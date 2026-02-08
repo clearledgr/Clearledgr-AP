@@ -1,0 +1,25 @@
+{
+  "name": "clearledgr-gmail-extension",
+  "version": "0.2.0",
+  "description": "Autonomous AP automation — invoices processed 24/7, right inside Gmail",
+  "main": "background.js",
+  "scripts": {
+    "start": "webpack --config webpack.dev.js --watch",
+    "build": "webpack --config webpack.dev.js",
+    "build:prod": "webpack --config webpack.prod.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["gmail", "chrome-extension", "invoice", "finance", "automation"],
+  "author": "Clearledgr",
+  "license": "ISC",
+  "dependencies": {
+    "@inboxsdk/core": "^2.2.11"
+  },
+  "devDependencies": {
+    "copy-webpack-plugin": "^12.0.2",
+    "source-map-loader": "^5.0.0",
+    "webpack": "^5.91.0",
+    "webpack-cli": "^5.1.4",
+    "webpack-merge": "^5.10.0"
+  }
+}

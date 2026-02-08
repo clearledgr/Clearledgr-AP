@@ -1,0 +1,1591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meridian Group - Bank Reconciliation - Google Sheets</title>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@300;400;500&family=Roboto+Mono:wght@400&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Roboto', -apple-system, sans-serif;
+      background: #f8f9fa;
+      height: 100vh;
+      overflow: hidden;
+      font-size: 13px;
+    }
+
+    .app-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* Top Header Bar - Row 1: Logo + Title */
+    .top-bar {
+      background: #fff;
+      padding: 4px 8px 0 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .sheets-logo {
+      cursor: pointer;
+      padding: 8px;
+    }
+
+    .sheets-logo svg {
+      width: 40px;
+      height: 40px;
+      display: block;
+    }
+
+    .doc-title-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex: 1;
+    }
+
+    .doc-name {
+      font-family: 'Google Sans', sans-serif;
+      font-size: 18px;
+      font-weight: 400;
+      color: #202124;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: text;
+      border: none;
+      background: transparent;
+    }
+
+    .doc-name:hover {
+      background: #f1f3f4;
+    }
+
+    .icon-btn {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 50%;
+      color: #5f6368;
+    }
+
+    .icon-btn:hover {
+      background: #f1f3f4;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .share-btn {
+      background: #c2e7ff;
+      color: #001d35;
+      border: none;
+      padding: 6px 20px;
+      border-radius: 24px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 8px;
+    }
+
+    .share-btn:hover {
+      background: #a8d4f0;
+    }
+
+    .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #8e44ad;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    /* Menu Bar - Row 2 */
+    .menu-bar {
+      background: #fff;
+      padding: 0 8px 4px 56px;
+      display: flex;
+      align-items: center;
+    }
+
+    .menu-item {
+      padding: 5px 7px;
+      font-size: 14px;
+      color: #202124;
+      cursor: pointer;
+      border-radius: 4px;
+      position: relative;
+    }
+
+    .menu-item:hover {
+      background: #f1f3f4;
+    }
+
+    .menu-item.clearledgr-menu {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .menu-item.clearledgr-menu img {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+    }
+
+    .menu-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      background: #fff;
+      border-radius: 4px;
+      box-shadow: 0 2px 6px 2px rgba(60,64,67,0.15);
+      min-width: 240px;
+      z-index: 1000;
+      display: none;
+      padding: 8px 0;
+    }
+
+    .menu-dropdown.show {
+      display: block;
+    }
+
+    .menu-dropdown-item {
+      padding: 6px 16px;
+      font-size: 14px;
+      color: #202124;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .menu-dropdown-item:hover {
+      background: #f1f3f4;
+    }
+
+    .menu-dropdown-item svg {
+      width: 20px;
+      height: 20px;
+      color: #5f6368;
+    }
+
+    .menu-dropdown-item .shortcut {
+      margin-left: auto;
+      color: #5f6368;
+      font-size: 12px;
+    }
+
+    .menu-divider {
+      height: 1px;
+      background: #e0e0e0;
+      margin: 8px 0;
+    }
+
+    /* Toolbar */
+    .toolbar {
+      background: #edf2fa;
+      padding: 4px 8px;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      border-bottom: 1px solid #c7c7c7;
+    }
+
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .toolbar-btn {
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 4px;
+      color: #444746;
+    }
+
+    .toolbar-btn:hover {
+      background: #d3d3d3;
+    }
+
+    .toolbar-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .toolbar-separator {
+      width: 1px;
+      height: 20px;
+      background: #c7c7c7;
+      margin: 0 6px;
+    }
+
+    .toolbar-select {
+      height: 30px;
+      padding: 0 8px;
+      border: 1px solid transparent;
+      background: transparent;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .toolbar-select:hover {
+      background: #d3d3d3;
+    }
+
+    .font-select {
+      width: 110px;
+    }
+
+    .size-select {
+      width: 50px;
+    }
+
+    /* Formula Bar */
+    .formula-bar {
+      background: #fff;
+      padding: 2px 8px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid #e0e0e0;
+      height: 28px;
+    }
+
+    .cell-name-container {
+      display: flex;
+      align-items: center;
+      min-width: 60px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 0 4px;
+      background: #fff;
+    }
+
+    .cell-name {
+      width: 50px;
+      border: none;
+      font-size: 13px;
+      color: #202124;
+      text-align: center;
+      background: transparent;
+      outline: none;
+    }
+
+    .formula-separator {
+      width: 1px;
+      height: 20px;
+      background: #e0e0e0;
+      margin: 0 8px;
+    }
+
+    .fx-icon {
+      color: #5f6368;
+      font-size: 14px;
+      padding: 0 8px;
+    }
+
+    .formula-input {
+      flex: 1;
+      border: none;
+      outline: none;
+      font-size: 13px;
+      font-family: 'Roboto', sans-serif;
+      padding: 4px;
+      color: #202124;
+    }
+
+    /* Main Content */
+    .main-content {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* Spreadsheet */
+    .spreadsheet-area {
+      flex: 1;
+      overflow: auto;
+      background: #fff;
+    }
+
+    .spreadsheet-table {
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    .spreadsheet-table th,
+    .spreadsheet-table td {
+      border: 1px solid #e2e2e2;
+      padding: 0;
+      height: 21px;
+      font-size: 13px;
+      font-weight: 400;
+    }
+
+    .spreadsheet-table th {
+      background: #f8f9fa;
+      color: #202124;
+      font-weight: 500;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .spreadsheet-table th.row-header {
+      width: 46px;
+      min-width: 46px;
+      text-align: center;
+      position: sticky;
+      left: 0;
+      z-index: 20;
+      background: #f8f9fa;
+    }
+
+    .spreadsheet-table th.col-header {
+      min-width: 100px;
+      text-align: center;
+      height: 21px;
+      line-height: 21px;
+    }
+
+    .spreadsheet-table th.col-header.selected {
+      background: #a8c7fa;
+      color: #202124;
+    }
+
+    .spreadsheet-table td {
+      padding: 0 4px;
+      color: #202124;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .spreadsheet-table td.row-num {
+      background: #f8f9fa;
+      text-align: center;
+      color: #202124;
+      position: sticky;
+      left: 0;
+      z-index: 5;
+    }
+
+    .spreadsheet-table tr:hover td {
+      background: #e8f0fe;
+    }
+
+    .spreadsheet-table tr:hover td.row-num {
+      background: #d3e3fd;
+    }
+
+    .cell-currency {
+      text-align: right;
+      font-family: 'Roboto Mono', monospace;
+    }
+
+    .cell-positive {
+      color: #137333;
+    }
+
+    .cell-negative {
+      color: #c5221f;
+    }
+
+    .cell-bold {
+      font-weight: 500;
+    }
+
+    .cell-header {
+      background: #f8f9fa;
+      font-weight: 500;
+    }
+
+    .status-chip {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .status-matched {
+      background: #e6f4ea;
+      color: #137333;
+    }
+
+    .status-exception {
+      background: #fce8e6;
+      color: #c5221f;
+    }
+
+    .status-pending {
+      background: #fef7e0;
+      color: #b06000;
+    }
+
+    /* Sheet Tabs */
+    .sheet-tabs-bar {
+      display: flex;
+      align-items: center;
+      background: #f1f3f4;
+      border-top: 1px solid #e0e0e0;
+      padding: 0 8px;
+      height: 36px;
+    }
+
+    .sheet-tabs-scroll {
+      display: flex;
+      gap: 0;
+    }
+
+    .sheet-tab {
+      padding: 8px 16px;
+      font-size: 13px;
+      color: #5f6368;
+      cursor: pointer;
+      border: 1px solid transparent;
+      border-bottom: none;
+      background: transparent;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sheet-tab:hover {
+      background: #e8eaed;
+    }
+
+    .sheet-tab.active {
+      background: #fff;
+      color: #202124;
+      border-color: #e0e0e0;
+      border-bottom: 1px solid #fff;
+      margin-bottom: -1px;
+      font-weight: 500;
+    }
+
+    .sheet-tab-icon {
+      width: 16px;
+      height: 16px;
+    }
+
+    .add-sheet-btn {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 50%;
+      color: #5f6368;
+      margin-right: 8px;
+    }
+
+    .add-sheet-btn:hover {
+      background: #e8eaed;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 380px;
+      background: #fff;
+      border-left: 1px solid #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.2s ease;
+    }
+
+    .sidebar.open {
+      transform: translateX(0);
+    }
+
+    .sidebar-header {
+      padding: 16px;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .sidebar-logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+    }
+
+    .sidebar-title {
+      flex: 1;
+      font-family: 'Google Sans', sans-serif;
+      font-size: 16px;
+      font-weight: 500;
+      color: #202124;
+    }
+
+    .sidebar-close {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 50%;
+      color: #5f6368;
+    }
+
+    .sidebar-close:hover {
+      background: #f1f3f4;
+    }
+
+    .sidebar-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    /* Sidebar Tabs */
+    .sidebar-tabs {
+      display: flex;
+      border-bottom: 1px solid #e0e0e0;
+      margin: -16px -16px 16px -16px;
+      padding: 0 16px;
+    }
+
+    .sidebar-tab {
+      padding: 12px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #5f6368;
+      background: none;
+      border: none;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+
+    .sidebar-tab:hover {
+      color: #202124;
+      background: #f1f3f4;
+    }
+
+    .sidebar-tab.active {
+      color: #0d9488;
+      border-bottom-color: #0d9488;
+    }
+
+    /* Sidebar Components */
+    .sidebar-section {
+      margin-bottom: 24px;
+    }
+
+    .sidebar-section-title {
+      font-size: 11px;
+      font-weight: 500;
+      color: #5f6368;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 12px;
+    }
+
+    .connected-systems {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .system-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #e6f4ea;
+      padding: 6px 10px;
+      border-radius: 16px;
+      font-size: 12px;
+      color: #137333;
+      font-weight: 500;
+    }
+
+    .system-chip .dot {
+      width: 6px;
+      height: 6px;
+      background: #137333;
+      border-radius: 50%;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .stat-card {
+      background: #f8f9fa;
+      padding: 16px;
+      border-radius: 8px;
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: 500;
+      color: #202124;
+      font-family: 'Google Sans', sans-serif;
+    }
+
+    .stat-value.positive {
+      color: #137333;
+    }
+
+    .stat-value.negative {
+      color: #c5221f;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: #5f6368;
+      margin-top: 4px;
+    }
+
+    .status-banner {
+      background: #e6f4ea;
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .status-banner svg {
+      width: 20px;
+      height: 20px;
+      color: #137333;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .status-banner-text {
+      flex: 1;
+    }
+
+    .status-banner-title {
+      font-size: 13px;
+      font-weight: 500;
+      color: #137333;
+    }
+
+    .status-banner-desc {
+      font-size: 12px;
+      color: #137333;
+      opacity: 0.8;
+    }
+
+    .action-btn {
+      width: 100%;
+      padding: 12px 16px;
+      background: #fff;
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+      transition: all 0.15s;
+      text-align: left;
+    }
+
+    .action-btn:hover {
+      background: #f8f9fa;
+      border-color: #0d9488;
+    }
+
+    .action-btn svg {
+      width: 20px;
+      height: 20px;
+      color: #0d9488;
+      flex-shrink: 0;
+    }
+
+    .action-btn-text {
+      flex: 1;
+    }
+
+    .action-btn-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: #202124;
+    }
+
+    .action-btn-desc {
+      font-size: 12px;
+      color: #5f6368;
+    }
+
+    /* Vita Chat */
+    .vita-container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .chat-message {
+      padding: 8px 0;
+    }
+
+    .chat-message.user {
+      text-align: right;
+    }
+
+    .chat-bubble {
+      display: inline-block;
+      max-width: 85%;
+      padding: 10px 14px;
+      border-radius: 18px;
+      font-size: 14px;
+      line-height: 1.4;
+      text-align: left;
+    }
+
+    .chat-message.user .chat-bubble {
+      background: #0d9488;
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+
+    .chat-message.bot .chat-bubble {
+      background: #f1f3f4;
+      color: #202124;
+      border-bottom-left-radius: 4px;
+    }
+
+    .chat-input-area {
+      padding: 12px 0;
+      border-top: 1px solid #e0e0e0;
+      display: flex;
+      gap: 8px;
+    }
+
+    .chat-input {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid #dadce0;
+      border-radius: 24px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .chat-input:focus {
+      border-color: #0d9488;
+    }
+
+    .chat-send {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #0d9488;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+    }
+
+    .chat-send:hover {
+      background: #0f766e;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #323232;
+      color: #fff;
+      padding: 12px 24px;
+      border-radius: 4px;
+      font-size: 14px;
+      z-index: 1000;
+      transition: transform 0.3s ease;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .toast.success {
+      background: #137333;
+    }
+
+    .loading-spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #dadce0;
+      border-top-color: #0d9488;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Row 1: Logo + Title + Icons -->
+    <div class="top-bar">
+      <div class="sheets-logo">
+        <svg viewBox="0 0 48 48" width="40" height="40">
+          <path fill="#43a047" d="M37,45H11c-1.657,0-3-1.343-3-3V6c0-1.657,1.343-3,3-3h19l10,10v29C40,43.657,38.657,45,37,45z"/>
+          <path fill="#c8e6c9" d="M40 13L30 13 30 3z"/>
+          <path fill="#2e7d32" d="M30 13L40 23 40 13z"/>
+          <path fill="#e8f5e9" d="M31,23H17h-4v18h22V23H31z M17,25h4v4h-4V25z M17,31h4v4h-4V31z M31,35h-8v-4h8V35z M31,29h-8v-4h8V29z"/>
+        </svg>
+      </div>
+      <div class="doc-title-row">
+        <input type="text" class="doc-name" value="Meridian Group - Bank Reconciliation" readonly>
+        <button class="icon-btn" title="Star">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#5f6368" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        </button>
+        <button class="icon-btn" title="Move">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#5f6368"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+        </button>
+        <button class="icon-btn" title="See document status">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#5f6368"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM19 18H6c-2.21 0-4-1.79-4-4s1.79-4 4-4h.71C7.37 7.69 9.48 6 12 6c3.04 0 5.5 2.46 5.5 5.5v.5H19c1.66 0 3 1.34 3 3s-1.34 3-3 3z"/></svg>
+        </button>
+      </div>
+      <div class="header-actions">
+        <button class="icon-btn" title="Last edit">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#5f6368"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+        </button>
+        <button class="icon-btn" title="Open comment history">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#5f6368"><path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18zM18 14H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
+        </button>
+        <button class="icon-btn" title="Join a call">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#5f6368"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+        </button>
+        <button class="share-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2z"/></svg>
+          Share
+        </button>
+        <div class="avatar">TM</div>
+      </div>
+    </div>
+
+    <!-- Row 2: Menu Bar -->
+    <div class="menu-bar">
+      <span class="menu-item">File</span>
+      <span class="menu-item">Edit</span>
+      <span class="menu-item">View</span>
+      <span class="menu-item">Insert</span>
+      <span class="menu-item">Format</span>
+      <span class="menu-item">Data</span>
+      <span class="menu-item">Tools</span>
+      <span class="menu-item">Extensions</span>
+      <span class="menu-item clearledgr-menu" onclick="toggleMenu()">
+        <img src="../gmail-extension/icons/icon48.png" alt="Clearledgr">
+        Clearledgr
+        <div class="menu-dropdown" id="clearledgrMenu">
+          <div class="menu-dropdown-item" onclick="showDashboard()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            Dashboard
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-dropdown-item" onclick="switchTab('exceptions')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            View Exceptions
+            <span class="shortcut">3 open</span>
+          </div>
+          <div class="menu-dropdown-item" onclick="switchTab('drafts')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            View Draft Entries
+            <span class="shortcut">4 pending</span>
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-dropdown-item" onclick="showVitaChat()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Ask Vita AI
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-dropdown-item" onclick="refreshData()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Refresh Data
+          </div>
+        </div>
+      </span>
+      <span class="menu-item">Help</span>
+    </div>
+
+    <!-- Row 3: Toolbar -->
+    <div class="toolbar">
+      <div class="toolbar-group">
+        <button class="toolbar-btn" title="Search"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg></button>
+      </div>
+      <div class="toolbar-separator"></div>
+      <div class="toolbar-group">
+        <button class="toolbar-btn" title="Undo"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg></button>
+        <button class="toolbar-btn" title="Redo"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.65 0-8.58 3.03-9.96 7.22L3.9 16c1.05-3.19 4.05-5.5 7.6-5.5 1.95 0 3.73.72 5.12 1.88L13 16h9V7l-3.6 3.6z"/></svg></button>
+        <button class="toolbar-btn" title="Print"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z"/></svg></button>
+        <button class="toolbar-btn" title="Paint format"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 4V3c0-.55-.45-1-1-1H5c-.55 0-1 .45-1 1v4c0 .55.45 1 1 1h12c.55 0 1-.45 1-1V6h1v4H9v11c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-9h8V4h-3z"/></svg></button>
+      </div>
+      <div class="toolbar-separator"></div>
+      <select class="toolbar-select" style="width: 60px;">
+        <option>100%</option>
+      </select>
+      <div class="toolbar-separator"></div>
+      <div class="toolbar-group">
+        <button class="toolbar-btn" title="Format as currency"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg></button>
+        <button class="toolbar-btn" title="Format as percent"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.5 11C9.43 11 11 9.43 11 7.5S9.43 4 7.5 4 4 5.57 4 7.5 5.57 11 7.5 11zm0-5C8.33 6 9 6.67 9 7.5S8.33 9 7.5 9 6 8.33 6 7.5 6.67 6 7.5 6zM4.41 19.5L19.5 4.41l1.41 1.41L5.82 20.91l-1.41-1.41zM16.5 13c-1.93 0-3.5 1.57-3.5 3.5s1.57 3.5 3.5 3.5 3.5-1.57 3.5-3.5-1.57-3.5-3.5-3.5zm0 5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg></button>
+        <button class="toolbar-btn" title="Decrease decimal places">.0</button>
+        <button class="toolbar-btn" title="Increase decimal places">.00</button>
+        <button class="toolbar-btn" title="123">123</button>
+      </div>
+      <div class="toolbar-separator"></div>
+      <select class="toolbar-select font-select">
+        <option>Default...</option>
+      </select>
+      <div class="toolbar-separator"></div>
+      <select class="toolbar-select size-select">
+        <option>10</option>
+      </select>
+      <div class="toolbar-group">
+        <button class="toolbar-btn" title="Decrease font size">−</button>
+        <button class="toolbar-btn" title="Increase font size">+</button>
+      </div>
+      <div class="toolbar-separator"></div>
+      <div class="toolbar-group">
+        <button class="toolbar-btn" title="Bold"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.6 10.79c.97-.67 1.65-1.77 1.65-2.79 0-2.26-1.75-4-4-4H7v14h7.04c2.09 0 3.71-1.7 3.71-3.79 0-1.52-.86-2.82-2.15-3.42zM10 6.5h3c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5h-3v-3zm3.5 9H10v-3h3.5c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5z"/></svg></button>
+        <button class="toolbar-btn" title="Italic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4v3h2.21l-3.42 8H6v3h8v-3h-2.21l3.42-8H18V4z"/></svg></button>
+        <button class="toolbar-btn" title="Strikethrough"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 19h4v-3h-4v3zM5 4v3h5v3h4V7h5V4H5zM3 14h18v-2H3v2z"/></svg></button>
+        <button class="toolbar-btn" title="Text color"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 3L5.5 17h2.25l1.12-3h6.25l1.12 3h2.25L13 3h-2zm-1.38 9L12 5.67 14.38 12H9.62z"/><rect x="3" y="19" width="18" height="3" fill="#000"/></svg></button>
+      </div>
+      <div class="toolbar-separator"></div>
+      <div class="toolbar-group">
+        <button class="toolbar-btn" title="Fill color"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.56 8.94L7.62 0 6.21 1.41l2.38 2.38-5.15 5.15c-.59.59-.59 1.54 0 2.12l5.5 5.5c.29.29.68.44 1.06.44s.77-.15 1.06-.44l5.5-5.5c.59-.58.59-1.53 0-2.12zM5.21 10L10 5.21 14.79 10H5.21zM19 11.5s-2 2.17-2 3.5c0 1.1.9 2 2 2s2-.9 2-2c0-1.33-2-3.5-2-3.5z"/><rect x="3" y="19" width="18" height="3" fill="#fff" stroke="#ccc"/></svg></button>
+        <button class="toolbar-btn" title="Borders"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 3v18h18V3H3zm8 16H5v-6h6v6zm0-8H5V5h6v6zm8 8h-6v-6h6v6zm0-8h-6V5h6v6z"/></svg></button>
+        <button class="toolbar-btn" title="Merge cells"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 21h18v-2H3v2zM3 3v2h18V3H3zm6 8H3v2h6v2l4-3-4-3v2zm6 2h6v-2h-6V9l-4 3 4 3v-2z"/></svg></button>
+      </div>
+      <div class="toolbar-separator"></div>
+      <div class="toolbar-group">
+        <button class="toolbar-btn" title="Horizontal align"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 21h18v-2H3v2zm0-4h18v-2H3v2zm0-4h18v-2H3v2zm0-4h18V7H3v2zm0-6v2h18V3H3z"/></svg></button>
+        <button class="toolbar-btn" title="Vertical align"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 11h3v10h2V11h3l-4-4-4 4zM4 3v2h16V3H4z"/></svg></button>
+        <button class="toolbar-btn" title="Text wrapping"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 19h6v-2H4v2zM20 5H4v2h16V5zm-3 6H4v2h13.25c1.1 0 2 .9 2 2s-.9 2-2 2H15v-2l-3 3 3 3v-2h2c2.21 0 4-1.79 4-4s-1.79-4-4-4z"/></svg></button>
+        <button class="toolbar-btn" title="Text rotation"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.75 3h-1.5L6.5 14h2.1l.9-2.2h5l.9 2.2h2.1L12.75 3zm-2.62 7L12 5.98 13.87 10h-3.74zm10.37 8l-3-3v2H5v2h12.5v2l3-3z"/></svg></button>
+      </div>
+      <div class="toolbar-separator"></div>
+      <div class="toolbar-group">
+        <button class="toolbar-btn" title="Insert link"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg></button>
+        <button class="toolbar-btn" title="Insert comment"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18zM18 14H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg></button>
+        <button class="toolbar-btn" title="Insert chart"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg></button>
+        <button class="toolbar-btn" title="Create a filter"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg></button>
+        <button class="toolbar-btn" title="Filter views"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5H1v16c0 1.1.9 2 2 2h16v-2H3V5zm18-4H7c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V3c0-1.1-.9-2-2-2zm0 16H7V3h14v14z"/></svg></button>
+        <button class="toolbar-btn" title="Functions"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 4H6v2l6.5 6L6 18v2h12v-3h-7l5-5-5-5h7z"/></svg></button>
+      </div>
+    </div>
+
+    <!-- Row 4: Formula Bar -->
+    <div class="formula-bar">
+      <div class="cell-name-container">
+        <input type="text" class="cell-name" value="A1" readonly>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="#5f6368"><path d="M7 10l5 5 5-5z"/></svg>
+      </div>
+      <div class="formula-separator"></div>
+      <span class="fx-icon">𝑓x</span>
+      <input type="text" class="formula-input" value="">
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <div class="spreadsheet-area">
+        <table class="spreadsheet-table" id="dataTable">
+          <!-- Rendered by JS -->
+        </table>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="sidebar open" id="sidebar">
+        <div class="sidebar-header">
+          <img src="../gmail-extension/icons/icon48.png" alt="Clearledgr" class="sidebar-logo">
+          <div class="sidebar-title" id="sidebarTitle">Dashboard</div>
+          <button class="sidebar-close" onclick="closeSidebar()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="sidebar-content" id="sidebarContent">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Sheet Tabs -->
+    <div class="sheet-tabs-bar">
+      <button class="add-sheet-btn">+</button>
+      <div class="sheet-tabs-scroll">
+        <div class="sheet-tab active" data-tab="dashboard" onclick="switchTab('dashboard')">Dashboard</div>
+        <div class="sheet-tab" data-tab="gateway" onclick="switchTab('gateway')">Stripe_Transactions</div>
+        <div class="sheet-tab" data-tab="bank" onclick="switchTab('bank')">Deutsche_Bank</div>
+        <div class="sheet-tab" data-tab="sap" onclick="switchTab('sap')">SAP_GL_Entries</div>
+        <div class="sheet-tab" data-tab="matches" onclick="switchTab('matches')">3-Way_Matches</div>
+        <div class="sheet-tab" data-tab="exceptions" onclick="switchTab('exceptions')">Exceptions</div>
+        <div class="sheet-tab" data-tab="drafts" onclick="switchTab('drafts')">Draft_Entries</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+
+  <script>
+    // DEMO DATA - ALIGNED WITH GMAIL AND SLACK
+    const DEMO_DATA = {
+      stats: {
+        email_count: 6,
+        matched_transactions: 2801,
+        open_exceptions: 3,
+        pending_drafts: 4,
+        match_rate: 98.4
+      },
+      gateway: [
+        { id: 'STR-2026-001', amount: 12847.32, date: '2026-01-15', description: 'Stripe Payout - Invoice INV-2026-4892', reference: 'po_3QxK2mLk8' },
+        { id: 'STR-2026-002', amount: 8920.50, date: '2026-01-14', description: 'Stripe Payout - Customer Payments', reference: 'po_3QxJ9nMp4' },
+        { id: 'STR-2026-003', amount: 15680.00, date: '2026-01-13', description: 'Stripe Payout - Customer Payments', reference: 'po_3QxH7kLn2' },
+        { id: 'STR-2026-004', amount: 6340.25, date: '2026-01-12', description: 'Stripe Payout - Customer Payments', reference: 'po_3QxG5jKm1' },
+        { id: 'STR-2026-005', amount: 22100.00, date: '2026-01-11', description: 'Stripe Payout - Customer Payments', reference: 'po_3QxF4hJl0' },
+        { id: 'STR-2026-006', amount: 9875.30, date: '2026-01-10', description: 'Stripe Payout - Customer Payments', reference: 'po_3QxE3gIk9' },
+      ],
+      bank: [
+        { id: 'DB-2026-001', amount: 12847.32, date: '2026-01-16', description: 'STRIPE PAYMENTS EUR', reference: 'STRIPE-EUR-001' },
+        { id: 'DB-2026-002', amount: 8920.50, date: '2026-01-15', description: 'STRIPE PAYMENTS EUR', reference: 'STRIPE-EUR-002' },
+        { id: 'DB-2026-003', amount: 15680.00, date: '2026-01-14', description: 'STRIPE PAYMENTS EUR', reference: 'STRIPE-EUR-003' },
+        { id: 'DB-2026-004', amount: 6340.25, date: '2026-01-13', description: 'STRIPE PAYMENTS EUR', reference: 'STRIPE-EUR-004' },
+        { id: 'DB-2026-005', amount: 22100.00, date: '2026-01-12', description: 'STRIPE PAYMENTS EUR', reference: 'STRIPE-EUR-005' },
+        { id: 'DB-2026-006', amount: 9718.50, date: '2026-01-11', description: 'STRIPE PAYMENTS EUR', reference: 'STRIPE-EUR-006' },
+        { id: 'DB-2026-007', amount: -45000.00, date: '2026-01-10', description: 'SAP SE LICENSE FEE Q1', reference: 'SAP-LIC-89234' },
+        { id: 'DB-2026-008', amount: -8234.50, date: '2026-01-09', description: 'AMAZON WEB SERVICES', reference: 'AWS-2026-0115' },
+        { id: 'DB-2026-009', amount: 5234.00, date: '2026-01-08', description: 'TRANSFER - UNKNOWN', reference: 'TRF-UNKNOWN' },
+      ],
+      matches: [
+        { id: 'M-001', gateway_id: 'STR-2026-001', bank_id: 'DB-2026-001', sap_gl: 'GL-1100-001', score: 100, confidence: 'High', amount: 12847.32 },
+        { id: 'M-002', gateway_id: 'STR-2026-002', bank_id: 'DB-2026-002', sap_gl: 'GL-1100-002', score: 100, confidence: 'High', amount: 8920.50 },
+        { id: 'M-003', gateway_id: 'STR-2026-003', bank_id: 'DB-2026-003', sap_gl: 'GL-1100-003', score: 100, confidence: 'High', amount: 15680.00 },
+        { id: 'M-004', gateway_id: 'STR-2026-004', bank_id: 'DB-2026-004', sap_gl: 'GL-1100-004', score: 100, confidence: 'High', amount: 6340.25 },
+        { id: 'M-005', gateway_id: 'STR-2026-005', bank_id: 'DB-2026-005', sap_gl: 'GL-1100-005', score: 100, confidence: 'High', amount: 22100.00 },
+      ],
+      exceptions: [
+        { id: 'EXC-001', type: 'Unidentified Transfer', amount: 5234.00, vendor: 'Unknown', priority: 'HIGH', status: 'Open', description: 'Unknown transfer - appears to be customer prepayment' },
+        { id: 'EXC-002', type: 'Amount Mismatch', amount: 156.80, vendor: 'Stripe', priority: 'MEDIUM', status: 'Open', description: 'Gateway: €9,875.30 vs Bank: €9,718.50 (fee difference)' },
+        { id: 'EXC-003', type: 'Missing Invoice', amount: 2100.00, vendor: 'Unknown', priority: 'MEDIUM', status: 'Open', description: 'Bank debit with no matching invoice' },
+      ],
+      sap_gl: [
+        { id: 'GL-1100-001', account: '1100', description: 'AR - Stripe Payout INV-4892', amount: 12847.32, date: '2026-01-15', doc_type: 'RV', status: 'Posted' },
+        { id: 'GL-1100-002', account: '1100', description: 'AR - Stripe Customer Payments', amount: 8920.50, date: '2026-01-14', doc_type: 'RV', status: 'Posted' },
+        { id: 'GL-1100-003', account: '1100', description: 'AR - Stripe Customer Payments', amount: 15680.00, date: '2026-01-13', doc_type: 'RV', status: 'Posted' },
+        { id: 'GL-1100-004', account: '1100', description: 'AR - Stripe Customer Payments', amount: 6340.25, date: '2026-01-12', doc_type: 'RV', status: 'Posted' },
+        { id: 'GL-1100-005', account: '1100', description: 'AR - Stripe Customer Payments', amount: 22100.00, date: '2026-01-11', doc_type: 'RV', status: 'Posted' },
+        { id: 'GL-6200-001', account: '6200', description: 'SAP License Fee Q1 2026', amount: -45000.00, date: '2026-01-10', doc_type: 'KR', status: 'Posted' },
+        { id: 'GL-6200-002', account: '6200', description: 'AWS Infrastructure Jan 2026', amount: -8234.50, date: '2026-01-09', doc_type: 'KR', status: 'Posted' },
+      ],
+      drafts: [
+        { id: 'DRF-001', description: 'SAP S/4HANA License - Q1 2026', amount: 45000.00, gl_code: '6200', confidence: 98, status: 'Pending', vendor: 'SAP SE' },
+        { id: 'DRF-002', description: 'Stripe Invoice - January 2026', amount: 12847.32, gl_code: '6150', confidence: 97, status: 'Pending', vendor: 'Stripe' },
+        { id: 'DRF-003', description: 'AWS Infrastructure - January 2026', amount: 8234.50, gl_code: '6200', confidence: 96, status: 'Pending', vendor: 'Amazon Web Services' },
+        { id: 'DRF-004', description: 'Office Rent - January 2026', amount: 12500.00, gl_code: '6100', confidence: 94, status: 'Pending', vendor: 'Immobilien GmbH' },
+      ]
+    };
+
+    let currentTab = 'dashboard';
+    let sidebarMode = 'dashboard';
+
+    function formatCurrency(amount) {
+      const sign = amount < 0 ? '-' : '';
+      return sign + '€' + Math.abs(amount).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function toggleMenu() {
+      document.getElementById('clearledgrMenu').classList.toggle('show');
+    }
+
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.clearledgr-menu')) {
+        document.getElementById('clearledgrMenu').classList.remove('show');
+      }
+    });
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.sheet-tab').forEach(t => t.classList.remove('active'));
+      document.querySelector(`.sheet-tab[data-tab="${tab}"]`)?.classList.add('active');
+      renderTable();
+    }
+
+    function renderTable() {
+      const table = document.getElementById('dataTable');
+      const cols = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
+      
+      let headerRow = '<tr><th class="row-header"></th>';
+      cols.forEach(c => headerRow += `<th class="col-header">${c}</th>`);
+      headerRow += '</tr>';
+
+      let html = headerRow;
+
+      switch (currentTab) {
+        case 'dashboard':
+          html += renderDashboardRows();
+          break;
+        case 'gateway':
+          html += renderGatewayRows();
+          break;
+        case 'bank':
+          html += renderBankRows();
+          break;
+        case 'sap':
+          html += renderSAPRows();
+          break;
+        case 'matches':
+          html += renderMatchesRows();
+          break;
+        case 'exceptions':
+          html += renderExceptionsRows();
+          break;
+        case 'drafts':
+          html += renderDraftsRows();
+          break;
+      }
+
+      table.innerHTML = html;
+    }
+
+    function renderDashboardRows() {
+      const s = DEMO_DATA.stats;
+      return `
+        <tr><td class="row-num">1</td><td class="cell-bold">Metric</td><td class="cell-bold">Value</td><td class="cell-bold">Updated</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td class="row-num">2</td><td>Finance Emails</td><td>${s.email_count}</td><td>${new Date().toLocaleDateString()}</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td class="row-num">3</td><td>Matched Transactions</td><td class="cell-positive">${s.matched_transactions.toLocaleString()}</td><td>${new Date().toLocaleDateString()}</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td class="row-num">4</td><td>Open Exceptions</td><td class="cell-negative">${s.open_exceptions}</td><td>${new Date().toLocaleDateString()}</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td class="row-num">5</td><td>Pending Drafts</td><td>${s.pending_drafts}</td><td>${new Date().toLocaleDateString()}</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td class="row-num">6</td><td>Match Rate</td><td class="cell-positive">${s.match_rate}%</td><td>${new Date().toLocaleDateString()}</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td class="row-num">7</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr><td class="row-num">8</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      `;
+    }
+
+    function renderGatewayRows() {
+      let rows = `<tr><td class="row-num">1</td><td class="cell-bold">ID</td><td class="cell-bold">Amount</td><td class="cell-bold">Date</td><td class="cell-bold">Description</td><td class="cell-bold">Reference</td><td></td><td></td></tr>`;
+      DEMO_DATA.gateway.forEach((tx, i) => {
+        rows += `<tr><td class="row-num">${i + 2}</td><td>${tx.id}</td><td class="cell-currency cell-positive">${formatCurrency(tx.amount)}</td><td>${tx.date}</td><td>${tx.description}</td><td>${tx.reference}</td><td></td><td></td></tr>`;
+      });
+      return rows;
+    }
+
+    function renderBankRows() {
+      let rows = `<tr><td class="row-num">1</td><td class="cell-bold">ID</td><td class="cell-bold">Amount</td><td class="cell-bold">Date</td><td class="cell-bold">Description</td><td class="cell-bold">Reference</td><td></td><td></td></tr>`;
+      DEMO_DATA.bank.forEach((tx, i) => {
+        const colorClass = tx.amount >= 0 ? 'cell-positive' : 'cell-negative';
+        rows += `<tr><td class="row-num">${i + 2}</td><td>${tx.id}</td><td class="cell-currency ${colorClass}">${formatCurrency(tx.amount)}</td><td>${tx.date}</td><td>${tx.description}</td><td>${tx.reference}</td><td></td><td></td></tr>`;
+      });
+      return rows;
+    }
+
+    function renderSAPRows() {
+      let rows = `<tr><td class="row-num">1</td><td class="cell-bold">GL Entry ID</td><td class="cell-bold">Account</td><td class="cell-bold">Description</td><td class="cell-bold">Amount</td><td class="cell-bold">Date</td><td class="cell-bold">Doc Type</td><td class="cell-bold">Status</td></tr>`;
+      DEMO_DATA.sap_gl.forEach((entry, i) => {
+        const colorClass = entry.amount >= 0 ? 'cell-positive' : 'cell-negative';
+        rows += `<tr><td class="row-num">${i + 2}</td><td>${entry.id}</td><td>${entry.account}</td><td>${entry.description}</td><td class="cell-currency ${colorClass}">${formatCurrency(entry.amount)}</td><td>${entry.date}</td><td>${entry.doc_type}</td><td><span class="status-chip status-matched">${entry.status}</span></td></tr>`;
+      });
+      return rows;
+    }
+
+    function renderMatchesRows() {
+      let rows = `<tr><td class="row-num">1</td><td class="cell-bold">Match ID</td><td class="cell-bold">Stripe</td><td class="cell-bold">Deutsche Bank</td><td class="cell-bold">SAP GL</td><td class="cell-bold">Amount</td><td class="cell-bold">Score</td><td class="cell-bold">Status</td></tr>`;
+      DEMO_DATA.matches.forEach((m, i) => {
+        rows += `<tr><td class="row-num">${i + 2}</td><td>${m.id}</td><td>${m.gateway_id}</td><td>${m.bank_id}</td><td>${m.sap_gl}</td><td class="cell-currency cell-positive">${formatCurrency(m.amount)}</td><td>${m.score}%</td><td><span class="status-chip status-matched">3-Way Match</span></td></tr>`;
+      });
+      return rows;
+    }
+
+    function renderExceptionsRows() {
+      let rows = `<tr><td class="row-num">1</td><td class="cell-bold">ID</td><td class="cell-bold">Type</td><td class="cell-bold">Amount</td><td class="cell-bold">Vendor</td><td class="cell-bold">Priority</td><td class="cell-bold">Status</td><td class="cell-bold">Description</td></tr>`;
+      DEMO_DATA.exceptions.forEach((exc, i) => {
+        const priorityClass = exc.priority === 'HIGH' ? 'status-exception' : 'status-pending';
+        rows += `<tr><td class="row-num">${i + 2}</td><td>${exc.id}</td><td>${exc.type}</td><td class="cell-currency cell-negative">${formatCurrency(exc.amount)}</td><td>${exc.vendor}</td><td><span class="status-chip ${priorityClass}">${exc.priority}</span></td><td><span class="status-chip status-exception">${exc.status}</span></td><td>${exc.description}</td></tr>`;
+      });
+      return rows;
+    }
+
+    function renderDraftsRows() {
+      let rows = `<tr><td class="row-num">1</td><td class="cell-bold">ID</td><td class="cell-bold">Description</td><td class="cell-bold">Amount</td><td class="cell-bold">GL Code</td><td class="cell-bold">Confidence</td><td class="cell-bold">Status</td><td class="cell-bold">Vendor</td></tr>`;
+      DEMO_DATA.drafts.forEach((d, i) => {
+        rows += `<tr><td class="row-num">${i + 2}</td><td>${d.id}</td><td>${d.description}</td><td class="cell-currency">${formatCurrency(d.amount)}</td><td>${d.gl_code}</td><td>${d.confidence}%</td><td><span class="status-chip status-pending">${d.status}</span></td><td>${d.vendor}</td></tr>`;
+      });
+      return rows;
+    }
+
+    // Sidebar
+    function showDashboard() {
+      sidebarMode = 'dashboard';
+      document.getElementById('sidebarTitle').textContent = 'Dashboard';
+      document.getElementById('sidebar').classList.add('open');
+      renderSidebar();
+    }
+
+    function showVitaChat() {
+      sidebarMode = 'vita';
+      document.getElementById('sidebarTitle').textContent = 'Vita AI';
+      document.getElementById('sidebar').classList.add('open');
+      renderSidebar();
+    }
+
+    function closeSidebar() {
+      document.getElementById('sidebar').classList.remove('open');
+    }
+
+    function showDashboardTab(tab) {
+      document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+      event.target.classList.add('active');
+      
+      const content = document.getElementById('dashboardTabContent');
+      const s = DEMO_DATA.stats;
+      
+      if (tab === 'overview') {
+        content.innerHTML = `
+          <div class="sidebar-section">
+            <div class="sidebar-section-title">Overview</div>
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-value positive">${s.match_rate}%</div>
+                <div class="stat-label">Match Rate</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value negative">${s.open_exceptions}</div>
+                <div class="stat-label">Exceptions</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value">${s.matched_transactions.toLocaleString()}</div>
+                <div class="stat-label">Matched</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value">${s.pending_drafts}</div>
+                <div class="stat-label">Pending</div>
+              </div>
+            </div>
+          </div>
+          <div class="sidebar-section">
+            <div class="sidebar-section-title">Status</div>
+            <div class="status-banner">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <div class="status-banner-text">
+                <div class="status-banner-title">3-Way Reconciliation: 7 min ago</div>
+                <div class="status-banner-desc">Stripe ↔ Deutsche Bank ↔ SAP GL</div>
+              </div>
+            </div>
+          </div>
+          <div class="sidebar-section">
+            <div class="sidebar-section-title">Actions</div>
+            <button class="action-btn" onclick="switchTab('exceptions')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <div class="action-btn-text">
+                <div class="action-btn-title">Review Exceptions</div>
+                <div class="action-btn-desc">${s.open_exceptions} items need attention</div>
+              </div>
+            </button>
+            <button class="action-btn" onclick="switchTab('drafts')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <div class="action-btn-text">
+                <div class="action-btn-title">Approve Drafts</div>
+                <div class="action-btn-desc">${s.pending_drafts} entries pending approval</div>
+              </div>
+            </button>
+            <button class="action-btn" onclick="showVitaChat()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <div class="action-btn-text">
+                <div class="action-btn-title">Ask Vita AI</div>
+                <div class="action-btn-desc">Get answers about your data</div>
+              </div>
+            </button>
+          </div>
+        `;
+      } else if (tab === 'activity') {
+        content.innerHTML = `
+          <div class="sidebar-section">
+            <div class="sidebar-section-title">Recent Activity</div>
+            <div class="activity-list">
+              <div class="activity-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" width="16" height="16"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <div class="activity-text">
+                  <div class="activity-title">Reconciliation completed</div>
+                  <div class="activity-time">7 minutes ago</div>
+                </div>
+              </div>
+              <div class="activity-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#0d9488" stroke-width="2" width="16" height="16"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <div class="activity-text">
+                  <div class="activity-title">4 draft entries created</div>
+                  <div class="activity-time">7 minutes ago</div>
+                </div>
+              </div>
+              <div class="activity-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" width="16" height="16"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <div class="activity-text">
+                  <div class="activity-title">3 exceptions flagged</div>
+                  <div class="activity-time">7 minutes ago</div>
+                </div>
+              </div>
+              <div class="activity-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" width="16" height="16"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <div class="activity-text">
+                  <div class="activity-title">Bank statement received</div>
+                  <div class="activity-time">12 minutes ago</div>
+                </div>
+              </div>
+              <div class="activity-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" width="16" height="16"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <div class="activity-text">
+                  <div class="activity-title">SAP invoice posted</div>
+                  <div class="activity-time">1 hour ago</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      } else if (tab === 'settings') {
+        content.innerHTML = `
+          <div class="sidebar-section">
+            <div class="sidebar-section-title">Data Sources (Read)</div>
+            <div class="connected-systems">
+              <div class="system-chip"><span class="dot"></span>Stripe API</div>
+              <div class="system-chip"><span class="dot"></span>Deutsche Bank</div>
+              <div class="system-chip"><span class="dot"></span>SAP GL Entries</div>
+              <div class="system-chip"><span class="dot"></span>Gmail</div>
+            </div>
+          </div>
+          <div class="sidebar-section">
+            <div class="sidebar-section-title">Destinations (Write)</div>
+            <div class="connected-systems" style="margin-bottom: 16px;">
+              <div class="system-chip" style="background: #eff6ff; border-color: #bfdbfe;"><span class="dot" style="background: #3b82f6;"></span>SAP S/4HANA</div>
+              <div class="system-chip" style="background: #eff6ff; border-color: #bfdbfe;"><span class="dot" style="background: #3b82f6;"></span>Google Sheets</div>
+              <div class="system-chip" style="background: #eff6ff; border-color: #bfdbfe;"><span class="dot" style="background: #3b82f6;"></span>Slack</div>
+            </div>
+          </div>
+          <div class="sidebar-section">
+            <div class="sidebar-section-title">Preferences</div>
+            <div class="settings-item">
+              <span>Auto-refresh data</span>
+              <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            </div>
+            <div class="settings-item">
+              <span>Show notifications</span>
+              <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            </div>
+            <div class="settings-item">
+              <span>Auto-approve high confidence</span>
+              <label class="toggle"><input type="checkbox"><span class="slider"></span></label>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    function renderSidebar() {
+      const content = document.getElementById('sidebarContent');
+      
+      if (sidebarMode === 'dashboard') {
+        const s = DEMO_DATA.stats;
+        content.innerHTML = `
+          <div class="sidebar-tabs">
+            <button class="sidebar-tab active" onclick="showDashboardTab('overview')">Overview</button>
+            <button class="sidebar-tab" onclick="showDashboardTab('activity')">Activity</button>
+            <button class="sidebar-tab" onclick="showDashboardTab('settings')">Settings</button>
+          </div>
+          
+          <div id="dashboardTabContent">
+            <div class="sidebar-section">
+              <div class="sidebar-section-title">Overview</div>
+              <div class="stats-grid">
+                <div class="stat-card">
+                  <div class="stat-value positive">${s.match_rate}%</div>
+                  <div class="stat-label">Match Rate</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value negative">${s.open_exceptions}</div>
+                  <div class="stat-label">Exceptions</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">${s.matched_transactions.toLocaleString()}</div>
+                  <div class="stat-label">Matched</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">${s.pending_drafts}</div>
+                  <div class="stat-label">Pending</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="sidebar-section">
+              <div class="sidebar-section-title">Status</div>
+              <div class="status-banner">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <div class="status-banner-text">
+                  <div class="status-banner-title">3-Way Reconciliation: 7 min ago</div>
+                  <div class="status-banner-desc">Stripe ↔ Deutsche Bank ↔ SAP GL</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="sidebar-section">
+              <div class="sidebar-section-title">Actions</div>
+              <button class="action-btn" onclick="switchTab('exceptions')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <div class="action-btn-text">
+                  <div class="action-btn-title">Review Exceptions</div>
+                  <div class="action-btn-desc">${s.open_exceptions} items need attention</div>
+                </div>
+              </button>
+              <button class="action-btn" onclick="switchTab('drafts')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <div class="action-btn-text">
+                  <div class="action-btn-title">Approve Drafts</div>
+                  <div class="action-btn-desc">${s.pending_drafts} entries pending approval</div>
+                </div>
+              </button>
+              <button class="action-btn" onclick="showVitaChat()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <div class="action-btn-text">
+                  <div class="action-btn-title">Ask Vita AI</div>
+                  <div class="action-btn-desc">Get answers about your data</div>
+                </div>
+              </button>
+            </div>
+          </div>
+        `;
+      } else if (sidebarMode === 'vita') {
+        content.innerHTML = `
+          <div class="vita-container">
+            <div class="chat-messages" id="chatMessages">
+              <div class="chat-message bot">
+                <div class="chat-bubble">Hi! I'm Vita, your AI finance assistant. Ask me anything about your reconciliation data, exceptions, or financial metrics.</div>
+              </div>
+            </div>
+            <div class="chat-input-area">
+              <input type="text" class="chat-input" id="vitaInput" placeholder="Ask Vita..." onkeypress="if(event.key==='Enter')sendVitaMessage()">
+              <button class="chat-send" onclick="sendVitaMessage()">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    async function sendVitaMessage() {
+      const input = document.getElementById('vitaInput');
+      const messages = document.getElementById('chatMessages');
+      const text = input.value.trim();
+      if (!text) return;
+
+      messages.innerHTML += `<div class="chat-message user"><div class="chat-bubble">${text}</div></div>`;
+      input.value = '';
+      messages.scrollTop = messages.scrollHeight;
+
+      messages.innerHTML += `<div class="chat-message bot" id="typing"><div class="chat-bubble"><span class="loading-spinner"></span> Thinking...</div></div>`;
+      messages.scrollTop = messages.scrollHeight;
+
+      await new Promise(r => setTimeout(r, 1500));
+
+      let response = '';
+      const q = text.toLowerCase();
+      
+      if (q.includes('exception') || q.includes('issue')) {
+        response = `You have <strong>3 open exceptions</strong> totaling <strong>€7,490.80</strong>:<br><br>1. <strong>Unknown Transfer</strong> — €5,234 (High priority)<br>2. <strong>Stripe</strong> — €156.80 (Medium)<br>3. <strong>Unknown</strong> — €2,100 (Medium)<br><br>The unknown transfer needs immediate attention.`;
+      } else if (q.includes('match') || q.includes('reconcil')) {
+        response = `Your current <strong>match rate is 98.4%</strong>.<br><br>• <strong>2,801 transactions</strong> matched<br>• <strong>3 exceptions</strong> need review<br>• Total: <strong>€312,847.23</strong>`;
+      } else if (q.includes('draft') || q.includes('approv')) {
+        response = `You have <strong>4 draft journal entries</strong> pending:<br><br>1. SAP License — €45,000 (98%)<br>2. Stripe Invoice — €12,847.32 (97%)<br>3. AWS — €8,234.50 (96%)<br>4. Office Rent — €12,500 (94%)`;
+      } else if (q.includes('cash') || q.includes('balance')) {
+        response = `<strong>Deutsche Bank ****4892</strong><br><br>Current Balance: <strong>€312,847.23</strong><br><br>• Inflows: €75,888.07<br>• Outflows: €53,234.50<br>• Net: +€28,314.56`;
+      } else {
+        response = `I can help with:<br><br>• "Show exceptions"<br>• "Match rate"<br>• "Pending drafts"<br>• "Cash balance"`;
+      }
+
+      document.getElementById('typing').remove();
+      messages.innerHTML += `<div class="chat-message bot"><div class="chat-bubble">${response}</div></div>`;
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    async function approveAllDrafts() {
+      showToast('Approving draft entries...', false);
+      await new Promise(r => setTimeout(r, 1500));
+      DEMO_DATA.drafts.forEach(d => d.status = 'Approved');
+      DEMO_DATA.stats.pending_drafts = 0;
+      renderTable();
+      renderSidebar();
+      showToast('✓ 4 entries approved and posted to SAP', true);
+    }
+
+    function refreshData() {
+      showToast('Refreshing data...', false);
+      setTimeout(() => {
+        renderTable();
+        showToast('✓ Data refreshed', true);
+      }, 1000);
+    }
+
+    function showToast(message, success) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = 'toast show' + (success ? ' success' : '');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    // Initialize
+    renderTable();
+    showDashboard();
+  </script>
+</body>
+</html>

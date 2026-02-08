@@ -1,0 +1,71 @@
+{
+  "manifest_version": 3,
+  "name": "Clearledgr",
+  "version": "1.2026.001",
+  "version_name": "1.2026.001 Phoenix",
+  "description": "Autonomous AP automation — invoices processed 24/7, right inside Gmail",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "identity",
+    "identity.email"
+  ],
+  "oauth2": {
+    "client_id": "333271407440-j42m0b6sh4j42bvlkr0vko7l058uf3ja.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.labels",
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/gmail.readonly"
+    ]
+  },
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://gmail.google.com/*",
+    "https://www.googleapis.com/*",
+    "https://gmail.googleapis.com/*",
+    "https://accounts.google.com/*",
+    "https://vision.googleapis.com/*",
+    "https://documentai.googleapis.com/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8010/*",
+    "http://127.0.0.1:8010/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mail.google.com/*",
+        "https://gmail.google.com/*"
+      ],
+      "js": [
+        "dist/inboxsdk-layer.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/*.png",
+        "dist/pageWorld.js",
+        "dist/inboxsdk-layer.js"
+      ],
+      "matches": [
+        "https://mail.google.com/*",
+        "https://gmail.google.com/*"
+      ]
+    }
+  ],
+  "action": {
+    "default_title": "Clearledgr"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

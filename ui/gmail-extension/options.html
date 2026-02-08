@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clearledgr Settings</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f8fafc;
+      color: #1e293b;
+      margin: 0;
+      padding: 40px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .container {
+      background: white;
+      width: 100%;
+      max-width: 500px;
+      padding: 32px;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 32px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #475569;
+      margin-bottom: 8px;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="number"] {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 14px;
+      box-sizing: border-box;
+      transition: border-color 0.2s;
+    }
+
+    input[type="text"]:focus,
+    input[type="password"]:focus,
+    input[type="number"]:focus {
+      outline: none;
+      border-color: #1abc9c;
+      box-shadow: 0 0 0 3px rgba(26, 188, 156, 0.1);
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: #1abc9c;
+    }
+
+    .checkbox-label {
+      margin: 0;
+      font-weight: 400;
+      color: #1e293b;
+    }
+
+    .btn-save {
+      width: 100%;
+      padding: 12px;
+      background-color: #1abc9c;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      margin-top: 12px;
+    }
+
+    .btn-save:hover {
+      background-color: #16a085;
+    }
+
+    .status {
+      margin-top: 16px;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      text-align: center;
+      display: none;
+    }
+
+    .status.success {
+      display: block;
+      background-color: #ecfdf5;
+      color: #047857;
+    }
+
+    .status.error {
+      display: block;
+      background-color: #fef2f2;
+      color: #b91c1c;
+    }
+
+    .help-text {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <img src="icons/icon48.png" alt="Clearledgr" class="logo">
+      <h1>Extension Settings</h1>
+    </div>
+
+    <form id="settings-form">
+      <div class="form-group">
+        <label for="apiKey">API Key</label>
+        <input type="password" id="apiKey" placeholder="cl_live_..." autocomplete="off">
+        <div class="help-text">Your secret key from the Clearledgr dashboard.</div>
+      </div>
+
+      <div class="form-group">
+        <label for="apiEndpoint">API Endpoint</label>
+        <input type="text" id="apiEndpoint" value="https://api.clearledgr.com/v1">
+      </div>
+
+      <div class="checkbox-group">
+        <input type="checkbox" id="autoMatch" checked>
+        <label for="autoMatch" class="checkbox-label">Enable Auto-match</label>
+      </div>
+
+      <div class="checkbox-group">
+        <input type="checkbox" id="notifications" checked>
+        <label for="notifications" class="checkbox-label">Show Notifications</label>
+      </div>
+
+      <button type="submit" class="btn-save">Save Settings</button>
+    </form>
+
+    <div id="status" class="status"></div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #0a1628;
+      --primary-light: #1a2d4a;
+      --accent: #00e599;
+      --accent-dark: #00c77d;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --bg: #ffffff;
+      --bg-secondary: #f8fafc;
+      --text: #0f172a;
+      --text-secondary: #64748b;
+      --border: #e2e8f0;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .container {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Header */
+    .header {
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 16px;
+    }
+
+    .header-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .header-subtitle {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    /* Main content */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    /* Section */
+    .section {
+      margin-bottom: 20px;
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+
+    /* Form elements */
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: inherit;
+      background: white;
+      cursor: pointer;
+    }
+
+    select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    input[type="number"] {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+
+    input[type="number"]:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    /* Checkbox */
+    .checkbox-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .checkbox-option:hover {
+      border-color: var(--accent);
+      background: rgba(0, 229, 153, 0.05);
+    }
+
+    .checkbox-option.checked {
+      border-color: var(--accent);
+      background: rgba(0, 229, 153, 0.1);
+    }
+
+    .checkbox-option input[type="checkbox"] {
+      accent-color: var(--accent);
+      width: 16px;
+      height: 16px;
+    }
+
+    .checkbox-label {
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    /* Buttons */
+    .btn {
+      width: 100%;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+      margin-bottom: 8px;
+    }
+
+    .btn:last-child {
+      margin-bottom: 0;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: var(--primary);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-dark);
+    }
+
+    .btn-secondary {
+      background: white;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-secondary);
+    }
+
+    /* Divider */
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 20px 0;
+    }
+
+    /* Schedule list */
+    .schedule-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .schedule-item {
+      background: var(--bg-secondary);
+      border-radius: 10px;
+      padding: 14px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .schedule-item.inactive {
+      border-left-color: var(--text-secondary);
+      opacity: 0.7;
+    }
+
+    .schedule-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .schedule-type {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .schedule-status {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+    }
+
+    .schedule-status.inactive {
+      background: rgba(100, 116, 139, 0.15);
+      color: var(--text-secondary);
+    }
+
+    .schedule-details {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .schedule-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .schedule-btn {
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      background: white;
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .schedule-btn:hover {
+      background: var(--bg-secondary);
+      border-color: var(--accent);
+    }
+
+    .schedule-btn.danger {
+      color: var(--danger);
+      border-color: var(--danger);
+    }
+
+    .schedule-btn.danger:hover {
+      background: rgba(239, 68, 68, 0.1);
+    }
+
+    /* Status messages */
+    .status-message {
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      margin-bottom: 16px;
+      display: none;
+    }
+
+    .status-message.success {
+      display: block;
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .status-message.error {
+      display: block;
+      background: rgba(239, 68, 68, 0.1);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 30px 20px;
+      color: var(--text-secondary);
+    }
+
+    .empty-icon {
+      font-size: 32px;
+      margin-bottom: 10px;
+    }
+
+    .empty-title {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    .empty-subtitle {
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Automated Schedules
+      </div>
+      <div class="header-subtitle">Configure recurring reconciliation jobs</div>
+    </div>
+
+    <div class="main">
+      <div id="status" class="status-message"></div>
+
+      <!-- Create Schedule -->
+      <div class="section">
+        <div class="section-title">Create Schedule</div>
+        
+        <div class="form-group">
+          <label for="schedule_type">Schedule Type</label>
+          <select id="schedule_type" onchange="updateScheduleConfig()">
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly (Mondays)</option>
+            <option value="monthly">Monthly (1st of month)</option>
+            <option value="on_change">On Data Change</option>
+            <option value="period_end">Period End</option>
+            <option value="threshold">Threshold Based</option>
+          </select>
+        </div>
+
+        <div id="schedule_config" class="form-group"></div>
+
+        <div class="form-group">
+          <label class="checkbox-option checked" onclick="toggleActive(this)">
+            <input type="checkbox" id="is_active" checked>
+            <span class="checkbox-label">Schedule Active</span>
+          </label>
+        </div>
+
+        <button class="btn btn-primary" onclick="createSchedule()">Create Schedule</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Existing Schedules -->
+      <div class="section">
+        <div class="section-title">Existing Schedules</div>
+        <div class="schedule-list" id="schedules_list">
+          <div class="empty-state">
+            <div class="empty-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+            <div class="empty-title">No schedules yet</div>
+            <div class="empty-subtitle">Create a schedule above to automate reconciliation</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let sheetId = '';
+
+    // Initialize
+    if (google && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(function(id) {
+          sheetId = id;
+          loadSchedules();
+        })
+        .getSpreadsheetId();
+    }
+
+    function loadSchedules() {
+      google.script.run
+        .withSuccessHandler(displaySchedules)
+        .withFailureHandler(showError)
+        .getSchedules('sheets', sheetId);
+    }
+
+    function updateScheduleConfig() {
+      const scheduleType = document.getElementById('schedule_type').value;
+      const configDiv = document.getElementById('schedule_config');
+
+      let html = '';
+
+      if (scheduleType === 'threshold') {
+        html = '<label for="threshold">Transaction Threshold</label>' +
+               '<input type="number" id="threshold" value="100" min="1" placeholder="Number of transactions">';
+      } else if (scheduleType === 'period_end') {
+        html = '<label for="period_type">Period Type</label>' +
+               '<select id="period_type">' +
+               '<option value="monthly">Monthly</option>' +
+               '<option value="quarterly">Quarterly</option>' +
+               '<option value="yearly">Yearly</option>' +
+               '</select>';
+      }
+
+      configDiv.innerHTML = html;
+    }
+
+    function toggleActive(label) {
+      const checkbox = label.querySelector('input');
+      label.classList.toggle('checked', checkbox.checked);
+    }
+
+    function createSchedule() {
+      const scheduleType = document.getElementById('schedule_type').value;
+      const isActive = document.getElementById('is_active').checked;
+
+      let scheduleConfig = {};
+
+      if (scheduleType === 'threshold') {
+        scheduleConfig.threshold = parseInt(document.getElementById('threshold').value) || 100;
+      } else if (scheduleType === 'period_end') {
+        scheduleConfig.period_type = document.getElementById('period_type').value || 'monthly';
+      }
+
+      const scheduleData = {
+        tool_type: 'sheets',
+        tool_id: sheetId,
+        schedule_type: scheduleType,
+        schedule_config: scheduleConfig,
+        is_active: isActive
+      };
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          showSuccess('Schedule created successfully!');
+          loadSchedules();
+        })
+        .withFailureHandler(showError)
+        .createSchedule(scheduleData);
+    }
+
+    function displaySchedules(result) {
+      const schedulesList = document.getElementById('schedules_list');
+
+      if (!result || !result.schedules || result.schedules.length === 0) {
+        schedulesList.innerHTML = 
+          '<div class="empty-state">' +
+          '<div class="empty-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>' +
+          '<div class="empty-title">No schedules yet</div>' +
+          '<div class="empty-subtitle">Create a schedule above to automate reconciliation</div>' +
+          '</div>';
+        return;
+      }
+
+      let html = '';
+      result.schedules.forEach(function(schedule) {
+        const statusClass = schedule.is_active ? '' : 'inactive';
+        const statusText = schedule.is_active ? 'Active' : 'Inactive';
+        const typeName = schedule.schedule_type.charAt(0).toUpperCase() + schedule.schedule_type.slice(1).replace('_', ' ');
+        const lastRun = schedule.last_run_date ? 'Last run: ' + schedule.last_run_date : 'Not run yet';
+
+        html += 
+          '<div class="schedule-item ' + statusClass + '">' +
+          '<div class="schedule-header">' +
+          '<span class="schedule-type">' + typeName + '</span>' +
+          '<span class="schedule-status ' + statusClass + '">' + statusText + '</span>' +
+          '</div>' +
+          '<div class="schedule-details">' + lastRun + '</div>' +
+          '<div class="schedule-actions">' +
+          '<button class="schedule-btn" onclick="toggleSchedule(\'' + schedule.schedule_id + '\', ' + !schedule.is_active + ')">' +
+          (schedule.is_active ? 'Pause' : 'Resume') +
+          '</button>' +
+          '<button class="schedule-btn" onclick="runNow(\'' + schedule.schedule_id + '\')">Run Now</button>' +
+          '<button class="schedule-btn danger" onclick="deleteSchedule(\'' + schedule.schedule_id + '\')">Delete</button>' +
+          '</div>' +
+          '</div>';
+      });
+
+      schedulesList.innerHTML = html;
+    }
+
+    function toggleSchedule(scheduleId, newState) {
+      google.script.run
+        .withSuccessHandler(function() {
+          showSuccess(newState ? 'Schedule activated' : 'Schedule paused');
+          loadSchedules();
+        })
+        .withFailureHandler(showError)
+        .toggleSchedule(scheduleId, newState);
+    }
+
+    function runNow(scheduleId) {
+      showSuccess('Running schedule...');
+      google.script.run
+        .withSuccessHandler(function(result) {
+          showSuccess('Schedule completed: ' + (result.matched || 0) + ' matched');
+          loadSchedules();
+        })
+        .withFailureHandler(showError)
+        .runScheduleNow(scheduleId);
+    }
+
+    function deleteSchedule(scheduleId) {
+      if (confirm('Delete this schedule?')) {
+        google.script.run
+          .withSuccessHandler(function() {
+            showSuccess('Schedule deleted');
+            loadSchedules();
+          })
+          .withFailureHandler(showError)
+          .deleteSchedule(scheduleId);
+      }
+    }
+
+    function showSuccess(message) {
+      const status = document.getElementById('status');
+      status.className = 'status-message success';
+      status.textContent = message;
+      setTimeout(function() {
+        status.className = 'status-message';
+      }, 3000);
+    }
+
+    function showError(error) {
+      const status = document.getElementById('status');
+      status.className = 'status-message error';
+      status.textContent = 'Error: ' + (error.message || error);
+    }
+
+    // Initialize config
+    updateScheduleConfig();
+  </script>
+</body>
+</html>

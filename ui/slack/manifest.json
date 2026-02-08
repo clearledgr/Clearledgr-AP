@@ -1,0 +1,96 @@
+{
+  "display_information": {
+    "name": "Clearledgr",
+    "description": "AI-powered reconciliation and categorization for finance teams",
+    "background_color": "#0a1628",
+    "long_description": "Clearledgr is an intelligent layer for finance teams. Get real-time reconciliation alerts, resolve exceptions, review categorization suggestions, and manage tasks - all without leaving Slack."
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "Clearledgr",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/clearledgr",
+        "url": "https://YOUR_DOMAIN/slack/commands",
+        "description": "Run Clearledgr commands",
+        "usage_hint": "[status | run | exceptions | tasks | help]",
+        "should_escape": false
+      },
+      {
+        "command": "/reconcile",
+        "url": "https://YOUR_DOMAIN/slack/commands",
+        "description": "Run reconciliation now",
+        "usage_hint": "",
+        "should_escape": false
+      },
+      {
+        "command": "/categorize",
+        "url": "https://YOUR_DOMAIN/slack/commands",
+        "description": "Review categorization suggestions",
+        "usage_hint": "[review | patterns | learn]",
+        "should_escape": false
+      }
+    ],
+    "shortcuts": [
+      {
+        "name": "Create Finance Task",
+        "type": "message",
+        "callback_id": "create_task_from_message",
+        "description": "Turn this message into a Clearledgr task"
+      },
+      {
+        "name": "Run Reconciliation",
+        "type": "global",
+        "callback_id": "run_reconciliation",
+        "description": "Run reconciliation on your connected spreadsheet"
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "commands",
+        "files:read",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "im:write",
+        "reactions:write",
+        "users:read"
+      ]
+    },
+    "redirect_urls": [
+      "https://YOUR_DOMAIN/slack/oauth/callback"
+    ]
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://YOUR_DOMAIN/slack/events",
+      "bot_events": [
+        "app_home_opened",
+        "app_mention",
+        "message.im"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://YOUR_DOMAIN/slack/interactions"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
+

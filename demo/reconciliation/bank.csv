@@ -1,0 +1,12 @@
+Bank Transaction ID,Booking Date,Amount,Currency,Description,Counterparty
+BANK-20250106-001,2025-01-06,1250.00,EUR,Payment received,Acme Corp
+BANK-20250108-001,2025-01-08,3500.00,EUR,Wire transfer,TechStart Ltd
+BANK-20250111-001,2025-01-11,890.50,EUR,Payment received,Nordic Systems
+BANK-20250113-001,2025-01-13,2100.00,EUR,Wire transfer,AfriTech Solutions
+BANK-20250116-001,2025-01-16,675.00,EUR,Payment received,Berlin Dynamics
+BANK-20250119-001,2025-01-19,4200.00,EUR,Wire transfer,Lagos Fintech
+BANK-20250121-001,2025-01-21,1550.00,EUR,Payment received,Paris Digital
+BANK-20250126-001,2025-01-26,2800.00,EUR,Wire transfer,Amsterdam Data Co
+BANK-20250129-001,2025-01-29,1100.00,EUR,Payment received,Nairobi Tech Hub
+BANK-20250131-001,2025-01-31,5500.00,EUR,Wire transfer,Munich Enterprises
+

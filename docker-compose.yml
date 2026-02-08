@@ -1,0 +1,79 @@
+# Clearledgr Development Stack
+# Usage: docker-compose up -d
+
+version: '3.8'
+
+services:
+  # Main API server
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://clearledgr:clearledgr@db:5432/clearledgr
+      - REDIS_URL=redis://redis:6379/0
+      - CLEARLEDGR_SECRET_KEY=${CLEARLEDGR_SECRET_KEY:-change-this-in-production}
+      - LOG_LEVEL=info
+      # ERP OAuth (set in .env)
+      - QUICKBOOKS_CLIENT_ID=${QUICKBOOKS_CLIENT_ID:-}
+      - QUICKBOOKS_CLIENT_SECRET=${QUICKBOOKS_CLIENT_SECRET:-}
+      - XERO_CLIENT_ID=${XERO_CLIENT_ID:-}
+      - XERO_CLIENT_SECRET=${XERO_CLIENT_SECRET:-}
+      # Payment Gateways
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY:-}
+      - FLUTTERWAVE_SECRET_KEY=${FLUTTERWAVE_SECRET_KEY:-}
+      # LLM
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Notifications
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL database
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=clearledgr
+      - POSTGRES_PASSWORD=clearledgr
+      - POSTGRES_DB=clearledgr
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # Webhook tunnel for development (ngrok alternative)
+  # Exposes api to public internet for testing webhooks
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - api
+    profiles:
+      - tunnel  # Only start with: docker-compose --profile tunnel up
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,9 @@
+INFO:     Started server process [81324]
+INFO:     Waiting for application startup.
+2026-02-07 07:05:03 - clearledgr.core.event_bus - INFO - Event handlers initialized - Clearledgr is now autonomous
+2026-02-07 07:05:03 - clearledgr - INFO - Clearledgr event-driven system initialized - autonomous mode active
+2026-02-07 07:05:03 - clearledgr - INFO - GmailWatcherAgent initialized - email monitoring active
+2026-02-07 07:05:03 - clearledgr.services.gmail_autopilot - INFO - Gmail autopilot started
+2026-02-07 07:05:03 - clearledgr - INFO - Gmail autopilot started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8010 (Press CTRL+C to quit)

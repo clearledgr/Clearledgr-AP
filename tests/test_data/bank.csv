@@ -1,0 +1,4 @@
+Bank Transaction ID,Booking Date,Amount,Currency,Description
+bank_001,2025-11-06,97.50,USD,Payment from gateway txn_001
+bank_002,2025-11-07,243.75,USD,Payment from gateway
+

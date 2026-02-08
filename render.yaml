@@ -1,0 +1,40 @@
+# Render Blueprint
+# Deploy with: https://render.com/deploy
+
+services:
+  - type: web
+    name: clearledgr-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: CLEARLEDGR_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: clearledgr-db
+          property: connectionString
+      - key: QUICKBOOKS_CLIENT_ID
+        sync: false
+      - key: QUICKBOOKS_CLIENT_SECRET
+        sync: false
+      - key: XERO_CLIENT_ID
+        sync: false
+      - key: XERO_CLIENT_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: FLUTTERWAVE_SECRET_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+    healthCheckPath: /health
+    autoDeploy: true
+
+databases:
+  - name: clearledgr-db
+    databaseName: clearledgr
+    plan: starter

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f9fafb;
+      color: #1f2937;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .logo {
+      width: 40px;
+      height: 40px;
+      background: #10b981;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+    }
+    .title {
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .status {
+      font-size: 12px;
+      color: #6b7280;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      background: white;
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+    }
+    .stat-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: #1f2937;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+    .section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    .btn {
+      width: 100%;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      margin-bottom: 8px;
+    }
+    .btn-primary {
+      background: #10b981;
+      color: white;
+    }
+    .btn-secondary {
+      background: white;
+      color: #374151;
+      border: 1px solid #d1d5db;
+    }
+    .activity-item {
+      background: white;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      margin-bottom: 8px;
+    }
+    .activity-title {
+      font-weight: 500;
+      font-size: 14px;
+    }
+    .activity-time {
+      font-size: 12px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+        <path d="M2 17l10 5 10-5"/>
+        <path d="M2 12l10 5 10-5"/>
+      </svg>
+    </div>
+    <div>
+      <div class="title">Clearledgr</div>
+      <div class="status" id="status">Loading...</div>
+    </div>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value" id="statEmails">-</div>
+      <div class="stat-label">Finance Emails</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="statMatched">-</div>
+      <div class="stat-label">Matched</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="statExceptions">-</div>
+      <div class="stat-label">Exceptions</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="statDrafts">-</div>
+      <div class="stat-label">Pending Drafts</div>
+    </div>
+  </div>
+
+  <div class="section-title">Actions</div>
+  <button class="btn btn-primary" onclick="runReconciliation()">Run Reconciliation</button>
+  <button class="btn btn-secondary" onclick="refreshData()">Refresh Data</button>
+  <button class="btn btn-secondary" onclick="showExceptions()">View Exceptions</button>
+  <button class="btn btn-secondary" onclick="showDrafts()">View Draft Entries</button>
+
+  <script>
+    function loadDashboard() {
+      google.script.run
+        .withSuccessHandler(function(settings) {
+          // Now fetch dashboard data
+          document.getElementById('status').textContent = 'Connected';
+        })
+        .withFailureHandler(function(err) {
+          document.getElementById('status').textContent = 'Error loading';
+        })
+        .getSettings();
+    }
+
+    function runReconciliation() {
+      document.getElementById('status').textContent = 'Running...';
+      google.script.run
+        .withSuccessHandler(function() {
+          document.getElementById('status').textContent = 'Complete';
+          loadDashboard();
+        })
+        .withFailureHandler(function(err) {
+          document.getElementById('status').textContent = 'Failed';
+        })
+        .runReconciliation();
+    }
+
+    function refreshData() {
+      document.getElementById('status').textContent = 'Refreshing...';
+      google.script.run
+        .withSuccessHandler(function() {
+          document.getElementById('status').textContent = 'Refreshed';
+          loadDashboard();
+        })
+        .refreshAllData();
+    }
+
+    function showExceptions() {
+      google.script.run.showExceptions();
+    }
+
+    function showDrafts() {
+      google.script.run.showDraftEntries();
+    }
+
+    loadDashboard();
+  </script>
+</body>
+</html>
