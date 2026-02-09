@@ -1,41 +1,21 @@
-# Clearledgr v1
+# Clearledgr
 
-**Clearledgr is a unifying intelligent layer for finance teams, embedding AI agents into tools finance teams already use.**
+Clearledgr builds the execution layer for finance workflows.
 
-This is not a standalone platform or dashboard. It's an embedded intelligence layer that works within Google Sheets, Gmail, and Slack to automate financial workflows (Outlook/Excel/Teams planned).
+Today, that means shipping one thing only:
 
-Clearledgr can process full email and transaction context when connected, while keeping workflows embedded in the tools your team already uses.
+**Clearledgr AP v1** — an embedded system that executes Accounts Payable workflows end-to-end inside the tools finance teams already use.
 
-## What's Included in v1
+Clearledgr:
+- Starts work in email
+- Coordinates approvals in Slack or Teams
+- Writes approved entries to the ERP
+- Produces a complete, immutable audit trail
 
-### Transaction Reconciliation
-3-way transaction reconciliation across payment gateway, bank, and internal ledger data.
+Clearledgr does not surface dashboards, insights, or tasks.
+It executes work.
 
-- Multi-source support: CSV files, Google Sheets
-- Intelligent 3-way/2-way matching with configurable tolerance and date windows
-- LLM-powered variance explanations for exceptions
-- Real-time notifications via Slack (Teams planned)
-- **Local-first**: Matching runs locally with optional backend augmentation
-
-### Transaction Categorization (Autonomous)
-Automatically classifies transactions to GL accounts. Runs when you open your spreadsheet. You only see exceptions.
-
-- **Autonomous**: Runs automatically on spreadsheet open
-- **Keyword Matching**: Match descriptions against GL account keywords
-- **Historical Learning**: Learns from user corrections to improve over time
-- **Category Patterns**: Built-in patterns for common expense types
-- **Exceptions Only**: Only low-confidence items surfaced for review
-- **70%+ auto-categorization rate** typical for established patterns
-
-### Email Integration (Autonomous)
-Finance copilot in Gmail (Outlook planned) that processes incoming emails automatically.
-
-- **Autonomous Processing**: Runs when emails arrive (no clicks needed)
-- **Auto-Categorization**: Invoices and settlements categorized to GL accounts
-- **Auto-Matching**: Matched to bank/internal records (90%+ auto-match)
-- **Exceptions Only**: Only surfaces items that need human review
-- **Slack Alerts**: Notified when exceptions need attention (Teams planned)
-- **Audit Trail**: Complete who/what/when tracking
+No other workflows exist until AP works in production.
 
 ## Roadmap
 
