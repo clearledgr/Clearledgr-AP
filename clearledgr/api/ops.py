@@ -7,6 +7,8 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Query, Request
 
 from clearledgr.core.database import get_db
+from clearledgr.integrations.erp_router import get_erp_connection
+from clearledgr.services.erp_connector_strategy import get_erp_connector_strategy
 from clearledgr.services.gmail_api import token_store
 from clearledgr.services.slack_api import SlackAPIClient
 try:
@@ -134,6 +136,22 @@ async def get_browser_agent_metrics(
         window_hours=window_hours,
     )
     return {"metrics": metrics}
+
+
+@router.get("/erp-routing-strategy")
+async def get_erp_routing_strategy(organization_id: str = Query("default")) -> Dict[str, Any]:
+    strategy = get_erp_connector_strategy()
+    connection = get_erp_connection(organization_id)
+    erp_type = str((connection.type if connection else "unconfigured") or "unconfigured")
+    route_plan = strategy.build_route_plan(
+        erp_type=erp_type,
+        connection_present=connection is not None,
+    )
+    return {
+        "organization_id": organization_id,
+        "selected_route": route_plan,
+        "capability_matrix": strategy.list_capabilities(),
+    }
 
 
 @router.get("/tenant-health/all")

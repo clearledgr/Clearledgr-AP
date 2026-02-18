@@ -366,3 +366,15 @@ def test_browser_agent_metrics_endpoint(client, db):
     metrics = response.json()["metrics"]
     assert metrics["totals"]["events"] >= 1
     assert "execution" in metrics
+    assert "api_first_routing" in metrics
+
+
+def test_erp_routing_strategy_endpoint(client, db):
+    _create_item(db)
+    response = client.get("/api/ops/erp-routing-strategy?organization_id=default")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["organization_id"] == "default"
+    assert "selected_route" in payload
+    assert "capability_matrix" in payload
+    assert isinstance(payload["capability_matrix"], list)

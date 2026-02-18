@@ -1551,10 +1551,17 @@ class ClearledgrDB:
         sql = self._prepare_sql(
             "SELECT * FROM browser_action_events WHERE organization_id = ? ORDER BY created_at DESC LIMIT ?"
         )
+        audit_sql = self._prepare_sql(
+            "SELECT event_type, ts FROM audit_events WHERE organization_id = ? "
+            "AND event_type IN ('erp_api_attempt', 'erp_api_success', 'erp_api_fallback_requested', 'erp_api_failed') "
+            "ORDER BY ts DESC LIMIT ?"
+        )
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (organization_id, 5000))
             rows = cur.fetchall()
+            cur.execute(audit_sql, (organization_id, 5000))
+            audit_rows = cur.fetchall()
 
         status_counts: Dict[str, int] = {}
         tool_usage: Dict[str, int] = {}
@@ -1619,6 +1626,26 @@ class ClearledgrDB:
         terminal_count = completed + failed + denied
         session_step_values = [float(count) for count in session_steps.values()]
 
+        routing_counts: Dict[str, int] = {
+            "erp_api_attempt": 0,
+            "erp_api_success": 0,
+            "erp_api_fallback_requested": 0,
+            "erp_api_failed": 0,
+        }
+        for raw_row in audit_rows:
+            row = dict(raw_row)
+            ts = self._parse_iso(row.get("ts"))
+            if ts and ts < window_start:
+                continue
+            event_type = str(row.get("event_type") or "")
+            if event_type in routing_counts:
+                routing_counts[event_type] = routing_counts.get(event_type, 0) + 1
+
+        attempt_count = int(routing_counts.get("erp_api_attempt") or 0)
+        api_success_count = int(routing_counts.get("erp_api_success") or 0)
+        fallback_requested_count = int(routing_counts.get("erp_api_fallback_requested") or 0)
+        api_failed_count = int(routing_counts.get("erp_api_failed") or 0)
+
         return {
             "organization_id": organization_id,
             "generated_at": now.isoformat(),
@@ -1645,6 +1672,14 @@ class ClearledgrDB:
                 "p95_steps_per_session": round(self._p95(session_step_values) or 0.0, 2),
                 "avg_latency_seconds": round((sum(latencies) / len(latencies)) if latencies else 0.0, 2),
                 "p95_latency_seconds": round(self._p95(latencies) or 0.0, 2),
+            },
+            "api_first_routing": {
+                "attempt_count": attempt_count,
+                "api_success_count": api_success_count,
+                "fallback_requested_count": fallback_requested_count,
+                "api_failed_count": api_failed_count,
+                "api_success_rate": round((api_success_count / attempt_count) if attempt_count else 0.0, 4),
+                "fallback_rate": round((fallback_requested_count / attempt_count) if attempt_count else 0.0, 4),
             },
             "failure_reasons": failure_reasons,
         }

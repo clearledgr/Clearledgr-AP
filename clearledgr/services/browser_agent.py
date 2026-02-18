@@ -53,6 +53,7 @@ DEFAULT_POLICY = {
 SUPPORTED_MACROS = {
     "ingest_invoice_match_po",
     "collect_w9",
+    "post_invoice_to_erp",
 }
 
 
@@ -599,6 +600,130 @@ class BrowserAgentService:
                     "params": {"selector": "body"},
                     "depends_on": ["macro_w9_find_docs"],
                     "step": "Capture W-9 collection evidence",
+                },
+            ]
+        elif macro == "post_invoice_to_erp":
+            erp_url = (
+                _normalize_text(parameters.get("erp_url"))
+                or _normalize_text(parameters.get("vendor_portal_url"))
+                or portal_url
+                or source_url
+            )
+            invoice_number = _normalize_text(parameters.get("invoice_number"))
+            vendor_name = _normalize_text(parameters.get("vendor_name"))
+            amount = parameters.get("amount")
+            currency = _normalize_text(parameters.get("currency")) or "USD"
+
+            commands = [
+                {
+                    "tool_name": "open_tab",
+                    "command_id": "macro_post_open_erp",
+                    "target": {"url": erp_url},
+                    "params": {"background": False},
+                    "depends_on": [],
+                    "step": "Open ERP posting surface",
+                },
+                {
+                    "tool_name": "query_selector_all",
+                    "command_id": "macro_post_find_entry",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "[data-test='new-bill'], button[aria-label*='Bill'], button[aria-label*='Invoice']",
+                        "limit": 5,
+                    },
+                    "depends_on": ["macro_post_open_erp"],
+                    "step": "Locate create-bill entry point",
+                },
+                {
+                    "tool_name": "click",
+                    "command_id": "macro_post_open_form",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "[data-test='new-bill'], button[aria-label*='Bill'], button[aria-label*='Invoice']",
+                        "selector_candidates": [
+                            "[data-test='new-bill']",
+                            "button[aria-label*='New Bill']",
+                            "button[aria-label*='New Invoice']",
+                            "button[type='submit']",
+                        ],
+                    },
+                    "depends_on": ["macro_post_find_entry"],
+                    "step": "Open ERP invoice posting form",
+                },
+                {
+                    "tool_name": "type",
+                    "command_id": "macro_post_invoice_number",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "input[name='invoice_number']",
+                        "selector_candidates": [
+                            "input[name='invoice_number']",
+                            "input[name='DocNumber']",
+                            "input[aria-label*='Invoice Number']",
+                            "input[placeholder*='Invoice']",
+                        ],
+                        "value": invoice_number,
+                    },
+                    "depends_on": ["macro_post_open_form"],
+                    "step": "Fill invoice number",
+                },
+                {
+                    "tool_name": "type",
+                    "command_id": "macro_post_vendor",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "input[name='vendor']",
+                        "selector_candidates": [
+                            "input[name='vendor']",
+                            "input[name='CardCode']",
+                            "input[aria-label*='Vendor']",
+                            "input[placeholder*='Supplier']",
+                        ],
+                        "value": vendor_name,
+                    },
+                    "depends_on": ["macro_post_open_form"],
+                    "step": "Fill vendor",
+                },
+                {
+                    "tool_name": "type",
+                    "command_id": "macro_post_amount",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "input[name='amount']",
+                        "selector_candidates": [
+                            "input[name='amount']",
+                            "input[name='DocTotal']",
+                            "input[aria-label*='Amount']",
+                            "input[placeholder*='Total']",
+                        ],
+                        "value": f"{amount or ''}",
+                    },
+                    "depends_on": ["macro_post_open_form"],
+                    "step": f"Fill amount ({currency})",
+                },
+                {
+                    "tool_name": "click",
+                    "command_id": "macro_post_submit",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "button[type='submit']",
+                        "selector_candidates": [
+                            "button[type='submit']",
+                            "button[data-test='post-bill']",
+                            "button[aria-label*='Post']",
+                            "button[aria-label*='Save']",
+                        ],
+                    },
+                    "depends_on": ["macro_post_invoice_number", "macro_post_vendor", "macro_post_amount"],
+                    "step": "Submit bill to ERP",
+                },
+                {
+                    "tool_name": "capture_evidence",
+                    "command_id": "macro_post_capture_result",
+                    "target": {"url": erp_url},
+                    "params": {"selector": "body"},
+                    "depends_on": ["macro_post_submit"],
+                    "step": "Capture ERP post confirmation evidence",
                 },
             ]
 

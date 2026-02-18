@@ -842,7 +842,8 @@ async def post_to_erp_activity(payload: Dict[str, Any]) -> Dict[str, Any]:
     
     DIFFERENTIATOR: Generates Clearledgr_Audit_ID and appends to ERP memo.
     """
-    from clearledgr.integrations.erp_router import Bill, Vendor, post_bill, get_or_create_vendor
+    from clearledgr.integrations.erp_router import Bill, Vendor, get_or_create_vendor
+    from clearledgr.services.erp_api_first import post_bill_api_first
     
     extraction = payload.get("extraction", {})
     erp_match = payload.get("erp_match", {})
@@ -908,8 +909,23 @@ async def post_to_erp_activity(payload: Dict[str, Any]) -> Dict[str, Any]:
         ],
     )
 
-    # Post vendor bill to ERP
-    sap_result = await post_bill(organization_id, bill)
+    # Post vendor bill through API-first router with browser fallback.
+    posting_result = await post_bill_api_first(
+        organization_id=organization_id,
+        bill=bill,
+        actor_id=approved_by or "system",
+        email_id=email_id,
+        invoice_number=invoice_number,
+        vendor_name=vendor,
+        amount=amount,
+        currency=currency,
+        vendor_portal_url=(
+            extraction.get("vendor_portal_url")
+            or extraction.get("invoice_portal_url")
+            or payload.get("vendor_portal_url")
+        ),
+        erp_url=payload.get("erp_url"),
+    )
     
     # Record in audit trail regardless of SAP result
     audit = AuditTrailService()
@@ -928,13 +944,33 @@ async def post_to_erp_activity(payload: Dict[str, Any]) -> Dict[str, Any]:
             "gl_code": gl_code,
             "confidence": confidence_result.get("confidence"),
             "memo": memo,
-            "sap_result": sap_result,
+            "sap_result": posting_result,
         },
     )
     
     # Determine final status
-    sap_status = sap_result.get("status", "unknown")
-    sap_doc_numbers = sap_result.get("sap_doc_numbers", [])
+    sap_status = posting_result.get("status", "unknown")
+    sap_doc_numbers = posting_result.get("sap_doc_numbers", [])
+    execution_mode = posting_result.get("execution_mode")
+    fallback = posting_result.get("fallback") or {}
+
+    if execution_mode == "browser_fallback" or sap_status == "pending_browser_fallback":
+        return {
+            "status": "pending_browser_fallback",
+            "clearledgr_audit_id": audit_id,
+            "document_number": f"PENDING-{audit_id[-8:]}",
+            "gl_code": gl_code,
+            "amount": amount,
+            "currency": currency,
+            "vendor": vendor,
+            "posted_by": approved_by,
+            "memo": memo,
+            "confidence": confidence_result.get("confidence_pct"),
+            "timestamp": timestamp,
+            "sap_status": "fallback_requested",
+            "execution_mode": execution_mode,
+            "fallback": fallback,
+        }
     
     if sap_status == "skipped":
         # SAP not configured - still return success with audit ID
@@ -983,7 +1019,9 @@ async def post_to_erp_activity(payload: Dict[str, Any]) -> Dict[str, Any]:
             "confidence": confidence_result.get("confidence_pct"),
             "timestamp": timestamp,
             "sap_status": sap_status,
-            "sap_error": sap_result.get("sap_error"),
+            "sap_error": posting_result.get("sap_error"),
+            "execution_mode": execution_mode or "api_failed",
+            "fallback": fallback,
         }
 
 
