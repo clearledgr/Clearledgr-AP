@@ -1,5 +1,5 @@
 """
-Rate limiting for Clearledgr Reconciliation API.
+Rate limiting for Clearledgr AP API.
 """
 import time
 from collections import defaultdict
@@ -91,4 +91,3 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         response.headers["X-RateLimit-Reset"] = str(int(time.time()) + reset_after)
         
         return response
-

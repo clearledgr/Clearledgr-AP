@@ -33,14 +33,9 @@ npm run build --silent
 # Copy extension files (InboxSDK-only implementation)
 echo "Copying extension files..."
 cp -r "$SCRIPT_DIR/icons" "$BUILD_DIR/"
-cp -r "$SCRIPT_DIR/clients" "$BUILD_DIR/" 2>/dev/null || true
-cp -r "$SCRIPT_DIR/workflows" "$BUILD_DIR/" 2>/dev/null || true
 cp -r "$SCRIPT_DIR/vendor" "$BUILD_DIR/" 2>/dev/null || true
-[ -d "$SCRIPT_DIR/engines" ] && cp -r "$SCRIPT_DIR/engines" "$BUILD_DIR/"
 cp "$SCRIPT_DIR/manifest.json" "$BUILD_DIR/"
 cp "$SCRIPT_DIR/background.js" "$BUILD_DIR/"
-cp "$SCRIPT_DIR/popup.html" "$BUILD_DIR/" 2>/dev/null || true
-cp "$SCRIPT_DIR/popup.js" "$BUILD_DIR/" 2>/dev/null || true
 cp "$SCRIPT_DIR/options.html" "$BUILD_DIR/" 2>/dev/null || true
 cp "$SCRIPT_DIR/options.js" "$BUILD_DIR/" 2>/dev/null || true
 
@@ -60,7 +55,7 @@ echo "Configuring for $ENV environment..."
 
 case $ENV in
   dev)
-    API_URL="http://127.0.0.1:8010"
+    API_URL="http://127.0.0.1:8000"
     ;;
   staging)
     API_URL="https://staging-api.clearledgr.com"

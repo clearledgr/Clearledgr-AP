@@ -76,10 +76,10 @@ def setup_pubsub(
     print(f"\n1. Creating Pub/Sub topic: {topic_path}")
     try:
         topic = publisher.create_topic(request={"name": topic_path})
-        print(f"   ✅ Created topic: {topic.name}")
+        print(f"   Created topic: {topic.name}")
         result["topic_created"] = True
     except AlreadyExists:
-        print(f"   ℹ️  Topic already exists")
+        print("   Topic already exists")
         result["topic_created"] = False
     
     # Step 2: Grant Gmail permission to publish to topic
@@ -104,13 +104,13 @@ def setup_pubsub(
             publisher.set_iam_policy(
                 request={"resource": topic_path, "policy": policy}
             )
-            print(f"   ✅ Granted publish permission to Gmail API")
+            print("   Granted publish permission to Gmail API")
         else:
-            print(f"   ℹ️  Gmail API already has publish permission")
+            print("   Gmail API already has publish permission")
         
         result["gmail_permission"] = True
     except Exception as e:
-        print(f"   ❌ Error setting IAM policy: {e}")
+        print(f"   Error setting IAM policy: {e}")
         result["gmail_permission"] = False
     
     # Step 3: Create push subscription
@@ -121,7 +121,7 @@ def setup_pubsub(
         # Delete existing subscription if it exists (to update webhook URL)
         try:
             subscriber.delete_subscription(request={"subscription": subscription_path})
-            print(f"   ℹ️  Deleted existing subscription")
+            print("   Deleted existing subscription")
         except NotFound:
             pass
         
@@ -143,13 +143,13 @@ def setup_pubsub(
                 },
             }
         )
-        print(f"   ✅ Created subscription: {subscription.name}")
+        print(f"   Created subscription: {subscription.name}")
         result["subscription_created"] = True
     except AlreadyExists:
-        print(f"   ℹ️  Subscription already exists")
+        print("   Subscription already exists")
         result["subscription_created"] = False
     except Exception as e:
-        print(f"   ❌ Error creating subscription: {e}")
+        print(f"   Error creating subscription: {e}")
         result["subscription_created"] = False
     
     return result
@@ -168,18 +168,18 @@ def verify_setup(project_id: str, topic_name: str = TOPIC_NAME) -> bool:
     # Check topic
     try:
         topic = publisher.get_topic(request={"topic": topic_path})
-        print(f"   ✅ Topic exists: {topic.name}")
+        print(f"   Topic exists: {topic.name}")
     except NotFound:
-        print(f"   ❌ Topic not found")
+        print("   Topic not found")
         return False
     
     # Check subscription
     try:
         subscription = subscriber.get_subscription(request={"subscription": subscription_path})
-        print(f"   ✅ Subscription exists: {subscription.name}")
-        print(f"   ✅ Push endpoint: {subscription.push_config.push_endpoint}")
+        print(f"   Subscription exists: {subscription.name}")
+        print(f"   Push endpoint: {subscription.push_config.push_endpoint}")
     except NotFound:
-        print(f"   ❌ Subscription not found")
+        print("   Subscription not found")
         return False
     
     # Check IAM
@@ -191,9 +191,9 @@ def verify_setup(project_id: str, topic_name: str = TOPIC_NAME) -> bool:
     )
     
     if has_gmail:
-        print(f"   ✅ Gmail API has publish permission")
+        print("   Gmail API has publish permission")
     else:
-        print(f"   ❌ Gmail API missing publish permission")
+        print("   Gmail API missing publish permission")
         return False
     
     return True
@@ -282,7 +282,7 @@ def main():
     print("=" * 60)
     
     if success:
-        print("\n✅ Gmail Pub/Sub is ready for 24/7 processing")
+    print("\nGmail Pub/Sub is ready for 24/7 processing")
         print("\nNext steps:")
         print("1. Set environment variables (run with --generate-env)")
         print("2. Deploy backend with webhook endpoint")

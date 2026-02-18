@@ -1,0 +1,220 @@
+Clearledgr AP v1: Gaps and Opportunities
+
+Patch Metadata
+
+- Patch date: February 17, 2026
+- Purpose: accuracy confirmation against codebase
+- Status legend: `Accurate` | `Partial` | `Outdated`
+
+Context
+
+Clearledgr AP v1 is designed as an embedded accounts‑payable (AP) execution layer.  It ingests invoice emails via Gmail, performs deterministic validation, routes approvals through Slack/Teams, posts approved invoices to the ERP (NetSuite first), and records an immutable audit trail.  The v1 scope intentionally excludes payment execution, reconciliation, dashboards and other workflows.  This focus allows the team to ship a robust AP flow quickly, but leaves room for future improvements.
+
+Current strengths
+Status: Accurate
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/main.py:2; /Users/mombalam/Desktop/Clearledgr.v1/main.py:9; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/ap_state.py:22; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py:1180; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/browser_agent.py:131
+Implementation impact: Preserve the execution-first AP core and extend capabilities without weakening state/audit/policy guarantees.
+	•	Execution‑first design: AP logic lives inside existing tools (Gmail, Slack/Teams, NetSuite), reducing context switching.
+	•	Deterministic state machine and append‑only audit: Every state transition and external call is logged, enabling transparent workflows and auditability.
+	•	Policy‑gated agent: A browser‑native agent performs actions with human oversight; sensitive actions require explicit approval.
+	•	Excludes payment: v1 defers payment initiation to avoid scope creep.
+
+Gaps
+
+1. Purchase‑order and budget matching
+Status: Accurate
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:771; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/policy_engine.py:45
+Implementation impact: Add PO/receipt/budget matching to deterministic validation before approval routing.
+
+The current v1 validates vendor and amount fields and detects duplicates but does not match invoices against purchase orders (POs) or budget allocations.  Without this matching, finance teams may approve payments that exceed budget or violate purchasing rules.  A two‑way or three‑way match (invoice to PO to receipt) is a common best practice for AP automation ￼.  Integrating PO and budget data into the validation step would catch discrepancies early and prevent unauthorized spend.
+
+2. Multi‑system data aggregation
+Status: Partial
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py:189; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py:204; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/gmail_extension.py:304; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ap_items.py:242; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ap_items.py:275; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:1568
+Implementation impact: Keep current invoice-centric aggregation and add first-class non-email/ERP connectors (bank/procurement/payroll/spreadsheets).
+
+V1 operates almost entirely within the email/ERP loop, so it lacks visibility into other data sources (bank feeds, procurement tools, payroll systems, spreadsheets).  When financial data lives in separate systems, finance teams waste time chasing context and build error‑prone reports ￼.  Disconnected tools lead to inconsistent metrics, compliance gaps and decision delays ￼.  Even within AP, if invoice status and approvals live in email threads or spreadsheets, spend reporting lags ￼.  Aggregating relevant data in a single store would enable better validation (e.g., detecting duplicate payments across systems) and provide a foundation for future reconciliation and FP&A workflows.
+
+3. User‑configured policies
+Status: Partial
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/policy_engine.py:28; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/policy_engine.py:67; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/policy_engine.py:87; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:131; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py:291; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/agent_sessions.py:133
+Implementation impact: Introduce tenant-configurable AP business policies (not only browser-agent policies) with versioned change history.
+
+The current system uses environment variables and hard‑coded thresholds (e.g., AP_AMOUNT_ANOMALY_THRESHOLD, AP_APPROVAL_THRESHOLD) to govern validation and approvals.  Users cannot easily define custom rules (such as per‑vendor approvals, budget thresholds, or escalation paths) without code changes.  This limits the platform’s flexibility across organizations and use cases.
+
+4. Lack of budget checks in approvals
+Status: Accurate
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:771; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:1633; /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js:607
+Implementation impact: Add budget availability checks and expose budget impact context to approvers in Gmail and chat.
+
+Approvers currently see limited context: the extracted invoice data, vendor and amount.  They do not see remaining budget in the relevant GL category or department.  As a result, approvals may push spend beyond the allocated budget.  Without budget checks, finance may face overruns or require manual corrections later.
+
+Opportunities
+
+1. Integrate purchase‑order and budget matching into validation
+Status: Accurate
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:771; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/policy_engine.py:45
+Implementation impact: Build two/three-way matching and budget exception paths as core validation gates.
+	•	Two/three‑way matching: For each incoming invoice, pull the corresponding purchase order and receipt from the ERP or procurement system.  Automatically match line items and amounts to ensure the invoice aligns with what was ordered and received.  Flag any mismatches for review.
+	•	Budget checks: Retrieve budget data for the relevant GL account or cost center.  Compare the invoice amount against the remaining budget and alert approvers if the expense would exceed the limit.
+	•	Exception handling: Provide clear reasons when an invoice fails a PO or budget check and require additional approval or adjustment before posting.
+
+2. Build a multi‑system data aggregation layer
+Status: Partial
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py:189; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py:204; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:1581; /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/queue-manager.js:663
+Implementation impact: Extend current source/context foundation into broader connector coverage and richer normalized linking.
+	•	Connectors: Develop lightweight connectors to ingest data from bank feeds, credit‑card statements, procurement platforms and internal spreadsheets into the central Postgres store.  Keep these feeds read‑only in v1 to avoid complexity.
+	•	Unified data model: Extend the ap_items schema to link invoices to external transaction IDs, purchase orders, budget line items and bank transactions.  This ensures all relevant data is accessible from a single record.
+	•	Context in approvals: Surface aggregated context in Slack/Teams approvals, such as vendor spend to date, budget balance and any outstanding credits.  This helps approvers make informed decisions without leaving chat.
+	•	API endpoints: Expose aggregated metrics (e.g., total invoices awaiting approval, spend by vendor, duplicate counts) via API rather than building dashboards.  Operators and future modules (reconciliation, FP&A) can query these endpoints.
+
+3. Introduce user‑configured policy framework
+Status: Partial
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/policy_engine.py:28; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py:291; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/agent_sessions.py:139
+Implementation impact: Create a declarative AP policy layer for thresholds/escalations/budget rules with tenant-level management.
+	•	Declarative policy engine: Allow administrators to define policies (e.g., vendor‑specific approval thresholds, budget rules, escalation paths) in a declarative format (JSON or YAML).  Policies could reference vendor master data, budget limits and PO rules.
+	•	Workflow integration: The AP engine reads these policies and applies them during validation and approval routing.  For example, invoices from new vendors might require multi‑level approvals, or invoices above a specified amount might require CFO sign‑off.
+	•	Auditable changes: Store policy versions and changes in the audit log to maintain compliance and traceability.
+
+4. Pilot budget visibility for approvers
+Status: Accurate
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:1633; /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js:615
+Implementation impact: Add budget widgets/alerts and decisions for over-budget approvals in Gmail and Slack/Teams surfaces.
+	•	Budget widget: Enhance the Slack/Teams approval message to include a lightweight budget widget showing the remaining budget in the relevant category and the impact of approving the invoice.
+	•	Alerts: If approving the invoice would exceed the budget, prompt the approver with options: approve anyway (with justification), request budget adjustment, or reject.
+	•	Context in Gmail extension: Similarly, show budget and PO context in the Gmail sidebar, so users reviewing the invoice can see whether it matches an approved PO and fits within budget.
+
+5. Vendor spend analytics and workload dashboards
+Status: Partial
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ops.py:33; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py:1067; /Users/mombalam/Desktop/Clearledgr.v1/tests/test_ap_v1_flow.py:384
+Implementation impact: Add embedded KPI snapshots/digests/AP APIs while continuing to avoid a standalone customer dashboard.
+
+Introducing analytics does not mean abandoning the “embedded, not standalone” philosophy.  Rather than building a separate web dashboard, Clearledgr can surface insights in the tools finance teams already use:
+	•	Embedded snapshots: Provide vendor‑spend summaries or workload heatmaps directly in Slack/Teams via slash commands or scheduled digests.  For example, a finance manager might run /clearledgr spend vendor Acme in Slack and receive a breakdown of year‑to‑date spend, outstanding invoices and budget variance.  Weekly email digests could summarise spend by supplier, department or category and highlight bottlenecks in approval queues.
+	•	Contextual analytics in the Gmail sidebar: When viewing an invoice, the Gmail extension could show a mini‑dashboard with the vendor’s historical spend, average payment cycle time and any outstanding credits.  This keeps analytics tied to the task at hand without requiring users to switch applications.
+	•	APIs and connectors: Expose aggregated metrics via API so organizations can ingest them into existing BI or FP&A tools (e.g., Tableau, Power BI, spreadsheets).  This avoids building a separate reporting UI while still enabling rich analytics.
+	•	Operator‑only dashboards: Maintain internal dashboards for Clearledgr’s operations and support teams to monitor queue health, error rates and performance.  These views are not customer‑facing and therefore do not dilute the product’s embedded positioning.
+
+This strategy preserves Clearledgr’s value proposition—execution inside existing tools—while still delivering the insights finance teams need ￼.  Existing Gmail CRM solutions like Streak show that reporting dashboards can live entirely inside Gmail; their “reports dashboard” is built into the inbox and uses flexible filters and charts ￼.  Clearledgr can take inspiration from this model to ensure that any current or future dashboards remain embedded in the email or chat surfaces finance teams already use.
+
+6. Additional roadmap considerations
+Status: Partial
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:526; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:866; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:981
+Implementation impact: Expand beyond current duplicate/approval foundations into fraud controls, vendor self-service, and global scaling capabilities.
+
+Beyond the core enhancements above, research into leading AP automation solutions highlights other features worth considering for future phases:
+	•	Fraud and compliance controls: Incorporate sanction‑list checks, VAT/TIN validation, bank‑detail change alerts and duplicate invoice detection to combat payment redirection scams and regulatory breaches ￼.
+	•	Vendor management and self‑service: Provide secure onboarding, W‑9/W‑8 collection and a portal where vendors can upload invoices and view payment status ￼.  Regularly monitor and update master vendor data to reduce risk ￼.
+	•	Multi‑level approvals and escalations: Expand the policy engine to support delegation, escalation paths and threshold‑based routing, ensuring approvals continue when primary approvers are unavailable ￼.
+	•	AI‑powered anomaly detection: Use machine learning to predict GL codes, flag price mismatches and misapplied taxes, and identify suspicious activity ￼.
+	•	Scalability and global support: Plan for multi‑entity, multi‑currency and multi‑language support with pre‑built ERP integrations and real‑time sync capabilities ￼.
+
+7. Browser‑agent and agentic enhancements
+Status: Partial
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/browser_agent.py:15; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/browser_agent.py:37; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/browser_agent.py:131; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/browser_agent.py:269; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/agent_sessions.py:139; /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/background.js:577
+Implementation impact: Add preflight previews, deeper observability, and richer permission controls while preserving API-first migration paths.
+
+Clearledgr’s browser‑native control plane is a key differentiator. To make it safer, more powerful and more transparent while still adhering to the execution‑first model, consider the following improvements:
+	•	Expand the tool registry judiciously: Introduce new primitives for file uploads, drag‑and‑drop interactions or complex selectors, but classify each as read‑only, mutating or high‑risk to preserve least‑privilege principles. Each category should have appropriate gating and auditing requirements.
+	•	Domain whitelisting and context‑aware policies: Maintain a whitelist of approved domains and URL patterns. Extend the existing browser policy API to support per‑workflow and per‑role rules, automatically approving non‑mutating actions in read‑only portals while requiring explicit confirmation for actions that post financial data.
+	•	Previews and dry runs: Before executing high‑risk sequences (e.g., posting invoices to the ERP), generate a preview of the steps and data involved. Present this summary in the Gmail sidebar or Slack for operator confirmation to reduce unexpected outcomes.
+	•	Robust error handling and recovery: Detect when a page’s DOM changes or elements are missing. Retry with fallback strategies or prompt a human for help. Maintain a test suite against staging versions of supported ERPs to catch UI changes early.
+	•	Eventual API integrations: The browser agent is a necessary bridge where APIs are absent, but as Clearledgr expands to new ERPs and services, prioritise native API connectors and treat the agent as a fallback. Abstract ERP interactions so the business logic can switch from browser automation to API calls without major rewrites.
+	•	Observability: Instrument the agent to capture metrics such as success rates, failure reasons and average steps per workflow. Expose these metrics through ops endpoints or Slack digests to aid debugging and policy tuning, and correlate them with the immutable audit log.
+	•	Dynamic policy updates: Provide a secure interface for administrators to adjust approval thresholds, vendor rules and domain whitelists at runtime, rather than relying solely on environment variables. Store policy changes in the audit log for traceability.
+
+Drawing inspiration from AI‑native browsers like Perplexity Comet, Clearledgr can also enhance the user experience without building a standalone UI:
+	•	Cross‑system context and memory: Persist context across Gmail, Slack/Teams and ERP sessions so the agent remembers prior vendor decisions, purchase‑order matches and budget status. This avoids siloed threads and redundant checks.
+	•	On‑demand summarisation: Offer one‑click summaries of invoice threads and supporting documents that highlight key fields, validation results and exceptions, making approvals faster.
+	•	High‑level finance macros: Provide macro‑style commands (e.g., “ingest invoice and match PO” or “collect W‑9 from vendor”) triggered from Slack or Gmail. As with existing agent actions, require confirmation before irreversible steps.
+	•	Configurable permissions: Extend the policy engine to enable or disable specific agent actions per workflow or user, mirroring Comet’s enterprise permission controls.
+	•	Transparent execution: Show a live log or preview of planned and executed actions in the Gmail sidebar or Slack. Combined with the audit trail, this reinforces trust and makes it easier to intervene when something looks wrong.
+
+8. Future TODOs from AP automation 2025 research
+Status: Partial
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ops.py:33; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py:1067; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:771
+Implementation impact: Expand existing ops and validation metrics into AP 2025 KPI and exception-first intelligence coverage.
+
+Source: HighRadius, "AP Automation in 2025" (published August 28, 2025).
+
+		•	TODO: Add AP KPI primitives and ops endpoints for touchless capture rate, average invoice cycle time, exception rate, on-time approval rate, and missed-discount count/value. — Status: Partial (tenant-health metrics exist, but AP-2025 KPI set is incomplete).
+		•	TODO: Make exception-first the default workflow: prioritize exception items in queue ordering and attach a standardized exception taxonomy/reason code to every failed or blocked invoice. — Status: Open (exception-priority queueing and taxonomy are not yet default).
+		•	TODO: Add approval-routing friction analytics (handoff count, approver wait time, SLA breaches) and suggest simplification opportunities for high-friction paths. — Status: Open (routing friction analytics are not currently computed).
+		•	TODO: Implement payment outcome signals: early-payment discount opportunity detection plus late-payment risk scoring surfaced in approval context. — Status: Open (no discount/risk scoring is surfaced today).
+		•	TODO: Add embedded KPI visibility (Gmail sidebar + Slack/Teams digests) without introducing a standalone dashboard. — Status: Open (embedded KPI views/digests are not yet implemented).
+		•	TODO: Add an AP automation maturity scorecard for onboarding and quarterly reviews (capture automation, exception automation, approval automation, posting automation). — Status: Open (maturity scorecard model and endpoints are absent).
+		•	TODO: Prioritize capture automation improvements to minimize manual keying (extraction confidence gates, required-field completion prompts, and source evidence links). — Status: Partial (confidence extraction, needs-info routing, and source links exist; confidence gating prompts need expansion).
+
+9. Future TODOs from focus-first sidebar and invoice-centric aggregation
+Status: Partial
+Evidence: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py:189; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py:348; /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js:567; /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/queue-manager.js:663
+Implementation impact: Complete the existing focus-first foundation with merge controls, freshness/conflict intelligence, and smarter queue prioritization.
+
+Source: Clearledgr AP v1 product implementation plan (Focus-First Sidebar + Invoice-Centric Aggregation).
+
+		•	TODO: Add richer merge transparency in UI with a dedicated confidence chip and explicit merge evidence (invoice-number match, attachment-hash match, vendor/amount checks). — Status: Partial (merge reason + confidence chip exist; explicit evidence chips need enhancement).
+		•	TODO: Add manual merge/split controls for ambiguous invoice clusters (operator-approved reconcile or unmerge flows) with full audit logging. — Status: Open (manual merge/split controls are not implemented).
+		•	TODO: Expand `ap_item_sources` adapters to include first-class connectors for ERP documents, procurement systems, DMS links, and payment portals (beyond Gmail/Slack/Teams/portal URLs). — Status: Partial (gmail/slack/teams/portal sources exist; ERP/procurement/DMS adapters remain open).
+		•	TODO: Add source-quality scoring and recency ranking so the sidebar highlights the most reliable source first when multiple threads/messages exist. — Status: Open (no quality/recency ranking model is applied in UI today).
+		•	TODO: Introduce context freshness SLAs and stale-data badges per tab (`Email`, `Web`, `Approvals`, `ERP`) with one-click refresh and cached fallback reason. — Status: Partial (manual refresh + cache fallback exist; SLA/stale badges are missing).
+		•	TODO: Add cross-system conflict intelligence (vendor mismatch, amount drift, duplicate ERP doc reference) surfaced as prioritized action cards in the active invoice workspace. — Status: Partial (`has_context_conflict` and merge conflict metadata exist; prioritized action cards are missing).
+		•	TODO: Add queue-level navigator intelligence (next-best invoice ordering by urgency, risk, and SLA) without reintroducing long technical lists. — Status: Open (compact navigator exists, but urgency/risk/SLA ranking is not implemented).
+		•	TODO: Add embedded context analytics primitives (context coverage %, merge conflict rate, source-link density per invoice) exposed via API and Slack/Teams digests. — Status: Open (context analytics primitives are not yet exposed).
+
+What This Means for Next Implementation Pass
+
+- Immediate open gaps: PO/receipt/budget matching, budget-aware approvals, broad multi-system connectors, and AP-specific KPI/exception intelligence.
+- Items to skip as already implemented foundations: focused one-item workspace, invoice-centric worklist API, linked source model, context endpoint/cache, browser-agent allowlist/confirmation policies.
+- Items to treat as polish vs foundational: polish includes merge transparency UX, stale-data indicators, and queue prioritization; foundational includes declarative AP policy framework and cross-system financial controls.
+
+Execution TODO Backlog (Canonical: TODO_BACKLOG.md)
+
+Canonical execution backlog: /Users/mombalam/Desktop/Clearledgr.v1/TODO_BACKLOG.md
+
+TODO item schema used here and in the canonical backlog:
+`ID | Priority | Type (Foundational/Polish) | Scope | Owner Role | Dependencies | Code Touchpoints | API/Type Changes | Acceptance Criteria`
+
+Section-to-backlog mapping (collapsed overlap)
+
+| Source section(s) | Backlog IDs |
+| --- | --- |
+| Gap 1 + Opportunity 1 + budget controls from Opportunity 4 | CL-AP-001, CL-AP-002 |
+| Gap 2 + Opportunity 2 + Section 9 connector/freshness/ranking items | CL-AP-006, CL-AP-010, CL-AP-011 |
+| Gap 3 + Opportunity 3 + policy items in Opportunity 7 | CL-AP-003, CL-AP-004 |
+| Gap 4 | CL-AP-002 |
+| Opportunity 5 + Section 8 KPI items | CL-AP-005, CL-AP-007, CL-AP-012 |
+| Section 8 remaining TODOs | CL-AP-004, CL-AP-008, CL-AP-013 |
+| Section 9 remaining TODOs | CL-AP-009, CL-AP-010, CL-AP-011, CL-AP-012 |
+| Additional roadmap considerations (Opportunity 6) | CL-AP-014, CL-AP-015, CL-AP-016, CL-AP-017 |
+
+Backlog summary (Now / Next / Later)
+
+- `CL-AP-001 | Now | Foundational | PO/receipt/budget validation gate in workflow | Owner Role: Backend AP | Dependencies: ERP read adapter for PO+receipt, budget source adapter | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/policy_engine.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py | API/Type Changes: extend AP item metadata with po_match_result and budget_check_result | Acceptance Criteria: deterministic PO/budget mismatch routing with reason-coded audit`
+- `CL-AP-002 | Now | Foundational | Budget-aware approval context in Gmail + Slack/Teams | Owner Role: Backend + Extension | Dependencies: CL-AP-001 | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ap_items.py; /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/slack_api.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/teams_api.py | API/Type Changes: add budget block to item context payload | Acceptance Criteria: approvers see budget impact and explicit decision options`
+- `CL-AP-003 | Now | Foundational | Declarative tenant AP policy framework (beyond env vars) | Owner Role: Backend Platform | Dependencies: none | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/policy_engine.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ap_items.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/agent_sessions.py | API/Type Changes: add AP policy read/write APIs and versioning | Acceptance Criteria: org-specific AP policy updates are runtime-editable and audited`
+- `CL-AP-004 | Now | Foundational | Exception taxonomy + exception-first queue ordering | Owner Role: Backend + Extension | Dependencies: CL-AP-001, CL-AP-003 | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/gmail_extension.py; /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/queue-manager.js | API/Type Changes: add exception_code and exception_severity to worklist item | Acceptance Criteria: queue defaults to exception-priority ordering with transparent reason`
+- `CL-AP-005 | Now | Foundational | AP KPI primitives + ops API for automation KPIs | Owner Role: Backend Ops | Dependencies: CL-AP-004 | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ops.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py | API/Type Changes: add AP KPI endpoint for touchless/cycle/exception/on-time/missed-discount | Acceptance Criteria: tenant KPI API is stable, tested, and digest-ready`
+- `CL-AP-006 | Next | Foundational | Expand source/context connectors (ERP docs, procurement, DMS, payment portals) | Owner Role: Backend Integrations | Dependencies: CL-AP-005 | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ap_items.py | API/Type Changes: extend source/context contracts for non-email systems | Acceptance Criteria: selected item context can aggregate configured external systems with graceful fallback`
+- `CL-AP-007 | Next | Foundational | Approval friction analytics (handoffs, wait time, SLA breach) + simplification signals | Owner Role: Backend Analytics | Dependencies: CL-AP-004, CL-AP-005 | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ops.py | API/Type Changes: extend ops KPI payload with friction metrics | Acceptance Criteria: friction metrics and bottleneck paths are queryable by tenant`
+- `CL-AP-008 | Next | Foundational | Payment outcome signals (discount opportunity + late-payment risk score) in approval context | Owner Role: Backend AP | Dependencies: CL-AP-001, CL-AP-005 | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ap_items.py | API/Type Changes: add risk_signals to approval context | Acceptance Criteria: approval context includes actionable discount and late-risk signals`
+- `CL-AP-009 | Next | Polish | Manual merge/split controls with audit logs for ambiguous clusters | Owner Role: Backend + Extension | Dependencies: existing merge model | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ap_items.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/database.py; /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js | API/Type Changes: add merge/split action APIs | Acceptance Criteria: operators can merge/split with rationale and immutable audit events`
+- `CL-AP-010 | Next | Polish | Source quality/recency ranking and context freshness SLAs with stale badges | Owner Role: Extension + Backend | Dependencies: CL-AP-006 | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js; /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/queue-manager.js; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py | API/Type Changes: freshness and ranking metadata in context response | Acceptance Criteria: sidebar tabs reflect freshness state and prefer high-quality sources`
+- `CL-AP-011 | Next | Polish | Queue navigator intelligence (urgency/risk/SLA) and conflict action cards | Owner Role: Extension + Backend | Dependencies: CL-AP-004, CL-AP-010 | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js; /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/queue-manager.js; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/gmail_extension.py | API/Type Changes: add priority_score and conflict action metadata | Acceptance Criteria: next-item ordering and conflict actioning are risk/SLA-aware`
+- `CL-AP-012 | Next | Foundational | Embedded KPI visibility in Gmail + Slack/Teams digests (no standalone dashboard) | Owner Role: Extension + Integrations | Dependencies: CL-AP-005 | Code Touchpoints: /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/slack_api.py; /Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/teams_api.py | API/Type Changes: consume AP KPI endpoint in embedded surfaces | Acceptance Criteria: KPI visibility is delivered via Gmail/chat digests only`
+- `CL-AP-013 | Later | Foundational | AP automation maturity scorecard APIs and onboarding checks | Owner Role: Backend Analytics | Dependencies: CL-AP-005 | Code Touchpoints: see canonical backlog | API/Type Changes: maturity scorecard endpoint and model | Acceptance Criteria: scorecard supports onboarding and periodic tenant reviews`
+- `CL-AP-014 | Later | Foundational | Fraud/compliance controls (sanctions, TIN/VAT, bank-change alerts) | Owner Role: Backend Compliance | Dependencies: CL-AP-001, CL-AP-003 | Code Touchpoints: see canonical backlog | API/Type Changes: compliance outcomes in validation/context payloads | Acceptance Criteria: high-risk compliance issues block/escalate with reason codes`
+- `CL-AP-015 | Later | Foundational | Vendor self-service onboarding/status portal | Owner Role: Product + Backend | Dependencies: CL-AP-003 | Code Touchpoints: see canonical backlog | API/Type Changes: vendor onboarding/status APIs | Acceptance Criteria: vendor onboarding/status flow is secure and auditable`
+- `CL-AP-016 | Later | Foundational | Multi-entity/multi-currency/multi-language support hardening | Owner Role: Platform | Dependencies: CL-AP-001, CL-AP-003 | Code Touchpoints: see canonical backlog | API/Type Changes: entity/currency/locale-safe contracts | Acceptance Criteria: AP workflow supports multi-entity/currency without policy regressions`
+- `CL-AP-017 | Later | Polish | Advanced AI anomaly and recommendation layer | Owner Role: ML/Backend | Dependencies: CL-AP-004, CL-AP-005 | Code Touchpoints: see canonical backlog | API/Type Changes: anomaly recommendation payload contract | Acceptance Criteria: recommendation quality is measurable and policy-gated`
+
+Deferred / Skip (already implemented foundations)
+
+- Focus-first single-item workspace baseline
+- Invoice-centric worklist baseline (`/extension/worklist`)
+- Linked source persistence baseline (`ap_item_sources`)
+- Context endpoint and cache baseline
+- Browser-agent allowlist/confirmation baseline
+
+Summary
+
+AP v1 delivers a solid execution loop for invoice intake, validation, approval and ERP posting, but it omits critical checks and data integrations needed for broader financial control.  Matching invoices to purchase orders and budgets, aggregating data from multiple systems, providing user‑configurable policies, piloting budget visibility, introducing embedded analytics and workload dashboards, and considering advanced features such as fraud detection, vendor self‑service and multi‑entity support will close these gaps.  Implementing these enhancements incrementally – starting with read‑only connectors, PO and budget matching in validation, and configurable policies – allows Clearledgr to remain execution‑first while laying the groundwork for reconciliation, FP&A and richer analytics without compromising its embedded value proposition.

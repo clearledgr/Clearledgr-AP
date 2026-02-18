@@ -1,4 +1,0 @@
-Internal ID,Date,Amount,Currency,Customer ID,Order ID
-int_001,2025-11-05,100.00,USD,cust_123,ord_abc
-int_002,2025-11-06,250.00,USD,cust_456,ord_def
-

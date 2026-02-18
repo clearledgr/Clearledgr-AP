@@ -16,10 +16,13 @@ import json
 import hmac
 import hashlib
 import time
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # Configuration
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
@@ -391,40 +394,57 @@ class SlackAPIClient:
                 ]
             }
         ]
-    
+
     @staticmethod
-    def build_reconciliation_summary_blocks(
-        matches: int,
-        exceptions: int,
-        match_rate: float,
-        run_id: Optional[str] = None
-    ) -> List[Dict]:
-        """Build Block Kit blocks for a reconciliation summary."""
-        status_label = "OK" if exceptions == 0 else "Attention" if exceptions < 5 else "Critical"
-        
+    def build_ap_kpi_digest_text(kpis: Dict[str, Any], organization_id: str) -> str:
+        touchless = float((kpis.get("touchless_rate") or {}).get("rate") or 0.0) * 100.0
+        exceptions = float((kpis.get("exception_rate") or {}).get("rate") or 0.0) * 100.0
+        on_time = float((kpis.get("on_time_approvals") or {}).get("rate") or 0.0) * 100.0
+        cycle_avg = float((kpis.get("cycle_time_hours") or {}).get("avg") or 0.0)
+        return (
+            f"AP KPI digest for `{organization_id}`: touchless {touchless:.1f}%, "
+            f"exceptions {exceptions:.1f}%, on-time approvals {on_time:.1f}%, "
+            f"avg cycle {cycle_avg:.1f}h."
+        )
+
+    @staticmethod
+    def build_ap_kpi_digest_blocks(kpis: Dict[str, Any], organization_id: str) -> List[Dict]:
+        touchless = float((kpis.get("touchless_rate") or {}).get("rate") or 0.0) * 100.0
+        exceptions = float((kpis.get("exception_rate") or {}).get("rate") or 0.0) * 100.0
+        on_time = float((kpis.get("on_time_approvals") or {}).get("rate") or 0.0) * 100.0
+        cycle = kpis.get("cycle_time_hours") or {}
+        friction = kpis.get("approval_friction") or {}
         return [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": "Reconciliation Complete"}
+                "text": {"type": "plain_text", "text": f"AP KPI Digest · {organization_id}"},
             },
             {
                 "type": "section",
                 "fields": [
-                    {"type": "mrkdwn", "text": f"*Matches:*\n{matches}"},
-                    {"type": "mrkdwn", "text": f"*Exceptions:*\n{exceptions}"},
-                    {"type": "mrkdwn", "text": f"*Match Rate:*\n{match_rate:.1f}%"},
-                    {"type": "mrkdwn", "text": f"*Status:*\n{status_label}"},
-                ]
+                    {"type": "mrkdwn", "text": f"*Touchless rate*\n{touchless:.1f}%"},
+                    {"type": "mrkdwn", "text": f"*Exception rate*\n{exceptions:.1f}%"},
+                    {"type": "mrkdwn", "text": f"*On-time approvals*\n{on_time:.1f}%"},
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Cycle time (avg/p95)*\n{float(cycle.get('avg') or 0.0):.1f}h / {float(cycle.get('p95') or 0.0):.1f}h",
+                    },
+                ],
             },
             {
-                "type": "context",
-                "elements": [
-                    {"type": "mrkdwn", "text": f"Run ID: `{run_id}`" if run_id else "Manual run"}
-                ]
-            }
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*Approval friction*\n"
+                        f"SLA breaches: {int(friction.get('sla_breach_count') or 0)} · "
+                        f"Avg handoffs: {float(friction.get('avg_handoffs') or 0.0):.2f} · "
+                        f"P95 wait: {float(friction.get('p95_wait_minutes') or 0.0):.1f}m"
+                    ),
+                },
+            },
         ]
-
-
+    
 class SlackAPIError(Exception):
     """Raised when Slack API returns an error."""
     
@@ -444,9 +464,15 @@ def verify_slack_signature(
     """Verify that a request came from Slack."""
     secret = signing_secret or SLACK_SIGNING_SECRET
     if not secret:
-        return True  # Skip in dev
+        logger.warning("Slack signature verification failed: signing secret is not configured")
+        return False
     
-    if abs(time.time() - int(timestamp)) > 300:
+    try:
+        ts = int(timestamp)
+    except (TypeError, ValueError):
+        return False
+
+    if abs(time.time() - ts) > 300:
         return False  # Request too old
     
     sig_base = f"v0:{timestamp}:{body.decode()}"

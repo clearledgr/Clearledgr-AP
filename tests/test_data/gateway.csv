@@ -1,5 +1,0 @@
-Transaction ID,Date,Gross Amount,Fees,Net Amount,Currency,Status
-txn_001,2025-11-05,100.00,2.50,97.50,USD,succeeded
-txn_002,2025-11-06,250.00,6.25,243.75,USD,succeeded
-txn_003,2025-11-07,50.00,1.25,48.75,USD,failed
-

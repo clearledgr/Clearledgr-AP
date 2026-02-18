@@ -1,0 +1,7 @@
+INFO:     Started server process [45664]
+INFO:     Waiting for application startup.
+2026-02-18 08:22:03 - clearledgr.workflows.ap.worker - INFO - AP Temporal worker disabled
+2026-02-18 08:22:03 - clearledgr.services.gmail_autopilot - INFO - Gmail autopilot started
+2026-02-18 08:22:03 - clearledgr - INFO - Gmail autopilot started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)

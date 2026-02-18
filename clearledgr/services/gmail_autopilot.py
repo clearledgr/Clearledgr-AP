@@ -1,8 +1,8 @@
 """
-Gmail Autopilot Service
+Gmail Autopilot Service for AP v1.
 
-Runs 24/7 Gmail scanning using Gmail API + Pub/Sub watch renewal.
-This enables backend-driven AP detection even when Gmail is closed.
+Runs 24/7 Gmail scanning using Gmail API and Pub/Sub watch renewal.
+AP-only. No reconciliation or non-AP workflows.
 """
 from __future__ import annotations
 
@@ -14,8 +14,9 @@ from typing import Any, Dict, Optional
 
 from clearledgr.core.database import get_db
 from clearledgr.services.gmail_api import GmailAPIClient, GmailWatchService, token_store, PUBSUB_TOPIC
-from clearledgr.core.engine import get_engine
-from clearledgr.services.ai_enhanced import EnhancedAIService
+from clearledgr.api.gmail_webhooks import process_single_email
+from clearledgr.services.slack_api import get_slack_client
+from clearledgr.services.teams_api import get_teams_client
 
 logger = logging.getLogger(__name__)
 
@@ -28,22 +29,16 @@ def _env_bool(name: str, default: bool = True) -> bool:
 
 
 class GmailAutopilot:
-    """
-    Background Gmail autopilot loop.
-
-    Modes:
-    - watch: ensure Gmail watch is active for push notifications
-    - poll: fallback polling for new emails
-    - both: watch + poll
-    """
-
     def __init__(self):
         self.enabled = _env_bool("GMAIL_AUTOPILOT_ENABLED", True)
         self.mode = os.getenv("GMAIL_AUTOPILOT_MODE", "both").strip().lower()
         self.poll_interval = int(os.getenv("GMAIL_POLL_INTERVAL_SEC", "300"))
         self.poll_max_results = int(os.getenv("GMAIL_POLL_MAX_RESULTS", "50"))
+        self.poll_concurrency = max(1, int(os.getenv("GMAIL_POLL_CONCURRENCY", "5")))
         self.poll_seed_hours = int(os.getenv("GMAIL_POLL_SEED_HOURS", "24"))
         self.watch_refresh_hours = int(os.getenv("GMAIL_WATCH_REFRESH_HOURS", "12"))
+        self.approval_sla_minutes = max(1, int(os.getenv("AP_APPROVAL_SLA_MINUTES", "240")))
+        self._slack_channel = os.getenv("SLACK_APPROVAL_CHANNEL", "#finance-approvals")
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._db = get_db()
@@ -92,17 +87,40 @@ class GmailAutopilot:
             return
 
         self._status = {"state": "running", "users": len(tokens)}
-
         tasks = [self._process_user(token) for token in tokens]
-        await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        self._status = {
-            "state": "idle",
-            "users": len(tokens),
-            "last_run": datetime.now(timezone.utc).isoformat(),
-        }
+        processed_count = 0
+        failed_count = 0
+        for result in results:
+            if isinstance(result, Exception):
+                failed_count += 1
+                continue
+            if isinstance(result, dict):
+                processed_count += int(result.get("processed_count") or 0)
+                failed_count += int(result.get("failed_count") or 0)
 
-    async def _process_user(self, token) -> None:
+        await self._process_sla_escalations()
+        if failed_count > 0:
+            self._status = {
+                "state": "degraded",
+                "users": len(tokens),
+                "processed_count": processed_count,
+                "failed_count": failed_count,
+                "detail": "processing_errors",
+                "error": "autopilot_processing_failures",
+                "last_run": datetime.now(timezone.utc).isoformat(),
+            }
+        else:
+            self._status = {
+                "state": "idle",
+                "users": len(tokens),
+                "processed_count": processed_count,
+                "failed_count": 0,
+                "last_run": datetime.now(timezone.utc).isoformat(),
+            }
+
+    async def _process_user(self, token) -> Dict[str, int]:
         client = GmailAPIClient(token.user_id)
         if not await client.ensure_authenticated():
             self._db.save_gmail_autopilot_state(
@@ -110,13 +128,18 @@ class GmailAutopilot:
                 email=token.email,
                 last_error="auth_failed",
             )
-            return
+            return {"processed_count": 0, "failed_count": 1}
 
         if self._watch_enabled():
             await self._ensure_watch(token)
 
+        processed_count = 0
+        failed_count = 0
         if self._poll_enabled():
-            await self._poll_messages(token, client)
+            result = await self._poll_messages(token, client)
+            processed_count += int(result.get("processed_count") or 0)
+            failed_count += int(result.get("failed_count") or 0)
+        return {"processed_count": processed_count, "failed_count": failed_count}
 
     async def _ensure_watch(self, token) -> None:
         state = self._db.get_gmail_autopilot_state(token.user_id) or {}
@@ -131,7 +154,6 @@ class GmailAutopilot:
             watch_service = GmailWatchService(token.user_id)
             result = await watch_service.setup_watch()
             exp_iso = _parse_watch_expiration(result.get("expiration"))
-
             self._db.save_gmail_autopilot_state(
                 user_id=token.user_id,
                 email=token.email,
@@ -140,7 +162,6 @@ class GmailAutopilot:
                 last_watch_at=now.isoformat(),
                 last_error=None,
             )
-            logger.info("Gmail watch refreshed for %s", token.email)
         except Exception as exc:
             logger.warning("Gmail watch refresh failed for %s: %s", token.email, exc)
             self._db.save_gmail_autopilot_state(
@@ -149,7 +170,7 @@ class GmailAutopilot:
                 last_error=f"watch_failed: {exc}",
             )
 
-    async def _poll_messages(self, token, client: GmailAPIClient) -> None:
+    async def _poll_messages(self, token, client: GmailAPIClient) -> Dict[str, int]:
         now = datetime.now(timezone.utc)
         state = self._db.get_gmail_autopilot_state(token.user_id) or {}
         last_scan_at = _parse_iso(state.get("last_scan_at"))
@@ -163,7 +184,7 @@ class GmailAutopilot:
             "-subject:(receipt OR confirmation OR paid OR \"payment received\" OR refund OR chargeback OR dispute OR declined OR \"payment failed\" OR \"card declined\" OR \"security alert\" OR \"password\" OR \"verify\" OR newsletter OR promotion OR offer OR webinar OR event)",
             "-category:promotions",
             "-category:social",
-            "-category:updates"
+            "-category:updates",
         ]
         query = os.getenv("GMAIL_POLL_QUERY", " ".join(default_query))
         if "after:" not in query:
@@ -179,34 +200,32 @@ class GmailAutopilot:
                     last_scan_at=now.isoformat(),
                     last_error=None,
                 )
-                return
+                return {"processed_count": 0, "failed_count": 0}
 
-            engine = get_engine()
-            ai_service = EnhancedAIService()
+            semaphore = asyncio.Semaphore(self.poll_concurrency)
+            counters = {"processed_count": 0, "failed_count": 0}
 
-            from clearledgr.api.gmail_webhooks import process_single_email
+            async def _process_entry(entry: Dict[str, Any]) -> None:
+                async with semaphore:
+                    message_id = entry.get("id")
+                    if not message_id:
+                        return
+                    try:
+                        await process_single_email(client, message_id, token.user_id, token.email)
+                        counters["processed_count"] += 1
+                    except Exception as exc:
+                        counters["failed_count"] += 1
+                        logger.warning("Autopilot email processing failed: %s", exc)
 
-            for entry in messages:
-                message_id = entry.get("id")
-                if not message_id:
-                    continue
-                try:
-                    await process_single_email(
-                        client=client,
-                        message_id=message_id,
-                        user_id=token.user_id,
-                        engine=engine,
-                        ai_service=ai_service,
-                    )
-                except Exception as exc:
-                    logger.warning("Autopilot email processing failed: %s", exc)
+            await asyncio.gather(*[_process_entry(entry) for entry in messages])
 
             self._db.save_gmail_autopilot_state(
                 user_id=token.user_id,
                 email=token.email,
                 last_scan_at=now.isoformat(),
-                last_error=None,
+                last_error=None if counters["failed_count"] == 0 else "processing_errors",
             )
+            return counters
         except Exception as exc:
             logger.warning("Autopilot poll failed for %s: %s", token.email, exc)
             self._db.save_gmail_autopilot_state(
@@ -214,6 +233,80 @@ class GmailAutopilot:
                 email=token.email,
                 last_error=f"poll_failed: {exc}",
             )
+            return {"processed_count": 0, "failed_count": 1}
+
+    async def _process_sla_escalations(self) -> None:
+        now = datetime.now(timezone.utc)
+        for org_id in self._db.list_organizations_with_ap_items():
+            needs_approval = self._db.list_ap_items(org_id, state="needs_approval", limit=500)
+            for item in needs_approval:
+                created_at = _parse_iso(item.get("created_at")) or _parse_iso(item.get("updated_at"))
+                if not created_at:
+                    continue
+                age_minutes = (now - created_at).total_seconds() / 60.0
+                if age_minutes < self.approval_sla_minutes:
+                    continue
+                idempotency_key = f"approval_escalated:{item.get('id')}:{self.approval_sla_minutes}"
+                if self._db.get_ap_audit_event_by_key(idempotency_key):
+                    continue
+                await self._send_escalation(org_id, item, age_minutes, idempotency_key)
+
+    async def _send_escalation(self, org_id: str, item: Dict[str, Any], age_minutes: float, idempotency_key: str) -> None:
+        vendor = item.get("vendor_name") or "Unknown vendor"
+        amount = item.get("amount")
+        currency = item.get("currency") or "USD"
+        text = (
+            f"AP approval SLA breached: {vendor} {currency} {amount if amount is not None else 'N/A'} "
+            f"has been waiting {int(age_minutes)} minutes."
+        )
+        slack_ref = None
+        teams_ref = None
+        try:
+            slack_client = get_slack_client()
+            if getattr(slack_client, "bot_token", ""):
+                msg = await slack_client.send_message(channel=self._slack_channel, text=text)
+                slack_ref = msg.ts
+        except Exception as exc:
+            logger.warning("Slack escalation failed: %s", exc)
+
+        try:
+            teams_client = get_teams_client()
+            if (teams_client.webhook_url or "").strip():
+                msg = await teams_client.send_approval_message(
+                    text=text,
+                    ap_item_id=item.get("id"),
+                    vendor=vendor,
+                    amount=f"{currency} {amount if amount is not None else 'N/A'}",
+                    invoice_number=item.get("invoice_number") or "N/A",
+                )
+                teams_ref = msg.message_id
+        except Exception as exc:
+            logger.warning("Teams escalation failed: %s", exc)
+
+        self._db.append_ap_audit_event(
+            {
+                "ap_item_id": item.get("id"),
+                "event_type": "approval_escalated",
+                "from_state": item.get("state"),
+                "to_state": item.get("state"),
+                "actor_type": "system",
+                "actor_id": "sla_monitor",
+                "payload_json": {
+                    "reason": "approval_sla_breached",
+                    "age_minutes": round(age_minutes, 2),
+                    "sla_minutes": self.approval_sla_minutes,
+                },
+                "external_refs": {
+                    "gmail_thread_id": item.get("thread_id"),
+                    "gmail_message_id": item.get("message_id"),
+                    "slack_message_ts": slack_ref,
+                    "teams_message_id": teams_ref,
+                },
+                "idempotency_key": idempotency_key,
+                "organization_id": org_id,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
 
 def _parse_watch_expiration(value: Optional[str]) -> Optional[str]:
@@ -245,7 +338,7 @@ async def start_gmail_autopilot(app=None) -> Optional[GmailAutopilot]:
 
 async def stop_gmail_autopilot(app=None) -> None:
     autopilot = None
-    if app is not None and hasattr(app.state, "gmail_autopilot"):
-        autopilot = app.state.gmail_autopilot
+    if app is not None:
+        autopilot = getattr(app.state, "gmail_autopilot", None)
     if autopilot:
         await autopilot.stop()

@@ -3,9 +3,10 @@
   "name": "Clearledgr",
   "version": "1.2026.001",
   "version_name": "1.2026.001 Phoenix",
-  "description": "Autonomous AP automation — invoices processed 24/7, right inside Gmail",
+  "description": "Autonomous AP automation, invoices processed 24/7 inside Gmail",
   "permissions": [
     "activeTab",
+    "tabs",
     "scripting",
     "storage",
     "identity",
@@ -25,12 +26,11 @@
     "https://www.googleapis.com/*",
     "https://gmail.googleapis.com/*",
     "https://accounts.google.com/*",
+    "https://*.netsuite.com/*",
     "https://vision.googleapis.com/*",
     "https://documentai.googleapis.com/*",
     "http://localhost:8000/*",
-    "http://127.0.0.1:8000/*",
-    "http://localhost:8010/*",
-    "http://127.0.0.1:8010/*"
+    "http://127.0.0.1:8000/*"
   ],
   "background": {
     "service_worker": "background.js"

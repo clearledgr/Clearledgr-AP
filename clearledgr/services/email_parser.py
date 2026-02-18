@@ -105,15 +105,16 @@ class EmailParser:
     ]
     
     INVOICE_PATTERNS = [
-        r'Invoice\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
-        r'INV[:\-\s#]*([A-Z0-9][\w\-]+)',
-        r'Bill\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
-        r'Reference\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
-        r'Order\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
-        r'PO\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
-        r'Receipt\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
-        r'Transaction\s*(?:ID|Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
-        r'Doc(?:ument)?\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
+        r'Invoice\s*(?:Number|No\.?|#)[:\s]*([A-Z0-9][\w\-/]{2,})',
+        r'Invoice[:\s#-]+([A-Z0-9][A-Z0-9\-/]{3,})',
+        r'INV[:\-\s#]*([A-Z0-9][\w\-]{2,})',
+        r'Bill\s*(?:Number|No\.?|#)[:\s]*([A-Z0-9][\w\-/]{2,})',
+        r'Reference\s*(?:Number|No\.?|#)[:\s]*([A-Z0-9][\w\-/]{2,})',
+        r'Order\s*(?:Number|No\.?|#)[:\s]*([A-Z0-9][\w\-/]{2,})',
+        r'PO\s*(?:Number|No\.?|#)[:\s]*([A-Z0-9][\w\-/]{2,})',
+        r'Receipt\s*(?:Number|No\.?|#)[:\s]*([A-Z0-9][\w\-/]{2,})',
+        r'Transaction\s*(?:ID|Number|No\.?|#)[:\s]*([A-Z0-9][\w\-/]{2,})',
+        r'Doc(?:ument)?\s*(?:Number|No\.?|#)[:\s]*([A-Z0-9][\w\-/]{2,})',
     ]
     
     DATE_PATTERNS = [
@@ -541,7 +542,7 @@ class EmailParser:
         invoice_digits = {
             re.sub(r'\D', '', str(number))
             for number in invoice_numbers
-            if number
+            if number and re.sub(r'\D', '', str(number))
         }
         if not invoice_digits:
             return amounts
@@ -555,7 +556,7 @@ class EmailParser:
                 if digits in invoice_digits or trimmed in invoice_digits:
                     continue
                 # If the amount digits contain the invoice digits (or vice versa), skip.
-                if any(inv in digits or digits in inv for inv in invoice_digits):
+                if any(len(inv) >= 4 and (inv in digits or digits in inv) for inv in invoice_digits):
                     continue
             filtered.append(amount)
         return filtered
@@ -569,12 +570,25 @@ class EmailParser:
             numbers.extend(matches)
         
         # Remove duplicates while preserving order
+        banned_tokens = {
+            "invoice", "number", "no", "total", "amount", "due",
+            "date", "billing", "domain", "summary", "subtotal", "vat"
+        }
         seen = set()
         unique = []
         for n in numbers:
-            if n not in seen:
-                seen.add(n)
-                unique.append(n)
+            token = str(n).strip().strip(":#.- ")
+            if not token:
+                continue
+            lowered = token.lower()
+            if lowered in banned_tokens:
+                continue
+            # Invoice identifiers should have at least one digit.
+            if not re.search(r"\d", token):
+                continue
+            if token not in seen:
+                seen.add(token)
+                unique.append(token)
         
         return unique
     

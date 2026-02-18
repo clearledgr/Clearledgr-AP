@@ -1,22 +1,23 @@
 """
-Clearledgr Integrations
+Clearledgr Integrations (AP v1)
 
-Real integrations with:
-- Payment gateways (Stripe, Paystack, Flutterwave)
-- ERP systems (QuickBooks, Xero, SAP)
-- Bank connections (Plaid, manual CSV)
+Minimal ERP connector surface for posting approved AP items.
 """
 
 from clearledgr.integrations.erp_router import (
-    post_journal_entry,
+    Bill,
     ERPConnection,
     get_erp_connection,
     set_erp_connection,
+    delete_erp_connection,
+    post_bill,
 )
 
 __all__ = [
-    "post_journal_entry",
+    "Bill",
     "ERPConnection",
     "get_erp_connection",
     "set_erp_connection",
+    "delete_erp_connection",
+    "post_bill",
 ]

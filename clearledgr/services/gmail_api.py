@@ -14,13 +14,18 @@ import json
 import os
 import logging
 from urllib.parse import urlencode
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import httpx
 from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
+
+
+def utc_now() -> datetime:
+    """Return timezone-aware UTC now."""
+    return datetime.now(timezone.utc)
 
 # Configuration
 DEFAULT_GOOGLE_REDIRECT_URI = "http://localhost:8000/gmail/callback"
@@ -105,7 +110,10 @@ class GmailToken:
     email: str
     
     def is_expired(self) -> bool:
-        return datetime.utcnow() >= self.expires_at - timedelta(minutes=5)
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return utc_now() >= expires_at - timedelta(minutes=5)
 
 
 @dataclass
@@ -191,13 +199,13 @@ class GmailTokenStore:
             try:
                 expires_at = datetime.fromisoformat(row['expires_at'].replace('Z', '+00:00'))
             except (ValueError, AttributeError):
-                expires_at = datetime.utcnow() + timedelta(hours=1)
+                expires_at = utc_now() + timedelta(hours=1)
         
         return GmailToken(
             user_id=row['user_id'],
             access_token=self._decrypt(row['access_token']),
             refresh_token=self._decrypt(row['refresh_token']) if row.get('refresh_token') else "",
-            expires_at=expires_at or datetime.utcnow() + timedelta(hours=1),
+            expires_at=expires_at or utc_now() + timedelta(hours=1),
             email=row.get('email', '')
         )
 
@@ -213,7 +221,7 @@ class GmailAPIClient:
     Usage:
         client = GmailAPIClient(user_id="user123")
         await client.ensure_authenticated()
-        messages = await client.list_messages(query="from:bank.com")
+        messages = await client.list_messages(query="has:attachment invoice")
     """
     
     def __init__(self, user_id: str):
@@ -259,7 +267,7 @@ class GmailAPIClient:
             user_id=self._token.user_id,
             access_token=data["access_token"],
             refresh_token=self._token.refresh_token,  # Keep existing refresh token
-            expires_at=datetime.utcnow() + timedelta(seconds=data["expires_in"]),
+            expires_at=utc_now() + timedelta(seconds=data["expires_in"]),
             email=self._token.email,
         )
         token_store.store(self._token)
@@ -283,7 +291,7 @@ class GmailAPIClient:
         List messages matching a query.
         
         Args:
-            query: Gmail search query (e.g., "from:bank.com has:attachment")
+            query: Gmail search query (e.g., "has:attachment invoice")
             max_results: Maximum number of messages to return
             page_token: Token for pagination
         
@@ -455,6 +463,26 @@ class GmailAPIClient:
                 json={"addLabelIds": label_ids},
             )
             response.raise_for_status()
+
+    async def send_thread_note(self, thread_id: str, to_email: str, subject: str, body: str) -> None:
+        """Send a short note into an existing thread (idempotency handled upstream)."""
+        if not thread_id:
+            return
+        message = "\r\n".join([
+            f"To: {to_email}",
+            f"Subject: {subject}",
+            "Content-Type: text/plain; charset=\"UTF-8\"",
+            "",
+            body,
+        ])
+        raw = base64.urlsafe_b64encode(message.encode("utf-8")).decode("utf-8")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{GMAIL_API_BASE}/users/me/messages/send",
+                headers=self._headers(),
+                json={"raw": raw, "threadId": thread_id},
+            )
+            response.raise_for_status()
     
     async def remove_label(self, message_id: str, label_ids: List[str]) -> None:
         """Remove labels from a message."""
@@ -581,7 +609,7 @@ async def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None
         user_id=user_info["id"],
         access_token=data["access_token"],
         refresh_token=data.get("refresh_token", ""),
-        expires_at=datetime.utcnow() + timedelta(seconds=data["expires_in"]),
+        expires_at=utc_now() + timedelta(seconds=data["expires_in"]),
         email=user_info["email"],
     )
 

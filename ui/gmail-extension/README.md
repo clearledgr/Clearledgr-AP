@@ -1,14 +1,14 @@
-# Clearledgr Gmail Chrome Extension (Embedded Worker)
+# Clearledgr Gmail Extension (AP v1)
 
-An embedded Gmail worker that automates AP workflows (invoice intake -> review -> approvals -> ERP posting) without leaving your inbox.
+Embedded InboxSDK sidebar for Clearledgr AP execution in Gmail.
 
 ## Features
 
-- **Streak-style UI (InboxSDK)** - AppMenu + routes inside Gmail (no custom DOM sidebar)
-- **Email sidebar** - Contextual AP panel when you open an invoice email
-- **Autonomous inbox scanning** - Finds AP candidates and queues them
-- **Approvals** - Review/approve/reject from the Clearledgr routes
-- **Non-finance detection** - Aggressively filters noise/marketing
+- InboxSDK embedded sidebar only
+- Autonomous AP inbox scanning
+- AP queue and current thread status
+- Approval and rejection actions
+- Backend-sourced immutable audit trail
 
 ## Installation
 
@@ -31,9 +31,9 @@ An embedded Gmail worker that automates AP workflows (invoice intake -> review -
    - Click "Allow" when prompted
 
 4. **Use the Extension**
-   - Go to Gmail (mail.google.com)
-   - Open the Clearledgr item in Gmail's left AppMenu (Streak-style)
-   - Open an invoice email to see the Clearledgr email sidebar
+   - Go to Gmail (`mail.google.com`)
+   - Open any invoice thread
+   - Clearledgr sidebar runs autonomously and updates AP state
 
 ### Publishing to Chrome Web Store
 
@@ -50,9 +50,9 @@ An embedded Gmail worker that automates AP workflows (invoice intake -> review -
 gmail-extension/
 ├── manifest.json      # Extension configuration
 ├── background.js      # Service worker for settings/storage
-├── content-script.js  # Data bridge (NO UI): queue/events <-> InboxSDK layer
+├── content-script.js  # Data bridge (NO UI)
 ├── queue-manager.js   # AP queue + autonomous scanning orchestration
-├── src/inboxsdk-layer.js    # InboxSDK implementation (routes + email sidebar)
+├── src/inboxsdk-layer.js    # InboxSDK implementation (single AP sidebar)
 ├── dist/inboxsdk-layer.js   # Built bundle (generated)
 ├── icons/             # Extension icons
 │   ├── icon16.png
@@ -64,11 +64,10 @@ gmail-extension/
 ## Configuration
 
 Settings are stored in Chrome sync storage and include:
-- Auto-process emails toggle
-- Confidence threshold for matches
-- Ignored sender domains
-- GL account mappings
-- ERP connection settings
+- Backend URL
+- Organization ID
+- User email
+- Slack channel
 
 ## Data Handling
 

@@ -1,5 +1,5 @@
 """
-Structured logging for Clearledgr Reconciliation API.
+Structured logging for Clearledgr AP v1.
 """
 import logging
 import sys
@@ -98,41 +98,6 @@ def log_request(
     logger.handle(record)
 
 
-def log_reconciliation_run(
-    run_id: str,
-    source_type: str,
-    period_start: str,
-    period_end: str,
-    status: str,
-    duration_ms: Optional[float] = None,
-    **kwargs
-):
-    """Log reconciliation run."""
-    extra_fields = {
-        "type": "reconciliation_run",
-        "run_id": run_id,
-        "source_type": source_type,
-        "period_start": period_start,
-        "period_end": period_end,
-        "status": status,
-    }
-    if duration_ms is not None:
-        extra_fields["duration_ms"] = duration_ms
-    extra_fields.update(kwargs)
-    
-    record = logging.LogRecord(
-        name=logger.name,
-        level=logging.INFO,
-        pathname="",
-        lineno=0,
-        msg=f"Reconciliation run {run_id} {status}",
-        args=(),
-        exc_info=None,
-    )
-    record.extra_fields = extra_fields
-    logger.handle(record)
-
-
 def log_error(
     error_type: str,
     message: str,
@@ -162,4 +127,3 @@ def log_error(
         )
         record.extra_fields = extra_fields
         logger.handle(record)
-
