@@ -2,3 +2,23 @@
 .env
 .env.staging
 /website
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Local runtime/state
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Local build/package artifacts
+*.zip
+ui/gmail-extension/build/config.js
+ui/gmail-extension/**/*.map
+
+# OS/editor noise
+.DS_Store
