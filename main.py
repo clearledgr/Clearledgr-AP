@@ -60,6 +60,7 @@ from clearledgr.api import (
     erp_router,
     gmail_extension_router,
     slack_invoices_router,
+    teams_invoices_router,
     autonomous_router,
     ai_enhanced_router,
     ap_workflow_router,
@@ -118,6 +119,7 @@ app.include_router(v1_router)
 app.include_router(erp_router)
 app.include_router(gmail_extension_router)
 app.include_router(slack_invoices_router)
+app.include_router(teams_invoices_router)
 
 for optional_router in (autonomous_router, ai_enhanced_router, ap_workflow_router, ap_advanced_router):
     if optional_router:
@@ -433,6 +435,13 @@ except ImportError:
 try:
     from clearledgr.api.ap_items import router as ap_items_router
     app.include_router(ap_items_router)
+except ImportError:
+    pass
+
+# AP business policy management (versioned + auditable)
+try:
+    from clearledgr.api.ap_policies import router as ap_policies_router
+    app.include_router(ap_policies_router)
 except ImportError:
     pass
 

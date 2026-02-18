@@ -35,10 +35,31 @@ def _extract_payload(body: bytes) -> Dict[str, Any]:
 def _get_gmail_id(action: Dict[str, Any]) -> str:
     value = action.get("value") or ""
     if value:
+        if value.startswith("{"):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, dict):
+                    candidate = parsed.get("gmail_id") or parsed.get("email_id") or parsed.get("invoice_id")
+                    if candidate:
+                        return str(candidate)
+            except Exception:
+                pass
         return value
     action_id = action.get("action_id", "")
+    for prefix in (
+        "approve_invoice_",
+        "post_to_erp_",
+        "post_to_sap_",
+        "reject_invoice_",
+        "approve_budget_override_",
+        "request_budget_adjustment_",
+        "reject_budget_",
+        "flag_invoice_",
+    ):
+        if action_id.startswith(prefix):
+            return action_id[len(prefix):]
     if "_" in action_id:
-        return action_id.split("_")[-1]
+        return action_id.rsplit("_", 1)[-1]
     return action_id
 
 
@@ -75,6 +96,11 @@ async def handle_invoice_interactive(request: Request):
             slack_channel=channel_id,
             slack_ts=message_ts,
         )
+        if result.get("status") == "needs_budget_decision":
+            return {
+                "response_type": "ephemeral",
+                "text": "Budget decision required. Use Approve override, Request budget adjustment, or Reject over budget.",
+            }
         erp_result = result.get("erp_result") or {}
         doc_num = erp_result.get("doc_num") or erp_result.get("document_number") or erp_result.get("erp_document")
         bill_id = erp_result.get("bill_id")
@@ -86,8 +112,50 @@ async def handle_invoice_interactive(request: Request):
             "text": f"Posted to ERP. {detail}"
         }
 
-    if action_id.startswith("reject_invoice_"):
-        reason = "rejected_in_slack"
+    if action_id.startswith("approve_budget_override_"):
+        justification = "Approved over budget in Slack"
+        value = str(action.get("value") or "")
+        if value.startswith("{"):
+            try:
+                payload_value = json.loads(value)
+                if isinstance(payload_value, dict):
+                    justification = str(payload_value.get("justification") or justification)
+            except Exception:
+                pass
+        result = await workflow.approve_invoice(
+            gmail_id=gmail_id,
+            approved_by=approved_by,
+            slack_channel=channel_id,
+            slack_ts=message_ts,
+            allow_budget_override=True,
+            override_justification=justification,
+        )
+        if result.get("status") != "approved":
+            return {
+                "response_type": "ephemeral",
+                "text": f"Budget override failed: {result.get('reason', result.get('status', 'unknown'))}",
+            }
+        erp_result = result.get("erp_result") or {}
+        bill_id = erp_result.get("bill_id") or "n/a"
+        return {
+            "response_type": "ephemeral",
+            "text": f"Budget override approved and posted. Bill ID: {bill_id}",
+        }
+
+    if action_id.startswith("request_budget_adjustment_"):
+        result = await workflow.request_budget_adjustment(
+            gmail_id=gmail_id,
+            requested_by=approved_by,
+            reason="budget_adjustment_requested_in_slack",
+            slack_channel=channel_id,
+            slack_ts=message_ts,
+        )
+        if result.get("status") == "needs_info":
+            return {"response_type": "ephemeral", "text": "Budget adjustment requested. Invoice moved to Needs info."}
+        return {"response_type": "ephemeral", "text": f"Request failed: {result.get('reason')}"}
+
+    if action_id.startswith(("reject_invoice_", "reject_budget_")):
+        reason = "rejected_over_budget_in_slack" if action_id.startswith("reject_budget_") else "rejected_in_slack"
         result = await workflow.reject_invoice(
             gmail_id=gmail_id,
             reason=reason,

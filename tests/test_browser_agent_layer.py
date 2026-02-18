@@ -51,10 +51,15 @@ def _create_item(db):
     )
 
 
-def _create_session(client, ap_item_id):
+def _create_session(client, ap_item_id, metadata=None):
     response = client.post(
         "/api/agent/sessions",
-        json={"org_id": "default", "ap_item_id": ap_item_id, "actor_id": "test_agent"},
+        json={
+            "org_id": "default",
+            "ap_item_id": ap_item_id,
+            "actor_id": "test_agent",
+            "metadata": metadata or {},
+        },
     )
     assert response.status_code == 200
     return response.json()["session"]["id"]
@@ -267,6 +272,36 @@ def test_preview_endpoint_returns_policy_summary(client, db):
     assert payload["decision"]["requires_confirmation"] is True
     assert payload["decision"]["tool_risk"] == "high_risk"
     assert "summary" in payload
+
+
+def test_preview_includes_session_context_snapshot(client, db):
+    item = _create_item(db)
+    session_id = _create_session(
+        client,
+        item["id"],
+        metadata={
+            "context_snapshot": {
+                "source_count": 3,
+                "budget_status": "critical",
+                "has_context_conflict": True,
+            }
+        },
+    )
+    response = client.post(
+        f"/api/agent/sessions/{session_id}/commands/preview",
+        json={
+            "actor_id": "test_agent",
+            "tool_name": "click",
+            "command_id": "cmd-preview-context-1",
+            "target": {"url": "https://mail.google.com/mail/u/0/#inbox"},
+            "params": {"selector": "button[aria-label='Archive']"},
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()["preview"]
+    assert payload["context_snapshot"]["source_count"] == 3
+    assert "linked sources" in payload["summary"]
+    assert any("context conflict" in warning for warning in payload["warnings"])
 
 
 def test_workflow_override_applies_to_policy_evaluation(client, db):

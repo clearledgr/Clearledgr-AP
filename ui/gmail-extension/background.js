@@ -716,18 +716,67 @@ async function executeBrowserToolCommand(command = {}) {
   const tabId = await resolveTargetTab(command);
   if (!tabId) return { ok: false, error: 'target_tab_not_found' };
 
-  const result = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: 'ISOLATED',
-    func: runBrowserCommand,
-    args: [command]
-  });
+  const retryableTools = new Set(['find_element', 'query_selector_all', 'click', 'type', 'select', 'upload_file', 'drag_drop']);
+  const retryableErrors = new Set([
+    'not_found',
+    'invalid_selector',
+    'source_not_found',
+    'target_not_found',
+    'element_not_input',
+    'element_not_select',
+    'element_not_file_input',
+    'drag_drop_failed'
+  ]);
+  const requestedAttempts = Math.floor(Number(command?.params?.max_attempts ?? 1));
+  const maxAttempts = retryableTools.has(tool) ? Math.max(1, Math.min(5, Number.isFinite(requestedAttempts) ? requestedAttempts : 1)) : 1;
+  const requestedDelay = Math.floor(Number(command?.params?.retry_delay_ms ?? 250));
+  const retryDelayMs = Math.max(100, Math.min(2000, Number.isFinite(requestedDelay) ? requestedDelay : 250));
 
-  const payload = result?.[0]?.result || { ok: false, error: 'no_result' };
+  let lastPayload = { ok: false, error: 'no_result' };
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const result = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'ISOLATED',
+        func: runBrowserCommand,
+        args: [command]
+      });
+      lastPayload = result?.[0]?.result || { ok: false, error: 'no_result' };
+    } catch (error) {
+      lastPayload = { ok: false, error: 'execute_script_failed', detail: String(error?.message || error) };
+    }
+
+    if (lastPayload?.ok) {
+      return {
+        ...lastPayload,
+        tab_id: tabId,
+        tool_name: tool,
+        attempts: attempt
+      };
+    }
+
+    const shouldRetry = (
+      attempt < maxAttempts
+      && retryableTools.has(tool)
+      && retryableErrors.has(String(lastPayload?.error || ''))
+    );
+    if (!shouldRetry) {
+      return {
+        ...lastPayload,
+        tab_id: tabId,
+        tool_name: tool,
+        attempts: attempt
+      };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+  }
+
   return {
-    ...payload,
+    ...lastPayload,
     tab_id: tabId,
-    tool_name: tool
+    tool_name: tool,
+    attempts: maxAttempts
   };
 }
 

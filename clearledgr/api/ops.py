@@ -125,6 +125,21 @@ async def get_ap_kpi_digest(
     return payload
 
 
+@router.get("/ap-aggregation")
+async def get_ap_aggregation(
+    organization_id: str = Query("default"),
+    limit: int = Query(10000, ge=100, le=50000),
+    vendor_limit: int = Query(10, ge=1, le=50),
+) -> Dict[str, Any]:
+    db = get_db()
+    metrics = db.get_ap_aggregation_metrics(
+        organization_id=organization_id,
+        limit=limit,
+        vendor_limit=vendor_limit,
+    )
+    return {"metrics": metrics}
+
+
 @router.get("/browser-agent")
 async def get_browser_agent_metrics(
     organization_id: str = Query("default"),

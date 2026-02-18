@@ -586,12 +586,47 @@ async def bulk_scan_emails(
     return results
 
 
+def _pipeline_bucket_for_state(state: Any) -> str:
+    normalized = str(state or "").strip().lower()
+    if normalized in {"new", "received", "validated"}:
+        return "new"
+    if normalized in {"needs_info", "needs_approval", "pending_approval"}:
+        return "pending_approval"
+    if normalized in {"approved", "ready_to_post"}:
+        return "approved"
+    if normalized in {"posted", "posted_to_erp", "closed"}:
+        return "posted"
+    if normalized in {"rejected"}:
+        return "rejected"
+    return "pending_approval"
+
+
+def _build_extension_pipeline(db, organization_id: str, limit: int = 1000) -> Dict[str, List[Dict[str, Any]]]:
+    items = db.list_ap_items(organization_id, limit=limit, prioritized=True)
+    groups: Dict[str, List[Dict[str, Any]]] = {
+        "new": [],
+        "pending_approval": [],
+        "approved": [],
+        "posted": [],
+        "rejected": [],
+    }
+    for item in items:
+        normalized = build_worklist_item(db, item)
+        bucket = _pipeline_bucket_for_state(normalized.get("state"))
+        groups.setdefault(bucket, []).append(normalized)
+    return groups
+
+
 @router.get("/pipeline")
 def get_invoice_pipeline(organization_id: Optional[str] = None):
-    """Return invoice pipeline grouped by status for Gmail extension."""
+    """Return invoice pipeline grouped by status for Gmail extension.
+
+    This legacy endpoint is kept for compatibility and now mirrors the
+    normalized exception taxonomy used by `/extension/worklist`.
+    """
     org_id = organization_id or "default"
     db = get_db()
-    return db.get_invoice_pipeline(org_id)
+    return _build_extension_pipeline(db, org_id)
 
 
 @router.get("/worklist")
@@ -896,6 +931,15 @@ class RejectInvoiceRequest(BaseModel):
     user_email: Optional[str] = None
 
 
+class BudgetDecisionRequest(BaseModel):
+    """Budget decision from Gmail/embedded approval surfaces."""
+    email_id: str
+    decision: str  # approve_override | request_budget_adjustment | reject
+    justification: Optional[str] = None
+    organization_id: Optional[str] = None
+    user_email: Optional[str] = None
+
+
 @router.post("/submit-for-approval")
 async def submit_for_approval(
     request: SubmitForApprovalRequest,
@@ -1085,6 +1129,61 @@ async def reject_invoice(
     return result
 
 
+@router.post("/budget-decision")
+async def budget_decision(
+    request: BudgetDecisionRequest,
+    audit: AuditTrailService = Depends(get_audit_service),
+):
+    """Handle explicit budget decisions from Gmail sidebar surfaces."""
+    from clearledgr.services.invoice_workflow import get_invoice_workflow
+
+    org_id = request.organization_id or "default"
+    actor = request.user_email or "extension"
+    workflow = get_invoice_workflow(org_id)
+    decision = str(request.decision or "").strip().lower()
+
+    if decision == "approve_override":
+        if not str(request.justification or "").strip():
+            raise HTTPException(status_code=400, detail="justification_required")
+        result = await workflow.approve_invoice(
+            gmail_id=request.email_id,
+            approved_by=actor,
+            allow_budget_override=True,
+            override_justification=request.justification,
+        )
+        if result.get("status") not in {"approved", "error"}:
+            raise HTTPException(status_code=400, detail=result.get("reason", "budget_override_failed"))
+    elif decision == "request_budget_adjustment":
+        result = await workflow.request_budget_adjustment(
+            gmail_id=request.email_id,
+            requested_by=actor,
+            reason=request.justification or "budget_adjustment_requested_in_gmail",
+        )
+    elif decision == "reject":
+        reason = request.justification or "rejected_over_budget_in_gmail"
+        result = await workflow.reject_invoice(
+            gmail_id=request.email_id,
+            reason=reason,
+            rejected_by=actor,
+        )
+    else:
+        raise HTTPException(status_code=400, detail="invalid_budget_decision")
+
+    audit.record_event(
+        user_email=actor,
+        action="budget_decision",
+        entity_type="invoice",
+        entity_id=request.email_id,
+        organization_id=org_id,
+        metadata={
+            "decision": decision,
+            "justification": request.justification,
+            "result": result,
+        },
+    )
+    return result
+
+
 @router.get("/invoice-status/{gmail_id}")
 async def get_invoice_status(gmail_id: str):
     """
@@ -1104,7 +1203,7 @@ async def get_invoice_status(gmail_id: str):
 
 
 @router.get("/invoice-pipeline/{organization_id}")
-async def get_invoice_pipeline(organization_id: str):
+async def get_invoice_pipeline_status(organization_id: str):
     """
     Get all invoices grouped by status (pipeline view).
     
@@ -1113,7 +1212,7 @@ async def get_invoice_pipeline(organization_id: str):
     from clearledgr.core.database import get_db
     
     db = get_db()
-    pipeline = db.get_invoice_pipeline(organization_id)
+    pipeline = _build_extension_pipeline(db, organization_id)
     
     return {
         "organization_id": organization_id,

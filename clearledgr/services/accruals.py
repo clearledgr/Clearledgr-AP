@@ -325,6 +325,55 @@ class AccrualsService:
             description=f"{utility_type.title()} Accrual - Estimated",
             accrual_date=accrual_date,
         )
+
+    def create_payroll_accrual(
+        self,
+        payroll_period: str,
+        amount: float,
+        expense_account: str = "6200",
+        accrual_date: date = None,
+        department: str = "",
+        vendor_name: str = "Payroll",
+    ) -> AccrualEntry:
+        """
+        Create a payroll accrual.
+
+        Debit: Payroll expense
+        Credit: Accrued expenses
+        """
+        accrual_date = accrual_date or date.today()
+        description = f"Payroll Accrual - {payroll_period}"
+        entry = AccrualEntry(
+            accrual_type=AccrualType.PAYROLL,
+            reference_id=payroll_period,
+            reference_type="payroll",
+            vendor_name=vendor_name,
+            amount=amount,
+            accrual_date=accrual_date,
+            period_month=accrual_date.month,
+            period_year=accrual_date.year,
+            description=description,
+            auto_reverse=True,
+            reversal_date=self._get_first_of_next_month(accrual_date),
+            organization_id=self.organization_id,
+        )
+
+        entry.lines.append(AccrualLine(
+            account_code=expense_account,
+            debit=amount,
+            description=description,
+            department=department,
+        ))
+        entry.lines.append(AccrualLine(
+            account_code=self._accounts["accrued_expenses"],
+            credit=amount,
+            description=f"Accrued payroll - {payroll_period}",
+            department=department,
+        ))
+
+        self._accruals[entry.accrual_id] = entry
+        logger.info(f"Created payroll accrual: {entry.accrual_id} for ${amount:.2f}")
+        return entry
     
     def post_accrual(self, accrual_id: str, posted_by: str) -> AccrualEntry:
         """Post an accrual entry."""
@@ -554,6 +603,23 @@ class AccrualsService:
     def get_accrual(self, accrual_id: str) -> Optional[AccrualEntry]:
         """Get an accrual by ID."""
         return self._accruals.get(accrual_id)
+
+    def list_accruals(
+        self,
+        accrual_type: Optional[AccrualType] = None,
+        vendor_name: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[AccrualEntry]:
+        """List accrual entries with optional type/vendor filters."""
+        entries = list(self._accruals.values())
+        if accrual_type:
+            entries = [entry for entry in entries if entry.accrual_type == accrual_type]
+        if vendor_name:
+            vendor_lower = str(vendor_name).strip().lower()
+            entries = [entry for entry in entries if vendor_lower in str(entry.vendor_name).lower()]
+        entries.sort(key=lambda entry: entry.created_at, reverse=True)
+        safe_limit = max(1, min(int(limit or 200), 5000))
+        return entries[:safe_limit]
     
     def get_pending_reversals(self) -> List[AccrualEntry]:
         """Get accruals pending reversal."""

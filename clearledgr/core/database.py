@@ -315,6 +315,19 @@ class ClearledgrDB:
                 )
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ap_policy_audit_events (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT NOT NULL,
+                    policy_name TEXT NOT NULL,
+                    version INTEGER,
+                    action TEXT NOT NULL,
+                    actor_id TEXT,
+                    payload_json TEXT,
+                    created_at TEXT
+                )
+            """)
+
             cur.execute("CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_tokens(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_oauth_provider ON oauth_tokens(provider)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_autopilot_email ON gmail_autopilot_state(email)")
@@ -337,6 +350,7 @@ class ClearledgrDB:
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_browser_actions_session_command ON browser_action_events(session_id, command_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_policies_org ON agent_policies(organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_policy_versions_org_name ON ap_policy_versions(organization_id, policy_name, version)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_policy_audit_org_name ON ap_policy_audit_events(organization_id, policy_name, created_at)")
 
             # Evolve existing DBs without external migration dependency.
             self._ensure_column(cur, "ap_items", "workflow_id", "TEXT")
@@ -1538,6 +1552,135 @@ class ClearledgrDB:
             },
         }
 
+    def get_ap_aggregation_metrics(
+        self,
+        organization_id: str,
+        limit: int = 10000,
+        vendor_limit: int = 10,
+    ) -> Dict[str, Any]:
+        """Return multi-system AP aggregation metrics for embedded surfaces."""
+        self.initialize()
+        safe_limit = max(100, min(int(limit or 10000), 50000))
+        safe_vendor_limit = max(1, min(int(vendor_limit or 10), 50))
+        now = datetime.now(timezone.utc)
+
+        items = self.list_ap_items(organization_id, limit=safe_limit)
+        source_sql = self._prepare_sql(
+            """
+            SELECT s.ap_item_id, s.source_type, COUNT(*) AS link_count
+            FROM ap_item_sources s
+            JOIN ap_items i ON i.id = s.ap_item_id
+            WHERE i.organization_id = ?
+            GROUP BY s.ap_item_id, s.source_type
+            """
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(source_sql, (organization_id,))
+            source_rows = cur.fetchall()
+
+        open_states = {"received", "validated", "needs_info", "needs_approval", "pending_approval", "approved", "ready_to_post"}
+        spend_by_vendor: Dict[str, Dict[str, Any]] = {}
+        invoice_numbers: Dict[str, List[str]] = {}
+        amount_unavailable = 0
+        total_amount = 0.0
+        open_items = 0
+
+        for item in items:
+            state = str(item.get("state") or "").strip().lower()
+            if state in open_states:
+                open_items += 1
+
+            amount = self._safe_float(item.get("amount"), 0.0)
+            if amount <= 0:
+                amount_unavailable += 1
+            else:
+                total_amount += amount
+
+            vendor = str(item.get("vendor_name") or "Unknown").strip() or "Unknown"
+            bucket = spend_by_vendor.setdefault(
+                vendor,
+                {"vendor_name": vendor, "invoice_count": 0, "open_count": 0, "total_amount": 0.0},
+            )
+            bucket["invoice_count"] += 1
+            if state in open_states:
+                bucket["open_count"] += 1
+            bucket["total_amount"] += amount
+
+            invoice_number = str(item.get("invoice_number") or "").strip().lower()
+            if invoice_number:
+                invoice_numbers.setdefault(invoice_number, []).append(str(item.get("id") or ""))
+
+        vendor_rows = sorted(
+            spend_by_vendor.values(),
+            key=lambda row: (float(row.get("total_amount") or 0.0), int(row.get("invoice_count") or 0)),
+            reverse=True,
+        )[:safe_vendor_limit]
+        for row in vendor_rows:
+            row["total_amount"] = round(float(row.get("total_amount") or 0.0), 2)
+
+        duplicate_clusters = [
+            {"invoice_number": key, "item_ids": ids, "count": len(ids)}
+            for key, ids in invoice_numbers.items()
+            if len(ids) > 1
+        ]
+        duplicate_clusters.sort(key=lambda row: int(row.get("count") or 0), reverse=True)
+        duplicate_count = sum(max(0, int(cluster.get("count", 0)) - 1) for cluster in duplicate_clusters)
+
+        source_type_counts: Dict[str, int] = {}
+        source_items_by_type: Dict[str, set] = {}
+        source_count_by_item: Dict[str, int] = {}
+        total_source_links = 0
+        for raw_row in source_rows:
+            row = dict(raw_row)
+            ap_item_id = str(row.get("ap_item_id") or "")
+            source_type = str(row.get("source_type") or "unknown")
+            link_count = int(row.get("link_count") or 0)
+            if not ap_item_id or link_count <= 0:
+                continue
+            total_source_links += link_count
+            source_type_counts[source_type] = source_type_counts.get(source_type, 0) + link_count
+            source_items_by_type.setdefault(source_type, set()).add(ap_item_id)
+            source_count_by_item[ap_item_id] = source_count_by_item.get(ap_item_id, 0) + link_count
+
+        items_with_sources = len(source_count_by_item)
+        avg_source_links = round(total_source_links / len(items), 2) if items else 0.0
+        avg_source_links_nonzero = round(total_source_links / items_with_sources, 2) if items_with_sources else 0.0
+
+        connected_systems = [
+            source_type
+            for source_type, count in sorted(source_type_counts.items(), key=lambda pair: pair[0])
+            if count > 0
+        ]
+
+        return {
+            "organization_id": organization_id,
+            "generated_at": now.isoformat(),
+            "totals": {
+                "items": len(items),
+                "open_items": int(open_items),
+                "total_amount": round(total_amount, 2),
+                "amount_unavailable_count": int(amount_unavailable),
+            },
+            "sources": {
+                "total_links": int(total_source_links),
+                "items_with_sources": int(items_with_sources),
+                "avg_links_per_item": avg_source_links,
+                "avg_links_per_linked_item": avg_source_links_nonzero,
+                "link_count_by_type": source_type_counts,
+                "linked_items_by_type": {
+                    source_type: len(item_ids) for source_type, item_ids in source_items_by_type.items()
+                },
+                "connected_systems": connected_systems,
+            },
+            "duplicates": {
+                "duplicate_invoice_count": int(duplicate_count),
+                "cluster_count": len(duplicate_clusters),
+                "top_clusters": duplicate_clusters[:10],
+            },
+            "spend_by_vendor": vendor_rows,
+        }
+
     def get_browser_agent_metrics(
         self,
         organization_id: str,
@@ -2335,7 +2478,89 @@ class ClearledgrDB:
             )
             conn.commit()
 
-        return self.get_ap_policy(organization_id, policy_name) or {}
+        updated_policy = self.get_ap_policy(organization_id, policy_name) or {}
+        self.append_ap_policy_audit_event(
+            organization_id=organization_id,
+            policy_name=policy_name,
+            version=int(updated_policy.get("version") or version),
+            action="upsert",
+            actor_id=updated_by,
+            payload={
+                "enabled": bool(enabled),
+                "config": config or {},
+                "previous_version": current.get("version"),
+            },
+        )
+        return updated_policy
+
+    def append_ap_policy_audit_event(
+        self,
+        organization_id: str,
+        policy_name: str,
+        version: Optional[int],
+        action: str,
+        actor_id: str = "system",
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self.initialize()
+        import uuid
+
+        event_id = f"APPOL-AUD-{uuid.uuid4().hex}"
+        now = datetime.now(timezone.utc).isoformat()
+        sql = self._prepare_sql(
+            """
+            INSERT INTO ap_policy_audit_events
+            (id, organization_id, policy_name, version, action, actor_id, payload_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                sql,
+                (
+                    event_id,
+                    organization_id,
+                    policy_name,
+                    int(version) if version is not None else None,
+                    action,
+                    actor_id,
+                    json.dumps(payload or {}),
+                    now,
+                ),
+            )
+            conn.commit()
+            row_sql = self._prepare_sql("SELECT * FROM ap_policy_audit_events WHERE id = ? LIMIT 1")
+            cur.execute(row_sql, (event_id,))
+            row = cur.fetchone()
+        return self._deserialize_ap_policy_audit_event(dict(row)) if row else None
+
+    def list_ap_policy_audit_events(
+        self,
+        organization_id: str,
+        policy_name: str = "ap_business_v1",
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        self.initialize()
+        safe_limit = max(1, min(int(limit or 100), 1000))
+        sql = self._prepare_sql(
+            "SELECT * FROM ap_policy_audit_events WHERE organization_id = ? AND policy_name = ? "
+            "ORDER BY created_at DESC LIMIT ?"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (organization_id, policy_name, safe_limit))
+            rows = cur.fetchall()
+        return [self._deserialize_ap_policy_audit_event(dict(row)) for row in rows]
+
+    def _deserialize_ap_policy_audit_event(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        raw = row.get("payload_json")
+        if isinstance(raw, str):
+            try:
+                row["payload_json"] = json.loads(raw)
+            except json.JSONDecodeError:
+                row["payload_json"] = {}
+        return row
 
     def _deserialize_browser_action_event(self, row: Dict[str, Any]) -> Dict[str, Any]:
         for field in ("request_payload", "result_payload"):

@@ -358,6 +358,7 @@ class BrowserAgentService:
         actor_role: Optional[str],
         workflow_id: Optional[str],
         session_id: str,
+        session_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         tool_name = str(command.get("tool_name") or "").strip().lower()
         selector = str((command.get("params") or {}).get("selector") or (command.get("target") or {}).get("selector") or "").strip()
@@ -370,6 +371,15 @@ class BrowserAgentService:
             summary_parts.append(f"selector `{selector}`")
         if value:
             summary_parts.append(f"value length {len(value)}")
+        memory_context = session_metadata or {}
+        context_snapshot = memory_context.get("context_snapshot")
+        if isinstance(context_snapshot, dict):
+            source_count = context_snapshot.get("source_count")
+            budget_status = _normalize_text(context_snapshot.get("budget_status"))
+            if source_count not in (None, ""):
+                summary_parts.append(f"{source_count} linked sources")
+            if budget_status:
+                summary_parts.append(f"budget `{budget_status}`")
         summary = " · ".join(summary_parts)
 
         warnings: List[str] = []
@@ -379,6 +389,8 @@ class BrowserAgentService:
             warnings.append("explicit human confirmation required")
         if decision.tool_risk == "high_risk":
             warnings.append("high-risk mutating action")
+        if isinstance(context_snapshot, dict) and bool(context_snapshot.get("has_context_conflict")):
+            warnings.append("context conflict is present on this invoice")
 
         return {
             "session_id": session_id,
@@ -405,6 +417,7 @@ class BrowserAgentService:
             "summary": summary,
             "warnings": warnings,
             "target_url": url or None,
+            "context_snapshot": context_snapshot if isinstance(context_snapshot, dict) else {},
         }
 
     def preview_command(
@@ -434,12 +447,14 @@ class BrowserAgentService:
             actor_role=resolved_role,
             workflow_id=resolved_workflow,
         )
+        session_metadata = _parse_metadata(session.get("metadata"))
         return self._build_preview_payload(
             command=command,
             decision=decision,
             actor_role=resolved_role,
             workflow_id=resolved_workflow,
             session_id=session_id,
+            session_metadata=session_metadata,
         )
 
     def create_session(

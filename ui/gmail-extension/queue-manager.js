@@ -661,6 +661,7 @@ class ClearledgrQueueManager {
     normalized.exception_code = normalized.exception_code || null;
     normalized.exception_severity = normalized.exception_severity || null;
     normalized.budget_status = normalized.budget_status || null;
+    normalized.budget_requires_decision = Boolean(normalized.budget_requires_decision);
     normalized.risk_signals = normalized.risk_signals || {};
     normalized.source_ranking = normalized.source_ranking || {};
     normalized.navigator = normalized.navigator || {};
@@ -996,6 +997,15 @@ class ClearledgrQueueManager {
     if (existing?.session?.id) return existing.session.id;
 
     const metadata = this.parseMetadata(item.metadata);
+    const contextSnapshot = {
+      invoice_number: item.invoice_number || metadata.invoice_number || null,
+      vendor_name: item.vendor_name || metadata.vendor_name || null,
+      amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : null,
+      currency: item.currency || metadata.currency || null,
+      source_count: Number.isFinite(Number(item.source_count)) ? Number(item.source_count) : 0,
+      budget_status: item.budget_status || metadata.budget_status || null,
+      has_context_conflict: Boolean(item.has_context_conflict || metadata.has_context_conflict)
+    };
     if (metadata?.agent_session_id) return metadata.agent_session_id;
 
     const scope = this.buildAgentScope(item);
@@ -1010,7 +1020,8 @@ class ClearledgrQueueManager {
           metadata: {
             source: 'gmail_sidebar',
             actor_role: scope.actorRole,
-            workflow_id: scope.workflowId
+            workflow_id: scope.workflowId,
+            context_snapshot: contextSnapshot
           }
         })
       });
@@ -1359,6 +1370,45 @@ class ClearledgrQueueManager {
     if (result.ap_item) this.upsertQueueItem(result.ap_item);
     this.emitQueueUpdated();
     return result;
+  }
+
+  async submitBudgetDecision(item, decision, justification = '') {
+    if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const payload = {
+      email_id: item.thread_id || item.message_id || item.id,
+      decision,
+      justification,
+      organization_id: this.runtimeConfig.organizationId,
+      user_email: this.runtimeConfig.userEmail
+    };
+
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/budget-decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const errPayload = await response.json();
+          detail = errPayload?.detail || '';
+        } catch (_) {
+          detail = '';
+        }
+        return { status: 'error', reason: detail || `http_${response.status}` };
+      }
+
+      const result = await response.json();
+      await this.syncQueueWithBackend({ updateStatus: false });
+      if (item.id) {
+        await this.fetchItemContext(item.id, { refresh: true });
+      }
+      this.emitQueueUpdated();
+      return result;
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
   }
 
   findMergeCandidates(item) {

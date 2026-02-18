@@ -17,13 +17,15 @@ Changelog:
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
 from clearledgr.core.database import get_db
 
 logger = logging.getLogger(__name__)
+
+AP_POLICY_NAME = "ap_business_v1"
 
 
 class PolicyAction(Enum):
@@ -110,6 +112,18 @@ class Policy:
     required_approvers: List[str] = field(default_factory=list)
     enabled: bool = True
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "policy_id": self.policy_id,
+            "name": self.name,
+            "description": self.description,
+            "condition": self.condition,
+            "action": self.action.value,
+            "severity": self.severity.value,
+            "required_approvers": self.required_approvers,
+            "enabled": self.enabled,
+        }
+
     @staticmethod
     def _to_number(value: Any) -> Optional[float]:
         """Coerce policy values into float safely (supports common currency strings)."""
@@ -150,6 +164,8 @@ class Policy:
         
         if condition_type == "amount_threshold":
             return self._check_amount_threshold(invoice)
+        elif condition_type == "vendor_threshold":
+            return self._check_vendor_threshold(invoice)
         elif condition_type == "category_approval":
             return self._check_category_approval(invoice)
         elif condition_type == "vendor_restriction":
@@ -158,7 +174,9 @@ class Policy:
             return self._check_po_required(invoice)
         elif condition_type == "new_vendor":
             return self._check_new_vendor(invoice)
-        
+        elif condition_type == "budget_status":
+            return self._check_budget_status(invoice)
+
         return None
     
     def _check_amount_threshold(self, invoice: Dict[str, Any]) -> Optional[PolicyViolation]:
@@ -222,7 +240,7 @@ class Policy:
     
     def _check_vendor_restriction(self, invoice: Dict[str, Any]) -> Optional[PolicyViolation]:
         """Check vendor restrictions."""
-        vendor = invoice.get("vendor", "").lower()
+        vendor = str(invoice.get("vendor") or invoice.get("vendor_name") or "").lower()
         restricted = [v.lower() for v in self.condition.get("vendors", [])]
         
         for restricted_vendor in restricted:
@@ -268,16 +286,108 @@ class Policy:
         is_first_invoice = invoice.get("is_first_invoice", False)
         
         if not is_known or is_first_invoice:
+            vendor_name = invoice.get("vendor") or invoice.get("vendor_name")
             return PolicyViolation(
                 policy_id=self.policy_id,
                 policy_name=self.name,
                 severity=self.severity,
                 action=self.action,
-                message=f"New vendor '{invoice.get('vendor')}' requires approval",
-                details={"vendor": invoice.get("vendor"), "is_new": True},
+                message=f"New vendor '{vendor_name}' requires approval",
+                details={"vendor": vendor_name, "is_new": True},
                 required_approvers=self.required_approvers,
             )
-        
+
+        return None
+
+    def _check_vendor_threshold(self, invoice: Dict[str, Any]) -> Optional[PolicyViolation]:
+        """Check amount threshold for specific vendors."""
+        vendor_name = str(invoice.get("vendor") or invoice.get("vendor_name") or "").strip()
+        if not vendor_name:
+            return None
+
+        vendor_l = vendor_name.lower()
+        contains = str(self.condition.get("vendor_contains") or "").strip().lower()
+        regex = str(self.condition.get("vendor_regex") or "").strip()
+        if contains and contains not in vendor_l:
+            return None
+        if regex:
+            try:
+                if not re.search(regex, vendor_name, flags=re.IGNORECASE):
+                    return None
+            except re.error:
+                return None
+
+        amount = self._to_number(invoice.get("amount"))
+        threshold = self._to_number(self.condition.get("threshold"))
+        operator = self.condition.get("operator", "gte")
+        if amount is None or threshold is None:
+            return None
+
+        triggered = False
+        if operator == "gt" and amount > threshold:
+            triggered = True
+        elif operator == "gte" and amount >= threshold:
+            triggered = True
+        elif operator == "lt" and amount < threshold:
+            triggered = True
+        elif operator == "lte" and amount <= threshold:
+            triggered = True
+
+        if not triggered:
+            return None
+
+        return PolicyViolation(
+            policy_id=self.policy_id,
+            policy_name=self.name,
+            severity=self.severity,
+            action=self.action,
+            message=f"Vendor '{vendor_name}' amount ${amount:,.2f} triggered threshold ${threshold:,.2f}",
+            details={
+                "vendor": vendor_name,
+                "amount": amount,
+                "threshold": threshold,
+                "operator": operator,
+            },
+            required_approvers=self.required_approvers,
+        )
+
+    def _check_budget_status(self, invoice: Dict[str, Any]) -> Optional[PolicyViolation]:
+        """Check policy against computed budget status."""
+        budget_entries = invoice.get("budget_impact")
+        if not isinstance(budget_entries, list):
+            return None
+
+        statuses = {
+            str(status).strip().lower()
+            for status in self.condition.get("statuses", ["critical", "exceeded"])
+            if str(status).strip()
+        }
+        if not statuses:
+            statuses = {"critical", "exceeded"}
+
+        target_budget_name = str(self.condition.get("budget_name") or "").strip().lower()
+        for entry in budget_entries:
+            if not isinstance(entry, dict):
+                continue
+            status = str(entry.get("after_approval_status") or "").strip().lower()
+            if status not in statuses:
+                continue
+            if target_budget_name:
+                budget_name = str(entry.get("budget_name") or "").strip().lower()
+                if budget_name != target_budget_name:
+                    continue
+            return PolicyViolation(
+                policy_id=self.policy_id,
+                policy_name=self.name,
+                severity=self.severity,
+                action=self.action,
+                message=str(
+                    entry.get("warning_message")
+                    or f"Budget '{entry.get('budget_name', 'unnamed')}' would be {status}"
+                ),
+                details=entry,
+                required_approvers=self.required_approvers,
+            )
         return None
 
 
@@ -362,37 +472,287 @@ class PolicyComplianceService:
             pass
     """
     
-    def __init__(self, organization_id: str = "default"):
+    def __init__(self, organization_id: str = "default", policy_name: str = AP_POLICY_NAME):
         self.organization_id = organization_id
+        self.policy_name = policy_name
         self.db = get_db()
         self.policies = self._load_policies()
-    
+
     def _load_policies(self) -> List[Policy]:
         """Load policies for the organization."""
-        # Try to load custom policies from database
+        default_policies = [self._dict_to_policy(item.to_dict()) for item in DEFAULT_POLICIES]
+
+        # Try to load organization AP policy document first.
+        policy_doc: Dict[str, Any] = {}
         try:
-            if hasattr(self.db, 'get_policies'):
-                custom_policies = self.db.get_policies(self.organization_id)
-                if custom_policies:
-                    return [self._dict_to_policy(p) for p in custom_policies]
-        except:
-            pass
-        
-        # Return default policies
-        return DEFAULT_POLICIES.copy()
+            if hasattr(self.db, "get_ap_policy"):
+                current = self.db.get_ap_policy(self.organization_id, policy_name=self.policy_name) or {}
+                policy_doc = current.get("config_json") if isinstance(current.get("config_json"), dict) else {}
+                if current and not current.get("enabled", True):
+                    return []
+        except Exception as exc:
+            logger.warning("Failed to load AP policy document for %s: %s", self.organization_id, exc)
+
+        custom_policies, errors = self._policies_from_config(policy_doc)
+        if errors:
+            logger.warning("AP policy parse warnings for %s: %s", self.organization_id, "; ".join(errors))
+
+        if not custom_policies:
+            return default_policies
+
+        inherit_defaults = bool(policy_doc.get("inherit_defaults", True))
+        if not inherit_defaults:
+            return custom_policies
+
+        merged: Dict[str, Policy] = {policy.policy_id: policy for policy in default_policies}
+        for policy in custom_policies:
+            merged[policy.policy_id] = policy
+        return list(merged.values())
     
     def _dict_to_policy(self, data: Dict[str, Any]) -> Policy:
         """Convert dictionary to Policy object."""
+        action_value = str(data.get("action", "require_approval")).strip()
+        severity_value = str(data.get("severity", "info")).strip()
+        try:
+            action = PolicyAction(action_value)
+        except ValueError:
+            action = PolicyAction.REQUIRE_APPROVAL
+        try:
+            severity = PolicySeverity(severity_value)
+        except ValueError:
+            severity = PolicySeverity.INFO
         return Policy(
             policy_id=data.get("policy_id", ""),
             name=data.get("name", ""),
             description=data.get("description", ""),
             condition=data.get("condition", {}),
-            action=PolicyAction(data.get("action", "require_approval")),
-            severity=PolicySeverity(data.get("severity", "info")),
+            action=action,
+            severity=severity,
             required_approvers=data.get("required_approvers", []),
             enabled=data.get("enabled", True),
         )
+
+    def _policies_from_config(self, config: Dict[str, Any]) -> Tuple[List[Policy], List[str]]:
+        """Build policy objects from a declarative AP policy document."""
+        if not isinstance(config, dict):
+            return [], ["config must be an object"]
+
+        policies: List[Policy] = []
+        errors: List[str] = []
+
+        # 1) Explicit policy rules.
+        explicit_rules = config.get("policies")
+        if not isinstance(explicit_rules, list):
+            explicit_rules = config.get("rules")
+        if isinstance(explicit_rules, list):
+            for idx, rule in enumerate(explicit_rules):
+                if not isinstance(rule, dict):
+                    errors.append(f"rules[{idx}] is not an object")
+                    continue
+                policy = self._dict_to_policy(rule)
+                if not policy.policy_id:
+                    policy.policy_id = f"rule_{idx + 1}"
+                if not policy.name:
+                    policy.name = policy.policy_id
+                if not isinstance(policy.condition, dict):
+                    errors.append(f"{policy.policy_id}: condition must be an object")
+                    continue
+                policies.append(policy)
+
+        # 2) Threshold shortcuts.
+        for idx, threshold in enumerate(config.get("approval_thresholds", []) or []):
+            if not isinstance(threshold, dict):
+                errors.append(f"approval_thresholds[{idx}] is not an object")
+                continue
+            amount = Policy._to_number(threshold.get("threshold") or threshold.get("min_amount"))
+            if amount is None:
+                errors.append(f"approval_thresholds[{idx}] missing numeric threshold")
+                continue
+            approvers = threshold.get("approvers") or threshold.get("required_approvers") or []
+            if not isinstance(approvers, list):
+                approvers = [str(approvers)] if approvers else []
+            policy = Policy(
+                policy_id=str(threshold.get("policy_id") or f"approval_threshold_{idx + 1}"),
+                name=str(threshold.get("name") or f"Approval threshold {idx + 1}"),
+                description=str(threshold.get("description") or "Amount-based approval threshold"),
+                condition={
+                    "type": "amount_threshold",
+                    "threshold": amount,
+                    "operator": str(threshold.get("operator") or "gte"),
+                },
+                action=(
+                    PolicyAction.REQUIRE_MULTI_APPROVAL
+                    if len(approvers) > 1
+                    else PolicyAction.REQUIRE_APPROVAL
+                ),
+                severity=(
+                    PolicySeverity(str(threshold.get("severity") or "warning"))
+                    if str(threshold.get("severity") or "warning") in {item.value for item in PolicySeverity}
+                    else PolicySeverity.WARNING
+                ),
+                required_approvers=[str(item) for item in approvers if str(item).strip()],
+                enabled=bool(threshold.get("enabled", True)),
+            )
+            policies.append(policy)
+
+        # 3) Vendor-specific shortcuts.
+        for idx, rule in enumerate(config.get("vendor_rules", []) or []):
+            if not isinstance(rule, dict):
+                errors.append(f"vendor_rules[{idx}] is not an object")
+                continue
+            vendor_contains = str(rule.get("vendor_contains") or rule.get("vendor") or "").strip()
+            vendor_regex = str(rule.get("vendor_regex") or "").strip()
+            if not vendor_contains and not vendor_regex:
+                errors.append(f"vendor_rules[{idx}] missing vendor matcher")
+                continue
+            threshold = Policy._to_number(rule.get("threshold") or rule.get("min_amount"))
+            blocked = bool(rule.get("blocked", False))
+            approvers = rule.get("approvers") or rule.get("required_approvers") or []
+            if not isinstance(approvers, list):
+                approvers = [str(approvers)] if approvers else []
+            if blocked:
+                condition = {"type": "vendor_restriction", "vendors": [vendor_contains or vendor_regex]}
+                action = PolicyAction.BLOCK
+            else:
+                if threshold is None:
+                    errors.append(f"vendor_rules[{idx}] missing numeric threshold for non-block rule")
+                    continue
+                condition = {
+                    "type": "vendor_threshold",
+                    "vendor_contains": vendor_contains,
+                    "vendor_regex": vendor_regex,
+                    "threshold": threshold,
+                    "operator": str(rule.get("operator") or "gte"),
+                }
+                action = (
+                    PolicyAction.REQUIRE_MULTI_APPROVAL
+                    if len(approvers) > 1
+                    else PolicyAction.REQUIRE_APPROVAL
+                )
+            try:
+                severity = PolicySeverity(str(rule.get("severity") or ("block" if blocked else "warning")))
+            except ValueError:
+                severity = PolicySeverity.WARNING
+            policies.append(
+                Policy(
+                    policy_id=str(rule.get("policy_id") or f"vendor_rule_{idx + 1}"),
+                    name=str(rule.get("name") or f"Vendor rule {idx + 1}"),
+                    description=str(rule.get("description") or "Vendor-specific policy"),
+                    condition=condition,
+                    action=action,
+                    severity=severity,
+                    required_approvers=[str(item) for item in approvers if str(item).strip()],
+                    enabled=bool(rule.get("enabled", True)),
+                )
+            )
+
+        # 4) Budget rule shortcuts.
+        for idx, rule in enumerate(config.get("budget_rules", []) or []):
+            if not isinstance(rule, dict):
+                errors.append(f"budget_rules[{idx}] is not an object")
+                continue
+            statuses = rule.get("statuses")
+            if not isinstance(statuses, list):
+                status = rule.get("status")
+                statuses = [status] if status else ["critical", "exceeded"]
+            try:
+                action = PolicyAction(str(rule.get("action") or "flag_for_review"))
+            except ValueError:
+                action = PolicyAction.FLAG_FOR_REVIEW
+            try:
+                severity = PolicySeverity(str(rule.get("severity") or "warning"))
+            except ValueError:
+                severity = PolicySeverity.WARNING
+            approvers = rule.get("approvers") or rule.get("required_approvers") or []
+            if not isinstance(approvers, list):
+                approvers = [str(approvers)] if approvers else []
+            policies.append(
+                Policy(
+                    policy_id=str(rule.get("policy_id") or f"budget_rule_{idx + 1}"),
+                    name=str(rule.get("name") or f"Budget rule {idx + 1}"),
+                    description=str(rule.get("description") or "Budget impact policy"),
+                    condition={
+                        "type": "budget_status",
+                        "statuses": [str(status).lower() for status in statuses if str(status).strip()],
+                        "budget_name": str(rule.get("budget_name") or "").strip(),
+                    },
+                    action=action,
+                    severity=severity,
+                    required_approvers=[str(item) for item in approvers if str(item).strip()],
+                    enabled=bool(rule.get("enabled", True)),
+                )
+            )
+
+        # 5) Escalation path shortcuts.
+        for idx, path in enumerate(config.get("escalation_paths", []) or []):
+            if not isinstance(path, dict):
+                errors.append(f"escalation_paths[{idx}] is not an object")
+                continue
+            min_amount = Policy._to_number(path.get("min_amount") or path.get("threshold"))
+            if min_amount is None:
+                errors.append(f"escalation_paths[{idx}] missing numeric min_amount")
+                continue
+            approvers = path.get("approvers") or path.get("required_approvers") or []
+            if not isinstance(approvers, list):
+                approvers = [str(approvers)] if approvers else []
+            action = (
+                PolicyAction.REQUIRE_MULTI_APPROVAL
+                if len(approvers) > 1
+                else PolicyAction.REQUIRE_APPROVAL
+            )
+            policies.append(
+                Policy(
+                    policy_id=str(path.get("policy_id") or f"escalation_{idx + 1}"),
+                    name=str(path.get("name") or f"Escalation {idx + 1}"),
+                    description=str(path.get("description") or "Escalation path"),
+                    condition={
+                        "type": "amount_threshold",
+                        "threshold": min_amount,
+                        "operator": str(path.get("operator") or "gte"),
+                    },
+                    action=action,
+                    severity=PolicySeverity.WARNING,
+                    required_approvers=[str(item) for item in approvers if str(item).strip()],
+                    enabled=bool(path.get("enabled", True)),
+                )
+            )
+
+        return policies, errors
+
+    def describe_effective_policies(self) -> List[Dict[str, Any]]:
+        """Serialize current effective policy set."""
+        return [policy.to_dict() for policy in self.policies]
+
+    def validate_policy_config(self, config: Dict[str, Any]) -> List[str]:
+        """Validate policy document and return parse errors."""
+        _, errors = self._policies_from_config(config or {})
+        return errors
+
+    def get_policy_document(self) -> Dict[str, Any]:
+        """
+        Return persisted AP policy document with effective fallback defaults.
+        """
+        current = self.db.get_ap_policy(self.organization_id, policy_name=self.policy_name) if hasattr(self.db, "get_ap_policy") else None
+        if current:
+            return {
+                "policy_name": self.policy_name,
+                "version": int(current.get("version") or 0),
+                "enabled": bool(current.get("enabled", True)),
+                "config": current.get("config_json") if isinstance(current.get("config_json"), dict) else {},
+                "updated_by": current.get("updated_by"),
+                "created_at": current.get("created_at"),
+            }
+        return {
+            "policy_name": self.policy_name,
+            "version": 0,
+            "enabled": True,
+            "config": {
+                "inherit_defaults": True,
+                "policies": [policy.to_dict() for policy in DEFAULT_POLICIES],
+            },
+            "updated_by": "system",
+            "created_at": None,
+        }
     
     def check(self, invoice: Dict[str, Any]) -> PolicyCheckResult:
         """
@@ -528,6 +888,9 @@ class PolicyComplianceService:
 
 
 # Convenience function
-def get_policy_compliance(organization_id: str = "default") -> PolicyComplianceService:
+def get_policy_compliance(
+    organization_id: str = "default",
+    policy_name: str = AP_POLICY_NAME,
+) -> PolicyComplianceService:
     """Get a policy compliance service instance."""
-    return PolicyComplianceService(organization_id=organization_id)
+    return PolicyComplianceService(organization_id=organization_id, policy_name=policy_name)

@@ -126,6 +126,35 @@ function formatAgeSeconds(value) {
   return `${Math.round(seconds / 86400)}d`;
 }
 
+function normalizeBudgetContext(contextPayload, item = null) {
+  const approvalsBudget = contextPayload?.approvals?.budget || {};
+  const rootBudget = contextPayload?.budget || {};
+  const candidate = approvalsBudget?.checks || approvalsBudget?.status ? approvalsBudget : rootBudget;
+  const checks = Array.isArray(candidate?.checks) ? candidate.checks : [];
+  const status = String(candidate?.status || item?.budget_status || '').trim().toLowerCase();
+  const requiresDecision = Boolean(
+    candidate?.requires_decision
+    || item?.budget_requires_decision
+    || status === 'critical'
+    || status === 'exceeded'
+  );
+  return {
+    status,
+    requiresDecision,
+    checks,
+    warningCount: Number(candidate?.warning_count || 0),
+    criticalCount: Number(candidate?.critical_count || 0),
+    exceededCount: Number(candidate?.exceeded_count || 0)
+  };
+}
+
+function budgetStatusTone(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'exceeded') return 'cl-context-warning';
+  if (normalized === 'critical') return 'cl-context-warning';
+  return '';
+}
+
 function formatPercentMetric(metric) {
   const value = Number(metric?.value);
   if (!Number.isFinite(value)) return 'N/A';
@@ -565,6 +594,8 @@ function renderContextTabBody(item, contextPayload, loading, error, agentInsight
     const paymentPortals = Array.isArray(web.payment_portals) ? web.payment_portals : [];
     const procurement = Array.isArray(web.procurement) ? web.procurement : [];
     const dms = Array.isArray(web.dms_documents) ? web.dms_documents : [];
+    const bankMatches = Array.isArray(web.bank_transactions) ? web.bank_transactions : [];
+    const spreadsheets = Array.isArray(web.spreadsheets) ? web.spreadsheets : [];
     const coverage = web.connector_coverage || {};
     const events = Array.isArray(web.recent_browser_events) ? web.recent_browser_events : [];
     const relatedTabs = Array.isArray(agentInsight?.relatedTabs) ? agentInsight.relatedTabs : [];
@@ -586,6 +617,18 @@ function renderContextTabBody(item, contextPayload, loading, error, agentInsight
         ${entry.detected_at ? `<div>${escapeHtml(formatDateTime(entry.detected_at))}</div>` : ''}
       </div>
     `).join('');
+    const bankRows = bankMatches.slice(0, 3).map((match) => `
+      <div class="cl-context-row">
+        <div><strong>${escapeHtml(trimText(match.description || match.reference || match.transaction_id || 'Bank match', 70))}</strong></div>
+        <div>${escapeHtml(String(match.currency || item.currency || 'USD'))} ${escapeHtml(String(match.amount ?? '0'))}</div>
+      </div>
+    `).join('');
+    const spreadsheetRows = spreadsheets.slice(0, 2).map((sheet) => `
+      <div class="cl-context-row">
+        <div><strong>${escapeHtml(trimText(sheet.spreadsheet_id || sheet.reference || 'Spreadsheet', 70))}</strong></div>
+        <div>${escapeHtml(trimText(sheet.reference || '', 80))}</div>
+      </div>
+    `).join('');
     const eventRows = events.slice(0, 3).map((event) => `
       <div class="cl-context-row">
         <div><strong>${escapeHtml(getAgentToolLabel(event.tool_name || 'browser_action'))}</strong></div>
@@ -601,11 +644,13 @@ function renderContextTabBody(item, contextPayload, loading, error, agentInsight
     return `
       <div class="cl-context-meta">Browser events: ${escapeHtml(String(web.browser_event_count || 0))} · Related tabs: ${escapeHtml(String(agentInsight?.relatedCount || 0))}</div>
       <div class="cl-context-row">
-        <div><strong>Coverage:</strong> portals ${coverage.payment_portal ? 'yes' : 'no'} · procurement ${coverage.procurement ? 'yes' : 'no'} · dms ${coverage.dms ? 'yes' : 'no'}</div>
+        <div><strong>Coverage:</strong> portals ${coverage.payment_portal ? 'yes' : 'no'} · procurement ${coverage.procurement ? 'yes' : 'no'} · bank ${coverage.bank ? 'yes' : 'no'} · sheets ${coverage.spreadsheets ? 'yes' : 'no'} · dms ${coverage.dms ? 'yes' : 'no'}</div>
       </div>
       ${freshnessSummary ? `<div class="cl-context-row ${freshness.is_stale ? 'cl-context-warning' : ''}">${escapeHtml(freshnessSummary)}</div>` : ''}
       ${portalRows || '<div class="cl-empty">No vendor portal sources detected.</div>'}
       ${procurementRows || ''}
+      ${bankRows || ''}
+      ${spreadsheetRows || ''}
       ${dmsRows || ''}
       ${tabRows || ''}
       ${eventRows || ''}
@@ -616,18 +661,44 @@ function renderContextTabBody(item, contextPayload, loading, error, agentInsight
     const approvals = contextPayload.approvals || {};
     const latest = approvals.latest || null;
     const slack = approvals.slack || {};
-    const budget = approvals.budget || contextPayload.budget || {};
-    const budgetStatus = String(budget.status || '').replace(/_/g, ' ');
+    const teams = approvals.teams || {};
+    const payroll = approvals.payroll || contextPayload.payroll || {};
+    const budgetContext = normalizeBudgetContext(contextPayload, item);
+    const budgetStatus = budgetContext.status ? String(budgetContext.status).replace(/_/g, ' ') : '';
+    const payrollCount = Number(payroll.count || 0);
+    const payrollAmount = Number(payroll.total_amount || 0);
     const threadPreview = Array.isArray(slack.thread_preview) ? slack.thread_preview : [];
     const previewRows = threadPreview.slice(0, 3).map((entry) => `
       <div class="cl-context-row">
         <div>${escapeHtml(trimText(entry.text || '', 120))}</div>
       </div>
     `).join('');
+    const budgetRows = budgetContext.checks.slice(0, 3).map((check) => `
+      <div class="cl-context-row">
+        <div><strong>${escapeHtml(String(check.name || 'Budget'))}:</strong> ${escapeHtml(String(check.status || 'unknown'))}</div>
+        <div>${escapeHtml(formatAmount(check.remaining, item.currency || 'USD'))} remaining · ${escapeHtml(formatAmount(check.invoice_amount, item.currency || 'USD'))} invoice</div>
+      </div>
+    `).join('');
     return `
       <div class="cl-context-meta">Approval records: ${escapeHtml(String(approvals.count || 0))}</div>
       ${latest ? `<div class="cl-context-row"><div><strong>Latest:</strong> ${escapeHtml(String(latest.status || 'pending'))}</div></div>` : '<div class="cl-empty">No approval record yet.</div>'}
-      ${budgetStatus ? `<div class="cl-context-row"><div><strong>Budget:</strong> ${escapeHtml(budgetStatus)}</div></div>` : ''}
+      ${
+        budgetStatus
+          ? `<div class="cl-context-row ${budgetStatusTone(budgetContext.status)}"><div><strong>Budget widget:</strong> ${escapeHtml(budgetStatus)}</div></div>`
+          : ''
+      }
+      ${budgetRows || ''}
+      ${
+        budgetContext.requiresDecision
+          ? '<div class="cl-context-row cl-context-warning"><div>Decision required: approve override (with justification), request budget adjustment, or reject.</div></div>'
+          : ''
+      }
+      ${
+        teams && (teams.channel || teams.state || teams.thread || teams.message_id)
+          ? `<div class="cl-context-row"><div><strong>Teams:</strong> ${escapeHtml(String(teams.state || teams.channel || teams.thread || teams.message_id))}</div></div>`
+          : ''
+      }
+      ${payrollCount ? `<div class="cl-context-row"><div><strong>Payroll context:</strong> ${escapeHtml(String(payrollCount))} entries · ${escapeHtml(formatAmount(payrollAmount, item.currency || 'USD'))}</div></div>` : ''}
       ${freshnessSummary ? `<div class="cl-context-row ${freshness.is_stale ? 'cl-context-warning' : ''}">${escapeHtml(freshnessSummary)}</div>` : ''}
       ${previewRows || ''}
     `;
@@ -697,6 +768,14 @@ function renderThreadContext() {
   const contextPayload = item?.id ? contextState.get(item.id) || null : null;
   const loadingContext = item?.id && contextUiState.loading && contextUiState.itemId === item.id;
   const contextError = item?.id && contextUiState.itemId === item.id ? contextUiState.error : '';
+  const budgetContext = normalizeBudgetContext(contextPayload, item);
+  const budgetStatusLabel = budgetContext.status ? String(budgetContext.status).replace(/_/g, ' ') : '';
+  const budgetPreviewRows = budgetContext.checks.slice(0, 2).map((check) => `
+    <div class="cl-thread-meta">
+      <span class="cl-pill cl-pill-queue">${escapeHtml(String(check.name || 'Budget'))}</span>
+      ${escapeHtml(String(check.status || 'unknown'))} · ${escapeHtml(formatAmount(check.remaining, item.currency || 'USD'))} remaining
+    </div>
+  `).join('');
   const metadata = queueManager?.parseMetadata ? queueManager.parseMetadata(item.metadata) : {};
   const stateColor = STATE_COLORS[state] || '#0f172a';
   const sourceRows = linkedSources
@@ -740,6 +819,17 @@ function renderThreadContext() {
       </div>
       <div class="cl-thread-main">${escapeHtml(amount)} · Invoice ${escapeHtml(invoiceNumber)} · Due ${escapeHtml(dueDate)}</div>
       <div class="cl-thread-sub">${escapeHtml(issueSummary)}</div>
+      ${
+        budgetStatusLabel
+          ? `<div class="cl-thread-meta ${budgetStatusTone(budgetContext.status)}"><span class="cl-pill cl-pill-queue">Budget</span> ${escapeHtml(budgetStatusLabel)}</div>`
+          : ''
+      }
+      ${budgetPreviewRows || ''}
+      ${
+        budgetContext.requiresDecision
+          ? '<div class="cl-thread-meta cl-context-warning">Budget decision required before posting.</div>'
+          : ''
+      }
       <div class="cl-thread-meta">${escapeHtml(sourceSender)}</div>
       <div class="cl-thread-meta cl-source-subject">${escapeHtml(sourceSubject)}</div>
       ${
@@ -813,7 +903,15 @@ function renderThreadContext() {
       }
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary" id="cl-open-source-email">Open source email</button>
-        <button class="cl-btn" id="cl-request-approval">Request approval</button>
+        ${
+          budgetContext.requiresDecision
+            ? `
+              <button class="cl-btn" id="cl-budget-approve-override">Approve override</button>
+              <button class="cl-btn cl-btn-secondary" id="cl-budget-request-adjustment">Request adjustment</button>
+              <button class="cl-btn cl-btn-secondary" id="cl-budget-reject">Reject</button>
+            `
+            : '<button class="cl-btn" id="cl-request-approval">Request approval</button>'
+        }
       </div>
       <details class="cl-details">
         <summary>Sources (${escapeHtml(String(linkedSources.length))})</summary>
@@ -847,6 +945,9 @@ function renderThreadContext() {
   const nextBtn = context.querySelector('#cl-next-item');
   const openSourceBtn = context.querySelector('#cl-open-source-email');
   const requestBtn = context.querySelector('#cl-request-approval');
+  const budgetApproveBtn = context.querySelector('#cl-budget-approve-override');
+  const budgetAdjustBtn = context.querySelector('#cl-budget-request-adjustment');
+  const budgetRejectBtn = context.querySelector('#cl-budget-reject');
   const mergeBtn = context.querySelector('#cl-merge-item');
   const splitBtn = context.querySelector('#cl-split-item');
   const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
@@ -915,6 +1016,52 @@ function renderThreadContext() {
         showToast('Approval requested');
       } else {
         showToast('Approval request failed', 'error');
+      }
+    });
+  }
+
+  if (budgetApproveBtn) {
+    budgetApproveBtn.addEventListener('click', async () => {
+      const justification = window.prompt('Approval justification (required for budget override):', 'Business-critical invoice');
+      if (!justification || !justification.trim()) {
+        showToast('Justification is required', 'error');
+        return;
+      }
+      budgetApproveBtn.disabled = true;
+      const result = await queueManager.submitBudgetDecision(item, 'approve_override', justification.trim());
+      budgetApproveBtn.disabled = false;
+      if (result?.status === 'approved') {
+        showToast('Budget override approved and posted');
+      } else {
+        showToast(`Budget override failed: ${result?.reason || result?.status || 'error'}`, 'error');
+      }
+    });
+  }
+
+  if (budgetAdjustBtn) {
+    budgetAdjustBtn.addEventListener('click', async () => {
+      const reason = window.prompt('Reason for requesting budget adjustment:', 'Budget threshold needs revision');
+      budgetAdjustBtn.disabled = true;
+      const result = await queueManager.submitBudgetDecision(item, 'request_budget_adjustment', (reason || '').trim());
+      budgetAdjustBtn.disabled = false;
+      if (result?.status === 'needs_info') {
+        showToast('Budget adjustment requested');
+      } else {
+        showToast(`Request failed: ${result?.reason || result?.status || 'error'}`, 'error');
+      }
+    });
+  }
+
+  if (budgetRejectBtn) {
+    budgetRejectBtn.addEventListener('click', async () => {
+      const reason = window.prompt('Reason for rejection:', 'Invoice exceeds approved budget');
+      budgetRejectBtn.disabled = true;
+      const result = await queueManager.submitBudgetDecision(item, 'reject', (reason || '').trim());
+      budgetRejectBtn.disabled = false;
+      if (result?.status === 'rejected') {
+        showToast('Invoice rejected');
+      } else {
+        showToast(`Reject failed: ${result?.reason || result?.status || 'error'}`, 'error');
       }
     });
   }
