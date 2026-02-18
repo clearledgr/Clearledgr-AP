@@ -422,6 +422,27 @@ try:
 except ImportError:
     pass
 
+# Browser-agent control plane APIs
+try:
+    from clearledgr.api.agent_sessions import router as agent_sessions_router
+    app.include_router(agent_sessions_router)
+except ImportError:
+    pass
+
+# AP item routes (sources/context/audit/merge/split)
+try:
+    from clearledgr.api.ap_items import router as ap_items_router
+    app.include_router(ap_items_router)
+except ImportError:
+    pass
+
+# Ops health/KPI endpoints (including browser-agent metrics)
+try:
+    from clearledgr.api.ops import router as ops_router
+    app.include_router(ops_router)
+except ImportError:
+    pass
+
 # Initialize event-driven system on startup
 @app.on_event("startup")
 async def startup_event_handlers():

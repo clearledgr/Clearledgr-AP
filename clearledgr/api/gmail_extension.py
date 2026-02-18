@@ -10,7 +10,7 @@ KEY DIFFERENTIATORS:
 4. Intelligent Agent - Vendor intelligence, policy compliance, priority detection
 """
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from pydantic import BaseModel
 
 from clearledgr.api.deps import get_audit_service
@@ -28,6 +28,7 @@ from clearledgr.services.proactive_insights import get_proactive_insights
 from clearledgr.services.cross_invoice_analysis import get_cross_invoice_analyzer
 from clearledgr.services.agent_reasoning import get_agent as get_reasoning_agent
 from clearledgr.core.database import get_db
+from clearledgr.api.ap_items import build_worklist_item
 
 
 router = APIRouter(prefix="/extension", tags=["gmail-extension"])
@@ -591,6 +592,23 @@ def get_invoice_pipeline(organization_id: Optional[str] = None):
     org_id = organization_id or "default"
     db = get_db()
     return db.get_invoice_pipeline(org_id)
+
+
+@router.get("/worklist")
+def get_extension_worklist(
+    organization_id: Optional[str] = None,
+    limit: int = Query(default=200, ge=1, le=1000),
+):
+    """Return invoice-centric worklist for the focused Gmail sidebar."""
+    org_id = organization_id or "default"
+    db = get_db()
+    items = db.list_ap_items(org_id, limit=limit, prioritized=True)
+    normalized = [build_worklist_item(db, item) for item in items]
+    return {
+        "organization_id": org_id,
+        "items": normalized,
+        "total": len(normalized),
+    }
 
 
 @router.post("/approve-and-post")
