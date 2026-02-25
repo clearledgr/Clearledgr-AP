@@ -29,8 +29,24 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       - key: SLACK_WEBHOOK_URL
         sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+      - key: TEAMS_APP_ID
+        sync: false
+      - key: AP_TEMPORAL_ENABLED
+        value: "false"
+      - key: AP_TEMPORAL_REQUIRED
+        value: "false"
+      - key: AP_AGENT_AUTONOMOUS_RETRY_ENABLED
+        value: "true"
+      - key: AP_AGENT_NON_DURABLE_RETRY_ALLOWED
+        value: "false"
+      - key: AP_BROWSER_RUNNER_TRUST_MODE
+        value: "api_or_admin"
     healthCheckPath: /health
     autoDeploy: true
 

@@ -308,7 +308,8 @@ class SlackAPIClient:
         details: Dict[str, str],
         approve_action_id: str,
         reject_action_id: str,
-        item_id: str
+        item_id: str,
+        request_info_action_id: str = "request_info",
     ) -> List[Dict]:
         """Build Block Kit blocks for an approval request."""
         fields = [
@@ -340,6 +341,12 @@ class SlackAPIClient:
                         "text": {"type": "plain_text", "text": "Reject"},
                         "style": "danger",
                         "action_id": f"{reject_action_id}_{item_id}",
+                        "value": item_id
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Request info"},
+                        "action_id": f"{request_info_action_id}_{item_id}",
                         "value": item_id
                     }
                 ]
@@ -459,7 +466,90 @@ def verify_slack_signature(
     return hmac.compare_digest(computed, signature)
 
 
-# Helper function
-def get_slack_client(bot_token: Optional[str] = None) -> SlackAPIClient:
-    """Get a Slack API client instance."""
-    return SlackAPIClient(bot_token)
+def resolve_slack_runtime(organization_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Resolve Slack token/channel runtime based on org integration mode.
+
+    Modes:
+    - shared: use env token + env/default channel
+    - per_org: use org installation token; fallback to shared when explicitly enabled
+    """
+    shared_token = os.getenv("SLACK_BOT_TOKEN", "").strip()
+    shared_channel = (
+        os.getenv("SLACK_APPROVAL_CHANNEL", "").strip()
+        or os.getenv("SLACK_DEFAULT_CHANNEL", "").strip()
+        or "#finance-approvals"
+    )
+    shared_secret = os.getenv("SLACK_SIGNING_SECRET", "").strip()
+    default_mode = os.getenv("SLACK_INTEGRATION_MODE", "shared").strip().lower() or "shared"
+    allow_shared_fallback = str(
+        os.getenv("SLACK_ALLOW_SHARED_FALLBACK", "true")
+    ).strip().lower() not in {"0", "false", "no", "off"}
+
+    runtime: Dict[str, Any] = {
+        "organization_id": organization_id or "default",
+        "mode": default_mode,
+        "bot_token": shared_token or None,
+        "signing_secret": shared_secret or None,
+        "approval_channel": shared_channel,
+        "connected": bool(shared_token),
+        "source": "shared_env",
+        "team_id": None,
+        "team_name": None,
+    }
+
+    if not organization_id:
+        return runtime
+
+    try:
+        from clearledgr.core.database import get_db
+
+        db = get_db()
+        org = db.get_organization(organization_id) or {}
+        mode = str(org.get("integration_mode") or default_mode or "shared").lower()
+        runtime["mode"] = mode
+
+        settings = org.get("settings_json") or org.get("settings") or {}
+        if isinstance(settings, str):
+            try:
+                settings = json.loads(settings)
+            except json.JSONDecodeError:
+                settings = {}
+        if isinstance(settings, dict):
+            channels = settings.get("slack_channels")
+            if isinstance(channels, dict):
+                runtime["approval_channel"] = channels.get("invoices") or runtime["approval_channel"]
+
+        if mode == "per_org":
+            install = db.get_slack_installation(organization_id, include_secrets=True)
+            token = (install or {}).get("bot_token")
+            if token:
+                runtime.update(
+                    {
+                        "bot_token": token,
+                        "connected": True,
+                        "source": "org_installation",
+                        "team_id": (install or {}).get("team_id"),
+                        "team_name": (install or {}).get("team_name"),
+                    }
+                )
+            elif allow_shared_fallback and shared_token:
+                runtime.update({"bot_token": shared_token, "connected": True, "source": "shared_fallback"})
+            else:
+                runtime.update({"bot_token": None, "connected": False, "source": "missing_org_installation"})
+    except Exception:
+        # Keep runtime non-fatal and preserve shared defaults.
+        pass
+
+    return runtime
+
+
+def get_slack_client(
+    bot_token: Optional[str] = None,
+    organization_id: Optional[str] = None,
+) -> SlackAPIClient:
+    """Get a Slack API client instance, optionally org-scoped."""
+    resolved_token = bot_token
+    if resolved_token is None:
+        resolved_token = resolve_slack_runtime(organization_id).get("bot_token")
+    return SlackAPIClient(resolved_token)

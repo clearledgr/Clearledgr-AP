@@ -1,6 +1,24 @@
 # Clearledgr Email Integration (Autonomous)
 
+## Governance Note (2026-02-25)
+
+- **Document role:** Legacy/broader email-automation design reference
+- **Canonical status for AP v1 launch:** **Non-canonical**
+- **Why:** This document predates the current AP v1 doctrine and includes reconciliation-, Sheets-, and Outlook-oriented assumptions that are not part of the canonical AP v1 launch definition.
+- **Use this doc for:** Historical context and legacy integration ideas
+- **Do not use this doc for:** AP v1 scope, UX doctrine, or launch-gate decisions
+
+### Canonical AP v1 references
+
+1. `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
+2. `/Users/mombalam/Desktop/Clearledgr.v1/docs/HOW_IT_WORKS.md`
+3. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_EMBEDDED_WORKER_EXPERIENCE.md`
+4. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
+5. `/Users/mombalam/Desktop/Clearledgr.v1/docs/API_REFERENCE.md`
+
 Clearledgr **automatically** processes finance emails in Gmail and Outlook. When invoices, payment gateway settlements, or payment confirmations arrive, Clearledgr processes them autonomously.
+
+> AP v1 doctrine note: Gmail is the AP entry point and primary intake/triage surface. Outlook is not part of the current AP v1 canonical launch contract.
 
 ## How It Works
 

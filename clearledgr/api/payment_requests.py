@@ -288,28 +288,22 @@ async def get_summary(organization_id: str = "default"):
 # SLACK INTEGRATION
 # ============================================================================
 
-SLACK_SIGNING_SECRET = None  # Set from environment
-
 @router.post("/slack/command")
 async def handle_slack_command(request: Request):
     """
     Handle Slack slash command for payment requests.
-    
+
     Supports commands like:
     - /clearledgr pay @john $500 for consulting work
     - /clearledgr pay 1000 to Acme Corp for services
     - /pay $250 to @jane reimbursement for supplies
     """
+    from clearledgr.core.slack_verify import require_slack_signature
+    from urllib.parse import parse_qs, unquote_plus
     try:
-        body = await request.body()
-        form_data = {}
-        for item in body.decode().split("&"):
-            if "=" in item:
-                key, value = item.split("=", 1)
-                form_data[key] = value.replace("+", " ").replace("%40", "@")
-        
-        # Verify Slack signature in production
-        # (skipped for development)
+        body = await require_slack_signature(request)
+        parsed = parse_qs(body.decode(), keep_blank_values=True)
+        form_data = {k: unquote_plus(v[0]) for k, v in parsed.items()}
         
         command = form_data.get("command", "")
         text = form_data.get("text", "")
@@ -380,11 +374,13 @@ async def handle_slack_command(request: Request):
                     f"Sent to #finance-approvals for approval."
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Slack command error: {e}")
+        logger.error("Slack command error: %s", e, exc_info=True)
         return {
             "response_type": "ephemeral",
-            "text": f"Error: {str(e)}"
+            "text": "An error occurred processing your command."
         }
 
 
@@ -392,26 +388,20 @@ async def handle_slack_command(request: Request):
 async def handle_slack_interactive(request: Request):
     """
     Handle Slack interactive component callbacks.
-    
+
     This handles button clicks from payment request notifications.
     """
+    from clearledgr.core.slack_verify import require_slack_signature
+    from urllib.parse import parse_qs, unquote
     try:
-        body = await request.body()
-        
-        # Parse form data
-        form_data = {}
-        for item in body.decode().split("&"):
-            if "=" in item:
-                key, value = item.split("=", 1)
-                form_data[key] = value
-        
-        payload_str = form_data.get("payload", "")
+        body = await require_slack_signature(request)
+
+        parsed = parse_qs(body.decode(), keep_blank_values=True)
+        payload_str = parsed.get("payload", [""])[0]
         if not payload_str:
             raise HTTPException(status_code=400, detail="No payload")
-        
-        # URL decode and parse JSON
-        import urllib.parse
-        payload = json.loads(urllib.parse.unquote(payload_str))
+
+        payload = json.loads(unquote(payload_str))
         
         action = payload.get("actions", [{}])[0]
         action_id = action.get("action_id", "")

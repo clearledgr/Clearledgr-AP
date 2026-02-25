@@ -1,7 +1,6 @@
 """Dependency injection container for core services."""
 from clearledgr.services.audit import AuditTrailService
 from clearledgr.services.exception_routing import ExceptionRoutingService
-from clearledgr.services.ingestion import IngestionService
 from clearledgr.services.learning import LearningService
 from clearledgr.services.llm_multimodal import MultiModalLLMService
 from clearledgr.services.erp.sap import SAPAdapter
@@ -13,7 +12,6 @@ class ServiceContainer:
         self._llm = None
         self._exceptions = None
         self._learning = None
-        self._ingestion = None
         self._sap = None
 
     def audit(self) -> AuditTrailService:
@@ -35,11 +33,6 @@ class ServiceContainer:
         if not self._learning:
             self._learning = LearningService()
         return self._learning
-
-    def ingestion(self) -> IngestionService:
-        if not self._ingestion:
-            self._ingestion = IngestionService(audit=self.audit(), llm=self.llm())
-        return self._ingestion
 
     def sap(self) -> SAPAdapter:
         if not self._sap:

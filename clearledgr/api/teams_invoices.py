@@ -2,15 +2,26 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+from clearledgr.core.approval_action_contract import (
+    ApprovalActionContractError,
+    NormalizedApprovalAction,
+    is_stale_action,
+    normalize_teams_action,
+)
 from clearledgr.core.database import get_db
+from clearledgr.core.launch_controls import get_channel_action_block_reason
+from clearledgr.core.teams_verify import verify_teams_token
 from clearledgr.services.invoice_workflow import get_invoice_workflow
 
 
 router = APIRouter(prefix="/teams/invoices", tags=["teams-invoices"])
+logger = logging.getLogger(__name__)
 
 
 def _parse_payload(raw: Any) -> Dict[str, Any]:
@@ -46,7 +57,15 @@ def _upsert_teams_metadata(
     action: str,
     status: str,
     reason: Optional[str] = None,
+    activity_id: Optional[str] = None,
+    service_url: Optional[str] = None,
 ) -> None:
+    """Persist Teams channel thread state to the dedicated channel_threads table.
+
+    Replaces the previous approach of writing Teams state into the AP item
+    metadata JSON blob (Gap #11).  Uses ``upsert_channel_thread()`` for
+    idempotent writes so repeated callbacks are safe.
+    """
     db = get_db()
     row = db.get_ap_item_by_thread(organization_id, email_id) if hasattr(db, "get_ap_item_by_thread") else None
     if not row:
@@ -54,101 +73,341 @@ def _upsert_teams_metadata(
     ap_item_id = str(row.get("id") or "")
     if not ap_item_id:
         return
+
+    if hasattr(db, "upsert_channel_thread"):
+        try:
+            db.upsert_channel_thread(
+                ap_item_id=ap_item_id,
+                channel="teams",
+                conversation_id=conversation_id or "",
+                message_id=message_id,
+                activity_id=activity_id,
+                service_url=service_url,
+                state=status,
+                last_action=action,
+                updated_by=actor,
+                reason=reason,
+                organization_id=organization_id,
+            )
+        except Exception as exc:
+            logger.debug("upsert_channel_thread failed: %s", exc)
+
+
+def _audit_callback_event(
+    db,
+    *,
+    event_type: str,
+    organization_id: str,
+    ap_item_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    reason: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    if not hasattr(db, "append_ap_audit_event"):
+        return
+    resolved_ap_item_id = ap_item_id or f"channel_callback:teams:{organization_id}"
     try:
-        metadata_raw = row.get("metadata")
-        if isinstance(metadata_raw, dict):
-            metadata = dict(metadata_raw)
-        elif isinstance(metadata_raw, str) and metadata_raw.strip():
-            metadata = json.loads(metadata_raw)
+        db.append_ap_audit_event(
+            {
+                "ap_item_id": resolved_ap_item_id,
+                "event_type": event_type,
+                "actor_type": "user" if actor_id else "system",
+                "actor_id": actor_id or "teams_callback",
+                "source": "teams",
+                "idempotency_key": idempotency_key,
+                "correlation_id": correlation_id,
+                "reason": reason,
+                "metadata": metadata or {},
+                "organization_id": organization_id,
+            }
+        )
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.debug("Could not audit teams callback event: %s", exc)
+
+
+def _resolve_ap_context(db, organization_id: str, email_id: str) -> tuple[str, Optional[str]]:
+    org_id = str(organization_id or "default")
+    row = None
+    if email_id and hasattr(db, "get_invoice_status"):
+        row = db.get_invoice_status(email_id)
+    if row and row.get("organization_id"):
+        org_id = str(row.get("organization_id"))
+    ap_item_id = None
+    if email_id and hasattr(db, "get_ap_item_by_thread"):
+        try:
+            ap_row = db.get_ap_item_by_thread(org_id, email_id)
+            if ap_row and ap_row.get("id"):
+                ap_item_id = str(ap_row["id"])
+        except Exception:
+            ap_item_id = None
+    return org_id, ap_item_id
+
+
+def _resolve_correlation_id(db, ap_item_id: Optional[str], email_id: str) -> Optional[str]:
+    try:
+        row = None
+        if ap_item_id and hasattr(db, "get_ap_item"):
+            row = db.get_ap_item(ap_item_id)
+        if row is None and email_id and hasattr(db, "get_invoice_status"):
+            row = db.get_invoice_status(email_id)
+        raw_meta = (row or {}).get("metadata")
+        if isinstance(raw_meta, dict):
+            metadata = raw_meta
+        elif isinstance(raw_meta, str) and raw_meta.strip():
+            metadata = json.loads(raw_meta)
         else:
             metadata = {}
+        corr = str(metadata.get("correlation_id") or "").strip()
+        return corr or None
     except Exception:
-        metadata = {}
-    metadata["teams"] = {
-        "channel": conversation_id,
-        "message_id": message_id,
-        "state": status,
-        "last_action": action,
-        "updated_by": actor,
-        "reason": reason,
+        return None
+
+
+async def _dispatch_teams_action(workflow, action: NormalizedApprovalAction) -> Dict[str, Any]:
+    kwargs = {
+        "source_channel": "teams",
+        "source_channel_id": action.source_channel_id,
+        "source_message_ref": action.source_message_ref,
+        "actor_display": action.actor_display,
+        "action_run_id": action.run_id,
+        "decision_request_ts": action.request_ts,
+        "decision_idempotency_key": action.idempotency_key,
+        "correlation_id": action.correlation_id,
     }
-    db.update_ap_item(ap_item_id, metadata=metadata)
+    if action.action == "approve":
+        return await workflow.approve_invoice(
+            gmail_id=action.gmail_id,
+            approved_by=action.actor_id,
+            allow_budget_override=bool(action.action_variant == "budget_override"),
+            override_justification=action.reason if action.action_variant == "budget_override" else None,
+            **kwargs,
+        )
+    if action.action == "request_info":
+        return await workflow.request_budget_adjustment(
+            gmail_id=action.gmail_id,
+            requested_by=action.actor_id,
+            reason=action.reason or "request_info_in_teams",
+            **kwargs,
+        )
+    if action.action == "reject":
+        return await workflow.reject_invoice(
+            gmail_id=action.gmail_id,
+            reason=action.reason or "rejected_in_teams",
+            rejected_by=action.actor_id,
+            **kwargs,
+        )
+    raise HTTPException(status_code=400, detail="unsupported_action")
 
 
 @router.post("/interactive")
 async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
     """Handle Teams approval/budget actions for AP invoices."""
-    payload = _parse_payload(await request.json())
+    db = get_db()
+    auth_header = request.headers.get("Authorization", "")
+    try:
+        claims = verify_teams_token(auth_header)
+    except HTTPException as exc:
+        raw_body = await request.body()
+        body_hash = hashlib.sha256(raw_body or b"").hexdigest()[:16]
+        _audit_callback_event(
+            db,
+            event_type="channel_callback_unauthorized",
+            organization_id="default",
+            idempotency_key=f"teams:unauthorized:{body_hash}",
+            reason=str(exc.detail),
+            metadata={"status_code": exc.status_code},
+        )
+        raise
+
+    raw_body = await request.body()
+    try:
+        body_text = raw_body.decode("utf-8") if raw_body else ""
+    except UnicodeDecodeError:
+        body_text = ""
+    payload = _parse_payload(body_text)
     if not payload:
+        body_hash = hashlib.sha256(raw_body or b"").hexdigest()[:16]
+        _audit_callback_event(
+            db,
+            event_type="channel_action_invalid",
+            organization_id="default",
+            idempotency_key=f"teams:invalid:{body_hash}",
+            reason="invalid_payload",
+            metadata={"status_code": 400},
+        )
         raise HTTPException(status_code=400, detail="invalid_payload")
-
-    action = str(payload.get("action") or "").strip().lower()
-    email_id = str(payload.get("email_id") or payload.get("gmail_id") or "").strip()
-    if not email_id:
-        raise HTTPException(status_code=400, detail="email_id_required")
-
-    organization_id = str(payload.get("organization_id") or "default")
-    actor = str(payload.get("actor") or payload.get("user_email") or "teams_user")
-    conversation_id = (
-        str(payload.get("conversation_id") or payload.get("channel_id") or "").strip() or None
+    email_candidate = str(payload.get("email_id") or payload.get("gmail_id") or "").strip()
+    organization_id, ap_item_id = _resolve_ap_context(
+        db,
+        str(payload.get("organization_id") or "default"),
+        email_candidate,
     )
-    message_id = str(payload.get("message_id") or payload.get("activity_id") or "").strip() or None
-    justification = str(payload.get("justification") or "").strip()
+    try:
+        normalized = normalize_teams_action(payload, claims=claims, organization_id=organization_id)
+    except ApprovalActionContractError as exc:
+        _audit_callback_event(
+            db,
+            event_type="channel_action_invalid",
+            organization_id=organization_id,
+            ap_item_id=ap_item_id,
+            reason=exc.code,
+            metadata={"message": exc.message, "email_id": email_candidate or None},
+        )
+        raise HTTPException(status_code=exc.status_code, detail=exc.code)
 
-    workflow = get_invoice_workflow(organization_id)
-    kwargs = {
-        "source_channel": "teams",
-        "source_channel_id": conversation_id,
-        "source_message_ref": message_id,
-    }
+    normalized.ap_item_id = ap_item_id
+    normalized.correlation_id = _resolve_correlation_id(db, ap_item_id, normalized.gmail_id)
 
-    if action in {"approve_invoice", "post_to_erp"}:
-        result = await workflow.approve_invoice(
-            gmail_id=email_id,
-            approved_by=actor,
-            **kwargs,
+    blocked_reason = get_channel_action_block_reason(
+        normalized.organization_id,
+        "teams",
+        db=db,
+    )
+    if blocked_reason:
+        _audit_callback_event(
+            db,
+            event_type="channel_action_blocked",
+            organization_id=normalized.organization_id,
+            ap_item_id=normalized.ap_item_id,
+            actor_id=normalized.actor_id,
+            idempotency_key=f"{normalized.idempotency_key}:blocked",
+            reason=blocked_reason,
+            metadata={"action": normalized.to_dict()},
+            correlation_id=normalized.correlation_id,
         )
-    elif action in {"approve_budget_override", "approve_override"}:
-        if not justification:
-            justification = "Approved over budget in Teams"
-        result = await workflow.approve_invoice(
-            gmail_id=email_id,
-            approved_by=actor,
-            allow_budget_override=True,
-            override_justification=justification,
-            **kwargs,
+        _upsert_teams_metadata(
+            normalized.organization_id,
+            normalized.gmail_id,
+            conversation_id=normalized.source_channel_id,
+            message_id=normalized.source_message_ref,
+            actor=normalized.actor_display,
+            action=normalized.raw_action or normalized.action,
+            status="blocked",
+            reason=blocked_reason,
         )
-    elif action in {"request_budget_adjustment", "request_adjustment"}:
-        result = await workflow.request_budget_adjustment(
-            gmail_id=email_id,
-            requested_by=actor,
-            reason=justification or "budget_adjustment_requested_in_teams",
-            **kwargs,
+        return {
+            "status": "blocked",
+            "action": normalized.action,
+            "email_id": normalized.gmail_id,
+            "reason": blocked_reason,
+        }
+
+    if is_stale_action(normalized):
+        _audit_callback_event(
+            db,
+            event_type="channel_action_stale",
+            organization_id=normalized.organization_id,
+            ap_item_id=normalized.ap_item_id,
+            actor_id=normalized.actor_id,
+            idempotency_key=f"{normalized.idempotency_key}:stale",
+            reason="stale_action",
+            metadata={"action": normalized.to_dict()},
+            correlation_id=normalized.correlation_id,
         )
-    elif action in {"reject_invoice", "reject_budget"}:
-        result = await workflow.reject_invoice(
-            gmail_id=email_id,
-            reason=justification or ("rejected_over_budget_in_teams" if action == "reject_budget" else "rejected_in_teams"),
-            rejected_by=actor,
-            **kwargs,
+        _upsert_teams_metadata(
+            normalized.organization_id,
+            normalized.gmail_id,
+            conversation_id=normalized.source_channel_id,
+            message_id=normalized.source_message_ref,
+            actor=normalized.actor_display,
+            action=normalized.raw_action or normalized.action,
+            status="stale",
+            reason="stale_action",
         )
-    else:
-        raise HTTPException(status_code=400, detail="unsupported_action")
+        return {
+            "status": "stale",
+            "action": normalized.action,
+            "email_id": normalized.gmail_id,
+            "reason": "stale_action",
+        }
+
+    processed_key = f"{normalized.idempotency_key}:processed"
+    if hasattr(db, "get_ap_audit_event_by_key") and db.get_ap_audit_event_by_key(processed_key):
+        _audit_callback_event(
+            db,
+            event_type="channel_action_duplicate",
+            organization_id=normalized.organization_id,
+            ap_item_id=normalized.ap_item_id,
+            actor_id=normalized.actor_id,
+            idempotency_key=f"{normalized.idempotency_key}:duplicate",
+            reason="duplicate_callback",
+            metadata={"action": normalized.to_dict()},
+            correlation_id=normalized.correlation_id,
+        )
+        return {
+            "status": "duplicate",
+            "action": normalized.action,
+            "email_id": normalized.gmail_id,
+            "reason": "duplicate_callback",
+        }
+
+    _audit_callback_event(
+        db,
+        event_type="channel_action_received",
+        organization_id=normalized.organization_id,
+        ap_item_id=normalized.ap_item_id,
+        actor_id=normalized.actor_id,
+        idempotency_key=f"{normalized.idempotency_key}:received",
+        metadata={"action": normalized.to_dict()},
+        correlation_id=normalized.correlation_id,
+    )
+
+    workflow = get_invoice_workflow(normalized.organization_id)
+    result = await _dispatch_teams_action(workflow, normalized)
+
+    result_status = str(result.get("status") or "unknown")
+    result_reason = str(result.get("reason") or "")
 
     _upsert_teams_metadata(
-        organization_id,
-        email_id,
-        conversation_id=conversation_id,
-        message_id=message_id,
-        actor=actor,
-        action=action,
-        status=str(result.get("status") or "unknown"),
-        reason=str(result.get("reason") or ""),
+        normalized.organization_id,
+        normalized.gmail_id,
+        conversation_id=normalized.source_channel_id,
+        message_id=normalized.source_message_ref,
+        actor=normalized.actor_display,
+        action=normalized.raw_action or normalized.action,
+        status=result_status,
+        reason=result_reason,
+    )
+    _audit_callback_event(
+        db,
+        event_type="channel_action_processed",
+        organization_id=normalized.organization_id,
+        ap_item_id=normalized.ap_item_id,
+        actor_id=normalized.actor_id,
+        idempotency_key=processed_key,
+        metadata={
+            "action": normalized.to_dict(),
+            "result_status": result_status,
+            "result_reason": result_reason,
+        },
+        correlation_id=normalized.correlation_id,
     )
 
+    # Update the original Teams approval card with the decision result so
+    # the approver sees immediate confirmation instead of a stale card.
+    service_url = str(payload.get("serviceUrl") or payload.get("service_url") or "").strip()
+    activity_id = str(payload.get("activityId") or payload.get("activity_id") or "").strip()
+    if service_url and activity_id and normalized.source_channel_id:
+        try:
+            from clearledgr.services.teams_api import TeamsAPIClient
+            teams_client = TeamsAPIClient()
+            teams_client.update_activity(
+                service_url=service_url,
+                conversation_id=normalized.source_channel_id,
+                activity_id=activity_id,
+                result_status=result_status,
+                actor_display=normalized.actor_display or normalized.actor_id or "unknown",
+                action=normalized.action,
+                reason=result_reason or None,
+            )
+        except Exception as _upd_exc:
+            logger.debug("Non-fatal: Teams card update failed: %s", _upd_exc)
+
     return {
-        "status": result.get("status"),
-        "action": action,
-        "email_id": email_id,
+        "status": result_status,
+        "action": normalized.action,
+        "email_id": normalized.gmail_id,
         "result": result,
     }

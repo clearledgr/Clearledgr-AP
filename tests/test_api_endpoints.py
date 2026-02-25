@@ -4,12 +4,15 @@ Tests for API Endpoints
 Tests the FastAPI endpoints for the Clearledgr API.
 """
 
+from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 # Import the FastAPI app
 from main import app
+from clearledgr.api import gmail_extension as gmail_extension_module
+from clearledgr.core.auth import TokenData
 
 client = TestClient(app)
 
@@ -228,19 +231,55 @@ class TestERPEndpoints:
 
 class TestExtensionEndpoints:
     """Test Gmail extension API endpoints."""
+
+    @staticmethod
+    def _fake_user():
+        return TokenData(
+            user_id="extension-user-1",
+            email="extension@example.com",
+            organization_id="default",
+            role="user",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
     
     def test_triage_endpoint(self):
         """Test email triage endpoint."""
-        response = client.post("/extension/triage", json={
-            "email_id": "test-email-123",
-            "subject": "Invoice #12345 from Acme Corp",
-            "sender": "billing@acme.com",
-            "body": "Please find attached invoice for $1,500.00",
-            "organization_id": "default",
-        })
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        try:
+            with patch.object(gmail_extension_module, "temporal_enabled", return_value=True):
+                with patch.object(gmail_extension_module, "TemporalRuntime") as runtime_cls:
+                    runtime = MagicMock()
+                    runtime.start_workflow = AsyncMock(
+                        return_value={
+                            "email_id": "test-email-123",
+                            "classification": {"type": "INVOICE", "confidence": 0.99},
+                            "extraction": {"vendor": "Acme Corp", "amount": 1500.0},
+                        }
+                    )
+                    runtime_cls.return_value = runtime
+                    response = client.post("/extension/triage", json={
+                        "email_id": "test-email-123",
+                        "subject": "Invoice #12345 from Acme Corp",
+                        "sender": "billing@acme.com",
+                        "body": "Please find attached invoice for $1,500.00",
+                        "organization_id": "default",
+                    })
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
         assert response.status_code == 200
         data = response.json()
         assert "classification" in data or "category" in data
+
+    def test_triage_endpoint_requires_auth(self):
+        app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+        response = client.post("/extension/triage", json={
+            "email_id": "test-email-unauth",
+            "subject": "Invoice",
+            "sender": "billing@acme.com",
+            "body": "Invoice body",
+            "organization_id": "default",
+        })
+        assert response.status_code == 401
     
     def test_invoice_pipeline(self):
         """Test invoice pipeline endpoint."""

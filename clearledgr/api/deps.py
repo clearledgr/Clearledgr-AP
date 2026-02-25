@@ -18,9 +18,5 @@ def get_learning_service():
     return container.learning()
 
 
-def get_ingestion_service():
-    return container.ingestion()
-
-
 def get_sap_adapter():
     return container.sap()

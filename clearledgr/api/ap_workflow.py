@@ -15,6 +15,8 @@ from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from pydantic import BaseModel
 import logging
 
+from clearledgr.core.errors import safe_error
+
 from clearledgr.services.early_payment_discounts import (
     get_discount_service,
     EarlyPaymentDiscount,
@@ -325,7 +327,7 @@ async def approval_action(request: ApproveStepRequest):
         
         return chain.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "approval action"))
 
 
 @router.get("/approvals/chain/{chain_id}")
@@ -574,7 +576,7 @@ async def activate_vendor(vendor_id: str, organization_id: str = "default"):
             raise HTTPException(status_code=404, detail="Vendor not found")
         return vendor.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "vendor activation"))
 
 
 @router.post("/vendors/{vendor_id}/deactivate")
@@ -951,8 +953,7 @@ async def sync_gl_accounts(organization_id: str = "default"):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"GL account sync failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=safe_error(e, "GL account sync"))
 
 
 @router.post("/gl/accounts/custom")
@@ -1551,7 +1552,7 @@ async def approve_purchase_order(po_id: str, approved_by: str, organization_id: 
         po = service.approve_po(po_id, approved_by)
         return po.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=safe_error(e, "PO approval"))
 
 
 @router.get("/po/summary")
@@ -1609,7 +1610,7 @@ async def create_goods_receipt(request: CreateGoodsReceiptRequest):
         )
         return gr.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "goods receipt"))
 
 
 @router.post("/match/3way")
@@ -1641,7 +1642,7 @@ async def override_match(request: OverrideMatchRequest):
         )
         return match.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "match override"))
 
 
 @router.get("/match/exceptions")
@@ -1731,7 +1732,7 @@ async def verify_credit(credit_id: str, verified_by: str, organization_id: str =
         credit = service.verify_credit(credit_id, verified_by)
         return credit.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "credit verification"))
 
 
 @router.post("/credit/apply")
@@ -1748,7 +1749,7 @@ async def apply_credit(request: ApplyCreditRequest):
         )
         return application.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "credit application"))
 
 
 @router.get("/credit/vendor/{vendor_id}")

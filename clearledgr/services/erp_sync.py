@@ -28,6 +28,7 @@ class ERPType(Enum):
     QUICKBOOKS = "quickbooks"
     XERO = "xero"
     NETSUITE = "netsuite"
+    SAP = "sap"
 
 
 class PaymentStatus(Enum):
@@ -138,6 +139,8 @@ class ERPSyncService:
                 new_status = await self._sync_xero_bill(bill)
             elif bill.erp_type == ERPType.NETSUITE:
                 new_status = await self._sync_netsuite_bill(bill)
+            elif bill.erp_type == ERPType.SAP:
+                new_status = await self._sync_sap_bill(bill)
             else:
                 return bill
             
@@ -333,6 +336,83 @@ class ERPSyncService:
         
         return bill
     
+    async def _sync_sap_bill(self, bill: ERPBillStatus) -> Optional[ERPBillStatus]:
+        """Sync AP invoice status from SAP via OData REST API.
+
+        Calls ``GET {base_url}/PurchaseInvoices({DocEntry})`` and maps the
+        SAP ``PaymentStatus`` / ``DocumentStatus`` field to the internal
+        ``PaymentStatus`` enum.
+
+        SAP document statuses used:
+        - ``O`` (Open) → PENDING
+        - ``P`` (Paid) → PAID
+        - ``C`` (Cancelled/Voided) → VOIDED
+        - Partially paid (``PartlyPaid``) → PARTIALLY_PAID
+        """
+        try:
+            from clearledgr.integrations.erp_router import get_erp_connection
+            import httpx
+
+            connection = get_erp_connection(self.organization_id)
+            if not connection or connection.type != "sap":
+                logger.warning("No SAP connection for %s", self.organization_id)
+                return bill
+
+            base_url = (connection.base_url or "").rstrip("/")
+            access_token = connection.access_token or ""
+            if not base_url or not access_token:
+                logger.warning("SAP connection for %s missing base_url or access_token", self.organization_id)
+                return bill
+
+            # erp_reference stored as the SAP DocEntry integer or DocNum string.
+            # Prefer erp_reference on the ERPBillStatus; fall back to erp_bill_id.
+            doc_entry = bill.erp_reference or bill.erp_bill_id
+            url = f"{base_url}/PurchaseInvoices({doc_entry})"
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Accept": "application/json",
+                    },
+                    timeout=30.0,
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    sap_status = str(data.get("PaymentStatus") or data.get("DocumentStatus") or "O").upper()
+                    doc_total = float(data.get("DocTotal") or bill.amount or 0)
+                    paid_to_date = float(data.get("PaidToDate") or data.get("PaidSum") or 0)
+
+                    bill.amount = doc_total
+                    bill.amount_paid = paid_to_date
+                    bill.last_synced = datetime.now()
+
+                    if sap_status in {"P", "PAID"}:
+                        bill.status = PaymentStatus.PAID
+                        bill.payment_date = datetime.now()
+                    elif sap_status in {"C", "CANCELLED", "VOIDED"}:
+                        bill.status = PaymentStatus.VOIDED
+                    elif paid_to_date > 0 and paid_to_date < doc_total:
+                        bill.status = PaymentStatus.PARTIALLY_PAID
+                    else:
+                        bill.status = PaymentStatus.PENDING
+
+                    logger.info(
+                        "Synced SAP invoice %s (DocEntry=%s): %s",
+                        bill.invoice_id, doc_entry, bill.status.value,
+                    )
+                elif response.status_code == 401:
+                    logger.warning("SAP token expired for %s — needs reauth", self.organization_id)
+                else:
+                    logger.error("SAP API error %d for DocEntry=%s", response.status_code, doc_entry)
+
+        except Exception as exc:
+            logger.error("Failed to sync SAP invoice %s: %s", bill.erp_bill_id, exc)
+
+        return bill
+
     # =========================================================================
     # WEBHOOK HANDLERS
     # =========================================================================

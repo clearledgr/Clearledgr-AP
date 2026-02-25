@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,10 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from main import app
+from clearledgr.api import agent_sessions as agent_sessions_module
+from clearledgr.api import ops as ops_module
 from clearledgr.core import database as db_module
+from clearledgr.core.auth import TokenData
 from clearledgr.services import browser_agent as browser_agent_module
 
 
@@ -27,6 +31,28 @@ def db(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def client(db):
+    def _fake_user():
+        return TokenData(
+            user_id="auth-user-1",
+            email="auth@example.com",
+            organization_id="default",
+            role="owner",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+    app.dependency_overrides[agent_sessions_module.get_current_user] = _fake_user
+    app.dependency_overrides[ops_module.get_current_user] = _fake_user
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
+        app.dependency_overrides.pop(ops_module.get_current_user, None)
+
+
+@pytest.fixture()
+def unauth_client(db):
+    app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
+    app.dependency_overrides.pop(ops_module.get_current_user, None)
     return TestClient(app)
 
 
@@ -51,6 +77,16 @@ def _create_item(db):
     )
 
 
+def _move_item_to_failed_post(db, ap_item_id: str) -> None:
+    for state in ("needs_approval", "approved", "ready_to_post", "failed_post"):
+        assert db.update_ap_item(
+            ap_item_id,
+            state=state,
+            _actor_type="test",
+            _actor_id="test-runner",
+        )
+
+
 def _create_session(client, ap_item_id, metadata=None):
     response = client.post(
         "/api/agent/sessions",
@@ -63,6 +99,46 @@ def _create_session(client, ap_item_id, metadata=None):
     )
     assert response.status_code == 200
     return response.json()["session"]["id"]
+
+
+def test_agent_sessions_endpoint_requires_auth(unauth_client, db):
+    item = _create_item(db)
+    response = unauth_client.post(
+        "/api/agent/sessions",
+        json={
+            "org_id": "default",
+            "ap_item_id": item["id"],
+            "actor_id": "spoofed_actor",
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_browser_fallback_complete_endpoint_requires_auth(unauth_client, db):
+    item = _create_item(db)
+    _move_item_to_failed_post(db, item["id"])
+    session = db.create_agent_session(
+        {
+            "organization_id": "default",
+            "ap_item_id": item["id"],
+            "created_by": "runner",
+            "metadata": {"workflow_id": "erp_posting_fallback"},
+        }
+    )
+    response = unauth_client.post(
+        f"/api/agent/sessions/{session['id']}/complete",
+        json={
+            "macro_name": "post_invoice_to_erp",
+            "status": "success",
+            "erp_reference": "ERP-UNAUTH-1",
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_ops_endpoints_require_auth(unauth_client):
+    response = unauth_client.get("/api/ops/browser-agent?organization_id=default")
+    assert response.status_code == 401
 
 
 def test_read_action_allowed_and_audited(client, db):
@@ -177,6 +253,225 @@ def test_duplicate_result_is_idempotent(client, db):
     events = [event for event in session_payload["events"] if event["command_id"] == "cmd-result-1"]
     assert len(events) == 1
     assert events[0]["status"] == "completed"
+
+
+def test_browser_fallback_complete_success_finalizes_ap_item_and_is_idempotent(client, db):
+    item = _create_item(db)
+    _move_item_to_failed_post(db, item["id"])
+    session_id = _create_session(
+        client,
+        item["id"],
+        metadata={"workflow_id": "erp_posting_fallback", "email_id": item["message_id"]},
+    )
+
+    first = client.post(
+        f"/api/agent/sessions/{session_id}/complete",
+        json={
+            "macro_name": "post_invoice_to_erp",
+            "status": "completed",
+            "erp_reference": "ERP-FALLBACK-123",
+            "evidence": {"receipt_id": "rcpt-1"},
+            "idempotency_key": "fallback-complete-1",
+            "correlation_id": "corr-fallback-1",
+        },
+    )
+    assert first.status_code == 200
+    completion = first.json()["completion"]
+    assert completion["status"] == "success"
+    assert completion["duplicate"] is False
+    assert completion["ap_item_state"] == "posted_to_erp"
+    assert completion["erp_reference"] == "ERP-FALLBACK-123"
+
+    updated_item = db.get_ap_item(item["id"])
+    assert updated_item["state"] == "posted_to_erp"
+    assert updated_item["erp_reference"] == "ERP-FALLBACK-123"
+
+    session_payload = client.get(f"/api/agent/sessions/{session_id}")
+    assert session_payload.status_code == 200
+    assert session_payload.json()["session"]["state"] == "completed"
+
+    audits = db.list_ap_audit_events(item["id"])
+    assert any(a.get("event_type") == "erp_browser_fallback_completed" for a in audits)
+
+    second = client.post(
+        f"/api/agent/sessions/{session_id}/complete",
+        json={
+            "macro_name": "post_invoice_to_erp",
+            "status": "success",
+            "erp_reference": "ERP-FALLBACK-123",
+            "idempotency_key": "fallback-complete-1",
+        },
+    )
+    assert second.status_code == 200
+    second_completion = second.json()["completion"]
+    assert second_completion["duplicate"] is True
+    assert second_completion["ap_item_state"] == "posted_to_erp"
+
+
+def test_browser_fallback_complete_failure_keeps_failed_post_and_audits(client, db):
+    item = _create_item(db)
+    _move_item_to_failed_post(db, item["id"])
+    session_id = _create_session(
+        client,
+        item["id"],
+        metadata={"workflow_id": "erp_posting_fallback"},
+    )
+
+    response = client.post(
+        f"/api/agent/sessions/{session_id}/complete",
+        json={
+            "macro_name": "post_invoice_to_erp",
+            "status": "failed",
+            "error_code": "erp_ui_timeout",
+            "error_message_redacted": "Timed out while posting bill",
+            "idempotency_key": "fallback-complete-fail-1",
+        },
+    )
+    assert response.status_code == 200
+    completion = response.json()["completion"]
+    assert completion["status"] == "failed"
+    assert completion["ap_item_state"] == "failed_post"
+
+    updated_item = db.get_ap_item(item["id"])
+    assert updated_item["state"] == "failed_post"
+    assert "Timed out" in str(updated_item.get("last_error") or "")
+
+    audits = db.list_ap_audit_events(item["id"])
+    assert any(a.get("event_type") == "erp_browser_fallback_failed" for a in audits)
+
+def test_submit_result_uses_authenticated_actor_identity(client, db):
+    item = _create_item(db)
+    session_id = _create_session(client, item["id"])
+    enqueue = client.post(
+        f"/api/agent/sessions/{session_id}/commands",
+        json={
+            "actor_id": "spoofed_request_actor",
+            "tool_name": "read_page",
+            "command_id": "cmd-auth-bind-1",
+            "target": {"url": "https://mail.google.com/mail/u/0/#inbox"},
+        },
+    )
+    assert enqueue.status_code == 200
+
+    result = client.post(
+        f"/api/agent/sessions/{session_id}/results",
+        json={
+            "actor_id": "spoofed_runner",
+            "command_id": "cmd-auth-bind-1",
+            "status": "completed",
+            "result_payload": {"ok": True},
+        },
+    )
+    assert result.status_code == 200
+
+    audits = db.list_ap_audit_events(item["id"])
+    result_events = [a for a in audits if a.get("event_type") == "browser_command_result"]
+    assert result_events
+    assert result_events[-1]["actor_id"] == "auth-user-1"
+
+
+def test_runner_trust_policy_denies_low_privileged_result_callback_and_audits(client, db, monkeypatch):
+    monkeypatch.setenv("AP_BROWSER_RUNNER_TRUST_MODE", "api_or_admin")
+    item = _create_item(db)
+    session_id = _create_session(client, item["id"])
+    enqueue = client.post(
+        f"/api/agent/sessions/{session_id}/commands",
+        json={
+            "actor_id": "test_agent",
+            "tool_name": "read_page",
+            "command_id": "cmd-runner-policy-1",
+            "target": {"url": "https://mail.google.com/mail/u/0/#inbox"},
+        },
+    )
+    assert enqueue.status_code == 200
+
+    def _low_priv_user():
+        return TokenData(
+            user_id="normal-user-1",
+            email="user@example.com",
+            organization_id="default",
+            role="user",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+    app.dependency_overrides[agent_sessions_module.get_current_user] = _low_priv_user
+    try:
+        low_client = TestClient(app)
+        denied = low_client.post(
+            f"/api/agent/sessions/{session_id}/results",
+            json={
+                "actor_id": "runner",
+                "command_id": "cmd-runner-policy-1",
+                "status": "completed",
+                "result_payload": {"ok": True},
+            },
+        )
+    finally:
+        app.dependency_overrides[agent_sessions_module.get_current_user] = lambda: TokenData(
+            user_id="auth-user-1",
+            email="auth@example.com",
+            organization_id="default",
+            role="owner",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
+
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "runner_trust_policy_denied"
+    audits = db.list_ap_audit_events(item["id"])
+    unauthorized = [a for a in audits if a.get("event_type") == "runner_callback_unauthorized"]
+    assert unauthorized
+    assert unauthorized[-1]["source"] == "agent_runner"
+    payload = unauthorized[-1].get("payload_json") or {}
+    assert (
+        unauthorized[-1].get("decision_reason") == "runner_trust_policy_denied"
+        or payload.get("reason") == "runner_trust_policy_denied"
+    )
+
+
+def test_runner_trust_policy_denies_low_privileged_fallback_complete_and_audits(client, db, monkeypatch):
+    monkeypatch.setenv("AP_BROWSER_RUNNER_TRUST_MODE", "api_or_admin")
+    item = _create_item(db)
+    _move_item_to_failed_post(db, item["id"])
+    session = db.create_agent_session(
+        {
+            "organization_id": "default",
+            "ap_item_id": item["id"],
+            "created_by": "runner",
+            "metadata": {"workflow_id": "erp_posting_fallback"},
+        }
+    )
+    session_id = session["id"]
+
+    def _low_priv_user():
+        return TokenData(
+            user_id="normal-user-2",
+            email="user2@example.com",
+            organization_id="default",
+            role="user",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+    app.dependency_overrides[agent_sessions_module.get_current_user] = _low_priv_user
+    try:
+        low_client = TestClient(app)
+        denied = low_client.post(
+            f"/api/agent/sessions/{session_id}/complete",
+            json={
+                "macro_name": "post_invoice_to_erp",
+                "status": "success",
+                "erp_reference": "ERP-SHOULD-NOT-POST",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
+
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "runner_trust_policy_denied"
+    audits = db.list_ap_audit_events(item["id"])
+    unauthorized = [a for a in audits if a.get("event_type") == "runner_callback_unauthorized"]
+    assert unauthorized
+    assert any((a.get("payload_json") or {}).get("endpoint") == "complete" for a in unauthorized)
 
 
 def test_browser_evidence_is_queryable_via_audit_endpoint(client, db):
@@ -413,3 +708,39 @@ def test_erp_routing_strategy_endpoint(client, db):
     assert "selected_route" in payload
     assert "capability_matrix" in payload
     assert isinstance(payload["capability_matrix"], list)
+
+
+def test_autopilot_status_includes_agent_runtime_truth_claims(client, monkeypatch):
+    monkeypatch.setenv("ENV", "dev")
+    monkeypatch.setenv("AP_AGENT_AUTONOMOUS_RETRY_ENABLED", "true")
+    monkeypatch.setenv("AP_AGENT_NON_DURABLE_RETRY_ALLOWED", "true")
+    monkeypatch.setenv("AP_AGENT_RETRY_BACKOFF_SECONDS", "0,5,10")
+    monkeypatch.setenv("AP_AGENT_RETRY_POLL_SECONDS", "2")
+
+    response = client.get("/api/ops/autopilot-status")
+    assert response.status_code == 200
+    payload = response.json()["autopilot"]
+
+    assert "agent_runtime" in payload
+    retry = payload["agent_runtime"]["autonomous_retry"]
+    assert retry["mode"] == "durable_db_retry_queue"
+    assert retry["durable"] is True
+    assert retry["enabled"] is True
+    assert retry["allow_non_durable"] is True
+    assert retry["backoff_seconds"] == [0, 5, 10]
+    assert retry["poll_interval_seconds"] == 2
+
+
+def test_autopilot_status_keeps_durable_retry_enabled_in_production(client, monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("AP_AGENT_AUTONOMOUS_RETRY_ENABLED", "true")
+    monkeypatch.setenv("AP_AGENT_NON_DURABLE_RETRY_ALLOWED", "false")
+
+    response = client.get("/api/ops/autopilot-status")
+    assert response.status_code == 200
+    retry = response.json()["autopilot"]["agent_runtime"]["autonomous_retry"]
+
+    assert retry["enabled"] is True
+    assert retry["durable"] is True
+    assert retry["allow_non_durable"] is False
+    assert retry["reason"] is None

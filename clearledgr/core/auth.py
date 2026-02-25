@@ -1,30 +1,48 @@
 """
 Clearledgr Authentication
 
-JWT-based authentication for all API endpoints.
+JWT-based authentication backed by persistent database records.
 """
 
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any
 from functools import wraps
-
-from fastapi import HTTPException, Depends, Header, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, EmailStr, Field
+from typing import Any, Dict, Optional
 
 import jwt
+from fastapi import Depends, Header, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.context import CryptContext
+from pydantic import BaseModel, EmailStr, Field
+
+from clearledgr.core.database import get_db
+
+logger = logging.getLogger(__name__)
+
+try:
+    import bcrypt as _bcrypt_lib
+except Exception as e:  # pragma: no cover
+    logger.info("bcrypt not available, using fallback: %s", e)
+    _bcrypt_lib = None
 
 # Configuration
-SECRET_KEY = os.getenv("CLEARLEDGR_SECRET_KEY", secrets.token_urlsafe(32))
+from clearledgr.core.secrets import require_secret as _require_secret
+
+SECRET_KEY = _require_secret("CLEARLEDGR_SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 # Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Keep bcrypt compatibility for existing hashes, but default to pbkdf2_sha256 so
+# local/dev environments don't fail when bcrypt wheels/backends are mismatched.
+pwd_context = CryptContext(
+    schemes=["pbkdf2_sha256", "bcrypt"],
+    deprecated="auto",
+)
+_fallback_pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 # Bearer token security
 security = HTTPBearer(auto_error=False)
@@ -32,6 +50,7 @@ security = HTTPBearer(auto_error=False)
 
 class TokenData(BaseModel):
     """JWT token payload."""
+
     user_id: str
     email: str
     organization_id: str
@@ -41,23 +60,26 @@ class TokenData(BaseModel):
 
 class User(BaseModel):
     """User model."""
+
     id: str
     email: EmailStr
     name: str
     organization_id: str
-    role: str = "user"  # user, admin, owner
+    role: str = "user"
     is_active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class LoginRequest(BaseModel):
     """Login request."""
+
     email: EmailStr
     password: str
 
 
 class TokenResponse(BaseModel):
     """Token response."""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -66,12 +88,37 @@ class TokenResponse(BaseModel):
 
 def hash_password(password: str) -> str:
     """Hash a password."""
-    return pwd_context.hash(password)
+    try:
+        return pwd_context.hash(password)
+    except Exception as e:
+        logger.warning("Primary password hashing failed, using fallback: %s", e)
+        return _fallback_pwd_context.hash(password)
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
+def verify_password(plain_password: str, hashed_password: Optional[str]) -> bool:
     """Verify a password against its hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    if not hashed_password:
+        return False
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception as e:
+        logger.warning("Primary password verification failed, trying fallbacks: %s", e)
+        if hashed_password.startswith("$2") and _bcrypt_lib is not None:
+            try:
+                return bool(
+                    _bcrypt_lib.checkpw(
+                        plain_password.encode("utf-8"),
+                        hashed_password.encode("utf-8"),
+                    )
+                )
+            except Exception as e:
+                logger.warning("bcrypt fallback verification failed: %s", e)
+        # Fallback verification path for pbkdf2 hashes when bcrypt backend is unavailable.
+        try:
+            return _fallback_pwd_context.verify(plain_password, hashed_password)
+        except Exception as e:
+            logger.error("All password verification methods failed: %s", e)
+            return False
 
 
 def create_access_token(
@@ -84,9 +131,8 @@ def create_access_token(
     """Create a JWT access token."""
     if expires_delta is None:
         expires_delta = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    
+
     expire = datetime.now(timezone.utc) + expires_delta
-    
     payload = {
         "sub": user_id,
         "email": email,
@@ -96,21 +142,18 @@ def create_access_token(
         "iat": datetime.now(timezone.utc),
         "type": "access",
     }
-    
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def create_refresh_token(user_id: str) -> str:
     """Create a JWT refresh token."""
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    
     payload = {
         "sub": user_id,
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "type": "refresh",
     }
-    
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -125,49 +168,46 @@ def decode_token(token: str) -> Dict[str, Any]:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
+def _token_data_from_payload(payload: Dict[str, Any]) -> TokenData:
+    return TokenData(
+        user_id=payload["sub"],
+        email=payload["email"],
+        organization_id=payload["org"],
+        role=payload.get("role", "user"),
+        exp=datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
+    )
+
+
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ) -> TokenData:
     """
     Get current authenticated user from JWT token or API key.
-    
+
     Supports:
     - Bearer token: Authorization: Bearer <jwt>
     - API key: X-API-Key: <key>
     """
-    # Try Bearer token first
     if credentials and credentials.credentials:
         payload = decode_token(credentials.credentials)
-        
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Invalid token type")
-        
-        return TokenData(
-            user_id=payload["sub"],
-            email=payload["email"],
-            organization_id=payload["org"],
-            role=payload.get("role", "user"),
-            exp=datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
-        )
-    
-    # Try API key
+        return _token_data_from_payload(payload)
+
     if x_api_key:
-        # In production, look up API key in database
-        # For now, accept format: org_<org_id>_<secret>
-        if x_api_key.startswith("org_"):
-            parts = x_api_key.split("_")
-            if len(parts) >= 3:
-                return TokenData(
-                    user_id="api_user",
-                    email="api@system",
-                    organization_id=parts[1],
-                    role="api",
-                    exp=datetime.now(timezone.utc) + timedelta(hours=1),
-                )
-        
+        db = get_db()
+        key_record = db.validate_api_key(x_api_key)
+        if key_record:
+            return TokenData(
+                user_id=key_record.get("user_id", "api_user"),
+                email="api@system",
+                organization_id=key_record["organization_id"],
+                role="api",
+                exp=datetime.now(timezone.utc) + timedelta(hours=1),
+            )
         raise HTTPException(status_code=401, detail="Invalid API key")
-    
+
     raise HTTPException(
         status_code=401,
         detail="Not authenticated. Provide Bearer token or X-API-Key header.",
@@ -187,6 +227,7 @@ def get_optional_user(
 
 def require_role(allowed_roles: list[str]):
     """Decorator to require specific roles."""
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, user: TokenData = Depends(get_current_user), **kwargs):
@@ -196,12 +237,15 @@ def require_role(allowed_roles: list[str]):
                     detail=f"Role '{user.role}' not authorized. Required: {allowed_roles}",
                 )
             return await func(*args, user=user, **kwargs)
+
         return wrapper
+
     return decorator
 
 
 def require_org(org_id_param: str = "organization_id"):
     """Decorator to verify user belongs to the organization."""
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, user: TokenData = Depends(get_current_user), **kwargs):
@@ -212,110 +256,100 @@ def require_org(org_id_param: str = "organization_id"):
                     detail="Not authorized to access this organization's data",
                 )
             return await func(*args, user=user, **kwargs)
+
         return wrapper
+
     return decorator
 
 
-# Simple in-memory user store for development
-# In production, this would be a database table
-_users_db: Dict[str, Dict[str, Any]] = {}
+def _row_to_user(row: Dict[str, Any]) -> User:
+    created_raw = row.get("created_at")
+    created_at = (
+        datetime.fromisoformat(str(created_raw).replace("Z", "+00:00"))
+        if created_raw
+        else datetime.now(timezone.utc)
+    )
+    return User(
+        id=str(row.get("id")),
+        email=str(row.get("email")),
+        name=str(row.get("name") or ""),
+        organization_id=str(row.get("organization_id")),
+        role=str(row.get("role") or "user"),
+        is_active=bool(row.get("is_active", True)),
+        created_at=created_at,
+    )
 
 
-def create_user(email: str, password: str, name: str, organization_id: str, role: str = "user") -> User:
-    """Create a new user."""
-    import uuid
-    
-    if email in _users_db:
+def create_user(
+    email: str,
+    password: str,
+    name: str,
+    organization_id: str,
+    role: str = "user",
+) -> User:
+    """Create a new user in persistent storage."""
+    db = get_db()
+    existing = db.get_user_by_email(email)
+    if existing:
         raise HTTPException(status_code=400, detail="User already exists")
-    
-    user_id = str(uuid.uuid4())
-    hashed = hash_password(password)
-    
-    user_data = {
-        "id": user_id,
-        "email": email,
-        "name": name,
-        "organization_id": organization_id,
-        "role": role,
-        "password_hash": hashed,
-        "is_active": True,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    
-    _users_db[email] = user_data
-    
-    return User(**{k: v for k, v in user_data.items() if k != "password_hash"})
+
+    db.ensure_organization(
+        organization_id=organization_id,
+        organization_name=organization_id.replace("-", " ").replace("_", " ").title(),
+        domain=(email.split("@")[1] if "@" in email else None),
+    )
+    row = db.create_user(
+        email=email,
+        name=name,
+        organization_id=organization_id,
+        role=role,
+        password_hash=hash_password(password),
+        is_active=True,
+    )
+    return _row_to_user(row)
 
 
 def authenticate_user(email: str, password: str) -> Optional[User]:
     """Authenticate a user by email and password."""
-    user_data = _users_db.get(email)
-    
-    if not user_data:
+    db = get_db()
+    row = db.get_user_by_email(email)
+    if not row:
         return None
-    
-    if not verify_password(password, user_data["password_hash"]):
+    if not verify_password(password, row.get("password_hash")):
         return None
-    
-    if not user_data.get("is_active", True):
+    if not bool(row.get("is_active", True)):
         return None
-    
-    return User(**{k: v for k, v in user_data.items() if k != "password_hash"})
+    return _row_to_user(row)
 
 
 def get_user_by_id(user_id: str) -> Optional[User]:
     """Get user by ID."""
-    for user_data in _users_db.values():
-        if user_data["id"] == user_id:
-            return User(**{k: v for k, v in user_data.items() if k != "password_hash"})
-    return None
+    row = get_db().get_user(user_id)
+    return _row_to_user(row) if row else None
 
 
 def get_user_by_email(email: str) -> Optional[User]:
     """Get user by email."""
-    user_data = _users_db.get(email)
-    if user_data:
-        return User(**{k: v for k, v in user_data.items() if k != "password_hash"})
-    return None
+    row = get_db().get_user_by_email(email)
+    return _row_to_user(row) if row else None
 
 
 def create_user_from_google(email: str, google_id: str, organization_id: str) -> User:
     """
-    Create a user from Google Identity.
-    
-    This is used when someone uses the Gmail extension but isn't 
-    registered yet. We auto-create their account.
-    
-    No password needed - they authenticate via Google.
+    Create or update a user from Google identity.
     """
-    import uuid
-    
-    if email in _users_db:
-        # Return existing user
-        user_data = _users_db[email]
-        return User(**{k: v for k, v in user_data.items() if k != "password_hash"})
-    
-    # Extract name from email (best effort)
-    name = email.split("@")[0].replace(".", " ").title()
-    
-    user_id = str(uuid.uuid4())
-    
-    user_data = {
-        "id": user_id,
-        "email": email,
-        "name": name,
-        "organization_id": organization_id,
-        "role": "user",
-        "google_id": google_id,
-        "password_hash": None,  # No password - Google auth only
-        "is_active": True,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    
-    _users_db[email] = user_data
-    
-    # Also create default org config for the organization
-    from clearledgr.core.org_config import get_or_create_config
-    get_or_create_config(organization_id, organization_name=organization_id.title())
-    
-    return User(**{k: v for k, v in user_data.items() if k not in ["password_hash", "google_id"]})
+    db = get_db()
+    domain = email.split("@")[1] if "@" in email else None
+    db.ensure_organization(
+        organization_id=organization_id,
+        organization_name=organization_id.replace("-", " ").replace("_", " ").title(),
+        domain=domain,
+    )
+    row = db.upsert_google_user(
+        email=email,
+        google_id=google_id,
+        organization_id=organization_id,
+        name=email.split("@")[0].replace(".", " ").title(),
+        role="user",
+    )
+    return _row_to_user(row)

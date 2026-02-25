@@ -25,35 +25,19 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
 import json
+import os
 from typing import Optional, List, Dict
 from clearledgr.services.auth import verify_api_key, get_api_key_optional
 from clearledgr.services.rate_limit import RateLimitMiddleware
 from clearledgr.services.errors import ClearledgrError, ReconciliationError, to_http_exception
+from clearledgr.core.errors import safe_error
 from clearledgr.services.validation import SheetsRunRequest as SheetsRunRequestModel
 from clearledgr.services.logging import log_request, log_reconciliation_run, log_error, logger
 from clearledgr.services.metrics import record_request, record_error, record_reconciliation_run, get_metrics
-from clearledgr.services.reconciliation_runner import (
-    run_reconciliation_pipeline,
-    run_reconciliation_from_sheets,
-    validate_period_dates,
-    validate_reconciliation_config,
-)
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 import time
-from clearledgr.state.db import init_db
-from clearledgr.state.run_history import (
-    create_run, complete_run, fail_run, get_run, list_runs, get_run_stats
-)
-from clearledgr.state.agent_memory import (
-    init_agent_memory_db, save_agent_schedule, get_agent_schedules,
-    update_schedule_last_run, save_agent_feedback, get_agent_memory,
-    record_agent_event, get_recent_agent_events
-)
-from clearledgr.services.agent_triggers import trigger_manager
-from clearledgr.services.agent_learning import learn_from_feedback, get_learned_config
-from clearledgr.services.agent_recommendations import get_proactive_recommendations
-from clearledgr.services.agent_quality import check_data_quality
+import uuid
 from datetime import datetime, timezone
 from clearledgr.api import (
     v1_router,
@@ -61,13 +45,10 @@ from clearledgr.api import (
     gmail_extension_router,
     slack_invoices_router,
     teams_invoices_router,
-    autonomous_router,
     ai_enhanced_router,
     ap_workflow_router,
     ap_advanced_router,
 )
-from clearledgr.workflows.temporal_runtime import temporal_enabled
-from clearledgr.workflows.temporal_schedules import TemporalScheduleManager, cron_from_schedule_type
 
 app = FastAPI(
     title="Clearledgr API",
@@ -121,22 +102,44 @@ app.include_router(gmail_extension_router)
 app.include_router(slack_invoices_router)
 app.include_router(teams_invoices_router)
 
-for optional_router in (autonomous_router, ai_enhanced_router, ap_workflow_router, ap_advanced_router):
+for optional_router in (ai_enhanced_router, ap_workflow_router, ap_advanced_router):
     if optional_router:
         app.include_router(optional_router)
+
+class CorrelationIdMiddleware(BaseHTTPMiddleware):
+    """Inject a correlation ID on every request and echo it back in the response.
+
+    Reads ``X-Correlation-ID`` from the incoming request headers.  If absent,
+    generates a new UUID4.  Stores the value in ``request.state.correlation_id``
+    so downstream handlers and audit events can reference it, and adds it to
+    the response headers so clients can correlate logs.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        correlation_id = (
+            request.headers.get("X-Correlation-ID")
+            or request.headers.get("X-Request-ID")
+            or str(uuid.uuid4())
+        )
+        # Expose on request state for handlers/dependencies
+        request.state.correlation_id = correlation_id
+        response = await call_next(request)
+        response.headers["X-Correlation-ID"] = correlation_id
+        return response
+
 
 # Add request logging middleware
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Middleware to log requests and record metrics."""
-    
+
     async def dispatch(self, request: Request, call_next):
         start_time = time.time()
         client_id = request.headers.get("X-API-Key", request.client.host if request.client else "unknown")
-        
+
         try:
             response = await call_next(request)
             duration_ms = (time.time() - start_time) * 1000
-            
+
             # Log request
             log_request(
                 method=request.method,
@@ -145,13 +148,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 duration_ms=duration_ms,
                 client_id=client_id
             )
-            
+
             # Record metrics
             record_request(request.method, request.url.path, response.status_code, duration_ms)
-            
+
             if response.status_code >= 400:
                 record_error(f"http_{response.status_code}", request.url.path)
-            
+
             return response
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
@@ -159,9 +162,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_error("request_exception", str(e), {"path": request.url.path, "method": request.method})
             raise
 
-# Add middleware in order (last added is first executed)
+# Add middleware in order (last added = outermost, executed first).
+# CorrelationIdMiddleware must be outermost so correlation_id is available to
+# all downstream middleware and handlers.
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(CorrelationIdMiddleware)
 
 
 # Global exception handler for ClearledgrErrors
@@ -244,24 +250,46 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 # Enable CORS for all origins
+def _parse_cors_origins(raw: str) -> List[str]:
+    values = [item.strip() for item in (raw or "").split(",")]
+    return [item for item in values if item]
+
+
+_default_cors_origins = [
+    "https://mail.google.com",
+    "https://gmail.google.com",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:8010",
+    "http://127.0.0.1:8010",
+]
+
+_configured_cors_origins = _parse_cors_origins(os.getenv("CORS_ALLOW_ORIGINS", ""))
+_cors_allow_origins = _configured_cors_origins or _default_cors_origins
+_cors_allow_origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX", r"^chrome-extension://[a-z]{32}$")
+
+# HTTPS enforcement in production
+if os.getenv("ENV", "dev").lower() in ("production", "prod"):
+    try:
+        from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+        app.add_middleware(HTTPSRedirectMiddleware)
+    except ImportError:
+        logger.warning("HTTPSRedirectMiddleware not available")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_allow_origins,
+    allow_origin_regex=_cors_allow_origin_regex,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Request-ID"],
 )
 
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
     """Initialize database on startup."""
-    init_db()
-    try:
-        trigger_manager.load_triggers_from_store()
-    except Exception as exc:
-        logger.warning("Trigger load skipped: %s", exc)
-    init_agent_memory_db()
+    pass  # ClearledgrDB initializes lazily via get_db()
 
 # Include Slack app
 try:
@@ -291,33 +319,7 @@ try:
 except ImportError:
     pass
 
-# Include Autonomous Agent API
-try:
-    from clearledgr.api.autonomous import router as autonomous_router
-    app.include_router(autonomous_router)
-except ImportError:
-    pass
-
-# Include Chat/Conversational API
-try:
-    from clearledgr.api.chat import router as chat_router
-    app.include_router(chat_router)
-except ImportError:
-    pass
-
-# Include Clearledgr Engine API (unified data layer)
-try:
-    from clearledgr.api.engine import router as engine_router
-    app.include_router(engine_router)
-except ImportError:
-    pass
-
-# Include Webhooks API (Stripe, Paystack, Flutterwave)
-try:
-    from clearledgr.api.webhooks import router as webhooks_router
-    app.include_router(webhooks_router)
-except ImportError:
-    pass
+# (Autonomous agent, chat, engine, and webhooks routers removed — archived to branch)
 
 # Include Onboarding API
 try:
@@ -452,61 +454,89 @@ try:
 except ImportError:
     pass
 
-# Initialize event-driven system on startup
-@app.on_event("startup")
-async def startup_event_handlers():
-    """Initialize the autonomous event-driven system."""
-    try:
-        from clearledgr.core.event_bus import setup_event_handlers, get_event_bus
-        setup_event_handlers()
-        logger.info("Clearledgr event-driven system initialized - autonomous mode active")
-        
-        # Initialize GmailWatcherAgent for autonomous email processing
-        try:
-            from clearledgr.agents.gmail_watcher import GmailWatcherAgent
-            event_bus = get_event_bus()
-            gmail_watcher = GmailWatcherAgent(event_bus)
-            # Store globally for webhook handler access
-            app.state.gmail_watcher = gmail_watcher
-            logger.info("GmailWatcherAgent initialized - email monitoring active")
-        except Exception as agent_err:
-            logger.warning(f"GmailWatcherAgent not initialized: {agent_err}")
+# Admin Center APIs (single contract for console + onboarding)
+try:
+    from clearledgr.api.admin_console import router as admin_console_router
+    admin_console_enabled = str(os.getenv("ADMIN_CONSOLE_ENABLED", "true")).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    if admin_console_enabled:
+        app.include_router(admin_console_router)
+except ImportError:
+    pass
 
-        # Start Gmail autopilot (24/7 backend scanning)
-        try:
-            from clearledgr.services.gmail_autopilot import start_gmail_autopilot
-            await start_gmail_autopilot(app)
-            logger.info("Gmail autopilot started")
-        except Exception as autopilot_err:
-            logger.warning(f"Gmail autopilot not started: {autopilot_err}")
-            
+# Start Gmail autopilot (24/7 background inbox scanning)
+@app.on_event("startup")
+async def startup_gmail_autopilot():
+    """Start Gmail autopilot for automatic invoice detection."""
+    try:
+        from clearledgr.services.gmail_autopilot import start_gmail_autopilot
+        await start_gmail_autopilot(app)
+        logger.info("Gmail autopilot started")
     except Exception as e:
-        logger.warning(f"Event handlers not initialized: {e}")
+        logger.warning(f"Gmail autopilot not started: {e}")
+
+
+@app.on_event("startup")
+async def startup_agent_background():
+    """Start agent background intelligence loop."""
+    try:
+        from clearledgr.services.agent_background import start_agent_background
+        await start_agent_background(app)
+        logger.info("Agent background intelligence started")
+    except Exception as e:
+        logger.warning(f"Agent background not started: {e}")
 
 
 @app.on_event("shutdown")
-async def shutdown_event_handlers():
-    """Stop background autonomous services."""
+async def shutdown_gmail_autopilot():
+    """Stop Gmail autopilot background service."""
     try:
         from clearledgr.services.gmail_autopilot import stop_gmail_autopilot
         await stop_gmail_autopilot(app)
     except Exception as e:
         logger.warning(f"Gmail autopilot stop failed: {e}")
 
+
+@app.on_event("shutdown")
+async def shutdown_agent_background():
+    """Stop agent background intelligence loop."""
+    try:
+        from clearledgr.services.agent_background import stop_agent_background
+        await stop_agent_background()
+    except Exception as e:
+        logger.warning(f"Agent background stop failed: {e}")
+
 # Serve static files (admin page)
-import os
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.get("/admin", tags=["Admin"], include_in_schema=False)
 async def admin_page():
-    """Internal admin page for QA and testing."""
+    """Internal admin page for QA and testing. Dev-only."""
+    if os.getenv("ENV", "dev").lower() not in ("dev", "development", "test"):
+        raise HTTPException(status_code=404)
     admin_file = os.path.join(os.path.dirname(__file__), "static", "admin.html")
     if os.path.exists(admin_file):
         return FileResponse(admin_file)
     else:
         raise HTTPException(status_code=404, detail="Admin page not found")
+
+
+@app.get("/console", tags=["Admin"], include_in_schema=False)
+async def console_page():
+    """Customer-facing Admin Center UI."""
+    enabled = str(os.getenv("ADMIN_CONSOLE_ENABLED", "true")).strip().lower() not in {"0", "false", "no", "off"}
+    if not enabled:
+        raise HTTPException(status_code=404, detail="Admin console disabled")
+    console_file = os.path.join(os.path.dirname(__file__), "static", "console", "index.html")
+    if os.path.exists(console_file):
+        return FileResponse(console_file)
+    raise HTTPException(status_code=404, detail="Console page not found")
 
 
 @app.get(
@@ -560,559 +590,7 @@ async def metrics_endpoint(
         log_error("metrics_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get metrics: {str(e)}"
-        )
-
-
-@app.post("/run-reconciliation")
-async def run_reconciliation(
-    config: str = Form(...),
-    period_start: str = Form(...),
-    period_end: str = Form(...),
-    payment_gateway_csv: UploadFile = File(...),
-    bank_csv: UploadFile = File(...),
-    internal_csv: UploadFile = File(...),
-):
-    """
-    Run Reconciliation reconciliation process.
-    
-    Accepts:
-    - config: JSON string with mappings and settings
-    - period_start: Start date (YYYY-MM-DD)
-    - period_end: End date (YYYY-MM-DD)
-    - payment_gateway_csv: CSV file for payment gateway data
-    - bank_csv: CSV file for bank data
-    - internal_csv: CSV file for internal data
-    
-    Returns:
-    - JSON with groups, exceptions, and stats from reconciliation
-    """
-    # Generate run ID
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    
-    try:
-        # Parse config JSON first
-        try:
-            config_dict = json.loads(config)
-        except json.JSONDecodeError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid JSON in config parameter: {str(e)}"
-            )
-
-        try:
-            validate_reconciliation_config(config_dict)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-        try:
-            validate_period_dates(period_start, period_end)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        
-        # Track this run
-        create_run(
-            run_id=run_id,
-            source_type="csv",
-            period_start=period_start,
-            period_end=period_end,
-            config=config_dict
-        )
-        
-        # Read CSV files into bytes
-        try:
-            gateway_bytes = await payment_gateway_csv.read()
-            bank_bytes = await bank_csv.read()
-            internal_bytes = await internal_csv.read()
-        except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to read CSV files: {str(e)}"
-            )
-        
-        # Run reconciliation pipeline
-        try:
-            outputs = run_reconciliation_pipeline(
-                config_dict,
-                period_start,
-                period_end,
-                gateway_bytes,
-                bank_bytes,
-                internal_bytes,
-            )
-        except ClearledgrError:
-            raise
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to run reconciliation pipeline: {str(e)}"
-            )
-        
-        # Log and record metrics
-        run_start_time = time.time()
-        try:
-            summary = outputs.get("summary", [{}])[0] if outputs.get("summary") else {}
-            
-            # Complete run tracking
-            total_groups = len(outputs.get("reconciled", []))
-            total_exceptions = len(outputs.get("exceptions", []))
-            match_rate = (total_groups / (total_groups + total_exceptions) * 100) if (total_groups + total_exceptions) > 0 else 0
-            complete_run(
-                run_id=run_id,
-                total_groups=total_groups,
-                total_exceptions=total_exceptions,
-                match_rate=match_rate,
-                summary=summary
-            )
-            
-            # Log and record metrics
-            run_duration_ms = (time.time() - run_start_time) * 1000
-            log_reconciliation_run(
-                run_id=run_id,
-                source_type="csv",
-                period_start=period_start,
-                period_end=period_end,
-                status="SUCCEEDED",
-                duration_ms=run_duration_ms,
-                total_groups=summary.get("total_groups", 0),
-                total_exceptions=summary.get("total_exceptions", 0)
-            )
-            record_reconciliation_run("csv", "SUCCEEDED", run_duration_ms)
-        except Exception as e:
-            # Log but don't fail
-            logger.error(f"Database save error (non-fatal): {str(e)}")
-        
-        # Return formatted outputs
-        return {
-            "run_id": run_id,
-            "summary": outputs["summary"],
-            "reconciled": outputs["reconciled"],
-            "exceptions": outputs["exceptions"]
-        }
-    
-    except ClearledgrError as e:
-        fail_run(run_id, str(e))
-        raise to_http_exception(e)
-    except HTTPException:
-        fail_run(run_id, "HTTP error")
-        raise
-    except Exception as e:
-        fail_run(run_id, str(e))
-        raise ReconciliationError(
-            stage="processing",
-            detail=str(e)
-        )
-
-
-@app.post("/run-reconciliation-sheets")
-async def run_reconciliation_sheets(request: SheetsRunRequestModel):
-    """
-    Run Reconciliation reconciliation using Google Sheets as source and destination.
-    
-    Accepts:
-    - sheet_id: Google Sheets ID
-    - period_start: Start date (YYYY-MM-DD)
-    - period_end: End date (YYYY-MM-DD)
-    - gateway_tab: Name of gateway tab (default: "GATEWAY")
-    - bank_tab: Name of bank tab (default: "BANK")
-    - internal_tab: Name of internal tab (default: "INTERNAL")
-    
-    Reads:
-    - CL_CONFIG tab for configuration
-    - Source tabs (GATEWAY, BANK, INTERNAL) for transaction data
-    
-    Writes:
-    - CL_SUMMARY tab with summary statistics
-    - CL_RECONCILED tab with matched groups
-    - CL_EXCEPTIONS tab with unmatched transactions and explanations
-    
-    Returns:
-    - JSON with sheet URL and reconciliation results
-    """
-    try:
-        try:
-            validate_period_dates(request.period_start, request.period_end)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-        try:
-            outputs, sheet_url = run_reconciliation_from_sheets(
-                sheet_id=request.sheet_id,
-                period_start=request.period_start,
-                period_end=request.period_end,
-                gateway_tab=request.gateway_tab,
-                bank_tab=request.bank_tab,
-                internal_tab=request.internal_tab,
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except ClearledgrError as e:
-            raise to_http_exception(e)
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to run reconciliation pipeline: {str(e)}"
-            )
-        
-        # Return results with sheet URL
-        return {
-            "sheet_url": sheet_url,
-            "summary": outputs["summary"],
-            "reconciled": outputs["reconciled"],
-            "exceptions": outputs["exceptions"]
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-
-# Run History Endpoints
-
-@app.get(
-    "/runs",
-    tags=["History"],
-    summary="List Reconciliation Runs",
-    description="List recent reconciliation runs with optional filters"
-)
-async def list_runs_endpoint(
-    limit: int = Query(50, ge=1, le=1000),
-    source_type: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    api_key: str = Depends(get_api_key_optional),
-):
-    """List recent reconciliation runs."""
-    try:
-        runs = list_runs(limit=limit, source_type=source_type, status=status)
-        return {"runs": runs, "count": len(runs)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list runs: {str(e)}")
-
-
-@app.get(
-    "/runs/{run_id}",
-    tags=["History"],
-    summary="Get Reconciliation Run",
-    description="Get a specific reconciliation run by ID"
-)
-async def get_run_endpoint(
-    run_id: str,
-    api_key: str = Depends(get_api_key_optional),
-):
-    """Get a specific run by ID."""
-    run = get_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    return run
-
-
-@app.get(
-    "/runs/stats",
-    tags=["History"],
-    summary="Get Run Statistics",
-    description="Get aggregate statistics about reconciliation runs"
-)
-async def get_stats_endpoint(
-    api_key: str = Depends(get_api_key_optional),
-):
-    """Get aggregate run statistics."""
-    try:
-        return get_run_stats()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
-
-
-# Agent Enhancement Endpoints
-
-class ScheduleRequest(BaseModel):
-    """Request to create/update agent schedule."""
-    tool_type: str
-    tool_id: str
-    schedule_type: str  # 'daily', 'weekly', 'monthly', 'on_change', 'period_end', 'threshold'
-    schedule_config: Dict
-    is_active: bool = True
-
-
-class FeedbackRequest(BaseModel):
-    """Request to submit agent feedback."""
-    run_id: str
-    feedback_type: str  # 'correction', 'approval', 'rejection', 'suggestion'
-    original_result: Dict
-    corrected_result: Optional[Dict] = None
-    user_notes: Optional[str] = None
-    organization_id: Optional[str] = None
-
-
-class QualityCheckRequest(BaseModel):
-    """Request for data quality check."""
-    gateway_data: List[Dict]
-    bank_data: List[Dict]
-    internal_data: List[Dict]
-
-
-@app.post(
-    "/agent/schedules",
-    tags=["Agent"],
-    summary="Create Agent Schedule",
-    description="Create or update an agent schedule for autonomous execution"
-)
-async def create_agent_schedule(
-    request: ScheduleRequest,
-    api_key: str = Depends(get_api_key_optional),
-):
-    """Create or update an agent schedule."""
-    try:
-        schedule_id = f"{request.tool_type}_{request.tool_id}_{request.schedule_type}"
-        
-        save_agent_schedule(
-            schedule_id=schedule_id,
-            tool_type=request.tool_type,
-            tool_id=request.tool_id,
-            schedule_type=request.schedule_type,
-            schedule_config=request.schedule_config,
-            is_active=request.is_active
-        )
-
-        if temporal_enabled():
-            cron_expr = cron_from_schedule_type(request.schedule_type)
-            if cron_expr:
-                manager = TemporalScheduleManager()
-                await manager.upsert_reconciliation_schedule(
-                    schedule_id=f"schedule-{schedule_id}",
-                    payload={
-                        "organization_id": request.schedule_config.get("organization_id"),
-                        "requester": request.schedule_config.get("requester"),
-                        "tool_type": request.tool_type,
-                        "tool_id": request.tool_id,
-                        "schedule_config": request.schedule_config,
-                    },
-                    cron=cron_expr,
-                )
-        
-        # Register trigger
-        if request.schedule_type in ["daily", "weekly", "monthly", "on_change", "period_end"]:
-            trigger_manager.create_schedule_trigger(
-                tool_type=request.tool_type,
-                tool_id=request.tool_id,
-                schedule_type=request.schedule_type,
-                config=request.schedule_config
-            )
-        elif request.schedule_type == "threshold":
-            threshold = request.schedule_config.get("threshold", 100)
-            trigger_manager.create_threshold_trigger(
-                tool_type=request.tool_type,
-                tool_id=request.tool_id,
-                threshold=threshold,
-                config=request.schedule_config
-            )
-        
-        return {
-            "schedule_id": schedule_id,
-            "status": "created",
-            "message": "Schedule created successfully"
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create schedule: {str(e)}"
-        )
-
-
-@app.get(
-    "/agent/schedules/{tool_type}/{tool_id}",
-    tags=["Agent"],
-    summary="Get Agent Schedules",
-    description="Get all schedules for a specific tool"
-)
-async def get_schedules(
-    tool_type: str,
-    tool_id: str,
-    api_key: str = Depends(get_api_key_optional),
-):
-    """Get schedules for a tool."""
-    try:
-        schedules = get_agent_schedules(tool_type, tool_id)
-        return {"schedules": schedules}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get schedules: {str(e)}"
-        )
-
-
-@app.post(
-    "/agent/feedback",
-    tags=["Agent"],
-    summary="Submit Agent Feedback",
-    description="Submit feedback for agent learning"
-)
-async def submit_agent_feedback(
-    request: FeedbackRequest,
-    api_key: str = Depends(get_api_key_optional),
-):
-    """Submit feedback for agent learning."""
-    try:
-        feedback_id = f"feedback_{request.run_id}_{datetime.now(timezone.utc).timestamp()}"
-        
-        learning_outcomes = learn_from_feedback(
-            feedback_id=feedback_id,
-            run_id=request.run_id,
-            feedback_type=request.feedback_type,
-            original_result=request.original_result,
-            corrected_result=request.corrected_result,
-            user_notes=request.user_notes,
-            organization_id=request.organization_id
-        )
-        
-        return {
-            "feedback_id": feedback_id,
-            "status": "saved",
-            "learning_outcomes": learning_outcomes
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save feedback: {str(e)}"
-        )
-
-
-@app.get(
-    "/agent/memory/{organization_id}",
-    tags=["Agent"],
-    summary="Get Agent Memory",
-    description="Get learned configuration and memory for an organization"
-)
-async def get_memory(
-    organization_id: str,
-    tool_type: Optional[str] = None,
-    memory_type: Optional[str] = None,
-    api_key: str = Depends(get_api_key_optional),
-):
-    """Get agent memory."""
-    try:
-        memory = get_agent_memory(
-            organization_id=organization_id,
-            tool_type=tool_type,
-            memory_type=memory_type
-        )
-        return {"memory": memory}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get memory: {str(e)}"
-        )
-
-
-@app.get(
-    "/agent/recommendations/{organization_id}",
-    tags=["Agent"],
-    summary="Get Proactive Recommendations",
-    description="Get proactive recommendations for reconciliation"
-)
-async def get_recommendations(
-    organization_id: str,
-    tool_type: str,
-    api_key: str = Depends(get_api_key_optional),
-):
-    """Get proactive recommendations."""
-    try:
-        recommendations = get_proactive_recommendations(
-            organization_id=organization_id,
-            tool_type=tool_type
-        )
-        return {"recommendations": recommendations}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get recommendations: {str(e)}"
-        )
-
-
-@app.post(
-    "/agent/quality-check",
-    tags=["Agent"],
-    summary="Check Data Quality",
-    description="Perform data quality checks before reconciliation"
-)
-async def check_quality(
-    request: QualityCheckRequest,
-    api_key: str = Depends(get_api_key_optional),
-):
-    """Check data quality."""
-    try:
-        quality_result = check_data_quality(
-            gateway_data=request.gateway_data,
-            bank_data=request.bank_data,
-            internal_data=request.internal_data
-        )
-        return quality_result
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to check quality: {str(e)}"
-        )
-
-
-@app.get(
-    "/agent/learned-config/{organization_id}",
-    tags=["Agent"],
-    summary="Get Learned Configuration",
-    description="Get configuration with learned parameters applied"
-)
-async def get_learned_config_endpoint(
-    organization_id: str,
-    tool_type: str,
-    api_key: str = Depends(get_api_key_optional),
-):
-    """Get learned configuration."""
-    try:
-        default_config = {
-            "amount_tolerance_pct": 0.5,
-            "date_window_days": 3
-        }
-        
-        learned_config = get_learned_config(
-            organization_id=organization_id,
-            tool_type=tool_type,
-            default_config=default_config
-        )
-        
-        return {"config": learned_config}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get learned config: {str(e)}"
-        )
-
-
-@app.get(
-    "/agent/events/{organization_id}",
-    tags=["Agent"],
-    summary="Get Agent Events",
-    description="Get recent agent events for coordination"
-)
-async def get_agent_events(
-    organization_id: str,
-    event_type: Optional[str] = None,
-    limit: int = 50,
-    api_key: str = Depends(get_api_key_optional),
-):
-    """Get agent events."""
-    try:
-        events = get_recent_agent_events(
-            organization_id=organization_id,
-            event_type=event_type,
-            limit=limit
-        )
-        return {"events": events}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get events: {str(e)}"
+            detail=safe_error(e, "metrics")
         )
 
 
@@ -1276,7 +754,7 @@ async def parse_email_endpoint(
         log_error("email_parse_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to parse email: {str(e)}"
+            detail=safe_error(e, "email parse")
         )
 
 
@@ -1308,7 +786,7 @@ async def match_invoice_endpoint(
         log_error("invoice_match_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to match invoice: {str(e)}"
+            detail=safe_error(e, "invoice match")
         )
 
 
@@ -1338,7 +816,7 @@ async def match_payment_endpoint(
         log_error("payment_match_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to match payment: {str(e)}"
+            detail=safe_error(e, "payment match")
         )
 
 
@@ -1369,7 +847,7 @@ async def vendor_exceptions_endpoint(
         log_error("vendor_exceptions_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get vendor exceptions: {str(e)}"
+            detail=safe_error(e, "vendor exceptions")
         )
 
 
@@ -1489,7 +967,7 @@ async def process_email_endpoint(
         log_error("email_process_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to process email: {str(e)}"
+            detail=safe_error(e, "email processing")
         )
 
 
@@ -1554,7 +1032,7 @@ async def create_task_endpoint(
         log_error("create_task_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to create task: {str(e)}"
+            detail=safe_error(e, "create task")
         )
 
 
@@ -1589,7 +1067,7 @@ async def update_task_status_endpoint(
         log_error("update_task_status_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to update task status: {str(e)}"
+            detail=safe_error(e, "update task status")
         )
 
 
@@ -1631,7 +1109,7 @@ async def assign_task_endpoint(
         log_error("assign_task_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to assign task: {str(e)}"
+            detail=safe_error(e, "assign task")
         )
 
 
@@ -1666,7 +1144,7 @@ async def add_comment_endpoint(
         log_error("add_comment_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to add comment: {str(e)}"
+            detail=safe_error(e, "add comment")
         )
 
 
@@ -1692,7 +1170,7 @@ async def get_task_endpoint(
         log_error("get_task_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get task: {str(e)}"
+            detail=safe_error(e, "get task")
         )
 
 
@@ -1726,7 +1204,7 @@ async def list_tasks_endpoint(
         log_error("list_tasks_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to list tasks: {str(e)}"
+            detail=safe_error(e, "list tasks")
         )
 
 
@@ -1748,7 +1226,7 @@ async def get_tasks_for_email_endpoint(
         log_error("get_tasks_for_email_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get tasks: {str(e)}"
+            detail=safe_error(e, "tasks for email")
         )
 
 
@@ -1770,7 +1248,7 @@ async def get_overdue_tasks_endpoint(
         log_error("get_overdue_tasks_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get overdue tasks: {str(e)}"
+            detail=safe_error(e, "overdue tasks")
         )
 
 
@@ -1798,7 +1276,7 @@ async def notify_overdue_tasks_endpoint(
         log_error("notify_overdue_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to send overdue notification: {str(e)}"
+            detail=safe_error(e, "overdue notification")
         )
 
 
@@ -1829,7 +1307,7 @@ async def run_task_scheduler_endpoint(
         log_error("task_scheduler_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to run scheduler: {str(e)}"
+            detail=safe_error(e, "task scheduler")
         )
 
 
@@ -1865,7 +1343,7 @@ async def record_audit_endpoint(
         log_error("record_audit_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to record audit event: {str(e)}"
+            detail=safe_error(e, "record audit")
         )
 
 
@@ -1903,7 +1381,7 @@ async def get_audit_trail_endpoint(
         log_error("get_audit_trail_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get audit trail: {str(e)}"
+            detail=safe_error(e, "audit trail")
         )
 
 
@@ -1926,7 +1404,7 @@ async def get_entity_history_endpoint(
         log_error("get_entity_history_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get entity history: {str(e)}"
+            detail=safe_error(e, "entity history")
         )
 
 
@@ -1949,5 +1427,5 @@ async def get_user_activity_endpoint(
         log_error("get_user_activity_error", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get user activity: {str(e)}"
+            detail=safe_error(e, "user activity")
         )

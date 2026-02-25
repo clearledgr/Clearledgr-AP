@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 import pytest
 
@@ -64,8 +64,19 @@ def _default_bill(item: Dict[str, str]) -> Bill:
     )
 
 
+def _move_item_to_failed_post(db, ap_item_id: str) -> None:
+    for state in ("needs_approval", "approved", "ready_to_post", "failed_post"):
+        assert db.update_ap_item(
+            ap_item_id,
+            state=state,
+            _actor_type="test",
+            _actor_id="test-suite",
+        )
+
+
 def test_post_bill_api_first_success_records_attempt_and_success(db, monkeypatch):
     item = _create_item(db)
+    db.update_ap_item(item["id"], metadata={"correlation_id": "corr-erp-api-1"})
 
     monkeypatch.setattr(
         erp_api_first_module,
@@ -73,12 +84,13 @@ def test_post_bill_api_first_success_records_attempt_and_success(db, monkeypatch
         lambda organization_id: ERPConnection(type="quickbooks"),
     )
 
-    async def _fake_post_bill(organization_id: str, bill: Bill) -> Dict[str, str]:
+    async def _fake_post_bill(organization_id: str, bill: Bill, **kwargs) -> Dict[str, str]:
         return {
             "status": "success",
             "erp": "quickbooks",
             "bill_id": "QB-1",
             "doc_num": "1001",
+            "idempotency_key": kwargs.get("idempotency_key"),
         }
 
     monkeypatch.setattr(erp_api_first_module, "post_bill", _fake_post_bill)
@@ -94,17 +106,28 @@ def test_post_bill_api_first_success_records_attempt_and_success(db, monkeypatch
             vendor_name=str(item["vendor_name"]),
             amount=float(item["amount"]),
             currency=str(item["currency"]),
+            correlation_id="corr-erp-api-1",
             db=db,
         )
     )
 
     assert result["execution_mode"] == "api"
+    assert result["idempotency_key"]
+    assert result["erp_type"] == "quickbooks"
+    assert result["erp_reference"] == "QB-1"
+    assert result["error_code"] is None
+    assert result["error_message"] is None
+    assert result["raw_response_redacted"]["bill_id"] == "QB-1"
     assert result["fallback"]["requested"] is False
     assert result["routing"]["primary_mode"] == "api"
     event_types = _event_types(db, str(item["id"]))
     assert "erp_api_attempt" in event_types
     assert "erp_api_success" in event_types
     assert "erp_api_fallback_requested" not in event_types
+    events = db.list_ap_audit_events(str(item["id"]))
+    erp_events = [e for e in events if str(e.get("event_type") or "").startswith("erp_api_")]
+    assert erp_events
+    assert all(e.get("correlation_id") == "corr-erp-api-1" for e in erp_events)
 
 
 def test_post_bill_api_first_requests_browser_fallback_on_api_failure(db, monkeypatch):
@@ -116,7 +139,7 @@ def test_post_bill_api_first_requests_browser_fallback_on_api_failure(db, monkey
         lambda organization_id: ERPConnection(type="xero"),
     )
 
-    async def _fake_post_bill(organization_id: str, bill: Bill) -> Dict[str, str]:
+    async def _fake_post_bill(organization_id: str, bill: Bill, **kwargs) -> Dict[str, str]:
         return {"status": "error", "erp": "xero", "reason": "api_timeout"}
 
     async def _fake_dispatch_browser_fallback(**kwargs) -> Dict[str, str]:
@@ -153,6 +176,11 @@ def test_post_bill_api_first_requests_browser_fallback_on_api_failure(db, monkey
 
     assert result["status"] == "pending_browser_fallback"
     assert result["execution_mode"] == "browser_fallback"
+    assert result["erp_type"] == "xero"
+    assert result["erp_reference"] is None
+    assert result["error_code"] == "api_timeout"
+    assert result["error_message"] == "api_timeout"
+    assert result["raw_response_redacted"]["reason"] == "api_timeout"
     assert result["fallback"]["requested"] is True
     event_types = _event_types(db, str(item["id"]))
     assert "erp_api_attempt" in event_types
@@ -169,7 +197,7 @@ def test_post_bill_api_first_fails_safe_when_connector_fallback_disabled(db, mon
         lambda organization_id: ERPConnection(type="custom_erp"),
     )
 
-    async def _fake_post_bill(organization_id: str, bill: Bill) -> Dict[str, str]:
+    async def _fake_post_bill(organization_id: str, bill: Bill, **kwargs) -> Dict[str, str]:
         called["post_bill"] += 1
         return {"status": "success"}
 
@@ -198,9 +226,291 @@ def test_post_bill_api_first_fails_safe_when_connector_fallback_disabled(db, mon
     assert called["post_bill"] == 0
     assert called["fallback"] == 0
     assert result["execution_mode"] == "api_failed"
+    assert result["erp_type"] == "custom_erp"
+    assert result["error_code"] == "fallback_disabled"
+    assert result["error_message"] == "api_not_available_for_connector"
+    assert result["raw_response_redacted"]["reason"] == "api_not_available_for_connector"
     assert result["fallback"]["reason"] == "fallback_disabled_for_connector"
     assert result["routing"]["primary_mode"] == "manual_review"
     event_types = _event_types(db, str(item["id"]))
     assert "erp_api_attempt" in event_types
     assert "erp_api_failed" in event_types
 
+
+def test_post_bill_api_first_propagates_explicit_idempotency_key(db, monkeypatch):
+    item = _create_item(db)
+
+    monkeypatch.setattr(
+        erp_api_first_module,
+        "get_erp_connection",
+        lambda organization_id: ERPConnection(type="quickbooks"),
+    )
+
+    captured = {}
+
+    async def _fake_post_bill(organization_id: str, bill: Bill, **kwargs) -> Dict[str, str]:
+        captured.update(kwargs)
+        return {
+            "status": "success",
+            "erp": "quickbooks",
+            "bill_id": "QB-IDEMP-1",
+            "doc_num": "2001",
+        }
+
+    monkeypatch.setattr(erp_api_first_module, "post_bill", _fake_post_bill)
+
+    result = asyncio.run(
+        erp_api_first_module.post_bill_api_first(
+            organization_id="default",
+            bill=_default_bill(item),
+            actor_id="tester",
+            ap_item_id=str(item["id"]),
+            email_id=str(item["message_id"]),
+            invoice_number=str(item["invoice_number"]),
+            vendor_name=str(item["vendor_name"]),
+            amount=float(item["amount"]),
+            currency=str(item["currency"]),
+            db=db,
+            idempotency_key="decision-key-123",
+        )
+    )
+
+    assert captured["idempotency_key"] == "decision-key-123"
+    assert result["idempotency_key"] == "decision-key-123"
+    assert result["erp_type"] == "quickbooks"
+    assert result["erp_reference"] == "QB-IDEMP-1"
+    assert result["error_code"] is None
+
+
+def test_dispatch_browser_fallback_emits_preview_and_confirmation_audit_sequence(db):
+    item = _create_item(db)
+
+    class _FakeBrowserService:
+        def __init__(self):
+            self.dispatch_calls: List[dict] = []
+            self.confirm_calls: List[dict] = []
+
+        def create_session(self, **kwargs):
+            return {
+                "id": "AGS-preview-1",
+                "organization_id": kwargs.get("organization_id"),
+                "ap_item_id": kwargs.get("ap_item_id"),
+                "state": "running",
+            }
+
+        def dispatch_macro(self, **kwargs):
+            self.dispatch_calls.append(dict(kwargs))
+            if kwargs.get("dry_run"):
+                return {
+                    "status": "preview",
+                    "commands": [
+                        {
+                            "command": {"command_id": "cmd-open", "tool_name": "open_tab"},
+                            "decision": {"requires_confirmation": False},
+                        },
+                        {
+                            "command": {"command_id": "cmd-submit", "tool_name": "click"},
+                            "decision": {"requires_confirmation": True},
+                        },
+                    ],
+                }
+            return {
+                "status": "dispatched",
+                "queued": 1,
+                "blocked": 1,
+                "denied": 0,
+                "events": [
+                    {"command_id": "cmd-open", "status": "queued"},
+                    {"command_id": "cmd-submit", "status": "blocked_for_approval"},
+                ],
+            }
+
+        def enqueue_command(self, **kwargs):
+            self.confirm_calls.append(dict(kwargs))
+            return {"command_id": kwargs["command"]["command_id"], "status": "queued"}
+
+    service = _FakeBrowserService()
+    result = asyncio.run(
+        erp_api_first_module._dispatch_browser_fallback(
+            db=db,
+            service=service,
+            organization_id="default",
+            actor_id="approver@example.com",
+            ap_item_id=str(item["id"]),
+            email_id=str(item["thread_id"]),
+            invoice_number=str(item["invoice_number"]),
+            vendor_name=str(item["vendor_name"]),
+            amount=float(item["amount"]),
+            currency=str(item["currency"]),
+            vendor_portal_url="https://vendor.example.com/invoice",
+            erp_url="https://erp.example.com/bills",
+        )
+    )
+
+    assert result["requested"] is True
+    assert result["reason"] == "fallback_preview_confirmed_and_dispatched"
+    assert result["preview"]["status"] == "preview"
+    assert result["preview"]["command_count"] == 2
+    assert result["preview"]["requires_confirmation_count"] == 1
+    assert result["confirmation"]["required_count"] == 1
+    assert result["confirmation"]["confirmed_count"] == 1
+    assert result["blocked"] == 0
+    assert result["queued"] == 2
+
+    assert len(service.dispatch_calls) == 2
+    assert service.dispatch_calls[0]["dry_run"] is True
+    assert service.dispatch_calls[1]["dry_run"] is False
+    assert len(service.confirm_calls) == 1
+    assert service.confirm_calls[0]["confirm"] is True
+    assert service.confirm_calls[0]["confirmed_by"] == "approver@example.com"
+    assert service.confirm_calls[0]["command"]["command_id"] == "cmd-submit"
+
+    event_types = _event_types(db, str(item["id"]))
+    assert "erp_api_fallback_preview_created" in event_types
+    assert "erp_api_fallback_confirmation_captured" in event_types
+
+
+def test_post_bill_api_first_blocks_when_rollout_control_disables_erp_posting(db, monkeypatch):
+    item = _create_item(db)
+    db.ensure_organization("default", organization_name="default")
+    db.update_organization(
+        "default",
+        settings={
+            "rollback_controls": {
+                "erp_posting_disabled": True,
+                "reason": "erp_posting_paused_for_incident",
+            }
+        },
+    )
+
+    called = {"post_bill": 0}
+
+    monkeypatch.setattr(
+        erp_api_first_module,
+        "get_erp_connection",
+        lambda organization_id: ERPConnection(type="quickbooks"),
+    )
+
+    async def _fake_post_bill(organization_id: str, bill: Bill, **kwargs) -> Dict[str, str]:
+        called["post_bill"] += 1
+        return {"status": "success", "erp": "quickbooks"}
+
+    monkeypatch.setattr(erp_api_first_module, "post_bill", _fake_post_bill)
+
+    result = asyncio.run(
+        erp_api_first_module.post_bill_api_first(
+            organization_id="default",
+            bill=_default_bill(item),
+            actor_id="tester",
+            ap_item_id=str(item["id"]),
+            email_id=str(item["message_id"]),
+            invoice_number=str(item["invoice_number"]),
+            vendor_name=str(item["vendor_name"]),
+            amount=float(item["amount"]),
+            currency=str(item["currency"]),
+            db=db,
+        )
+    )
+
+    assert called["post_bill"] == 0
+    assert result["status"] == "blocked"
+    assert result["execution_mode"] == "blocked"
+    assert result["reason"] == "erp_posting_paused_for_incident"
+    assert result["erp_type"] == "quickbooks"
+    assert result["error_code"] == "posting_blocked"
+    assert result["error_message"] == "erp_posting_paused_for_incident"
+    assert result["raw_response_redacted"]["reason"] == "erp_posting_paused_for_incident"
+    assert result["fallback"]["reason"] == "erp_posting_disabled_by_rollout_control"
+
+    event_types = _event_types(db, str(item["id"]))
+    assert "erp_api_blocked" in event_types
+
+
+def test_reconcile_browser_fallback_completion_updates_ap_item_and_is_idempotent(db):
+    item = _create_item(db)
+    _move_item_to_failed_post(db, str(item["id"]))
+    session = db.create_agent_session(
+        {
+            "organization_id": "default",
+            "ap_item_id": str(item["id"]),
+            "created_by": "runner-service",
+            "metadata": {"workflow_id": "erp_posting_fallback"},
+        }
+    )
+
+    first = erp_api_first_module.reconcile_browser_fallback_completion(
+        session_id=str(session["id"]),
+        macro_name="post_invoice_to_erp",
+        status="completed",
+        actor_id="runner-service",
+        erp_reference="ERP-FINAL-1",
+        evidence={"screenshot_hash": "abc123"},
+        idempotency_key="fallback-finalize-1",
+        correlation_id="corr-finalize-1",
+        db=db,
+    )
+    assert first["status"] == "success"
+    assert first["duplicate"] is False
+    assert first["ap_item_state"] == "posted_to_erp"
+
+    updated = db.get_ap_item(str(item["id"]))
+    assert updated["state"] == "posted_to_erp"
+    assert updated["erp_reference"] == "ERP-FINAL-1"
+
+    second = erp_api_first_module.reconcile_browser_fallback_completion(
+        session_id=str(session["id"]),
+        macro_name="post_invoice_to_erp",
+        status="success",
+        actor_id="runner-service",
+        erp_reference="ERP-FINAL-1",
+        idempotency_key="fallback-finalize-1",
+        db=db,
+    )
+    assert second["duplicate"] is True
+
+    event_types = _event_types(db, str(item["id"]))
+    assert "erp_browser_fallback_completed" in event_types
+
+
+def test_post_bill_api_first_treats_already_posted_as_successful_idempotent_result(db, monkeypatch):
+    item = _create_item(db)
+
+    monkeypatch.setattr(
+        erp_api_first_module,
+        "get_erp_connection",
+        lambda organization_id: ERPConnection(type="quickbooks"),
+    )
+
+    async def _fake_post_bill(organization_id: str, bill: Bill, **kwargs) -> Dict[str, str]:
+        return {
+            "status": "already_posted",
+            "erp": "quickbooks",
+            "reference_id": "QB-ALREADY-1",
+            "idempotency_key": kwargs.get("idempotency_key"),
+        }
+
+    monkeypatch.setattr(erp_api_first_module, "post_bill", _fake_post_bill)
+
+    result = asyncio.run(
+        erp_api_first_module.post_bill_api_first(
+            organization_id="default",
+            bill=_default_bill(item),
+            actor_id="tester",
+            ap_item_id=str(item["id"]),
+            email_id=str(item["message_id"]),
+            invoice_number=str(item["invoice_number"]),
+            vendor_name=str(item["vendor_name"]),
+            amount=float(item["amount"]),
+            currency=str(item["currency"]),
+            db=db,
+            idempotency_key="already-posted-key",
+        )
+    )
+
+    assert result["status"] == "already_posted"
+    assert result["execution_mode"] == "api"
+    assert result["erp_type"] == "quickbooks"
+    assert result["erp_reference"] == "QB-ALREADY-1"
+    assert result["error_code"] is None
+    assert result["idempotency_key"] == "already-posted-key"
+    assert result["fallback"]["requested"] is False

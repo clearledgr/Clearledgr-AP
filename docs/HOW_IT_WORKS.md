@@ -1,138 +1,146 @@
-# How Clearledgr Works
+# How Clearledgr AP v1 Works
 
 ## Overview
 
-Clearledgr is an AI-powered accounts payable assistant that lives inside Gmail. Instead of forcing finance teams into another dashboard, we embed directly where invoices arrive - your inbox.
+Clearledgr AP v1 is an **inbox-native, agentic AP workflow** for finance teams.
 
----
+It starts in Gmail, routes approvals in Slack and Teams, and writes approved invoices into ERP systems with policy checks, deterministic workflow orchestration, and an auditable execution trail.
 
-## Step-by-Step
+Clearledgr is not a standalone AP dashboard for daily work. The day-to-day operator workflow lives in Gmail and chat.
 
-### 1. Install the Gmail Extension
+## Product Shape (AP v1)
 
-Add Clearledgr to Chrome. It embeds directly into Gmail - no new tabs, no new apps to learn. You'll see a Clearledgr icon in your Gmail sidebar.
+- **Gmail** = intake, context, status, exceptions, next action
+- **Slack / Teams** = approval and escalation decisions
+- **ERP** = system of record
+- **Clearledgr** = policy + orchestration + execution + audit
 
-### 2. Connect Your Accounting Software
+## Step-by-Step (AP v1)
 
-One-click OAuth to link your ERP:
-- QuickBooks Online
-- Xero
-- NetSuite
-- SAP
+### 1. Set up Clearledgr (Admin Console)
 
-Your chart of accounts syncs automatically, so GL code suggestions are always accurate.
+An admin connects:
 
-### 3. Clearledgr Monitors Your Inbox 24/7
+1. Gmail
+2. Slack and/or Teams (AP v1 GA requires both channel contracts)
+3. ERP connector(s)
+4. Approval routing configuration
+5. AP policies
 
-Our AI agent watches for invoices, receipts, and payment requests. No action required from you. The agent:
-- Scans incoming emails in real-time
-- Identifies financial documents using pattern matching and AI
-- Extracts data from PDFs and images using Claude Vision
+The Admin Console is for setup, configuration, and health checks, not daily AP processing.
 
-### 4. Invoices Appear in Your Pipeline
+### 2. Invoice arrives in Gmail
 
-When an invoice arrives, Clearledgr:
-- Extracts vendor name, amount, currency, due date
-- Suggests the correct GL code based on learned patterns
-- Calculates a confidence score
-- Shows it in a pipeline view right inside Gmail
+When an invoice or AP-related request lands in the inbox, Clearledgr detects it and creates (or links to) an invoice-centric AP item.
 
-### 5. Review & Approve (or Let AI Handle It)
+Clearledgr can:
 
-Clearledgr uses confidence-based automation:
+- classify AP-relevant messages
+- parse email content and attachments
+- extract key invoice fields (including PDFs/images where supported)
+- associate multiple related emails/threads to one invoice item when appropriate
 
-| Confidence | Action |
-|------------|--------|
-| **95%+** | Auto-approved and posted to ERP (no human needed) |
-| **85-94%** | Auto-approved, you get a notification |
-| **70-84%** | Asks for confirmation before posting |
-| **Below 70%** | Requires manual review |
+### 3. Clearledgr validates before routing
 
-Low-confidence invoices appear in Slack or the Gmail sidebar for one-click approval.
+Before approval routing or ERP posting, Clearledgr runs deterministic checks such as:
 
-### 6. Posted to Your ERP
+- duplicate detection / merge-link checks
+- policy checks
+- PO / receipt / budget checks (where configured data is available)
+- extraction confidence gate checks for critical fields
 
-Approved invoices become Bills in your accounting system automatically:
-- Creates the vendor if they don't exist
-- Maps to the correct GL account
-- Attaches the original invoice PDF
+If there is an issue, Clearledgr creates an explicit exception state (for example low confidence, mismatch, missing info) with a clear next action.
 
-### 7. Payment Scheduled
+### 4. Gmail thread becomes the AP control surface
 
-After posting, Clearledgr:
-- Queues the payment based on due date
-- Detects early payment discounts (e.g., "2/10 Net 30")
-- Sends reminders before due dates
-- Supports batch payment processing
+Inside Gmail, the operator sees a focused AP workspace for the invoice:
 
----
+- status
+- extracted fields
+- exceptions
+- next action
+- audit breadcrumbs
 
-## The Result
+Technical details and deep context are hidden behind progressive disclosure so the thread card stays decision-first and uncluttered.
 
-What used to take hours of:
-- Downloading PDF attachments
-- Manual data entry into your ERP
-- Switching between Gmail, spreadsheets, and accounting software
+### 5. Approvals happen in Slack and Teams
 
-Becomes a **20-minute batch review session** - all without leaving Gmail.
+When an invoice needs approval, Clearledgr sends an approval request to the configured approver(s) in Slack or Teams.
 
----
+The approval card includes the information needed to decide:
 
-## Key Features
+- invoice summary
+- validation summary / exceptions
+- requested action
+- approve / reject / request-info actions
 
-### For Finance Teams
-- **No context switching** - work stays in Gmail
-- **AI-powered extraction** - handles PDFs, images, and email text
-- **Confidence-based automation** - routine invoices process automatically
-- **Full audit trail** - every action is logged
+Approval actions are handled through a common contract and must be idempotent (duplicate clicks/callbacks cannot create duplicate approvals or posts).
 
-### For Leadership
-- **Real-time visibility** - dashboard shows AP status at a glance
-- **Policy compliance** - automatic checks against spending rules
-- **Reduced errors** - AI catches duplicates and anomalies
-- **Faster close** - less manual work at month-end
+### 6. Approved invoices are posted to ERP (system of record)
 
----
+Once an invoice is approved and all posting preconditions are satisfied, Clearledgr posts the invoice to the ERP.
 
-## Integrations
+AP v1 doctrine defines ERP write-back as:
 
-### ERPs
-- QuickBooks Online
-- Xero
-- NetSuite
-- SAP Business One
+- API-first
+- idempotent
+- audit-traced
+- policy-guarded
 
-### Bank Feeds
-- Nordigen (EU Open Banking)
-- TrueLayer (UK)
-- Okra (Africa)
+If a fallback path is used (for example a gated browser-based path where allowed), it must be previewed, confirmed, and audited.
 
-### Notifications
-- Slack (approval workflows)
-- Email digests
+### 7. Clearledgr records audit breadcrumbs and outcomes
 
-### Payments
-- Wise Business API
-- Stripe
-- ACH/NACHA batch files
+Clearledgr records:
 
----
+- validation outcomes
+- approval requests and decisions
+- state transitions
+- ERP posting attempts/results
+- overrides and exception resolutions
 
-## Security & Compliance
+These breadcrumbs are surfaced in-context (Gmail and admin/ops tools) so finance teams can trust what happened and why.
 
-- **OAuth 2.0** - secure connection to ERPs (no passwords stored)
-- **GDPR compliant** - data residency options for EU
-- **EU VAT validation** - automatic VIES checks
-- **Audit logs** - full history of all actions
-- **Role-based access** - control who can approve
+## Confidence and Human Review (AP v1 defaults)
 
----
+Clearledgr uses confidence-based extraction and review gating.
 
-## Getting Started
+Default AP v1 behavior:
 
-1. Install the Chrome extension
-2. Authorize Gmail access
-3. Connect your ERP
-4. Start processing invoices
+1. Critical extracted fields are confidence-checked.
+2. Low-confidence critical fields block posting.
+3. A human can review/correct fields.
+4. Overrides require justification and audit logging.
 
-The AI learns from your approvals, getting smarter over time.
+This is how Clearledgr remains agentic without becoming unsafe or opaque.
+
+## What AP v1 Does Not Do
+
+AP v1 does **not** include:
+
+- payment execution / payment scheduling
+- bank-feed reconciliation workflows
+- consumer messaging surfaces (WhatsApp/Telegram)
+- a required standalone AP dashboard for daily use
+
+Those are separate product decisions and are not part of the AP v1 doctrine.
+
+## Why This Matters
+
+Clearledgr’s AP v1 value is not just "UI inside Gmail."
+
+The differentiator is the combination of:
+
+- inbox-native workflow
+- chat-native approvals
+- ERP write-back
+- deterministic policy enforcement
+- auditable execution
+
+That is what makes it an embedded finance execution layer rather than a lightweight automation plugin.
+
+## Canonical Reference
+
+For the authoritative AP v1 doctrine, contracts, and GA launch gates, see:
+
+- `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`

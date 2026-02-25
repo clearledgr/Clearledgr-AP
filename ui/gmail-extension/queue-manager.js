@@ -555,7 +555,16 @@ class ClearledgrQueueManager {
       };
     }
 
-    const backendUrl = String(raw.backendUrl || 'http://127.0.0.1:8000').trim().replace(/\/+$/, '');
+    const extensionConfig =
+      (typeof window !== 'undefined' && (window.CLEARLEDGR_CONFIG || window.CONFIG))
+      || (typeof globalThis !== 'undefined' && (globalThis.CLEARLEDGR_CONFIG || globalThis.CONFIG))
+      || {};
+    const configuredBackendUrl = String(
+      extensionConfig.API_URL || extensionConfig.BACKEND_URL || ''
+    ).trim();
+    const backendUrl = String(raw.backendUrl || configuredBackendUrl || 'http://127.0.0.1:8000')
+      .trim()
+      .replace(/\/+$/, '');
     return {
       backendUrl,
       organizationId: String(raw.organizationId || 'default').trim(),
@@ -1336,6 +1345,109 @@ class ClearledgrQueueManager {
       this.emitQueueUpdated();
     } finally {
       this.agentSyncInFlight = false;
+    }
+  }
+
+  async verifyConfidence(item) {
+    if (!item || !this.runtimeConfig?.backendUrl) return null;
+    const extraction = {
+      vendor: item.vendor_name || item.vendor || '',
+      amount: item.amount,
+      currency: item.currency || 'USD',
+      invoice_number: item.invoice_number || '',
+    };
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/verify-confidence`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email_id: item.thread_id || item.message_id || item.id,
+          extraction,
+          organization_id: this.runtimeConfig.organizationId || 'default',
+        })
+      });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async approveAndPost(item, { override = false, overrideJustification = '' } = {}) {
+    if (!item || !this.runtimeConfig?.backendUrl) return { status: 'error', reason: 'invalid' };
+    const extraction = {
+      vendor: item.vendor_name || item.vendor || '',
+      amount: item.amount,
+      currency: item.currency || 'USD',
+      invoice_number: item.invoice_number || '',
+      due_date: item.due_date || '',
+    };
+    if (override && overrideJustification) {
+      extraction.override_justification = overrideJustification;
+    }
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/approve-and-post`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email_id: item.thread_id || item.message_id || item.id,
+          extraction,
+          override,
+          organization_id: this.runtimeConfig.organizationId || 'default',
+          user_email: this.runtimeConfig.userEmail || 'gmail_extension',
+        })
+      });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const errPayload = await response.json();
+          detail = errPayload?.detail || '';
+        } catch (_) {}
+        return { status: 'error', reason: detail || `http_${response.status}` };
+      }
+      const result = await response.json();
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result;
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async getGlSuggestions(item) {
+    if (!item || !this.runtimeConfig?.backendUrl) return null;
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/suggestions/gl-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vendor_name: item.vendor_name || item.vendor || '',
+          organization_id: this.runtimeConfig.organizationId || 'default',
+        })
+      });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async getVendorSuggestions(item) {
+    if (!item || !this.runtimeConfig?.backendUrl) return null;
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/suggestions/vendor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          extracted_vendor: item.vendor_name || item.vendor || '',
+          sender_email: item.sender || '',
+          organization_id: this.runtimeConfig.organizationId || 'default',
+        })
+      });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (_) {
+      return null;
     }
   }
 

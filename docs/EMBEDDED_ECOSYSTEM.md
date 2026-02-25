@@ -1,10 +1,28 @@
 # Clearledgr Embedded Ecosystem
 
+## Governance Note (2026-02-25)
+
+- **Document role:** Embedded-platform concept reference (cross-surface / cross-workflow)
+- **Canonical status for AP v1 launch:** **Non-canonical**
+- **Why:** This document describes a broader autonomous ecosystem (including reconciliation and Sheets-first flows) beyond the current AP v1 doctrine.
+- **Use this doc for:** Conceptual ecosystem patterns and future expansion thinking
+- **Do not use this doc for:** AP v1 launch scope, channel parity commitments, or GA readiness requirements
+
+### Canonical AP v1 references
+
+1. `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
+2. `/Users/mombalam/Desktop/Clearledgr.v1/docs/HOW_IT_WORKS.md`
+3. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_EMBEDDED_WORKER_EXPERIENCE.md`
+4. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
+5. `/Users/mombalam/Desktop/Clearledgr.v1/docs/API_REFERENCE.md`
+
 ## Summary
 
 Clearledgr embeds autonomous finance agents inside the tools finance teams already use. The system combines **server-side Gmail API access** for 24/7 autonomous processing with **in-app UI surfaces** for zero context switching.
 
 **Key Innovation**: Work happens in the background. Users see results, not processes.
+
+> Note: For AP v1 specifically, Gmail is the primary operator surface, Slack/Teams are approval surfaces, and Admin Console is setup/ops. This document includes broader ecosystem concepts beyond that AP v1 boundary.
 
 ## Architecture Overview
 

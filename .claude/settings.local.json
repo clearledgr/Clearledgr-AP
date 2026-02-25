@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/ --ignore=tests/test_core_workflows.py -v)",
+      "Bash(wc -l /Users/mombalam/Desktop/Clearledgr.v1/static/console/*.js /Users/mombalam/Desktop/Clearledgr.v1/static/console/*.css /Users/mombalam/Desktop/Clearledgr.v1/static/console/*.html)",
+      "Bash(python -m pytest tests/test_plan_acceptance.py -v)",
+      "Bash(python -m pytest tests/ -x -q --tb=short)",
+      "Bash(python -m pytest tests/ -x -q --tb=long --ignore=tests/test_core_workflows.py)",
+      "Bash(python -m pytest tests/ -q --tb=short --ignore=tests/test_core_workflows.py)",
+      "Bash(python -m pytest tests/test_channel_approval_contract.py tests/test_invoice_workflow_controls.py tests/test_v1_core_completion.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_invoice_workflow_controls.py::test_approve_invoice_allows_budget_override_with_justification tests/test_v1_core_completion.py::test_worklist_derives_budget_exception_and_teams_interactive -v --tb=long)",
+      "Bash(git stash)",
+      "Bash(python -m pytest tests/test_invoice_workflow_controls.py::test_approve_invoice_allows_budget_override_with_justification -q --tb=line)",
+      "Bash(git stash pop)"
+    ]
+  }
+}

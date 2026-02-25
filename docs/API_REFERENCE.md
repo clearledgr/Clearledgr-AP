@@ -1,855 +1,366 @@
-# Clearledgr API Reference
+# Clearledgr API Reference (AP v1-Aligned)
 
-Complete API documentation for the Clearledgr backend.
+This document is the AP v1-aligned API reference for Clearledgr’s canonical product surfaces and operational endpoints.
 
-## Base URL
+It does **not** attempt to exhaustively document every route currently registered in the codebase. The repository contains legacy and experimental endpoints that may still appear in OpenAPI.
 
-```
+Use this document for AP v1 product-facing and operator/admin-facing APIs, and use runtime OpenAPI for exhaustive route discovery.
+
+## Canonical References
+
+- Doctrine + launch gates + interface expectations: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
+- AP v1 backend contract semantics: `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
+- Runtime OpenAPI (exhaustive route listing): `/docs`
+
+## Base URLs
+
+```text
 Production: https://api.clearledgr.com
 Development: http://localhost:8000
 ```
 
-## Authentication
+## Authentication and Security
 
-Most endpoints require authentication via JWT Bearer token.
+Clearledgr uses multiple auth/security patterns depending on surface:
 
-```http
-Authorization: Bearer <access_token>
-```
+1. **JWT bearer auth** for user/admin APIs
+2. **API key** for some operational/dev endpoints (where enabled)
+3. **Slack request verification** for Slack callbacks/actions
+4. **Teams callback verification** for Teams callbacks/actions
 
-### Get Token
-
-**For Gmail Extension (Google Identity):**
-```http
-POST /auth/google-identity
-Content-Type: application/json
-
-{
-  "email": "user@company.com",
-  "google_id": "google-account-id"
-}
-```
-
-**Response:**
-```json
-{
-  "access_token": "eyJ...",
-  "expires_in": 3600,
-  "user_id": "usr_123",
-  "organization_id": "company",
-  "is_new_user": false
-}
-```
-
-**For Web/API:**
-```http
-POST /auth/login
-Content-Type: application/json
-
-{
-  "email": "user@example.com",
-  "password": "password"
-}
-```
+Do not assume all endpoints use the same auth mechanism.
 
 ---
 
-## Core Endpoints
+## 1. System and Console Endpoints
 
-### Health Check
+### Health
 
-```http
-GET /health
-```
+`GET /health`
 
-Returns system health status.
+Purpose:
+- service health status
+- version info
+- health checks
 
----
+### Metrics
 
-## Analytics API
+`GET /metrics`
 
-### Dashboard Metrics
+Purpose:
+- backend metrics and operational statistics (exact contents may vary by environment/build)
 
-```http
-GET /analytics/dashboard/{organization_id}
-```
+### Admin Console UI
 
-**Response:**
-```json
-{
-  "pending_review": 5,
-  "auto_processed": 127,
-  "total_posted": 45000,
-  "exceptions": 2,
-  "recent_activity": [
-    {
-      "action": "Invoice approved",
-      "vendor": "AWS",
-      "amount": 1500,
-      "timestamp": "2024-01-15T10:30:00Z"
-    }
-  ]
-}
-```
+`GET /console`
 
-### Spend by Vendor
+Purpose:
+- customer-facing Admin Center UI (feature-gated)
 
-```http
-GET /analytics/spend-by-vendor/{organization_id}
-```
+Notes:
+- may return `404` when `ADMIN_CONSOLE_ENABLED` is disabled
 
-### Spend by Category
+### Internal Admin Page (dev/test)
 
-```http
-GET /analytics/spend-by-category/{organization_id}
-```
+`GET /admin`
 
-### Processing Metrics
-
-```http
-GET /analytics/processing-metrics/{organization_id}
-```
+Purpose:
+- internal QA/testing page (dev-oriented; not the customer Admin Center)
 
 ---
 
-## AP Workflow API
+## 2. Authentication APIs (AP v1 Relevant)
 
-### Payments
+Authentication routes can vary by environment and enabled integrations. AP v1 commonly uses:
 
-#### List Pending Payments
+### JWT Login / Register (web/admin)
 
-```http
-GET /ap/payments/pending?organization_id={org_id}
-```
+Examples:
+- `POST /auth/login`
+- `POST /auth/register`
 
-**Response:**
-```json
-[
-  {
-    "payment_id": "pay_123",
-    "invoice_id": "INV-001",
-    "vendor_id": "v_456",
-    "vendor_name": "Acme Corp",
-    "amount": 1500.00,
-    "currency": "USD",
-    "method": "ach",
-    "status": "pending",
-    "scheduled_date": null,
-    "created_at": "2024-01-15T10:00:00Z"
-  }
-]
-```
+Use cases:
+- Admin Console access
+- API access for admin/operator workflows
 
-#### Create Payment
+### Google-based Identity / Login (Gmail-linked flows)
 
-```http
-POST /ap/payments/create
-Content-Type: application/json
+Google auth and identity routes are used for:
+1. Gmail-linked auth flows
+2. Admin console Google login (where configured)
+3. Gmail integration setup
 
-{
-  "invoice_id": "INV-001",
-  "vendor_id": "v_456",
-  "vendor_name": "Acme Corp",
-  "amount": 1500.00,
-  "currency": "USD",
-  "method": "ach",
-  "scheduled_date": "2024-01-20",
-  "organization_id": "default"
-}
-```
-
-**Methods:** `ach`, `wire`, `check`
-
-#### Schedule Payment
-
-```http
-POST /ap/payments/schedule
-Content-Type: application/json
-
-{
-  "payment_id": "pay_123",
-  "scheduled_date": "2024-01-20",
-  "organization_id": "default"
-}
-```
-
-#### Create ACH Batch
-
-```http
-POST /ap/payments/batch
-Content-Type: application/json
-
-{
-  "payment_ids": ["pay_123", "pay_456"],
-  "execute_immediately": false,
-  "organization_id": "default"
-}
-```
-
-**Response:**
-```json
-{
-  "batch_id": "batch_789",
-  "payment_count": 2,
-  "total_amount": 3000.00,
-  "status": "pending",
-  "nacha_file": "101 ..."
-}
-```
-
-#### Get Wire Instructions
-
-```http
-POST /ap/payments/{payment_id}/wire-instructions?organization_id={org_id}
-```
-
-#### Mark Payment Sent
-
-```http
-POST /ap/payments/{payment_id}/mark-sent
-Content-Type: application/json
-
-{
-  "payment_id": "pay_123",
-  "confirmation_number": "CONF-12345",
-  "organization_id": "default"
-}
-```
-
-#### Mark Payment Completed
-
-```http
-POST /ap/payments/{payment_id}/mark-completed?organization_id={org_id}
-```
-
-#### Payment Summary
-
-```http
-GET /ap/payments/summary?organization_id={org_id}
-```
-
-**Response:**
-```json
-{
-  "pending": 5,
-  "scheduled": 3,
-  "processing_amount": 15000.00,
-  "completed_30d": 42
-}
-```
+Use runtime OpenAPI (`/docs`) for the exact enabled route set in your build.
 
 ---
 
-### GL Corrections
+## 3. Admin Center APIs (`/api/admin/*`)
 
-#### Get GL Accounts
+These endpoints support the customer-facing Admin Center (`/console`) and first-time setup.
 
-```http
-GET /ap/gl/accounts?organization_id={org_id}&account_type={type}&search={query}
-```
+### Bootstrap / Health / Status
 
-**Response:**
-```json
-[
-  {
-    "code": "5000",
-    "name": "Operating Expenses",
-    "account_type": "expense",
-    "category": "Operations"
-  }
-]
-```
+- `GET /api/admin/bootstrap`
+- `GET /api/admin/health`
+- `GET /api/admin/onboarding/status`
 
-#### Add GL Account
+Purpose:
+1. load org/user/integration/health state for the console
+2. surface required actions (connect Gmail, connect Slack/Teams, connect ERP, etc.)
+3. track onboarding progress
 
-```http
-POST /ap/gl/accounts
-Content-Type: application/json
+### Integrations (Gmail / Slack / ERP)
 
-{
-  "code": "5200",
-  "name": "Software & Subscriptions",
-  "account_type": "expense",
-  "category": "Technology",
-  "organization_id": "default"
-}
-```
+Examples:
+- `GET /api/admin/integrations`
+- Slack install/start/callback endpoints
+- Slack channel configuration/test endpoints
 
-#### Get GL Suggestion
+Purpose:
+1. integration status
+2. installation/configuration actions
+3. test actions (for example approval card tests)
 
-```http
-GET /ap/gl/suggest?vendor={vendor}&amount={amount}&organization_id={org_id}
-```
+### AP Policy and Org Settings
 
-**Response:**
-```json
-{
-  "suggested_gl": "5200",
-  "confidence": 0.95,
-  "reason": "Based on 12 previous invoices from this vendor"
-}
-```
+Examples:
+- `GET /api/admin/policies/ap`
+- `PUT /api/admin/policies/ap`
+- `GET /api/admin/org/settings`
+- `PATCH /api/admin/org/settings`
 
-#### Record GL Correction
+Purpose:
+1. configure AP policy defaults and org-level settings
+2. keep policy changes and org behavior aligned to AP v1 doctrine
 
-```http
-POST /ap/gl/correct
-Content-Type: application/json
+### Team and Subscription
 
-{
-  "invoice_id": "INV-001",
-  "vendor": "AWS",
-  "original_gl": "5000",
-  "corrected_gl": "5200",
-  "amount": 1500.00,
-  "reason": "Cloud infrastructure cost",
-  "corrected_by": "user@company.com",
-  "organization_id": "default"
-}
-```
+Examples:
+- `GET /api/admin/team/invites`
+- `POST /api/admin/team/invites`
+- `POST /api/admin/team/invites/{invite_id}/revoke`
+- `GET /api/admin/subscription`
+- `PATCH /api/admin/subscription/plan`
 
-#### Get Recent Corrections
-
-```http
-GET /ap/gl/corrections?vendor={vendor}&limit={n}&organization_id={org_id}
-```
-
-#### GL Correction Stats
-
-```http
-GET /ap/gl/stats?organization_id={org_id}
-```
-
-**Response:**
-```json
-{
-  "total_corrections": 156,
-  "accuracy": 0.94,
-  "learned_rules": 23
-}
-```
+Purpose:
+1. invite-based team onboarding
+2. org plan/usage visibility and controls
 
 ---
 
-### Recurring Invoices
+## 4. Gmail Extension APIs (AP v1 Embedded Workflow)
 
-#### List Rules
+These endpoints power the Gmail embedded AP experience.
 
-```http
-GET /ap/recurring/rules?enabled_only=true&organization_id={org_id}
-```
+### AP Worklist (Preferred)
 
-**Response:**
-```json
-[
-  {
-    "rule_id": "rule_123",
-    "vendor": "Adobe",
-    "expected_frequency": "monthly",
-    "expected_amount": 99.99,
-    "amount_tolerance_pct": 5.0,
-    "action": "auto_approve",
-    "default_gl_code": "5200",
-    "vendor_aliases": ["ADOBE SYSTEMS"],
-    "enabled": true,
-    "created_at": "2024-01-01T00:00:00Z"
-  }
-]
-```
+`GET /extension/worklist`
 
-#### Create Rule
+Purpose:
+- invoice-centric AP worklist for the Gmail sidebar/workspace
 
-```http
-POST /ap/recurring/rules
-Content-Type: application/json
+Contract expectations (see canonical contract docs):
+- status, confidence, exceptions, next action, source linkage
 
-{
-  "vendor": "Adobe",
-  "expected_frequency": "monthly",
-  "expected_amount": 99.99,
-  "amount_tolerance_pct": 5.0,
-  "action": "auto_approve",
-  "default_gl_code": "5200",
-  "vendor_aliases": ["ADOBE SYSTEMS", "Adobe Inc"],
-  "notes": "Creative Cloud subscription",
-  "organization_id": "default"
-}
-```
+### Legacy Compatibility Pipeline (Compatibility Path)
 
-**Frequencies:** `weekly`, `monthly`, `quarterly`, `annual`
-**Actions:** `auto_approve`, `flag_for_review`, `notify_only`
+`GET /extension/pipeline`
 
-#### Update Rule
+Purpose:
+- compatibility path for older extension flows
 
-```http
-PUT /ap/recurring/rules/{rule_id}
-Content-Type: application/json
+Notes:
+- AP v1 product contract prefers `/extension/worklist`
+- do not treat `/extension/pipeline` as the canonical AP v1 worklist contract unless explicitly required for compatibility
 
-{
-  "updates": {
-    "expected_amount": 109.99,
-    "action": "flag_for_review"
-  },
-  "organization_id": "default"
-}
-```
+### Triage / Submission / Extension Actions
 
-#### Delete Rule
+The Gmail extension may call AP workflow endpoints for:
+1. triage
+2. submit for approval
+3. confidence verification
+4. review/override actions
+5. retry posting
 
-```http
-DELETE /ap/recurring/rules/{rule_id}?organization_id={org_id}
-```
-
-#### Process Invoice
-
-```http
-POST /ap/recurring/process
-Content-Type: application/json
-
-{
-  "invoice_id": "INV-001",
-  "vendor": "Adobe",
-  "amount": 99.99,
-  "currency": "USD",
-  "invoice_date": "2024-01-15",
-  "organization_id": "default"
-}
-```
-
-**Response:**
-```json
-{
-  "matched": true,
-  "rule_id": "rule_123",
-  "action": "auto_approve",
-  "amount_variance_pct": 0.0,
-  "auto_approved": true
-}
-```
-
-#### Get Upcoming Invoices
-
-```http
-GET /ap/recurring/upcoming?days=30&organization_id={org_id}
-```
-
-**Response:**
-```json
-[
-  {
-    "vendor": "Adobe",
-    "expected_amount": 99.99,
-    "frequency": "monthly",
-    "expected_date": "2024-02-01",
-    "days_until": 15,
-    "action": "auto_approve"
-  }
-]
-```
-
-#### Subscription Summary
-
-```http
-GET /ap/recurring/summary?organization_id={org_id}
-```
-
-**Response:**
-```json
-{
-  "active_rules": 12,
-  "monthly_spend": 1500.00,
-  "annual_spend": 18000.00,
-  "due_this_week": 3,
-  "auto_approved": 8
-}
-```
-
-#### Detect Recurring Pattern
-
-```http
-POST /ap/recurring/detect
-Content-Type: application/json
-
-{
-  "vendor": "New Vendor",
-  "invoices": [
-    {"date": "2024-01-15", "amount": 99.00},
-    {"date": "2024-02-15", "amount": 99.00},
-    {"date": "2024-03-15", "amount": 99.00}
-  ],
-  "organization_id": "default"
-}
-```
-
-**Response:**
-```json
-{
-  "detected": true,
-  "suggestion": {
-    "detected_frequency": "monthly",
-    "detected_amount": 99.00,
-    "confidence": 0.92
-  }
-}
-```
+Exact endpoint names vary by the active implementation and compatibility layers. Use `/docs` for exact route names and this document + `PLAN.md` for canonical semantics.
 
 ---
 
-## Gmail Extension API
+## 5. AP Item APIs (Context, Audit, Item State)
 
-### Triage Email
+These are core AP v1 APIs for embedded surfaces and operator tooling.
 
-```http
-POST /extension/triage
-Content-Type: application/json
+### Get AP Item
 
-{
-  "email_id": "gmail-message-id",
-  "subject": "Invoice #12345",
-  "sender": "billing@vendor.com",
-  "body": "Invoice content...",
-  "attachments": [],
-  "organization_id": "default"
-}
-```
+`GET /api/ap/items/{ap_item_id}`
 
-**Response:**
-```json
-{
-  "classification": "invoice",
-  "confidence": 0.95,
-  "extracted": {
-    "vendor": "Vendor Name",
-    "amount": 1500.00,
-    "invoice_number": "12345",
-    "due_date": "2024-02-01"
-  },
-  "suggested_action": "review",
-  "suggested_gl": "5200"
-}
-```
+Purpose:
+- retrieve AP item summary and workflow state
 
-### Get Invoice Pipeline
+### Get AP Item Context
 
-```http
-GET /extension/invoice-pipeline/{organization_id}
-```
+`GET /api/ap/items/{ap_item_id}/context`
 
-**Response:**
-```json
-{
-  "detected": [
-    {"email_id": "...", "vendor": "AWS", "amount": 1500, "status": "detected"}
-  ],
-  "review": [
-    {"email_id": "...", "vendor": "Adobe", "amount": 99, "status": "review"}
-  ],
-  "approved": [],
-  "posted": []
-}
-```
+Purpose:
+- retrieve normalized cross-system AP context for the selected invoice item
 
-### Submit for Approval
+### Get AP Item Audit Trail
 
-```http
-POST /extension/submit-for-approval
-Content-Type: application/json
+`GET /api/ap/items/{ap_item_id}/audit`
 
-{
-  "email_id": "gmail-message-id",
-  "invoice_data": {
-    "vendor": "AWS",
-    "amount": 1500.00,
-    "gl_code": "5200"
-  },
-  "organization_id": "default"
-}
-```
+Purpose:
+- retrieve AP audit breadcrumbs/events for transparency and support
 
-### Approve and Post
+### Get Linked Sources / Source Linking (if enabled in your build)
 
-```http
-POST /extension/approve-and-post
-Content-Type: application/json
+AP item source-linking endpoints may include:
+- source listing
+- source linking/unlinking/debug actions
 
-{
-  "email_id": "gmail-message-id",
-  "approved_by": "user@company.com",
-  "gl_code": "5200",
-  "erp_target": "quickbooks",
-  "organization_id": "default"
-}
-```
+These support the invoice-centric aggregation model and multi-source context.
 
 ---
 
-## Gmail Pub/Sub Webhooks
+## 6. AP Policy APIs
 
-### Authorization
+AP v1 relies on runtime-editable, auditable AP policies.
 
-```http
-GET /gmail/authorize?user_id={user_id}&redirect_url={url}
-```
+### AP Policies
 
-Returns OAuth URL to redirect user to.
+Examples:
+- `GET /api/ap/policies`
+- `PUT /api/ap/policies`
 
-### OAuth Callback
+Purpose:
+1. configure tenant AP business rules
+2. enforce deterministic validation and approval routing
+3. support policy versioning and auditability
 
-```http
-GET /gmail/callback?code={code}&state={state}
-```
-
-Exchanges OAuth code for tokens and sets up Gmail watch.
-
-### Push Notification (Pub/Sub)
-
-```http
-POST /gmail/push
-Content-Type: application/json
-
-{
-  "message": {
-    "data": "base64-encoded-notification"
-  },
-  "subscription": "projects/project/subscriptions/sub"
-}
-```
-
-This endpoint is called by Google Cloud Pub/Sub.
-
-### Check Status
-
-```http
-GET /gmail/status/{user_id}
-```
-
-**Response:**
-```json
-{
-  "connected": true,
-  "email": "user@company.com",
-  "expires_at": "2024-02-15T10:00:00Z",
-  "is_expired": false
-}
-```
-
-### Disconnect
-
-```http
-POST /gmail/disconnect
-Content-Type: application/json
-
-{
-  "user_id": "user-id"
-}
-```
+Exact route variants may differ (`collection` vs `named policy` style). Follow `/docs` for exact signatures.
 
 ---
 
-## ERP Integration
+## 7. Ops APIs (AP v1 Operational Visibility)
 
-### Connection Status
+These endpoints support operational status and KPI visibility for AP v1.
 
-```http
-GET /erp/status/{organization_id}
-```
+### Autopilot Status
 
-**Response:**
-```json
-{
-  "quickbooks": {
-    "connected": true,
-    "company_name": "Company Inc",
-    "expires_at": "2024-02-15T10:00:00Z"
-  },
-  "xero": {
-    "connected": false
-  },
-  "netsuite": {
-    "connected": false
-  }
-}
-```
+`GET /api/ops/autopilot-status`
 
-### OAuth URLs
+Purpose:
+- expose AP/Gmail autopilot status used by embedded surfaces and admin/ops UI
 
-```http
-GET /oauth/quickbooks/authorize?organization_id={org_id}
-GET /oauth/xero/authorize?organization_id={org_id}
-```
+### AP KPIs
 
-### Refresh Connection
+`GET /api/ops/ap-kpis`
 
-```http
-POST /erp/refresh/{organization_id}/{erp_type}
-```
+Purpose:
+- return AP KPI payload (for embedded or admin visibility)
+
+Examples of metric categories:
+- cycle time
+- exception rate
+- approval turnaround
+- throughput / processing counts
+
+### Additional Ops / Diagnostics
+
+Other ops endpoints may exist (browser-agent metrics, connector diagnostics, etc.) depending on build and enabled modules.
 
 ---
 
-## Organization Settings
+## 8. Slack and Teams APIs (AP Approvals)
 
-### Get Settings
+Slack and Teams integrations use callback/webhook endpoints and internal handlers to process approval decisions.
 
-```http
-GET /settings/{organization_id}
-```
+### Slack
 
-### Update Approval Thresholds
+AP-v1 relevant behaviors:
+1. approval action callbacks
+2. message/card interactions
+3. verification of Slack request signatures
 
-```http
-PUT /settings/{organization_id}/approval-thresholds
-Content-Type: application/json
+### Teams
 
-{
-  "auto_approve_limit": 500,
-  "manager_approval_limit": 5000,
-  "executive_approval_limit": 25000
-}
-```
+AP-v1 relevant behaviors:
+1. approval action callbacks
+2. Teams message/action handling
+3. callback verification
 
-### GL Mappings
+### Contract requirement (canonical)
 
-```http
-GET /settings/{organization_id}/gl-mappings
-POST /settings/{organization_id}/gl-mappings
-DELETE /settings/{organization_id}/gl-mappings/{mapping_id}
-```
+Slack and Teams must map to the same approval action semantics for AP v1:
+- `approve`
+- `reject`
+- `request_info`
 
----
-
-## Error Responses
-
-All endpoints return errors in this format:
-
-```json
-{
-  "detail": "Error message describing what went wrong"
-}
-```
-
-Common status codes:
-- `400` - Bad request (invalid input)
-- `401` - Unauthorized (invalid/missing token)
-- `403` - Forbidden (insufficient permissions)
-- `404` - Not found
-- `422` - Validation error
-- `500` - Internal server error
+See:
+- `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
+- `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
 
 ---
 
-## Rate Limits
+## 9. ERP and Integration APIs (AP v1 Context)
 
-- **Standard endpoints:** 100 requests/minute
-- **Webhook endpoints:** 1000 requests/minute
-- **Batch operations:** 10 requests/minute
+The repository may expose ERP onboarding, OAuth, and connector management APIs.
 
-Rate limit headers:
-```http
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1705320000
-```
+These are relevant to AP v1 when used for:
+1. ERP connectivity/auth setup
+2. ERP connector readiness checks
+3. AP posting support
 
----
+Important distinction:
+- **Connector endpoint exists** != **connector is operationally parity-enabled for AP v1 GA**
 
-## Webhooks
-
-### Slack Notifications
-
-Configure Slack webhook in settings to receive:
-- Invoice approval requests
-- Payment confirmations
-- Exception alerts
-
-### Custom Webhooks
-
-```http
-POST /settings/{organization_id}/webhooks
-Content-Type: application/json
-
-{
-  "url": "https://your-server.com/webhook",
-  "events": ["invoice.detected", "invoice.approved", "payment.completed"],
-  "secret": "webhook-secret"
-}
-```
+Operational parity requirements are defined in:
+- `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md` (Section 6 ERP parity contract)
 
 ---
 
-## SDK & Client Libraries
+## 10. API Contract Principles for AP v1 (Normative Summary)
 
-### JavaScript (Gmail Extension)
+When implementing or consuming AP v1 APIs, the following rules apply:
 
-```javascript
-const BACKEND_URL = 'http://localhost:8000';
+1. **Server-enforced state machine**
+   - clients request actions; they do not set arbitrary AP states
 
-// Authenticate with Google Identity
-async function authenticate(email, googleId) {
-  const response = await fetch(`${BACKEND_URL}/auth/google-identity`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, google_id: googleId }),
-  });
-  return response.json();
-}
+2. **Idempotent approval and posting actions**
+   - duplicate callbacks or retries must not duplicate business outcomes
 
-// Triage an email
-async function triageEmail(emailData, token) {
-  const response = await fetch(`${BACKEND_URL}/extension/triage`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify(emailData),
-  });
-  return response.json();
-}
-```
+3. **Policy before write**
+   - deterministic checks and policy gates before mutating external actions
 
-### Python
+4. **Audit completeness**
+   - every transition and external mutating action must be auditable
 
-```python
-import requests
-
-class ClearledgrClient:
-    def __init__(self, base_url='http://localhost:8000', token=None):
-        self.base_url = base_url
-        self.token = token
-    
-    def _headers(self):
-        h = {'Content-Type': 'application/json'}
-        if self.token:
-            h['Authorization'] = f'Bearer {self.token}'
-        return h
-    
-    def get_dashboard(self, org_id='default'):
-        return requests.get(
-            f'{self.base_url}/analytics/dashboard/{org_id}',
-            headers=self._headers()
-        ).json()
-    
-    def create_payment(self, invoice_id, vendor_name, amount, method='ach'):
-        return requests.post(
-            f'{self.base_url}/ap/payments/create',
-            headers=self._headers(),
-            json={
-                'invoice_id': invoice_id,
-                'vendor_id': vendor_name.lower().replace(' ', '-'),
-                'vendor_name': vendor_name,
-                'amount': amount,
-                'method': method,
-                'organization_id': 'default',
-            }
-        ).json()
-```
+5. **Operator-safe errors**
+   - errors should be actionable and reason-coded where possible
 
 ---
 
-## Changelog
+## 11. Legacy and Non-Canonical Endpoints (Important)
 
-### v1.0.0 (Current)
-- Full AP workflow (payments, GL corrections, recurring)
-- Gmail Pub/Sub integration
-- ERP integrations (QuickBooks, Xero, NetSuite, SAP)
-- Slack approval workflow
+This codebase still includes legacy and/or experimental endpoints for other workflows (including reconciliation, Sheets-driven flows, and earlier product directions).
+
+Rules for AP v1 work:
+1. Do not assume all routes shown in `/docs` are in AP v1 product scope.
+2. Use `PLAN.md` for scope and launch-gate truth.
+3. Use `V1_BACKEND_CONTRACTS.md` for AP v1 contract semantics.
+4. Treat this `API_REFERENCE.md` as the AP v1-aligned operational map, not an exhaustive generated spec.
+
+---
+
+## 12. How to Get the Exact Route Signatures
+
+For exact request/response schemas in your running build:
+
+1. Start the backend
+2. Open:
+   - `http://localhost:8000/docs`
+   - `http://localhost:8000/redoc`
+3. Verify routes against:
+   - `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
+   - `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
+
+This is the safest workflow because route registration can vary with enabled modules and environment flags.

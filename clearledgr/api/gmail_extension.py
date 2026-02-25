@@ -27,6 +27,8 @@ from clearledgr.services.agent_reflection import get_agent_reflection
 from clearledgr.services.proactive_insights import get_proactive_insights
 from clearledgr.services.cross_invoice_analysis import get_cross_invoice_analyzer
 from clearledgr.services.agent_reasoning import get_agent as get_reasoning_agent
+from clearledgr.core.ap_confidence import evaluate_critical_field_confidence, extract_field_confidences
+from clearledgr.core.auth import get_current_user
 from clearledgr.core.database import get_db
 from clearledgr.api.ap_items import build_worklist_item
 
@@ -116,7 +118,7 @@ class MatchERPRequest(BaseModel):
 
 # ==================== ENDPOINTS ====================
 
-@router.post("/triage")
+@router.post("/triage", dependencies=[Depends(get_current_user)])
 async def triage_email(
     request: EmailTriageRequest,
     audit: AuditTrailService = Depends(get_audit_service),
@@ -482,7 +484,7 @@ def _apply_agent_reasoning(
     return result
 
 
-@router.post("/process")
+@router.post("/process", dependencies=[Depends(get_current_user)])
 async def process_email(
     request: EmailProcessRequest,
     audit: AuditTrailService = Depends(get_audit_service),
@@ -530,7 +532,7 @@ async def process_email(
     }
 
 
-@router.post("/scan")
+@router.post("/scan", dependencies=[Depends(get_current_user)])
 async def bulk_scan_emails(
     request: BulkScanRequest,
     audit: AuditTrailService = Depends(get_audit_service),
@@ -633,9 +635,23 @@ def get_invoice_pipeline(organization_id: Optional[str] = None):
 def get_extension_worklist(
     organization_id: Optional[str] = None,
     limit: int = Query(default=200, ge=1, le=1000),
+    user=Depends(get_current_user),
 ):
-    """Return invoice-centric worklist for the focused Gmail sidebar."""
-    org_id = organization_id or "default"
+    """Return invoice-centric worklist for the focused Gmail sidebar.
+
+    Requires authentication.  Non-admin users are restricted to their own
+    organisation; admin/owner roles may request any org.
+    """
+    from fastapi import HTTPException
+
+    _ADMIN_ROLES = {"admin", "owner"}
+    if organization_id and organization_id != "default":
+        if user.role not in _ADMIN_ROLES and str(user.organization_id) != str(organization_id):
+            raise HTTPException(status_code=403, detail="org_mismatch")
+        org_id = organization_id
+    else:
+        org_id = str(user.organization_id or "default")
+
     db = get_db()
     items = db.list_ap_items(org_id, limit=limit, prioritized=True)
     normalized = [build_worklist_item(db, item) for item in items]
@@ -646,122 +662,51 @@ def get_extension_worklist(
     }
 
 
-@router.post("/approve-and-post")
+@router.post("/approve-and-post", dependencies=[Depends(get_current_user)])
 async def approve_and_post(
     request: ApproveAndPostRequest,
     audit: AuditTrailService = Depends(get_audit_service),
 ):
     """
-    DIFFERENTIATOR: Approve and post an invoice to ERP with HITL gate.
-    
-    This triggers the ApproveAndPostWorkflow which:
-    1. HITL: Re-verifies confidence (blocks if <95%)
-    2. Generates Clearledgr_Audit_ID
-    3. Posts to ERP with audit ID in memo
-    4. Updates Slack thread (multi-system routing)
-    5. Updates Gmail label to Processed
-    6. Records audit trail
-    
-    Use this for the "Approve & Post" button in the extension.
+    Approve and post an invoice to ERP — inline from Gmail extension.
+
+    Uses the same ``InvoiceWorkflowService.approve_invoice()`` path as
+    Slack approval buttons so behaviour is identical regardless of surface.
     """
-    from clearledgr.workflows.gmail_activities import (
-        verify_match_confidence_activity,
-        post_to_erp_activity,
-        update_slack_thread_activity,
-        generate_audit_id,
-    )
-    from datetime import datetime, timezone
-    
-    payload = request.model_dump()
-    
-    if temporal_enabled():
-        runtime = TemporalRuntime()
-        result = await runtime.start_workflow(
-            "ApproveAndPostWorkflow",
-            payload,
-            task_queue="clearledgr-gmail",
-            wait=True,
-            timeout_seconds=60,
+    from clearledgr.core.ap_states import OverrideContext, OVERRIDE_TYPE_MULTI
+    from clearledgr.services.agent_orchestrator import get_orchestrator
+
+    org_id = request.organization_id or "default"
+    orchestrator = get_orchestrator(org_id)
+
+    # Resolve the AP item's gmail_id (thread_id) from request
+    gmail_id = request.email_id
+
+    actor = request.user_email or "gmail_extension"
+    justification = (request.extraction.get("override_justification", "") if request.override else None)
+    override_ctx = (
+        OverrideContext(
+            override_type=OVERRIDE_TYPE_MULTI,
+            justification=str(justification or "override_requested_in_gmail"),
+            actor_id=actor,
         )
-        return result
-    
-    # Inline execution with HITL gate
-    
-    # Step 1: HITL - Verify confidence
-    if not request.override:
-        confidence_result = await verify_match_confidence_activity({
-            "extraction": request.extraction,
-            "bank_match": request.bank_match or {},
-            "erp_match": request.erp_match or {},
-        })
-        
-        if not confidence_result.get("can_post", False):
-            return {
-                "email_id": request.email_id,
-                "status": "blocked",
-                "reason": f"Confidence {confidence_result.get('confidence_pct')}% below 95% threshold",
-                "confidence": confidence_result.get("confidence_pct"),
-                "mismatches": confidence_result.get("mismatches", []),
-                "action_required": "review_mismatch",
-            }
-    else:
-        confidence_result = {"confidence_pct": 0, "can_post": True}  # Override
-    
-    # Step 2: Generate Audit-Link ID
-    timestamp = datetime.now(timezone.utc).isoformat()
-    audit_id = generate_audit_id(request.email_id, request.organization_id, timestamp)
-    
-    # Step 3: Post to ERP with audit ID
-    post_result = await post_to_erp_activity({
-        "email_id": request.email_id,
-        "extraction": request.extraction,
-        "erp_match": request.erp_match or {},
-        "confidence_result": confidence_result,
-        "organization_id": request.organization_id,
-        "approved_by": request.user_email,
-    })
-    
-    if post_result.get("status") == "blocked":
-        return post_result
-    
-    # Step 4: Multi-System - Update Slack thread
-    await update_slack_thread_activity({
-        "email_id": request.email_id,
-        "vendor": request.extraction.get("vendor"),
-        "amount": request.extraction.get("amount"),
-        "currency": request.extraction.get("currency", "USD"),
-        "invoice_number": request.extraction.get("invoice_number"),
-        "clearledgr_audit_id": post_result.get("clearledgr_audit_id", audit_id),
-        "erp_document": post_result.get("document_number"),
-        "approved_by": request.user_email,
-        "organization_id": request.organization_id,
-    })
-    
-    # Step 5: Record audit trail
-    audit.record_event(
-        user_email=request.user_email or "extension",
-        action="invoice_approved_and_posted",
-        entity_type="invoice",
-        entity_id=post_result.get("clearledgr_audit_id", audit_id),
-        organization_id=request.organization_id,
-        metadata={
-            "email_id": request.email_id,
-            "clearledgr_audit_id": post_result.get("clearledgr_audit_id", audit_id),
-            "extraction": request.extraction,
-            "confidence": confidence_result.get("confidence_pct"),
-            "override": request.override,
-            "post_result": post_result,
-        },
+        if request.override else None
     )
-    
+
+    result = await orchestrator.on_approval(
+        gmail_id=gmail_id,
+        approved_by=actor,
+        source_channel="gmail_extension",
+        allow_budget_override=request.override,
+        allow_confidence_override=request.override,
+        override_justification=justification,
+        field_confidences=extract_field_confidences(request.extraction or {}),
+        override_context=override_ctx,
+    )
+
     return {
         "email_id": request.email_id,
-        "status": "posted",
-        "clearledgr_audit_id": post_result.get("clearledgr_audit_id", audit_id),
-        "erp_document": post_result.get("document_number"),
-        "confidence": confidence_result.get("confidence_pct"),
-        "slack_updated": True,
-        "post_result": post_result,
+        **result,
     }
 
 
@@ -770,26 +715,103 @@ async def verify_confidence(
     request: VerifyConfidenceRequest,
 ):
     """
-    DIFFERENTIATOR: HITL - Verify match confidence and identify mismatches.
-    
+    Verify extraction confidence and surface mismatches for HITL review.
+
     Returns:
-    - confidence: 0-100%
+    - confidence_pct: 0-100
     - can_post: True if >= 95%
-    - mismatches: List of specific discrepancies
-    
-    Use this to check if an invoice can be posted or needs review.
+    - mismatches: list of {field, extracted, expected, severity}
     """
-    from clearledgr.workflows.gmail_activities import verify_match_confidence_activity
-    
-    result = await verify_match_confidence_activity({
-        "extraction": request.extraction,
-        "bank_match": request.bank_match or {},
-        "erp_match": request.erp_match or {},
-    })
-    
+    from clearledgr.core.database import get_db
+
+    db = get_db()
+    org_id = request.organization_id or "default"
+
+    # Look up the AP item to get its stored confidence
+    ap_item = db.get_ap_item_by_thread(org_id, request.email_id)
+    if not ap_item:
+        # Try by message_id
+        ap_item = db.get_ap_item_by_message_id(org_id, request.email_id)
+
+    confidence_pct = 0
+    mismatches = []
+    confidence_gate: Dict[str, Any] = {
+        "threshold": 0.95,
+        "threshold_pct": 95,
+        "confidence_blockers": [],
+        "requires_field_review": True,
+    }
+
+    if ap_item:
+        confidence_pct = round((ap_item.get("confidence") or 0) * 100)
+        metadata = db._decode_json(ap_item.get("metadata"))
+
+        # Surface mismatches from extraction vs stored data
+        extraction = request.extraction or {}
+        request_field_confidences = extract_field_confidences(extraction)
+        stored_vendor = ap_item.get("vendor_name") or ""
+        extracted_vendor = extraction.get("vendor") or ""
+        if extracted_vendor and stored_vendor and extracted_vendor.lower() != stored_vendor.lower():
+            mismatches.append({
+                "field": "vendor",
+                "extracted": extracted_vendor,
+                "expected": stored_vendor,
+                "severity": "medium",
+            })
+
+        stored_amount = ap_item.get("amount")
+        extracted_amount = extraction.get("amount")
+        if extracted_amount is not None and stored_amount is not None:
+            try:
+                if abs(float(extracted_amount) - float(stored_amount)) > 0.01:
+                    mismatches.append({
+                        "field": "amount",
+                        "extracted": str(extracted_amount),
+                        "expected": str(stored_amount),
+                        "severity": "high",
+                    })
+            except (TypeError, ValueError):
+                pass
+
+        # Check exception codes from metadata
+        exception_code = ap_item.get("exception_code") or metadata.get("exception_code")
+        if exception_code:
+            mismatches.append({
+                "field": "exception",
+                "extracted": exception_code,
+                "expected": "none",
+                "severity": metadata.get("exception_severity", "medium"),
+            })
+
+        confidence_gate = evaluate_critical_field_confidence(
+            overall_confidence=ap_item.get("confidence"),
+            field_values={
+                "vendor": extraction.get("vendor") or ap_item.get("vendor_name"),
+                "amount": extraction.get("amount")
+                if extraction.get("amount") is not None else ap_item.get("amount"),
+                "invoice_number": extraction.get("invoice_number") or ap_item.get("invoice_number"),
+                "due_date": extraction.get("due_date") or ap_item.get("due_date"),
+            },
+            field_confidences=request_field_confidences or metadata.get("field_confidences"),
+        )
+    else:
+        # No AP item found — report as low confidence
+        confidence_pct = 0
+        confidence_gate = evaluate_critical_field_confidence(
+            overall_confidence=0,
+            field_values=request.extraction or {},
+            field_confidences=extract_field_confidences(request.extraction or {}),
+        )
+
     return {
         "email_id": request.email_id,
-        **result,
+        "confidence_pct": confidence_pct,
+        "can_post": confidence_pct >= 95 and len(mismatches) == 0 and not confidence_gate.get("requires_field_review"),
+        "mismatches": mismatches,
+        "threshold": confidence_gate.get("threshold_pct", 95),
+        "requires_field_review": bool(confidence_gate.get("requires_field_review")),
+        "confidence_blockers": confidence_gate.get("confidence_blockers") or [],
+        "confidence_gate": confidence_gate,
     }
 
 
@@ -827,7 +849,7 @@ async def match_erp(
     })
 
 
-@router.post("/escalate")
+@router.post("/escalate", dependencies=[Depends(get_current_user)])
 async def escalate_to_manager(
     request: EscalateRequest,
     audit: AuditTrailService = Depends(get_audit_service),
@@ -904,6 +926,7 @@ class SubmitForApprovalRequest(BaseModel):
     due_date: Optional[str] = None
     po_number: Optional[str] = None
     confidence: float = 0.0
+    field_confidences: Optional[Dict[str, Any]] = None
     organization_id: Optional[str] = None
     user_email: Optional[str] = None
     slack_channel: Optional[str] = None
@@ -940,7 +963,7 @@ class BudgetDecisionRequest(BaseModel):
     user_email: Optional[str] = None
 
 
-@router.post("/submit-for-approval")
+@router.post("/submit-for-approval", dependencies=[Depends(get_current_user)])
 async def submit_for_approval(
     request: SubmitForApprovalRequest,
     audit: AuditTrailService = Depends(get_audit_service),
@@ -1034,6 +1057,7 @@ async def submit_for_approval(
         due_date=request.due_date,
         po_number=request.po_number,
         confidence=request.confidence,
+        field_confidences=request.field_confidences,
         organization_id=request.organization_id,
         user_id=request.user_email,
         invoice_text=request.email_body or f"{request.subject}\n{request.vendor}",  # For discount detection
@@ -1098,7 +1122,7 @@ async def submit_for_approval(
     return result
 
 
-@router.post("/reject-invoice")
+@router.post("/reject-invoice", dependencies=[Depends(get_current_user)])
 async def reject_invoice(
     request: RejectInvoiceRequest,
     audit: AuditTrailService = Depends(get_audit_service),
@@ -1129,12 +1153,13 @@ async def reject_invoice(
     return result
 
 
-@router.post("/budget-decision")
+@router.post("/budget-decision", dependencies=[Depends(get_current_user)])
 async def budget_decision(
     request: BudgetDecisionRequest,
     audit: AuditTrailService = Depends(get_audit_service),
 ):
     """Handle explicit budget decisions from Gmail sidebar surfaces."""
+    from clearledgr.core.ap_states import OverrideContext, OVERRIDE_TYPE_BUDGET
     from clearledgr.services.invoice_workflow import get_invoice_workflow
 
     org_id = request.organization_id or "default"
@@ -1145,11 +1170,17 @@ async def budget_decision(
     if decision == "approve_override":
         if not str(request.justification or "").strip():
             raise HTTPException(status_code=400, detail="justification_required")
+        ctx = OverrideContext(
+            override_type=OVERRIDE_TYPE_BUDGET,
+            justification=str(request.justification),
+            actor_id=actor,
+        )
         result = await workflow.approve_invoice(
             gmail_id=request.email_id,
             approved_by=actor,
             allow_budget_override=True,
             override_justification=request.justification,
+            override_context=ctx,
         )
         if result.get("status") not in {"approved", "error"}:
             raise HTTPException(status_code=400, detail=result.get("reason", "budget_override_failed"))
@@ -1228,11 +1259,11 @@ async def get_workflow_status(workflow_id: str):
     
     Use this to poll for completion of async workflows.
     """
-    if not temporal_enabled():
-        raise HTTPException(status_code=400, detail="Temporal not enabled")
-    
     runtime = TemporalRuntime()
-    return await runtime.get_status(workflow_id)
+    try:
+        return await runtime.get_status(workflow_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="workflow_not_found")
 
 
 @router.get("/health")

@@ -1,287 +1,744 @@
-# Clearledgr Execution Layer Build Plan (AP-First to Multi-Workflow)
+# Clearledgr AP v1 GA Doctrine and Launch Spec (Canonical)
+
+## Document Metadata
+- **Status:** Canonical doctrine + contracts + launch-gates spec for Clearledgr AP v1
+- **Last updated:** 2026-02-25
+- **Owner:** Product + Engineering
+- **Scope:** Accounts Payable (AP) v1 only
+- **Supersedes:** prior AP-first execution-layer plan variants that used ambiguous "launch" terminology
 
 ## Summary
-This plan builds Clearledgr as an embedded finance execution layer with **AP as the first shipped workflow** and a clear path to reconciliation and FP&A afterward.
+This document is the single source of truth for Clearledgr AP v1 doctrine, product positioning, engineering contracts, and GA launch gates.
 
-Locked decisions for this plan:
-- **Launch scope:** AP-only first, production-grade.
-- **Data store:** Postgres as source of truth from day one (multi-tenant).
-- **Approval channels at launch:** Slack and Teams (Slack implemented first, Teams parity completed before GA).
-- **Primary ERP connector:** NetSuite first (mock retained for local/dev).
-- **Deployment:** Multi-tenant cloud from day one.
-- **UX:** Embedded only in existing tools. No standalone dashboard app.
+Clearledgr AP v1 is an **embedded finance execution layer**. It is not a generic automation builder and not a standalone AP platform dashboard. AP v1 starts inside Gmail, routes approvals through Slack and Teams, posts to ERP systems as the system of record, and provides policy-governed orchestration plus an auditable execution trail.
 
----
-
-## 1. Target System Definition
-
-## 1.1 Product boundary (v1 ship)
-Clearledgr AP v1 executes:
-1. Email intake from Gmail
-2. Invoice extraction and deterministic validation
-3. Approval orchestration in Slack/Teams
-4. ERP posting (NetSuite first)
-5. Immutable audit trail
-6. Email thread outcome updates
-
-Out of scope until AP is stable in production:
-- Reconciliation workflows
-- Close workflows
-- FP&A aggregation
-- New destination dashboards
-
-## 1.2 Runtime surfaces
-- Gmail extension (InboxSDK): inline thread card + minimal queue state list.
-- Slack and Teams: approval actions and exception decisions.
-- ERP: NetSuite connector.
-- Backend API: orchestration, state machine, audit, connector orchestration.
-- Postgres: single source of truth for AP items, approvals, and audit events.
+### Locked product decisions
+1. **Clearledgr is an embedded finance execution layer** (external positioning).
+2. **AP v1 starts in Gmail** (inbox-native intake and triage).
+3. **Approvals happen in Slack and Teams at v1 GA** (co-equal channel parity requirement at GA).
+4. **ERP remains the system of record**; Clearledgr orchestrates and executes.
+5. **Clearledgr provides policy + orchestration + execution + audit**.
+6. **"Streak-like" is internal UX doctrine only**, not external positioning.
+7. **WhatsApp and Telegram are not product surfaces** and are out of product scope by default.
+8. **"v1 launch" means GA launch**, not pilot launch.
+9. **ERP commitment at v1 GA is operational parity all enabled** for **QuickBooks + Xero + NetSuite + SAP**.
+10. **Execution is agentic and audit-safe**; mutating/high-risk actions are human-confirmed by default unless policy explicitly allows autopilot.
 
 ---
 
-## 2. Canonical Workflow Contract
+## 1. Product Doctrine
 
-## 2.1 AP state machine (server-enforced, deterministic)
-Primary:
+### 1.1 What Clearledgr is
+Clearledgr is an **embedded finance execution layer** that sits inside the tools finance teams already use and executes finance workflows end-to-end with policy controls and auditability.
+
+For AP v1, Clearledgr:
+1. Detects invoice and AP requests from email (Gmail primary).
+2. Extracts and validates fields against internal and connected systems.
+3. Routes approvals to finance decision-makers in Slack and Teams.
+4. Posts approved invoices to ERP systems.
+5. Records immutable, queryable execution and approval breadcrumbs.
+
+### 1.2 What Clearledgr is not
+Clearledgr is not:
+1. A generic automation builder or no-code workflow tool.
+2. A consumer/personal AI assistant.
+3. A "Streak for finance" product category.
+4. A standalone AP dashboard required for daily operator work.
+5. A consumer messaging workflow product (WhatsApp/Telegram excluded).
+
+### 1.3 Why AP is the wedge
+AP is the right first workflow because:
+1. Invoice intake and exceptions already originate in email.
+2. Approvals are already distributed across chat and email contexts.
+3. ERP posting is high-value and measurable.
+4. AP creates reusable primitives for later workflows:
+   - deterministic state machine
+   - policy enforcement
+   - adapter orchestration
+   - audit trail
+   - idempotent writes
+
+### 1.4 Embedded surfaces doctrine
+AP v1 is intentionally split across the surfaces finance teams already use:
+1. **Gmail** = operational context, thread-level status, exceptions, and next action.
+2. **Slack / Teams** = approval and escalation decision surfaces.
+3. **ERP** = system of record for posted AP transactions.
+4. **Clearledgr backend** = policy checks, workflow orchestration, execution engine, audit.
+
+### 1.5 Internal UX doctrine ("Streak-like", internal only)
+The phrase "Streak-like" is internal shorthand for UX principles, not external product positioning.
+
+It means:
+1. Work happens in context (the email thread).
+2. Users should not need another daily tab for routine AP operations.
+3. UI should remain light and decision-first.
+4. Backend reliability carries the product trust burden.
+5. Progressive disclosure hides technical detail until needed.
+
+---
+
+## 2. AP v1 Release Taxonomy (Pilot vs GA)
+
+### 2.1 Terminology (canonical)
+1. **v1 Pilot** = pre-GA validation phase with design partners.
+2. **v1 GA** = official v1 launch.
+3. **v1 launch** = **v1 GA** only.
+
+This distinction is mandatory in all future docs and tickets.
+
+### 2.2 v1 Pilot definition (pre-GA)
+v1 Pilot exists to validate:
+1. Extraction quality and confidence gating.
+2. AP state machine behavior in real operator workflows.
+3. Approval UX in Slack/Teams.
+4. ERP posting reliability and connector readiness.
+5. Operator trust and exception handling.
+
+Pilot may use staged connector/channel enablement. Pilot readiness does not imply GA parity.
+
+### 2.3 v1 GA definition (launch)
+v1 GA is the first generally available AP release and requires:
+1. Gmail AP workspace as the primary operator surface.
+2. Slack and Teams approval parity (co-equal channels).
+3. Operationally enabled ERP parity for QuickBooks, Xero, NetSuite, and SAP.
+4. Reliability and trust gates in Section 7.
+5. Launch acceptance criteria in Section 8.
+
+### 2.4 Non-goals for AP v1 (pilot and GA)
+AP v1 does not include:
+1. Reconciliation workflows.
+2. Month-end close workflows.
+3. FP&A aggregation as a primary shipped workflow.
+4. A standalone dashboard for daily AP operations.
+5. Consumer messaging channels (WhatsApp/Telegram).
+
+### 2.5 Admin Console role (release taxonomy context)
+The Admin Console is in-scope for AP v1 as setup/operations infrastructure, not as the primary AP daily workflow UI.
+
+Admin Console responsibilities:
+1. Integration setup and diagnostics.
+2. Policy configuration.
+3. Team access and onboarding.
+4. Subscription/usage visibility.
+5. Health checks and required-action surfacing.
+
+---
+
+## 3. UX Doctrine and Operator Experience
+
+### 3.1 Gmail thread card doctrine (primary AP operator experience)
+The Gmail thread is the AP workflow control surface. Each invoice thread (or grouped invoice entity) should present a compact AP card that shows:
+1. **Status** (for example: `received`, `validating`, `needs_info`, `awaiting_approval`, `approved`, `ready_to_post`, `posted`, `failed_post`)
+2. **Extracted fields** (vendor, invoice number, amount, PO, due date)
+3. **Exceptions** (duplicate risk, PO mismatch, budget mismatch, low confidence, missing data)
+4. **Next action** (single prioritized action)
+5. **Audit breadcrumbs** (who approved, when posted, why rejected/overridden)
+
+### 3.2 Progressive disclosure rules (required)
+To avoid a "cluttered plugin" outcome:
+1. Show decision-relevant information first.
+2. Collapse technical details (IDs, payloads, traces) by default.
+3. Collapse source lists and deep context sections by default unless they contain blockers.
+4. Hide empty sections instead of showing placeholder panels.
+5. Present one active invoice workspace at a time; use compact navigation for queue traversal.
+
+### 3.3 Gmail UI anti-patterns (must avoid)
+1. Rebuilding a full AP dashboard inside Gmail.
+2. Showing multiple large sections with empty placeholder copy.
+3. Surfacing raw system identifiers in the primary decision view.
+4. Rendering long lists when a focused active-item workspace is available.
+5. Mixing operator actions and admin setup/config in the same UI surface.
+
+### 3.4 Slack and Teams approval card doctrine
+Slack and Teams cards are decision surfaces, not full workflow dashboards.
+
+Each approval card must show:
+1. Invoice summary (vendor, invoice #, amount, due date)
+2. Validation summary (PO/budget status, confidence status, key exceptions)
+3. Requested action and reason
+4. Available actions (`approve`, `reject`, `request_info`)
+5. Link back to Gmail context / AP item details
+6. Clear result feedback (decision accepted, duplicate click ignored, action blocked, etc.)
+
+### 3.5 Admin Console UX doctrine (non-daily workflow)
+Admin Console is for setup and operations, not routine AP processing.
+
+It must provide:
+1. Integration setup (Gmail, Slack, Teams, ERP)
+2. Approval channel configuration
+3. Policy configuration and version visibility
+4. Health and required-action diagnostics
+5. Team access / invites
+6. Plan/subscription visibility
+
+---
+
+## 4. AP Execution Contract (Server-Enforced, Deterministic)
+
+### 4.1 Canonical AP state machine (server-enforced)
+No client may force AP item state changes directly. All transitions are validated server-side against legal paths.
+
+#### Primary path
 - `received -> validated -> needs_approval -> approved -> ready_to_post -> posted_to_erp -> closed`
 
-Exceptions:
+#### Exception paths
 - `validated -> needs_info`
 - `needs_approval -> rejected`
 - `ready_to_post -> failed_post`
+- `failed_post -> ready_to_post` (explicit retry path only, with audit)
+- `needs_info -> validated` (after required data received/reviewed)
 
-Resubmission semantics:
-- Rejected item is terminal.
-- Resubmission creates a **new AP item** with metadata:
-  - `supersedes_ap_item_id`
-  - `supersedes_invoice_key`
-  - `resubmission_reason`
+#### Resubmission semantics
+1. Rejected item is terminal.
+2. Resubmission creates a new AP item (not state resurrection) with linkage metadata:
+   - `supersedes_ap_item_id`
+   - `supersedes_invoice_key`
+   - `resubmission_reason`
 
-No client may force state transitions directly.
+### 4.2 Deterministic validation and policy checks (pre-write guardrail)
+Before approval routing and before posting, workflow must enforce:
+1. Field presence/format checks
+2. Duplicate detection and merge/linking logic
+3. PO/receipt matching checks (where data is available)
+4. Budget checks and policy compliance gates
+5. Approval policy resolution (who must approve, what thresholds apply)
+6. Confidence gate evaluation for critical extracted fields
 
-## 2.2 Idempotency and dedupe
-- Deduplication key: normalized `invoice_key` plus optional attachment hash checks.
-- Transition idempotency: every external action uses stable idempotency keys.
-- Posting idempotency: one ERP post per AP item unless explicit retry path from `failed_post`.
+No external mutating write (ERP post, irreversible approval completion path if applicable) may proceed without passing applicable deterministic checks or explicit override rules.
 
----
+### 4.3 Extraction confidence gating (launch-critical)
+Critical-field confidence gating is mandatory for AP v1.
 
-## 3. Architecture and Components
+#### Critical fields (default)
+1. `vendor`
+2. `invoice_number`
+3. `amount`
+4. `due_date` (when present/required by workflow/policy)
 
-## 3.1 Backend modules
-1. **Intake service**
-   - Receives triage payloads and Gmail webhook-triggered processing.
-   - Classifies AP relevance and parses body/attachments.
-2. **Workflow engine**
-   - Owns AP item lifecycle and legal transitions.
-   - Enforces approval gating and posting preconditions.
-3. **Approval adapter layer**
-   - Slack adapter and Teams adapter with common action contract.
-4. **ERP adapter layer**
-   - NetSuite adapter first, mock adapter for local tests.
-5. **Audit service**
-   - Append-only event writer.
-   - Query by AP item and by thread/message.
-6. **Gmail thread updater**
-   - Idempotent label and note updates after major outcomes.
+#### Default behavior
+1. Low-confidence critical fields block posting.
+2. Blocked items surface `requires_field_review` and `confidence_blockers`.
+3. Override requires explicit justification and audit event.
+4. Thresholds are policy-configurable, but a default threshold must be defined and enforced.
 
-## 3.2 Extension modules
-1. InboxSDK sidebar renderer only.
-2. Queue manager for periodic scan and backend sync.
-3. Background worker for Gmail API/OAuth and attachment retrieval.
-4. No dashboard routes, no generic navigation, no non-AP views.
+#### Default threshold
+- **Critical-field confidence threshold default:** `95%` (unless org policy overrides)
 
----
+### 4.4 Exception handling and escalation
+Exceptions must be explicit, reason-coded, and visible in-context.
 
-## 4. Data Model and Interfaces
+Minimum requirements:
+1. `exception_code` and `exception_severity` on AP item surfaces
+2. Deterministic routing rules for:
+   - duplicate risk
+   - low confidence
+   - no PO / mismatch
+   - budget overage
+   - posting failure
+3. Clear operator next action for each exception state
+4. Audit events for exception detection, override, and resolution
 
-## 4.1 Core tables (Postgres)
-1. `ap_items`
-   - tenant/org scope, source refs, extracted fields, state, approval metadata, ERP ref, error fields.
-2. `audit_events` (append-only)
-   - `id, org_id, ap_item_id, ts, actor_type, actor_id, event_type, prev_state, new_state, payload_json, external_refs, idempotency_key`
-3. `approvals`
-   - channel (`slack` or `teams`), message/activity refs, approver, status, reason, timestamps.
-4. `oauth_tokens`
-   - Gmail, Slack, Teams tokens where applicable.
-5. `erp_connections`
-   - NetSuite credentials/config per tenant.
+### 4.5 Idempotency and dedupe (required)
+#### Dedupe
+1. Deduplication key must use normalized invoice identity and source evidence (invoice number and/or attachment hash strategy where applicable).
+2. Cross-thread duplicates must link to one invoice-centric AP item when confidence/validation rules allow.
 
-## 4.2 Required backend APIs
-Existing AP routes remain and are hardened. Add or finalize:
-- `POST /extension/triage`
-- `POST /extension/submit-for-approval`
-- `GET /extension/pipeline`
-- `POST /api/slack/actions` (verified signatures)
-- `POST /api/teams/actions` (verified signatures)
-- `POST /api/audit/events`
-- `GET /api/ap/items/{id}`
-- `GET /api/ap/items/{id}/audit`
-- `GET /api/ap/items/by-thread/{thread_id}`
-- `GET /api/ap/items/by-thread/{thread_id}/audit`
-- `POST /api/ap/items/{id}/retry-post` (legal only from `failed_post`)
+#### Idempotency
+1. Approval actions must be idempotent across duplicate callbacks/clicks.
+2. ERP posting must require an idempotency key.
+3. Retry behavior must not create duplicate ERP transactions.
+4. Idempotency keys and retry attempts must be auditable.
 
-## 4.3 External action payload contracts
-Approval action payload (normalized for Slack/Teams):
-- `ap_item_id`
-- `run_id`
-- `action` (`approve` or `reject`)
-- `actor_id`
-- `actor_display`
-- `reason` (required for reject)
-- `source_channel`
-- `source_message_ref`
-- `request_ts`
+### 4.6 ERP posting contract (workflow-level)
+ERP posting is API-first. If browser fallback is supported, it is gated and audited.
 
-ERP post response contract:
-- `status`
-- `erp_reference_id` (required on success)
-- `raw_response_redacted`
-- `error_code/error_message` (on failure)
+Requirements:
+1. Post only from legal state (`ready_to_post`) unless a documented exception path exists.
+2. Return stable ERP reference on success.
+3. Persist normalized success/failure result.
+4. On failure, transition deterministically to `failed_post` with audit.
+5. Browser fallback (if enabled) requires:
+   - preview
+   - confirmation
+   - policy allowance
+   - audit event of planned and executed action
 
----
+### 4.7 Audit coverage contract (non-negotiable)
+Every AP state transition and every external mutating action must generate an audit event.
 
-## 5. Security, Compliance, and Reliability
-
-1. Multi-tenant isolation
-   - Every row scoped by `organization_id`.
-   - No cross-tenant queries.
-2. Signature verification
-   - Slack: HMAC `v0` verification with timestamp replay protection.
-   - Teams: JWT/signature verification via Microsoft channel security.
-3. Secret handling
-   - All secrets from env/secret manager, never persisted plaintext in UI storage.
-4. Audit immutability
-   - Insert-only audit rows.
-   - No update/delete endpoints for audit events.
-5. Retry model
-   - Exponential backoff for transient failures.
-   - Explicit dead-letter state through `failed_post` and `needs_info`.
-6. No silent failure
-   - User-safe surfaced status in Gmail.
-   - Ops logs with correlation IDs.
+Required audit coverage includes:
+1. Validation outcomes (including policy/budget/PO checks)
+2. Approval requests and decisions
+3. Overrides (confidence, policy, budget, posting fallback)
+4. ERP post attempts and results
+5. Retry attempts
+6. Exception escalations and resolutions
 
 ---
 
-## 6. Implementation Phases
+## 5. Channel Contracts (Gmail / Slack / Teams)
 
-## Phase 0: Baseline hardening (current AP code stabilization)
-1. Final AP-only route and module pruning.
-2. Remove duplicate/legacy route registrations.
-3. Harden parser correctness for common invoice formats.
-4. Stabilize scan lifecycle and pagination.
-5. Ensure no client-side approve/reject bypasses.
+### 5.1 Gmail contract (primary operator surface)
+Gmail is the intake and triage surface for AP v1.
 
-Exit criteria:
-- AP queue auto-populates without manual rescan.
-- No deprecated InboxSDK usage.
-- No dashboard or non-AP code paths reachable.
+Gmail responsibilities:
+1. Thread-level AP status visibility
+2. Exception and next-action visibility
+3. Extracted field display and targeted review prompts
+4. Source evidence navigation (linked emails/threads/attachments)
+5. Audit breadcrumb display (progressive disclosure)
+6. Operator commands that do not bypass server state/policy enforcement
 
-## Phase 1: AP v1 GA completion
-1. Postgres-first configuration and migration path from SQLite dev.
-2. Final Slack + Teams approval adapter interface.
-3. Teams callback endpoint with signature verification.
-4. NetSuite connector implementation:
-   - create payable/bill
-   - return stable ERP reference
-   - idempotent post keys
-5. Gmail thread update idempotency and consistent labels.
-6. Complete runbook, architecture docs, and operational alerts.
+#### Gmail worklist/workspace contract (backend API)
+`GET /extension/worklist`
 
-Exit criteria:
-- AP item flows email to approval to ERP to audit without manual stitching.
-- Both Slack and Teams approvals supported in production.
-- Every transition and external action audited.
+Required item fields (minimum):
+1. `id`
+2. `state`
+3. `vendor_name`
+4. `invoice_number`
+5. `amount`
+6. `due_date`
+7. `exception_code`
+8. `exception_severity`
+9. `confidence`
+10. `next_action`
+11. `source_count`
+12. `primary_source`
+13. `merge_reason`
+14. `has_context_conflict`
+15. `requires_field_review`
+16. `confidence_blockers`
 
-## Phase 2: AP scale and operations hardening
-1. Throughput improvements for multi-invoice inboxes.
-2. Tenant-level policy engine (thresholds, required docs, vendor rules).
-3. Approval SLA timers and escalation routing.
-4. Operational observability:
-   - queue lag
+### 5.2 Slack contract (approval and exception decisions)
+Slack is a co-equal GA approval channel.
+
+Slack requirements:
+1. Signature verification and replay protection
+2. Common approval action contract support
+3. Idempotent action handling
+4. Result feedback to user/card
+5. Audit/event propagation for all actions and failures
+
+### 5.3 Teams contract (approval and exception decisions)
+Teams is a co-equal GA approval channel and must support the same approval semantics as Slack.
+
+Teams requirements:
+1. Verified callback/security model
+2. Common approval action contract support
+3. Idempotent action handling
+4. Result feedback to user/card
+5. Audit/event propagation for all actions and failures
+
+### 5.4 Common Slack/Teams approval action contract (canonical)
+Approval action payload (normalized):
+1. `ap_item_id`
+2. `run_id`
+3. `action` (`approve`, `reject`, `request_info`)
+4. `actor_id`
+5. `actor_display`
+6. `reason` (required for `reject`; required where policy demands for overrides)
+7. `source_channel` (`slack` or `teams`)
+8. `source_message_ref`
+9. `request_ts`
+10. `idempotency_key` (or equivalent unique action correlation)
+
+Behavioral requirements:
+1. Duplicate callbacks are safe and do not duplicate transitions/posts.
+2. Invalid or unauthorized actions are rejected and auditable.
+3. Result states are reflected back to channel surfaces (or explicitly marked stale/expired).
+
+---
+
+## 6. ERP Parity Contract (QuickBooks + Xero + NetSuite + SAP)
+
+### 6.1 Supported ERP list for AP v1 GA (locked)
+AP v1 GA operational parity commitment applies to:
+1. QuickBooks
+2. Xero
+3. NetSuite
+4. SAP
+
+### 6.2 Definition of "operational parity all enabled"
+For AP v1 GA, "multi-ERP parity" does **not** mean "connectors exist."
+
+It means:
+1. All four ERPs are enabled for production use at GA.
+2. All required AP workflow capabilities are implemented and validated for each ERP.
+3. Connector differences do not break the common AP workflow semantics or operator UX contract.
+
+### 6.3 Required capabilities for GA parity (all four ERPs)
+Each ERP connector must support, at minimum:
+1. Connectivity/auth readiness check
+2. Vendor lookup (create behavior may be policy-dependent; see optional capabilities)
+3. Account/GL lookup as required for AP posting workflows
+4. AP bill/invoice create flow
+5. Post/submit behavior (or equivalent finalization step)
+6. Stable ERP reference return on success
+7. Status lookup/verification
+8. Idempotent post behavior
+9. Structured error normalization (connector-specific errors mapped to canonical error codes)
+
+### 6.4 Optional capabilities (must not block parity unless promoted)
+Optional capabilities may vary by ERP but must be documented:
+1. Attachment upload
+2. Draft-only mode
+3. Vendor creation
+
+If any optional capability becomes launch-critical for a tenant segment, it must be promoted explicitly in this document before being treated as a parity requirement.
+
+### 6.5 ERP posting response contract (canonical)
+ERP post response contract must include:
+1. `erp_type`
+2. `status`
+3. `erp_reference` (required on success)
+4. `idempotency_key`
+5. `error_code` (normalized, on failure)
+6. `error_message` (redacted and operator-safe where surfaced)
+7. `raw_response_redacted` (stored where allowed)
+
+### 6.6 Connector readiness checklist (per ERP, required before GA)
+Each ERP must pass a readiness checklist that includes:
+1. Authentication/connectivity validation
+2. Sandbox/staging end-to-end AP posting test pass
+3. Idempotent retry verification
+4. Error mapping verification
+5. Audit coverage verification
+6. Operator-facing exception behavior verification
+7. Runbook completeness
+8. Signed-off validation evidence
+
+### 6.7 Fallback policy (API-first, gated browser fallback)
+Default policy:
+1. API-first for all ERP writes.
+2. Browser fallback is only allowed if:
+   - connector path is unavailable/incomplete for a supported ERP capability,
+   - policy explicitly permits it,
+   - a preview is generated,
+   - human confirmation is captured,
+   - the action is fully audited.
+
+If browser fallback is not supported for a connector/workflow, the system must fail safely and surface a manual handoff path without implying successful posting.
+
+### 6.8 GA parity evidence requirements
+GA cannot be declared until QuickBooks, Xero, NetSuite, and SAP each have:
+1. A passing parity test matrix
+2. Signed-off connector readiness checklist
+3. Production runbook entries
+4. Monitored error/latency baselines established
+
+---
+
+## 7. Reliability and Trust Requirements (GA Launch Gates)
+
+### 7.1 Extraction confidence gates
+Launch gate requirements:
+1. Critical-field confidence gate is active and enforced server-side.
+2. Low-confidence critical fields block posting and require review.
+3. Overrides require explicit justification and audit.
+4. Field-level blockers are visible in Gmail and channel actions where applicable.
+
+### 7.2 Deterministic state enforcement
+Launch gate requirements:
+1. 100% server-side transition validation against legal paths.
+2. Illegal transition attempts are rejected and logged.
+3. No client or integration callback can set arbitrary state directly.
+
+### 7.3 Idempotent ERP posting and action handling
+Launch gate requirements:
+1. ERP posting requires idempotency keys.
+2. Duplicate approval callbacks/clicks are safe.
+3. Retrying after transient failures does not create duplicate ERP transactions.
+4. Retry attempts and outcomes are auditable.
+
+### 7.4 Audit completeness and immutability
+Launch gate requirements:
+1. Every AP state transition is audited.
+2. Every external mutating action is audited.
+3. Approval decisions capture actor, timestamp, and reason where applicable.
+4. Audit completeness is a launch gate, not a post-launch hardening item.
+5. Audit entries are append-only and protected from routine mutation paths.
+
+### 7.5 Exception handling and escalation clarity
+Launch gate requirements:
+1. Exceptions are reason-coded and severity-ranked.
+2. Each exception state has a deterministic next action or escalation path.
+3. Operators can see why the item is blocked and how to resolve it.
+4. Slack/Teams decisions and ERP failures surface clear operator-safe outcomes.
+
+### 7.6 Observability and operator support requirements
+Launch gate requirements:
+1. Correlation IDs across intake, approval, posting, and audit events
+2. Metrics for:
    - approval latency
    - post failure rate
-   - per-tenant health.
+   - retry rate
+   - extraction correction rate
+   - exception rate
+3. Per-tenant/channel/ERP diagnostics in ops/admin surfaces
+4. Actionable health status for auth/token expiry, connector degradation, and callback failures
+
+### 7.7 Failure mode behavior (must be defined and tested)
+AP v1 GA must define and validate behavior for:
+1. ERP connector auth expiry / disconnect
+2. Slack/Teams callback duplication or delayed delivery
+3. Gmail rescan/reprocessing after backend outage
+4. Posting failure after approval
+5. Low-confidence extraction discovered late in workflow
+6. Browser fallback failure (if fallback path is enabled)
+
+---
+
+## 8. Metrics and Launch Success Criteria
+
+### 8.1 Primary launch metric (AP v1)
+**Primary metric:** Cycle-time reduction for AP invoice processing vs customer baseline.
+
+### 8.2 Supporting metrics (required)
+Track at minimum:
+1. Extraction correction rate (critical fields)
+2. Approval turnaround time
+3. Posting success rate by ERP (QB/Xero/NetSuite/SAP)
+4. Exception rate and exception resolution time
+5. Duplicate-prevention effectiveness (duplicate post prevention)
+6. Audit coverage completeness
+7. Retry success rate after transient failures
+
+### 8.3 Pilot-to-GA graduation criteria
+Pre-GA pilot must demonstrate:
+1. Stable end-to-end AP flow on real customer data patterns
+2. Predictable exception handling and operator trust
+3. Proven channel action reliability (Slack and Teams)
+4. Proven connector readiness for all four GA ERPs
+5. Acceptable extraction correction burden
+
+Pilot success alone is not sufficient unless GA parity and reliability gates are met.
+
+### 8.4 GA launch acceptance criteria (minimum)
+AP v1 GA launch requires all of the following:
+1. Gmail + Slack + Teams channel contracts operational and validated
+2. QuickBooks + Xero + NetSuite + SAP parity requirements passed
+3. State machine enforcement proven in tests and staging validation
+4. Audit completeness validated for transitions and external actions
+5. Idempotent posting and duplicate action handling validated
+6. Runbooks and on-call/operator procedures documented
+7. Rollback controls validated
+
+### 8.5 Post-GA monitoring and rollback triggers
+Post-GA launch operations must define thresholds for:
+1. Elevated post failure rate
+2. Connector-specific degradation
+3. Callback security/verification failures
+4. Audit write failures or audit coverage gaps
+5. Duplicate posting incidents
+
+Rollback controls must support at least:
+1. Per-tenant ERP posting disablement (intake and approvals continue)
+2. Per-channel action disablement with safe fallback path
+3. Connector-specific feature gating without disabling all AP intake
+
+---
+
+## 9. Rollout Plan (Pilot -> GA)
+
+### 9.1 Internal validation
+1. Dogfood with internal/staging tenants
+2. Mock and sandbox ERP validation
+3. Gmail + Slack + Teams callback reliability testing
+4. State machine / idempotency / audit coverage tests
 
 Exit criteria:
-- Stable multi-tenant ops under expected production load.
-- Error budgets and oncall runbooks proven.
+1. No unauthorized state transitions in validation logs
+2. No duplicate ERP posts for identical idempotency keys
+3. Audit coverage checks pass for required flows
 
-## Phase 3: Post-AP expansion to execution layer
-Only after AP SLOs are met for sustained period:
-1. Reconciliation execution workflow
-2. FP&A data aggregation workflow
-3. Shared orchestration framework reused from AP primitives (state machine, audit, adapters)
+### 9.2 Design-partner pilot (pre-GA)
+Purpose: validate operator UX, extraction quality, and connector behavior in real workflows.
 
----
+Pilot activities:
+1. Onboard design partners
+2. Measure baseline AP cycle time
+3. Run guided rollout with feature gates
+4. Collect exception and correction patterns
+5. Harden runbooks and support procedures
 
-## 7. Testing and Acceptance Criteria
+Pilot may use staged enablement, but must still progress toward GA parity validation.
 
-## 7.1 Automated tests (minimum required)
-1. Intake creates AP item in `received`.
-2. Validation routes to `validated` or `needs_info`.
-3. Illegal transitions are rejected server-side.
-4. Reject path writes actor, reason, timestamp, audit.
-5. Resubmission after reject creates new AP item with `supersedes` metadata.
-6. Slack signature verification: invalid rejected, valid accepted.
-7. Teams callback verification: invalid rejected, valid accepted.
-8. Approval idempotency: repeated callback does not duplicate transitions/posts.
-9. ERP post success persists `erp_reference_id` and transitions to `closed`.
-10. ERP post failure transitions to `failed_post` and writes audit.
-11. Gmail thread update invoked and idempotent after post/reject/needs_info.
-12. Pipeline endpoints return AP-only states.
+### 9.3 Channel parity validation (Slack + Teams)
+Before GA:
+1. Slack and Teams must each pass the common approval action contract test matrix
+2. Both channels must support:
+   - `approve`
+   - `reject`
+   - `request_info`
+   - result feedback / stale action handling
+3. Duplicate callback/action handling must be verified in both channels
 
-## 7.2 End-to-end scenarios
-1. Single invoice email, approval, NetSuite posting, thread updated.
-2. Multi-invoice same vendor day, duplicate prevention and correct grouping.
-3. Rejected invoice resubmitted with corrected attachment.
-4. Backend outage during scan then recovery without data loss.
-5. Slack outage fallback to Teams approvals (and inverse).
+### 9.4 ERP parity validation (QuickBooks + Xero + NetSuite + SAP)
+Before GA:
+1. All four ERPs must complete readiness checklists
+2. All required parity capabilities must be enabled
+3. Connector-specific limitations must be documented and not break workflow semantics
+4. Parity evidence must be archived for signoff
 
-## 7.3 Production readiness gates
-- 0 unauthorized state transitions in logs.
-- 0 unaudited transitions/actions.
-- >99% callback signature verification pass/fail correctness.
-- No duplicate ERP posts for identical idempotency keys.
-- Tenant data isolation checks pass.
+### 9.5 GA launch
+GA launch occurs only when:
+1. Section 7 reliability/trust gates pass
+2. Section 8 GA acceptance criteria pass
+3. Channel and ERP parity validation is complete
+4. Rollback controls are tested
 
----
-
-## 8. Rollout Plan
-
-1. Internal dogfood tenant with mock ERP.
-2. Pilot tenant with NetSuite sandbox.
-3. Controlled production launch:
-   - feature gates per tenant
-   - channel-by-channel enablement (Slack and Teams)
-4. Full production with SLO dashboards for operators only (not product dashboards).
-
-Rollback:
-- Disable ERP posting per tenant while preserving intake and approvals.
-- Keep AP items in `ready_to_post` for retry after incident resolution.
+### 9.6 Controlled expansion after GA
+After GA:
+1. Expand tenant cohorts and volumes in controlled increments
+2. Tighten SLOs and error budgets
+3. Continue AP hardening before expanding to new finance workflows
+4. Reuse AP primitives for future reconciliation/close/FP&A workflows only after AP stability targets are sustained
 
 ---
 
-## 9. Documentation Deliverables
+## 10. Doc Reconciliation Matrix (Canonical Doc Governance)
 
-1. `README.md` updated to AP-only execution scope.
-2. `ARCHITECTURE.md` with module and data-flow diagrams.
-3. `RUNBOOK.md` covering:
-   - local start
-   - OAuth setup
-   - Slack/Teams callback testing
-   - NetSuite sandbox testing
-   - failure triage and retry steps
-4. `DECISIONS.md` with locked semantics and channel/ERP choices.
+### 10.1 Canonical document roles
+This matrix prevents contradictions across strategy, backlog, and assessment docs.
+
+| Document | Role | Canonical for | Not canonical for | Update trigger |
+|---|---|---|---|---|
+| `PLAN.md` | Doctrine + contracts + launch spec | Product doctrine, AP v1 release taxonomy, channel/ERP parity, GA launch gates | Point-in-time implementation status, backlog sequencing | Product/engineering doctrine change, launch-gate changes |
+| `TODO_BACKLOG.md` | Execution backlog | Work sequencing, ownership, implementation streams, release buckets | Product doctrine, launch definitions | Backlog grooming / implementation progress |
+| `gaps_opportunities` | Strategic analysis | Gap analysis, opportunities, future expansion thinking | Canonical launch gates or release taxonomy | Strategic review / roadmap updates |
+| `docs/GO_LIVE_ASSESSMENT.md` | Point-in-time audit report | Readiness assessment findings for a specific date/branch | Canonical product doctrine or future release commitments | New readiness audit run |
+
+### 10.2 Required cross-doc consistency rules
+1. `PLAN.md` defines release terminology (`pilot`, `GA`, `launch`).
+2. `TODO_BACKLOG.md` must not redefine launch doctrine; it maps work to the doctrine in `PLAN.md`.
+3. `gaps_opportunities` may describe open/closed gaps, but not override `PLAN.md` contracts.
+4. `GO_LIVE_ASSESSMENT.md` must be treated as a dated report and cite the `PLAN.md` version/assumptions it assessed.
+
+### 10.3 Current reconciliation notes (as of 2026-02-25)
+1. `/Users/mombalam/Desktop/Clearledgr.v1/docs/GO_LIVE_ASSESSMENT.md` is a point-in-time readiness assessment dated **2026-02-18**, performed against an earlier `PLAN.md` variant ("Execution Layer Build Plan, AP-First").
+2. Findings in `GO_LIVE_ASSESSMENT.md` remain valuable as engineering risk inputs, but that document is **not** the canonical source for AP v1 doctrine or launch definitions.
+3. `/Users/mombalam/Desktop/Clearledgr.v1/TODO_BACKLOG.md` and `/Users/mombalam/Desktop/Clearledgr.v1/gaps_opportunities` should be interpreted as execution and strategy inputs aligned to this `PLAN.md`.
+
+### 10.4 Terminology normalization (mandatory)
+To avoid scope drift and false completion claims, all future docs and tickets must distinguish:
+1. **Connector exists** vs **operational parity enabled**
+2. **Pilot-ready** vs **launch-ready (GA)**
+3. **Supported in code path** vs **validated and enabled in production**
+4. **Embedded UX doctrine** vs **product positioning**
 
 ---
 
-## 10. Assumptions and Defaults
+## Canonical Public APIs / Interfaces / Types (Spec-Level Requirements)
 
-1. AP-only remains the only shipped workflow until AP SLOs are met.
-2. Postgres is mandatory for production; SQLite allowed for local development.
-3. NetSuite is first real ERP connector; mock mode retained for tests/dev.
-4. Slack and Teams both must support approval actions at launch.
-5. Gmail extension remains InboxSDK-only with minimal queue and inline context.
-6. No standalone web app or dashboard is introduced.
-7. Audit trail is backend source of truth; extension may cache for display only.
+This section is normative for implementation and QA. It defines the interfaces that AP v1 depends on, even if implementation details evolve.
+
+### A. Gmail extension worklist/workspace APIs
+1. `GET /extension/worklist`
+   - Returns invoice-centric AP items for Gmail operator workflow
+   - Must include status, confidence, exception, next action, and source linkage fields
+
+2. `GET /api/ap/items/{ap_item_id}/context`
+   - Returns normalized cross-system context (email, approvals, ERP, web/portal, etc.)
+   - Must expose blocking conditions and operator-safe summaries
+
+3. `GET /api/ap/items/{ap_item_id}/audit`
+   - Returns audit breadcrumbs and detailed events for progressive disclosure
+
+### B. Approval action interfaces (Slack/Teams)
+Approval action handling must normalize Slack and Teams actions into the common contract in Section 5.4 and enforce:
+1. Signature/security verification
+2. Idempotency
+3. Server-side policy and state validation
+4. Audit propagation
+
+### C. ERP posting interfaces
+ERP posting behavior must provide:
+1. Idempotent posting with required idempotency key
+2. Stable ERP reference on success
+3. Normalized error codes on failure
+4. Safe retry semantics
+5. Optional preview/confirm contract for fallback/high-risk paths (if applicable)
+
+### D. AP item type requirements (minimum fields)
+AP item surfaces and APIs should support these canonical fields (minimum; implementation may include additional fields):
+1. `id`
+2. `state`
+3. `vendor_name`
+4. `invoice_number`
+5. `amount`
+6. `due_date`
+7. `confidence`
+8. `exception_code`
+9. `exception_severity`
+10. `next_action`
+11. `source_count`
+12. `merge_reason`
+13. `has_context_conflict`
+14. `requires_field_review`
+15. `confidence_blockers`
+
+### E. Audit event type requirements (minimum fields)
+Audit events should support:
+1. `id`
+2. `organization_id`
+3. `ap_item_id`
+4. `timestamp`
+5. `actor_type`
+6. `actor_id`
+7. `action` / `event_type`
+8. `prev_state`
+9. `new_state`
+10. `result`
+11. `payload_json` (redacted where needed)
+12. `correlation_id` / `idempotency_key`
+
+---
+
+## GA Launch Gate Defaults (Decision Defaults)
+
+These defaults apply unless superseded by a later explicit revision to this `PLAN.md`.
+
+### Extraction and validation defaults
+1. Critical-field confidence gating is enabled by default.
+2. Default critical-field threshold is 95% confidence.
+3. Low-confidence critical fields block posting and require review.
+4. Overrides require justification and audit logging.
+
+### State machine and idempotency defaults
+1. All AP state transitions are server-enforced.
+2. Illegal transitions are rejected and logged.
+3. ERP posting requires idempotency keys.
+4. Duplicate approval callbacks/actions must not duplicate transitions or posts.
+
+### Audit and traceability defaults
+1. Every state transition is audited.
+2. Every external mutating action is audited.
+3. Approval decisions capture actor, timestamp, and reason where applicable.
+4. Audit completeness is a GA launch gate.
+
+### Channel defaults
+1. Gmail is the primary AP intake/triage operator surface.
+2. Slack and Teams are co-equal GA approval channels.
+3. Admin Console is setup/ops only, not daily AP workflow UI.
+
+### ERP defaults
+1. AP v1 GA parity commitment includes QuickBooks, Xero, NetSuite, and SAP.
+2. All four must be operationally enabled at GA.
+3. API-first posting is the default execution path.
+4. Browser fallback, if supported, is gated by preview + confirmation + audit + policy.
+
+---
+
+## Appendix: Implementation Guidance for Engineers (Non-Canonical Sequencing)
+
+This appendix is intentionally lightweight. The canonical sequencing and ownership should live in `TODO_BACKLOG.md`. It exists only to prevent misinterpretation of doctrine as implementation order.
+
+Recommended sequencing themes:
+1. State machine enforcement and audit completeness
+2. Extraction confidence gating and review UX
+3. Slack/Teams parity hardening
+4. ERP parity hardening (QB/Xero/NetSuite/SAP)
+5. Ops health, observability, and rollback readiness
+
+If `TODO_BACKLOG.md` conflicts with this `PLAN.md`, update the backlog to match this document or submit a doctrine revision to `PLAN.md`.

@@ -28,6 +28,15 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       # Notifications
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+      - TEAMS_APP_ID=${TEAMS_APP_ID:-}
+      # AP runtime / durability truth-in-claims
+      - AP_TEMPORAL_ENABLED=${AP_TEMPORAL_ENABLED:-false}
+      - AP_TEMPORAL_REQUIRED=${AP_TEMPORAL_REQUIRED:-false}
+      - AP_AGENT_AUTONOMOUS_RETRY_ENABLED=${AP_AGENT_AUTONOMOUS_RETRY_ENABLED:-true}
+      # Safe default for integration/pilot-style testing; set to true for local exploratory retry behavior.
+      - AP_AGENT_NON_DURABLE_RETRY_ALLOWED=${AP_AGENT_NON_DURABLE_RETRY_ALLOWED:-false}
+      - AP_BROWSER_RUNNER_TRUST_MODE=${AP_BROWSER_RUNNER_TRUST_MODE:-api_or_admin}
     depends_on:
       - db
       - redis
@@ -35,7 +44,7 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

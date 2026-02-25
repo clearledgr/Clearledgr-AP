@@ -9,8 +9,143 @@ import os
 import logging
 import httpx
 from typing import Dict, Any, Optional, List
+from clearledgr.services.slack_api import resolve_slack_runtime
 
 logger = logging.getLogger(__name__)
+
+
+async def _post_slack_blocks(
+    blocks: List[Dict[str, Any]],
+    text: str,
+    preferred_channel: Optional[str] = None,
+    organization_id: Optional[str] = None,
+) -> bool:
+    """
+    Send Slack blocks using webhook first, then bot token fallback.
+
+    This supports both deployment styles:
+    - Incoming webhook (SLACK_WEBHOOK_URL)
+    - Bot token (SLACK_BOT_TOKEN + channel)
+    """
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "").strip()
+    runtime = resolve_slack_runtime(organization_id)
+    bot_token = (runtime.get("bot_token") or "").strip()
+    channel = (
+        (preferred_channel or "").strip()
+        or str(runtime.get("approval_channel") or "").strip()
+        or "#finance-approvals"
+    )
+
+    if webhook_url:
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    webhook_url,
+                    json={"text": text, "blocks": blocks},
+                    timeout=15,
+                )
+                response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.warning(f"Slack webhook send failed, trying bot token fallback: {e}")
+
+    if bot_token:
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://slack.com/api/chat.postMessage",
+                    headers={
+                        "Authorization": f"Bearer {bot_token}",
+                        "Content-Type": "application/json; charset=utf-8",
+                    },
+                    json={
+                        "channel": channel,
+                        "text": text,
+                        "blocks": blocks,
+                        "unfurl_links": False,
+                        "unfurl_media": False,
+                    },
+                    timeout=15,
+                )
+            payload = response.json() if response.content else {}
+            if response.status_code >= 400 or not payload.get("ok", False):
+                logger.error(f"Slack bot send failed: status={response.status_code} payload={payload}")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Slack bot token send failed: {e}")
+            return False
+
+    logger.warning(
+        "No Slack delivery method configured (set Slack install or SLACK_BOT_TOKEN). org=%s mode=%s",
+        organization_id or "default",
+        runtime.get("mode"),
+    )
+    return False
+
+
+async def send_with_retry(
+    blocks: List[Dict[str, Any]],
+    text: str,
+    ap_item_id: Optional[str] = None,
+    preferred_channel: Optional[str] = None,
+    organization_id: Optional[str] = None,
+) -> bool:
+    """Send Slack blocks, enqueueing for retry on failure."""
+    ok = await _post_slack_blocks(blocks, text, preferred_channel, organization_id)
+    if ok:
+        return True
+    # Enqueue for retry
+    try:
+        from clearledgr.core.database import get_db
+        db = get_db()
+        db.enqueue_notification(
+            organization_id=organization_id or "default",
+            channel="slack",
+            payload={
+                "blocks": blocks,
+                "text": text,
+                "preferred_channel": preferred_channel,
+            },
+            ap_item_id=ap_item_id,
+        )
+        logger.info("Notification enqueued for retry (ap_item=%s)", ap_item_id)
+    except Exception as e:
+        logger.error("Failed to enqueue notification: %s", e)
+    return False
+
+
+async def process_retry_queue() -> int:
+    """Process pending notifications in the retry queue.
+
+    Returns the number of notifications processed.
+    Call this from a background task every 60 seconds.
+    """
+    from clearledgr.core.database import get_db
+    db = get_db()
+    pending = db.get_pending_notifications(limit=20)
+    processed = 0
+    for notif in pending:
+        import json as _json
+        payload = _json.loads(notif["payload_json"]) if isinstance(notif["payload_json"], str) else notif["payload_json"]
+        ok = await _post_slack_blocks(
+            blocks=payload.get("blocks", []),
+            text=payload.get("text", ""),
+            preferred_channel=payload.get("preferred_channel"),
+            organization_id=notif.get("organization_id"),
+        )
+        if ok:
+            db.mark_notification_sent(notif["id"])
+            logger.info("Retry succeeded for notification %s", notif["id"])
+        else:
+            db.mark_notification_failed(notif["id"], "delivery failed")
+            logger.warning(
+                "Retry %d failed for notification %s",
+                (notif.get("retry_count") or 0) + 1,
+                notif["id"],
+            )
+        processed += 1
+    return processed
 
 
 class SlackNotifier:
@@ -307,10 +442,8 @@ async def send_payment_request_notification(request) -> bool:
     Returns:
         True if sent successfully
     """
-    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
-    if not webhook_url:
-        logger.warning("Cannot send payment request notification - no webhook configured")
-        return False
+    organization_id = getattr(request, "organization_id", None)
+    preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
     
     # Determine channel based on amount
     amount = request.amount
@@ -388,17 +521,16 @@ async def send_payment_request_notification(request) -> bool:
         }
     ]
     
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(webhook_url, json={"blocks": blocks})
-            response.raise_for_status()
-        
+    sent = await send_with_retry(
+        blocks=blocks,
+        text=f"Payment request {request.request_id} requires approval",
+        ap_item_id=request.request_id,
+        preferred_channel=preferred_channel,
+        organization_id=organization_id,
+    )
+    if sent:
         logger.info(f"Sent payment request notification for {request.request_id}")
-        return True
-    
-    except Exception as e:
-        logger.error(f"Failed to send payment request notification: {e}")
-        return False
+    return sent
 
 
 async def send_invoice_approval_notification(
@@ -409,6 +541,7 @@ async def send_invoice_approval_notification(
     due_date: Optional[str] = None,
     user_email: Optional[str] = None,
     exceptions: Optional[List[str]] = None,
+    organization_id: Optional[str] = None,
 ) -> bool:
     """
     Send Slack notification for invoice requiring approval.
@@ -427,10 +560,7 @@ async def send_invoice_approval_notification(
     Returns:
         True if sent successfully
     """
-    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
-    if not webhook_url:
-        logger.warning("Cannot send invoice notification - no webhook configured")
-        return False
+    preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
     
     # Build Gmail deep link that opens directly to the thread
     # Format: https://mail.google.com/mail/u/0/#inbox/{thread_id}
@@ -523,17 +653,16 @@ async def send_invoice_approval_notification(
         }
     ]
     
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(webhook_url, json={"blocks": blocks})
-            response.raise_for_status()
-        
+    sent = await send_with_retry(
+        blocks=blocks,
+        text=f"Invoice {invoice_id} needs approval",
+        ap_item_id=invoice_id,
+        preferred_channel=preferred_channel,
+        organization_id=organization_id,
+    )
+    if sent:
         logger.info(f"Sent invoice approval notification for {invoice_id}")
-        return True
-    
-    except Exception as e:
-        logger.error(f"Failed to send invoice notification: {e}")
-        return False
+    return sent
 
 
 async def send_invoice_posted_notification(
@@ -543,13 +672,12 @@ async def send_invoice_posted_notification(
     erp_system: str,
     erp_reference: str,
     approved_by: str,
+    organization_id: Optional[str] = None,
 ) -> bool:
     """
     Send confirmation that invoice was posted to ERP.
     """
-    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
-    if not webhook_url:
-        return False
+    preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
     
     blocks = [
         {
@@ -566,13 +694,12 @@ async def send_invoice_posted_notification(
         }
     ]
     
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(webhook_url, json={"blocks": blocks})
-            response.raise_for_status()
-        return True
-    except:
-        return False
+    return await _post_slack_blocks(
+        blocks=blocks,
+        text=f"Invoice {invoice_id} posted to {erp_system}",
+        preferred_channel=preferred_channel,
+        organization_id=organization_id,
+    )
 
 
 async def send_task_created_notification(*args, **kwargs):

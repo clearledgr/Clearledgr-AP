@@ -2,10 +2,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 from typing import Any, Dict, List, Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+logger = logging.getLogger(__name__)
+
+# Bot Framework OAuth token endpoint for client-credentials flow
+_BOT_FRAMEWORK_TOKEN_URL = "https://login.botframework.com/v1/.oauth/token"
+# Cache: {"token": str, "expires_at": float}
+_bot_token_cache: Dict[str, Any] = {}
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -123,9 +132,9 @@ class TeamsAPIClient:
                     },
                     {
                         "type": "Action.Submit",
-                        "title": "Request adjustment",
+                        "title": "Request info",
                         "data": {
-                            "action": "request_budget_adjustment",
+                            "action": "request_info",
                             "email_id": email_id,
                             "organization_id": organization_id,
                             "justification": "Budget adjustment requested in Teams",
@@ -165,6 +174,16 @@ class TeamsAPIClient:
                             "justification": "Rejected in Teams",
                         },
                     },
+                    {
+                        "type": "Action.Submit",
+                        "title": "Request info",
+                        "data": {
+                            "action": "request_info",
+                            "email_id": email_id,
+                            "organization_id": organization_id,
+                            "justification": "Additional info requested in Teams",
+                        },
+                    },
                 ]
             )
 
@@ -183,6 +202,139 @@ class TeamsAPIClient:
                 }
             ],
         }
+
+    # ------------------------------------------------------------------
+    # Bot Framework card update (replaces the original approval card
+    # with a result card once the approver has acted)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_bot_framework_token() -> Optional[str]:
+        """Acquire (and cache) an OAuth2 client-credentials token for the
+        Bot Framework REST API.  Requires ``TEAMS_APP_ID`` and
+        ``TEAMS_APP_PASSWORD`` environment variables.
+
+        Returns the bearer token string, or ``None`` if credentials are
+        not configured or the request fails.
+        """
+        app_id = os.getenv("TEAMS_APP_ID", "").strip()
+        app_password = os.getenv("TEAMS_APP_PASSWORD", "").strip()
+        if not app_id or not app_password:
+            return None
+
+        cached = _bot_token_cache
+        if cached.get("token") and time.time() < cached.get("expires_at", 0) - 60:
+            return str(cached["token"])
+
+        payload = (
+            f"grant_type=client_credentials"
+            f"&client_id={app_id}"
+            f"&client_secret={app_password}"
+            f"&scope=https%3A%2F%2Fapi.botframework.com%2F.default"
+        ).encode("utf-8")
+
+        req = Request(
+            _BOT_FRAMEWORK_TOKEN_URL,
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        try:
+            with urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            token = data.get("access_token")
+            expires_in = int(data.get("expires_in", 3600))
+            if token:
+                _bot_token_cache["token"] = token
+                _bot_token_cache["expires_at"] = time.time() + expires_in
+                return token
+        except Exception as exc:
+            logger.warning("Failed to acquire Bot Framework token: %s", exc)
+        return None
+
+    def update_activity(
+        self,
+        *,
+        service_url: str,
+        conversation_id: str,
+        activity_id: str,
+        result_status: str,
+        actor_display: str,
+        action: str,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update the original Teams approval card with a result summary.
+
+        Posts to the Bot Framework REST API:
+        ``{service_url}/v3/conversations/{conversationId}/activities/{activityId}``
+
+        The updated card replaces the action buttons with a plain result
+        so operators see the decision immediately in their Teams channel.
+
+        Returns a dict with ``status`` (``"updated"``, ``"skipped"``, or
+        ``"error"``) and any relevant detail.
+        """
+        token = self._get_bot_framework_token()
+        if not token:
+            return {"status": "skipped", "reason": "bot_framework_credentials_not_configured"}
+
+        service_url = service_url.rstrip("/")
+        url = f"{service_url}/v3/conversations/{conversation_id}/activities/{activity_id}"
+
+        icon = "✅" if action == "approve" else ("❌" if action == "reject" else "ℹ️")
+        result_text = f"{icon} {actor_display} — {result_status.replace('_', ' ').title()}"
+        if reason:
+            result_text += f"\n> {reason}"
+
+        updated_card = {
+            "type": "message",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content": {
+                        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                        "type": "AdaptiveCard",
+                        "version": "1.4",
+                        "body": [
+                            {
+                                "type": "TextBlock",
+                                "size": "Medium",
+                                "weight": "Bolder",
+                                "text": "Invoice Approval — Decision Recorded",
+                            },
+                            {
+                                "type": "TextBlock",
+                                "wrap": True,
+                                "text": result_text,
+                            },
+                        ],
+                    },
+                }
+            ],
+        }
+
+        body = json.dumps(updated_card).encode("utf-8")
+        req = Request(
+            url,
+            data=body,
+            method="PUT",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urlopen(req, timeout=10) as resp:
+                status_code = int(getattr(resp, "status", 200))
+            if 200 <= status_code < 300:
+                return {"status": "updated", "status_code": status_code}
+            return {"status": "error", "status_code": status_code}
+        except URLError as exc:
+            logger.warning("Teams card update failed: %s", exc)
+            return {"status": "error", "reason": str(exc)}
+        except Exception as exc:
+            logger.warning("Teams card update unexpected error: %s", exc)
+            return {"status": "error", "reason": str(exc)}
 
     def send_invoice_budget_card(
         self,

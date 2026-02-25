@@ -65,8 +65,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Settings helpers
+function getConfiguredBackendUrl() {
+  const globalConfig =
+    (typeof self !== 'undefined' && self.CLEARLEDGR_CONFIG)
+    || (typeof globalThis !== 'undefined' && globalThis.CLEARLEDGR_CONFIG)
+    || (typeof self !== 'undefined' && self.CONFIG)
+    || (typeof globalThis !== 'undefined' && globalThis.CONFIG)
+    || null;
+  if (!globalConfig) return '';
+  return String(globalConfig.API_URL || globalConfig.BACKEND_URL || '').trim();
+}
+
 function normalizeBackendUrl(raw) {
   let url = String(raw || '').trim();
+  if (!url) {
+    url = getConfiguredBackendUrl();
+  }
   if (!url) return 'http://127.0.0.1:8000';
   if (!/^https?:\/\//i.test(url)) url = `http://${url}`;
   if (url.endsWith('/v1')) url = url.slice(0, -3);

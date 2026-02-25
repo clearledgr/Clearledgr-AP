@@ -1,5 +1,21 @@
 # Clearledgr Architecture
 
+## Governance Note (2026-02-25)
+
+- **Document role:** Broad architecture and platform-direction reference
+- **Canonical status for AP v1 launch:** **Non-canonical**
+- **Why:** This document includes broader multi-workflow concepts (for example reconciliation, bank feeds, and Sheets surfaces) that exceed current AP v1 product scope.
+- **Use this doc for:** System thinking, long-range architecture direction, and cross-workflow design context
+- **Do not use this doc for:** AP v1 launch doctrine, GA gates, or canonical interface/surface commitments
+
+### Canonical AP v1 references
+
+1. `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md` — doctrine, contracts, release taxonomy, launch gates
+2. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md` — AP v1 backend contract semantics
+3. `/Users/mombalam/Desktop/Clearledgr.v1/docs/API_REFERENCE.md` — AP v1-aligned API map
+4. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_EMBEDDED_WORKER_EXPERIENCE.md` — embedded AP operator UX
+5. `/Users/mombalam/Desktop/Clearledgr.v1/docs/HOW_IT_WORKS.md` — AP v1 user-facing workflow summary
+
 ## Overview
 
 Clearledgr is an **autonomous finance agent** that embeds directly into tools finance teams already use. It combines the best of two proven approaches:

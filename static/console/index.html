@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Clearledgr Admin Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/console/styles.css" />
+  </head>
+  <body>
+    <div id="auth-shell" class="auth-shell">
+      <div class="auth-card">
+        <h1>Clearledgr Admin Center</h1>
+        <p>Sign in to manage setup, integrations, policies, and plan controls.</p>
+        <div id="auth-message" class="muted"></div>
+        <form id="login-form">
+          <label>Email</label>
+          <input type="email" name="email" required />
+          <label>Password</label>
+          <input type="password" name="password" required />
+          <button type="submit">Sign in</button>
+        </form>
+        <button id="google-login-btn" class="alt">Continue with Google</button>
+        <div id="invite-shell" class="invite-shell hidden">
+          <h3>Accept Team Invite</h3>
+          <p>Set your name and password to join your organization.</p>
+          <form id="invite-form">
+            <label>Name (optional)</label>
+            <input type="text" name="name" placeholder="Your name" />
+            <label>Password</label>
+            <input type="password" name="password" minlength="8" required />
+            <button type="submit">Accept Invite</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div id="console-shell" class="shell hidden">
+      <aside class="side-nav">
+        <div class="brand">Clearledgr</div>
+        <div class="org-chip" id="org-chip">Organization</div>
+        <nav id="nav"></nav>
+        <button id="logout-btn" class="logout">Log out</button>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <h2 id="page-title">Setup</h2>
+          <p id="page-subtitle"></p>
+        </header>
+        <section id="page-content"></section>
+      </main>
+    </div>
+
+    <div id="toast-container"></div>
+    <script src="/static/console/app.js"></script>
+  </body>
+</html>

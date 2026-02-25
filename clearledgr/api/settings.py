@@ -165,10 +165,10 @@ async def get_settings(organization_id: str):
     Returns current configuration or defaults if not set.
     """
     db = get_db()
-    org = db.get_organization(organization_id)
-    
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
+    org = db.get_organization(organization_id) or db.ensure_organization(
+        organization_id,
+        organization_name=organization_id,
+    )
     
     # Parse stored settings
     stored_settings = org.get("settings", {})
@@ -197,10 +197,10 @@ async def update_settings(organization_id: str, request: UpdateSettingsRequest):
     Update organization settings.
     """
     db = get_db()
-    org = db.get_organization(organization_id)
-    
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
+    org = db.get_organization(organization_id) or db.ensure_organization(
+        organization_id,
+        organization_name=organization_id,
+    )
     
     # Get current settings
     current = org.get("settings", {})

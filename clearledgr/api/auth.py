@@ -4,7 +4,19 @@ Clearledgr Auth API
 Authentication endpoints for login, registration, and token management.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+import base64
+import hashlib
+import hmac
+import json
+import os
+import secrets
+from datetime import datetime, timezone
+from typing import Optional
+from urllib.parse import urlencode
+
+import httpx
+from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, Field, validator
 import re
 
@@ -59,6 +71,43 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class InviteAcceptRequest(BaseModel):
+    token: str
+    password: Optional[str] = None
+    name: Optional[str] = None
+
+
+def _oauth_secret() -> str:
+    from clearledgr.core.secrets import require_secret
+    return require_secret("CLEARLEDGR_SECRET_KEY")
+
+
+def _google_oauth_redirect_uri() -> str:
+    return os.getenv(
+        "GOOGLE_CONSOLE_REDIRECT_URI",
+        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/auth/google/callback",
+    ).strip()
+
+
+def _sign_google_state(payload: dict) -> str:
+    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("utf-8")
+    sig = hmac.new(_oauth_secret().encode("utf-8"), body.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{body}.{sig}"
+
+
+def _unsign_google_state(state: str) -> dict:
+    if "." not in state:
+        raise HTTPException(status_code=400, detail="invalid_state")
+    body, sig = state.split(".", 1)
+    expected = hmac.new(_oauth_secret().encode("utf-8"), body.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        raise HTTPException(status_code=400, detail="invalid_state_signature")
+    decoded = json.loads(base64.urlsafe_b64decode(body.encode("utf-8")).decode("utf-8"))
+    if int(decoded.get("iat") or 0) and datetime.now(timezone.utc).timestamp() - int(decoded["iat"]) > 900:
+        raise HTTPException(status_code=400, detail="expired_state")
+    return decoded
+
+
 @router.post("/register", response_model=User)
 async def register(request: RegisterRequest):
     """
@@ -81,7 +130,8 @@ async def register(request: RegisterRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        from clearledgr.core.errors import safe_error
+        raise HTTPException(status_code=500, detail=safe_error(e, "user registration"))
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -524,4 +574,182 @@ async def invite_user(
         "user_id": user_id,
         "email": email,
         "role": role
+    }
+
+
+@router.get("/google/start")
+async def start_google_web_auth(
+    organization_id: Optional[str] = Query(default=None),
+    redirect_path: str = Query(default="/"),
+    invite_token: Optional[str] = Query(default=None),
+):
+    """Start Google web OAuth flow for console sign-in."""
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    if not client_id:
+        raise HTTPException(status_code=503, detail="GOOGLE_CLIENT_ID not configured")
+
+    state = _sign_google_state(
+        {
+            "organization_id": organization_id or "default",
+            "redirect_path": redirect_path or "/",
+            "invite_token": invite_token,
+            "nonce": secrets.token_urlsafe(8),
+            "iat": int(datetime.now(timezone.utc).timestamp()),
+        }
+    )
+    params = {
+        "client_id": client_id,
+        "redirect_uri": _google_oauth_redirect_uri(),
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "offline",
+        "prompt": "consent",
+    }
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+    return {"auth_url": auth_url}
+
+
+@router.get("/google/callback")
+async def google_web_auth_callback(
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+):
+    """Handle Google OAuth callback for console sign-in."""
+    if error:
+        return RedirectResponse(url=f"/?auth_error={error}")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="missing_code_or_state")
+
+    state_payload = _unsign_google_state(state)
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=503, detail="google_oauth_not_configured")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        token_resp = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": _google_oauth_redirect_uri(),
+                "grant_type": "authorization_code",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    token_payload = token_resp.json() if token_resp.content else {}
+    if token_resp.status_code >= 400 or "access_token" not in token_payload:
+        raise HTTPException(status_code=400, detail={"message": "google_token_exchange_failed", "payload": token_payload})
+
+    access_token = token_payload["access_token"]
+    async with httpx.AsyncClient(timeout=30) as client:
+        profile_resp = await client.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    profile = profile_resp.json() if profile_resp.content else {}
+    if profile_resp.status_code >= 400:
+        raise HTTPException(status_code=401, detail={"message": "google_profile_fetch_failed", "payload": profile})
+
+    email = str(profile.get("email") or "").strip().lower()
+    google_id = str(profile.get("id") or "")
+    if not email or not google_id:
+        raise HTTPException(status_code=400, detail="invalid_google_profile")
+
+    from clearledgr.core.database import get_db
+    from clearledgr.core.auth import create_user_from_google, get_user_by_email
+
+    db = get_db()
+    invite_token = state_payload.get("invite_token")
+    invite = db.get_team_invite_by_token(str(invite_token)) if invite_token else None
+    if invite and invite.get("status") != "pending":
+        invite = None
+
+    if invite:
+        if str(invite.get("email")).lower().strip() != email:
+            raise HTTPException(status_code=403, detail="invite_email_mismatch")
+        org_id = str(invite.get("organization_id"))
+        role = str(invite.get("role") or "member")
+    else:
+        org_id = str(state_payload.get("organization_id") or email.split("@")[1].split(".")[0] or "default")
+        role = "user"
+
+    user = get_user_by_email(email)
+    if user is None:
+        user = create_user_from_google(email=email, google_id=google_id, organization_id=org_id)
+    else:
+        db.update_user(user.id, google_id=google_id, organization_id=org_id, is_active=True)
+        user = get_user_by_email(email)
+    if user is None:
+        raise HTTPException(status_code=500, detail="failed_to_create_user")
+
+    if invite:
+        db.update_user(user.id, role=role, organization_id=org_id)
+        db.accept_team_invite(str(invite.get("id")), accepted_by=user.id)
+        user = get_user_by_email(email) or user
+
+    jwt_token = create_access_token(
+        user_id=user.id,
+        email=user.email,
+        organization_id=user.organization_id,
+        role=user.role,
+    )
+    refresh = create_refresh_token(user.id)
+    redirect_path = str(state_payload.get("redirect_path") or "/")
+    return RedirectResponse(url=f"{redirect_path}?token={jwt_token}&refresh_token={refresh}&org={user.organization_id}")
+
+
+@router.post("/invites/accept")
+async def accept_invite(request: InviteAcceptRequest):
+    """Accept an invite-link and create/join user account."""
+    from clearledgr.core.database import get_db
+    from clearledgr.core.auth import get_user_by_email
+
+    db = get_db()
+    invite = db.get_team_invite_by_token(request.token)
+    if not invite:
+        raise HTTPException(status_code=404, detail="invite_not_found")
+    if invite.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="invite_not_pending")
+
+    expires_at = invite.get("expires_at")
+    if expires_at:
+        expires = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) > expires:
+            raise HTTPException(status_code=400, detail="invite_expired")
+
+    email = str(invite.get("email")).lower().strip()
+    role = str(invite.get("role") or "member")
+    organization_id = str(invite.get("organization_id") or "default")
+    user = get_user_by_email(email)
+    if user is None:
+        if not request.password:
+            raise HTTPException(status_code=400, detail="password_required_for_new_user")
+        created = create_user(
+            email=email,
+            password=request.password,
+            name=(request.name or email.split("@")[0].replace(".", " ").title()),
+            organization_id=organization_id,
+            role=role,
+        )
+        user = created
+    else:
+        db.update_user(user.id, organization_id=organization_id, role=role, is_active=True)
+        user = get_user_by_email(email)
+
+    if user is None:
+        raise HTTPException(status_code=500, detail="invite_accept_failed")
+
+    db.accept_team_invite(str(invite.get("id")), accepted_by=user.id)
+    access = create_access_token(user.id, user.email, user.organization_id, user.role)
+    refresh = create_refresh_token(user.id)
+    return {
+        "success": True,
+        "user": user,
+        "access_token": access,
+        "refresh_token": refresh,
+        "token_type": "bearer",
     }

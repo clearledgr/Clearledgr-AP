@@ -61312,7 +61312,16 @@ class ClearledgrQueueManager {
       };
     }
 
-    const backendUrl = String(raw.backendUrl || 'http://127.0.0.1:8000').trim().replace(/\/+$/, '');
+    const extensionConfig =
+      (typeof window !== 'undefined' && (window.CLEARLEDGR_CONFIG || window.CONFIG))
+      || (typeof globalThis !== 'undefined' && (globalThis.CLEARLEDGR_CONFIG || globalThis.CONFIG))
+      || {};
+    const configuredBackendUrl = String(
+      extensionConfig.API_URL || extensionConfig.BACKEND_URL || ''
+    ).trim();
+    const backendUrl = String(raw.backendUrl || configuredBackendUrl || 'http://127.0.0.1:8000')
+      .trim()
+      .replace(/\/+$/, '');
     return {
       backendUrl,
       organizationId: String(raw.organizationId || 'default').trim(),
@@ -62096,6 +62105,109 @@ class ClearledgrQueueManager {
     }
   }
 
+  async verifyConfidence(item) {
+    if (!item || !this.runtimeConfig?.backendUrl) return null;
+    const extraction = {
+      vendor: item.vendor_name || item.vendor || '',
+      amount: item.amount,
+      currency: item.currency || 'USD',
+      invoice_number: item.invoice_number || '',
+    };
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/verify-confidence`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email_id: item.thread_id || item.message_id || item.id,
+          extraction,
+          organization_id: this.runtimeConfig.organizationId || 'default',
+        })
+      });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async approveAndPost(item, { override = false, overrideJustification = '' } = {}) {
+    if (!item || !this.runtimeConfig?.backendUrl) return { status: 'error', reason: 'invalid' };
+    const extraction = {
+      vendor: item.vendor_name || item.vendor || '',
+      amount: item.amount,
+      currency: item.currency || 'USD',
+      invoice_number: item.invoice_number || '',
+      due_date: item.due_date || '',
+    };
+    if (override && overrideJustification) {
+      extraction.override_justification = overrideJustification;
+    }
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/approve-and-post`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email_id: item.thread_id || item.message_id || item.id,
+          extraction,
+          override,
+          organization_id: this.runtimeConfig.organizationId || 'default',
+          user_email: this.runtimeConfig.userEmail || 'gmail_extension',
+        })
+      });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const errPayload = await response.json();
+          detail = errPayload?.detail || '';
+        } catch (_) {}
+        return { status: 'error', reason: detail || `http_${response.status}` };
+      }
+      const result = await response.json();
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result;
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async getGlSuggestions(item) {
+    if (!item || !this.runtimeConfig?.backendUrl) return null;
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/suggestions/gl-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vendor_name: item.vendor_name || item.vendor || '',
+          organization_id: this.runtimeConfig.organizationId || 'default',
+        })
+      });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async getVendorSuggestions(item) {
+    if (!item || !this.runtimeConfig?.backendUrl) return null;
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/suggestions/vendor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          extracted_vendor: item.vendor_name || item.vendor || '',
+          sender_email: item.sender || '',
+          organization_id: this.runtimeConfig.organizationId || 'default',
+        })
+      });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (_) {
+      return null;
+    }
+  }
+
   async requestApproval(item) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
     const payload = {
@@ -62695,6 +62807,78 @@ function getIssueSummary(item) {
   return 'Under AP review';
 }
 
+function getDueRiskLabel(dueDateValue) {
+  if (!dueDateValue) return '';
+  const due = new Date(dueDateValue);
+  if (Number.isNaN(due.getTime())) return '';
+  const now = new Date();
+  const diffDays = Math.ceil((due.getTime() - now.getTime()) / 86400000);
+  if (diffDays < 0) return `Past due ${Math.abs(diffDays)}d`;
+  if (diffDays === 0) return 'Due today';
+  if (diffDays <= 3) return `Due in ${diffDays}d`;
+  return '';
+}
+
+function getDecisionSummary(item, budgetContext) {
+  const state = String(item?.state || 'received').toLowerCase();
+  const exceptionCode = String(item?.exception_code || '').trim().toLowerCase();
+
+  if (budgetContext?.requiresDecision) {
+    return {
+      title: 'Budget review required',
+      detail: 'Choose override, budget adjustment, or rejection.',
+      tone: 'warning'
+    };
+  }
+  if (state === 'needs_info' || exceptionCode) {
+    return {
+      title: 'Needs review',
+      detail: getIssueSummary(item),
+      tone: 'warning'
+    };
+  }
+  if (state === 'needs_approval') {
+    return {
+      title: 'Approval required',
+      detail: 'Route to approver with full context.',
+      tone: 'neutral'
+    };
+  }
+  if (state === 'approved' || state === 'ready_to_post') {
+    return {
+      title: 'Ready for posting',
+      detail: 'Required checks are complete.',
+      tone: 'good'
+    };
+  }
+  if (state === 'posted_to_erp' || state === 'closed') {
+    return {
+      title: 'Completed',
+      detail: 'Invoice has already been posted.',
+      tone: 'good'
+    };
+  }
+  if (state === 'failed_post') {
+    return {
+      title: 'Posting failed',
+      detail: 'Retry posting or escalate this invoice.',
+      tone: 'warning'
+    };
+  }
+  if (state === 'rejected') {
+    return {
+      title: 'Rejected',
+      detail: 'No further action required unless reopened.',
+      tone: 'warning'
+    };
+  }
+  return {
+    title: 'Under review',
+    detail: getIssueSummary(item),
+    tone: 'neutral'
+  };
+}
+
 function getLinkedSources(item) {
   if (!item?.id) {
     return [];
@@ -63051,6 +63235,13 @@ function renderContextTabBody(item, contextPayload, loading, error, agentInsight
   `;
 }
 
+function setSectionVisibility(sectionId, visible) {
+  if (!globalSidebarEl) return;
+  const section = globalSidebarEl.querySelector(`#${sectionId}`);
+  if (!section) return;
+  section.style.display = visible ? '' : 'none';
+}
+
 function renderThreadContext() {
   if (!globalSidebarEl) return;
   const context = globalSidebarEl.querySelector('#cl-thread-context');
@@ -63058,9 +63249,11 @@ function renderThreadContext() {
 
   const item = getPrimaryItem();
   if (!item) {
-    context.innerHTML = '<div class="cl-empty">Autopilot is scanning your inbox. AP items will appear automatically.</div>';
+    context.innerHTML = '';
+    setSectionVisibility('cl-section-current', false);
     return;
   }
+  setSectionVisibility('cl-section-current', true);
 
   if (item?.id && !(contextUiState.loading && contextUiState.itemId === item.id)) {
     void ensureItemContext(item, { refresh: false });
@@ -63105,6 +63298,31 @@ function renderThreadContext() {
       ${escapeHtml(String(check.status || 'unknown'))} · ${escapeHtml(formatAmount(check.remaining, item.currency || 'USD'))} remaining
     </div>
   `).join('');
+  const decisionSummary = getDecisionSummary(item, budgetContext);
+  const decisionToneClass = decisionSummary.tone === 'good'
+    ? 'cl-decision-good'
+    : decisionSummary.tone === 'warning'
+      ? 'cl-decision-warning'
+      : 'cl-decision-neutral';
+  const dueRiskLabel = getDueRiskLabel(item.due_date);
+  const hasBudgetWarning = budgetContext.status === 'critical' || budgetContext.status === 'exceeded';
+  const riskChips = [];
+  if (budgetStatusLabel) {
+    riskChips.push(`<span class="cl-risk-chip ${hasBudgetWarning ? 'cl-risk-chip-warning' : ''}">Budget: ${escapeHtml(budgetStatusLabel)}</span>`);
+  }
+  if (dueRiskLabel) {
+    const dueTone = dueRiskLabel.startsWith('Past due') || dueRiskLabel === 'Due today' ? 'cl-risk-chip-warning' : '';
+    riskChips.push(`<span class="cl-risk-chip ${dueTone}">${escapeHtml(dueRiskLabel)}</span>`);
+  }
+  if (latePaymentRisk) {
+    riskChips.push(`<span class="cl-risk-chip cl-risk-chip-warning">Late risk: ${escapeHtml(latePaymentRisk)}</span>`);
+  }
+  if (discountSignal) {
+    riskChips.push('<span class="cl-risk-chip">Discount available</span>');
+  }
+  if (exceptionCode) {
+    riskChips.push(`<span class="cl-risk-chip cl-risk-chip-warning">${escapeHtml(exceptionCode.replace(/_/g, ' '))}</span>`);
+  }
   const metadata = queueManager?.parseMetadata ? queueManager.parseMetadata(item.metadata) : {};
   const stateColor = STATE_COLORS[state] || '#0f172a';
   const sourceRows = linkedSources
@@ -63147,38 +63365,15 @@ function renderThreadContext() {
         <span class="cl-pill" style="color:${stateColor}; border-color:${stateColor};">${escapeHtml(stateLabel)}</span>
       </div>
       <div class="cl-thread-main">${escapeHtml(amount)} · Invoice ${escapeHtml(invoiceNumber)} · Due ${escapeHtml(dueDate)}</div>
-      <div class="cl-thread-sub">${escapeHtml(issueSummary)}</div>
-      ${
-        budgetStatusLabel
-          ? `<div class="cl-thread-meta ${budgetStatusTone(budgetContext.status)}"><span class="cl-pill cl-pill-queue">Budget</span> ${escapeHtml(budgetStatusLabel)}</div>`
-          : ''
-      }
-      ${budgetPreviewRows || ''}
+      <div class="cl-decision-banner ${decisionToneClass}">
+        <div class="cl-decision-title">${escapeHtml(decisionSummary.title)}</div>
+        <div class="cl-decision-detail">${escapeHtml(decisionSummary.detail)}</div>
+      </div>
+      ${riskChips.length ? `<div class="cl-risk-row">${riskChips.join('')}</div>` : ''}
+      ${budgetContext.requiresDecision ? budgetPreviewRows : ''}
       ${
         budgetContext.requiresDecision
           ? '<div class="cl-thread-meta cl-context-warning">Budget decision required before posting.</div>'
-          : ''
-      }
-      <div class="cl-thread-meta">${escapeHtml(sourceSender)}</div>
-      <div class="cl-thread-meta cl-source-subject">${escapeHtml(sourceSubject)}</div>
-      ${
-        mergeReason
-          ? `<div class="cl-thread-meta"><span class="cl-pill cl-pill-queue">Merged: ${escapeHtml(mergeReason)}</span></div>`
-          : ''
-      }
-      ${
-        hasConfidence
-          ? `<div class="cl-thread-meta"><span class="cl-pill cl-pill-queue">Confidence: ${escapeHtml(String(confidencePercent))}%</span></div>`
-          : ''
-      }
-      ${
-        exceptionCode
-          ? `<div class="cl-thread-meta"><span class="cl-pill cl-pill-queue">${escapeHtml(exceptionSeverity || 'issue')}: ${escapeHtml(exceptionCode)}</span></div>`
-          : ''
-      }
-      ${
-        latePaymentRisk
-          ? `<div class="cl-thread-meta"><span class="cl-pill cl-pill-queue">Late risk: ${escapeHtml(latePaymentRisk)}</span>${discountSignal ? ' <span class="cl-pill cl-pill-queue">Discount candidate</span>' : ''}</div>`
           : ''
       }
       ${
@@ -63230,16 +63425,34 @@ function renderThreadContext() {
           `
           : ''
       }
+      <div class="cl-confidence-section" id="cl-confidence-section">
+        <div class="cl-confidence-bar">
+          <span class="cl-confidence-label">Confidence</span>
+          <span class="cl-confidence-value ${
+            hasConfidence
+              ? (confidencePercent >= 95 ? 'cl-conf-high' : confidencePercent >= 75 ? 'cl-conf-med' : 'cl-conf-low')
+              : ''
+          }">${hasConfidence ? `${confidencePercent}%` : 'Checking...'}</span>
+          <span class="cl-confidence-threshold">Threshold: 95%</span>
+        </div>
+        <div id="cl-mismatches"></div>
+      </div>
       <div class="cl-thread-actions">
-        <button class="cl-btn cl-btn-secondary" id="cl-open-source-email">Open source email</button>
+        <button class="cl-btn cl-btn-secondary" id="cl-open-source-email">Open email</button>
         ${
           budgetContext.requiresDecision
             ? `
-              <button class="cl-btn" id="cl-budget-approve-override">Approve override</button>
-              <button class="cl-btn cl-btn-secondary" id="cl-budget-request-adjustment">Request adjustment</button>
-              <button class="cl-btn cl-btn-secondary" id="cl-budget-reject">Reject</button>
+              <button class="cl-btn" id="cl-budget-approve-override">Approve with override</button>
+              <button class="cl-btn cl-btn-secondary" id="cl-budget-request-adjustment">Escalate budget</button>
+              <button class="cl-btn cl-btn-secondary" id="cl-budget-reject">Reject invoice</button>
             `
-            : '<button class="cl-btn" id="cl-request-approval">Request approval</button>'
+            : `
+              <button class="cl-btn ${hasConfidence && confidencePercent >= 95 ? 'cl-btn-approve' : 'cl-btn-review'}" id="cl-approve-and-post">
+                ${hasConfidence && confidencePercent >= 95 ? 'Approve & Post' : hasConfidence && confidencePercent >= 75 ? 'Approve & Post' : 'Approve with Override'}
+              </button>
+              <button class="cl-btn cl-btn-secondary" id="cl-reject-inline">Reject</button>
+              <button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-escalate-to-slack">Escalate to Slack</button>
+            `
         }
       </div>
       <details class="cl-details">
@@ -63261,6 +63474,12 @@ function renderThreadContext() {
       <details class="cl-details">
         <summary>Technical details</summary>
         <div class="cl-detail-grid">
+          <div class="cl-detail-row"><span>Issue summary</span><span>${escapeHtml(issueSummary)}</span></div>
+          <div class="cl-detail-row"><span>Source sender</span><span>${escapeHtml(sourceSender || 'N/A')}</span></div>
+          <div class="cl-detail-row"><span>Source subject</span><span>${escapeHtml(sourceSubject || 'N/A')}</span></div>
+          <div class="cl-detail-row"><span>Merge reason</span><span>${escapeHtml(mergeReason || 'N/A')}</span></div>
+          <div class="cl-detail-row"><span>Confidence</span><span>${escapeHtml(hasConfidence ? `${confidencePercent}%` : 'N/A')}</span></div>
+          <div class="cl-detail-row"><span>Exception</span><span>${escapeHtml(exceptionSeverity || 'N/A')} ${escapeHtml(exceptionCode || '')}</span></div>
           <div class="cl-detail-row"><span>Thread</span><span>${escapeHtml(getSourceThreadId(item) || 'N/A')}</span></div>
           <div class="cl-detail-row"><span>Message</span><span>${escapeHtml(getSourceMessageId(item) || 'N/A')}</span></div>
           <div class="cl-detail-row"><span>Workflow</span><span>${escapeHtml(metadata.workflow_id || item.workflow_id || 'N/A')}</span></div>
@@ -63273,7 +63492,9 @@ function renderThreadContext() {
   const prevBtn = context.querySelector('#cl-prev-item');
   const nextBtn = context.querySelector('#cl-next-item');
   const openSourceBtn = context.querySelector('#cl-open-source-email');
-  const requestBtn = context.querySelector('#cl-request-approval');
+  const approveBtn = context.querySelector('#cl-approve-and-post');
+  const rejectInlineBtn = context.querySelector('#cl-reject-inline');
+  const escalateBtn = context.querySelector('#cl-escalate-to-slack');
   const budgetApproveBtn = context.querySelector('#cl-budget-approve-override');
   const budgetAdjustBtn = context.querySelector('#cl-budget-request-adjustment');
   const budgetRejectBtn = context.querySelector('#cl-budget-reject');
@@ -63283,8 +63504,48 @@ function renderThreadContext() {
 
   setButtonState(openSourceBtn, canOpenSource, 'Source email reference unavailable');
 
-  const requestReason = queueManager.getUiActionDisabledReason('request_approval', state);
-  setButtonState(requestBtn, !requestReason, requestReason);
+  // Fetch confidence verification and render mismatches
+  (async () => {
+    const confidenceResult = await queueManager.verifyConfidence(item);
+    const mismatchEl = context.querySelector('#cl-mismatches');
+    const confSection = context.querySelector('#cl-confidence-section');
+    if (confidenceResult && mismatchEl) {
+      const pct = confidenceResult.confidence_pct || 0;
+      const canPost = confidenceResult.can_post;
+      const mismatches = confidenceResult.mismatches || [];
+
+      // Update confidence display
+      const confValue = confSection?.querySelector('.cl-confidence-value');
+      if (confValue) {
+        confValue.textContent = `${pct}%`;
+        confValue.className = `cl-confidence-value ${pct >= 95 ? 'cl-conf-high' : pct >= 75 ? 'cl-conf-med' : 'cl-conf-low'}`;
+      }
+
+      // Render mismatches
+      if (mismatches.length > 0) {
+        mismatchEl.innerHTML = mismatches.map(m =>
+          `<div class="cl-mismatch cl-mismatch-${escapeHtml(m.severity || 'medium')}">
+            <span class="cl-mismatch-field">${escapeHtml(m.field)}</span>
+            <span class="cl-mismatch-detail">${escapeHtml(m.extracted || '')} → ${escapeHtml(m.expected || '')}</span>
+          </div>`
+        ).join('');
+      }
+
+      // Update approve button text based on confidence
+      if (approveBtn) {
+        if (canPost) {
+          approveBtn.textContent = 'Approve & Post';
+          approveBtn.className = 'cl-btn cl-btn-approve';
+        } else if (pct >= 75) {
+          approveBtn.textContent = 'Approve & Post';
+          approveBtn.className = 'cl-btn cl-btn-review';
+        } else {
+          approveBtn.textContent = 'Approve with Override';
+          approveBtn.className = 'cl-btn cl-btn-review';
+        }
+      }
+    }
+  })();
 
   if (openSourceBtn) {
     openSourceBtn.addEventListener('click', () => {
@@ -63334,17 +63595,60 @@ function renderThreadContext() {
     });
   }
 
-  if (requestBtn) {
-    requestBtn.addEventListener('click', async () => {
-      if (requestBtn.disabled) {
-        showToast(requestBtn.dataset.disabledReason || 'Action unavailable');
+  if (approveBtn) {
+    approveBtn.addEventListener('click', async () => {
+      const needsOverride = !hasConfidence || confidencePercent < 95;
+      let justification = '';
+      if (needsOverride) {
+        justification = window.prompt(
+          `Confidence is ${hasConfidence ? confidencePercent + '%' : 'unknown'} (below 95% threshold). Provide justification to override:`,
+          'Reviewed and confirmed accurate'
+        );
+        if (!justification || !justification.trim()) {
+          showToast('Justification required for override', 'error');
+          return;
+        }
+      }
+      approveBtn.disabled = true;
+      approveBtn.textContent = 'Posting...';
+      const result = await queueManager.approveAndPost(item, {
+        override: needsOverride,
+        overrideJustification: justification.trim()
+      });
+      approveBtn.disabled = false;
+      if (result?.status === 'approved' || result?.status === 'posted') {
+        showToast('Approved and posted to ERP');
+        renderThreadContext();
+      } else if (result?.status === 'needs_budget_decision') {
+        showToast('Budget decision required — use budget override buttons');
+        renderThreadContext();
+      } else {
+        approveBtn.textContent = needsOverride ? 'Approve with Override' : 'Approve & Post';
+        showToast(result?.reason || 'Approval failed', 'error');
+      }
+    });
+  }
+
+  if (rejectInlineBtn) {
+    rejectInlineBtn.addEventListener('click', async () => {
+      const reason = window.prompt('Rejection reason:', '');
+      if (!reason || !reason.trim()) {
+        showToast('Reason required', 'error');
         return;
       }
+      window.dispatchEvent(new CustomEvent('clearledgr:reject-invoice', {
+        detail: { emailId: item.id || item.thread_id, reason: reason.trim() }
+      }));
+    });
+  }
+
+  if (escalateBtn) {
+    escalateBtn.addEventListener('click', async () => {
       const result = await queueManager.requestApproval(item);
       if (result?.status === 'needs_approval') {
-        showToast('Approval requested');
+        showToast('Escalated to Slack');
       } else {
-        showToast('Approval request failed', 'error');
+        showToast('Escalation failed', 'error');
       }
     });
   }
@@ -63446,13 +63750,15 @@ function renderAgentActions() {
   if (!container) return;
   const item = getPrimaryItem();
   if (!item) {
-    container.innerHTML = '<div class="cl-empty">Agent actions will appear when AP items are detected.</div>';
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-agent', false);
     return;
   }
 
   const sessionPayload = getPrimaryAgentSession();
   if (!sessionPayload || !sessionPayload.session) {
-    container.innerHTML = '<div class="cl-empty">Preparing browser agent session...</div>';
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-agent', false);
     return;
   }
 
@@ -63466,6 +63772,19 @@ function renderAgentActions() {
   const state = String(session.state || 'running');
   const stateTone = state === 'blocked_for_approval' ? '#b45309' : state === 'failed' ? '#b91c1c' : '#0f766e';
   const stateLabel = state.replace(/_/g, ' ');
+  const hasAgentContent =
+    pending.length > 0 ||
+    queued.length > 0 ||
+    historyEvents.length > 0 ||
+    state === 'blocked_for_approval' ||
+    state === 'failed';
+
+  if (!hasAgentContent) {
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-agent', false);
+    return;
+  }
+  setSectionVisibility('cl-section-agent', true);
 
   const nextActionEvent = pending[0] || queued[0] || historyEvents.find((entry) => entry.status === 'failed') || null;
   const requestPayload = nextActionEvent?.request_payload || nextActionEvent?.requestPayload || {};
@@ -63696,20 +64015,24 @@ function renderAuditTrail() {
 
   const item = getPrimaryItem();
   if (!item) {
-    container.innerHTML = '<div class="cl-empty">Audit events will appear once AP items are detected.</div>';
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-audit', false);
     return;
   }
 
   if (auditState.loading && auditState.itemId === item.id) {
-    container.innerHTML = '<div class="cl-empty">Loading audit trail...</div>';
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-audit', false);
     return;
   }
 
   const events = Array.isArray(auditState.events) ? auditState.events : [];
   if (!events.length) {
-    container.innerHTML = '<div class="cl-empty">No audit events yet.</div>';
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-audit', false);
     return;
   }
+  setSectionVisibility('cl-section-audit', true);
 
   container.innerHTML = events
     .slice(0, 5)
@@ -63777,9 +64100,11 @@ function renderKpiSummary() {
   if (!container) return;
   const kpis = kpiSnapshotState || queueManager?.getKpiSnapshot?.() || null;
   if (!kpis) {
-    container.innerHTML = '<div class="cl-empty">KPI snapshot will appear once telemetry sync completes.</div>';
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-kpi', false);
     return;
   }
+  setSectionVisibility('cl-section-kpi', true);
 
   const touchless = formatPercentMetric(kpis.touchless_rate);
   const exceptions = formatPercentMetric(kpis.exception_rate);
@@ -63920,6 +64245,52 @@ function initializeSidebar() {
         font-size: 11px;
         color: #4b5563;
       }
+      .cl-decision-banner {
+        border: 1px solid var(--cl-border);
+        border-radius: 8px;
+        padding: 8px;
+        background: #ffffff;
+      }
+      .cl-decision-title {
+        font-size: 11px;
+        font-weight: 700;
+        color: #111827;
+      }
+      .cl-decision-detail {
+        margin-top: 2px;
+        font-size: 10px;
+        color: #4b5563;
+      }
+      .cl-decision-good {
+        border-color: #86efac;
+        background: #f0fdf4;
+      }
+      .cl-decision-warning {
+        border-color: #fcd34d;
+        background: #fffbeb;
+      }
+      .cl-decision-neutral {
+        border-color: #d1d5db;
+        background: #f9fafb;
+      }
+      .cl-risk-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .cl-risk-chip {
+        font-size: 10px;
+        border: 1px solid #d1d5db;
+        border-radius: 999px;
+        padding: 2px 8px;
+        color: #374151;
+        background: #f9fafb;
+      }
+      .cl-risk-chip-warning {
+        border-color: #f59e0b;
+        color: #92400e;
+        background: #fffbeb;
+      }
       .cl-thread-meta {
         font-size: 11px;
         color: var(--cl-muted);
@@ -63927,10 +64298,82 @@ function initializeSidebar() {
       .cl-source-subject {
         line-height: 1.35;
       }
+      .cl-confidence-section {
+        margin: 6px 0;
+        padding: 8px;
+        background: #f9fafb;
+        border: 1px solid var(--cl-border);
+        border-radius: 8px;
+      }
+      .cl-confidence-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+      }
+      .cl-confidence-label {
+        color: var(--cl-muted);
+        font-weight: 500;
+      }
+      .cl-confidence-value {
+        font-weight: 600;
+        font-size: 13px;
+      }
+      .cl-conf-high { color: #16a34a; }
+      .cl-conf-med { color: #ca8a04; }
+      .cl-conf-low { color: #dc2626; }
+      .cl-confidence-threshold {
+        margin-left: auto;
+        color: var(--cl-muted);
+        font-size: 10px;
+      }
+      .cl-mismatch {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 4px;
+        padding: 4px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+      }
+      .cl-mismatch-high {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #991b1b;
+      }
+      .cl-mismatch-medium {
+        background: #fffbeb;
+        border: 1px solid #fed7aa;
+        color: #92400e;
+      }
+      .cl-mismatch-low {
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        color: #166534;
+      }
+      .cl-mismatch-field {
+        font-weight: 600;
+        text-transform: capitalize;
+      }
+      .cl-btn-approve {
+        background: #16a34a !important;
+        color: white !important;
+        border-color: #16a34a !important;
+      }
+      .cl-btn-review {
+        background: #ca8a04 !important;
+        color: white !important;
+        border-color: #ca8a04 !important;
+      }
+      .cl-btn-small {
+        font-size: 10px !important;
+        padding: 3px 6px !important;
+      }
       .cl-thread-actions {
         display: flex;
         gap: 6px;
         margin-top: 4px;
+        flex-wrap: wrap;
       }
       .cl-source-list {
         display: flex;
@@ -64372,20 +64815,20 @@ function initializeSidebar() {
         <button class="cl-btn cl-btn-secondary" id="cl-debug-scan">Scan</button>
       </div>
     </div>
-    <div class="cl-section">
-      <div class="cl-section-title">Current item</div>
+    <div class="cl-section" id="cl-section-current">
+      <div class="cl-section-title">Decision workspace</div>
       <div id="cl-thread-context"></div>
     </div>
-    <div class="cl-section">
-      <div class="cl-section-title">KPI snapshot</div>
+    <div class="cl-section" id="cl-section-kpi">
+      <div class="cl-section-title">KPI summary</div>
       <div id="cl-kpi-summary"></div>
     </div>
-    <div class="cl-section">
-      <div class="cl-section-title">Agent actions</div>
+    <div class="cl-section" id="cl-section-agent">
+      <div class="cl-section-title">Workflow assistant</div>
       <div id="cl-agent-actions"></div>
     </div>
-    <div class="cl-section">
-      <div class="cl-section-title">Audit</div>
+    <div class="cl-section" id="cl-section-audit">
+      <div class="cl-section-title">Activity log</div>
       <div id="cl-audit-trail" class="cl-audit-list"></div>
     </div>
   `;
@@ -64453,19 +64896,19 @@ function renderScanStatus() {
   const state = scanStatus?.state || 'idle';
   statusEl.dataset.tone = '';
   if (state === 'initializing') {
-    statusEl.textContent = 'Autopilot initializing.';
+    statusEl.textContent = 'Preparing inbox monitor.';
     statusEl.style.display = 'block';
     return;
   }
 
   if (state === 'scanning') {
-    statusEl.textContent = 'Autopilot scanning inbox.';
+    statusEl.textContent = 'Scanning inbox for invoices.';
     statusEl.style.display = 'block';
     return;
   }
 
   if (state === 'auth_required') {
-    statusEl.textContent = 'Gmail authorization required to start autopilot.';
+    statusEl.textContent = 'Authorize Gmail to start monitoring.';
     statusEl.style.display = 'block';
     if (authActionsEl) authActionsEl.style.display = 'block';
     return;
@@ -64473,9 +64916,9 @@ function renderScanStatus() {
 
   if (state === 'blocked') {
     if ((scanStatus?.error || '') === 'temporal_unavailable') {
-      statusEl.textContent = 'Autopilot is blocked because Temporal is not connected.';
+      statusEl.textContent = 'Automation engine is unavailable.';
     } else {
-      statusEl.textContent = 'Setup required. Configure backend and organization settings.';
+      statusEl.textContent = 'Setup required before invoice monitoring can run.';
     }
     statusEl.dataset.tone = 'error';
     statusEl.style.display = 'block';
@@ -64486,16 +64929,16 @@ function renderScanStatus() {
     const errorCode = String(scanStatus?.error || '');
     const backendDown = errorCode.includes('backend');
     if (backendDown) {
-      statusEl.textContent = 'Autopilot cannot sync because backend is unreachable.';
+      statusEl.textContent = 'Cannot sync: backend is unreachable.';
     } else if (errorCode.includes('temporal')) {
-      statusEl.textContent = 'Autopilot cannot process AP runs because Temporal is unavailable.';
+      statusEl.textContent = 'Cannot process invoices: automation engine unavailable.';
     } else if (errorCode.includes('processing')) {
       const failedCount = Number(scanStatus?.failedCount || 0);
       statusEl.textContent = failedCount > 0
-        ? `Autopilot is running but ${failedCount} email(s) failed to process. We are retrying automatically.`
-        : 'Autopilot is running but some emails failed to process. We are retrying automatically.';
+        ? `${failedCount} email(s) failed to process. Retrying automatically.`
+        : 'Some emails failed to process. Retrying automatically.';
     } else {
-      statusEl.textContent = 'Inbox scan error. We will retry automatically.';
+      statusEl.textContent = 'Inbox sync issue. Retrying automatically.';
     }
     statusEl.dataset.tone = 'error';
     statusEl.style.display = 'block';
@@ -64504,9 +64947,9 @@ function renderScanStatus() {
 
   const lastScan = scanStatus?.lastScanAt ? new Date(scanStatus.lastScanAt) : null;
   if (lastScan) {
-    statusEl.textContent = `Autopilot active. Last scan ${lastScan.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+    statusEl.textContent = `Monitoring active. Last scan ${lastScan.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
   } else {
-    statusEl.textContent = 'Autopilot running.';
+    statusEl.textContent = 'Monitoring active.';
   }
   statusEl.style.display = 'block';
 }

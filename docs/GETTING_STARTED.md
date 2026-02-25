@@ -1,114 +1,162 @@
-# Getting Started with Clearledgr
+# Getting Started with Clearledgr AP v1
 
-Welcome to Clearledgr! This guide will help you set up and run your first reconciliation and Reconciliation analysis.
+This guide covers the current AP v1 product shape:
 
-## What is Clearledgr?
+- **Gmail** for inbox-native AP intake and triage
+- **Slack / Teams** for approvals and escalation decisions
+- **ERP** as system of record
+- **Clearledgr** for policy, orchestration, execution, and audit
 
-Clearledgr is an intelligent layer that embeds directly into the tools you already use. Google Sheets, Gmail, and Slack. It automates financial reconciliation workflows without requiring you to learn a new platform. Excel/Teams support is planned.
+For canonical doctrine, contracts, and launch gates, use:
 
-## Quick Start (5 minutes)
+- `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
 
-### Step 1: Prepare Your Data
+## Before You Start
 
-You need three data sources for reconciliation:
+Clearledgr AP v1 is not a standalone AP dashboard for daily work.
 
-1. **Payment Gateway Export** (from Stripe, Flutterwave, PayStack, etc.)
-   - Transaction ID
-   - Date
-   - Amount
-   - Status
+Daily AP operations happen in:
+1. Gmail (primary operator surface)
+2. Slack/Teams (approval surfaces)
 
-2. **Bank Statement** (from your bank)
-   - Transaction ID
-   - Date
-   - Amount
+The Admin Console is used for setup, configuration, and health checks.
 
-3. **Internal Records** (from your accounting system)
-   - Invoice/Transaction ID
-   - Date
-   - Amount
+## Quick Start (Admin Setup)
 
-### Step 2: Open Your Spreadsheet
+### Step 1: Start the backend
 
-#### Google Sheets
-1. Create a new Google Sheet
-2. Import each data source as a separate tab
-3. Name the tabs: `GATEWAY`, `BANK`, `INTERNAL`
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-Excel support is planned after v1.
+If using the Admin Console, ensure the admin console flag is enabled in your environment.
 
-### Step 3: Run Clearledgr
+### Step 2: Open the Admin Console
 
-#### In Google Sheets
-1. Click **Clearledgr** in the menu bar
-2. Select **Reconciliation > Run Reconciliation**
-3. In the sidebar:
-   - Select your three data tabs
-   - Set the period dates
-   - Click **Run Reconciliation**
+Open:
 
-### Step 4: Review Results
+- `http://127.0.0.1:8000/console`
 
-Results appear in new sheets in your workbook:
+Use the Admin Console for:
+1. organization setup
+2. integration connections
+3. policy configuration
+4. team invites
+5. health diagnostics
 
-| Sheet | Contents |
-|-------|----------|
-| CL_SUMMARY | Overall statistics for the period |
-| CL_RECONCILED | All matched transaction groups |
-| CL_EXCEPTIONS | Unmatched items with AI explanations |
+### Step 3: Connect Gmail
 
----
+Connect the Gmail account/workspace that will be monitored for AP intake.
 
-## Notifications
+Clearledgr AP v1 expects Gmail to be the primary intake surface for:
+- invoices
+- statements
+- payment requests
+- AP exceptions and follow-ups
 
-### Slack App
+### Step 4: Connect Slack and Teams
 
-Install the Clearledgr Slack app from your workspace's App Directory:
+Configure approval channels and callbacks for both:
+1. Slack
+2. Teams
 
-1. Search for "Clearledgr" in Slack's app directory
-2. Click "Add to Slack"
-3. Authorize the app
+AP v1 doctrine requires both channel contracts to be supported at GA, even if you stage rollout during pilot validation.
 
-You'll receive rich interactive notifications:
-- Reconciliation results with match rates
-- Exception notifications with resolve buttons
-- Task reminders with complete buttons
+### Step 5: Connect ERP
 
-Use slash commands directly in Slack:
-- `/clearledgr status` - View current status
-- `/clearledgr run` - Run reconciliation
-- `/reconcile` - Quick reconciliation
----
+Connect the ERP(s) you plan to validate or use:
 
-## Tips for Best Results
+- QuickBooks
+- Xero
+- NetSuite
+- SAP
 
-### Reconciliation
+Note:
+- Connector presence in the repo is not the same as operational readiness.
+- Readiness and parity are governed by `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`.
 
-1. **Use consistent date formats** - Dates should be in a recognized format (YYYY-MM-DD, DD/MM/YYYY, etc.)
+### Step 6: Configure AP policies
 
-2. **Include reference numbers** - If available, include transaction references to improve matching
+Set the baseline AP policy rules for:
+1. approval thresholds
+2. routing requirements
+3. budget/PO behavior (where configured)
+4. confidence and override requirements
+5. browser fallback policy (if enabled)
 
-3. **Review exceptions** - The AI explains why items didn't match, use this to investigate
+### Step 7: Load the Gmail extension (operator experience)
 
----
+Load the Gmail extension and verify it points to your backend URL (typically `http://127.0.0.1:8000` for local dev).
 
-## Troubleshooting
+The Gmail surface should show:
+1. focused AP item workspace
+2. status + exceptions + next action
+3. progressive disclosure for sources/context/audit details
 
-### "Sheet not found"
-Verify the sheet names match exactly what you entered in the sidebar.
+## First End-to-End AP v1 Validation Flow
 
-### "No matches found"
-Check that:
-- Dates are within the selected period
-- Amounts are in the same currency
-- Date formats are consistent
+Use this as the first sanity test:
 
-### "API request failed"
-The Clearledgr service may be temporarily unavailable. Try again in a few minutes.
+1. Send a test invoice email to the connected Gmail inbox
+2. Confirm Clearledgr detects and creates/links an AP item
+3. Open Gmail and verify the AP workspace appears on the thread
+4. Confirm extraction fields and confidence state are visible
+5. Trigger approval routing
+6. Approve in Slack or Teams
+7. Confirm ERP posting behavior (or safe blocked state if prerequisites are missing)
+8. Confirm audit breadcrumbs are visible and consistent
 
----
+## What to Expect in Gmail (AP v1)
 
-## Support
+The Gmail AP experience should prioritize:
+1. current state
+2. exceptions
+3. next action
+4. key extracted fields
+5. audit breadcrumbs
 
-- Documentation: https://docs.clearledgr.com
-- Email: support@clearledgr.com
+It should not behave like a full dashboard embedded in Gmail.
+
+## Troubleshooting (AP v1)
+
+### Admin Console returns 404
+Check:
+1. backend is running on the expected port
+2. `ADMIN_CONSOLE_ENABLED` is enabled in the environment
+
+### Gmail sidebar cannot reach backend
+Check:
+1. extension backend URL is correct (`http://127.0.0.1:8000` for local)
+2. backend server is running
+3. CORS is configured for Gmail origin in your local setup
+
+### Approvals do not appear in Slack/Teams
+Check:
+1. integration credentials installed correctly
+2. callback routes reachable
+3. channel/team configuration set in Admin Console
+4. per-org integration health in `/console` and `/api/admin/health`
+
+### Invoice detected but cannot post
+Common causes:
+1. low-confidence critical fields (review required)
+2. policy or budget/PO block
+3. missing ERP connector readiness
+4. duplicate/exception state requiring explicit resolution
+
+## Developer Notes
+
+### Canonical references for AP v1 work
+
+- Doctrine / launch gates: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
+- Backlog / sequencing: `/Users/mombalam/Desktop/Clearledgr.v1/TODO_BACKLOG.md`
+- Strategy / future gaps: `/Users/mombalam/Desktop/Clearledgr.v1/gaps_opportunities`
+- Point-in-time readiness audit: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GO_LIVE_ASSESSMENT.md`
+
+### Historical MVP framing
+
+The earlier MVP scope doc has been archived:
+
+- `/Users/mombalam/Desktop/Clearledgr.v1/docs/archive/MVP_SCOPE.md`
+
+It is not the canonical source for AP v1.

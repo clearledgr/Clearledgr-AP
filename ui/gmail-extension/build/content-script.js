@@ -45,7 +45,14 @@ import { ClearledgrQueueManager } from './queue-manager.js';
       chrome.storage.sync.get(['settings', 'backendUrl', 'organizationId', 'userEmail', 'slackChannel'], resolve);
     });
     const nested = data.settings || {};
-    let backendUrl = data.backendUrl || nested.backendUrl || nested.apiEndpoint || 'http://127.0.0.1:8010';
+    const extensionConfig =
+      (typeof window !== 'undefined' && (window.CLEARLEDGR_CONFIG || window.CONFIG))
+      || (typeof globalThis !== 'undefined' && (globalThis.CLEARLEDGR_CONFIG || globalThis.CONFIG))
+      || {};
+    const configuredBackendUrl = String(
+      extensionConfig.API_URL || extensionConfig.BACKEND_URL || ''
+    ).trim();
+    let backendUrl = data.backendUrl || nested.backendUrl || nested.apiEndpoint || configuredBackendUrl || 'http://127.0.0.1:8000';
     backendUrl = String(backendUrl).trim();
     if (!/^https?:\/\//i.test(backendUrl)) backendUrl = `http://${backendUrl}`;
     if (backendUrl.endsWith('/v1')) backendUrl = backendUrl.slice(0, -3);
@@ -893,6 +900,46 @@ import { ClearledgrQueueManager } from './queue-manager.js';
       chrome.storage.local.set({ glConfig });
       emit('clearledgr:gl-config-data', glConfig);
       toast('Removed categorization rule', 'info');
+    });
+
+    // Inline approval (no Slack roundtrip)
+    window.addEventListener('clearledgr:verify-confidence', async (e) => {
+      const { item } = e.detail || {};
+      if (!item || !queueManager) return;
+      const result = await queueManager.verifyConfidence(item);
+      emit('clearledgr:confidence-result', { itemId: item.id, result });
+    });
+
+    window.addEventListener('clearledgr:approve-and-post', async (e) => {
+      const { item, override, justification } = e.detail || {};
+      if (!item || !queueManager) return;
+      const result = await queueManager.approveAndPost(item, {
+        override: !!override,
+        overrideJustification: justification || ''
+      });
+      if (result.status === 'approved' || result.status === 'posted') {
+        toast('Invoice approved and posted', 'success');
+      } else if (result.status === 'needs_budget_decision') {
+        toast('Budget decision required', 'warning');
+      } else if (result.status === 'error') {
+        toast(result.reason || 'Approval failed', 'error');
+      }
+      emit('clearledgr:approve-result', { itemId: item.id, result });
+      dispatchPipelineData({ source: 'approve_and_post' });
+    });
+
+    window.addEventListener('clearledgr:get-gl-suggestions', async (e) => {
+      const { item } = e.detail || {};
+      if (!item || !queueManager) return;
+      const result = await queueManager.getGlSuggestions(item);
+      emit('clearledgr:gl-suggestions-result', { itemId: item.id, result });
+    });
+
+    window.addEventListener('clearledgr:get-vendor-suggestions', async (e) => {
+      const { item } = e.detail || {};
+      if (!item || !queueManager) return;
+      const result = await queueManager.getVendorSuggestions(item);
+      emit('clearledgr:vendor-suggestions-result', { itemId: item.id, result });
     });
 
     window.addEventListener('clearledgr:connect-erp', handleConnectErp);

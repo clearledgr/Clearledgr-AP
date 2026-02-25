@@ -27,6 +27,8 @@
     "https://accounts.google.com/*",
     "https://vision.googleapis.com/*",
     "https://documentai.googleapis.com/*",
+    "https://api.clearledgr.com/*",
+    "https://staging-api.clearledgr.com/*",
     "http://localhost:8000/*",
     "http://127.0.0.1:8000/*",
     "http://localhost:8010/*",

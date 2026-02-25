@@ -239,7 +239,13 @@ class EmailParser:
 
         if invoice_numbers and amounts:
             amounts = self._filter_amounts_against_invoice_numbers(amounts, invoice_numbers)
-        
+
+        # Payment requests often lack invoice labels. If no amount survived the
+        # main invoice-oriented extraction heuristics, fall back to a broader
+        # currency+amount scan on the email text.
+        if email_type == "payment_request" and not amounts:
+            amounts = self._extract_payment_request_amounts(subject + " " + body)
+
         primary_amount = None
         primary_currency = None
         if amounts:
@@ -363,20 +369,66 @@ class EmailParser:
             # Remove common TLDs and clean up
             name = domain.split('.')[0]
             capitalized = name.title()
-            
-            # Try fuzzy match against known vendors
-            if FUZZY_AVAILABLE and self.known_vendors:
-                match = process.extractOne(
-                    capitalized, 
-                    self.known_vendors,
-                    scorer=fuzz.ratio,
-                    score_cutoff=70
-                )
-                if match:
-                    return match[0]  # Return standardized vendor name
-            
-            return capitalized
+
+            return self._normalize_vendor_candidate(capitalized)
         return sender
+
+    def _normalize_vendor_candidate(self, candidate: Optional[str]) -> Optional[str]:
+        """Normalize vendor names against a known-vendor list conservatively.
+
+        We prefer avoiding false positives (e.g., ``Taskforce`` -> ``Salesforce``)
+        over aggressively normalizing unknown vendors.
+        """
+        if not candidate:
+            return candidate
+
+        cleaned = str(candidate).strip()
+        if not cleaned:
+            return cleaned
+
+        if not (FUZZY_AVAILABLE and self.known_vendors):
+            return cleaned
+
+        def _norm(text: str) -> str:
+            return "".join(ch.lower() for ch in str(text) if ch.isalnum())
+
+        candidate_norm = _norm(cleaned)
+        if not candidate_norm:
+            return cleaned
+
+        normalized_map: Dict[str, str] = {}
+        for vendor in self.known_vendors:
+            normalized_map.setdefault(_norm(vendor), vendor)
+
+        # Exact normalized match handles casing and punctuation variants safely
+        # (e.g., Aws -> AWS, Hubspot -> HubSpot).
+        exact = normalized_map.get(candidate_norm)
+        if exact:
+            return exact
+
+        match = process.extractOne(
+            candidate_norm,
+            list(normalized_map.keys()),
+            scorer=fuzz.ratio,
+            score_cutoff=75,
+        )
+        if not match:
+            return cleaned
+
+        matched_norm = match[0]
+        score = float(match[1])
+
+        # Require high confidence, or moderate confidence with strong shared prefix.
+        shared_prefix = 0
+        for left, right in zip(candidate_norm, matched_norm):
+            if left != right:
+                break
+            shared_prefix += 1
+
+        if score >= 88 or (score >= 75 and shared_prefix >= 4):
+            return normalized_map.get(matched_norm, cleaned)
+
+        return cleaned
     
     def _extract_vendor_from_text(self, text: str) -> Optional[str]:
         """Extract vendor name from invoice text with fuzzy matching."""
@@ -428,24 +480,21 @@ class EmailParser:
         for pattern in self.AMOUNT_PATTERNS:
             for match in re.finditer(pattern, text, re.IGNORECASE):
                 raw = match.group(1) if match.groups() else match.group(0)
-                value = self._parse_amount_value(raw)
+                value = self._parse_amount_value(raw, source_fragment=match.group(0))
                 # Keep legitimate zero-value invoices (e.g., $0.00 credit/settled cycles).
                 if value is None or value < 0:
                     continue
 
                 context = text[max(0, match.start() - 40):match.end() + 40].lower()
-                score = 0
-                if re.search(r"(total|amount\s+due|balance\s+due|total\s+due|invoice\s+total|grand\s+total|amount\s+payable|pay\s+this\s+amount)", context):
-                    score += 3
-                if re.search(r"(subtotal|tax|vat|gst|discount|shipping|fee)", context):
-                    score -= 1
-                if re.search(r"(usd|eur|gbp|\\$|€|£)", match.group(0), re.IGNORECASE):
-                    score += 1
+                if self._looks_like_identifier_token(raw):
+                    continue
+                score = self._score_amount_candidate(match.group(0), context)
+                local_currency = self._detect_currency(f"{match.group(0)} {context}") or self._detect_currency(text)
 
                 amounts.append({
                     "value": value,
                     "raw": raw,
-                    "currency": self._detect_currency(text),
+                    "currency": local_currency,
                     "score": score
                 })
 
@@ -460,7 +509,11 @@ class EmailParser:
         # Prefer labeled totals, then larger values
         return sorted(unique, key=lambda x: (x.get("score", 0), x["value"]), reverse=True)
 
-    def _parse_amount_value(self, raw: str) -> Optional[float]:
+    def _parse_amount_value(
+        self,
+        raw: str,
+        source_fragment: Optional[str] = None,
+    ) -> Optional[float]:
         """
         Parse amount value with international format support.
         Handles: 1,234.56 | 1.234,56 | 1 234,56 | 1234.56
@@ -472,9 +525,12 @@ class EmailParser:
         cleaned = str(raw).strip()
         cleaned = re.sub(r'[€$£₦₹¥฿]', '', cleaned)
         cleaned = cleaned.replace(' ', '').replace('\u00a0', '')  # Remove nbsp
+        cleaned = cleaned.replace("'", "")
         # Amount patterns can capture trailing punctuation (e.g., "40.23.").
         # Trim non-numeric boundary characters so decimal parsing is stable.
         cleaned = cleaned.strip(".,;:-_()[]{}")
+        if cleaned.endswith("-"):
+            cleaned = f"-{cleaned[:-1]}"
         
         if not cleaned:
             return None
@@ -524,14 +580,111 @@ class EmailParser:
                 return None
 
             # Filter obvious years (e.g., 2024, 2025) unless currency symbols present.
-            raw_str = str(raw)
-            has_currency = bool(re.search(r"(USD|EUR|GBP|\\$|€|£)", raw_str, re.IGNORECASE))
+            raw_str = str(source_fragment or raw)
+            has_currency = bool(re.search(r"(USD|EUR|GBP|\$|€|£)", raw_str, re.IGNORECASE))
             if not has_currency and value.is_integer() and 1900 <= value <= 2100:
                 return None
 
             return value
         except ValueError:
             return None
+
+    def _score_amount_candidate(self, fragment: str, context: str) -> int:
+        """Score amount candidates so invoice totals outrank line-item values."""
+        score = 0
+        fragment_lower = str(fragment or "").lower()
+        context_lower = str(context or "").lower()
+
+        # Strong fragment-level signals (most precise; keep these weighted high).
+        if re.search(r"(grand\s+total|total\s+due|balance\s+due|amount\s+due|invoice\s+total|amount\s+payable)", fragment_lower):
+            score += 8
+        elif re.search(r"\btotal\b", fragment_lower):
+            score += 4
+
+        # Penalize line-item and non-final totals aggressively so they do not
+        # outrank final payable amounts when both appear in the same window.
+        if re.search(r"\bsubtotal\b", fragment_lower):
+            score -= 6
+        if re.search(r"\b(tax|vat|gst|discount|shipping|fee|unit\s+price|qty|quantity)\b", fragment_lower):
+            score -= 4
+
+        # Context-level signals are weaker than fragment labels.
+        if re.search(
+            r"(total\s+due|balance\s+due|amount\s+due|invoice\s+total|grand\s+total|amount\s+payable|pay\s+this\s+amount)",
+            context_lower,
+        ):
+            score += 2
+        elif re.search(r"\btotal\b", context_lower):
+            score += 1
+
+        if re.search(r"\b(subtotal|tax|vat|gst|discount|shipping|fee|unit\s+price|qty|quantity)\b", context_lower):
+            score -= 1
+
+        # Payment request contexts often have only one amount and little invoice structure.
+        if re.search(r"(payment\s+request|please\s+pay|reimburse|reimbursement)", context_lower):
+            score += 2
+
+        if re.search(r"(usd|eur|gbp|\$|€|£|cad|aud|inr|ngn)", fragment_lower, re.IGNORECASE):
+            score += 1
+        return score
+
+    def _extract_payment_request_amounts(self, text: str) -> List[Dict[str, Any]]:
+        """Broad currency+amount fallback for payment-request emails.
+
+        This intentionally favors capture over invoice-specific labeling when
+        `_extract_amounts()` finds nothing, while still returning scored
+        candidates with currency hints.
+        """
+        if not text:
+            return []
+
+        candidates: List[Dict[str, Any]] = []
+        patterns = [
+            r"((?:USD|EUR|GBP|CAD|AUD|INR|NGN|KES|JPY|CNY|CHF|AED|SAR)\s*[\d][\d\s,\.]*)",
+            r"((?:\$|€|£|₹|₦|¥)\s*[\d][\d\s,\.]*)",
+        ]
+
+        for pattern in patterns:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                fragment = match.group(1)
+                raw_value = re.sub(r"^(?:USD|EUR|GBP|CAD|AUD|INR|NGN|KES|JPY|CNY|CHF|AED|SAR|\$|€|£|₹|₦|¥)\s*", "", fragment, flags=re.IGNORECASE)
+                value = self._parse_amount_value(raw_value, source_fragment=fragment)
+                if value is None or value < 0:
+                    continue
+                context = text[max(0, match.start() - 40):match.end() + 40].lower()
+                candidates.append(
+                    {
+                        "value": value,
+                        "raw": raw_value,
+                        "currency": self._detect_currency(f"{fragment} {context}"),
+                        "score": 1 + self._score_amount_candidate(fragment, context),
+                    }
+                )
+
+        if not candidates:
+            return []
+
+        unique_map: Dict[float, Dict[str, Any]] = {}
+        for candidate in candidates:
+            value = candidate["value"]
+            current = unique_map.get(value)
+            if not current or candidate.get("score", 0) > current.get("score", 0):
+                unique_map[value] = candidate
+
+        return sorted(unique_map.values(), key=lambda x: (x.get("score", 0), x["value"]), reverse=True)
+
+    def _looks_like_identifier_token(self, raw: str) -> bool:
+        """Reject ID-like numeric tokens that should not be treated as monetary values."""
+        token = re.sub(r'[^A-Za-z0-9.-]', '', str(raw or ""))
+        if not token:
+            return False
+        # Long digit strings are usually invoice/transaction identifiers.
+        if re.fullmatch(r"\d{8,}", token):
+            return True
+        # Mixed ID forms such as INV-12345 should not flow through amount parsing.
+        if re.search(r"[A-Za-z]", token) and re.search(r"\d", token):
+            return True
+        return False
 
     def _filter_amounts_against_invoice_numbers(
         self,
@@ -562,21 +715,81 @@ class EmailParser:
     
     def _extract_invoice_numbers(self, text: str) -> List[str]:
         """Extract invoice numbers from text."""
-        numbers = []
-        
+        candidates: List[Dict[str, Any]] = []
+
         for pattern in self.INVOICE_PATTERNS:
-            matches = re.findall(pattern, text, re.IGNORECASE)
-            numbers.extend(matches)
-        
-        # Remove duplicates while preserving order
-        seen = set()
-        unique = []
-        for n in numbers:
-            if n not in seen:
-                seen.add(n)
-                unique.append(n)
-        
-        return unique
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                candidate = self._normalize_invoice_candidate(match.group(1))
+                if not candidate:
+                    continue
+                context = text[max(0, match.start() - 30):match.end() + 30].lower()
+                label = match.group(0).lower()
+                score = 0
+                if "invoice" in label or label.startswith("inv"):
+                    score += 4
+                elif "bill" in label or "reference" in label:
+                    score += 2
+                elif "order" in label or "po" in label or "receipt" in label:
+                    score += 1
+                if re.search(r"(invoice|bill|reference|payment)", context):
+                    score += 1
+                if re.search(r"[A-Za-z]", candidate) and re.search(r"\d", candidate):
+                    score += 1
+                if len(candidate) > 28:
+                    score -= 1
+                candidates.append({"value": candidate, "score": score, "start": match.start()})
+
+        # Fallback for common free-form invoice IDs in subject/body.
+        fallback_patterns = [
+            r"\b(?:invoice|inv|bill|doc)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{3,})\b",
+            r"\b([A-Z]{1,4}-\d{4,})\b",
+        ]
+        for pattern in fallback_patterns:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                candidate = self._normalize_invoice_candidate(match.group(1))
+                if candidate:
+                    candidates.append({"value": candidate, "score": 1, "start": match.start()})
+
+        if not candidates:
+            return []
+
+        # Keep highest score per normalized value.
+        best_by_value: Dict[str, Dict[str, Any]] = {}
+        for candidate in candidates:
+            key = candidate["value"].upper()
+            current = best_by_value.get(key)
+            if not current or candidate["score"] > current["score"]:
+                best_by_value[key] = candidate
+
+        ranked = sorted(best_by_value.values(), key=lambda item: (-item["score"], item["start"]))
+        return [item["value"] for item in ranked]
+
+    def _normalize_invoice_candidate(self, value: Optional[str]) -> Optional[str]:
+        """Normalize/validate invoice candidate tokens."""
+        token = str(value or "").strip().strip(".,;:()[]{}")
+        token = token.replace(" ", "")
+        if not token:
+            return None
+        if not self._is_probable_invoice_number(token):
+            return None
+        return token
+
+    def _is_probable_invoice_number(self, token: str) -> bool:
+        """Heuristics to keep valid invoice IDs and drop dates/noise."""
+        if len(token) < 4 or len(token) > 40:
+            return False
+        if not re.search(r"\d", token):
+            return False
+        if re.fullmatch(r"\d{4}", token) and 1900 <= int(token) <= 2100:
+            return False
+        if re.fullmatch(r"\d+\.\d{2}", token):
+            return False
+        if re.fullmatch(r"\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}", token):
+            return False
+        # Pure short numerics are typically line references rather than invoice IDs.
+        if re.fullmatch(r"\d{1,5}", token):
+            return False
+        return True
     
     def _extract_dates(self, text: str) -> List[str]:
         """Extract and validate dates from text."""

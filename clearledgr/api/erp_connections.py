@@ -61,7 +61,7 @@ NETSUITE_TOKEN_SECRET = os.getenv("NETSUITE_TOKEN_SECRET", "")
 _oauth_states: Dict[str, Dict[str, Any]] = {}
 
 # Frontend URL for redirects after OAuth
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "/")
 
 
 # ==================== REQUEST MODELS ====================
@@ -168,7 +168,7 @@ async def quickbooks_callback(
     """
     if error:
         logger.error(f"QuickBooks OAuth error: {error}")
-        return RedirectResponse(f"{FRONTEND_URL}/settings/erp?error={error}")
+        return RedirectResponse(f"{FRONTEND_URL}?erp_error={error}")
     
     if not state or state not in _oauth_states:
         raise HTTPException(status_code=400, detail="Invalid state")
@@ -178,7 +178,7 @@ async def quickbooks_callback(
     return_url = state_data["return_url"]
     
     if not code or not realmId:
-        return RedirectResponse(f"{return_url}?error=missing_params")
+        return RedirectResponse(f"{FRONTEND_URL}?erp_error=missing_params")
     
     # Exchange code for tokens
     try:
@@ -197,8 +197,8 @@ async def quickbooks_callback(
             tokens = response.json()
     except Exception as e:
         logger.error(f"QuickBooks token exchange failed: {e}")
-        return RedirectResponse(f"{return_url}?error=token_exchange_failed")
-    
+        return RedirectResponse(f"{FRONTEND_URL}?erp_error=token_exchange_failed")
+
     # Store connection
     connection = ERPConnection(
         type="quickbooks",
@@ -208,12 +208,12 @@ async def quickbooks_callback(
         refresh_token=tokens.get("refresh_token"),
         realm_id=realmId,
     )
-    
+
     set_erp_connection(organization_id, connection)
-    
+
     logger.info(f"QuickBooks connected for org {organization_id}, realm {realmId}")
-    
-    return RedirectResponse(f"{return_url}?connected=quickbooks")
+
+    return RedirectResponse(f"{FRONTEND_URL}?connected=quickbooks&org={organization_id}")
 
 
 @router.post("/quickbooks/disconnect")
@@ -272,7 +272,7 @@ async def xero_callback(
     """
     if error:
         logger.error(f"Xero OAuth error: {error}")
-        return RedirectResponse(f"{FRONTEND_URL}/settings/erp?error={error}")
+        return RedirectResponse(f"{FRONTEND_URL}?erp_error={error}")
     
     if not state or state not in _oauth_states:
         raise HTTPException(status_code=400, detail="Invalid state")
@@ -282,7 +282,7 @@ async def xero_callback(
     return_url = state_data["return_url"]
     
     if not code:
-        return RedirectResponse(f"{return_url}?error=missing_code")
+        return RedirectResponse(f"{FRONTEND_URL}?erp_error=missing_code")
     
     # Exchange code for tokens
     try:
@@ -301,8 +301,8 @@ async def xero_callback(
             tokens = response.json()
     except Exception as e:
         logger.error(f"Xero token exchange failed: {e}")
-        return RedirectResponse(f"{return_url}?error=token_exchange_failed")
-    
+        return RedirectResponse(f"{FRONTEND_URL}?erp_error=token_exchange_failed")
+
     # Get tenant ID (Xero organization)
     tenant_id = None
     try:
@@ -317,7 +317,7 @@ async def xero_callback(
                 tenant_id = connections[0].get("tenantId")
     except Exception as e:
         logger.warning(f"Failed to get Xero tenant: {e}")
-    
+
     # Store connection
     connection = ERPConnection(
         type="xero",
@@ -327,12 +327,12 @@ async def xero_callback(
         refresh_token=tokens.get("refresh_token"),
         tenant_id=tenant_id,
     )
-    
+
     set_erp_connection(organization_id, connection)
-    
+
     logger.info(f"Xero connected for org {organization_id}, tenant {tenant_id}")
-    
-    return RedirectResponse(f"{return_url}?connected=xero")
+
+    return RedirectResponse(f"{FRONTEND_URL}?connected=xero&org={organization_id}")
 
 
 @router.post("/xero/disconnect")

@@ -9,9 +9,6 @@ def __getattr__(name):
     elif name == "LearningService":
         from clearledgr.services.learning import LearningService
         return LearningService
-    elif name == "IngestionService":
-        from clearledgr.services.ingestion import IngestionService
-        return IngestionService
     elif name == "MultiModalLLMService":
         from clearledgr.services.llm_multimodal import MultiModalLLMService
         return MultiModalLLMService
@@ -33,7 +30,6 @@ __all__ = [
     "AuditTrailService",
     "ExceptionRoutingService",
     "LearningService",
-    "IngestionService",
     "MultiModalLLMService",
     "match_bank_to_gl",
     "IntelligentMatchingService",

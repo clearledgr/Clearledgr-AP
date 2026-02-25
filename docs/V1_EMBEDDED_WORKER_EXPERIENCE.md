@@ -1,109 +1,171 @@
-# Clearledgr v1 Embedded Worker Experience
+# Clearledgr AP v1 Embedded Operator Experience
 
-Clearledgr v1 is an automation-first finance worker embedded in Gmail, Sheets, and Slack. The conversational sidebar is the control plane for intent, explanations, and approvals. The worker runs end-to-end workflows and surfaces exceptions only.
+This document describes the **embedded AP v1 operator experience** across Gmail, Slack, and Teams.
 
-## Core Principles
-- **Automation first**: Clearledgr runs workflows automatically; humans only handle exceptions and approvals.
-- **Embedded**: The worker lives in the tools teams already use (Gmail, Sheets, Slack).
-- **Full-context processing**: Email content and transaction details can be used to improve extraction and explanations.
-- **Auditability**: Every exception and approval is tracked as a task and/or audit event.
+It aligns to the canonical doctrine in:
 
-## Gmail Experience (Embedded Worker Sidebar)
+- `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
 
-### States and User Messages
-- **Idle**: Finance queue visible.
-  - Empty state: "All caught up!" / "No finance items to process"
-  - Tip: "Open an email to process it"
-- **Processing** (Worker Activity panel):
-  - "Scanning email locally..."
-  - "Classified: invoice/payment/statement/non-finance"
-  - "Extracting finance signals..."
-  - "Assigning GL category..."
-  - "Checking matching engine..."
-  - "Match found: 92% confidence"
-  - "No matching transaction found"
-  - "Backend offline - local mode"
-  - "Error: <message>"
-- **Result card**:
-  - Badge: "Matched" | "Pending" | "Needs review"
-  - Labels: "Matched to", "Match confidence"
+## Purpose
 
-### Actions
-- **Approve**: Sends feedback to `/agent/feedback`.
-- **Edit**: Adjusts vendor/amount/category before approval (local).
-- **Flag**: Creates an exception task in `/email/tasks` and triggers Slack notification.
-- **Log to Sheets**: Sends a log entry to the Sheets webhook to append into `CL_EMAIL_INBOX`.
- - **Auto-route** (default): Missing matches automatically create a task for Slack approval.
+Define the user-facing behavior of the AP v1 embedded experience so the product feels:
+1. inbox-native
+2. agentic (not a generic automation tool)
+3. trustworthy
+4. low-clutter
 
-### Data Handling
-- Email subject/body and attachment text can be sent to Clearledgr for extraction.
-- Transaction details are shared with Clearledgr to power matching and explanations.
+## Product Shape (AP v1)
 
-## Sheets Experience (Reconciliation Worker)
+- **Gmail** = context + status + exceptions + next action (primary operator surface)
+- **Slack / Teams** = approvals and escalation decisions
+- **ERP** = system of record
+- **Admin Console** = setup/ops only (not daily AP processing)
 
-### States and User Messages
-- **Ready**: "Ready to reconcile"
-- **Running**: "Clearledgr is running in your sheet"
-- **Activity feed**:
-  - "Scanning your sheet"
-  - "Matched (78%)"
-- **Exceptions**:
-  - Section title: "Needs Review"
-  - Shows exception list with amounts and reasons
+## Core UX Principles
 
-### Outputs
-- `CL_SUMMARY` - reconciliation summary
-  - Match rate, totals, exceptions
-- `CL_RECONCILED` - matched groups
-- `CL_EXCEPTIONS` - exceptions requiring review
-- `CL_EMAIL_INBOX` - Gmail log (when webhook is used)
+1. **Decision-first**
+   - Show what the operator needs to decide now.
+   - Hide technical details and raw payloads by default.
 
-### Slack Notification
-When reconciliation completes, Slack receives:
-- Summary (match rate, matched volume, exception count)
-- Top exceptions (if any)
-- "View in Sheets" button with the sheet URL
+2. **Agentic but transparent**
+   - The agent can gather context and propose/execute steps.
+   - The UI must always show what happened, what is blocked, and what is next.
 
-## Slack Experience (Exception and Approval Hub)
+3. **Progressive disclosure**
+   - Summary first.
+   - Context tabs and audit details only when needed.
 
-### Commands
-- `/clearledgr status` - summary stats from `/runs/stats`
-- `/clearledgr run` - run reconciliation for the default sheet
-- `/clearledgr exceptions` - list open exception tasks
-- `/clearledgr tasks` - list open tasks
-- `/reconcile` - shortcut for `/clearledgr run`
+4. **No mini-dashboard in Gmail**
+   - Gmail thread panel is a focused workspace, not a full AP console.
 
-### Exceptions
-- New exception tasks are posted with actions: **Complete**, **Approve**, **Reject**, **Add Note**.
-- Completing or approving closes the task via `/email/tasks/status`.
-- Reconciliation exceptions are converted into tasks when runs are triggered from Slack.
+5. **Consistent semantics across Slack and Teams**
+   - Approval actions and outcomes should feel equivalent even if channel UI differs.
 
-### Approval Outcomes
-- **Approve**: task status -> `completed`
-- **Reject**: task status -> `cancelled`
-- **Add Note**: posts to `/email/tasks/comments`
+## Gmail Experience (Primary Operator Surface)
 
-## Exception Lifecycle (Shared)
-1) **Detected** -> task created with status `open`
-2) **Routed** -> Slack notification posted in `#finance`
-3) **Reviewed** -> approved/rejected in Slack
-4) **Closed** -> task status updates and audit events recorded
+### AP Workspace (Thread-Level)
 
-## Viral Loops (v1)
+When Clearledgr identifies an AP item in a thread, Gmail should show a focused workspace with:
 
-### Loop A: Gmail -> Slack approvals -> Teammate pull-in
-1) Finance email flagged in Gmail creates a task.
-2) Task posts to Slack with "Invite Approver" CTA.
-3) Approver completes task in Slack and sees Clearledgr working in context.
-4) Approver invites another teammate for the next approval.
+1. **Status**
+   - Current AP state (for example `validating`, `needs_info`, `needs_approval`, `ready_to_post`, `posted`)
 
-### Loop B: Sheets -> Slack digest -> Team adoption
-1) Reconciliation run posts summary and exceptions to Slack.
-2) Exceptions appear as tasks with action buttons.
-3) Approvers complete tasks in Slack; results link back to Sheets.
-4) Team subscribes to the channel digest for ongoing visibility.
+2. **Key extracted fields**
+   - vendor
+   - invoice number
+   - amount
+   - due date
 
-### Entry Points to Emphasize
-- Gmail sidebar: "Exceptions route to Slack for approval."
-- Slack tasks: "Invite Approver" button.
-- Slack reconciliation summary: "Invite Approver" button.
+3. **Exceptions**
+   - reason-coded blockers (duplicate risk, low confidence, PO mismatch, budget issue, posting failure)
+
+4. **Next action**
+   - one clear action (review, request info, route approval, retry post, etc.)
+
+5. **Audit breadcrumbs**
+   - compact human-readable history (approved by X, rejected by Y, posted to ERP at Z)
+
+### Gmail Sections (progressive disclosure)
+
+Default-visible:
+1. primary invoice summary
+2. status and exception summary
+3. next action
+
+Collapsed by default:
+1. sources (linked emails/threads)
+2. full context tabs
+3. technical details (IDs, payload fragments, traces)
+4. full audit event list
+
+### Gmail Empty/Idle States
+
+Avoid dashboard-style filler panels.
+
+Preferred behavior:
+1. single compact status line
+2. actionable message only when needed
+3. no large empty KPI/audit sections
+
+### Gmail Operator Actions (examples)
+
+Allowed actions depend on state/policy:
+1. request info
+2. submit for approval / re-route approval
+3. approve with override (with required justification)
+4. retry posting (legal states only)
+5. open source email / open linked source
+
+No action may bypass server-side state validation or policy enforcement.
+
+## Slack and Teams Experience (Approval/Decision Surfaces)
+
+### Role in the AP workflow
+
+Slack and Teams are where approvers make decisions. They are not full workflow dashboards.
+
+### Approval card requirements
+
+Each card should include:
+1. invoice summary
+2. validation summary and exception highlights
+3. requested action
+4. action buttons:
+   - approve
+   - reject
+   - request info
+5. clear result feedback
+6. link back to Gmail/AP context
+
+### Channel action behavior requirements
+
+1. Duplicate clicks/callbacks are safe and idempotent.
+2. Invalid/stale actions return clear feedback.
+3. All action outcomes are audited.
+4. Slack and Teams support equivalent AP decision semantics.
+
+## Agentic Transparency Patterns (Required)
+
+To preserve trust, the UI should reveal agent behavior without overwhelming users.
+
+### Show in primary flow
+
+1. what state the agent is in
+2. what blocked progress (if blocked)
+3. what the next step is
+4. whether human confirmation is required
+
+### Show on demand
+
+1. validation details
+2. source evidence
+3. execution history
+4. posting preview details (for high-risk/fallback paths)
+
+## Experience Anti-Patterns (Do Not Ship)
+
+1. Gmail panel as global navigation hub
+2. Gmail panel as dense multi-section dashboard
+3. Technical text in the primary decision area
+4. Inconsistent Slack vs Teams decision semantics
+5. Hidden failure states ("looks successful" but actually blocked)
+
+## Admin Console Boundary (Explicit)
+
+Admin Console responsibilities:
+1. integration setup
+2. policy configuration
+3. org/team settings
+4. health and diagnostics
+5. subscription/plan management
+
+Admin Console is **not** the daily AP operator workflow UI for AP v1.
+
+## UX Acceptance Checklist (AP v1)
+
+1. Operator can process the current invoice from Gmail without reading raw technical data.
+2. Gmail panel defaults to one active item and low-clutter summary.
+3. Slack and Teams approval cards support equivalent actions and outcomes.
+4. Exceptions are clearly reason-coded and actionable.
+5. Audit breadcrumbs are visible in-context with deeper detail on demand.
+6. The product feels like an embedded execution layer, not a generic automation panel.

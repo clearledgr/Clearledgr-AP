@@ -8,7 +8,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
 from clearledgr.core.database import ClearledgrDB, get_db
+from clearledgr.core.ap_states import APState
+from clearledgr.core.errors import safe_error
 from clearledgr.services.ap_context_connectors import build_multi_system_context
 
 
@@ -41,6 +44,24 @@ class SplitItemRequest(BaseModel):
     sources: List[SplitSourceRequest] = []
 
 
+class ResubmitRejectedItemRequest(BaseModel):
+    actor_id: str = Field(default="system", min_length=1)
+    reason: str = Field(default="corrected_resubmission", min_length=1)
+    initial_state: str = Field(default="received", min_length=1)
+    copy_sources: bool = True
+    thread_id: Optional[str] = None
+    message_id: Optional[str] = None
+    subject: Optional[str] = None
+    sender: Optional[str] = None
+    vendor_name: Optional[str] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    invoice_number: Optional[str] = None
+    invoice_date: Optional[str] = None
+    due_date: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+
+
 def _parse_json(raw: Any) -> Dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -70,6 +91,108 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _derive_confidence_gate(payload: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
+    raw_gate = metadata.get("confidence_gate")
+    if isinstance(raw_gate, dict) and "requires_field_review" in raw_gate:
+        gate = dict(raw_gate)
+        blockers = gate.get("confidence_blockers")
+        gate["confidence_blockers"] = blockers if isinstance(blockers, list) else []
+        gate["requires_field_review"] = bool(gate.get("requires_field_review"))
+        return gate
+
+    return evaluate_critical_field_confidence(
+        overall_confidence=payload.get("confidence"),
+        field_values={
+            "vendor": payload.get("vendor_name"),
+            "amount": payload.get("amount"),
+            "invoice_number": payload.get("invoice_number"),
+            "due_date": payload.get("due_date"),
+        },
+        field_confidences=metadata.get("field_confidences"),
+    )
+
+
+def _derive_next_action(payload: Dict[str, Any]) -> str:
+    if payload.get("is_merged_source") or payload.get("merged_into"):
+        return "none"
+    state = str(payload.get("state") or "").strip().lower()
+    if payload.get("requires_field_review"):
+        return "review_fields"
+    if state in {APState.NEEDS_INFO.value}:
+        return "request_info"
+    if state in {APState.FAILED_POST.value}:
+        return "retry_post"
+    if state in {APState.READY_TO_POST.value, APState.APPROVED.value}:
+        return "post_to_erp"
+    if state in {APState.NEEDS_APPROVAL.value, "pending_approval"}:
+        if payload.get("budget_requires_decision"):
+            return "budget_decision"
+        if payload.get("exception_code"):
+            return "review_exception"
+        return "approve_or_reject"
+    if state in {APState.RECEIVED.value, APState.VALIDATED.value}:
+        if payload.get("exception_code"):
+            return "review_exception"
+        return "route_for_approval"
+    if state in {APState.REJECTED.value}:
+        return "none" if payload.get("superseded_by_ap_item_id") else "resubmit"
+    if state in {APState.POSTED_TO_ERP.value, APState.CLOSED.value}:
+        return "none"
+    return "review"
+
+
+def _normalized_state_value(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    return value
+
+
+def _resubmission_invoice_key(source: Dict[str, Any], request: ResubmitRejectedItemRequest) -> str:
+    base_key = str(source.get("invoice_key") or "").strip()
+    if not base_key:
+        base_key = "|".join(
+            [
+                str(request.vendor_name or source.get("vendor_name") or "").strip().lower(),
+                str(request.invoice_number or source.get("invoice_number") or "").strip(),
+                str(request.amount if request.amount is not None else source.get("amount") or "").strip(),
+                str(request.currency or source.get("currency") or "USD").strip().upper(),
+            ]
+        )
+    source_hint = (
+        str(request.message_id or "").strip()
+        or str(request.thread_id or "").strip()
+        or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    )
+    return f"{base_key}|resub:{source_hint}"
+
+
+def _copy_item_sources_for_resubmission(
+    db: ClearledgrDB,
+    *,
+    source_ap_item_id: str,
+    target_ap_item_id: str,
+    actor_id: str,
+) -> int:
+    copied = 0
+    for source_link in db.list_ap_item_sources(source_ap_item_id):
+        metadata = _parse_json(source_link.get("metadata"))
+        metadata.setdefault("resubmitted_from_ap_item_id", source_ap_item_id)
+        metadata.setdefault("copied_by", actor_id)
+        linked = db.link_ap_item_source(
+            {
+                "ap_item_id": target_ap_item_id,
+                "source_type": source_link.get("source_type"),
+                "source_ref": source_link.get("source_ref"),
+                "subject": source_link.get("subject"),
+                "sender": source_link.get("sender"),
+                "detected_at": source_link.get("detected_at"),
+                "metadata": metadata,
+            }
+        )
+        if linked:
+            copied += 1
+    return copied
 
 
 def _normalize_budget_checks(raw: Any) -> List[Dict[str, Any]]:
@@ -290,6 +413,13 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         parsed_meta_source_count = 0
     payload["source_count"] = max(parsed_meta_source_count, len(sources))
     payload["primary_source"] = _build_primary_source(payload, sources)
+    payload["supersedes_ap_item_id"] = payload.get("supersedes_ap_item_id") or metadata.get("supersedes_ap_item_id")
+    payload["superseded_by_ap_item_id"] = payload.get("superseded_by_ap_item_id") or metadata.get("superseded_by_ap_item_id")
+    payload["resubmission_reason"] = payload.get("resubmission_reason") or metadata.get("resubmission_reason")
+    payload["is_resubmission"] = bool(payload.get("supersedes_ap_item_id"))
+    payload["has_resubmission"] = bool(payload.get("superseded_by_ap_item_id"))
+    payload["merged_into"] = metadata.get("merged_into")
+    payload["is_merged_source"] = bool(metadata.get("merged_into"))
     payload["merge_reason"] = metadata.get("merge_reason")
     payload["has_context_conflict"] = bool(
         metadata.get("has_context_conflict") or metadata.get("context_conflict")
@@ -312,10 +442,21 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         or budget_summary.get("status")
     )
     payload["budget_requires_decision"] = bool(budget_summary.get("requires_decision"))
+    confidence_gate = _derive_confidence_gate(payload, metadata)
+    payload["confidence_gate"] = confidence_gate
+    payload["requires_field_review"] = bool(
+        metadata.get("requires_field_review") or confidence_gate.get("requires_field_review")
+    )
+    confidence_blockers = metadata.get("confidence_blockers")
+    if isinstance(confidence_blockers, list):
+        payload["confidence_blockers"] = confidence_blockers
+    else:
+        payload["confidence_blockers"] = confidence_gate.get("confidence_blockers") or []
     payload["risk_signals"] = metadata.get("risk_signals") or {}
     payload["source_ranking"] = metadata.get("source_ranking") or {}
     payload["navigator"] = metadata.get("navigator") or {}
     payload["conflict_actions"] = metadata.get("conflict_actions") if isinstance(metadata.get("conflict_actions"), list) else []
+    payload["next_action"] = _derive_next_action(payload)
     if metadata.get("priority_score") is not None:
         payload["priority_score"] = metadata.get("priority_score")
     elif hasattr(db, "_worklist_priority_score"):
@@ -547,6 +688,11 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
             "erp_posted_at": item.get("erp_posted_at"),
             "connector_available": connector_available,
         },
+        "supersession": {
+            "supersedes_ap_item_id": item.get("supersedes_ap_item_id") or metadata.get("supersedes_ap_item_id"),
+            "superseded_by_ap_item_id": item.get("superseded_by_ap_item_id") or metadata.get("superseded_by_ap_item_id"),
+            "resubmission_reason": item.get("resubmission_reason") or metadata.get("resubmission_reason"),
+        },
         "po_match": metadata.get("po_match") or metadata.get("po_match_result") or {},
         "budget": budget_summary,
         "risk_signals": metadata.get("risk_signals") or {},
@@ -651,6 +797,162 @@ def get_ap_item_context(ap_item_id: str, refresh: bool = Query(False)) -> Dict[s
     return context
 
 
+@router.post("/{ap_item_id}/resubmit")
+def resubmit_rejected_item(
+    ap_item_id: str,
+    request: ResubmitRejectedItemRequest,
+) -> Dict[str, Any]:
+    db = get_db()
+    source = _require_item(db, ap_item_id)
+    source_state = _normalized_state_value(source.get("state"))
+    if source_state != APState.REJECTED.value:
+        raise HTTPException(status_code=400, detail="resubmission_requires_rejected_state")
+
+    existing_child_id = str(source.get("superseded_by_ap_item_id") or "").strip()
+    if existing_child_id:
+        existing_child = db.get_ap_item(existing_child_id)
+        if existing_child:
+            return {
+                "status": "already_resubmitted",
+                "source_ap_item_id": source["id"],
+                "new_ap_item_id": existing_child_id,
+                "ap_item": build_worklist_item(db, existing_child),
+                "linkage": {
+                    "supersedes_ap_item_id": source["id"],
+                    "superseded_by_ap_item_id": existing_child_id,
+                },
+            }
+
+    initial_state = _normalized_state_value(request.initial_state)
+    if initial_state not in {APState.RECEIVED.value, APState.VALIDATED.value}:
+        raise HTTPException(status_code=400, detail="invalid_resubmission_initial_state")
+
+    source_meta = _parse_json(source.get("metadata"))
+    new_meta = dict(source_meta)
+    for stale_key in (
+        "merged_into",
+        "merge_reason",
+        "merge_status",
+        "suppressed_from_worklist",
+        "confidence_override",
+    ):
+        new_meta.pop(stale_key, None)
+    new_meta["supersedes_ap_item_id"] = source["id"]
+    new_meta["resubmission_reason"] = request.reason
+    new_meta["resubmission"] = {
+        "source_ap_item_id": source["id"],
+        "reason": request.reason,
+        "actor_id": request.actor_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if request.metadata:
+        new_meta.update(request.metadata)
+
+    create_payload: Dict[str, Any] = {
+        "invoice_key": _resubmission_invoice_key(source, request),
+        "thread_id": request.thread_id or source.get("thread_id"),
+        "message_id": request.message_id or source.get("message_id"),
+        "subject": request.subject or source.get("subject"),
+        "sender": request.sender or source.get("sender"),
+        "vendor_name": request.vendor_name or source.get("vendor_name"),
+        "amount": request.amount if request.amount is not None else source.get("amount"),
+        "currency": request.currency or source.get("currency") or "USD",
+        "invoice_number": request.invoice_number or source.get("invoice_number"),
+        "invoice_date": request.invoice_date or source.get("invoice_date"),
+        "due_date": request.due_date or source.get("due_date"),
+        "state": initial_state,
+        "confidence": source.get("confidence"),
+        "approval_required": bool(source.get("approval_required", True)),
+        "workflow_id": source.get("workflow_id"),
+        "run_id": None,
+        "approval_surface": source.get("approval_surface") or "hybrid",
+        "approval_policy_version": source.get("approval_policy_version"),
+        "post_attempted_at": None,
+        "last_error": None,
+        "organization_id": source.get("organization_id"),
+        "user_id": source.get("user_id"),
+        "po_number": source.get("po_number"),
+        "attachment_url": source.get("attachment_url"),
+        "supersedes_ap_item_id": source["id"],
+        "superseded_by_ap_item_id": None,
+        "resubmission_reason": request.reason,
+        "metadata": new_meta,
+    }
+    created = db.create_ap_item(create_payload)
+
+    db.update_ap_item(
+        source["id"],
+        superseded_by_ap_item_id=created["id"],
+        _actor_type="user",
+        _actor_id=request.actor_id,
+    )
+    source_after = db.get_ap_item(source["id"]) or source
+    source_after_meta = _parse_json(source_after.get("metadata"))
+    source_after_meta["superseded_by_ap_item_id"] = created["id"]
+    source_after_meta["resubmission_reason"] = request.reason
+    db.update_ap_item(source["id"], metadata=source_after_meta, _actor_type="user", _actor_id=request.actor_id)
+
+    copied_sources = 0
+    if request.copy_sources:
+        copied_sources = _copy_item_sources_for_resubmission(
+            db,
+            source_ap_item_id=source["id"],
+            target_ap_item_id=created["id"],
+            actor_id=request.actor_id,
+        )
+
+    audit_key = f"ap_item_resubmission:{source['id']}:{created['id']}"
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": source["id"],
+            "event_type": "ap_item_resubmitted",
+            "actor_type": "user",
+            "actor_id": request.actor_id,
+            "payload_json": {
+                "source_ap_item_id": source["id"],
+                "new_ap_item_id": created["id"],
+                "reason": request.reason,
+                "copied_sources": copied_sources,
+            },
+            "organization_id": source.get("organization_id") or "default",
+            "source": "ap_items_api",
+            "decision_reason": request.reason,
+            "idempotency_key": audit_key,
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": created["id"],
+            "event_type": "ap_item_resubmission_created",
+            "actor_type": "user",
+            "actor_id": request.actor_id,
+            "payload_json": {
+                "source_ap_item_id": source["id"],
+                "new_ap_item_id": created["id"],
+                "reason": request.reason,
+                "copied_sources": copied_sources,
+            },
+            "organization_id": created.get("organization_id") or "default",
+            "source": "ap_items_api",
+            "decision_reason": request.reason,
+            "idempotency_key": f"{audit_key}:new",
+        }
+    )
+
+    return {
+        "status": "resubmitted",
+        "source_ap_item_id": source["id"],
+        "new_ap_item_id": created["id"],
+        "copied_sources": copied_sources,
+        "linkage": {
+            "supersedes_ap_item_id": source["id"],
+            "superseded_by_ap_item_id": created["id"],
+            "resubmission_reason": request.reason,
+        },
+        "ap_item": build_worklist_item(db, created),
+    }
+
+
 @router.post("/{ap_item_id}/merge")
 def merge_ap_items(ap_item_id: str, request: MergeItemsRequest) -> Dict[str, Any]:
     db = get_db()
@@ -703,12 +1005,13 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest) -> Dict[str, Any
     merge_history = target_meta.get("merge_history")
     if not isinstance(merge_history, list):
         merge_history = []
+    merged_at = datetime.now(timezone.utc).isoformat()
     merge_history.append(
         {
             "source_ap_item_id": source["id"],
             "reason": request.reason,
             "actor_id": request.actor_id,
-            "merged_at": datetime.now(timezone.utc).isoformat(),
+            "merged_at": merged_at,
         }
     )
     target_meta["merge_history"] = merge_history
@@ -720,7 +1023,14 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest) -> Dict[str, Any
     source_meta = _parse_json(source.get("metadata"))
     source_meta["merged_into"] = target["id"]
     source_meta["merge_reason"] = request.reason
-    db.update_ap_item(source["id"], state="merged", metadata=source_meta)
+    source_meta["merged_at"] = merged_at
+    source_meta["merged_by"] = request.actor_id
+    source_meta["merge_status"] = "merged_source"
+    source_meta["source_count"] = 0
+    source_meta["suppressed_from_worklist"] = True
+    if source.get("state"):
+        source_meta["merge_source_state"] = source.get("state")
+    db.update_ap_item(source["id"], metadata=source_meta)
 
     db.append_ap_audit_event(
         {
@@ -738,6 +1048,23 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest) -> Dict[str, Any
             "source": "ap_items_api",
             "decision_reason": request.reason,
             "idempotency_key": f"merge:{target['id']}:{source['id']}",
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": source["id"],
+            "event_type": "ap_item_merged_into",
+            "actor_type": "user",
+            "actor_id": request.actor_id,
+            "payload_json": {
+                "source_ap_item_id": source["id"],
+                "target_ap_item_id": target["id"],
+                "reason": request.reason,
+            },
+            "organization_id": source.get("organization_id") or "default",
+            "source": "ap_items_api",
+            "decision_reason": request.reason,
+            "idempotency_key": f"merge-source:{source['id']}:{target['id']}",
         }
     )
 
@@ -834,3 +1161,81 @@ def split_ap_item(ap_item_id: str, request: SplitItemRequest) -> Dict[str, Any]:
         "parent_ap_item_id": parent["id"],
         "created_items": [build_worklist_item(db, item) for item in created_items],
     }
+
+
+@router.post("/{ap_item_id}/retry-post")
+async def retry_erp_post(ap_item_id: str, organization_id: str = "default"):
+    """Retry posting an AP item to the ERP after a previous failure.
+
+    Only items in ``failed_post`` state can be retried.  The item is
+    transitioned back to ``ready_to_post`` and then the ERP adapter is
+    invoked.  The full state machine and audit trail apply.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    db = get_db()
+    item = db.get_ap_item(ap_item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="AP item not found")
+
+    if item.get("organization_id") != organization_id:
+        raise HTTPException(status_code=403, detail="Organization mismatch")
+
+    current_state = item.get("state") or item.get("status")
+    if current_state != APState.FAILED_POST:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Can only retry from failed_post state (current: {current_state})",
+        )
+
+    # Transition back to ready_to_post (state machine validates this)
+    try:
+        db.update_ap_item(
+            ap_item_id,
+            state=APState.READY_TO_POST,
+            last_error=None,
+            _actor_type="user",
+            _actor_id="api",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=safe_error(e, "retry transition"))
+
+    # Attempt ERP posting
+    try:
+        from clearledgr.integrations.erp_router import post_to_erp
+
+        erp_result = post_to_erp(item, idempotency_key=ap_item_id)
+
+        db.update_ap_item(
+            ap_item_id,
+            state=APState.POSTED_TO_ERP,
+            erp_reference=erp_result.get("reference_id"),
+            erp_posted_at=datetime.now(timezone.utc).isoformat(),
+            _actor_type="system",
+            _actor_id="erp_retry",
+        )
+        return {
+            "status": "posted",
+            "ap_item_id": ap_item_id,
+            "erp_reference": erp_result.get("reference_id"),
+        }
+    except ImportError:
+        # ERP adapter not yet wired — leave item in ready_to_post
+        logger.warning("ERP adapter not available for retry of %s", ap_item_id)
+        return {
+            "status": "ready_to_post",
+            "ap_item_id": ap_item_id,
+            "message": "Item transitioned to ready_to_post; ERP adapter not configured",
+        }
+    except Exception as e:
+        # Transition back to failed_post
+        logger.error("ERP retry failed for %s: %s", ap_item_id, e)
+        db.update_ap_item(
+            ap_item_id,
+            state=APState.FAILED_POST,
+            last_error=str(e),
+            _actor_type="system",
+            _actor_id="erp_retry",
+        )
+        raise HTTPException(status_code=502, detail=safe_error(e, "ERP posting"))

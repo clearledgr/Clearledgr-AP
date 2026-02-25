@@ -16,6 +16,7 @@ Features:
 - Vita AI chat via @clearledgr mentions
 """
 
+import logging
 import os
 import json
 import hmac
@@ -23,9 +24,12 @@ import hashlib
 import time
 from typing import Dict, Any, Optional, List
 
+logger = logging.getLogger(__name__)
+
 import httpx
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
+from clearledgr.services.slack_api import resolve_slack_runtime
 
 router = APIRouter(prefix="/slack", tags=["slack"])
 
@@ -65,15 +69,31 @@ async def api(method: str, endpoint: str, body: Optional[Dict] = None) -> Option
 
 # ==================== SLACK API ====================
 
-async def slack_api(method: str, payload: Dict) -> Optional[Dict]:
+def _resolve_org_id_for_team(team_id: Optional[str]) -> str:
+    if not team_id:
+        return DEFAULT_ORG_ID
+    try:
+        from clearledgr.core.database import get_db
+
+        install = get_db().get_slack_installation_by_team(team_id)
+        if install and install.get("organization_id"):
+            return str(install["organization_id"])
+    except Exception:
+        pass
+    return DEFAULT_ORG_ID
+
+
+async def slack_api(method: str, payload: Dict, organization_id: Optional[str] = None) -> Optional[Dict]:
     """Call Slack API."""
-    if not SLACK_BOT_TOKEN:
+    runtime = resolve_slack_runtime(organization_id or DEFAULT_ORG_ID)
+    bot_token = runtime.get("bot_token") or SLACK_BOT_TOKEN
+    if not bot_token:
         print("[Slack] No bot token configured")
         return None
     
     url = f"https://slack.com/api/{method}"
     headers = {
-        "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+        "Authorization": f"Bearer {bot_token}",
         "Content-Type": "application/json",
     }
     
@@ -86,20 +106,34 @@ async def slack_api(method: str, payload: Dict) -> Optional[Dict]:
         return None
 
 
-async def send_message(channel: str, text: str, blocks: Optional[List] = None):
+async def send_message(
+    channel: str,
+    text: str,
+    blocks: Optional[List] = None,
+    thread_ts: Optional[str] = None,
+    organization_id: Optional[str] = None,
+):
     """Send a message to a Slack channel."""
     payload = {"channel": channel, "text": text}
     if blocks:
         payload["blocks"] = blocks
-    return await slack_api("chat.postMessage", payload)
+    if thread_ts:
+        payload["thread_ts"] = thread_ts
+    return await slack_api("chat.postMessage", payload, organization_id=organization_id)
 
 
-async def update_message(channel: str, ts: str, text: str, blocks: Optional[List] = None):
+async def update_message(
+    channel: str,
+    ts: str,
+    text: str,
+    blocks: Optional[List] = None,
+    organization_id: Optional[str] = None,
+):
     """Update an existing Slack message."""
     payload = {"channel": channel, "ts": ts, "text": text}
     if blocks:
         payload["blocks"] = blocks
-    return await slack_api("chat.update", payload)
+    return await slack_api("chat.update", payload, organization_id=organization_id)
 
 
 # ==================== VERIFICATION ====================
@@ -207,15 +241,33 @@ async def slack_interactions(request: Request):
     user_id = payload.get("user", {}).get("id", "")
     channel = payload.get("channel", {}).get("id", "")
     message_ts = payload.get("message", {}).get("ts", "")
+    team_id = payload.get("team", {}).get("id", "")
+    org_id = _resolve_org_id_for_team(team_id)
     
     # Handle actions
     if action_id.startswith("approve_invoice_"):
         gmail_id = action_id.replace("approve_invoice_", "")
-        await handle_invoice_approve(gmail_id, user_id, channel, message_ts)
+        await handle_invoice_approve(gmail_id, user_id, channel, message_ts, organization_id=org_id)
     
     elif action_id.startswith("reject_invoice_"):
         gmail_id = action_id.replace("reject_invoice_", "")
-        await handle_invoice_reject(gmail_id, user_id, channel, message_ts)
+        await handle_invoice_reject(gmail_id, user_id, channel, message_ts, organization_id=org_id)
+
+    elif action_id.startswith("approve_budget_override_"):
+        gmail_id = action_id.replace("approve_budget_override_", "")
+        await handle_budget_override(gmail_id, user_id, channel, message_ts, organization_id=org_id)
+
+    elif action_id.startswith("request_budget_adjustment_"):
+        gmail_id = action_id.replace("request_budget_adjustment_", "")
+        await handle_budget_adjustment(gmail_id, user_id, channel, message_ts, organization_id=org_id)
+
+    elif action_id.startswith("reject_budget_"):
+        gmail_id = action_id.replace("reject_budget_", "")
+        await handle_budget_reject(gmail_id, user_id, channel, message_ts, organization_id=org_id)
+
+    elif action_id.startswith("flag_invoice_"):
+        gmail_id = action_id.replace("flag_invoice_", "")
+        await handle_invoice_flag(gmail_id, user_id, channel, message_ts, organization_id=org_id)
     
     elif action_id.startswith("approve_"):
         item_id = action_id.replace("approve_", "")
@@ -272,15 +324,23 @@ async def handle_command(action: str, args: str, user_id: str, channel_id: str) 
     
     if action == "help":
         return """*Clearledgr Commands:*
+
+*Setup & Config:*
+- `/clearledgr setup` - Onboarding checklist and integration status
+- `/clearledgr config channel #channel` - Set the approval notification channel
+- `/clearledgr setup erp [quickbooks|xero|netsuite]` - Connect your ERP
+- `/clearledgr invite user@email.com [admin|member]` - Invite a team member
+
+*Daily Use:*
 - `/clearledgr status` - View current status
-- `/clearledgr reconcile` - Run reconciliation
+- `/clearledgr queue` - View invoice priority queue
+- `/clearledgr approve [id]` - Approve a draft entry
 - `/clearledgr exceptions` - View open exceptions
 - `/clearledgr drafts` - View pending draft entries
-- `/clearledgr approve [id]` - Approve a draft entry
+- `/clearledgr reconcile` - Run reconciliation
 - `/clearledgr ask [question]` - Ask Vita AI a question
 - `/clearledgr forecast` - View cash flow forecast
 - `/clearledgr budget` - View budget status
-- `/clearledgr queue` - View invoice priority queue
 
 *Natural Language (just type):*
 - "Approve all AWS invoices under $500"
@@ -314,7 +374,25 @@ async def handle_command(action: str, args: str, user_id: str, channel_id: str) 
     
     elif action == "queue":
         return await get_priority_queue()
-    
+
+    elif action == "setup":
+        if args and args.startswith("erp"):
+            erp_type = args.split(None, 1)[1].strip().lower() if len(args.split()) > 1 else ""
+            return await handle_setup_erp(erp_type, user_id)
+        return await handle_setup(user_id)
+
+    elif action == "config":
+        if args and args.startswith("channel"):
+            channel_arg = args.split(None, 1)[1].strip() if len(args.split()) > 1 else ""
+            return await handle_config_channel(channel_arg, user_id)
+        return "Usage: `/clearledgr config channel #channel-name`"
+
+    elif action == "invite" and args:
+        parts = args.split()
+        email = parts[0]
+        role = parts[1] if len(parts) > 1 else "member"
+        return await handle_invite(email, role, user_id)
+
     else:
         # Try natural language processing
         full_text = f"{action} {args}".strip() if args else action
@@ -544,6 +622,207 @@ async def get_priority_queue() -> str:
         return f"Could not get priority queue: {str(e)}"
 
 
+# ==================== SETUP & CONFIG HANDLERS ====================
+
+
+async def handle_setup(user_id: str) -> str:
+    """Show onboarding checklist with integration statuses."""
+    from clearledgr.core.database import get_db
+
+    db = get_db()
+    org_id = DEFAULT_ORG_ID
+
+    # Check Gmail (extension-based — always "ready" if AP items exist)
+    ap_count = 0
+    try:
+        pipeline = db.get_invoice_pipeline(org_id)
+        ap_count = sum(len(v) for v in pipeline.values() if isinstance(v, list))
+    except Exception:
+        pass
+    gmail_status = "Connected" if ap_count > 0 else "Awaiting first invoice"
+    gmail_icon = ":white_check_mark:" if ap_count > 0 else ":hourglass_flowing_sand:"
+
+    # Check ERP
+    erp_connections = db.get_erp_connections(org_id)
+    active_erps = [c for c in erp_connections if c.get("is_active")]
+    if active_erps:
+        erp_names = ", ".join(c.get("erp_type", "?").title() for c in active_erps)
+        erp_status = f"Connected ({erp_names})"
+        erp_icon = ":white_check_mark:"
+    else:
+        erp_status = "Not connected"
+        erp_icon = ":x:"
+
+    # Check Slack (if we're here, Slack is connected)
+    slack_icon = ":white_check_mark:"
+    slack_status = "Connected"
+
+    # Check approval channel
+    org = db.get_organization(org_id) or {}
+    settings = org.get("settings", {})
+    if isinstance(settings, str):
+        import json as _json
+        settings = _json.loads(settings) if settings else {}
+    channels = settings.get("slack_channels", {})
+    approval_ch = channels.get("invoices", "#finance-approvals")
+    channel_icon = ":white_check_mark:" if channels else ":warning:"
+
+    return f"""*Clearledgr Setup*
+
+{gmail_icon} *Gmail:* {gmail_status}
+{slack_icon} *Slack:* {slack_status}
+{erp_icon} *ERP:* {erp_status}
+{channel_icon} *Approval Channel:* {approval_ch}
+
+*Quick Setup:*
+{"• `/clearledgr setup erp quickbooks` — Connect QuickBooks" if not active_erps else ""}
+{"• `/clearledgr setup erp xero` — Connect Xero" if not active_erps else ""}
+{"• `/clearledgr setup erp netsuite` — Connect NetSuite" if not active_erps else ""}
+• `/clearledgr config channel #channel` — Set approval channel
+• `/clearledgr invite user@email.com admin` — Invite a team member"""
+
+
+async def handle_config_channel(channel_arg: str, user_id: str) -> str:
+    """Set the approval notification channel."""
+    from clearledgr.core.database import get_db
+
+    if not channel_arg:
+        return "Usage: `/clearledgr config channel #channel-name`"
+
+    # Normalize: strip <# > wrapper that Slack adds for channel mentions
+    channel_name = channel_arg.strip()
+    if channel_name.startswith("<#") and "|" in channel_name:
+        # Format: <#C12345|channel-name>
+        channel_name = "#" + channel_name.split("|")[1].rstrip(">")
+    elif not channel_name.startswith("#"):
+        channel_name = "#" + channel_name
+
+    db = get_db()
+    org_id = DEFAULT_ORG_ID
+
+    org = db.get_organization(org_id) or db.ensure_organization(org_id, organization_name=org_id)
+    settings = org.get("settings", {})
+    if isinstance(settings, str):
+        import json as _json
+        settings = _json.loads(settings) if settings else {}
+
+    slack_channels = settings.get("slack_channels", {
+        "invoices": "#finance-approvals",
+        "expenses": "#expense-approvals",
+        "exceptions": "#finance-exceptions",
+        "notifications": "#finance-notifications",
+    })
+    slack_channels["invoices"] = channel_name
+    settings["slack_channels"] = slack_channels
+
+    db.update_organization(org_id, settings=settings)
+
+    return f"Approval channel set to *{channel_name}*. Invoice notifications will be sent there."
+
+
+async def handle_setup_erp(erp_type: str, user_id: str) -> str:
+    """Start ERP connection flow from Slack."""
+    if not erp_type:
+        return """*Connect your ERP:*
+• `/clearledgr setup erp quickbooks` — QuickBooks Online (OAuth)
+• `/clearledgr setup erp xero` — Xero (OAuth)
+• `/clearledgr setup erp netsuite` — NetSuite (Token-Based Auth)"""
+
+    erp_type = erp_type.lower().strip()
+    if erp_type not in ("quickbooks", "xero", "netsuite"):
+        return f"Unknown ERP type: `{erp_type}`. Supported: `quickbooks`, `xero`, `netsuite`."
+
+    if erp_type == "netsuite":
+        return """*NetSuite Setup*
+
+NetSuite uses Token-Based Authentication. You'll need:
+1. Account ID (e.g., `1234567` or `1234567_SB1`)
+2. Consumer Key
+3. Consumer Secret
+4. Token ID
+5. Token Secret
+
+*How to get these:*
+In NetSuite: Setup > Company > Enable Features > SuiteCloud > Token-Based Authentication.
+Then create an Integration record and generate a Token.
+
+Once you have the credentials, an admin can enter them at:
+`/api/admin/integrations/erp/connect/start` with `erp_type: netsuite`"""
+
+    # OAuth ERPs (QuickBooks, Xero)
+    try:
+        from clearledgr.api.erp_connections import (
+            _oauth_states,
+            QUICKBOOKS_CLIENT_ID, QUICKBOOKS_REDIRECT_URI, QUICKBOOKS_AUTH_URL,
+            XERO_CLIENT_ID, XERO_REDIRECT_URI, XERO_AUTH_URL,
+        )
+        from urllib.parse import urlencode as _urlencode
+        import secrets as _secrets
+
+        state = _secrets.token_urlsafe(32)
+        _oauth_states[state] = {
+            "organization_id": DEFAULT_ORG_ID,
+            "return_url": "slack",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+
+        if erp_type == "quickbooks":
+            if not QUICKBOOKS_CLIENT_ID:
+                return "QuickBooks is not configured on this server. Set `QUICKBOOKS_CLIENT_ID` and related env vars."
+            params = {
+                "client_id": QUICKBOOKS_CLIENT_ID,
+                "redirect_uri": QUICKBOOKS_REDIRECT_URI,
+                "response_type": "code",
+                "scope": "com.intuit.quickbooks.accounting",
+                "state": state,
+            }
+            auth_url = f"{QUICKBOOKS_AUTH_URL}?{_urlencode(params)}"
+            return f"*Connect QuickBooks*\n\nClick the link below to authorize Clearledgr:\n{auth_url}"
+
+        if erp_type == "xero":
+            if not XERO_CLIENT_ID:
+                return "Xero is not configured on this server. Set `XERO_CLIENT_ID` and related env vars."
+            params = {
+                "client_id": XERO_CLIENT_ID,
+                "redirect_uri": XERO_REDIRECT_URI,
+                "response_type": "code",
+                "scope": "openid profile email accounting.transactions accounting.contacts offline_access",
+                "state": state,
+            }
+            auth_url = f"{XERO_AUTH_URL}?{_urlencode(params)}"
+            return f"*Connect Xero*\n\nClick the link below to authorize Clearledgr:\n{auth_url}"
+
+    except ImportError:
+        return f"ERP connection module not available. Ensure `clearledgr.api.erp_connections` is installed."
+
+
+async def handle_invite(email: str, role: str, user_id: str) -> str:
+    """Invite a team member."""
+    from clearledgr.core.database import get_db
+    from datetime import datetime, timezone, timedelta
+
+    if role not in ("admin", "member", "viewer"):
+        return f"Invalid role: `{role}`. Use `admin`, `member`, or `viewer`."
+
+    db = get_db()
+    org_id = DEFAULT_ORG_ID
+
+    expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+
+    try:
+        invite = db.create_team_invite(
+            organization_id=org_id,
+            email=email,
+            role=role,
+            created_by=user_id,
+            expires_at=expires,
+        )
+        token = invite.get("token", "")
+        return f"Invitation sent to *{email}* as *{role}*.\nInvite link expires in 7 days."
+    except Exception as e:
+        return f"Could not create invite: {str(e)}"
+
+
 async def process_natural_language(text: str, user_id: str, channel_id: str) -> str:
     """Process a natural language command."""
     from clearledgr.services.natural_language_commands import get_nlp_processor
@@ -652,54 +931,211 @@ async def handle_dm(event: Dict):
 
 # ==================== INTERACTION HANDLERS ====================
 
-async def handle_invoice_approve(gmail_id: str, user_id: str, channel: str, message_ts: str):
+async def handle_invoice_approve(
+    gmail_id: str,
+    user_id: str,
+    channel: str,
+    message_ts: str,
+    organization_id: str = DEFAULT_ORG_ID,
+):
     """Handle invoice approval button click from Slack."""
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
-    
-    try:
-        # Get user email from Slack
-        user_email = f"slack:{user_id}"  # Will be resolved to actual email in production
-        
-        workflow = get_invoice_workflow(DEFAULT_ORG_ID, slack_channel=channel)
-        result = await workflow.approve_invoice(
-            gmail_id=gmail_id,
-            approved_by=user_email,
-            slack_channel=channel,
-            slack_ts=message_ts,
-        )
-        
-        if result.get("status") == "approved":
-            erp_result = result.get("erp_result", {})
-            bill_id = erp_result.get("bill_id", "N/A")
-            # Message update is handled by the workflow service
-        else:
-            await send_message(channel, f"Failed to approve invoice: {result.get('erp_result', {}).get('reason', 'Unknown error')}")
-            
-    except Exception as e:
-        await send_message(channel, f"Error approving invoice: {str(e)}")
+    from clearledgr.services.agent_orchestrator import get_orchestrator
 
+    # Immediately show processing state — replaces buttons with status text
+    await update_message(
+        channel,
+        message_ts,
+        f"Approved by <@{user_id}> — posting to ERP...",
+        blocks=[
+            {"type": "section", "text": {"type": "mrkdwn", "text": f":hourglass_flowing_sand: *Approved by <@{user_id}>* — posting to ERP..."}},
+        ],
+        organization_id=organization_id,
+    )
 
-async def handle_invoice_reject(gmail_id: str, user_id: str, channel: str, message_ts: str):
-    """Handle invoice rejection button click from Slack."""
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
-    
     try:
         user_email = f"slack:{user_id}"
-        
-        workflow = get_invoice_workflow(DEFAULT_ORG_ID, slack_channel=channel)
-        result = await workflow.reject_invoice(
+
+        orchestrator = get_orchestrator(organization_id)
+        result = await orchestrator.on_approval(
             gmail_id=gmail_id,
-            reason="Rejected via Slack",  # TODO: Add modal for reason input
+            approved_by=user_email,
+            source_channel="slack",
+        )
+
+        if result.get("status") != "approved":
+            await update_message(
+                channel,
+                message_ts,
+                f"Failed to approve invoice: {result.get('erp_result', {}).get('reason', 'Unknown error')}",
+                organization_id=organization_id,
+            )
+
+    except Exception as e:
+        await update_message(
+            channel,
+            message_ts,
+            f"Error approving invoice: {str(e)}",
+            blocks=[
+                {"type": "section", "text": {"type": "mrkdwn", "text": f":x: *Approval failed:* {str(e)}"}},
+            ],
+            organization_id=organization_id,
+        )
+
+
+async def handle_invoice_reject(
+    gmail_id: str,
+    user_id: str,
+    channel: str,
+    message_ts: str,
+    organization_id: str = DEFAULT_ORG_ID,
+):
+    """Handle invoice rejection button click from Slack."""
+    from clearledgr.services.agent_orchestrator import get_orchestrator
+
+    # Immediately show processing state
+    await update_message(
+        channel,
+        message_ts,
+        f"Rejected by <@{user_id}>",
+        blocks=[
+            {"type": "section", "text": {"type": "mrkdwn", "text": f":no_entry_sign: *Rejected by <@{user_id}>*"}},
+        ],
+        organization_id=organization_id,
+    )
+
+    try:
+        user_email = f"slack:{user_id}"
+
+        orchestrator = get_orchestrator(organization_id)
+        result = await orchestrator.on_rejection(
+            gmail_id=gmail_id,
             rejected_by=user_email,
+            reason="Rejected via Slack",
+            source_channel="slack",
+        )
+
+        if result.get("status") != "rejected":
+            await update_message(
+                channel,
+                message_ts,
+                f"Failed to reject invoice: {result.get('reason', 'Unknown error')}",
+                organization_id=organization_id,
+            )
+
+    except Exception as e:
+        await update_message(
+            channel,
+            message_ts,
+            f"Error rejecting invoice: {str(e)}",
+            blocks=[
+                {"type": "section", "text": {"type": "mrkdwn", "text": f":x: *Rejection failed:* {str(e)}"}},
+            ],
+            organization_id=organization_id,
+        )
+
+
+async def handle_budget_override(
+    gmail_id: str,
+    user_id: str,
+    channel: str,
+    message_ts: str,
+    organization_id: str = DEFAULT_ORG_ID,
+):
+    """Handle budget override approval from Slack."""
+    from clearledgr.services.agent_orchestrator import get_orchestrator
+
+    try:
+        user_email = f"slack:{user_id}"
+        orchestrator = get_orchestrator(organization_id)
+        result = await orchestrator.on_approval(
+            gmail_id=gmail_id,
+            approved_by=user_email,
+            source_channel="slack",
+            allow_budget_override=True,
+            override_justification="Approved over budget in Slack",
+        )
+        if result.get("status") != "approved":
+            await send_message(channel, f"Budget override failed: {result.get('reason', 'Unknown error')}", organization_id=organization_id)
+    except Exception as e:
+        await send_message(channel, f"Error approving budget override: {str(e)}", organization_id=organization_id)
+
+
+async def handle_budget_adjustment(
+    gmail_id: str,
+    user_id: str,
+    channel: str,
+    message_ts: str,
+    organization_id: str = DEFAULT_ORG_ID,
+):
+    """Handle budget adjustment request from Slack."""
+    from clearledgr.services.invoice_workflow import get_invoice_workflow
+
+    try:
+        user_email = f"slack:{user_id}"
+        workflow = get_invoice_workflow(organization_id, slack_channel=channel)
+        result = await workflow.request_budget_adjustment(
+            gmail_id=gmail_id,
+            requested_by=user_email,
+            reason="Budget adjustment requested in Slack",
             slack_channel=channel,
             slack_ts=message_ts,
         )
-        
-        if result.get("status") != "rejected":
-            await send_message(channel, f"Failed to reject invoice: {result.get('reason', 'Unknown error')}")
-            
+        if result.get("status") != "needs_info":
+            await send_message(channel, f"Budget adjustment request failed: {result.get('reason', 'Unknown error')}", organization_id=organization_id)
     except Exception as e:
-        await send_message(channel, f"Error rejecting invoice: {str(e)}")
+        await send_message(channel, f"Error requesting budget adjustment: {str(e)}", organization_id=organization_id)
+
+
+async def handle_budget_reject(
+    gmail_id: str,
+    user_id: str,
+    channel: str,
+    message_ts: str,
+    organization_id: str = DEFAULT_ORG_ID,
+):
+    """Handle over-budget rejection from Slack."""
+    from clearledgr.services.agent_orchestrator import get_orchestrator
+
+    try:
+        user_email = f"slack:{user_id}"
+        orchestrator = get_orchestrator(organization_id)
+        result = await orchestrator.on_rejection(
+            gmail_id=gmail_id,
+            rejected_by=user_email,
+            reason="Rejected over budget in Slack",
+            source_channel="slack",
+        )
+        if result.get("status") != "rejected":
+            await send_message(channel, f"Budget rejection failed: {result.get('reason', 'Unknown error')}", organization_id=organization_id)
+    except Exception as e:
+        await send_message(channel, f"Error rejecting invoice: {str(e)}", organization_id=organization_id)
+
+
+async def handle_invoice_flag(
+    gmail_id: str,
+    user_id: str,
+    channel: str,
+    message_ts: str,
+    organization_id: str = DEFAULT_ORG_ID,
+):
+    """Handle invoice flag-for-review from Slack."""
+    from clearledgr.core.database import get_db
+
+    try:
+        db = get_db()
+        db.update_invoice_status(
+            gmail_id=gmail_id,
+            status="pending_approval",
+            rejection_reason=f"Flagged for review in Slack by {user_id}",
+        )
+        await update_message(
+            channel,
+            message_ts,
+            f"Invoice `{gmail_id}` flagged for review by <@{user_id}>",
+            organization_id=organization_id,
+        )
+    except Exception as e:
+        await send_message(channel, f"Error flagging invoice: {str(e)}", organization_id=organization_id)
 
 
 async def handle_review_exception(exc_id: str, user_id: str, channel: str, message_ts: str):
@@ -839,64 +1275,88 @@ async def handle_resolve(exc_id: str, user_id: str, channel: str, message_ts: st
 async def handle_clarifying_response(question_id: str, response_value: str, user_id: str, channel: str, message_ts: str):
     """
     Handle response to a clarifying question from the conversational agent.
-    
-    This is called when a user clicks a button on a clarifying question.
+
+    Routes through the orchestrator so the agent can learn from answers
+    and take autonomous action (approve, reject, flag, request more info).
     """
     from clearledgr.services.conversational_agent import get_conversational_agent
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
-    
+    from clearledgr.services.agent_orchestrator import get_orchestrator
+
     try:
         user_email = f"slack:{user_id}"
         agent = get_conversational_agent(DEFAULT_ORG_ID)
-        
+
         # Process the response
         result = agent.handle_response(
             question_id=question_id,
             response_value=response_value,
             responder=user_email,
         )
-        
+
         action = result.get("action", "unknown")
         invoice_id = result.get("invoice_id", "")
-        
+        orchestrator = get_orchestrator(DEFAULT_ORG_ID)
+
         # Update the message to show response received
         response_text = f"<@{user_id}> responded: *{response_value}*"
-        
+
         if action == "proceed":
             response_text += "\nProceeding with invoice processing..."
-            
-            # If confirmed to proceed, continue with approval workflow
             if invoice_id:
-                workflow = get_invoice_workflow(DEFAULT_ORG_ID, slack_channel=channel)
-                # Continue processing - this would trigger the next step
-                await send_message(channel, f"Got it! Processing invoice `{invoice_id}`...", thread_ts=message_ts)
-        
+                approve_result = await orchestrator.on_approval(
+                    gmail_id=invoice_id,
+                    approved_by=user_email,
+                    source_channel="slack",
+                )
+                status = approve_result.get("status", "unknown")
+                if status in ("approved", "posted"):
+                    await send_message(channel, f"Invoice `{invoice_id}` approved and posted.", thread_ts=message_ts)
+                else:
+                    await send_message(channel, f"Invoice `{invoice_id}` processed — status: {status}", thread_ts=message_ts)
+
         elif action == "reject":
-            response_text += f"\nInvoice marked as {result.get('reason', 'rejected')}"
-            
+            reason = result.get("reason", "Rejected after clarification")
+            response_text += f"\n{reason}"
+            if invoice_id:
+                await orchestrator.on_rejection(
+                    gmail_id=invoice_id,
+                    rejected_by=user_email,
+                    reason=reason,
+                    source_channel="slack",
+                )
+
         elif action == "flag_for_review":
             response_text += f"\nFlagged for manual review: {result.get('reason', '')}"
-            
+
         elif action == "hold":
             response_text += "\nInvoice on hold pending further review"
-            
+
         elif action == "skip":
             response_text += "\nInvoice skipped"
-            
+
         elif action == "request_info":
             info_needed = result.get("info_needed", "additional information")
             response_text += f"\nPlease provide {info_needed} in a reply"
-            # Could open a modal here for input
-            
+
         elif action == "request_gl":
             response_text += "\nPlease specify the GL code in a reply"
-        
+            # Record that we're waiting for GL so the agent can learn
+            if invoice_id:
+                orchestrator.correction_learning.record_correction(
+                    correction_type="gl_code",
+                    original_value="unknown",
+                    corrected_value="pending_user_input",
+                    context={"invoice_id": invoice_id, "source": "clarifying_question"},
+                    user_id=user_email,
+                    invoice_id=invoice_id,
+                )
+
         await update_message(channel, message_ts, response_text)
-        
-        print(f"[Slack] Clarifying response handled: {question_id} -> {action}")
-        
+
+        logger.info(f"Clarifying response handled: {question_id} -> {action}")
+
     except Exception as e:
-        print(f"[Slack] Error handling clarifying response: {e}")
+        logger.error(f"Error handling clarifying response: {e}")
         await send_message(channel, f"Error processing response: {str(e)}")
 
 

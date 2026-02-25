@@ -678,28 +678,54 @@ class Bill:
 async def post_bill(
     organization_id: str,
     bill: Bill,
+    ap_item_id: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Post a vendor bill to the organization's ERP.
+
+    This is the primary function for invoice processing — posts as AP Bill.
+
+    Idempotency: If *ap_item_id* is provided the function checks whether
+    the AP item already has an ``erp_reference``.  If it does the post is
+    skipped and the existing reference is returned, preventing duplicate
+    bills in the ERP.
     """
-    Post a vendor bill to the organization's ERP.
-    
-    This is the primary function for invoice processing - posts as AP Bill, not journal entry.
-    """
+    # Idempotency guard — skip if already posted
+    if ap_item_id:
+        db = _get_db()
+        existing = db.get_ap_item(ap_item_id)
+        if existing and existing.get("erp_reference"):
+            logger.info(
+                "Idempotency: AP item %s already posted (ref=%s), skipping",
+                ap_item_id,
+                existing["erp_reference"],
+            )
+            return {
+                "status": "already_posted",
+                "reference_id": existing["erp_reference"],
+                "idempotency_key": idempotency_key,
+            }
+
     connection = get_erp_connection(organization_id)
-    
+
     if not connection:
-        logger.warning(f"No ERP connected for {organization_id}")
-        return {"status": "skipped", "reason": "No ERP connected"}
-    
+        logger.warning("No ERP connected for %s", organization_id)
+        return {"status": "skipped", "reason": "No ERP connected", "idempotency_key": idempotency_key}
+
     if connection.type == "quickbooks":
-        return await post_bill_to_quickbooks(connection, bill)
+        result = await post_bill_to_quickbooks(connection, bill)
     elif connection.type == "xero":
-        return await post_bill_to_xero(connection, bill)
+        result = await post_bill_to_xero(connection, bill)
     elif connection.type == "netsuite":
-        return await post_bill_to_netsuite(connection, bill)
+        result = await post_bill_to_netsuite(connection, bill)
     elif connection.type == "sap":
-        return await post_bill_to_sap(connection, bill)
+        result = await post_bill_to_sap(connection, bill)
     else:
-        return {"status": "error", "reason": f"Unknown ERP type: {connection.type}"}
+        result = {"status": "error", "reason": f"Unknown ERP type: {connection.type}"}
+
+    if isinstance(result, dict) and idempotency_key and not result.get("idempotency_key"):
+        result = {**result, "idempotency_key": idempotency_key}
+    return result
 
 
 async def post_bill_to_quickbooks(

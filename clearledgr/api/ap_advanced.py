@@ -29,6 +29,7 @@ from clearledgr.services.accruals import (
     AccrualType,
     AccrualStatus,
 )
+from clearledgr.core.errors import safe_error
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,7 @@ async def archive_document(record_id: str, archived_by: str = "", organization_i
         record = service.archive_document(record_id, archived_by)
         return record.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "document archive"))
 
 
 @router.post("/retention/legal-hold/place")
@@ -183,7 +184,7 @@ async def place_legal_hold(request: LegalHoldRequest):
         )
         return record.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "legal hold placement"))
 
 
 @router.post("/retention/legal-hold/release")
@@ -195,7 +196,7 @@ async def release_legal_hold(request: LegalHoldRequest):
         record = service.release_legal_hold(request.record_id, request.placed_by)
         return record.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "legal hold release"))
 
 
 @router.get("/retention/expiring")
@@ -406,7 +407,7 @@ async def post_accrual(accrual_id: str, posted_by: str, organization_id: str = "
         entry = service.post_accrual(accrual_id, posted_by)
         return entry.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "accrual posting"))
 
 
 @router.post("/accruals/{accrual_id}/reverse")
@@ -424,7 +425,7 @@ async def reverse_accrual(
         reversal = service.reverse_accrual(accrual_id, r_date)
         return reversal.to_dict()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "accrual reversal"))
 
 
 @router.post("/accruals/month-end")

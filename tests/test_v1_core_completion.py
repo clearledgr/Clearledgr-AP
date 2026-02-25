@@ -31,7 +31,14 @@ def client(db):
     return TestClient(app)
 
 
-def _create_ap_item(db, *, item_id: str, state: str, metadata: dict) -> dict:
+def _create_ap_item(
+    db,
+    *,
+    item_id: str,
+    state: str,
+    metadata: dict,
+    confidence: float = 0.99,
+) -> dict:
     return db.create_ap_item(
         {
             "id": item_id,
@@ -45,6 +52,7 @@ def _create_ap_item(db, *, item_id: str, state: str, metadata: dict) -> dict:
             "currency": "USD",
             "invoice_number": f"INV-{item_id}",
             "state": state,
+            "confidence": confidence,
             "organization_id": "default",
             "metadata": metadata,
         }
@@ -107,6 +115,36 @@ def test_worklist_derives_budget_exception_and_teams_interactive(monkeypatch, cl
     assert row["exception_code"] == "budget_overrun"
     assert row["exception_severity"] == "critical"
     assert row["budget_requires_decision"] is True
+    assert row["next_action"] == "budget_decision"
+    assert row["requires_field_review"] is False
+    assert isinstance(row["confidence_blockers"], list)
+
+    confidence_item = _create_ap_item(
+        db,
+        item_id="CONF-REVIEW-1",
+        state="needs_approval",
+        metadata={
+            "field_confidences": {
+                "vendor": 0.82,
+                "amount": 0.99,
+                "invoice_number": 0.99,
+                "due_date": 0.99,
+            }
+        },
+    )
+    db.update_ap_item(confidence_item["id"], confidence=0.99)
+
+    worklist_response = client.get("/extension/worklist?organization_id=default")
+    assert worklist_response.status_code == 200
+    worklist_rows = worklist_response.json()["items"]
+    confidence_row = next(
+        (entry for entry in worklist_rows if entry.get("id") == confidence_item["id"]),
+        None,
+    )
+    assert confidence_row is not None
+    assert confidence_row["requires_field_review"] is True
+    assert confidence_row["next_action"] == "review_fields"
+    assert any(blocker["field"] == "vendor" for blocker in confidence_row["confidence_blockers"])
 
     class _FakeWorkflow:
         async def approve_invoice(self, **kwargs):
@@ -119,6 +157,10 @@ def test_worklist_derives_budget_exception_and_teams_interactive(monkeypatch, cl
             return {"status": "rejected", "kwargs": kwargs}
 
     monkeypatch.setattr("clearledgr.api.teams_invoices.get_invoice_workflow", lambda _org: _FakeWorkflow())
+    monkeypatch.setattr(
+        "clearledgr.api.teams_invoices.verify_teams_token",
+        lambda _auth: {"appid": "test-bot", "iat": 1890000000},
+    )
 
     interactive_response = client.post(
         "/teams/invoices/interactive",
@@ -131,6 +173,7 @@ def test_worklist_derives_budget_exception_and_teams_interactive(monkeypatch, cl
             "message_id": "msg-001",
             "justification": "Critical month-end payment",
         },
+        headers={"Authorization": "Bearer test-token"},
     )
     assert interactive_response.status_code == 200
     payload = interactive_response.json()

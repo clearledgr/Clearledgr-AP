@@ -271,17 +271,89 @@ class SubscriptionService:
     TRIAL_DAYS = 14
     
     def __init__(self):
-        self._subscriptions: Dict[str, Subscription] = {}
+        from clearledgr.core.database import get_db
+
+        self.db = get_db()
+
+    def _subscription_from_row(self, row: Optional[Dict[str, Any]], organization_id: str) -> Subscription:
+        if not row:
+            return Subscription(organization_id=organization_id)
+
+        plan_value = str(row.get("plan") or PlanTier.FREE.value).lower()
+        try:
+            plan = PlanTier(plan_value)
+        except ValueError:
+            plan = PlanTier.FREE
+
+        usage_raw = row.get("usage_json") or {}
+        usage = UsageStats(**usage_raw) if isinstance(usage_raw, dict) else UsageStats()
+
+        limits_raw = row.get("limits_json") or {}
+        if isinstance(limits_raw, dict) and limits_raw:
+            limits = PlanLimits(**limits_raw)
+        else:
+            limits = PlanLimits.for_tier(plan)
+
+        features_raw = row.get("features_json") or {}
+        if isinstance(features_raw, dict) and features_raw:
+            features = PlanFeatures(**features_raw)
+        else:
+            features = PlanFeatures.for_tier(plan)
+
+        return Subscription(
+            organization_id=organization_id,
+            plan=plan,
+            status=str(row.get("status") or "active"),
+            trial_started_at=row.get("trial_started_at"),
+            trial_ends_at=row.get("trial_ends_at"),
+            trial_days_remaining=int(row.get("trial_days_remaining") or 0),
+            billing_cycle=str(row.get("billing_cycle") or "monthly"),
+            current_period_start=row.get("current_period_start"),
+            current_period_end=row.get("current_period_end"),
+            stripe_customer_id=row.get("stripe_customer_id"),
+            stripe_subscription_id=row.get("stripe_subscription_id"),
+            limits=limits,
+            features=features,
+            usage=usage,
+            onboarding_completed=bool(row.get("onboarding_completed")),
+            onboarding_step=int(row.get("onboarding_step") or 0),
+            created_at=str(row.get("created_at") or datetime.now(timezone.utc).isoformat()),
+            updated_at=str(row.get("updated_at") or datetime.now(timezone.utc).isoformat()),
+        )
+
+    def _save_subscription(self, sub: Subscription) -> Subscription:
+        sub.updated_at = datetime.now(timezone.utc).isoformat()
+        row = self.db.upsert_subscription_record(
+            sub.organization_id,
+            {
+                "plan": sub.plan.value,
+                "status": sub.status,
+                "trial_started_at": sub.trial_started_at,
+                "trial_ends_at": sub.trial_ends_at,
+                "trial_days_remaining": sub.trial_days_remaining,
+                "billing_cycle": sub.billing_cycle,
+                "current_period_start": sub.current_period_start,
+                "current_period_end": sub.current_period_end,
+                "stripe_customer_id": sub.stripe_customer_id,
+                "stripe_subscription_id": sub.stripe_subscription_id,
+                "limits": asdict(sub.limits) if sub.limits else {},
+                "features": asdict(sub.features) if sub.features else {},
+                "usage": sub.usage.to_dict() if sub.usage else {},
+                "onboarding_completed": sub.onboarding_completed,
+                "onboarding_step": sub.onboarding_step,
+                "created_at": sub.created_at,
+                "updated_at": sub.updated_at,
+            },
+        )
+        return self._subscription_from_row(row, sub.organization_id)
     
     def get_subscription(self, organization_id: str) -> Subscription:
         """Get or create subscription for an organization."""
-        if organization_id not in self._subscriptions:
-            self._subscriptions[organization_id] = Subscription(
-                organization_id=organization_id
-            )
-        
-        sub = self._subscriptions[organization_id]
+        self.db.ensure_organization(organization_id, organization_name=organization_id)
+        row = self.db.get_subscription_record(organization_id)
+        sub = self._subscription_from_row(row, organization_id)
         self._update_trial_status(sub)
+        sub = self._save_subscription(sub)
         return sub
     
     def start_trial(self, organization_id: str) -> Subscription:
@@ -305,7 +377,7 @@ class SubscriptionService:
         sub.updated_at = now.isoformat()
         
         logger.info(f"Started trial for organization {organization_id}")
-        return sub
+        return self._save_subscription(sub)
     
     def upgrade_to_pro(self, organization_id: str, stripe_customer_id: str = None, stripe_subscription_id: str = None) -> Subscription:
         """Upgrade organization to Pro plan."""
@@ -325,7 +397,7 @@ class SubscriptionService:
         sub.updated_at = now.isoformat()
         
         logger.info(f"Upgraded organization {organization_id} to Pro")
-        return sub
+        return self._save_subscription(sub)
     
     def downgrade_to_free(self, organization_id: str) -> Subscription:
         """Downgrade organization to Free plan."""
@@ -338,7 +410,7 @@ class SubscriptionService:
         sub.updated_at = datetime.now(timezone.utc).isoformat()
         
         logger.info(f"Downgraded organization {organization_id} to Free")
-        return sub
+        return self._save_subscription(sub)
     
     def complete_onboarding_step(self, organization_id: str, step: int) -> Subscription:
         """Mark an onboarding step as complete."""
@@ -352,7 +424,7 @@ class SubscriptionService:
             sub.onboarding_completed = True
         
         sub.updated_at = datetime.now(timezone.utc).isoformat()
-        return sub
+        return self._save_subscription(sub)
     
     def skip_onboarding(self, organization_id: str) -> Subscription:
         """Skip onboarding flow."""
@@ -360,7 +432,7 @@ class SubscriptionService:
         sub.onboarding_completed = True
         sub.onboarding_step = 5
         sub.updated_at = datetime.now(timezone.utc).isoformat()
-        return sub
+        return self._save_subscription(sub)
     
     def check_feature_access(self, organization_id: str, feature: str) -> bool:
         """Check if organization has access to a feature."""
@@ -401,8 +473,8 @@ class SubscriptionService:
         
         current = getattr(sub.usage, usage_type, 0)
         setattr(sub.usage, usage_type, current + amount)
-        
-        return sub.usage
+        saved = self._save_subscription(sub)
+        return saved.usage or UsageStats()
     
     def _update_trial_status(self, sub: Subscription) -> None:
         """Update trial status and days remaining."""

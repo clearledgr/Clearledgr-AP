@@ -8,11 +8,14 @@ This enables 24/7 autonomous email processing without requiring the browser to b
 import base64
 import json
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from pydantic import BaseModel
+
+from clearledgr.core.errors import safe_error
 
 from clearledgr.services.gmail_api import (
     GmailAPIClient,
@@ -28,6 +31,22 @@ from clearledgr.services.ai_enhanced import EnhancedAIService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/gmail", tags=["gmail"])
+
+
+def _should_setup_watch() -> bool:
+    """
+    Determine whether callback should attempt Gmail push watch setup.
+    In poll mode, watch is optional and should be skipped.
+    """
+    mode = os.getenv("GMAIL_AUTOPILOT_MODE", "both").strip().lower() or "both"
+    if mode not in {"watch", "both"}:
+        return False
+    topic = os.getenv("GMAIL_PUBSUB_TOPIC", "").strip()
+    if not topic:
+        return False
+    if "your-project" in topic.lower():
+        return False
+    return True
 
 
 class PubSubMessage(BaseModel):
@@ -416,14 +435,15 @@ async def process_invoice_email(
         invoice_text=invoice_text,  # For discount detection
     )
     
-    # Submit to invoice workflow
+    # Submit to agent orchestrator (reasoning → reflection → workflow)
     try:
-        workflow = InvoiceWorkflowService(organization_id=invoice.organization_id)
-        result = await workflow.process_new_invoice(invoice)
-        logger.info(f"Invoice workflow result: {result.get('status')}")
+        from clearledgr.services.agent_orchestrator import get_orchestrator
+        orchestrator = get_orchestrator(invoice.organization_id)
+        result = await orchestrator.process_invoice(invoice)
+        logger.info(f"Agent orchestrator result: {result.get('status')}")
         return result
     except Exception as e:
-        logger.error(f"Invoice workflow failed: {e}")
+        logger.error(f"Agent orchestrator failed: {e}")
         return {"status": "error", "error": str(e)}
 
 
@@ -581,7 +601,7 @@ async def gmail_authorize(user_id: str, redirect_url: Optional[str] = None):
     try:
         auth_url = generate_auth_url(state=state_encoded)
     except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail=safe_error(exc, "gmail auth url")) from exc
     
     return {"auth_url": auth_url}
 
@@ -622,21 +642,38 @@ async def gmail_callback(code: str, state: Optional[str] = None):
         # Store token
         token_store.store(token)
         
-        # Set up watch for push notifications
-        watch_service = GmailWatchService(token.user_id)
-        watch_result = await watch_service.setup_watch()
+        watch_result: Dict[str, Any] = {}
+        watch_status = "skipped"
+        watch_error: Optional[str] = None
 
-        logger.info(f"Gmail watch set up for {token.email}, expires: {watch_result.get('expiration')}")
+        if _should_setup_watch():
+            try:
+                watch_service = GmailWatchService(token.user_id)
+                watch_result = await watch_service.setup_watch()
+                watch_status = "enabled"
+                logger.info(
+                    "Gmail watch set up for %s, expires: %s",
+                    token.email,
+                    watch_result.get("expiration"),
+                )
+            except Exception as exc:
+                # Keep Gmail OAuth connected even if Pub/Sub watch setup fails;
+                # poll mode can continue to process messages.
+                watch_status = "failed"
+                watch_error = str(exc)
+                logger.warning("Gmail watch setup failed for %s: %s", token.email, exc)
+        else:
+            logger.info("Skipping Gmail watch setup (poll mode or topic not configured)")
 
-        # Mark autopilot connected immediately after OAuth + watch setup succeeds.
+        # Mark autopilot connected immediately after OAuth (watch is optional).
         db = get_db()
         db.save_gmail_autopilot_state(
             user_id=token.user_id,
             email=token.email,
-            last_history_id=watch_result.get("historyId"),
-            watch_expiration=watch_result.get("expiration"),
-            last_watch_at=datetime.utcnow().isoformat(),
-            last_error=None,
+            last_history_id=watch_result.get("historyId") if watch_result else None,
+            watch_expiration=watch_result.get("expiration") if watch_result else None,
+            last_watch_at=datetime.utcnow().isoformat() if watch_result else None,
+            last_error=watch_error,
         )
         
         # Return success or redirect
@@ -648,15 +685,15 @@ async def gmail_callback(code: str, state: Optional[str] = None):
             "status": "success",
             "email": token.email,
             "message": "Gmail autopilot enabled. Clearledgr will now process your emails automatically.",
+            "watch_status": watch_status,
+            "watch_error": watch_error,
             "watch_expiration": watch_result.get("expiration"),
         }
     
     except ValueError as e:
-        logger.error(f"Gmail callback config error: {e}")
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail=safe_error(e, "gmail callback config"))
     except Exception as e:
-        logger.error(f"Gmail callback error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "gmail callback"))
 
 
 @router.post("/disconnect")
@@ -675,8 +712,7 @@ async def gmail_disconnect(user_id: str):
         return {"status": "success", "message": "Gmail disconnected"}
     
     except Exception as e:
-        logger.error(f"Gmail disconnect error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=safe_error(e, "gmail disconnect"))
 
 
 @router.get("/status/{user_id}")

@@ -1,9 +1,12 @@
-"""SAP S/4HANA adapter (dry-run friendly)."""
+"""SAP S/4HANA adapter (dry-run friendly, live-capable)."""
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime
-from typing import List
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 from clearledgr.models.erp import (
     ERPDocumentResult,
@@ -26,9 +29,19 @@ from clearledgr.models.erp import (
 
 
 class SAPAdapter:
-    def __init__(self, default_config: SAPDocumentConfig | None = None) -> None:
+    def __init__(
+        self,
+        default_config: SAPDocumentConfig | None = None,
+        *,
+        base_url: Optional[str] = None,
+        bearer_token: Optional[str] = None,
+    ) -> None:
         self.default_config = default_config or SAPDocumentConfig()
         self.endpoints = SAPAPIEndpoints()
+        # Live connection credentials — injected when a real SAP connection is
+        # available (e.g. from ``get_erp_connection(organization_id)``).
+        self._base_url = (base_url or "").rstrip("/")
+        self._bearer_token = bearer_token or ""
 
     def get_endpoints(self) -> SAPAPIEndpoints:
         return self.endpoints
@@ -51,21 +64,86 @@ class SAPAdapter:
         return SAPVendorList(items=items, mode=mode, message=message)
 
     def list_gl_accounts(self, query: str | None = None) -> SAPGLAccountList:
-        mode = "dry_run" if self.default_config.dry_run else "live"
-        message = "Dry run: connect SAP to fetch GL accounts." if self.default_config.dry_run else None
-        items: List[SAPGLAccount] = []
+        """Return GL accounts from the SAP Chart of Accounts.
 
+        In ``dry_run`` mode: returns a small set of static mock accounts so
+        the UI/tests can function without a live SAP connection.
+
+        In live mode: calls the SAP OData endpoint
+        ``{base_url}/ChartOfAccounts`` (or ``/GLAccounts`` on S/4HANA Public
+        Cloud).  Requires ``base_url`` and ``bearer_token`` to be provided to
+        the constructor (typically injected from ``get_erp_connection()``).
+        Falls back to an empty list — not mock data — on failure so callers
+        can distinguish "no connection" from "real empty result".
+        """
         if self.default_config.dry_run:
-            items = [
+            items: List[SAPGLAccount] = [
                 SAPGLAccount(gl_account="6000", name="Hosting Expense", chart_of_accounts="YCOA"),
                 SAPGLAccount(gl_account="6100", name="Software Subscriptions", chart_of_accounts="YCOA"),
                 SAPGLAccount(gl_account="2000", name="Accounts Payable", chart_of_accounts="YCOA"),
             ]
             if query:
                 items = [item for item in items if query.lower() in item.name.lower()]
-            message = "Dry run: returning mocked GL accounts."
+            return SAPGLAccountList(items=items, mode="dry_run", message="Dry run: returning mocked GL accounts.")
 
-        return SAPGLAccountList(items=items, mode=mode, message=message)
+        # Live mode — call SAP OData API
+        if not self._base_url or not self._bearer_token:
+            return SAPGLAccountList(
+                items=[],
+                mode="live",
+                message="SAP connection not configured (base_url or bearer_token missing).",
+            )
+
+        try:
+            import urllib.request as _urllib_request
+            import json as _json
+
+            # S/4HANA On-Premise: /sap/opu/odata/sap/FAG_FINANCIALACCOUNTING_GLA_SRV/GLAccountInChartOfAccountsSet
+            # S/4HANA Cloud (simplified): /api/v1/ChartOfAccounts
+            # We support both via a configurable path; default to the On-Premise OData endpoint.
+            odata_path = "/sap/opu/odata/sap/FAG_FINANCIALACCOUNTING_GLA_SRV/GLAccountInChartOfAccountsSet"
+            filter_clause = ""
+            if query:
+                safe_q = query.replace("'", "''")
+                filter_clause = f"?$filter=substringof('{safe_q}',GLAccountName)&$format=json"
+            else:
+                filter_clause = "?$format=json&$top=500"
+
+            url = f"{self._base_url}{odata_path}{filter_clause}"
+            req = _urllib_request.Request(
+                url,
+                headers={
+                    "Authorization": f"Bearer {self._bearer_token}",
+                    "Accept": "application/json",
+                },
+            )
+            with _urllib_request.urlopen(req, timeout=15) as resp:
+                raw = _json.loads(resp.read().decode("utf-8"))
+
+            entries = (raw.get("d") or {}).get("results") or raw.get("value") or []
+            items = []
+            for entry in entries:
+                gl_account = str(
+                    entry.get("GLAccount") or entry.get("gl_account") or entry.get("AccountNumber") or ""
+                ).strip()
+                name = str(
+                    entry.get("GLAccountName") or entry.get("name") or entry.get("AccountDescription") or ""
+                ).strip()
+                coa = str(
+                    entry.get("ChartOfAccounts") or entry.get("chart_of_accounts") or ""
+                ).strip()
+                if gl_account:
+                    items.append(SAPGLAccount(gl_account=gl_account, name=name, chart_of_accounts=coa))
+
+            return SAPGLAccountList(items=items, mode="live", message=None)
+
+        except Exception as exc:
+            logger.warning("SAP GL account lookup failed: %s", exc)
+            return SAPGLAccountList(
+                items=[],
+                mode="live",
+                message=f"SAP GL account lookup failed: {exc}",
+            )
 
     def list_open_invoices(self, query: str | None = None) -> SAPOpenInvoiceList:
         mode = "dry_run" if self.default_config.dry_run else "live"

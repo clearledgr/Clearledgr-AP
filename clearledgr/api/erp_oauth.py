@@ -13,7 +13,7 @@ import logging
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from clearledgr.integrations.oauth import (
@@ -36,6 +36,16 @@ from clearledgr.integrations.erp_router import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/oauth", tags=["ERP OAuth"])
+
+
+def _oauth_success_response(erp_name: str) -> HTMLResponse:
+    """Return a simple success page after OAuth — no console redirect."""
+    return HTMLResponse(f"""<!DOCTYPE html><html><head><title>Connected</title>
+<style>body{{font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f8f9fa}}
+.card{{text-align:center;padding:2rem;border-radius:8px;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.1)}}
+h1{{color:#22c55e;margin:0 0 .5rem}}</style></head>
+<body><div class="card"><h1>{erp_name} Connected</h1>
+<p>You can close this tab and return to Slack or Gmail.</p></div></body></html>""")
 
 
 # ==================== REQUEST/RESPONSE MODELS ====================
@@ -134,7 +144,7 @@ async def quickbooks_callback(
     logger.info(f"Connected QuickBooks for organization {organization_id}")
     
     # Redirect to success page (frontend should handle this)
-    return RedirectResponse(url=f"/settings/integrations?success=quickbooks&org={organization_id}")
+    return _oauth_success_response("QuickBooks")
 
 
 # ==================== XERO ====================
@@ -193,7 +203,7 @@ async def xero_callback(
     
     logger.info(f"Connected Xero for organization {organization_id}")
     
-    return RedirectResponse(url=f"/settings/integrations?success=xero&org={organization_id}")
+    return _oauth_success_response("Xero")
 
 
 # ==================== NETSUITE (Token-Based Auth) ====================

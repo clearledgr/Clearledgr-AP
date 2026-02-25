@@ -23,10 +23,21 @@ from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from collections import defaultdict
+from enum import Enum
 
 from clearledgr.core.database import get_db
 
 logger = logging.getLogger(__name__)
+
+
+class CorrectionType(str, Enum):
+    """Canonical correction categories used across services."""
+
+    GL_CODE = "gl_code"
+    VENDOR = "vendor"
+    AMOUNT = "amount"
+    CLASSIFICATION = "classification"
+    APPROVAL = "approval"
 
 
 @dataclass
@@ -83,12 +94,150 @@ class CorrectionLearningService:
     def __init__(self, organization_id: str = "default"):
         self.organization_id = organization_id
         self.db = get_db()
-        
-        # In-memory storage (would be database in production)
+
+        # In-memory cache backed by DB
         self._corrections: List[Correction] = []
         self._learned_rules: Dict[str, LearningRule] = {}
         self._vendor_preferences: Dict[str, Dict[str, Any]] = defaultdict(dict)
+
+        self._init_tables()
+        self._load_rules()
     
+    # ------------------------------------------------------------------
+    # DB persistence
+    # ------------------------------------------------------------------
+
+    def _init_tables(self):
+        """Create tables for persisting corrections and learned rules."""
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_corrections (
+                        id TEXT PRIMARY KEY,
+                        organization_id TEXT NOT NULL,
+                        correction_type TEXT NOT NULL,
+                        original_value TEXT,
+                        corrected_value TEXT,
+                        context TEXT,
+                        user_id TEXT,
+                        invoice_id TEXT,
+                        vendor TEXT,
+                        feedback TEXT,
+                        created_at TEXT NOT NULL
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_learned_rules (
+                        id TEXT PRIMARY KEY,
+                        organization_id TEXT NOT NULL,
+                        rule_type TEXT NOT NULL,
+                        condition TEXT,
+                        action TEXT,
+                        confidence REAL,
+                        learned_from INTEGER,
+                        created_at TEXT NOT NULL,
+                        last_applied TEXT,
+                        success_rate REAL DEFAULT 1.0
+                    )
+                """)
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Could not init correction tables: {e}")
+
+    def _load_rules(self):
+        """Load learned rules from DB into memory cache."""
+        import json as _json
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT * FROM agent_learned_rules WHERE organization_id = ?",
+                    (self.organization_id,),
+                )
+                for row in cur.fetchall():
+                    r = dict(row)
+                    rule = LearningRule(
+                        rule_id=r["id"],
+                        rule_type=r["rule_type"],
+                        condition=_json.loads(r["condition"]) if r.get("condition") else {},
+                        action=_json.loads(r["action"]) if r.get("action") else {},
+                        confidence=r.get("confidence", 0.5),
+                        learned_from=r.get("learned_from", 1),
+                        created_at=r.get("created_at", ""),
+                        last_applied=r.get("last_applied"),
+                        success_rate=r.get("success_rate", 1.0),
+                    )
+                    self._learned_rules[rule.rule_id] = rule
+            if self._learned_rules:
+                logger.info(
+                    f"Loaded {len(self._learned_rules)} learned rules for {self.organization_id}"
+                )
+        except Exception as e:
+            logger.debug(f"Could not load learned rules: {e}")
+
+    def _persist_correction(self, correction: Correction):
+        """Write a correction to the DB."""
+        import json as _json
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """INSERT OR IGNORE INTO agent_corrections
+                    (id, organization_id, correction_type, original_value,
+                     corrected_value, context, user_id, invoice_id, vendor,
+                     feedback, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        correction.correction_id,
+                        self.organization_id,
+                        correction.correction_type,
+                        str(correction.original_value),
+                        str(correction.corrected_value),
+                        _json.dumps(correction.context),
+                        correction.user_id,
+                        correction.invoice_id,
+                        correction.vendor,
+                        correction.feedback,
+                        correction.timestamp,
+                    ),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.debug(f"Could not persist correction: {e}")
+
+    def _persist_rule(self, rule: LearningRule):
+        """Upsert a learned rule to the DB."""
+        import json as _json
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """INSERT OR REPLACE INTO agent_learned_rules
+                    (id, organization_id, rule_type, condition, action,
+                     confidence, learned_from, created_at, last_applied, success_rate)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        rule.rule_id,
+                        self.organization_id,
+                        rule.rule_type,
+                        _json.dumps(rule.condition),
+                        _json.dumps(rule.action),
+                        rule.confidence,
+                        rule.learned_from,
+                        rule.created_at,
+                        rule.last_applied,
+                        rule.success_rate,
+                    ),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.debug(f"Could not persist rule: {e}")
+
+    # ------------------------------------------------------------------
+    # Core methods
+    # ------------------------------------------------------------------
+
     def record_correction(
         self,
         correction_type: str,
@@ -118,7 +267,8 @@ class CorrectionLearningService:
         )
         
         self._corrections.append(correction)
-        
+        self._persist_correction(correction)
+
         # Learn from the correction
         learned = self._learn_from_correction(correction)
         
@@ -173,17 +323,20 @@ class CorrectionLearningService:
             rule.learned_from += 1
             rule.action = {"gl_code": correction.corrected_value}
             rule.confidence = min(0.99, rule.confidence + 0.1)
+            self._persist_rule(rule)
             return {"rules_updated": 1}
         else:
-            self._learned_rules[rule_id] = LearningRule(
+            rule = LearningRule(
                 rule_id=rule_id,
                 rule_type="gl_code",
                 condition={"vendor": vendor},
                 action={"gl_code": correction.corrected_value},
-                confidence=0.7,  # Start with moderate confidence
+                confidence=0.7,
                 learned_from=1,
                 created_at=datetime.now().isoformat(),
             )
+            self._learned_rules[rule_id] = rule
+            self._persist_rule(rule)
             return {"rules_created": 1}
     
     def _learn_vendor_name(self, correction: Correction) -> Dict[str, Any]:
@@ -193,17 +346,19 @@ class CorrectionLearningService:
         
         # Store alias mapping
         rule_id = f"vendor_alias_{original.replace(' ', '_')}"
-        
-        self._learned_rules[rule_id] = LearningRule(
+
+        rule = LearningRule(
             rule_id=rule_id,
             rule_type="vendor_alias",
             condition={"raw_vendor": original},
             action={"normalized_vendor": corrected},
-            confidence=0.9,  # High confidence for explicit correction
+            confidence=0.9,
             learned_from=1,
             created_at=datetime.now().isoformat(),
         )
-        
+        self._learned_rules[rule_id] = rule
+        self._persist_rule(rule)
+
         return {"rules_created": 1, "preferences_updated": ["vendor_aliases"]}
     
     def _learn_amount_pattern(self, correction: Correction) -> Dict[str, Any]:
@@ -235,8 +390,8 @@ class CorrectionLearningService:
         context = correction.context
         
         rule_id = f"classify_{context.get('sender', 'unknown')[:20]}"
-        
-        self._learned_rules[rule_id] = LearningRule(
+
+        rule = LearningRule(
             rule_id=rule_id,
             rule_type="classification",
             condition={
@@ -248,7 +403,9 @@ class CorrectionLearningService:
             learned_from=1,
             created_at=datetime.now().isoformat(),
         )
-        
+        self._learned_rules[rule_id] = rule
+        self._persist_rule(rule)
+
         return {"rules_created": 1}
     
     def _learn_approval_preference(self, correction: Correction) -> Dict[str, Any]:

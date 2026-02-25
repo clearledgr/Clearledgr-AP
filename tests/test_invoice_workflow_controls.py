@@ -182,6 +182,20 @@ def test_budget_exceeded_forces_manual_approval(monkeypatch):
 
 def test_healthy_invoice_can_auto_approve(monkeypatch):
     service, calls = _setup_service(monkeypatch)
+    monkeypatch.setattr(
+        service,
+        "_evaluate_deterministic_validation",
+        lambda _invoice: {
+            "passed": True,
+            "checked_at": "2026-02-25T00:00:00+00:00",
+            "reason_codes": [],
+            "reasons": [],
+            "policy_compliance": {},
+            "po_match_result": None,
+            "budget_impact": [],
+            "budget": {"status": "healthy"},
+        },
+    )
 
     invoice = InvoiceData(
         gmail_id="gmail-4",
@@ -217,6 +231,7 @@ def test_approve_invoice_blocks_when_budget_requires_decision(monkeypatch):
         "currency": "USD",
         "invoice_number": "INV-APP-1",
         "due_date": "2026-02-20",
+        "confidence": 0.99,
     }
 
     monkeypatch.setattr(
@@ -242,7 +257,7 @@ def test_approve_invoice_blocks_when_budget_requires_decision(monkeypatch):
     )
 
     assert result["status"] == "needs_budget_decision"
-    assert result["reason"] == "budget_requires_decision"
+    assert result["reason"] == "budget_exceeded_hard_block"
 
 
 def test_approve_invoice_allows_budget_override_with_justification(monkeypatch):
@@ -255,6 +270,7 @@ def test_approve_invoice_allows_budget_override_with_justification(monkeypatch):
         "currency": "USD",
         "invoice_number": "INV-APP-2",
         "due_date": "2026-02-21",
+        "confidence": 0.99,
     }
 
     monkeypatch.setattr(

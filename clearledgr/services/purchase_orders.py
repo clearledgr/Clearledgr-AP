@@ -682,22 +682,152 @@ class PurchaseOrderService:
         else:
             po.status = POStatus.PARTIALLY_INVOICED
     
+    # =========================================================================
+    # 2-WAY MATCHING (Invoice + GR, no PO)
+    # =========================================================================
+
+    def match_invoice_to_gr(
+        self,
+        invoice_id: str,
+        invoice_amount: float,
+        invoice_vendor: str,
+        invoice_lines: List[Dict[str, Any]] = None,
+    ) -> ThreeWayMatch:
+        """
+        Perform 2-way matching: Goods Receipt + Invoice (when PO is unavailable).
+
+        Finds a GR by vendor name and checks amount variance against the
+        received total.  Returns a ThreeWayMatch with ``po_id`` left empty.
+        """
+        match = ThreeWayMatch(
+            invoice_id=invoice_id,
+            invoice_amount=invoice_amount,
+        )
+
+        # Find GR by vendor
+        candidate_grs = [
+            gr for gr in self._goods_receipts.values()
+            if invoice_vendor.lower() in gr.vendor_name.lower()
+            and gr.status in (GRStatus.RECEIVED, GRStatus.PARTIAL)
+        ]
+
+        if not candidate_grs:
+            match.status = MatchStatus.EXCEPTION
+            match.exceptions.append({
+                "type": MatchExceptionType.NO_GR.value,
+                "message": f"No goods receipt found for vendor {invoice_vendor}",
+                "severity": "high",
+            })
+            self._matches[match.match_id] = match
+            return match
+
+        # Pick best GR by closest amount
+        best_gr: Optional[GoodsReceipt] = None
+        best_diff = float("inf")
+        for gr in candidate_grs:
+            # Estimate GR total using PO line prices where available
+            gr_total = 0.0
+            po = self._purchase_orders.get(gr.po_id)
+            for line in gr.line_items:
+                price = self._get_po_line_price(po, line.po_line_id) if po else 0.0
+                gr_total += line.quantity_received * price
+            diff = abs(gr_total - invoice_amount)
+            if diff < best_diff:
+                best_diff = diff
+                best_gr = gr
+                match.gr_amount = gr_total
+
+        if best_gr is None:
+            match.status = MatchStatus.EXCEPTION
+            match.exceptions.append({
+                "type": MatchExceptionType.NO_GR.value,
+                "message": "Could not determine matching goods receipt",
+                "severity": "high",
+            })
+            self._matches[match.match_id] = match
+            return match
+
+        match.gr_id = best_gr.gr_id
+
+        # No PO — flag as informational exception
+        match.exceptions.append({
+            "type": MatchExceptionType.NO_PO.value,
+            "message": "Two-way match only (no PO available)",
+            "severity": "low",
+        })
+
+        # Price variance check (invoice vs GR total)
+        if match.gr_amount > 0:
+            match.price_variance = invoice_amount - match.gr_amount
+            variance_pct = abs(match.price_variance) / match.gr_amount * 100
+            if variance_pct > self.PRICE_TOLERANCE_PERCENT and abs(match.price_variance) > self.AMOUNT_TOLERANCE:
+                match.exceptions.append({
+                    "type": MatchExceptionType.PRICE_MISMATCH.value,
+                    "message": (
+                        f"Invoice ${invoice_amount:.2f} differs from GR total "
+                        f"${match.gr_amount:.2f} by {variance_pct:.1f}%"
+                    ),
+                    "severity": "medium",
+                    "variance": match.price_variance,
+                    "variance_pct": variance_pct,
+                })
+
+        # Determine status
+        high_severity = [e for e in match.exceptions if e.get("severity") in ("high", "medium")]
+        if not high_severity:
+            match.status = MatchStatus.PARTIAL_MATCH
+        else:
+            match.status = MatchStatus.EXCEPTION
+
+        self._matches[match.match_id] = match
+        logger.info("2-way match result for invoice %s: %s", invoice_id, match.status.value)
+        return match
+
     def override_match_exception(
         self,
         match_id: str,
         override_by: str,
         reason: str,
     ) -> ThreeWayMatch:
-        """Override match exceptions (management approval)."""
+        """Override match exceptions (management approval).
+
+        Records the override in the audit trail via
+        ``ClearledgrDB.list_audit_events`` when available.
+        """
         match = self._matches.get(match_id)
         if not match:
             raise ValueError(f"Match {match_id} not found")
-        
+
+        prev_status = match.status.value
         match.status = MatchStatus.OVERRIDE
         match.override_by = override_by
         match.override_reason = reason
-        
-        logger.info(f"Match {match_id} overridden by {override_by}: {reason}")
+
+        # Best-effort audit trail write
+        try:
+            from clearledgr.core.database import get_db
+            db = get_db()
+            if hasattr(db, "_write_audit_event"):
+                db._write_audit_event(
+                    org_id=self.organization_id,
+                    ap_item_id=match.invoice_id,
+                    event_type="po_match_override",
+                    prev_state=prev_status,
+                    new_state="override",
+                    actor_type="user",
+                    actor_id=override_by,
+                    payload={
+                        "match_id": match_id,
+                        "override_reason": reason,
+                        "exceptions": match.exceptions,
+                        "price_variance": match.price_variance,
+                        "quantity_variance": match.quantity_variance,
+                    },
+                )
+        except Exception as exc:
+            logger.warning("Failed to write PO override audit event: %s", exc)
+
+        logger.info("Match %s overridden by %s: %s", match_id, override_by, reason)
         return match
     
     def get_match(self, match_id: str) -> Optional[ThreeWayMatch]:

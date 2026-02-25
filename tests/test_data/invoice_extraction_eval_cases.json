@@ -1,0 +1,969 @@
+{
+  "meta": {
+    "version": 2,
+    "description": "Anonymized synthetic invoice/AP email extraction benchmark for local parser regression.",
+    "dataset_kind": "synthetic_anonymized",
+    "notes": [
+      "Expand with real anonymized invoices for production-quality accuracy measurement.",
+      "This benchmark is intentionally local-parser focused (not full multimodal/agent pipeline)."
+    ]
+  },
+  "cases": [
+    {
+      "id": "basic_invoice_usd",
+      "input": {
+        "sender": "billing@acme.com",
+        "subject": "Invoice INV-1001 for January services",
+        "body": "Invoice Number: INV-1001\nInvoice Date: 2026-01-31\nTotal Due: $1,200.00\nPlease remit payment."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Acme",
+        "primary_amount": 1200.0,
+        "primary_invoice": "INV-1001",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "eur_invoice",
+      "input": {
+        "sender": "finance@contoso.eu",
+        "subject": "Invoice #CT-2026-02",
+        "body": "Grand Total: EUR 899.50\nInvoice No: CT-2026-02\nDue Date: 15/03/2026"
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Contoso",
+        "primary_amount": 899.5,
+        "primary_invoice": "CT-2026-02",
+        "currency": "EUR"
+      }
+    },
+    {
+      "id": "slack_vendor_fuzzy_domain",
+      "input": {
+        "sender": "billing@slack.com",
+        "subject": "Invoice INV-SL-77",
+        "body": "Amount Due: $49.99\nInvoice #: INV-SL-77"
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Slack",
+        "primary_amount": 49.99,
+        "primary_invoice": "INV-SL-77",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "attachment_content_text_overrides_body_amount",
+      "input": {
+        "sender": "accounts@vendorco.com",
+        "subject": "Your invoice is attached",
+        "body": "Please see attached invoice.",
+        "attachments": [
+          {
+            "name": "invoice.txt",
+            "content_type": "text/plain",
+            "content_text": "VendorCo LLC\nInvoice No: VC-2026-44\nSubtotal: $400.00\nTax: $40.00\nTotal Due: $440.00"
+          }
+        ]
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Vendorco",
+        "primary_amount": 440.0,
+        "primary_invoice": "VC-2026-44",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "payment_request_not_invoice",
+      "input": {
+        "sender": "contractor@freelance.dev",
+        "subject": "Payment request for February work",
+        "body": "Please pay $2,000.00 for February retainer. Thank you."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Freelance",
+        "primary_amount": 2000.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "subtotal_and_total_due_choose_total",
+      "input": {
+        "sender": "ar@designco.com",
+        "subject": "Invoice INV-7788",
+        "body": "Subtotal: $300.00\nDiscount: $20.00\nTotal Due: $280.00\nInvoice # INV-7788"
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Designco",
+        "primary_amount": 280.0,
+        "primary_invoice": "INV-7788",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "zero_dollar_invoice",
+      "input": {
+        "sender": "billing@saasapp.com",
+        "subject": "Invoice INV-ZERO-1",
+        "body": "Invoice Number: INV-ZERO-1\nTotal Due: $0.00"
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Saasapp",
+        "primary_amount": 0.0,
+        "primary_invoice": "INV-ZERO-1",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "gbp_invoice",
+      "input": {
+        "sender": "billing@ukservices.co.uk",
+        "subject": "Invoice UK-INV-19",
+        "body": "Amount Payable: GBP 125.75\nInvoice No: UK-INV-19"
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Ukservices",
+        "primary_amount": 125.75,
+        "primary_invoice": "UK-INV-19",
+        "currency": "GBP"
+      }
+    },
+    {
+      "id": "forwarded_invoice_noise",
+      "input": {
+        "sender": "ops@company.com",
+        "subject": "Fwd: INV-3021 from Paper Supply",
+        "body": "Forwarding this for AP.\n\n--- Original Message ---\nInvoice # INV-3021\nTotal Due: $615.40\nPlease pay by 2026-03-10."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Company",
+        "primary_amount": 615.4,
+        "primary_invoice": "INV-3021",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "invoice_number_label_variant",
+      "input": {
+        "sender": "receivables@office-supply.io",
+        "subject": "Monthly office supplies invoice",
+        "body": "Reference Number: OS-REF-2026-008\nInvoice Total: $312.15"
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Office-Supply",
+        "primary_amount": 312.15,
+        "primary_invoice": "OS-REF-2026-008",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "multiple_numeric_tokens_phone_and_total",
+      "input": {
+        "sender": "billing@supportvendor.com",
+        "subject": "Invoice SV-5500",
+        "body": "Call us at 1-800-555-1212\nInvoice #: SV-5500\nSupport plan renewal\nTotal: $1,050.00"
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Supportvendor",
+        "primary_amount": 1050.0,
+        "primary_invoice": "SV-5500",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "attachment_only_invoice_data",
+      "input": {
+        "sender": "notify@billingportal.example",
+        "subject": "Statement available",
+        "body": "A new document is available in the portal.",
+        "attachments": [
+          {
+            "name": "invoice-export.txt",
+            "content_type": "text/plain",
+            "content_text": "Northwind Traders\nBill Number: NW-9921\nDate: 2026-02-20\nBalance Due: $2,345.67"
+          }
+        ]
+      },
+      "expected": {
+        "vendor": "Billingportal",
+        "primary_amount": 2345.67,
+        "primary_invoice": "NW-9921",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "invoice_generated_01",
+      "input": {
+        "sender": "billing@north-peak.example",
+        "subject": "Invoice AB-8600 for monthly services",
+        "body": "Invoice Number: AB-8600\nSubtotal: $174.60\nTax: $14.40\nDiscount: $9.00\nShipping: $12.50\nTotal Due: $180.00\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "North-Peak",
+        "primary_amount": 180.0,
+        "primary_invoice": "AB-8600",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "invoice_generated_02",
+      "input": {
+        "sender": "billing@blueharbor.example",
+        "subject": "Invoice BC-8601 for monthly services",
+        "body": "Invoice #: BC-8601\nSubtotal: EUR 220.53\nTax: EUR 18.19\nDiscount: EUR 11.37\nShipping: EUR 15.75\nGrand Total: EUR 227,35\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Blueharbor",
+        "primary_amount": 227.35,
+        "primary_invoice": "BC-8601",
+        "currency": "EUR"
+      }
+    },
+    {
+      "id": "invoice_generated_03",
+      "input": {
+        "sender": "billing@sunline.example",
+        "subject": "Invoice CD-8602 for monthly services",
+        "body": "Invoice No: CD-8602\nSubtotal: GBP 266.45\nTax: GBP 21.98\nDiscount: GBP 13.73\nShipping: GBP 19.00\nBalance Due: GBP 274.70\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Sunline",
+        "primary_amount": 274.7,
+        "primary_invoice": "CD-8602",
+        "currency": "GBP"
+      }
+    },
+    {
+      "id": "invoice_generated_04",
+      "input": {
+        "sender": "billing@greenfield.example",
+        "subject": "Invoice DE-8603 for monthly services",
+        "body": "Bill Number: DE-8603\nSubtotal: CAD 312.39\nTax: CAD 25.76\nDiscount: CAD 16.10\nShipping: CAD 22.25\nInvoice Total: CAD 322.05\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Greenfield",
+        "primary_amount": 322.05,
+        "primary_invoice": "DE-8603",
+        "currency": "CAD"
+      }
+    },
+    {
+      "id": "invoice_generated_05",
+      "input": {
+        "sender": "billing@oakridge.example",
+        "subject": "Invoice EF-8604 for monthly services",
+        "body": "Reference Number: EF-8604\nSubtotal: AUD 358.32\nTax: AUD 29.55\nDiscount: AUD 18.47\nShipping: AUD 12.50\nAmount Due: AUD 369.40\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Oakridge",
+        "primary_amount": 369.4,
+        "primary_invoice": "EF-8604",
+        "currency": "AUD"
+      }
+    },
+    {
+      "id": "invoice_generated_06",
+      "input": {
+        "sender": "billing@stonepath.example",
+        "subject": "Invoice FG-8605 for monthly services",
+        "body": "Invoice Number: FG-8605\nSubtotal: INR 404.25\nTax: INR 33.34\nDiscount: INR 20.84\nShipping: INR 15.75\nAmount Payable: INR 416.75\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Stonepath",
+        "primary_amount": 416.75,
+        "primary_invoice": "FG-8605",
+        "currency": "INR"
+      }
+    },
+    {
+      "id": "invoice_generated_07",
+      "input": {
+        "sender": "billing@lumenworks.example",
+        "subject": "Invoice GH-8606 for monthly services",
+        "body": "Invoice #: GH-8606\nSubtotal: CHF 450.18\nTax: CHF 37.13\nDiscount: CHF 23.21\nShipping: CHF 19.00\nTotal: CHF 464.10\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Lumenworks",
+        "primary_amount": 464.1,
+        "primary_invoice": "GH-8606",
+        "currency": "CHF"
+      }
+    },
+    {
+      "id": "invoice_generated_08",
+      "input": {
+        "sender": "billing@riverbend.example",
+        "subject": "Invoice HI-8607 for monthly services",
+        "body": "Invoice No: HI-8607\nSubtotal: $496.10\nTax: $40.92\nDiscount: $25.57\nShipping: $22.25\nTotal Due: $511.45\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Riverbend",
+        "primary_amount": 511.45,
+        "primary_invoice": "HI-8607",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "invoice_generated_09",
+      "input": {
+        "sender": "billing@brightforge.example",
+        "subject": "Invoice IJ-8608 for monthly services",
+        "body": "Bill Number: IJ-8608\nSubtotal: EUR 542.04\nTax: EUR 44.70\nDiscount: EUR 27.94\nShipping: EUR 12.50\nGrand Total: EUR 558.80\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Brightforge",
+        "primary_amount": 558.8,
+        "primary_invoice": "IJ-8608",
+        "currency": "EUR"
+      }
+    },
+    {
+      "id": "invoice_generated_10",
+      "input": {
+        "sender": "billing@redmaple.example",
+        "subject": "Invoice JK-8609 for monthly services",
+        "body": "Reference Number: JK-8609\nSubtotal: GBP 587.97\nTax: GBP 48.49\nDiscount: GBP 30.31\nShipping: GBP 15.75\nBalance Due: GBP 606.15\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Redmaple",
+        "primary_amount": 606.15,
+        "primary_invoice": "JK-8609",
+        "currency": "GBP"
+      }
+    },
+    {
+      "id": "invoice_generated_11",
+      "input": {
+        "sender": "billing@silverbird.example",
+        "subject": "Invoice KL-8610 for monthly services",
+        "body": "Invoice Number: KL-8610\nSubtotal: CAD 633.90\nTax: CAD 52.28\nDiscount: CAD 32.68\nShipping: CAD 19.00\nInvoice Total: CAD 653.50\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Silverbird",
+        "primary_amount": 653.5,
+        "primary_invoice": "KL-8610",
+        "currency": "CAD"
+      }
+    },
+    {
+      "id": "invoice_generated_12",
+      "input": {
+        "sender": "billing@trailhead.example",
+        "subject": "Invoice LM-8611 for monthly services",
+        "body": "Invoice #: LM-8611\nSubtotal: AUD 679.82\nTax: AUD 56.07\nDiscount: AUD 35.04\nShipping: AUD 22.25\nAmount Due: AUD 700.85\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Trailhead",
+        "primary_amount": 700.85,
+        "primary_invoice": "LM-8611",
+        "currency": "AUD"
+      }
+    },
+    {
+      "id": "invoice_generated_13",
+      "input": {
+        "sender": "billing@clearwater.example",
+        "subject": "Invoice MN-8612 for monthly services",
+        "body": "Invoice No: MN-8612\nSubtotal: INR 725.75\nTax: INR 59.86\nDiscount: INR 37.41\nShipping: INR 12.50\nAmount Payable: INR 748.20\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Clearwater",
+        "primary_amount": 748.2,
+        "primary_invoice": "MN-8612",
+        "currency": "INR"
+      }
+    },
+    {
+      "id": "invoice_generated_14",
+      "input": {
+        "sender": "billing@highcrest.example",
+        "subject": "Invoice NO-8613 for monthly services",
+        "body": "Bill Number: NO-8613\nSubtotal: CHF 771.69\nTax: CHF 63.64\nDiscount: CHF 39.78\nShipping: CHF 15.75\nTotal: CHF 795.55\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Highcrest",
+        "primary_amount": 795.55,
+        "primary_invoice": "NO-8613",
+        "currency": "CHF"
+      }
+    },
+    {
+      "id": "invoice_generated_15",
+      "input": {
+        "sender": "billing@primegrid.example",
+        "subject": "Invoice OP-8614 for monthly services",
+        "body": "Reference Number: OP-8614\nSubtotal: $817.62\nTax: $67.43\nDiscount: $42.15\nShipping: $19.00\nTotal Due: $842.90\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Primegrid",
+        "primary_amount": 842.9,
+        "primary_invoice": "OP-8614",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "invoice_generated_16",
+      "input": {
+        "sender": "billing@summitlane.example",
+        "subject": "Invoice PQ-8615 for monthly services",
+        "body": "Invoice Number: PQ-8615\nSubtotal: EUR 863.54\nTax: EUR 71.22\nDiscount: EUR 44.51\nShipping: EUR 22.25\nGrand Total: EUR 890.25\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Summitlane",
+        "primary_amount": 890.25,
+        "primary_invoice": "PQ-8615",
+        "currency": "EUR"
+      }
+    },
+    {
+      "id": "invoice_generated_17",
+      "input": {
+        "sender": "billing@harvestbay.example",
+        "subject": "Invoice QR-8616 for monthly services",
+        "body": "Invoice #: QR-8616\nSubtotal: GBP 909.47\nTax: GBP 75.01\nDiscount: GBP 46.88\nShipping: GBP 12.50\nBalance Due: GBP 937.60\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Harvestbay",
+        "primary_amount": 937.6,
+        "primary_invoice": "QR-8616",
+        "currency": "GBP"
+      }
+    },
+    {
+      "id": "invoice_generated_18",
+      "input": {
+        "sender": "billing@windmill.example",
+        "subject": "Invoice RS-8617 for monthly services",
+        "body": "Invoice No: RS-8617\nSubtotal: CAD 955.40\nTax: CAD 78.80\nDiscount: CAD 49.25\nShipping: CAD 15.75\nInvoice Total: CAD 984.95\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Windmill",
+        "primary_amount": 984.95,
+        "primary_invoice": "RS-8617",
+        "currency": "CAD"
+      }
+    },
+    {
+      "id": "invoice_generated_19",
+      "input": {
+        "sender": "billing@copperleaf.example",
+        "subject": "Invoice ST-8618 for monthly services",
+        "body": "Bill Number: ST-8618\nSubtotal: AUD 1,001.34\nTax: AUD 82.58\nDiscount: AUD 51.62\nShipping: AUD 19.00\nAmount Due: AUD 1,032.30\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Copperleaf",
+        "primary_amount": 1032.3,
+        "primary_invoice": "ST-8618",
+        "currency": "AUD"
+      }
+    },
+    {
+      "id": "invoice_generated_20",
+      "input": {
+        "sender": "billing@lakeshore.example",
+        "subject": "Invoice TU-8619 for monthly services",
+        "body": "Reference Number: TU-8619\nSubtotal: INR 1,047.26\nTax: INR 86.37\nDiscount: INR 53.98\nShipping: INR 22.25\nAmount Payable: INR 1,079.65\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Lakeshore",
+        "primary_amount": 1079.65,
+        "primary_invoice": "TU-8619",
+        "currency": "INR"
+      }
+    },
+    {
+      "id": "invoice_generated_21",
+      "input": {
+        "sender": "billing@moonstone.example",
+        "subject": "Invoice UV-8620 for monthly services",
+        "body": "Invoice Number: UV-8620\nSubtotal: CHF 1,093.19\nTax: CHF 90.16\nDiscount: CHF 56.35\nShipping: CHF 12.50\nTotal: CHF 1,127.00\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Moonstone",
+        "primary_amount": 1127.0,
+        "primary_invoice": "UV-8620",
+        "currency": "CHF"
+      }
+    },
+    {
+      "id": "invoice_generated_22",
+      "input": {
+        "sender": "billing@pinegrove.example",
+        "subject": "Invoice VW-8621 for monthly services",
+        "body": "Invoice #: VW-8621\nSubtotal: $1,139.12\nTax: $93.95\nDiscount: $58.72\nShipping: $15.75\nTotal Due: $1,174.35\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Pinegrove",
+        "primary_amount": 1174.35,
+        "primary_invoice": "VW-8621",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "invoice_generated_23",
+      "input": {
+        "sender": "billing@starboard.example",
+        "subject": "Invoice WX-8622 for monthly services",
+        "body": "Invoice No: WX-8622\nSubtotal: EUR 1,185.05\nTax: EUR 97.74\nDiscount: EUR 61.09\nShipping: EUR 19.00\nGrand Total: EUR 1,221.70\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Starboard",
+        "primary_amount": 1221.7,
+        "primary_invoice": "WX-8622",
+        "currency": "EUR"
+      }
+    },
+    {
+      "id": "invoice_generated_24",
+      "input": {
+        "sender": "billing@westhaven.example",
+        "subject": "Invoice XY-8623 for monthly services",
+        "body": "Bill Number: XY-8623\nSubtotal: GBP 1,230.98\nTax: GBP 101.52\nDiscount: GBP 63.45\nShipping: GBP 22.25\nBalance Due: GBP 1,269.05\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Westhaven",
+        "primary_amount": 1269.05,
+        "primary_invoice": "XY-8623",
+        "currency": "GBP"
+      }
+    },
+    {
+      "id": "invoice_generated_25",
+      "input": {
+        "sender": "billing@goldcrest.example",
+        "subject": "Invoice YZ-8624 for monthly services",
+        "body": "Reference Number: YZ-8624\nSubtotal: CAD 1,276.91\nTax: CAD 105.31\nDiscount: CAD 65.82\nShipping: CAD 12.50\nInvoice Total: CAD 1,316.40\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Goldcrest",
+        "primary_amount": 1316.4,
+        "primary_invoice": "YZ-8624",
+        "currency": "CAD"
+      }
+    },
+    {
+      "id": "invoice_generated_26",
+      "input": {
+        "sender": "billing@fairview.example",
+        "subject": "Invoice ZB-8625 for monthly services",
+        "body": "Invoice Number: ZB-8625\nSubtotal: AUD 1,322.84\nTax: AUD 109.10\nDiscount: AUD 68.19\nShipping: AUD 15.75\nAmount Due: AUD 1,363.75\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Fairview",
+        "primary_amount": 1363.75,
+        "primary_invoice": "ZB-8625",
+        "currency": "AUD"
+      }
+    },
+    {
+      "id": "invoice_generated_27",
+      "input": {
+        "sender": "billing@foxbridge.example",
+        "subject": "Invoice AC-8626 for monthly services",
+        "body": "Invoice #: AC-8626\nSubtotal: INR 1,368.76\nTax: INR 112.89\nDiscount: INR 70.55\nShipping: INR 19.00\nAmount Payable: INR 1,411.10\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Foxbridge",
+        "primary_amount": 1411.1,
+        "primary_invoice": "AC-8626",
+        "currency": "INR"
+      }
+    },
+    {
+      "id": "invoice_generated_28",
+      "input": {
+        "sender": "billing@cedarline.example",
+        "subject": "Invoice BD-8627 for monthly services",
+        "body": "Invoice No: BD-8627\nSubtotal: CHF 1,414.69\nTax: CHF 116.68\nDiscount: CHF 72.92\nShipping: CHF 22.25\nTotal: CHF 1,458.45\nPlease remit payment within 15 days."
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Cedarline",
+        "primary_amount": 1458.45,
+        "primary_invoice": "BD-8627",
+        "currency": "CHF"
+      }
+    },
+    {
+      "id": "payment_request_generated_01",
+      "input": {
+        "sender": "ap@freelance.dev",
+        "subject": "Payment request for contractor work",
+        "body": "Please pay $250.00 for March retainer by Friday. Logged 24 hours in week 9."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Freelance",
+        "primary_amount": 250.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "payment_request_generated_02",
+      "input": {
+        "sender": "ap@opsvendor.dev",
+        "subject": "Reimbursement request",
+        "body": "Requesting reimbursement of EUR 383.40 for client travel and meals. Work completed on 2026-02-21."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Opsvendor",
+        "primary_amount": 383.4,
+        "currency": "EUR"
+      }
+    },
+    {
+      "id": "payment_request_generated_03",
+      "input": {
+        "sender": "ap@fieldagent.dev",
+        "subject": "Contractor payment",
+        "body": "Contractor payment requested: GBP 516.80 for sprint deliverables."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Fieldagent",
+        "primary_amount": 516.8,
+        "currency": "GBP"
+      }
+    },
+    {
+      "id": "payment_request_generated_04",
+      "input": {
+        "sender": "ap@consultinghub.dev",
+        "subject": "Please pay vendor",
+        "body": "Please pay CAD 650.20 to complete the service order. Logged 24 hours in week 9."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Consultinghub",
+        "primary_amount": 650.2,
+        "currency": "CAD"
+      }
+    },
+    {
+      "id": "payment_request_generated_05",
+      "input": {
+        "sender": "ap@studioworks.dev",
+        "subject": "Payment request for contractor work",
+        "body": "Please pay $783.60 for March retainer by Friday."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Studioworks",
+        "primary_amount": 783.6,
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "payment_request_generated_06",
+      "input": {
+        "sender": "ap@rapidhelp.dev",
+        "subject": "Reimbursement request",
+        "body": "Requesting reimbursement of EUR 917.00 for client travel and meals. Work completed on 2026-02-21."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Rapidhelp",
+        "primary_amount": 917.0,
+        "currency": "EUR"
+      }
+    },
+    {
+      "id": "payment_request_generated_07",
+      "input": {
+        "sender": "ap@northops.dev",
+        "subject": "Contractor payment",
+        "body": "Contractor payment requested: GBP 1,050.40 for sprint deliverables. Logged 24 hours in week 9."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Northops",
+        "primary_amount": 1050.4,
+        "currency": "GBP"
+      }
+    },
+    {
+      "id": "payment_request_generated_08",
+      "input": {
+        "sender": "ap@eastpoint.dev",
+        "subject": "Please pay vendor",
+        "body": "Please pay CAD 1,183.80 to complete the service order."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Eastpoint",
+        "primary_amount": 1183.8,
+        "currency": "CAD"
+      }
+    },
+    {
+      "id": "payment_request_generated_09",
+      "input": {
+        "sender": "ap@taskforce.dev",
+        "subject": "Payment request for contractor work",
+        "body": "Please pay $1,317.20 for March retainer by Friday."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Taskforce",
+        "primary_amount": 1317.2,
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "payment_request_generated_10",
+      "input": {
+        "sender": "ap@craftteam.dev",
+        "subject": "Reimbursement request",
+        "body": "Requesting reimbursement of EUR 1,450.60 for client travel and meals. Logged 24 hours in week 9. Work completed on 2026-02-21."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Craftteam",
+        "primary_amount": 1450.6,
+        "currency": "EUR"
+      }
+    },
+    {
+      "id": "payment_request_generated_11",
+      "input": {
+        "sender": "ap@buildlane.dev",
+        "subject": "Contractor payment",
+        "body": "Contractor payment requested: GBP 1,584.00 for sprint deliverables."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Buildlane",
+        "primary_amount": 1584.0,
+        "currency": "GBP"
+      }
+    },
+    {
+      "id": "payment_request_generated_12",
+      "input": {
+        "sender": "ap@shoreline.dev",
+        "subject": "Please pay vendor",
+        "body": "Please pay CAD 1,717.40 to complete the service order."
+      },
+      "expected": {
+        "email_type": "payment_request",
+        "vendor": "Shoreline",
+        "primary_amount": 1717.4,
+        "currency": "CAD"
+      }
+    },
+    {
+      "id": "attachment_invoice_generated_01",
+      "input": {
+        "sender": "notify@paperline.io",
+        "subject": "New document available",
+        "body": "Your billing document is attached.",
+        "attachments": [
+          {
+            "name": "invoice-ATT-9300.txt",
+            "content_type": "text/plain",
+            "content_text": "Paperline Services LLC\nInvoice No: ATT-9300\nSubtotal: GBP 449.95\nTax: GBP 50.00\nBalance Due: GBP 499.95"
+          }
+        ]
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Paperline",
+        "primary_amount": 499.95,
+        "primary_invoice": "ATT-9300",
+        "currency": "GBP"
+      }
+    },
+    {
+      "id": "attachment_invoice_generated_02",
+      "input": {
+        "sender": "notify@netcloud.io",
+        "subject": "New document available",
+        "body": "Your billing document is attached.",
+        "attachments": [
+          {
+            "name": "invoice-ATT-9301.txt",
+            "content_type": "text/plain",
+            "content_text": "Netcloud Services LLC\nInvoice No: ATT-9301\nSubtotal: CAD 639.94\nTax: CAD 71.11\nBalance Due: CAD 711.05"
+          }
+        ]
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Netcloud",
+        "primary_amount": 711.05,
+        "primary_invoice": "ATT-9301",
+        "currency": "CAD"
+      }
+    },
+    {
+      "id": "attachment_invoice_generated_03",
+      "input": {
+        "sender": "notify@seabright.io",
+        "subject": "New document available",
+        "body": "Your billing document is attached.",
+        "attachments": [
+          {
+            "name": "invoice-ATT-9302.txt",
+            "content_type": "text/plain",
+            "content_text": "Seabright Services LLC\nInvoice No: ATT-9302\nSubtotal: AUD 829.93\nTax: AUD 92.22\nBalance Due: AUD 922.15"
+          }
+        ]
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Seabright",
+        "primary_amount": 922.15,
+        "primary_invoice": "ATT-9302",
+        "currency": "AUD"
+      }
+    },
+    {
+      "id": "attachment_invoice_generated_04",
+      "input": {
+        "sender": "notify@atlasworks.io",
+        "subject": "New document available",
+        "body": "Your billing document is attached.",
+        "attachments": [
+          {
+            "name": "invoice-ATT-9303.txt",
+            "content_type": "text/plain",
+            "content_text": "Atlasworks Services LLC\nInvoice No: ATT-9303\nSubtotal: INR 1,019.93\nTax: INR 113.32\nBalance Due: INR 1,133.25"
+          }
+        ]
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Atlasworks",
+        "primary_amount": 1133.25,
+        "primary_invoice": "ATT-9303",
+        "currency": "INR"
+      }
+    },
+    {
+      "id": "attachment_invoice_generated_05",
+      "input": {
+        "sender": "notify@meadowtech.io",
+        "subject": "New document available",
+        "body": "Your billing document is attached.",
+        "attachments": [
+          {
+            "name": "invoice-ATT-9304.txt",
+            "content_type": "text/plain",
+            "content_text": "Meadowtech Services LLC\nInvoice No: ATT-9304\nSubtotal: CHF 1,209.91\nTax: CHF 134.44\nBalance Due: CHF 1,344.35"
+          }
+        ]
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Meadowtech",
+        "primary_amount": 1344.35,
+        "primary_invoice": "ATT-9304",
+        "currency": "CHF"
+      }
+    },
+    {
+      "id": "attachment_invoice_generated_06",
+      "input": {
+        "sender": "notify@ridgepoint.io",
+        "subject": "New document available",
+        "body": "Your billing document is attached.",
+        "attachments": [
+          {
+            "name": "invoice-ATT-9305.txt",
+            "content_type": "text/plain",
+            "content_text": "Ridgepoint Services LLC\nInvoice No: ATT-9305\nSubtotal: $1,399.90\nTax: $155.55\nBalance Due: $1,555.45"
+          }
+        ]
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Ridgepoint",
+        "primary_amount": 1555.45,
+        "primary_invoice": "ATT-9305",
+        "currency": "USD"
+      }
+    },
+    {
+      "id": "attachment_invoice_generated_07",
+      "input": {
+        "sender": "notify@harborwest.io",
+        "subject": "New document available",
+        "body": "Your billing document is attached.",
+        "attachments": [
+          {
+            "name": "invoice-ATT-9306.txt",
+            "content_type": "text/plain",
+            "content_text": "Harborwest Services LLC\nInvoice No: ATT-9306\nSubtotal: EUR 1,589.89\nTax: EUR 176.66\nBalance Due: EUR 1,766.55"
+          }
+        ]
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Harborwest",
+        "primary_amount": 1766.55,
+        "primary_invoice": "ATT-9306",
+        "currency": "EUR"
+      }
+    },
+    {
+      "id": "attachment_invoice_generated_08",
+      "input": {
+        "sender": "notify@oakfield.io",
+        "subject": "New document available",
+        "body": "Your billing document is attached.",
+        "attachments": [
+          {
+            "name": "invoice-ATT-9307.txt",
+            "content_type": "text/plain",
+            "content_text": "Oakfield Services LLC\nInvoice No: ATT-9307\nSubtotal: GBP 1,779.89\nTax: GBP 197.76\nBalance Due: GBP 1,977.65"
+          }
+        ]
+      },
+      "expected": {
+        "email_type": "invoice",
+        "vendor": "Oakfield",
+        "primary_amount": 1977.65,
+        "primary_invoice": "ATT-9307",
+        "currency": "GBP"
+      }
+    }
+  ]
+}

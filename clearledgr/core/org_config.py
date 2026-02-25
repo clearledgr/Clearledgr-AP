@@ -12,6 +12,7 @@ A Nigerian fintech using Paystack needs different GL mappings than
 a European SaaS using Stripe.
 """
 
+import json
 import logging
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field, asdict
@@ -342,27 +343,86 @@ def create_default_config(
 
 # ==================== STORAGE ====================
 
-# In-memory storage (replace with database in production)
-_org_configs: Dict[str, OrganizationConfig] = {}
+def _load_config_from_org_settings(raw_org: Dict[str, Any]) -> Optional[OrganizationConfig]:
+    settings = raw_org.get("settings_json") or raw_org.get("settings") or {}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except Exception:
+            settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
+
+    payload = settings.get("org_config")
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return OrganizationConfig.from_dict(payload)
+    except Exception as exc:
+        logger.warning("Failed to parse org_config for %s: %s", raw_org.get("id"), exc)
+        return None
 
 
 def get_org_config(organization_id: str) -> Optional[OrganizationConfig]:
-    """Get organization configuration."""
-    return _org_configs.get(organization_id)
+    """Get organization configuration from persistent organization settings."""
+    from clearledgr.core.database import get_db
+
+    db = get_db()
+    org = db.get_organization(organization_id)
+    if not org:
+        return None
+    return _load_config_from_org_settings(org)
 
 
 def save_org_config(config: OrganizationConfig):
-    """Save organization configuration."""
+    """Persist organization configuration into organization settings."""
+    from clearledgr.core.database import get_db
+
+    db = get_db()
+    org = db.get_organization(config.organization_id)
+    if not org:
+        db.create_organization(
+            organization_id=config.organization_id,
+            name=config.organization_name or config.organization_id,
+            settings={},
+        )
+        org = db.get_organization(config.organization_id) or {}
+
+    settings = org.get("settings_json") or org.get("settings") or {}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except Exception:
+            settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
+
     config.updated_at = datetime.now(timezone.utc).isoformat()
-    _org_configs[config.organization_id] = config
-    logger.info(f"Saved config for organization {config.organization_id}")
+    settings["org_config"] = config.to_dict()
+    db.update_organization(config.organization_id, settings=settings)
+    logger.info("Saved config for organization %s", config.organization_id)
 
 
 def delete_org_config(organization_id: str):
-    """Delete organization configuration."""
-    if organization_id in _org_configs:
-        del _org_configs[organization_id]
-        logger.info(f"Deleted config for organization {organization_id}")
+    """Remove org config payload from organization settings."""
+    from clearledgr.core.database import get_db
+
+    db = get_db()
+    org = db.get_organization(organization_id)
+    if not org:
+        return
+    settings = org.get("settings_json") or org.get("settings") or {}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except Exception:
+            settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
+    if "org_config" in settings:
+        settings.pop("org_config", None)
+        db.update_organization(organization_id, settings=settings)
+        logger.info("Deleted config for organization %s", organization_id)
 
 
 def get_or_create_config(

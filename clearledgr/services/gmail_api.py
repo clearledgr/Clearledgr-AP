@@ -14,7 +14,7 @@ import json
 import os
 import logging
 from urllib.parse import urlencode
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import httpx
@@ -42,15 +42,29 @@ def get_google_oauth_config() -> Dict[str, str]:
     }
 
 
+def _is_placeholder(value: str) -> bool:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return True
+    placeholder_markers = (
+        "your-google-oauth-client-id",
+        "your-google-oauth-client-secret",
+        "your-project",
+        "example",
+        "changeme",
+    )
+    return any(marker in normalized for marker in placeholder_markers)
+
+
 def validate_google_oauth_config(require_secret: bool = False) -> Dict[str, str]:
     """Validate Gmail OAuth env config and return it."""
     config = get_google_oauth_config()
     missing: List[str] = []
-    if not config["client_id"]:
+    if _is_placeholder(config["client_id"]):
         missing.append("GOOGLE_CLIENT_ID")
-    if not config["redirect_uri"]:
+    if _is_placeholder(config["redirect_uri"]):
         missing.append("GOOGLE_REDIRECT_URI")
-    if require_secret and not config["client_secret"]:
+    if require_secret and _is_placeholder(config["client_secret"]):
         missing.append("GOOGLE_CLIENT_SECRET")
     if missing:
         raise ValueError(
@@ -61,38 +75,49 @@ def validate_google_oauth_config(require_secret: bool = False) -> Dict[str, str]
     return config
 
 
-def _load_or_create_key(path: str) -> str:
-    """Load encryption key from disk, or create and persist it if missing."""
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as fh:
-                key = fh.read().strip()
-                if key:
-                    return key
-        # Create and persist a new key (dev-friendly, still stable across restarts)
-        key = Fernet.generate_key().decode()
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(key)
-        return key
-    except Exception as exc:
-        logger.warning("Failed to persist token encryption key: %s", exc)
-        return Fernet.generate_key().decode()
+def _load_encryption_key() -> bytes:
+    """Load and derive a Fernet-compatible encryption key.
+
+    In production, TOKEN_ENCRYPTION_KEY must be set.  In dev mode a key
+    is generated once per process (tokens won't survive restarts unless
+    the env var is set, which is acceptable for local development).
+
+    The raw secret is hashed to produce a 32-byte key that Fernet accepts
+    regardless of the original secret's format.
+    """
+    import hashlib
+    from clearledgr.core.secrets import require_secret
+    raw = require_secret("TOKEN_ENCRYPTION_KEY")
+    derived = hashlib.sha256(raw.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(derived)
 
 
-ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY")
-if not ENCRYPTION_KEY:
-    ENCRYPTION_KEY = _load_or_create_key(TOKEN_KEY_FILE)
+ENCRYPTION_KEY = _load_encryption_key()
 
 # Gmail API endpoints
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
 OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
+GMAIL_PROFILE_URL = f"{GMAIL_API_BASE}/users/me/profile"
 
 # Scopes needed for autonomous processing
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",  # Read emails
     "https://www.googleapis.com/auth/gmail.modify",    # Manage labels
 ]
+
+
+def _utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.now(timezone.utc)
+
+
+def _to_utc(value: datetime) -> datetime:
+    """Normalize naive/aware datetime values to UTC-aware."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 @dataclass
@@ -105,7 +130,7 @@ class GmailToken:
     email: str
     
     def is_expired(self) -> bool:
-        return datetime.utcnow() >= self.expires_at - timedelta(minutes=5)
+        return _utc_now() >= _to_utc(self.expires_at) - timedelta(minutes=5)
 
 
 @dataclass
@@ -131,7 +156,7 @@ class GmailTokenStore:
     """
     
     def __init__(self):
-        self._fernet = Fernet(ENCRYPTION_KEY.encode() if isinstance(ENCRYPTION_KEY, str) else ENCRYPTION_KEY)
+        self._fernet = Fernet(ENCRYPTION_KEY)
         self._db = None
     
     @property
@@ -191,13 +216,13 @@ class GmailTokenStore:
             try:
                 expires_at = datetime.fromisoformat(row['expires_at'].replace('Z', '+00:00'))
             except (ValueError, AttributeError):
-                expires_at = datetime.utcnow() + timedelta(hours=1)
+                expires_at = _utc_now() + timedelta(hours=1)
         
         return GmailToken(
             user_id=row['user_id'],
             access_token=self._decrypt(row['access_token']),
             refresh_token=self._decrypt(row['refresh_token']) if row.get('refresh_token') else "",
-            expires_at=expires_at or datetime.utcnow() + timedelta(hours=1),
+            expires_at=_to_utc(expires_at) if expires_at else _utc_now() + timedelta(hours=1),
             email=row.get('email', '')
         )
 
@@ -259,7 +284,7 @@ class GmailAPIClient:
             user_id=self._token.user_id,
             access_token=data["access_token"],
             refresh_token=self._token.refresh_token,  # Keep existing refresh token
-            expires_at=datetime.utcnow() + timedelta(seconds=data["expires_in"]),
+            expires_at=_utc_now() + timedelta(seconds=data["expires_in"]),
             email=self._token.email,
         )
         token_store.store(self._token)
@@ -568,20 +593,34 @@ async def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None
         response.raise_for_status()
         data = response.json()
     
-    # Get user info to get email
+    # Resolve user identity from OAuth token. Prefer Gmail profile because
+    # Gmail scopes are guaranteed, while userinfo scopes may not be present.
+    user_info: Dict[str, Any] = {}
     async with httpx.AsyncClient() as client:
-        response = await client.get(
-            "https://www.googleapis.com/oauth2/v2/userinfo",
+        profile_response = await client.get(
+            GMAIL_PROFILE_URL,
             headers={"Authorization": f"Bearer {data['access_token']}"},
         )
-        response.raise_for_status()
-        user_info = response.json()
+        if profile_response.status_code < 400:
+            profile = profile_response.json()
+            user_info = {
+                "id": profile.get("emailAddress") or "gmail-user",
+                "email": profile.get("emailAddress", ""),
+            }
+        else:
+            # Fallback for environments where Gmail profile endpoint is blocked.
+            response = await client.get(
+                GOOGLE_USERINFO_URL,
+                headers={"Authorization": f"Bearer {data['access_token']}"},
+            )
+            response.raise_for_status()
+            user_info = response.json()
     
     return GmailToken(
         user_id=user_info["id"],
         access_token=data["access_token"],
         refresh_token=data.get("refresh_token", ""),
-        expires_at=datetime.utcnow() + timedelta(seconds=data["expires_in"]),
+        expires_at=_utc_now() + timedelta(seconds=data["expires_in"]),
         email=user_info["email"],
     )
 

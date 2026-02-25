@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,9 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from main import app
+from clearledgr.api import ops as ops_module
 from clearledgr.core import database as db_module
+from clearledgr.core.auth import TokenData
 
 
 @pytest.fixture()
@@ -27,7 +30,27 @@ def db(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def client(db):
-    return TestClient(app)
+    def _fake_user():
+        return TokenData(
+            user_id="ops-user-1",
+            email="ops@example.com",
+            organization_id="default",
+            role="owner",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+    app.dependency_overrides[ops_module.get_current_user] = _fake_user
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(ops_module.get_current_user, None)
+
+
+def test_ap_aggregation_ops_endpoint_requires_auth(db):
+    app.dependency_overrides.pop(ops_module.get_current_user, None)
+    client = TestClient(app)
+    response = client.get("/api/ops/ap-aggregation?organization_id=default")
+    assert response.status_code == 401
 
 
 def _create_item(db, item_id: str, vendor: str, amount: float) -> dict:

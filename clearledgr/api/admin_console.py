@@ -1,0 +1,969 @@
+"""Admin Center API: bootstrap, integrations, onboarding, policy, team, subscription, health."""
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import os
+import secrets
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, EmailStr, Field
+
+from clearledgr.core.auth import TokenData, get_current_user
+from clearledgr.core.database import get_db
+from clearledgr.core.launch_controls import (
+    get_ga_readiness,
+    get_rollback_controls,
+    set_ga_readiness,
+    set_rollback_controls,
+    summarize_ga_readiness,
+)
+from clearledgr.services.policy_compliance import AP_POLICY_NAME, get_policy_compliance
+from clearledgr.services.slack_api import SlackAPIClient, resolve_slack_runtime
+from clearledgr.services.subscription import PlanTier, get_subscription_service
+
+
+router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _now_iso() -> str:
+    return _utcnow().isoformat()
+
+
+def _secret_key() -> str:
+    from clearledgr.core.secrets import require_secret
+    return require_secret("CLEARLEDGR_SECRET_KEY")
+
+
+def _sign_state(payload: Dict[str, Any]) -> str:
+    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("utf-8")
+    signature = hmac.new(_secret_key().encode("utf-8"), body.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{body}.{signature}"
+
+
+def _unsign_state(state: str) -> Dict[str, Any]:
+    if "." not in state:
+        raise HTTPException(status_code=400, detail="invalid_state")
+    body, signature = state.split(".", 1)
+    expected = hmac.new(_secret_key().encode("utf-8"), body.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=400, detail="invalid_state_signature")
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(body.encode("utf-8")).decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="invalid_state_payload") from exc
+    if not isinstance(decoded, dict):
+        raise HTTPException(status_code=400, detail="invalid_state_payload")
+    issued_at = int(decoded.get("iat") or 0)
+    if issued_at and _utcnow().timestamp() - issued_at > 600:
+        raise HTTPException(status_code=400, detail="expired_state")
+    return decoded
+
+
+def _require_admin(user: TokenData) -> None:
+    if user.role not in {"admin", "owner"}:
+        raise HTTPException(status_code=403, detail="admin_role_required")
+
+
+def _resolve_org_id(user: TokenData, organization_id: Optional[str]) -> str:
+    resolved = (organization_id or user.organization_id or "default").strip()
+    if not resolved:
+        resolved = "default"
+    if user.role != "owner" and resolved != user.organization_id:
+        raise HTTPException(status_code=403, detail="org_access_denied")
+    return resolved
+
+
+def _load_org_settings(org: Dict[str, Any]) -> Dict[str, Any]:
+    settings = org.get("settings_json") or org.get("settings") or {}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except Exception:  # noqa: BLE001
+            settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
+    return settings
+
+
+def _save_org_settings(organization_id: str, settings: Dict[str, Any]) -> None:
+    get_db().update_organization(organization_id, settings=settings)
+
+
+def _gmail_status_for_org(organization_id: str, user: TokenData) -> Dict[str, Any]:
+    db = get_db()
+    token = db.get_oauth_token(user.user_id, "gmail")
+    if not token:
+        user_ids = {str(item.get("id")) for item in db.get_users(organization_id, include_inactive=False)}
+        for candidate in db.list_oauth_tokens(provider="gmail"):
+            if str(candidate.get("user_id")) in user_ids:
+                token = candidate
+                break
+    connected = bool(token)
+    ap_state = db.get_gmail_autopilot_state(user.user_id) or {}
+    watch_exp = ap_state.get("watch_expiration")
+    watch_active = False
+    if watch_exp:
+        try:
+            exp_ts = int(watch_exp) if str(watch_exp).isdigit() else 0
+            watch_active = exp_ts > int(_utcnow().timestamp() * 1000)
+        except (ValueError, TypeError):
+            pass
+    watch_status = "active" if watch_active else ("polling" if connected else "disconnected")
+    # Gap #17: surface expiry warning when watch expires within 24 hours
+    watch_expires_soon = False
+    if watch_active and watch_exp:
+        try:
+            exp_ts_ms = int(watch_exp) if str(watch_exp).isdigit() else 0
+            cutoff_ms = int((_utcnow() + timedelta(hours=24)).timestamp() * 1000)
+            watch_expires_soon = 0 < exp_ts_ms < cutoff_ms
+        except (ValueError, TypeError):
+            pass
+    return {
+        "name": "gmail",
+        "connected": connected,
+        "status": "connected" if connected else "disconnected",
+        "mode": "oauth",
+        "email": token.get("email") if token else None,
+        "last_sync_at": ap_state.get("last_scan_at"),
+        "watch_expiration": watch_exp,
+        "watch_status": watch_status,
+        "watch_expires_soon": watch_expires_soon,
+        "invoices_processed": int(ap_state.get("invoices_processed") or 0),
+    }
+
+
+def _slack_status_for_org(organization_id: str) -> Dict[str, Any]:
+    db = get_db()
+    org = db.get_organization(organization_id) or {}
+    integration = db.get_organization_integration(organization_id, "slack") or {}
+    install = db.get_slack_installation(organization_id) or {}
+    mode = (
+        integration.get("mode")
+        or org.get("integration_mode")
+        or os.getenv("SLACK_INTEGRATION_MODE", "shared")
+    )
+    settings = _load_org_settings(org)
+    slack_channels = settings.get("slack_channels") if isinstance(settings.get("slack_channels"), dict) else {}
+    return {
+        "name": "slack",
+        "connected": bool(integration.get("status") == "connected" or install),
+        "status": integration.get("status") or ("connected" if install else "disconnected"),
+        "mode": mode,
+        "team_id": install.get("team_id"),
+        "team_name": install.get("team_name"),
+        "approval_channel": slack_channels.get("invoices") if isinstance(slack_channels, dict) else None,
+        "last_sync_at": integration.get("last_sync_at"),
+    }
+
+
+def _erp_status_for_org(organization_id: str) -> Dict[str, Any]:
+    db = get_db()
+    conns = db.get_erp_connections(organization_id)
+    latest = conns[0] if conns else {}
+    return {
+        "name": "erp",
+        "connected": bool(conns),
+        "status": "connected" if conns else "disconnected",
+        "connections": [
+            {
+                "erp_type": item.get("erp_type"),
+                "base_url": item.get("base_url"),
+                "last_sync_at": item.get("last_sync_at"),
+                "is_active": bool(item.get("is_active", 1)),
+            }
+            for item in conns
+        ],
+        "last_sync_at": latest.get("last_sync_at"),
+    }
+
+
+def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
+    db = get_db()
+    org = db.ensure_organization(organization_id, organization_name=organization_id)
+    settings = _load_org_settings(org)
+    integrations = {
+        "gmail": _gmail_status_for_org(organization_id, user),
+        "slack": _slack_status_for_org(organization_id),
+        "erp": _erp_status_for_org(organization_id),
+    }
+    required_actions: List[Dict[str, str]] = []
+
+    if not integrations["gmail"]["connected"]:
+        required_actions.append({"code": "connect_gmail", "message": "Connect Gmail account"})
+    elif integrations["gmail"].get("watch_expires_soon"):
+        required_actions.append({
+            "code": "renew_gmail_watch",
+            "message": "Gmail push-notification watch expires within 24 hours — renew via /api/gmail/watch/renew",
+            "severity": "warning",
+        })
+    elif integrations["gmail"].get("watch_status") not in {"active", "polling"}:
+        required_actions.append({
+            "code": "reactivate_gmail_watch",
+            "message": "Gmail push-notification watch is not active — re-authenticate or renew the watch",
+            "severity": "warning",
+        })
+    if not integrations["slack"]["connected"]:
+        required_actions.append({"code": "connect_slack", "message": "Connect Slack workspace"})
+    if not integrations["erp"]["connected"]:
+        required_actions.append({"code": "connect_erp", "message": "Connect ERP system"})
+
+    slack_channels = settings.get("slack_channels") if isinstance(settings.get("slack_channels"), dict) else {}
+    if integrations["slack"]["connected"] and not (slack_channels or {}).get("invoices"):
+        required_actions.append({"code": "set_slack_channel", "message": "Set Slack approval channel"})
+
+    slack_oauth_ready = bool(
+        os.getenv("SLACK_CLIENT_ID", "").strip() and os.getenv("SLACK_CLIENT_SECRET", "").strip()
+    )
+    if not slack_oauth_ready:
+        required_actions.append(
+            {"code": "configure_slack_oauth_env", "message": "Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET"}
+        )
+
+    slack_redirect_uri = os.getenv(
+        "SLACK_REDIRECT_URI",
+        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/admin/integrations/slack/install/callback",
+    ).strip()
+
+    return {
+        "organization_id": organization_id,
+        "timestamp": _now_iso(),
+        "integrations": integrations,
+        "diagnostics": {
+            "slack_oauth_ready": slack_oauth_ready,
+            "slack_redirect_uri": slack_redirect_uri,
+            "admin_console_enabled": str(os.getenv("ADMIN_CONSOLE_ENABLED", "true")).strip().lower()
+            not in {"0", "false", "no", "off"},
+        },
+        "required_actions": required_actions,
+    }
+
+
+class SlackInstallStartRequest(BaseModel):
+    organization_id: Optional[str] = None
+    mode: str = Field(default="per_org", pattern="^(shared|per_org)$")
+    redirect_path: str = "/"
+
+
+class SlackChannelRequest(BaseModel):
+    organization_id: Optional[str] = None
+    channel_id: str = Field(..., min_length=2)
+
+
+class SlackTestRequest(BaseModel):
+    organization_id: Optional[str] = None
+    channel_id: Optional[str] = None
+    message: str = "Clearledgr admin test: Slack approval channel is connected."
+
+
+class OnboardingStepRequest(BaseModel):
+    organization_id: Optional[str] = None
+    step: int = Field(..., ge=1, le=5)
+
+
+class APPolicyRequest(BaseModel):
+    organization_id: Optional[str] = None
+    updated_by: Optional[str] = None
+    enabled: bool = True
+    config: Dict[str, Any] = {}
+
+
+class OrgSettingsPatchRequest(BaseModel):
+    organization_id: Optional[str] = None
+    patch: Dict[str, Any]
+
+
+class TeamInviteCreateRequest(BaseModel):
+    organization_id: Optional[str] = None
+    email: EmailStr
+    role: str = Field(default="member", pattern="^(admin|member|viewer|user)$")
+    expires_in_days: int = Field(default=7, ge=1, le=30)
+
+
+class ERPConnectStartRequest(BaseModel):
+    organization_id: Optional[str] = None
+    erp_type: str = Field(..., pattern="^(quickbooks|xero|netsuite)$")
+
+
+class SubscriptionPlanPatchRequest(BaseModel):
+    organization_id: Optional[str] = None
+    plan: str = Field(..., pattern="^(free|trial|pro|enterprise)$")
+
+
+class RollbackControlsRequest(BaseModel):
+    organization_id: Optional[str] = None
+    updated_by: Optional[str] = None
+    controls: Dict[str, Any] = {}
+
+
+class GAReadinessRequest(BaseModel):
+    organization_id: Optional[str] = None
+    updated_by: Optional[str] = None
+    evidence: Dict[str, Any] = {}
+
+
+@router.get("/bootstrap")
+def get_admin_bootstrap(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    org = db.ensure_organization(org_id, organization_name=org_id)
+    org_settings = _load_org_settings(org)
+    subscription = get_subscription_service().get_subscription(org_id).to_dict()
+    health = _build_health(org_id, user)
+
+    current_user = db.get_user(user.user_id) or {}
+    integrations = [
+        _gmail_status_for_org(org_id, user),
+        _slack_status_for_org(org_id),
+        _erp_status_for_org(org_id),
+        {"name": "outlook", "connected": False, "status": "coming_soon", "mode": "oauth"},
+    ]
+
+    onboarding = {
+        "completed": bool(subscription.get("onboarding_completed")),
+        "step": int(subscription.get("onboarding_step") or 0),
+        "steps": [
+            {"id": 1, "name": "Connect Gmail"},
+            {"id": 2, "name": "Connect Slack"},
+            {"id": 3, "name": "Connect ERP"},
+            {"id": 4, "name": "Set approval channel"},
+            {"id": 5, "name": "Review AP policy defaults"},
+        ],
+    }
+
+    return {
+        "organization": {
+            "id": org.get("id"),
+            "name": org.get("name"),
+            "domain": org.get("domain"),
+            "integration_mode": org.get("integration_mode") or "shared",
+            "settings": org_settings,
+        },
+        "current_user": {
+            "id": current_user.get("id") or user.user_id,
+            "email": current_user.get("email") or user.email,
+            "name": current_user.get("name") or user.email.split("@")[0],
+            "role": current_user.get("role") or user.role,
+            "organization_id": org_id,
+        },
+        "integrations": integrations,
+        "onboarding": onboarding,
+        "subscription": subscription,
+        "health": health,
+        "required_actions": health.get("required_actions", []),
+        "dashboard": _safe_dashboard_stats(org_id),
+    }
+
+
+def _safe_dashboard_stats(org_id: str) -> Dict[str, Any]:
+    """Load dashboard stats for bootstrap. Never fails — returns empty on error."""
+    try:
+        db = get_db()
+        pipeline = db.get_invoice_pipeline(org_id) if hasattr(db, "get_invoice_pipeline") else {}
+        from datetime import date as _date
+        today = _date.today().isoformat()
+        total = sum(len(v) for v in pipeline.values()) if pipeline else 0
+        pending = len(pipeline.get("needs_approval", []) + pipeline.get("pending_approval", []))  if pipeline else 0
+        posted = sum(1 for inv in pipeline.get("posted_to_erp", []) + pipeline.get("closed", []) if isinstance(inv, dict) and str(inv.get("created_at", "")).startswith(today)) if pipeline else 0
+        rejected = sum(1 for inv in pipeline.get("rejected", []) if isinstance(inv, dict) and str(inv.get("created_at", "")).startswith(today)) if pipeline else 0
+        return {
+            "total_invoices": total,
+            "pending_approval": pending,
+            "posted_today": posted,
+            "rejected_today": rejected,
+            "auto_approved_rate": 0,
+            "avg_processing_time_hours": 0,
+            "total_amount_pending": sum(float(inv.get("amount") or 0) for inv in pipeline.get("needs_approval", []) + pipeline.get("pending_approval", []) if isinstance(inv, dict)) if pipeline else 0,
+            "total_amount_posted_today": 0,
+        }
+    except Exception:
+        return {}
+
+
+@router.get("/integrations")
+def get_admin_integrations(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    return {
+        "organization_id": org_id,
+        "integrations": [
+            _gmail_status_for_org(org_id, user),
+            _slack_status_for_org(org_id),
+            _erp_status_for_org(org_id),
+            {"name": "outlook", "connected": False, "status": "coming_soon", "mode": "oauth"},
+        ],
+    }
+
+
+@router.post("/integrations/slack/install/start")
+def start_slack_install(
+    request: SlackInstallStartRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    client_id = os.getenv("SLACK_CLIENT_ID", "").strip()
+    client_secret = os.getenv("SLACK_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=503, detail="slack_oauth_not_configured")
+
+    redirect_uri = os.getenv(
+        "SLACK_REDIRECT_URI",
+        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/admin/integrations/slack/install/callback",
+    ).strip()
+    scopes = os.getenv(
+        "SLACK_OAUTH_SCOPES",
+        "chat:write,commands,channels:read,groups:read,users:read",
+    ).strip()
+    state = _sign_state(
+        {
+            "organization_id": org_id,
+            "user_id": user.user_id,
+            "mode": request.mode,
+            "redirect_path": request.redirect_path,
+            "nonce": secrets.token_urlsafe(8),
+            "iat": int(_utcnow().timestamp()),
+        }
+    )
+    params = {
+        "client_id": client_id,
+        "scope": scopes,
+        "redirect_uri": redirect_uri,
+        "state": state,
+        "response_type": "code",
+    }
+    auth_url = f"https://slack.com/oauth/v2/authorize?{urlencode(params)}"
+    return {"auth_url": auth_url, "state": state, "mode": request.mode}
+
+
+@router.get("/integrations/slack/install/callback")
+async def slack_install_callback(
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+):
+    if error:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(f"<html><body><h2>Slack connection failed</h2><p>{error}</p><p>Close this tab and try again.</p></body></html>", status_code=400)
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="missing_code_or_state")
+
+    state_payload = _unsign_state(state)
+    org_id = str(state_payload.get("organization_id") or "default")
+    mode = str(state_payload.get("mode") or "per_org")
+
+    client_id = os.getenv("SLACK_CLIENT_ID", "").strip()
+    client_secret = os.getenv("SLACK_CLIENT_SECRET", "").strip()
+    redirect_uri = os.getenv(
+        "SLACK_REDIRECT_URI",
+        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/admin/integrations/slack/install/callback",
+    ).strip()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=503, detail="slack_oauth_not_configured")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            "https://slack.com/api/oauth.v2.access",
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    payload = response.json() if response.content else {}
+    if response.status_code >= 400 or not payload.get("ok"):
+        raise HTTPException(status_code=400, detail={"message": "slack_install_failed", "payload": payload})
+
+    team = payload.get("team") or {}
+    authed_user = payload.get("authed_user") or {}
+    access_token = payload.get("access_token")
+    scope_csv = payload.get("scope") or ""
+    team_id = str(team.get("id") or "")
+    if not team_id or not access_token:
+        raise HTTPException(status_code=400, detail="invalid_slack_install_payload")
+
+    db = get_db()
+    db.ensure_organization(org_id, organization_name=org_id)
+    db.upsert_slack_installation(
+        organization_id=org_id,
+        team_id=team_id,
+        team_name=team.get("name"),
+        bot_user_id=authed_user.get("id"),
+        bot_token=access_token,
+        scope_csv=scope_csv,
+        mode=mode,
+        is_active=True,
+        metadata={"install_payload": payload},
+    )
+    db.update_organization(org_id, integration_mode=mode)
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse("""<!DOCTYPE html><html><head><title>Connected</title>
+<style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f8f9fa}
+.card{text-align:center;padding:2rem;border-radius:8px;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+h1{color:#22c55e;margin:0 0 .5rem}</style></head>
+<body><div class="card"><h1>Slack Connected</h1>
+<p>You can close this tab. Use <code>/clearledgr setup</code> in Slack to continue.</p></div></body></html>""")
+
+
+@router.post("/integrations/slack/channel")
+def set_slack_channel(
+    request: SlackChannelRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    db = get_db()
+    org = db.ensure_organization(org_id, organization_name=org_id)
+    settings = _load_org_settings(org)
+    channels = settings.get("slack_channels") if isinstance(settings.get("slack_channels"), dict) else {}
+    channels["invoices"] = request.channel_id.strip()
+    settings["slack_channels"] = channels
+    _save_org_settings(org_id, settings)
+    db.upsert_organization_integration(
+        organization_id=org_id,
+        integration_type="slack",
+        status="connected",
+        mode=(db.get_organization(org_id) or {}).get("integration_mode") or "shared",
+        metadata={"approval_channel": request.channel_id.strip()},
+        last_sync_at=_now_iso(),
+    )
+    return {"success": True, "organization_id": org_id, "channel_id": request.channel_id.strip()}
+
+
+@router.post("/integrations/slack/test")
+async def test_slack_channel(
+    request: SlackTestRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    runtime = resolve_slack_runtime(org_id)
+    token = runtime.get("bot_token")
+    if not token:
+        raise HTTPException(status_code=400, detail="slack_not_connected")
+    channel = request.channel_id or runtime.get("approval_channel") or "#finance-approvals"
+    client = SlackAPIClient(bot_token=token)
+    sent = await client.send_message(channel=channel, text=request.message)
+    return {
+        "success": True,
+        "organization_id": org_id,
+        "channel": channel,
+        "mode": runtime.get("mode"),
+        "message_ts": sent.ts,
+    }
+
+
+@router.get("/integrations/slack/manifest")
+def slack_manifest_template(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    redirect_uri = os.getenv(
+        "SLACK_REDIRECT_URI",
+        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/admin/integrations/slack/install/callback",
+    ).strip()
+    app_base = os.getenv("API_BASE_URL", "http://127.0.0.1:8010").rstrip("/")
+    return {
+        "organization_id": org_id,
+        "manifest": {
+            "display_information": {"name": "Clearledgr AP"},
+            "features": {"bot_user": {"display_name": "Clearledgr AP"}},
+            "oauth_config": {
+                "redirect_urls": [redirect_uri],
+                "scopes": {
+                    "bot": os.getenv(
+                        "SLACK_OAUTH_SCOPES",
+                        "chat:write,commands,channels:read,groups:read,users:read",
+                    ).split(",")
+                },
+            },
+            "settings": {
+                "event_subscriptions": {"request_url": f"{app_base}/slack/events"},
+                "interactivity": {"is_enabled": True, "request_url": f"{app_base}/slack/interactions"},
+                "slash_commands": [
+                    {"command": "/clearledgr", "url": f"{app_base}/slack/commands", "description": "Clearledgr AP"}
+                ],
+            },
+        },
+    }
+
+
+@router.post("/integrations/erp/connect/start")
+def erp_connect_start(
+    request: ERPConnectStartRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    """Start ERP connection flow. Returns auth_url for OAuth ERPs or form spec for credential-based ERPs."""
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    erp_type = request.erp_type
+
+    if erp_type == "netsuite":
+        return {
+            "erp_type": "netsuite",
+            "method": "form",
+            "fields": [
+                {"name": "account_id", "label": "Account ID", "type": "text", "placeholder": "1234567 or 1234567_SB1", "required": True},
+                {"name": "consumer_key", "label": "Consumer Key", "type": "text", "required": True},
+                {"name": "consumer_secret", "label": "Consumer Secret", "type": "password", "required": True},
+                {"name": "token_id", "label": "Token ID", "type": "text", "required": True},
+                {"name": "token_secret", "label": "Token Secret", "type": "password", "required": True},
+            ],
+            "submit_url": "/erp/netsuite/connect",
+            "help_text": "In NetSuite: Setup > Company > Enable Features > SuiteCloud > Token-Based Authentication. Then create an Integration record and generate a Token.",
+        }
+
+    # OAuth-based ERPs (QuickBooks, Xero)
+    from clearledgr.api.erp_connections import (
+        _oauth_states,
+        QUICKBOOKS_CLIENT_ID, QUICKBOOKS_REDIRECT_URI, QUICKBOOKS_AUTH_URL,
+        XERO_CLIENT_ID, XERO_REDIRECT_URI, XERO_AUTH_URL,
+    )
+    from urllib.parse import urlencode as _urlencode
+
+    state = secrets.token_urlsafe(32)
+    _oauth_states[state] = {
+        "organization_id": org_id,
+        "return_url": "success_page",
+        "created_at": _now_iso(),
+    }
+
+    if erp_type == "quickbooks":
+        if not QUICKBOOKS_CLIENT_ID:
+            raise HTTPException(status_code=500, detail="QuickBooks not configured on this server")
+        params = {
+            "client_id": QUICKBOOKS_CLIENT_ID,
+            "redirect_uri": QUICKBOOKS_REDIRECT_URI,
+            "response_type": "code",
+            "scope": "com.intuit.quickbooks.accounting",
+            "state": state,
+        }
+        return {"erp_type": "quickbooks", "method": "oauth", "auth_url": f"{QUICKBOOKS_AUTH_URL}?{_urlencode(params)}"}
+
+    if erp_type == "xero":
+        if not XERO_CLIENT_ID:
+            raise HTTPException(status_code=500, detail="Xero not configured on this server")
+        params = {
+            "client_id": XERO_CLIENT_ID,
+            "redirect_uri": XERO_REDIRECT_URI,
+            "response_type": "code",
+            "scope": "openid profile email accounting.transactions accounting.contacts offline_access",
+            "state": state,
+        }
+        return {"erp_type": "xero", "method": "oauth", "auth_url": f"{XERO_AUTH_URL}?{_urlencode(params)}"}
+
+
+@router.get("/onboarding/status")
+def get_onboarding_status(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    sub = get_subscription_service().get_subscription(org_id)
+    return {
+        "organization_id": org_id,
+        "onboarding_completed": sub.onboarding_completed,
+        "onboarding_step": sub.onboarding_step,
+    }
+
+
+@router.post("/onboarding/step")
+def complete_onboarding_step(
+    request: OnboardingStepRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    sub = get_subscription_service().complete_onboarding_step(org_id, request.step)
+    return {
+        "success": True,
+        "organization_id": org_id,
+        "onboarding_completed": sub.onboarding_completed,
+        "onboarding_step": sub.onboarding_step,
+    }
+
+
+@router.get("/policies/ap")
+def get_ap_policy(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    policy_service = get_policy_compliance(organization_id=org_id, policy_name=AP_POLICY_NAME)
+    db = get_db()
+    policy = db.get_ap_policy(org_id, AP_POLICY_NAME)
+    return {
+        "organization_id": org_id,
+        "policy_name": AP_POLICY_NAME,
+        "policy": policy,
+        "effective_policies": policy_service.describe_effective_policies(),
+    }
+
+
+@router.put("/policies/ap")
+def put_ap_policy(
+    request: APPolicyRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    db = get_db()
+    policy_service = get_policy_compliance(organization_id=org_id, policy_name=AP_POLICY_NAME)
+    errors = policy_service.validate_policy_config(request.config or {})
+    if errors:
+        raise HTTPException(status_code=422, detail={"message": "invalid_policy_document", "errors": errors})
+    updated = db.upsert_ap_policy_version(
+        organization_id=org_id,
+        policy_name=AP_POLICY_NAME,
+        config=request.config or {},
+        updated_by=request.updated_by or user.user_id,
+        enabled=bool(request.enabled),
+    )
+    return {"organization_id": org_id, "policy_name": AP_POLICY_NAME, "policy": updated}
+
+
+@router.get("/org/settings")
+def get_org_settings(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    org = db.ensure_organization(org_id, organization_name=org_id)
+    return {"organization_id": org_id, "settings": _load_org_settings(org)}
+
+
+@router.patch("/org/settings")
+def patch_org_settings(
+    request: OrgSettingsPatchRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    db = get_db()
+    org = db.ensure_organization(org_id, organization_name=org_id)
+    settings = _load_org_settings(org)
+    patch = request.patch or {}
+
+    org_updates: Dict[str, Any] = {}
+    if "organization_name" in patch:
+        org_updates["name"] = patch.get("organization_name")
+    if "name" in patch:
+        org_updates["name"] = patch.get("name")
+    if "domain" in patch:
+        org_updates["domain"] = patch.get("domain")
+    if "integration_mode" in patch:
+        mode = str(patch.get("integration_mode") or "").strip().lower()
+        if mode not in {"shared", "per_org"}:
+            raise HTTPException(status_code=422, detail="invalid_integration_mode")
+        org_updates["integration_mode"] = mode
+
+    if org_updates:
+        db.update_organization(org_id, **org_updates)
+
+    for key, value in patch.items():
+        if key in {"organization_name", "name", "domain", "integration_mode"}:
+            continue
+        settings[key] = value
+    _save_org_settings(org_id, settings)
+    updated_org = db.get_organization(org_id) or {}
+    return {
+        "success": True,
+        "organization_id": org_id,
+        "organization": {
+            "id": updated_org.get("id"),
+            "name": updated_org.get("name"),
+            "domain": updated_org.get("domain"),
+            "integration_mode": updated_org.get("integration_mode") or "shared",
+        },
+        "settings": settings,
+    }
+
+
+@router.get("/rollback-controls")
+def get_admin_rollback_controls(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    controls = get_rollback_controls(org_id)
+    return {"organization_id": org_id, "rollback_controls": controls}
+
+
+@router.put("/rollback-controls")
+def put_admin_rollback_controls(
+    request: RollbackControlsRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    controls = set_rollback_controls(
+        org_id,
+        request.controls or {},
+        updated_by=request.updated_by or user.user_id,
+    )
+    return {"success": True, "organization_id": org_id, "rollback_controls": controls}
+
+
+@router.get("/ga-readiness")
+def get_admin_ga_readiness(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    evidence = get_ga_readiness(org_id)
+    rollback_controls = get_rollback_controls(org_id)
+    return {
+        "organization_id": org_id,
+        "ga_readiness": evidence,
+        "rollback_controls": rollback_controls,
+        "summary": summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
+    }
+
+
+@router.put("/ga-readiness")
+def put_admin_ga_readiness(
+    request: GAReadinessRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    evidence = set_ga_readiness(
+        org_id,
+        request.evidence or {},
+        updated_by=request.updated_by or user.user_id,
+    )
+    rollback_controls = get_rollback_controls(org_id)
+    return {
+        "success": True,
+        "organization_id": org_id,
+        "ga_readiness": evidence,
+        "rollback_controls": rollback_controls,
+        "summary": summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
+    }
+
+
+@router.get("/team/invites")
+def list_team_invites(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    invites = get_db().list_team_invites(org_id)
+    base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")
+    for invite in invites:
+        invite["invite_link"] = f"{base}/api/auth/google/start?invite_token={invite.get('token')}"
+    return {"organization_id": org_id, "invites": invites}
+
+
+@router.post("/team/invites")
+def create_team_invite(
+    request: TeamInviteCreateRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    expires_at = (_utcnow() + timedelta(days=request.expires_in_days)).isoformat()
+    db = get_db()
+    invite = db.create_team_invite(
+        organization_id=org_id,
+        email=request.email,
+        role=request.role,
+        created_by=user.user_id,
+        expires_at=expires_at,
+    )
+    base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")
+    invite_link = f"{base}/api/auth/google/start?invite_token={invite.get('token')}"
+    return {"success": True, "organization_id": org_id, "invite": invite, "invite_link": invite_link}
+
+
+@router.post("/team/invites/{invite_id}/revoke")
+def revoke_team_invite(
+    invite_id: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    invite = db.get_team_invite(invite_id)
+    if not invite or str(invite.get("organization_id")) != org_id:
+        raise HTTPException(status_code=404, detail="invite_not_found")
+    ok = db.revoke_team_invite(invite_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail="invite_not_revoked")
+    return {"success": True, "invite_id": invite_id}
+
+
+@router.get("/subscription")
+def get_admin_subscription(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    return {"organization_id": org_id, "subscription": get_subscription_service().get_subscription(org_id).to_dict()}
+
+
+@router.patch("/subscription/plan")
+def patch_subscription_plan(
+    request: SubscriptionPlanPatchRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    service = get_subscription_service()
+    plan = request.plan.lower().strip()
+    if plan == PlanTier.FREE.value:
+        sub = service.downgrade_to_free(org_id)
+    elif plan == PlanTier.TRIAL.value:
+        sub = service.start_trial(org_id)
+    elif plan == PlanTier.PRO.value:
+        sub = service.upgrade_to_pro(org_id)
+    elif plan == PlanTier.ENTERPRISE.value:
+        # Enterprise plan controls now; billing integration remains deferred.
+        record = get_db().upsert_subscription_record(
+            org_id,
+            {
+                "plan": PlanTier.ENTERPRISE.value,
+                "status": "active",
+            },
+        )
+        sub = service._subscription_from_row(record, org_id)
+    else:
+        raise HTTPException(status_code=400, detail="invalid_plan")
+    return {"success": True, "organization_id": org_id, "subscription": sub.to_dict()}
+
+
+@router.get("/health")
+def get_admin_health(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    health = _build_health(org_id, user)
+    evidence = get_ga_readiness(org_id)
+    rollback_controls = get_rollback_controls(org_id)
+    health["launch_controls"] = {
+        "rollback_controls": rollback_controls,
+        "ga_readiness_summary": summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
+    }
+    return health
