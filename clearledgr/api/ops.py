@@ -382,6 +382,60 @@ async def get_extraction_quality(
         (correction_count / total_items * 100) if total_items > 0 else 0.0, 2
     )
 
+    # --- Per-field confidence breakdown from ap_items.field_confidences column ---
+    # Read field_confidences from items created in the window and compute per-field
+    # average confidence + high/low distribution.
+    CONFIDENCE_HIGH_THRESHOLD = 0.95
+
+    field_confidence_buckets: Dict[str, List[float]] = {}
+    try:
+        sql_fc = db._prepare_sql(
+            "SELECT field_confidences FROM ap_items "
+            "WHERE organization_id = ? AND created_at >= ? "
+            "AND field_confidences IS NOT NULL LIMIT 2000"
+        )
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql_fc, (organization_id, cutoff))
+            for row in cur.fetchall():
+                raw = (dict(row) if hasattr(row, "keys") else {"field_confidences": row[0]}).get("field_confidences")
+                if not raw:
+                    continue
+                try:
+                    fc_map = _json.loads(raw) if isinstance(raw, str) else raw
+                    if not isinstance(fc_map, dict):
+                        continue
+                    for field_name, conf_val in fc_map.items():
+                        try:
+                            conf_float = float(conf_val)
+                        except (TypeError, ValueError):
+                            continue
+                        if field_name not in field_confidence_buckets:
+                            field_confidence_buckets[field_name] = []
+                        field_confidence_buckets[field_name].append(conf_float)
+                except Exception:
+                    pass
+    except Exception:
+        field_confidence_buckets = {}
+
+    by_field: Dict[str, Any] = {}
+    for field_name, scores in field_confidence_buckets.items():
+        if not scores:
+            continue
+        avg_conf = sum(scores) / len(scores)
+        high_count = sum(1 for s in scores if s >= CONFIDENCE_HIGH_THRESHOLD)
+        low_count = len(scores) - high_count
+        corrections_for_field = corrected_fields.get(field_name, 0)
+        by_field[field_name] = {
+            "sample_count": len(scores),
+            "avg_confidence": round(avg_conf, 4),
+            "avg_confidence_pct": round(avg_conf * 100, 1),
+            "high_confidence_count": high_count,
+            "low_confidence_count": low_count,
+            "high_confidence_pct": round(high_count / len(scores) * 100, 1),
+            "correction_count": corrections_for_field,
+        }
+
     return {
         "organization_id": organization_id,
         "window_hours": window_hours,
@@ -389,8 +443,469 @@ async def get_extraction_quality(
         "correction_count": correction_count,
         "correction_rate_pct": correction_rate_pct,
         "corrected_fields": corrected_fields,
+        "by_field": by_field,
+        "confidence_threshold": CONFIDENCE_HIGH_THRESHOLD,
         "note": (
             "correction_rate_pct = corrections / total_items_in_window * 100. "
-            "A rate above 10% warrants extraction model review."
+            "A rate above 10% warrants extraction model review. "
+            "by_field requires field_confidences column populated on ap_items."
         ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Gap #9 — Post-GA monitoring thresholds (PLAN.md §8.5)
+# ---------------------------------------------------------------------------
+
+def _threshold_pct(env_var: str, default: float) -> float:
+    try:
+        return max(0.0, float(os.getenv(env_var, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _threshold_int(env_var: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(env_var, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _evaluate_monitoring_thresholds(
+    organization_id: str,
+    window_hours: int,
+    db,
+) -> Dict[str, Any]:
+    """Core threshold evaluation logic.
+
+    Computes four rate metrics for the given window and compares them against
+    env-var-configurable thresholds.  Returns a structured dict with ``alerts``
+    (list of threshold breaches) and raw ``metrics``.
+
+    Thresholds (PLAN.md §8.5):
+    - ``AP_ALERT_POST_FAILURE_RATE_PCT``  (default 20 %) — per-tenant ERP disable trigger
+    - ``AP_ALERT_EXCEPTION_RATE_PCT``     (default 15 %) — connector-specific degradation
+    - ``AP_ALERT_CORRECTION_RATE_PCT``    (default 10 %) — extraction model review trigger
+    - ``AP_ALERT_DUPLICATE_POST_COUNT``   (default 1)    — duplicate-posting circuit breaker
+    """
+    from datetime import datetime, timedelta, timezone
+    import json as _json
+
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(hours=window_hours)).isoformat()
+
+    # ── 1. ERP post failure rate ────────────────────────────────────────────
+    attempted = 0
+    failed = 0
+    _post_sql = db._prepare_sql(
+        "SELECT event_type FROM audit_events "
+        "WHERE organization_id = ? "
+        "AND event_type IN ('erp_post_attempted', 'erp_post_failed') "
+        "AND ts >= ?"
+    )
+    try:
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(_post_sql, (organization_id, cutoff))
+            for row in cur.fetchall():
+                et = (dict(row) if not isinstance(row, dict) else row).get("event_type", "")
+                if et == "erp_post_attempted":
+                    attempted += 1
+                elif et == "erp_post_failed":
+                    failed += 1
+    except Exception:
+        pass
+    post_failure_rate_pct = round((failed / attempted * 100) if attempted else 0.0, 2)
+
+    # ── 2. Exception rate (items in exception/failed states / total active) ──
+    exception_count = 0
+    total_active = 0
+    _state_sql = db._prepare_sql(
+        "SELECT state FROM ap_items WHERE organization_id = ? AND created_at >= ?"
+    )
+    _exception_states = {"exception", "failed_post", "needs_info"}
+    _active_states = {
+        "received", "validated", "needs_approval", "approved",
+        "ready_to_post", "failed_post", "needs_info", "exception",
+    }
+    try:
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(_state_sql, (organization_id, cutoff))
+            for row in cur.fetchall():
+                state = (dict(row) if not isinstance(row, dict) else row).get("state", "")
+                if state in _active_states:
+                    total_active += 1
+                if state in _exception_states:
+                    exception_count += 1
+    except Exception:
+        pass
+    exception_rate_pct = round((exception_count / total_active * 100) if total_active else 0.0, 2)
+
+    # ── 3. Extraction correction rate ───────────────────────────────────────
+    correction_count = 0
+    total_items = 0
+    _corr_sql = db._prepare_sql(
+        "SELECT COUNT(*) AS cnt FROM audit_events "
+        "WHERE organization_id = ? "
+        "AND event_type IN ('correction_applied','field_correction','extraction_correction') "
+        "AND ts >= ?"
+    )
+    _total_sql = db._prepare_sql(
+        "SELECT COUNT(*) AS cnt FROM ap_items WHERE organization_id = ? AND created_at >= ?"
+    )
+    try:
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(_corr_sql, (organization_id, cutoff))
+            row = cur.fetchone()
+            correction_count = int((dict(row) if row else {}).get("cnt") or 0)
+            cur.execute(_total_sql, (organization_id, cutoff))
+            row = cur.fetchone()
+            total_items = int((dict(row) if row else {}).get("cnt") or 0)
+    except Exception:
+        pass
+    correction_rate_pct = round((correction_count / total_items * 100) if total_items else 0.0, 2)
+
+    # ── 4. Duplicate posting count ───────────────────────────────────────────
+    duplicate_post_count = 0
+    _dup_sql = db._prepare_sql(
+        "SELECT COUNT(*) AS cnt FROM audit_events "
+        "WHERE organization_id = ? "
+        "AND event_type IN ('duplicate_post_detected', 'idempotency_key_collision') "
+        "AND ts >= ?"
+    )
+    try:
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(_dup_sql, (organization_id, cutoff))
+            row = cur.fetchone()
+            duplicate_post_count = int((dict(row) if row else {}).get("cnt") or 0)
+    except Exception:
+        pass
+
+    # ── Thresholds ──────────────────────────────────────────────────────────
+    thresh_post_failure_pct = _threshold_pct("AP_ALERT_POST_FAILURE_RATE_PCT", 20.0)
+    thresh_exception_pct = _threshold_pct("AP_ALERT_EXCEPTION_RATE_PCT", 15.0)
+    thresh_correction_pct = _threshold_pct("AP_ALERT_CORRECTION_RATE_PCT", 10.0)
+    thresh_dup_count = _threshold_int("AP_ALERT_DUPLICATE_POST_COUNT", 1)
+
+    # ── Build alerts ─────────────────────────────────────────────────────────
+    alerts: List[Dict[str, Any]] = []
+
+    if post_failure_rate_pct >= thresh_post_failure_pct and attempted > 0:
+        alerts.append({
+            "type": "post_failure_rate",
+            "severity": "critical",
+            "current_value": post_failure_rate_pct,
+            "threshold": thresh_post_failure_pct,
+            "message": (
+                f"ERP post failure rate {post_failure_rate_pct}% exceeds "
+                f"{thresh_post_failure_pct}% threshold — consider disabling "
+                f"erp_posting for {organization_id} until root cause is resolved."
+            ),
+            "action": "disable_erp_posting",
+        })
+
+    if exception_rate_pct >= thresh_exception_pct and total_active > 0:
+        alerts.append({
+            "type": "exception_rate",
+            "severity": "warning",
+            "current_value": exception_rate_pct,
+            "threshold": thresh_exception_pct,
+            "message": (
+                f"Exception/failed rate {exception_rate_pct}% exceeds "
+                f"{thresh_exception_pct}% threshold — investigate connector "
+                f"stability for {organization_id}."
+            ),
+            "action": "investigate_connector",
+        })
+
+    if correction_rate_pct >= thresh_correction_pct and total_items > 0:
+        alerts.append({
+            "type": "correction_rate",
+            "severity": "warning",
+            "current_value": correction_rate_pct,
+            "threshold": thresh_correction_pct,
+            "message": (
+                f"Extraction correction rate {correction_rate_pct}% exceeds "
+                f"{thresh_correction_pct}% threshold — extraction model review "
+                f"recommended for {organization_id}."
+            ),
+            "action": "review_extraction_model",
+        })
+
+    if duplicate_post_count >= thresh_dup_count:
+        alerts.append({
+            "type": "duplicate_post",
+            "severity": "critical",
+            "current_value": duplicate_post_count,
+            "threshold": thresh_dup_count,
+            "message": (
+                f"{duplicate_post_count} duplicate-posting incident(s) detected "
+                f"for {organization_id} — circuit breaker should be triggered."
+            ),
+            "action": "circuit_break_erp_posting",
+        })
+
+    return {
+        "organization_id": organization_id,
+        "evaluated_at": now.isoformat(),
+        "window_hours": window_hours,
+        "alerts": alerts,
+        "alert_count": len(alerts),
+        "metrics": {
+            "post_failure_rate_pct": post_failure_rate_pct,
+            "erp_post_attempted": attempted,
+            "erp_post_failed": failed,
+            "exception_rate_pct": exception_rate_pct,
+            "exception_count": exception_count,
+            "total_active_in_window": total_active,
+            "correction_rate_pct": correction_rate_pct,
+            "correction_count": correction_count,
+            "total_items_in_window": total_items,
+            "duplicate_post_count": duplicate_post_count,
+        },
+        "thresholds": {
+            "post_failure_rate_pct": thresh_post_failure_pct,
+            "exception_rate_pct": thresh_exception_pct,
+            "correction_rate_pct": thresh_correction_pct,
+            "duplicate_post_count": thresh_dup_count,
+        },
+    }
+
+
+@router.get("/monitoring-thresholds")
+async def get_monitoring_thresholds(
+    organization_id: str = Query("default"),
+    window_hours: int = Query(default=24, ge=1, le=168),
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Evaluate post-GA monitoring thresholds and return structured alerts.
+
+    Implements PLAN.md §8.5 observability requirements:
+    - Post failure rate threshold → per-tenant ERP disable signal
+    - Exception/failed rate → connector-specific degradation alert
+    - Correction rate → extraction model review trigger
+    - Duplicate posting count → circuit-breaker trigger
+
+    Configure thresholds via environment variables:
+    - ``AP_ALERT_POST_FAILURE_RATE_PCT``  (default 20)
+    - ``AP_ALERT_EXCEPTION_RATE_PCT``     (default 15)
+    - ``AP_ALERT_CORRECTION_RATE_PCT``    (default 10)
+    - ``AP_ALERT_DUPLICATE_POST_COUNT``   (default 1)
+    """
+    _assert_org_access(user, organization_id)
+    db = get_db()
+    return _evaluate_monitoring_thresholds(organization_id, window_hours, db)
+
+
+@router.post("/monitoring-thresholds/check")
+async def check_and_alert_thresholds(
+    organization_id: str = Query("default"),
+    window_hours: int = Query(default=24, ge=1, le=168),
+    push_slack: bool = Query(default=False, description="Push alert summary to Slack digest channel if alerts are found"),
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Evaluate thresholds and optionally push an alert to the Slack digest channel.
+
+    When ``push_slack=true`` and alerts are present, posts a structured Slack
+    message to the ``AP_OPS_SLACK_CHANNEL`` channel (env var, default
+    ``#ap-ops-alerts``).  Designed to be called from a cron job or the durable
+    retry worker loop.
+    """
+    _assert_org_access(user, organization_id)
+    db = get_db()
+    result = _evaluate_monitoring_thresholds(organization_id, window_hours, db)
+
+    if push_slack and result["alert_count"] > 0:
+        channel = os.getenv("AP_OPS_SLACK_CHANNEL", "#ap-ops-alerts")
+        alerts = result["alerts"]
+        lines = [f"*AP Monitoring Alert* — `{organization_id}` (last {window_hours}h)"]
+        for alert in alerts:
+            sev = str(alert.get("severity") or "warning").upper()
+            lines.append(f"• [{sev}] {alert['message']}")
+        text = "\n".join(lines)
+        try:
+            slack_token = os.getenv("SLACK_BOT_TOKEN", "")
+            if slack_token:
+                import httpx as _httpx
+                _httpx.post(
+                    "https://slack.com/api/chat.postMessage",
+                    json={"channel": channel, "text": text, "mrkdwn": True},
+                    headers={"Authorization": f"Bearer {slack_token}"},
+                    timeout=10,
+                )
+                result["slack_notified"] = True
+                result["slack_channel"] = channel
+            else:
+                result["slack_notified"] = False
+                result["slack_note"] = "SLACK_BOT_TOKEN not configured"
+        except Exception as exc:
+            result["slack_notified"] = False
+            result["slack_error"] = str(exc)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Gap #18 — Dead-letter queue ops surface (PLAN.md §8.4)
+# ---------------------------------------------------------------------------
+
+def _serialize_retry_job(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Add computed backoff_state and overdue flag to a retry job row."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    retry_count = int(job.get("retry_count") or 0)
+    max_retries = int(job.get("max_retries") or 3)
+    next_retry_at_raw = job.get("next_retry_at")
+    overdue = False
+    if next_retry_at_raw:
+        try:
+            next_dt = datetime.fromisoformat(str(next_retry_at_raw).replace("Z", "+00:00"))
+            if next_dt.tzinfo is None:
+                next_dt = next_dt.replace(tzinfo=timezone.utc)
+            overdue = now > next_dt
+        except (TypeError, ValueError):
+            pass
+
+    job["backoff_state"] = {
+        "retry_count": retry_count,
+        "max_retries": max_retries,
+        "next_retry_at": next_retry_at_raw,
+        "overdue": overdue,
+        "exhausted": retry_count >= max_retries,
+    }
+    return job
+
+
+@router.get("/retry-queue")
+async def get_retry_queue(
+    organization_id: str = Query("default"),
+    status: str = Query(
+        default="dead_letter",
+        description="Job status filter: 'dead_letter', 'pending', 'all'",
+    ),
+    limit: int = Query(default=100, ge=1, le=500),
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """List stuck or dead-lettered durable retry jobs with backoff state.
+
+    Implements PLAN.md §8.4 — dead-letter queue visibility.
+
+    Status values:
+    - ``dead_letter`` (default): permanently failed after exhausting retries.
+    - ``pending``: jobs still in retry backlog (includes overdue ones).
+    - ``all``: all jobs regardless of status.
+
+    Each job includes a ``backoff_state`` object with ``retry_count``,
+    ``max_retries``, ``next_retry_at``, ``overdue``, and ``exhausted`` flags.
+    Use ``POST /api/ops/retry-queue/{job_id}/retry`` or ``.../skip`` for
+    manual intervention.
+    """
+    _assert_org_access(user, organization_id)
+    db = get_db()
+    safe_status: Any = str(status or "dead_letter").strip().lower()
+    query_status = None if safe_status == "all" else safe_status
+    if not hasattr(db, "list_agent_retry_jobs"):
+        return {
+            "organization_id": organization_id,
+            "status_filter": safe_status,
+            "jobs": [],
+            "total": 0,
+            "note": "retry_queue_not_supported",
+        }
+    jobs = db.list_agent_retry_jobs(
+        organization_id,
+        status=query_status,
+        limit=limit,
+    )
+    serialized = [_serialize_retry_job(j) for j in jobs]
+    return {
+        "organization_id": organization_id,
+        "status_filter": safe_status,
+        "jobs": serialized,
+        "total": len(serialized),
+    }
+
+
+@router.post("/retry-queue/{job_id}/retry")
+async def manual_retry_job(
+    job_id: str,
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Re-queue a dead-lettered or stuck retry job for immediate execution.
+
+    Resets the job to ``pending`` with ``next_retry_at = now`` so the durable
+    retry worker picks it up on its next cycle.  Admin or owner role required.
+    """
+    _require_admin(user)
+    from datetime import datetime, timezone
+
+    db = get_db()
+    if not hasattr(db, "get_agent_retry_job"):
+        raise HTTPException(status_code=501, detail="retry_queue_not_supported")
+
+    job = db.get_agent_retry_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="retry_job_not_found")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    updated = db.reschedule_agent_retry_job(
+        job_id,
+        next_retry_at=now_iso,
+        last_error=job.get("last_error"),
+        status="pending",
+    )
+    if not updated:
+        raise HTTPException(status_code=500, detail="retry_job_update_failed")
+
+    return {
+        "job_id": job_id,
+        "action": "retry",
+        "status": "pending",
+        "next_retry_at": now_iso,
+        "previous_status": str(job.get("status") or "unknown"),
+    }
+
+
+@router.post("/retry-queue/{job_id}/skip")
+async def skip_retry_job(
+    job_id: str,
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Mark a retry job as skipped so it no longer blocks the queue.
+
+    Transitions the job to ``skipped`` (terminal state, never re-processed).
+    Admin or owner role required.
+    """
+    _require_admin(user)
+    from datetime import datetime, timezone
+
+    db = get_db()
+    if not hasattr(db, "get_agent_retry_job"):
+        raise HTTPException(status_code=501, detail="retry_queue_not_supported")
+
+    job = db.get_agent_retry_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="retry_job_not_found")
+
+    updated = db.complete_agent_retry_job(
+        job_id,
+        status="skipped",
+        last_error=job.get("last_error"),
+        result={
+            "skipped_by": str(user.user_id),
+            "skipped_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    if not updated:
+        raise HTTPException(status_code=500, detail="skip_job_update_failed")
+
+    return {
+        "job_id": job_id,
+        "action": "skip",
+        "status": "skipped",
+        "previous_status": str(job.get("status") or "unknown"),
     }

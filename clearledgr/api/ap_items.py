@@ -102,6 +102,14 @@ def _derive_confidence_gate(payload: Dict[str, Any], metadata: Dict[str, Any]) -
         gate["requires_field_review"] = bool(gate.get("requires_field_review"))
         return gate
 
+    # Prefer first-class column value over metadata blob for field confidences
+    raw_fc = payload.get("field_confidences") or metadata.get("field_confidences")
+    if isinstance(raw_fc, str):
+        try:
+            raw_fc = json.loads(raw_fc)
+        except (json.JSONDecodeError, TypeError):
+            raw_fc = None
+
     return evaluate_critical_field_confidence(
         overall_confidence=payload.get("confidence"),
         field_values={
@@ -110,7 +118,7 @@ def _derive_confidence_gate(payload: Dict[str, Any], metadata: Dict[str, Any]) -
             "invoice_number": payload.get("invoice_number"),
             "due_date": payload.get("due_date"),
         },
-        field_confidences=metadata.get("field_confidences"),
+        field_confidences=raw_fc,
     )
 
 
@@ -444,6 +452,14 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
     payload["budget_requires_decision"] = bool(budget_summary.get("requires_decision"))
     confidence_gate = _derive_confidence_gate(payload, metadata)
     payload["confidence_gate"] = confidence_gate
+    # Expose per-field confidence map for the Gmail card (field-level UX)
+    raw_fc = payload.get("field_confidences") or metadata.get("field_confidences")
+    if isinstance(raw_fc, str):
+        try:
+            raw_fc = json.loads(raw_fc)
+        except (json.JSONDecodeError, TypeError):
+            raw_fc = {}
+    payload["field_confidences"] = raw_fc or confidence_gate.get("field_confidences") or {}
     payload["requires_field_review"] = bool(
         metadata.get("requires_field_review") or confidence_gate.get("requires_field_review")
     )
@@ -455,6 +471,14 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
     payload["risk_signals"] = metadata.get("risk_signals") or {}
     payload["source_ranking"] = metadata.get("source_ranking") or {}
     payload["navigator"] = metadata.get("navigator") or {}
+    # Document type: use stored value from ingestion, or infer from subject.
+    # Receipts are payment confirmations — they should not be routed through AP approval.
+    _doc_type = metadata.get("email_type") or metadata.get("document_type")
+    if not _doc_type:
+        _subject_lc = str(payload.get("subject") or "").lower()
+        _receipt_kw = {"receipt", "payment confirmation", "payment received", "payment processed", "order confirmation"}
+        _doc_type = "receipt" if any(kw in _subject_lc for kw in _receipt_kw) else "invoice"
+    payload["document_type"] = _doc_type
     payload["conflict_actions"] = metadata.get("conflict_actions") if isinstance(metadata.get("conflict_actions"), list) else []
     payload["next_action"] = _derive_next_action(payload)
     if metadata.get("priority_score") is not None:
@@ -464,6 +488,25 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
             payload["priority_score"] = db._worklist_priority_score(payload)  # type: ignore[attr-defined]
         except Exception:
             pass
+
+    # Correction learning: surface GL suggestion + previously-corrected fields.
+    # suggest() is in-memory after rule load — fast per call.
+    try:
+        from clearledgr.services.correction_learning import CorrectionLearningService
+        _vendor = payload.get("vendor_name") or payload.get("vendor")
+        _org = payload.get("organization_id") or "default"
+        if _vendor:
+            _cls = CorrectionLearningService(_org)
+            payload["gl_suggestion"] = _cls.suggest("gl_code", {"vendor": _vendor})
+            # Surface vendor alias suggestions (catches normalisation corrections)
+            payload["vendor_suggestion"] = _cls.suggest("vendor", {"raw_vendor": _vendor})
+        else:
+            payload["gl_suggestion"] = None
+            payload["vendor_suggestion"] = None
+    except Exception:
+        payload["gl_suggestion"] = None
+        payload["vendor_suggestion"] = None
+
     return payload
 
 

@@ -49,6 +49,8 @@ class APStore:
         "slack_channel_id", "slack_thread_id", "slack_message_ts",
         # Gap #10: exception fields as first-class indexed columns
         "exception_code", "exception_severity",
+        # Extraction accuracy: per-field confidence JSON for trend analysis
+        "field_confidences",
     })
 
     # ------------------------------------------------------------------
@@ -61,6 +63,14 @@ class APStore:
         now = datetime.now(timezone.utc).isoformat()
         item_id = payload.get("id") or f"AP-{uuid.uuid4().hex}"
         metadata = json.dumps(payload.get("metadata") or {})
+        # Serialize field_confidences to JSON if provided as a dict
+        raw_fc = payload.get("field_confidences")
+        field_confidences_json: Optional[str] = None
+        if isinstance(raw_fc, dict):
+            field_confidences_json = json.dumps(raw_fc)
+        elif isinstance(raw_fc, str):
+            field_confidences_json = raw_fc
+
         sql = self._prepare_sql("""
             INSERT INTO ap_items
             (id, invoice_key, thread_id, message_id, subject, sender, vendor_name, amount, currency,
@@ -68,8 +78,8 @@ class APStore:
              approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
              supersedes_ap_item_id, superseded_by_ap_item_id, resubmission_reason, erp_reference,
              erp_posted_at, workflow_id, run_id, approval_surface, approval_policy_version, post_attempted_at,
-             last_error, organization_id, user_id, created_at, updated_at, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             last_error, organization_id, user_id, created_at, updated_at, metadata, field_confidences)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         values = (
             item_id,
@@ -108,6 +118,7 @@ class APStore:
             now,
             now,
             metadata,
+            field_confidences_json,
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -335,6 +346,7 @@ class APStore:
             "due_date": kwargs.get("due_date"),
             "state": state,
             "confidence": kwargs.get("confidence", 0),
+            "field_confidences": kwargs.get("field_confidences"),
             "organization_id": kwargs.get("organization_id"),
             "user_id": kwargs.get("user_id"),
         }

@@ -67,8 +67,21 @@ let agentPreviewState = {
   error: '',
   data: null
 };
+let batchOpsState = {
+  mode: null,
+  loading: false,
+  error: '',
+  data: null
+};
+let batchOpsPolicyState = {
+  maxItems: 5,
+  amountThreshold: '',
+  selectionPreset: 'queue_order'
+};
 let toastTimer = null;
 let rowDecorated = new Set();
+// Holds { to, subject, body } when a draft-reply is initiated; consumed by the compose handler.
+let _pendingComposePrefill = null;
 let auditState = {
   itemId: null,
   loading: false,
@@ -156,13 +169,14 @@ function budgetStatusTone(status) {
 }
 
 function formatPercentMetric(metric) {
-  const value = Number(metric?.value);
-  if (!Number.isFinite(value)) return 'N/A';
+  const raw = Number(metric?.value ?? metric?.rate);
+  if (!Number.isFinite(raw)) return 'N/A';
+  const value = raw >= 0 && raw <= 1 ? raw * 100 : raw;
   return `${value.toFixed(1)}%`;
 }
 
 function formatHoursMetric(metric) {
-  const value = Number(metric?.avg_hours);
+  const value = Number(metric?.avg_hours ?? metric?.avg);
   if (!Number.isFinite(value)) return 'N/A';
   return `${value.toFixed(1)}h`;
 }
@@ -284,6 +298,535 @@ function summarizeAgentEvents(events, limit = 5) {
   };
 }
 
+function parseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getAuditEventPayload(event) {
+  return parseJsonObject(event?.payload_json || event?.payloadJson || event?.payload) || {};
+}
+
+function getAuditEventTimestamp(event) {
+  const raw = event?.ts || event?.created_at || event?.createdAt || event?.updated_at || event?.updatedAt || null;
+  if (!raw) return 0;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function humanizeSnakeText(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function getBrowserFallbackStageMeta(eventType) {
+  const normalized = String(eventType || '').trim().toLowerCase();
+  const total = 5;
+  if (normalized === 'erp_api_failed') {
+    return { index: 1, total, label: 'API post failed', key: 'api_failed' };
+  }
+  if (normalized === 'erp_api_fallback_preview_created') {
+    return { index: 2, total, label: 'Fallback preview ready', key: 'preview' };
+  }
+  if (normalized === 'erp_api_fallback_confirmation_captured') {
+    return { index: 3, total, label: 'Confirmation captured', key: 'confirmation' };
+  }
+  if (normalized === 'erp_api_fallback_requested') {
+    return { index: 4, total, label: 'Runner executing', key: 'runner' };
+  }
+  if (normalized === 'erp_browser_fallback_completed') {
+    return { index: 5, total, label: 'Result reconciled (success)', key: 'reconciled_success' };
+  }
+  if (normalized === 'erp_browser_fallback_failed') {
+    return { index: 5, total, label: 'Result reconciled (failed)', key: 'reconciled_failed' };
+  }
+  return null;
+}
+
+function getBrowserFallbackAuditPresentation(event) {
+  const eventType = String(event?.event_type || event?.eventType || '').toLowerCase();
+  if (!eventType) return null;
+  const payload = getAuditEventPayload(event);
+  const stage = getBrowserFallbackStageMeta(eventType);
+
+  if (eventType === 'erp_api_failed') {
+    const fallback = payload?.fallback && typeof payload.fallback === 'object' ? payload.fallback : {};
+    const fallbackRequested = Boolean(fallback?.requested);
+    const fallbackEligible = fallback?.eligible;
+    const apiReason = String(payload?.api_reason || payload?.reason || event?.decision_reason || event?.reason || '').trim();
+    const fallbackReason = String(fallback?.control_reason || fallback?.reason || '').trim();
+    const detailParts = [];
+    if (apiReason) detailParts.push(`API failure: ${apiReason.replace(/_/g, ' ')}`);
+    if (fallbackReason) {
+      detailParts.push(
+        fallbackEligible === false
+          ? `Fallback unavailable: ${fallbackReason.replace(/_/g, ' ')}`
+          : `Fallback: ${fallbackReason.replace(/_/g, ' ')}`
+      );
+    }
+    return {
+      kind: 'browser_fallback',
+      bucket: 'blocked',
+      stage,
+      title: fallbackRequested
+        ? 'ERP API post failed; browser fallback required'
+        : fallbackEligible === false
+          ? 'ERP API post failed; browser fallback unavailable'
+          : 'ERP API post failed',
+      status: fallbackRequested ? 'API failed' : 'Blocked',
+      detail: detailParts.join(' · '),
+    };
+  }
+
+  if (eventType === 'erp_api_fallback_preview_created') {
+    const commandCount = Number(payload?.command_count || 0);
+    const confirmCount = Number(payload?.requires_confirmation_count || 0);
+    const detailParts = [];
+    if (Number.isFinite(commandCount) && commandCount > 0) detailParts.push(`${commandCount} command${commandCount === 1 ? '' : 's'} prepared`);
+    if (Number.isFinite(confirmCount)) detailParts.push(`${confirmCount} confirmation${confirmCount === 1 ? '' : 's'} required`);
+    return {
+      kind: 'browser_fallback',
+      bucket: 'executing',
+      stage,
+      title: 'Browser fallback preview generated',
+      status: 'Preview ready',
+      detail: detailParts.join(' · '),
+    };
+  }
+
+  if (eventType === 'erp_api_fallback_confirmation_captured') {
+    const requiredCount = Number(payload?.required_count || payload?.requires_confirmation_count || 0);
+    const confirmedCount = Number(payload?.confirmed_count || 0);
+    const pendingCount = Math.max(0, requiredCount - confirmedCount);
+    return {
+      kind: 'browser_fallback',
+      bucket: pendingCount > 0 ? 'blocked' : 'executing',
+      stage,
+      title: 'Browser fallback confirmation captured',
+      status: pendingCount > 0 ? 'Awaiting approval' : 'Confirmed',
+      detail: `${confirmedCount}/${requiredCount} confirmations captured${pendingCount > 0 ? ` · ${pendingCount} pending` : ''}`,
+    };
+  }
+
+  if (eventType === 'erp_api_fallback_requested') {
+    const fallback = payload?.fallback && typeof payload.fallback === 'object' ? payload.fallback : {};
+    const queued = Number(fallback?.queued || 0);
+    const blocked = Number(fallback?.blocked || 0);
+    const denied = Number(fallback?.denied || 0);
+    const parts = [];
+    if (Number.isFinite(queued)) parts.push(`${queued} queued`);
+    if (Number.isFinite(blocked) && blocked > 0) parts.push(`${blocked} awaiting approval`);
+    if (Number.isFinite(denied) && denied > 0) parts.push(`${denied} denied`);
+    if (fallback?.dispatch_status) parts.push(`dispatch ${String(fallback.dispatch_status).replace(/_/g, ' ')}`);
+    return {
+      kind: 'browser_fallback',
+      bucket: blocked > 0 ? 'awaiting_approval' : 'executing',
+      stage,
+      title: 'Browser fallback runner executing',
+      status: blocked > 0 ? 'Awaiting approval' : 'Runner queued',
+      detail: parts.join(' · '),
+    };
+  }
+
+  if (eventType === 'erp_browser_fallback_completed') {
+    const erpReference = String(payload?.erp_reference || '').trim();
+    const evidence = payload?.evidence && typeof payload.evidence === 'object' ? payload.evidence : {};
+    const evidenceKeys = Object.keys(evidence).filter(Boolean);
+    return {
+      kind: 'browser_fallback',
+      bucket: 'completed',
+      stage,
+      title: 'Browser fallback completed (result reconciled)',
+      status: 'Completed',
+      detail: [
+        erpReference ? `ERP ref ${erpReference}` : '',
+        evidenceKeys.length ? `Evidence: ${trimText(evidenceKeys.join(', '), 60)}` : '',
+      ].filter(Boolean).join(' · '),
+    };
+  }
+
+  if (eventType === 'erp_browser_fallback_failed') {
+    const errorCode = String(payload?.error_code || '').trim();
+    const errorMsg = String(payload?.error_message_redacted || '').trim();
+    return {
+      kind: 'browser_fallback',
+      bucket: 'blocked',
+      stage,
+      title: 'Browser fallback failed (result reconciled)',
+      status: 'Failed',
+      detail: [
+        errorCode ? `Code: ${errorCode}` : '',
+        errorMsg || String(event?.decision_reason || event?.reason || '').trim(),
+      ].filter(Boolean).join(' · '),
+    };
+  }
+
+  return null;
+}
+
+function buildBrowserFallbackStatusSummary(item, contextPayload, auditEvents) {
+  const events = Array.isArray(auditEvents) ? auditEvents : [];
+  const fallbackEvents = events
+    .map((event) => ({
+      event,
+      presentation: getBrowserFallbackAuditPresentation(event),
+      ts: getAuditEventTimestamp(event),
+    }))
+    .filter((entry) => entry.presentation)
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+
+  if (!fallbackEvents.length) return null;
+
+  const latest = fallbackEvents[0];
+  const latestEvent = latest.event;
+  const presentation = latest.presentation || {};
+  const latestStage = presentation.stage || getBrowserFallbackStageMeta(latestEvent?.event_type || latestEvent?.eventType) || null;
+  const payload = getAuditEventPayload(latestEvent);
+  const itemState = String(item?.state || '').trim().toLowerCase();
+  const erp = contextPayload?.erp || {};
+  const erpReference = String(
+    payload?.erp_reference
+    || (payload?.fallback && typeof payload.fallback === 'object' ? payload.fallback.erp_reference : '')
+    || erp?.erp_reference
+    || item?.erp_reference
+    || ''
+  ).trim();
+  const fallback = payload?.fallback && typeof payload.fallback === 'object' ? payload.fallback : {};
+  const sessionId = String(payload?.session_id || fallback?.session_id || '').trim();
+  const errorCode = String(payload?.error_code || '').trim();
+  const errorMsg = String(payload?.error_message_redacted || '').trim();
+  const apiReason = String(payload?.api_reason || '').trim();
+  const fallbackReason = String(fallback?.control_reason || fallback?.reason || '').trim();
+  const stateLabel = getStateLabel(itemState || 'received');
+  const timeLabel = formatTimestamp(latestEvent?.ts || latestEvent?.created_at || latestEvent?.createdAt);
+  const reachedStageLabels = [];
+  const seenStageKeys = new Set();
+  for (const entry of fallbackEvents) {
+    const stage = entry.presentation?.stage;
+    if (!stage || !stage.key || seenStageKeys.has(stage.key)) continue;
+    seenStageKeys.add(stage.key);
+    reachedStageLabels.push({ key: stage.key, index: stage.index, total: stage.total, label: stage.label });
+  }
+  reachedStageLabels.sort((a, b) => (a.index || 0) - (b.index || 0));
+  const meta = [
+    `AP state: ${stateLabel}`,
+    sessionId ? `Session: ${trimText(sessionId, 28)}` : '',
+    erpReference ? `ERP ref: ${erpReference}` : '',
+    timeLabel ? `Updated ${timeLabel}` : '',
+  ].filter(Boolean);
+
+  const detailParts = [
+    presentation.detail || '',
+    apiReason && !String(presentation.detail || '').toLowerCase().includes(String(apiReason).toLowerCase())
+      ? `API reason: ${apiReason.replace(/_/g, ' ')}`
+      : '',
+    fallbackReason && !String(presentation.detail || '').toLowerCase().includes(String(fallbackReason).toLowerCase())
+      ? `Fallback reason: ${fallbackReason.replace(/_/g, ' ')}`
+      : '',
+    errorCode ? `Error code: ${errorCode}` : '',
+    errorMsg || '',
+  ].filter(Boolean);
+
+  let tone = 'info';
+  const latestType = String(latestEvent?.event_type || latestEvent?.eventType || '').toLowerCase();
+  if (latestType === 'erp_browser_fallback_completed') tone = 'success';
+  else if (latestType === 'erp_browser_fallback_failed' || latestType === 'erp_api_failed') tone = 'error';
+  else if (latestType === 'erp_api_fallback_confirmation_captured' && String(presentation.status || '').toLowerCase().includes('awaiting')) tone = 'warning';
+  else if (itemState === 'failed_post') tone = 'warning';
+
+  let trustNote = '';
+  if (latestType === 'erp_browser_fallback_completed') {
+    trustNote = 'Runner completion is reconciled and the AP item is updated to posted_to_erp.';
+  } else if (latestType === 'erp_browser_fallback_failed') {
+    trustNote = 'Runner failure is reconciled and the invoice remains in failed_post for retry or review.';
+  } else if (latestType === 'erp_api_fallback_requested') {
+    trustNote = 'Fallback is in progress. Clearledgr will not mark posting done until the runner completion callback is reconciled.';
+  } else if (latestType === 'erp_api_fallback_confirmation_captured') {
+    trustNote = String(presentation.status || '').toLowerCase().includes('awaiting')
+      ? 'Fallback is paused pending required command approval.'
+      : 'Fallback confirmation was captured and commands can execute.';
+  } else if (latestType === 'erp_api_fallback_preview_created') {
+    trustNote = 'Fallback plan is prepared for review before browser execution.';
+  } else if (latestType === 'erp_api_failed') {
+    trustNote = String(fallback?.requested || '').toLowerCase() === 'true'
+      ? 'API posting failed and fallback is required before this invoice can be marked posted.'
+      : 'API posting failed. Browser fallback did not start for this attempt.';
+  }
+
+  return {
+    kind: 'browser_fallback_status',
+    tone,
+    title: presentation.title || 'Browser fallback status',
+    stage: presentation.status || 'Status update',
+    stageLabel: latestStage?.label || '',
+    stageIndex: latestStage?.index || null,
+    stageTotal: latestStage?.total || null,
+    detail: detailParts.join(' · '),
+    meta,
+    trustNote,
+    reachedStages: reachedStageLabels,
+  };
+}
+
+function renderBrowserFallbackStatusBannerHtml(summary) {
+  if (!summary || typeof summary !== 'object') return '';
+  const meta = Array.isArray(summary.meta) ? summary.meta : [];
+  const reachedStages = Array.isArray(summary.reachedStages) ? summary.reachedStages : [];
+  const progressLabel = Number.isFinite(Number(summary.stageIndex)) && Number.isFinite(Number(summary.stageTotal))
+    ? `Stage ${Number(summary.stageIndex)} of ${Number(summary.stageTotal)}`
+    : '';
+  return `
+    <div class="cl-fallback-banner" data-tone="${escapeHtml(String(summary.tone || 'info'))}">
+      <div class="cl-fallback-header">
+        <span class="cl-fallback-badge">Browser fallback</span>
+        <span class="cl-fallback-stage">${escapeHtml(String(summary.stage || 'Status update'))}</span>
+      </div>
+      ${
+        progressLabel || summary.stageLabel
+          ? `<div class="cl-fallback-progress">${escapeHtml([progressLabel, String(summary.stageLabel || '').trim()].filter(Boolean).join(' · '))}</div>`
+          : ''
+      }
+      <div class="cl-fallback-title">${escapeHtml(String(summary.title || 'Browser fallback status'))}</div>
+      ${summary.detail ? `<div class="cl-fallback-detail">${escapeHtml(String(summary.detail))}</div>` : ''}
+      ${summary.trustNote ? `<div class="cl-fallback-trust-note">${escapeHtml(String(summary.trustNote))}</div>` : ''}
+      ${
+        reachedStages.length
+          ? `<div class="cl-fallback-stage-list">${reachedStages.map((stage) => `<span class="cl-fallback-stage-chip">${escapeHtml(`S${stage.index}`)} ${escapeHtml(String(stage.label || ''))}</span>`).join('')}</div>`
+          : ''
+      }
+      ${meta.length ? `<div class="cl-fallback-meta">${meta.map((value) => `<span>${escapeHtml(String(value))}</span>`).join('')}</div>` : ''}
+    </div>
+  `;
+}
+
+function describeBrowserContextEvent(event) {
+  const statusRaw = String(event?.status || '').trim().toLowerCase();
+  const status = (statusRaw || 'unknown')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+  const result = event?.result && typeof event.result === 'object' ? event.result : {};
+  const title = getAgentToolLabel(event?.tool_name || 'browser_action') || 'Browser action';
+  const detail = trimText(
+    result?.summary
+    || result?.error_message_redacted
+    || result?.error
+    || result?.message
+    || (result?.erp_reference ? `ERP ref ${result.erp_reference}` : '')
+    || '',
+    110
+  );
+  const detailText = String(detail || '').toLowerCase();
+  const fallbackRelated = Boolean(
+    result?.erp_reference
+    || detailText.includes('fallback')
+    || detailText.includes('erp posting')
+    || detailText.includes('erp portal')
+  );
+  const statusTone = statusRaw === 'failed' ? 'error' : statusRaw === 'completed' ? 'success' : 'info';
+  return {
+    title,
+    status,
+    detail,
+    timeLabel: formatTimestamp(event?.ts),
+    fallbackRelated,
+    statusTone,
+  };
+}
+
+function classifyTimelineBucketFromState(state) {
+  const normalized = String(state || '').toLowerCase();
+  if (!normalized) return 'completed';
+  if (normalized === 'received') return 'planned';
+  if (normalized === 'needs_approval') return 'awaiting_approval';
+  if (normalized === 'needs_info' || normalized === 'failed_post' || normalized === 'rejected') return 'blocked';
+  if (normalized === 'validated' || normalized === 'approved' || normalized === 'ready_to_post') return 'executing';
+  if (normalized === 'posted_to_erp' || normalized === 'closed') return 'completed';
+  return 'completed';
+}
+
+function classifyAgentTimelineBucket(event) {
+  const status = String(event?.status || '').toLowerCase();
+  if (status === 'blocked_for_approval') return 'awaiting_approval';
+  if (status === 'queued' || status === 'preview') return 'planned';
+  if (status === 'running' || status === 'submitted') return 'executing';
+  if (status === 'failed' || status === 'denied') return 'blocked';
+  if (status === 'completed') return 'completed';
+  return 'executing';
+}
+
+function classifyAuditTimelineBucket(event) {
+  const eventType = String(event?.event_type || event?.eventType || '').toLowerCase();
+  const fallbackPresentation = getBrowserFallbackAuditPresentation(event);
+  if (fallbackPresentation?.bucket) {
+    return fallbackPresentation.bucket;
+  }
+  const payload = getAuditEventPayload(event);
+  const toState = event?.to_state || payload?.to_state || payload?.toState;
+  if (toState) {
+    return classifyTimelineBucketFromState(toState);
+  }
+
+  if (eventType.includes('unauthorized') || eventType.includes('invalid') || eventType.includes('stale') || eventType.includes('failed')) {
+    return 'blocked';
+  }
+  if (eventType.includes('approval') || eventType.includes('channel_action')) {
+    return eventType.includes('processed') || eventType.includes('approved') || eventType.includes('rejected')
+      ? 'completed'
+      : 'awaiting_approval';
+  }
+  if (eventType.includes('preview') || eventType.includes('confirmation') || eventType.includes('dispatch') || eventType.includes('retry')) {
+    return 'executing';
+  }
+  if (eventType.includes('posted') || eventType.includes('completed') || eventType.includes('success')) {
+    return 'completed';
+  }
+  return 'completed';
+}
+
+function buildAgentTimelineEntries(agentEvents, auditEvents, options = {}) {
+  const maxEntries = Number(options.maxEntries || 14);
+  const entries = [];
+
+  (Array.isArray(agentEvents) ? agentEvents : []).forEach((event, index) => {
+    const requestPayload = event?.request_payload || event?.requestPayload || {};
+    const title = trimText(
+      requestPayload?.step
+      || getAgentToolLabel(event?.tool_name || requestPayload?.tool_name || 'agent action'),
+      72
+    );
+    const status = String(event?.status || 'queued').replace(/_/g, ' ');
+    const detail = trimText(
+      describeAgentEvent(event)
+      || requestPayload?.detail
+      || requestPayload?.summary
+      || event?.result_payload?.summary
+      || event?.resultPayload?.summary
+      || '',
+      120
+    );
+    entries.push({
+      key: `agent:${event?.command_id || index}:${event?.status || 'unknown'}`,
+      source: 'Agent',
+      bucket: classifyAgentTimelineBucket(event),
+      title,
+      status,
+      detail,
+      ts: getAgentEventTimestamp(event),
+      timeLabel: formatTimestamp(event?.updated_at || event?.updatedAt || event?.created_at || event?.createdAt),
+      sortOrder: 0
+    });
+  });
+
+  (Array.isArray(auditEvents) ? auditEvents : []).forEach((event, index) => {
+    const payload = getAuditEventPayload(event);
+    const fallbackPresentation = getBrowserFallbackAuditPresentation(event);
+    const eventTypeRaw = String(event?.event_type || event?.eventType || '').toLowerCase();
+    const fromState = String(event?.from_state || payload?.from_state || payload?.fromState || '').trim();
+    const toState = String(event?.to_state || payload?.to_state || payload?.toState || '').trim();
+    const title = fallbackPresentation?.title || ((fromState || toState)
+      ? `State: ${getStateLabel(fromState || 'received')} -> ${getStateLabel(toState || fromState || 'received')}`
+      : prettifyEventType(event?.event_type || event?.eventType || 'audit_event'));
+    const detail = trimText(
+      fallbackPresentation?.detail
+      || event?.decision_reason
+      || event?.reason
+      || payload?.reason
+      || payload?.error_message
+      || payload?.error_message_redacted
+      || payload?.status
+      || '',
+      120
+    );
+    const statusLabel = String(fallbackPresentation?.status || (toState || eventTypeRaw || 'audit'))
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (ch) => ch.toUpperCase());
+
+    entries.push({
+      key: `audit:${event?.id || index}:${eventTypeRaw}`,
+      source: 'Audit',
+      bucket: classifyAuditTimelineBucket(event),
+      kind: fallbackPresentation?.kind || '',
+      stage: fallbackPresentation?.stage || null,
+      title: trimText(title, 72),
+      status: trimText(statusLabel, 36),
+      detail,
+      ts: getAuditEventTimestamp(event),
+      timeLabel: formatTimestamp(event?.ts || event?.created_at || event?.createdAt),
+      sortOrder: 1
+    });
+  });
+
+  return entries
+    .sort((a, b) => {
+      if ((b.ts || 0) !== (a.ts || 0)) return (b.ts || 0) - (a.ts || 0);
+      return (a.sortOrder || 0) - (b.sortOrder || 0);
+    })
+    .slice(0, maxEntries);
+}
+
+function renderAgentTimelineGroups(entries, options = {}) {
+  const auditLoading = Boolean(options.auditLoading);
+  const buckets = [
+    { id: 'blocked', label: 'Blocked / failed' },
+    { id: 'awaiting_approval', label: 'Awaiting approval' },
+    { id: 'executing', label: 'Executing' },
+    { id: 'planned', label: 'Planned' },
+    { id: 'completed', label: 'Completed' }
+  ];
+
+  const grouped = new Map();
+  buckets.forEach((bucket) => grouped.set(bucket.id, []));
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const list = grouped.get(entry.bucket) || grouped.get('completed');
+    list.push(entry);
+  });
+
+  const groupsHtml = buckets
+    .map((bucket) => {
+      const items = grouped.get(bucket.id) || [];
+      if (!items.length) return '';
+      const rows = items.slice(0, 3).map((entry) => `
+        <div class="cl-agent-row cl-agent-row-timeline" data-source="${escapeHtml(entry.source.toLowerCase())}" ${entry.kind ? `data-kind="${escapeHtml(String(entry.kind))}"` : ''}>
+          <div class="cl-agent-row-main">
+            <span class="cl-agent-tool">${escapeHtml(entry.title || entry.source)}</span>
+            ${
+              entry.stage?.index && entry.stage?.total
+                ? `<span class="cl-agent-stage-chip">S${escapeHtml(String(entry.stage.index))}/${escapeHtml(String(entry.stage.total))}</span>`
+                : ''
+            }
+            <span class="cl-agent-status">${escapeHtml(entry.status || bucket.label)}</span>
+          </div>
+          <div class="cl-agent-timeline-meta">
+            <span class="cl-agent-source">${escapeHtml(entry.source)}</span>
+            ${entry.timeLabel ? `<span class="cl-agent-time">${escapeHtml(entry.timeLabel)}</span>` : ''}
+          </div>
+          ${entry.detail ? `<div class="cl-agent-detail">${escapeHtml(entry.detail)}</div>` : ''}
+        </div>
+      `).join('');
+      return `
+        <div class="cl-agent-group">
+          <div class="cl-agent-group-title">${escapeHtml(bucket.label)}</div>
+          <div class="cl-agent-list">${rows}</div>
+        </div>
+      `;
+    })
+    .join('');
+
+  if (groupsHtml) return groupsHtml;
+  if (auditLoading) {
+    return '<div class="cl-agent-timeline-empty">Loading timeline breadcrumbs…</div>';
+  }
+  return '<div class="cl-agent-timeline-empty">No agent timeline events yet.</div>';
+}
+
 function getAgentToolLabel(toolName) {
   const tool = String(toolName || '').toLowerCase();
   if (tool === 'read_page') return 'Read source email';
@@ -366,6 +909,19 @@ function getIssueSummary(item) {
   return 'Under AP review';
 }
 
+function getExceptionReason(exceptionCode) {
+  const code = String(exceptionCode || '').trim().toLowerCase();
+  if (code === 'po_missing_reference') return 'PO reference required for this vendor/category';
+  if (code === 'po_amount_mismatch') return 'Invoice amount does not match approved PO';
+  if (code === 'receipt_missing') return 'Goods receipt confirmation pending';
+  if (code === 'budget_overrun') return 'Invoice exceeds approved budget limit';
+  if (code === 'missing_budget_context') return 'No budget context found for this cost center';
+  if (code === 'policy_validation_failed') return 'AP policy check failed — review required';
+  if (code === 'duplicate_invoice') return 'Duplicate invoice detected for this vendor';
+  if (code === 'confidence_low') return 'Extraction confidence too low for auto-posting';
+  return '';
+}
+
 function getDueRiskLabel(dueDateValue) {
   if (!dueDateValue) return '';
   const due = new Date(dueDateValue);
@@ -436,6 +992,997 @@ function getDecisionSummary(item, budgetContext) {
     detail: getIssueSummary(item),
     tone: 'neutral'
   };
+}
+
+function buildAgentBlockerSummary(item) {
+  const state = String(item?.state || 'received').toLowerCase();
+  const nextAction = String(item?.next_action || '').trim();
+  const exceptionCode = String(item?.exception_code || '').trim();
+  const confidenceBlockers = Array.isArray(item?.confidence_blockers) ? item.confidence_blockers : [];
+  const lines = [];
+
+  if (nextAction) {
+    lines.push(`Next action: ${nextAction.replace(/_/g, ' ')}`);
+  }
+
+  const issue = getIssueSummary(item);
+  if (issue) {
+    lines.push(issue);
+  }
+
+  const exceptionReason = getExceptionReason(exceptionCode);
+  if (exceptionReason) {
+    lines.push(exceptionReason);
+  }
+
+  if (item?.requires_field_review && confidenceBlockers.length > 0) {
+    const fields = confidenceBlockers
+      .slice(0, 4)
+      .map((entry) => {
+        if (!entry) return '';
+        if (typeof entry === 'string') return entry;
+        return String(entry.field || entry.code || '').trim();
+      })
+      .filter(Boolean);
+    if (fields.length > 0) {
+      lines.push(`Field review required: ${fields.join(', ')}`);
+    } else {
+      lines.push('Field review required before posting');
+    }
+  }
+
+  if (state === 'failed_post') {
+    lines.push('ERP posting failed. Review fallback or retry actions.');
+  } else if (state === 'needs_approval') {
+    lines.push('Awaiting approver action in Slack or Teams.');
+  } else if (state === 'needs_info') {
+    lines.push('Missing or unverified invoice details need follow-up.');
+  }
+
+  const deduped = [];
+  const seen = new Set();
+  for (const line of lines) {
+    const text = String(line || '').trim();
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(text);
+  }
+
+  return {
+    title: deduped.length ? 'Blocker summary' : 'No blockers detected',
+    lines: deduped.length ? deduped : ['No active blocker details were found for this invoice.'],
+  };
+}
+
+function buildFinanceLeadExceptionSummary(item, {
+  contextPayload = null,
+  auditEvents = []
+} = {}) {
+  const vendor = String(item?.vendor_name || item?.vendor || 'Unknown vendor').trim();
+  const invoiceNumber = String(item?.invoice_number || 'N/A').trim();
+  const state = String(item?.state || 'received').toLowerCase();
+  const nextAction = String(item?.next_action || '').trim();
+  const exceptionCode = String(item?.exception_code || '').trim();
+  const issueSummary = getIssueSummary(item) || 'Review required before invoice can proceed.';
+  const exceptionReason = getExceptionReason(exceptionCode);
+  const dueRisk = getDueRiskLabel(item?.due_date);
+  const budgetContext = normalizeBudgetContext(contextPayload || {}, item);
+  const decisionSummary = getDecisionSummary(item, budgetContext);
+  const contextSummary = String(contextPayload?.summary?.text || '').trim();
+  const recentAudit = Array.isArray(auditEvents)
+    ? auditEvents
+      .slice(0, 3)
+      .map((event) => prettifyEventType(event?.event_type || event?.eventType || ''))
+      .filter(Boolean)
+    : [];
+
+  const lines = [];
+  lines.push(`${vendor} · Invoice ${invoiceNumber} · ${formatAmount(item?.amount, item?.currency || 'USD')}`);
+  lines.push(`Current state: ${state.replace(/_/g, ' ')}${nextAction ? ` · Next action: ${nextAction.replace(/_/g, ' ')}` : ''}`);
+  lines.push(`Summary: ${issueSummary}`);
+  if (exceptionReason) lines.push(`Exception detail: ${exceptionReason}`);
+  if (decisionSummary?.detail) lines.push(`Recommended handling: ${decisionSummary.detail}`);
+  if (dueRisk) lines.push(`Due risk: ${dueRisk}`);
+  if (budgetContext?.requiresDecision) {
+    const budgetStatus = String(budgetContext.status || 'review').replace(/_/g, ' ');
+    lines.push(`Budget decision required (${budgetStatus}).`);
+  }
+  if (item?.requires_field_review) {
+    const blockers = Array.isArray(item?.confidence_blockers) ? item.confidence_blockers : [];
+    const fields = blockers
+      .slice(0, 4)
+      .map((entry) => (typeof entry === 'string' ? entry : String(entry?.field || entry?.code || '').trim()))
+      .filter(Boolean);
+    lines.push(
+      fields.length
+        ? `Field review blockers: ${fields.join(', ')}`
+        : 'Field review blockers present.'
+    );
+  }
+  if (contextSummary) {
+    lines.push(`Context: ${trimText(contextSummary, 160)}`);
+  }
+  if (recentAudit.length > 0) {
+    lines.push(`Recent activity: ${recentAudit.join(' → ')}`);
+  }
+
+  const deduped = [];
+  const seen = new Set();
+  for (const line of lines) {
+    const text = String(line || '').trim();
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(text);
+  }
+
+  return {
+    title: 'Finance lead exception summary',
+    lines: deduped.slice(0, 8)
+  };
+}
+
+function buildFinanceSummarySharePreviewCard(result, fallbackTarget = 'email_draft') {
+  const target = String(result?.target || fallbackTarget || 'email_draft').trim() || 'email_draft';
+  const summary = result?.summary || {};
+  const preview = result?.preview || {};
+  const title = `Finance summary share preview · ${target.replace(/_/g, ' ')}`;
+  const lines = Array.isArray(summary?.lines) ? summary.lines.slice(0, 3) : [];
+  let previewText = '';
+
+  if (target === 'email_draft') {
+    const draft = preview?.draft || result?.draft || {};
+    const to = String(preview?.recipient_email || draft?.to || '').trim() || 'Recipient not set';
+    const subject = String(draft?.subject || '').trim() || 'No subject';
+    const body = String(draft?.body || '').trim();
+    lines.push(`Email draft recipient: ${to}`);
+    lines.push(`Subject: ${subject}`);
+    previewText = `To: ${to}\nSubject: ${subject}\n\n${body}`.trim();
+  } else if (target === 'slack_thread') {
+    const channelId = String(preview?.channel_id || '').trim() || 'unknown';
+    const threadTs = String(preview?.thread_ts || '').trim() || 'unknown';
+    lines.push(`Slack thread target: ${channelId}`);
+    lines.push(`Thread: ${threadTs}`);
+    previewText = String(preview?.text || '').trim();
+  } else if (target === 'teams_reply') {
+    const channelId = String(preview?.channel_id || '').trim() || 'unknown';
+    const replyToId = String(preview?.reply_to_id || '').trim();
+    lines.push(`Teams thread target: ${channelId}`);
+    if (replyToId) lines.push(`Reply to: ${replyToId}`);
+    try {
+      previewText = JSON.stringify(preview?.activity || {}, null, 2);
+    } catch (_) {
+      previewText = '';
+    }
+  }
+
+  if (result?.audit_event_id) {
+    lines.push(`Preview audited (${result.audit_event_id}).`);
+  }
+
+  return {
+    kind: 'finance_share_preview',
+    title,
+    lines: lines.filter(Boolean),
+    previewText: previewText.length > 2500 ? `${previewText.slice(0, 2500)}\n…` : previewText
+  };
+}
+
+function renderAgentSummaryCardHtml(data) {
+  const lines = Array.isArray(data?.lines) ? data.lines : [];
+  const visibleLineLimit = data?.kind === 'batch_run_result' ? 4 : 5;
+  const visibleLines = lines.slice(0, visibleLineLimit);
+  const hiddenLines = lines.slice(visibleLineLimit);
+  const rows = visibleLines
+    .map((line) => `
+      <div class="cl-agent-related-row">
+        <div class="cl-agent-detail">${escapeHtml(String(line))}</div>
+      </div>
+    `)
+    .join('');
+  const detailItems = Array.isArray(data?.detailItems) ? data.detailItems : [];
+  const visibleDetailItems = detailItems.slice(0, 12);
+  const renderDetailRow = (item) => {
+      const tone = String(item?.tone || '').trim().toLowerCase();
+      const toneClass = tone === 'success'
+        ? ' cl-batch-result-status-success'
+        : tone === 'warn'
+          ? ' cl-batch-result-status-warn'
+          : tone === 'error'
+            ? ' cl-batch-result-status-error'
+            : '';
+      return `
+        <div class="cl-batch-result-row">
+          <div class="cl-batch-result-main">
+            <span class="cl-batch-result-status${toneClass}">${escapeHtml(String(item?.status || 'result').replace(/_/g, ' '))}</span>
+            <span class="cl-batch-result-label">${escapeHtml(String(item?.label || 'Item'))}</span>
+          </div>
+          ${item?.detail ? `<div class="cl-batch-result-detail">${escapeHtml(String(item.detail))}</div>` : ''}
+        </div>
+      `;
+  };
+  const groupedDetailRows = data?.kind === 'batch_run_result'
+    ? [
+        { key: 'success', title: 'Successful' },
+        { key: 'warn', title: 'Needs follow-up' },
+        { key: 'error', title: 'Failed' },
+      ]
+        .map((group) => {
+          const members = visibleDetailItems.filter((item) => String(item?.tone || '').trim().toLowerCase() === group.key);
+          if (!members.length) return '';
+          return `
+            <div class="cl-batch-result-group">
+              <div class="cl-batch-result-group-title">${escapeHtml(group.title)} (${members.length})</div>
+              <div class="cl-batch-result-group-body">
+                ${members.map(renderDetailRow).join('')}
+              </div>
+            </div>
+          `;
+        })
+        .filter(Boolean)
+        .join('')
+    : visibleDetailItems.map(renderDetailRow).join('');
+  const detailRows = groupedDetailRows;
+  const hiddenLineRows = hiddenLines
+    .map((line) => `<div class="cl-agent-detail">${escapeHtml(String(line))}</div>`)
+    .join('');
+  const hiddenDetailCount = Math.max(0, detailItems.length - 12);
+  const detailsHtml = (hiddenLines.length > 0 || detailRows || hiddenDetailCount > 0)
+    ? `
+      <details class="cl-details cl-agent-brief-details">
+        <summary>${escapeHtml(
+          detailRows
+            ? `Show item results (${detailItems.length})`
+            : `Show more details (${hiddenLines.length})`
+        )}</summary>
+        <div class="cl-detail-grid">
+          ${hiddenLineRows}
+          ${detailRows ? `<div class="cl-batch-result-list">${detailRows}${hiddenDetailCount > 0 ? `<div class="cl-agent-detail">${hiddenDetailCount} additional item result(s) not shown.</div>` : ''}</div>` : ''}
+        </div>
+      </details>
+    `
+    : '';
+  const actions = Array.isArray(data?.actions) ? data.actions : [];
+  const actionButtonsHtml = actions.length > 0
+    ? `
+      <div class="cl-agent-actions-bar cl-batch-summary-actions">
+        ${actions.slice(0, 3).map((action) => `
+          <button
+            class="cl-btn cl-btn-secondary cl-batch-summary-action"
+            data-action-id="${escapeHtml(String(action.id || ''))}"
+            data-batch-op="${escapeHtml(String(action.opId || ''))}"
+            data-target-item-ids="${escapeHtml((Array.isArray(action.itemIds) ? action.itemIds : []).join(','))}"
+          >
+            ${escapeHtml(String(action.label || 'Action'))}
+          </button>
+        `).join('')}
+      </div>
+    `
+    : '';
+  return `
+    <div class="cl-agent-brief">
+      <div class="cl-agent-brief-title">${escapeHtml(data?.title || 'Summary')}</div>
+      ${rows || '<div class="cl-empty">No blocker details.</div>'}
+      ${actionButtonsHtml}
+      ${detailsHtml}
+      ${data?.kind === 'finance_share_preview' && data?.previewText
+        ? `<pre class="cl-agent-preview-payload">${escapeHtml(String(data.previewText))}</pre>`
+        : ''
+      }
+    </div>
+  `;
+}
+
+async function openNeedsInfoDraftCompose(item) {
+  if (!item?.id || !queueManager) {
+    return { ok: false, reason: 'unavailable' };
+  }
+  try {
+    const settings = await queueManager.getSyncConfig();
+    const backendUrl = String(settings?.backendUrl || '').trim();
+    if (!backendUrl) {
+      return { ok: false, reason: 'backend_unavailable' };
+    }
+    const url = `${backendUrl}/extension/needs-info-draft/${encodeURIComponent(item.id)}`;
+    const resp = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+    if (!resp.ok) {
+      return { ok: false, reason: `http_${resp.status}` };
+    }
+    const draft = await resp.json();
+    return openComposePrefill(draft);
+  } catch (_) {
+    return { ok: false, reason: 'draft_fetch_failed' };
+  }
+}
+
+function openComposePrefill(draft) {
+  if (!sdk?.Compose?.openNewComposeView) {
+    return { ok: false, reason: 'compose_unavailable' };
+  }
+  _pendingComposePrefill = {
+    to: draft?.to || '',
+    subject: draft?.subject || '',
+    body: draft?.body || '',
+  };
+  sdk.Compose.openNewComposeView();
+  return { ok: true };
+}
+
+function chunkList(items, size = 2) {
+  const safeSize = Number(size) > 0 ? Number(size) : 2;
+  const chunks = [];
+  const list = Array.isArray(items) ? items : [];
+  for (let i = 0; i < list.length; i += safeSize) {
+    chunks.push(list.slice(i, i + safeSize));
+  }
+  return chunks;
+}
+
+function getItemActivityTimestampMs(item) {
+  const raw = item?.updated_at || item?.updatedAt || item?.state_updated_at || item?.stateUpdatedAt || item?.created_at || item?.createdAt || '';
+  if (!raw) return 0;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildBatchAgentOpsSnapshot(items, agentSessionsByItem = new Map(), {
+  nowMs = Date.now(),
+  agingApprovalHours = 24,
+  previewLimit = 5
+} = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const sessionsMap = agentSessionsByItem instanceof Map ? agentSessionsByItem : new Map();
+  const thresholdMs = Number(agingApprovalHours) > 0 ? Number(agingApprovalHours) * 3600 * 1000 : 24 * 3600 * 1000;
+
+  const summarizeItem = (item, extra = {}) => {
+    const ts = getItemActivityTimestampMs(item);
+    const ageMs = ts > 0 ? Math.max(0, nowMs - ts) : null;
+    const ageHours = ageMs === null ? null : Number((ageMs / 3600000).toFixed(1));
+    const hasSession = Boolean(item?.id && sessionsMap.get(item.id)?.session?.id);
+    return {
+      id: item?.id || '',
+      threadId: item?.thread_id || item?.threadId || '',
+      vendor: String(item?.vendor_name || item?.vendor || item?.sender || 'Unknown vendor').trim(),
+      invoiceNumber: String(item?.invoice_number || 'N/A').trim(),
+      amountRaw: Number(item?.amount),
+      amountText: formatAmount(item?.amount, item?.currency || 'USD'),
+      state: String(item?.state || 'received').toLowerCase(),
+      nextAction: String(item?.next_action || '').trim(),
+      hasSession,
+      ageHours,
+      ageUnknown: ageHours === null,
+      ...extra
+    };
+  };
+
+  const lowRiskReadyCandidates = list
+    .filter((item) => String(item?.state || '').toLowerCase() === 'ready_to_post')
+    .map((item) => {
+      const blockedReasons = [];
+      if (item?.requires_field_review) blockedReasons.push('field review required');
+      if (Array.isArray(item?.confidence_blockers) && item.confidence_blockers.length > 0) blockedReasons.push('confidence blockers');
+      if (item?.budget_requires_decision) blockedReasons.push('budget decision required');
+      if (String(item?.next_action || '').trim().toLowerCase() === 'none') blockedReasons.push('merged/suppressed');
+      if (item?.exception_code) blockedReasons.push(String(item.exception_code).replace(/_/g, ' '));
+      return summarizeItem(item, {
+        runnable: blockedReasons.length === 0,
+        blockedReasons,
+      });
+    });
+
+  const failedPostCandidates = list
+    .filter((item) => String(item?.state || '').toLowerCase() === 'failed_post')
+    .map((item) => summarizeItem(item, { runnable: Boolean(item?.id) }));
+
+  const agingApprovalCandidates = list
+    .filter((item) => ['needs_approval', 'pending_approval'].includes(String(item?.state || '').toLowerCase()))
+    .map((item) => summarizeItem(item))
+    .filter((item) => item.ageUnknown || (item.ageHours !== null && item.ageHours * 3600000 >= thresholdMs))
+    .sort((a, b) => {
+      const aAge = a.ageHours === null ? Number.POSITIVE_INFINITY : a.ageHours;
+      const bAge = b.ageHours === null ? Number.POSITIVE_INFINITY : b.ageHours;
+      return bAge - aAge;
+    });
+
+  const summarizeGroup = (itemsList, {
+    runSupported = false,
+    previewOnly = false
+  } = {}) => {
+    const itemsSafe = Array.isArray(itemsList) ? itemsList : [];
+    const runnable = itemsSafe.filter((entry) => entry.runnable !== false);
+    const withSession = runnable.filter((entry) => entry.hasSession);
+    const missingSession = runnable.filter((entry) => !entry.hasSession);
+    const blocked = itemsSafe.filter((entry) => entry.runnable === false);
+    return {
+      count: itemsSafe.length,
+      runSupported,
+      previewOnly,
+      items: itemsSafe,
+      previewItems: itemsSafe.slice(0, previewLimit),
+      runnableCount: runnable.length,
+      withSessionCount: withSession.length,
+      missingSessionCount: missingSession.length,
+      blockedCount: blocked.length,
+    };
+  };
+
+  return {
+    queueCount: list.length,
+    agingApprovalHours,
+    lowRiskReady: summarizeGroup(lowRiskReadyCandidates, { runSupported: true }),
+    failedPostRetryPreview: summarizeGroup(failedPostCandidates, { runSupported: false, previewOnly: true }),
+    nudgeAgingApprovals: summarizeGroup(agingApprovalCandidates, { runSupported: true }),
+  };
+}
+
+function buildBatchOpsPreviewCard(operationId, snapshot) {
+  const op = String(operationId || '').trim();
+  const previewItems = Array.isArray(snapshot?.previewItems) ? snapshot.previewItems : [];
+  const itemLines = previewItems.map((entry) => {
+    const ageText = entry.ageUnknown ? 'age unknown' : entry.ageHours !== null ? `${entry.ageHours}h old` : '';
+    const sessionText = entry.hasSession ? 'agent session ready' : 'no agent session';
+    const parts = [
+      `${entry.vendor} · ${entry.invoiceNumber}`,
+      entry.amountText,
+      ageText,
+      sessionText
+    ].filter(Boolean);
+    return trimText(parts.join(' · '), 180);
+  });
+
+  if (op === 'process_low_risk_ready') {
+    return {
+      kind: 'blocker_summary',
+      title: 'Preview batch: process low-risk ready items',
+      lines: [
+        `${snapshot?.count || 0} ready-to-post item(s) matched the low-risk filter.`,
+        snapshot?.selectedCount !== undefined ? `${snapshot?.selectedCount || 0} item(s) selected by current batch policy.` : '',
+        `${snapshot?.runnableCount || 0} runnable now · ${snapshot?.withSessionCount || 0} with agent sessions · ${snapshot?.missingSessionCount || 0} missing sessions.`,
+        `${snapshot?.blockedCount || 0} item(s) excluded due to field review, confidence blockers, budget decisions, or suppression.`,
+        snapshot?.policySummary || '',
+        'Run dispatches the ERP posting macro to existing item agent sessions (preview-first; per-item confirmations may still be required).',
+        ...itemLines,
+      ].filter(Boolean)
+    };
+  }
+
+  if (op === 'retry_failed_posts_preview') {
+    return {
+      kind: 'blocker_summary',
+      title: 'Preview batch: failed post retries',
+      lines: [
+        `${snapshot?.count || 0} failed-post item(s) found.`,
+        snapshot?.selectedCount !== undefined ? `${snapshot?.selectedCount || 0} item(s) selected by current batch policy.` : '',
+        `${snapshot?.withSessionCount || 0} have active agent sessions and are eligible for retry previews.`,
+        snapshot?.policySummary || '',
+        'Run retries uses the canonical AP retry-post path and preserves per-item audit/state transitions.',
+        ...itemLines,
+      ].filter(Boolean)
+    };
+  }
+
+  if (op === 'nudge_aging_approvals') {
+    return {
+      kind: 'blocker_summary',
+      title: 'Preview batch: approval nudges',
+      lines: [
+        `${snapshot?.count || 0} aging approval item(s) found (threshold: ${snapshot?.agingApprovalHours || 24}h).`,
+        snapshot?.selectedCount !== undefined ? `${snapshot?.selectedCount || 0} item(s) selected by current batch policy.` : '',
+        `${snapshot?.withSessionCount || 0} with agent sessions · ${snapshot?.missingSessionCount || 0} without sessions (nudge path still uses audited channel callbacks).`,
+        snapshot?.policySummary || '',
+        'Run sends approver nudges via the audited `/extension/approval-nudge` path and records per-item nudge events.',
+        ...itemLines,
+      ].filter(Boolean)
+    };
+  }
+
+  return {
+    kind: 'blocker_summary',
+    title: 'Batch preview',
+    lines: ['No preview details are available for this action.']
+  };
+}
+
+function normalizeBatchOpsPolicyConfig(policyState = batchOpsPolicyState) {
+  const rawMax = Number(policyState?.maxItems);
+  const allowed = [3, 5, 10, 20];
+  const maxItems = allowed.includes(rawMax) ? rawMax : 5;
+  const rawAmount = String(policyState?.amountThreshold ?? '').trim();
+  const parsedAmount = rawAmount === '' ? null : Number(rawAmount);
+  const amountThreshold = Number.isFinite(parsedAmount) && parsedAmount > 0 ? parsedAmount : null;
+  const allowedPresets = new Set(['queue_order', 'lowest_risk_first', 'oldest_first']);
+  const selectionPreset = allowedPresets.has(String(policyState?.selectionPreset || '').trim())
+    ? String(policyState.selectionPreset).trim()
+    : 'queue_order';
+  return {
+    maxItems,
+    amountThreshold,
+    amountThresholdInput: amountThreshold === null ? '' : String(amountThreshold),
+    selectionPreset,
+  };
+}
+
+function applyBatchPolicyToGroup(group, policyConfig, { previewLimit = 4 } = {}) {
+  const groupSafe = group || {};
+  const items = Array.isArray(groupSafe.items) ? groupSafe.items : [];
+  const policy = normalizeBatchOpsPolicyConfig(policyConfig);
+  const amountFiltered = [];
+  const amountExcluded = [];
+
+  for (const item of items) {
+    const amountThreshold = policy.amountThreshold;
+    if (amountThreshold === null) {
+      amountFiltered.push(item);
+      continue;
+    }
+    const numericAmount = Number(item?.amountRaw ?? item?.amount ?? NaN);
+    if (!Number.isFinite(numericAmount) || numericAmount <= amountThreshold) {
+      amountFiltered.push(item);
+    } else {
+      amountExcluded.push(item);
+    }
+  }
+
+  const orderedItems = [...amountFiltered];
+  if (policy.selectionPreset === 'oldest_first') {
+    orderedItems.sort((a, b) => {
+      const aUnknown = Boolean(a?.ageUnknown);
+      const bUnknown = Boolean(b?.ageUnknown);
+      if (aUnknown !== bUnknown) return aUnknown ? 1 : -1;
+      const aAge = Number.isFinite(Number(a?.ageHours)) ? Number(a.ageHours) : -1;
+      const bAge = Number.isFinite(Number(b?.ageHours)) ? Number(b.ageHours) : -1;
+      return bAge - aAge;
+    });
+  } else if (policy.selectionPreset === 'lowest_risk_first') {
+    orderedItems.sort((a, b) => {
+      const aRunnable = a?.runnable !== false ? 1 : 0;
+      const bRunnable = b?.runnable !== false ? 1 : 0;
+      if (bRunnable !== aRunnable) return bRunnable - aRunnable;
+      const aSession = a?.hasSession ? 1 : 0;
+      const bSession = b?.hasSession ? 1 : 0;
+      if (bSession !== aSession) return bSession - aSession;
+      const aAmount = Number.isFinite(Number(a?.amountRaw)) ? Number(a.amountRaw) : Number.POSITIVE_INFINITY;
+      const bAmount = Number.isFinite(Number(b?.amountRaw)) ? Number(b.amountRaw) : Number.POSITIVE_INFINITY;
+      if (aAmount !== bAmount) return aAmount - bAmount;
+      const aAgeUnknown = Boolean(a?.ageUnknown);
+      const bAgeUnknown = Boolean(b?.ageUnknown);
+      if (aAgeUnknown !== bAgeUnknown) return aAgeUnknown ? 1 : -1;
+      const aAge = Number.isFinite(Number(a?.ageHours)) ? Number(a.ageHours) : -1;
+      const bAge = Number.isFinite(Number(b?.ageHours)) ? Number(b.ageHours) : -1;
+      return bAge - aAge;
+    });
+  }
+
+  const selectedItems = orderedItems.slice(0, policy.maxItems);
+  const limitExcludedCount = Math.max(0, amountFiltered.length - selectedItems.length);
+  const runnable = selectedItems.filter((entry) => entry.runnable !== false);
+  const withSession = runnable.filter((entry) => entry.hasSession);
+  const missingSession = runnable.filter((entry) => !entry.hasSession);
+  const blocked = selectedItems.filter((entry) => entry.runnable === false);
+
+  const policySummaryParts = [];
+  policySummaryParts.push(`Policy: top ${policy.maxItems} item(s)`);
+  if (policy.selectionPreset === 'lowest_risk_first') {
+    policySummaryParts.push('preset lowest risk first');
+  } else if (policy.selectionPreset === 'oldest_first') {
+    policySummaryParts.push('preset oldest first');
+  } else {
+    policySummaryParts.push('preset queue order');
+  }
+  if (policy.amountThreshold !== null) {
+    policySummaryParts.push(`amount cap ${policy.amountThreshold.toFixed(2)}`);
+  }
+  if (amountExcluded.length > 0) {
+    policySummaryParts.push(`${amountExcluded.length} excluded by amount cap`);
+  }
+  if (limitExcludedCount > 0) {
+    policySummaryParts.push(`${limitExcludedCount} deferred by limit`);
+  }
+
+  return {
+    ...groupSafe,
+    policy,
+    selectedItems,
+    selectedCount: selectedItems.length,
+    previewItems: selectedItems.slice(0, Math.max(1, Number(previewLimit) || 4)),
+    runnableCount: runnable.length,
+    withSessionCount: withSession.length,
+    missingSessionCount: missingSession.length,
+    blockedCount: blocked.length,
+    policyAmountExcludedCount: amountExcluded.length,
+    policyLimitExcludedCount: limitExcludedCount,
+    policySummary: policySummaryParts.join(' · ')
+  };
+}
+
+function buildBatchRefreshIndicator(operationId, targetedIds = [], queueItems = []) {
+  const op = String(operationId || '').trim();
+  const ids = Array.isArray(targetedIds) ? targetedIds.filter(Boolean) : [];
+  if (ids.length === 0) return '';
+  const queue = Array.isArray(queueItems) ? queueItems : [];
+  const stateById = new Map(queue.filter((item) => item?.id).map((item) => [item.id, String(item.state || '').toLowerCase()]));
+
+  let posted = 0;
+  let ready = 0;
+  let failed = 0;
+  let awaitingApproval = 0;
+  let other = 0;
+  let missing = 0;
+
+  for (const id of ids) {
+    const state = stateById.get(id);
+    if (!state) {
+      missing += 1;
+      continue;
+    }
+    if (state === 'posted_to_erp') posted += 1;
+    else if (state === 'ready_to_post') ready += 1;
+    else if (state === 'failed_post') failed += 1;
+    else if (state === 'needs_approval' || state === 'pending_approval') awaitingApproval += 1;
+    else other += 1;
+  }
+
+  if (op === 'process_low_risk_ready') {
+    return `Refresh check: ${posted} posted, ${ready} still ready, ${failed} failed_post, ${other} in-progress/other, ${missing} missing from current queue snapshot.`;
+  }
+  if (op === 'retry_failed_posts_preview') {
+    return `Refresh check: ${posted} posted, ${ready} ready_to_post, ${failed} still failed_post, ${other} other, ${missing} missing from current queue snapshot.`;
+  }
+  if (op === 'nudge_aging_approvals') {
+    return `Refresh check: ${awaitingApproval} still awaiting approval, ${other} moved to other states, ${missing} missing from current queue snapshot.`;
+  }
+  return `Refresh check: ${posted} posted, ${ready} ready_to_post, ${failed} failed_post, ${other} other, ${missing} missing from current queue snapshot.`;
+}
+
+function buildBatchOpsRunResultCard(operationId, {
+  attempted = 0,
+  successCount = 0,
+  partialCount = 0,
+  failureCount = 0,
+  skippedCount = 0,
+  items = [],
+  policySummary = '',
+  refreshSummary = '',
+} = {}) {
+  const op = String(operationId || '').trim();
+  const normalizedDetailItems = (Array.isArray(items) ? items : []).map((entry) => ({
+    itemId: entry?.itemId || '',
+    status: entry?.status || '',
+    label: entry?.label || 'Item',
+    detail: entry?.detail || '',
+    tone: entry?.ok ? 'success' : entry?.partial ? 'warn' : 'error',
+    retryable: Boolean(entry?.retryable),
+  }));
+  const rerunFailedIds = normalizedDetailItems
+    .filter((entry) => entry.retryable && entry.tone === 'error' && entry.itemId)
+    .map((entry) => entry.itemId);
+  const rerunActions = rerunFailedIds.length > 0
+    ? [{
+        id: 'rerun_failed_subset',
+        opId: op,
+        itemIds: rerunFailedIds,
+        label: `Rerun failed subset (${rerunFailedIds.length})`,
+      }]
+    : [];
+
+  if (op === 'process_low_risk_ready') {
+    return {
+      kind: 'batch_run_result',
+      title: 'Batch run completed: low-risk ready items',
+      lines: [
+        `Attempted ${attempted} item(s): ${successCount} dispatched, ${failureCount} failed, ${skippedCount} skipped.`,
+        policySummary,
+        'Dispatched items now continue in their per-item agent timelines (preview/confirmation may still be required).',
+        refreshSummary,
+      ].filter(Boolean),
+      detailItems: normalizedDetailItems,
+      actions: rerunActions,
+    };
+  }
+
+  if (op === 'retry_failed_posts_preview') {
+    return {
+      kind: 'batch_run_result',
+      title: 'Batch run completed: failed post retries',
+      lines: [
+        `Attempted ${attempted} item(s): ${successCount} posted, ${partialCount} re-queued, ${failureCount} failed, ${skippedCount} skipped.`,
+        policySummary,
+        'Retries use the canonical AP retry-post path (failed_post -> ready_to_post -> posted_to_erp/failed_post) and preserve audit history.',
+        refreshSummary,
+      ].filter(Boolean),
+      detailItems: normalizedDetailItems,
+      actions: rerunActions,
+    };
+  }
+
+  if (op === 'nudge_aging_approvals') {
+    return {
+      kind: 'batch_run_result',
+      title: 'Batch run completed: approval nudges',
+      lines: [
+        `Attempted ${attempted} item(s): ${successCount} nudged, ${failureCount} failed, ${skippedCount} skipped.`,
+        policySummary,
+        'Per-item nudge outcomes are audited and appear in the item timeline/audit trail.',
+        refreshSummary,
+      ].filter(Boolean),
+      detailItems: normalizedDetailItems,
+      actions: rerunActions,
+    };
+  }
+
+  return {
+    kind: 'batch_run_result',
+    title: 'Batch run completed',
+    lines: [
+      `Attempted ${attempted} item(s).`,
+      policySummary,
+      refreshSummary,
+    ].filter(Boolean),
+    detailItems: normalizedDetailItems,
+    actions: rerunActions,
+  };
+}
+
+function buildAgentIntentRecommendations(item, {
+  canRetryPostMacro = false,
+  canRunCollectW9 = false,
+  canRouteApproval = false,
+  canNudgeApprovers = false,
+  canSummarizeBlockers = false,
+  canDraftVendorReply = false,
+  canSummarizeFinanceLead = false,
+  canShareFinanceSummary = false
+} = {}) {
+  const itemState = String(item?.state || 'received').toLowerCase();
+  const nextAction = String(item?.next_action || '').trim().toLowerCase();
+  const exceptionCode = String(item?.exception_code || '').trim().toLowerCase();
+  const hasFieldReview = Boolean(item?.requires_field_review);
+  const confidenceBlockers = Array.isArray(item?.confidence_blockers) ? item.confidence_blockers : [];
+  const hasBlockers = Boolean(
+    canSummarizeBlockers
+    || hasFieldReview
+    || confidenceBlockers.length > 0
+    || exceptionCode
+    || ['needs_info', 'failed_post'].includes(itemState)
+  );
+  const actions = [];
+  let order = 0;
+
+  const pushAction = (intent, label, why, {
+    buttonTone = 'secondary',
+    score = 0
+  } = {}) => {
+    actions.push({
+      intent,
+      label,
+      why: trimText(why, 120),
+      buttonTone,
+      score,
+      order: order++
+    });
+  };
+
+  if (canRetryPostMacro) {
+    pushAction(
+      'preview_post_fallback',
+      'Preview ERP retry plan',
+      'See browser fallback steps and approval requirements before execution.',
+      { buttonTone: 'secondary', score: 20 }
+    );
+    pushAction(
+      'run_post_fallback',
+      itemState === 'failed_post' ? 'Retry ERP posting now' : 'Run ERP fallback now',
+      itemState === 'failed_post'
+        ? 'Re-attempt ERP posting through the agent fallback flow.'
+        : 'Execute the approved ERP fallback flow now.',
+      { buttonTone: 'primary', score: 10 }
+    );
+  }
+
+  pushAction(
+    'preview_collect_w9',
+    'Preview vendor docs check (W-9)',
+    'Preview how the agent will check or collect vendor tax documentation.',
+    { buttonTone: 'secondary', score: 8 }
+  );
+  if (canRunCollectW9) {
+    pushAction(
+      'run_collect_w9',
+      'Run vendor docs check now',
+      'Start the agent flow to check or collect vendor tax documentation.',
+      { buttonTone: 'secondary', score: 6 }
+    );
+  }
+
+  if (canRouteApproval) {
+    const needsReroute = ['needs_approval', 'pending_approval'].includes(itemState);
+    pushAction(
+      'route_approval',
+      needsReroute ? 'Re-send approval request' : 'Send for approval',
+      needsReroute
+        ? 'Push this invoice back to Slack/Teams with current context.'
+        : 'Route this invoice to approvers in Slack/Teams with full context.',
+      { buttonTone: 'secondary', score: 25 }
+    );
+  }
+
+  if (canNudgeApprovers) {
+    pushAction(
+      'nudge_approvers',
+      'Nudge approver(s)',
+      'Re-send approval context to prompt a decision in Slack/Teams.',
+      { buttonTone: 'secondary', score: 26 }
+    );
+  }
+
+  if (canSummarizeBlockers) {
+    pushAction(
+      'summarize_blockers',
+      'Explain what is blocking this invoice',
+      'Summarize policy, confidence, or posting blockers and the next recovery step.',
+      { buttonTone: 'secondary', score: 30 }
+    );
+  }
+
+  if (canDraftVendorReply) {
+    pushAction(
+      'draft_vendor_reply',
+      'Draft vendor info request',
+      'Open a pre-filled Gmail draft to request missing invoice details from the vendor.',
+      { buttonTone: 'secondary', score: 28 }
+    );
+  }
+
+  if (canSummarizeFinanceLead) {
+    pushAction(
+      'summarize_finance_lead',
+      'Summarize exception for finance lead',
+      'Prepare a concise, shareable exception summary using AP context and recent audit activity.',
+      { buttonTone: 'secondary', score: 22 }
+    );
+  }
+  if (canShareFinanceSummary) {
+    pushAction(
+      'preview_finance_summary_share',
+      'Preview finance summary share',
+      'Preview the exact finance summary message for the selected target before sending it.',
+      { buttonTone: 'secondary', score: 27 }
+    );
+    pushAction(
+      'share_finance_summary',
+      'Share finance summary',
+      'Open a finance-lead draft summary (and record an audit event for the share action).',
+      { buttonTone: 'secondary', score: 24 }
+    );
+  }
+
+  for (const action of actions) {
+    if (action.intent === 'preview_post_fallback') {
+      if (itemState === 'failed_post') action.score += 90;
+      else if (['ready_to_post', 'approved'].includes(itemState)) action.score += 75;
+      if (nextAction.includes('retry') || nextAction.includes('post')) action.score += 20;
+    }
+    if (action.intent === 'run_post_fallback') {
+      if (itemState === 'failed_post') action.score += 70;
+      else if (itemState === 'ready_to_post') action.score += 55;
+      if (hasBlockers || hasFieldReview) action.score -= 20;
+    }
+    if (action.intent === 'route_approval') {
+      if (['validated', 'needs_approval', 'pending_approval'].includes(itemState)) action.score += 75;
+      if (nextAction === 'approve_or_reject') action.score += 25;
+      if (hasFieldReview || confidenceBlockers.length > 0) action.score -= 10;
+    }
+    if (action.intent === 'nudge_approvers') {
+      if (['needs_approval', 'pending_approval'].includes(itemState)) action.score += 95;
+      if (nextAction === 'approve_or_reject') action.score += 25;
+      if (itemState === 'validated') action.score -= 20;
+    }
+    if (action.intent === 'summarize_blockers') {
+      if (hasBlockers) action.score += 75;
+      if (exceptionCode === 'confidence_low' || hasFieldReview) action.score += 10;
+      if (itemState === 'failed_post') action.score += 10;
+    }
+    if (action.intent === 'draft_vendor_reply') {
+      if (itemState === 'needs_info') action.score += 95;
+      if (nextAction === 'request_info') action.score += 35;
+      if (hasFieldReview || confidenceBlockers.length > 0) action.score += 15;
+      if (itemState === 'failed_post') action.score -= 15;
+    }
+    if (action.intent === 'summarize_finance_lead') {
+      if (hasBlockers) action.score += 70;
+      if (['needs_info', 'failed_post', 'needs_approval', 'pending_approval'].includes(itemState)) action.score += 20;
+      if (exceptionCode) action.score += 15;
+    }
+    if (action.intent === 'preview_finance_summary_share') {
+      if (hasBlockers) action.score += 82;
+      if (['needs_info', 'failed_post', 'needs_approval', 'pending_approval'].includes(itemState)) action.score += 20;
+      if (exceptionCode) action.score += 10;
+    }
+    if (action.intent === 'share_finance_summary') {
+      if (hasBlockers) action.score += 78;
+      if (['needs_info', 'failed_post', 'needs_approval', 'pending_approval'].includes(itemState)) action.score += 20;
+      if (exceptionCode) action.score += 10;
+    }
+    if (action.intent === 'preview_collect_w9') {
+      if (itemState === 'needs_info') action.score += 30;
+      if (exceptionCode.includes('w9') || exceptionCode.includes('vendor')) action.score += 25;
+      if (nextAction.includes('vendor') || nextAction.includes('document') || nextAction.includes('w9')) action.score += 15;
+    }
+    if (action.intent === 'run_collect_w9') {
+      if (itemState === 'needs_info') action.score += 55;
+      if (exceptionCode.includes('w9') || exceptionCode.includes('vendor')) action.score += 35;
+      if (nextAction.includes('vendor') || nextAction.includes('document') || nextAction.includes('w9')) action.score += 20;
+      if (itemState === 'posted_to_erp' || itemState === 'closed') action.score -= 50;
+    }
+  }
+
+  actions.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.order - b.order;
+  });
+
+  const recommended = actions[0] || null;
+  return {
+    actions,
+    recommended
+  };
+}
+
+function parseAgentIntentCommand(rawValue, { availableIntents = new Set() } = {}) {
+  const text = String(rawValue || '').trim().toLowerCase();
+  if (!text) return null;
+  const normalized = text.replace(/\s+/g, ' ');
+  const includesAny = (...needles) => needles.some((needle) => normalized.includes(needle));
+  const canUse = (intent) => availableIntents.has(intent);
+
+  const candidates = [];
+  const push = (intent, score = 0) => {
+    if (!canUse(intent)) return;
+    candidates.push({ intent, score });
+  };
+
+  if (includesAny('blocker', 'blocked', 'why blocked', 'explain')) {
+    push('summarize_blockers', 100);
+  }
+  if (includesAny('finance lead', 'controller', 'finance summary', 'exception summary', 'summary for finance')) {
+    push('summarize_finance_lead', 97);
+  }
+  if (includesAny('preview', 'show', 'what will send', 'what will post') && includesAny('finance summary', 'finance lead', 'exception summary')) {
+    push('preview_finance_summary_share', 101);
+  }
+  if (includesAny('share', 'send') && includesAny('finance summary', 'finance lead', 'exception summary')) {
+    push('share_finance_summary', 100);
+  }
+  if (includesAny('draft', 'email', 'reply', 'vendor') && includesAny('vendor', 'reply', 'info', 'missing', 'request')) {
+    push('draft_vendor_reply', 98);
+  }
+  if (includesAny('nudge', 'remind', 'ping') && includesAny('approver', 'approval')) {
+    push('nudge_approvers', 99);
+  }
+  if (includesAny('approval', 'approver') && includesAny('route', 'send', 're-send', 'reroute', 'escalate', 'route approval')) {
+    push('route_approval', 95);
+  }
+  if (includesAny('w9', 'w-9', 'tax form', 'vendor docs', 'vendor document')) {
+    if (includesAny('run', 'start', 'collect', 'send')) {
+      push('run_collect_w9', 94);
+    }
+    push('preview_collect_w9', 88);
+  }
+  if (includesAny('erp', 'post', 'posting', 'fallback', 'retry')) {
+    if (includesAny('run', 'retry', 'post now', 'execute')) {
+      push('run_post_fallback', 96);
+    }
+    push('preview_post_fallback', 90);
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0];
 }
 
 function getLinkedSources(item) {
@@ -701,12 +2248,20 @@ function renderContextTabBody(item, contextPayload, loading, error, agentInsight
         <div>${escapeHtml(trimText(sheet.reference || '', 80))}</div>
       </div>
     `).join('');
-    const eventRows = events.slice(0, 3).map((event) => `
-      <div class="cl-context-row">
-        <div><strong>${escapeHtml(getAgentToolLabel(event.tool_name || 'browser_action'))}</strong></div>
-        <div>${escapeHtml(String(event.status || 'unknown').replace(/_/g, ' '))}</div>
-      </div>
-    `).join('');
+    const eventRows = events.slice(0, 3).map((event) => {
+      const browserEvent = describeBrowserContextEvent(event);
+      return `
+        <div class="cl-context-row cl-context-row-browser">
+          <div class="cl-context-row-browser-main">
+            <strong>${escapeHtml(browserEvent.title || 'Browser action')}</strong>
+            <span class="cl-context-row-browser-status" data-tone="${escapeHtml(String(browserEvent.statusTone || 'info'))}">${escapeHtml(browserEvent.status || 'Unknown')}</span>
+          </div>
+          ${browserEvent.fallbackRelated ? '<div class="cl-context-row-browser-tag">Fallback evidence</div>' : ''}
+          ${browserEvent.detail ? `<div>${escapeHtml(browserEvent.detail)}</div>` : ''}
+          ${browserEvent.timeLabel ? `<div>${escapeHtml(browserEvent.timeLabel)}</div>` : ''}
+        </div>
+      `;
+    }).join('');
     const tabRows = relatedTabs.slice(0, 3).map((tab) => `
       <div class="cl-context-row">
         <div><strong>${escapeHtml(trimText(tab.title || tab.url || 'Browser tab', 80))}</strong></div>
@@ -825,6 +2380,11 @@ function renderThreadContext() {
   const invoiceNumber = item.invoice_number || 'N/A';
   const dueDate = item.due_date || 'N/A';
   const amount = formatAmount(item.amount, item.currency || 'USD');
+  const poNumber = item.po_number || null;
+  // Per-field confidence map: { vendor: 0.87, amount: 0.99, ... }
+  const fieldConfidences = (typeof item.field_confidences === 'object' && item.field_confidences !== null)
+    ? item.field_confidences
+    : {};
   const state = item.state || 'received';
   const stateLabel = getStateLabel(state);
   const sourceSubject = trimText(item.subject || 'Subject unavailable', 96);
@@ -840,6 +2400,12 @@ function renderThreadContext() {
   const mergeReason = item.merge_reason ? String(item.merge_reason).replace(/_/g, ' ') : '';
   const exceptionSeverity = item.exception_severity ? String(item.exception_severity).toLowerCase() : '';
   const exceptionCode = item.exception_code ? String(item.exception_code).replace(/_/g, ' ') : '';
+  const documentType = String(item.document_type || 'invoice').toLowerCase();
+  const isReceipt = documentType === 'receipt';
+  const docLabel = isReceipt ? 'Receipt' : 'Invoice';
+  // Correction learning fields — populated by build_worklist_item on the backend
+  const glSuggestion = (item.gl_suggestion && item.gl_suggestion.value) ? item.gl_suggestion : null;
+  const correctionHints = Array.isArray(item.correction_hints) ? item.correction_hints : [];
   const riskSignals = item.risk_signals || {};
   const latePaymentRisk = String(riskSignals?.late_payment_risk?.level || '').trim();
   const discountSignal = Boolean(riskSignals?.discount_opportunity?.available);
@@ -849,6 +2415,8 @@ function renderThreadContext() {
   const contextPayload = item?.id ? contextState.get(item.id) || null : null;
   const loadingContext = item?.id && contextUiState.loading && contextUiState.itemId === item.id;
   const contextError = item?.id && contextUiState.itemId === item.id ? contextUiState.error : '';
+  const auditEvents = auditState.itemId === item.id && Array.isArray(auditState.events) ? auditState.events : [];
+  const browserFallbackStatus = buildBrowserFallbackStatusSummary(item, contextPayload, auditEvents);
   const budgetContext = normalizeBudgetContext(contextPayload, item);
   const budgetStatusLabel = budgetContext.status ? String(budgetContext.status).replace(/_/g, ' ') : '';
   const budgetPreviewRows = budgetContext.checks.slice(0, 2).map((check) => `
@@ -913,7 +2481,7 @@ function renderThreadContext() {
   context.innerHTML = `
     <div class="cl-thread-card">
       <div class="cl-navigator">
-        <div class="cl-thread-main">Invoice ${escapeHtml(humanIndex)} of ${escapeHtml(items.length || 1)}</div>
+        <div class="cl-thread-main">${escapeHtml(docLabel)} ${escapeHtml(humanIndex)} of ${escapeHtml(items.length || 1)}</div>
         <div class="cl-nav-buttons">
           <button class="cl-btn cl-btn-secondary cl-nav-btn" id="cl-prev-item" ${itemIndex <= 0 ? 'disabled' : ''}>Prev</button>
           <button class="cl-btn cl-btn-secondary cl-nav-btn" id="cl-next-item" ${itemIndex >= items.length - 1 ? 'disabled' : ''}>Next</button>
@@ -923,11 +2491,17 @@ function renderThreadContext() {
         <div class="cl-thread-title">${escapeHtml(vendor)}</div>
         <span class="cl-pill" style="color:${stateColor}; border-color:${stateColor};">${escapeHtml(stateLabel)}</span>
       </div>
-      <div class="cl-thread-main">${escapeHtml(amount)} · Invoice ${escapeHtml(invoiceNumber)} · Due ${escapeHtml(dueDate)}</div>
+      <div class="cl-thread-main">${escapeHtml(amount)} · ${escapeHtml(docLabel)} ${escapeHtml(invoiceNumber)}${isReceipt ? ' · Already paid' : ` · Due ${escapeHtml(dueDate)}`}${!isReceipt && poNumber ? ` · PO ${escapeHtml(poNumber)}` : !isReceipt ? ' · No PO' : ''}</div>
+      ${
+        item.exception_code && getExceptionReason(item.exception_code)
+          ? `<div class="cl-exception-reason">⚠ ${escapeHtml(getExceptionReason(item.exception_code))}</div>`
+          : ''
+      }
       <div class="cl-decision-banner ${decisionToneClass}">
         <div class="cl-decision-title">${escapeHtml(decisionSummary.title)}</div>
         <div class="cl-decision-detail">${escapeHtml(decisionSummary.detail)}</div>
       </div>
+      ${browserFallbackStatus ? renderBrowserFallbackStatusBannerHtml(browserFallbackStatus) : ''}
       ${riskChips.length ? `<div class="cl-risk-row">${riskChips.join('')}</div>` : ''}
       ${budgetContext.requiresDecision ? budgetPreviewRows : ''}
       ${
@@ -994,12 +2568,41 @@ function renderThreadContext() {
           }">${hasConfidence ? `${confidencePercent}%` : 'Checking...'}</span>
           <span class="cl-confidence-threshold">Threshold: 95%</span>
         </div>
+        ${
+          Object.keys(fieldConfidences).length > 0
+            ? `<details class="cl-field-conf-details">
+                <summary class="cl-field-conf-summary">Field validation</summary>
+                <div class="cl-field-conf-grid">
+                  ${['vendor', 'amount', 'invoice_number', 'due_date'].map(field => {
+                    const conf = fieldConfidences[field];
+                    if (conf === undefined) return '';
+                    const pct = Math.round(Math.max(0, Math.min(1, Number(conf))) * 100);
+                    const cls = pct >= 95 ? 'cl-conf-high' : pct >= 75 ? 'cl-conf-med' : 'cl-conf-low';
+                    const icon = pct >= 95 ? '✓' : pct >= 75 ? '⚠' : '✗';
+                    const label = field.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                    return `<div class="cl-field-conf-row">
+                      <span class="cl-field-conf-label">${escapeHtml(label)}</span>
+                      <span class="cl-field-conf-value ${cls}">${icon} ${pct}%</span>
+                    </div>`;
+                  }).join('')}
+                </div>
+              </details>`
+            : ''
+        }
         <div id="cl-mismatches"></div>
       </div>
+      ${isReceipt
+        ? `<div class="cl-receipt-notice">
+             <span class="cl-receipt-icon">✓</span>
+             This is a <strong>payment receipt</strong> — the payment has already been made. No AP approval is required.
+           </div>`
+        : ''}
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary" id="cl-open-source-email">Open email</button>
         ${
-          budgetContext.requiresDecision
+          isReceipt
+            ? `<button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-escalate-to-slack">Share to Slack</button>`
+            : budgetContext.requiresDecision
             ? `
               <button class="cl-btn" id="cl-budget-approve-override">Approve with override</button>
               <button class="cl-btn cl-btn-secondary" id="cl-budget-request-adjustment">Escalate budget</button>
@@ -1011,6 +2614,9 @@ function renderThreadContext() {
               </button>
               <button class="cl-btn cl-btn-secondary" id="cl-reject-inline">Reject</button>
               <button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-escalate-to-slack">Escalate to Slack</button>
+              ${state === 'needs_info'
+                ? `<button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-draft-vendor-reply">Draft vendor reply</button>`
+                : ''}
             `
         }
       </div>
@@ -1038,6 +2644,18 @@ function renderThreadContext() {
           <div class="cl-detail-row"><span>Source subject</span><span>${escapeHtml(sourceSubject || 'N/A')}</span></div>
           <div class="cl-detail-row"><span>Merge reason</span><span>${escapeHtml(mergeReason || 'N/A')}</span></div>
           <div class="cl-detail-row"><span>Confidence</span><span>${escapeHtml(hasConfidence ? `${confidencePercent}%` : 'N/A')}</span></div>
+          ${glSuggestion
+            ? `<div class="cl-detail-row">
+                 <span>Suggested GL</span>
+                 <span class="cl-conf-med">${escapeHtml(glSuggestion.value)}<span class="cl-field-conf-label"> (${glSuggestion.learned_from || 0}× learned)</span></span>
+               </div>`
+            : ''}
+          ${correctionHints.length > 0
+            ? `<div class="cl-detail-row">
+                 <span>Prior corrections</span>
+                 <span class="cl-conf-med">${escapeHtml(correctionHints.map(h => h.field).join(', '))}</span>
+               </div>`
+            : ''}
           <div class="cl-detail-row"><span>Exception</span><span>${escapeHtml(exceptionSeverity || 'N/A')} ${escapeHtml(exceptionCode || '')}</span></div>
           <div class="cl-detail-row"><span>Thread</span><span>${escapeHtml(getSourceThreadId(item) || 'N/A')}</span></div>
           <div class="cl-detail-row"><span>Message</span><span>${escapeHtml(getSourceMessageId(item) || 'N/A')}</span></div>
@@ -1301,6 +2919,17 @@ function renderThreadContext() {
       }
     });
   }
+
+  const draftReplyBtn = context.querySelector('#cl-draft-vendor-reply');
+  if (draftReplyBtn) {
+    draftReplyBtn.addEventListener('click', async () => {
+      const result = await openNeedsInfoDraftCompose(item);
+      if (!result?.ok) {
+        // Keep this non-blocking in the thread action path; operator can still compose manually.
+        showToast('Unable to prepare vendor draft', 'error');
+      }
+    });
+  }
 }
 
 function renderAgentActions() {
@@ -1329,12 +2958,16 @@ function renderAgentActions() {
   const scope = getAgentScope(item, sessionPayload);
   const summary = summarizeAgentEvents(allEvents, 8);
   const historyEvents = summary.events;
+  const auditEvents = auditState.itemId === item.id && Array.isArray(auditState.events) ? auditState.events : [];
+  const auditLoading = Boolean(auditState.loading && auditState.itemId === item.id);
+  const timelineEntries = buildAgentTimelineEntries(historyEvents, auditEvents, { maxEntries: 14 });
   const state = String(session.state || 'running');
   const stateTone = state === 'blocked_for_approval' ? '#b45309' : state === 'failed' ? '#b91c1c' : '#0f766e';
   const stateLabel = state.replace(/_/g, ' ');
   const hasAgentContent =
     pending.length > 0 ||
     queued.length > 0 ||
+    timelineEntries.length > 0 ||
     historyEvents.length > 0 ||
     state === 'blocked_for_approval' ||
     state === 'failed';
@@ -1395,7 +3028,7 @@ function renderAgentActions() {
     }
   }
 
-  const itemSummaryState = debugUiEnabled && agentSummaryState.itemId === item.id ? agentSummaryState : null;
+  const itemSummaryState = agentSummaryState.itemId === item.id ? agentSummaryState : null;
   let macroSummaryHtml = '';
   if (itemSummaryState) {
     if (itemSummaryState.loading) {
@@ -1405,45 +3038,49 @@ function renderAgentActions() {
     } else if (itemSummaryState.data) {
       const data = itemSummaryState.data;
       const mode = String(itemSummaryState.mode || '').toLowerCase();
-      const title = mode.includes('preview') ? 'Macro preview' : 'Macro dispatched';
-      let rows = '';
-      if (Array.isArray(data.commands)) {
-        rows = data.commands
-          .slice(0, 4)
-          .map((entry) => {
-            const command = entry?.command || {};
-            const tool = getAgentToolLabel(command.tool_name || '');
-            const detail = entry?.summary || command.step || '';
-            return `
-              <div class="cl-agent-related-row">
-                <div class="cl-agent-related-title">${escapeHtml(tool || 'Step')}</div>
-                <div class="cl-agent-detail">${escapeHtml(detail)}</div>
-              </div>
-            `;
-          })
-          .join('');
+      if (data.kind === 'blocker_summary' || data.kind === 'finance_lead_summary' || data.kind === 'finance_share_preview') {
+        macroSummaryHtml = renderAgentSummaryCardHtml(data);
       } else {
-        rows = `
-          <div class="cl-agent-related-row">
-            <div class="cl-agent-detail">
-              Queued: ${escapeHtml(String(data.queued || 0))}
-              · Awaiting approval: ${escapeHtml(String(data.blocked || 0))}
-              · Denied: ${escapeHtml(String(data.denied || 0))}
+        const title = mode.includes('preview') ? 'Macro preview' : 'Macro dispatched';
+      let rows = '';
+        if (Array.isArray(data.commands)) {
+          rows = data.commands
+            .slice(0, 4)
+            .map((entry) => {
+              const command = entry?.command || {};
+              const tool = getAgentToolLabel(command.tool_name || '');
+              const detail = entry?.summary || command.step || '';
+              return `
+                <div class="cl-agent-related-row">
+                  <div class="cl-agent-related-title">${escapeHtml(tool || 'Step')}</div>
+                  <div class="cl-agent-detail">${escapeHtml(detail)}</div>
+                </div>
+              `;
+            })
+            .join('');
+        } else {
+          rows = `
+            <div class="cl-agent-related-row">
+              <div class="cl-agent-detail">
+                Queued: ${escapeHtml(String(data.queued || 0))}
+                · Awaiting approval: ${escapeHtml(String(data.blocked || 0))}
+                · Denied: ${escapeHtml(String(data.denied || 0))}
+              </div>
             </div>
+          `;
+        }
+        macroSummaryHtml = `
+          <div class="cl-agent-brief">
+            <div class="cl-agent-brief-title">${escapeHtml(title)} · ${escapeHtml(getMacroLabel(data.macro_name || ''))}</div>
+            ${rows}
           </div>
         `;
       }
-      macroSummaryHtml = `
-        <div class="cl-agent-brief">
-          <div class="cl-agent-brief-title">${escapeHtml(title)} · ${escapeHtml(getMacroLabel(data.macro_name || ''))}</div>
-          ${rows}
-        </div>
-      `;
     }
   }
 
   const historyRows = historyEvents
-    .slice(0, 5)
+    .slice(0, 8)
     .map((event) => {
       const statusText = String(event.status || 'queued').replace(/_/g, ' ');
       const tool = getAgentToolLabel(event.tool_name || '');
@@ -1457,6 +3094,149 @@ function renderAgentActions() {
       `;
     })
     .join('');
+  const timelineGroupsHtml = renderAgentTimelineGroups(timelineEntries, { auditLoading });
+  const recoveredFailuresNote = summary.recoveredFailures > 0
+    ? `<div class="cl-agent-detail">Recovered ${escapeHtml(String(summary.recoveredFailures))} transient failure${summary.recoveredFailures === 1 ? '' : 's'} after successful retries.</div>`
+    : '';
+  const itemState = String(item?.state || 'received').toLowerCase();
+  const itemContextPayload = contextState.get(item.id) || null;
+  const itemMetadata = queueManager?.parseMetadata ? queueManager.parseMetadata(item.metadata) : {};
+  const teamsMeta = itemMetadata && typeof itemMetadata === 'object' && itemMetadata.teams && typeof itemMetadata.teams === 'object'
+    ? itemMetadata.teams
+    : {};
+  const canRetryPostMacro = ['failed_post', 'ready_to_post', 'approved'].includes(itemState);
+  const canRunCollectW9 = !['posted_to_erp', 'closed', 'rejected'].includes(itemState);
+  const canRouteApproval = ['needs_approval', 'pending_approval', 'validated'].includes(itemState)
+    || String(item?.next_action || '') === 'approve_or_reject';
+  const canNudgeApprovers = ['needs_approval', 'pending_approval'].includes(itemState) || pending.length > 0;
+  const canSummarizeBlockers = Boolean(
+    item?.exception_code
+    || item?.requires_field_review
+    || (Array.isArray(item?.confidence_blockers) && item.confidence_blockers.length > 0)
+    || ['needs_info', 'failed_post', 'needs_approval', 'pending_approval'].includes(itemState)
+  );
+  const canDraftVendorReply = itemState === 'needs_info'
+    || String(item?.next_action || '').trim().toLowerCase() === 'request_info';
+  const canSummarizeFinanceLead = canSummarizeBlockers
+    || Boolean(itemContextPayload?.summary?.text)
+    || Boolean(String(item?.next_action || '').trim());
+  const canShareFinanceSummary = canSummarizeFinanceLead;
+  const hasSlackSummaryTarget = Boolean(item?.slack_channel_id && (item?.slack_thread_id || item?.slack_message_ts));
+  const hasTeamsSummaryTarget = Boolean(teamsMeta?.channel);
+  const intentRecommendations = buildAgentIntentRecommendations(item, {
+    canRetryPostMacro,
+    canRunCollectW9,
+    canRouteApproval,
+    canNudgeApprovers,
+    canSummarizeBlockers,
+    canDraftVendorReply,
+    canSummarizeFinanceLead,
+    canShareFinanceSummary
+  });
+  const recommendedIntent = intentRecommendations.recommended;
+  const availableIntentIds = new Set(intentRecommendations.actions.map((action) => String(action.intent || '')));
+  const isBlockedInvoice = ['needs_info', 'failed_post', 'needs_approval', 'pending_approval'].includes(itemState)
+    || Boolean(item?.requires_field_review)
+    || Boolean(item?.exception_code);
+  const proactiveIntentIds = new Set([
+    'draft_vendor_reply',
+    'nudge_approvers',
+    'summarize_finance_lead',
+    'preview_finance_summary_share',
+    'share_finance_summary'
+  ]);
+  const proactiveActions = intentRecommendations.actions.filter((action) => proactiveIntentIds.has(String(action.intent || '')));
+  const intentRowsHtml = chunkList(intentRecommendations.actions, 2)
+    .map((row) => `
+      <div class="cl-agent-actions-bar">
+        ${row.map((action) => `
+          <button
+            class="cl-btn ${action.buttonTone === 'primary' ? 'cl-btn-primary' : 'cl-btn-secondary'} cl-agent-intent ${recommendedIntent && recommendedIntent.intent === action.intent ? 'cl-agent-intent-recommended' : ''}"
+            data-intent="${escapeHtml(action.intent)}"
+          >
+            ${escapeHtml(action.label)}
+            ${recommendedIntent && recommendedIntent.intent === action.intent ? '<span class="cl-agent-intent-badge">Recommended</span>' : ''}
+          </button>
+        `).join('')}
+      </div>
+    `)
+    .join('');
+  const proactiveRecommended = proactiveActions[0] || recommendedIntent;
+  const proactiveActionsHtml = isBlockedInvoice && proactiveActions.length > 0
+    ? `
+      <div class="cl-agent-proactive">
+        <div class="cl-agent-proactive-title">Agent suggested next step</div>
+        <div class="cl-agent-detail">${escapeHtml(
+          proactiveRecommended?.why || 'Choose a recovery action to move this invoice forward.'
+        )}</div>
+        <div class="cl-agent-actions-bar">
+          ${proactiveActions.slice(0, 2).map((action) => `
+            <button
+              class="cl-btn cl-btn-secondary cl-agent-intent ${proactiveRecommended && proactiveRecommended.intent === action.intent ? 'cl-agent-intent-recommended' : ''}"
+              data-intent="${escapeHtml(action.intent)}"
+            >
+              ${escapeHtml(action.label)}
+              ${proactiveRecommended && proactiveRecommended.intent === action.intent ? '<span class="cl-agent-intent-badge">Suggested</span>' : ''}
+            </button>
+          `).join('')}
+        </div>
+        ${proactiveActions.length > 2
+          ? `
+            <div class="cl-agent-actions-bar">
+              ${proactiveActions.slice(2, 4).map((action) => `
+                <button class="cl-btn cl-btn-secondary cl-agent-intent" data-intent="${escapeHtml(action.intent)}">
+                  ${escapeHtml(action.label)}
+                </button>
+              `).join('')}
+            </div>
+          `
+          : ''
+        }
+      </div>
+    `
+    : '';
+  const financeShareTargetOptionsHtml = canShareFinanceSummary
+    ? `
+      <div class="cl-agent-share-target-row">
+        <label class="cl-agent-share-target-label" for="cl-agent-share-target">Finance summary target</label>
+        <select class="cl-select cl-agent-share-target" id="cl-agent-share-target">
+          <option value="email_draft">Email draft</option>
+          ${hasSlackSummaryTarget ? '<option value="slack_thread">Slack approval thread</option>' : ''}
+          ${hasTeamsSummaryTarget ? '<option value="teams_reply">Teams approval thread</option>' : ''}
+        </select>
+      </div>
+    `
+    : '';
+  const boundedAgentActionsHtml = `
+    <details class="cl-details" open>
+      <summary>Agent actions (preview-first)</summary>
+      <div class="cl-agent-detail">Bounded actions use policy checks and may require human confirmation before execution.</div>
+      ${recommendedIntent
+        ? `
+          <div class="cl-agent-recommendation">
+            <div class="cl-agent-recommendation-title">Recommended next move: ${escapeHtml(recommendedIntent.label)}</div>
+            <div class="cl-agent-detail">${escapeHtml(recommendedIntent.why || 'Preview the action before running it.')}</div>
+          </div>
+        `
+        : ''
+      }
+      <div class="cl-agent-command-bar" role="group" aria-label="Agent command bar">
+        <input
+          type="text"
+          class="cl-agent-command-input"
+          id="cl-agent-command-input"
+          placeholder="Try: preview finance summary, retry ERP posting, draft vendor info request"
+        />
+        <button class="cl-btn cl-btn-secondary cl-agent-command-submit" id="cl-agent-command-submit">Run</button>
+      </div>
+      <div class="cl-agent-command-hint">
+        Structured commands only. Clearledgr maps your text to approved agent actions (no free-form tool execution).
+      </div>
+      ${financeShareTargetOptionsHtml}
+      ${proactiveActionsHtml}
+      ${intentRowsHtml || '<div class="cl-empty">No bounded agent actions are available for this invoice yet.</div>'}
+    </details>
+  `;
 
   const debugAgentToolsHtml = debugUiEnabled
     ? `
@@ -1492,15 +3272,310 @@ function renderAgentActions() {
       }
       ${previewHtml}
     </div>
+    ${boundedAgentActionsHtml}
     ${debugAgentToolsHtml}
     ${macroSummaryHtml}
+    <div class="cl-agent-timeline">
+      <div class="cl-agent-brief-title">Recent agent timeline</div>
+      ${recoveredFailuresNote}
+      ${timelineGroupsHtml}
+    </div>
     <details class="cl-details">
-      <summary>View history</summary>
+      <summary>View raw agent events</summary>
       <div class="cl-agent-list">
         ${historyRows || '<div class="cl-empty">No recent actions.</div>'}
       </div>
     </details>
   `;
+
+  const runMacroFromAgentUi = async (macro, dryRun, uiButton = null) => {
+    if (!macro || !session?.id) return null;
+    if (uiButton) uiButton.disabled = true;
+    agentSummaryState = {
+      itemId: item.id,
+      mode: dryRun ? 'macro_preview' : 'macro_run',
+      loading: true,
+      error: '',
+      data: null
+    };
+    renderAgentActions();
+
+    const payload = await queueManager.dispatchAgentMacro(session.id, macro, {
+      actorId: 'gmail_user',
+      actorRole: scope.actorRole,
+      workflowId: scope.workflowId,
+      params: {
+        workflow_id: scope.workflowId || undefined,
+        actor_role: scope.actorRole || undefined,
+        invoice_number: item.invoice_number || undefined,
+        vendor_name: item.vendor_name || item.vendor || undefined,
+        amount: item.amount,
+        currency: item.currency || undefined
+      },
+      dryRun
+    });
+
+    if (!payload) {
+      agentSummaryState = {
+        itemId: item.id,
+        mode: dryRun ? 'macro_preview' : 'macro_run',
+        loading: false,
+        error: 'Unable to run macro.',
+        data: null
+      };
+      renderAgentActions();
+      showToast('Macro request failed', 'error');
+      if (uiButton) uiButton.disabled = false;
+      return null;
+    }
+
+    agentSummaryState = {
+      itemId: item.id,
+      mode: dryRun ? 'macro_preview' : 'macro_run',
+      loading: false,
+      error: '',
+      data: payload
+    };
+    renderAgentActions();
+    if (dryRun) {
+      const stepCount = Array.isArray(payload.commands) ? payload.commands.length : 0;
+      showToast(`Preview ready (${stepCount} steps)`);
+    } else {
+      showToast('Macro dispatched');
+      await queueManager.syncAgentSessions();
+    }
+    if (uiButton) uiButton.disabled = false;
+    return payload;
+  };
+
+  const runAgentIntent = async (intent, uiButton = null) => {
+    const intentId = String(intent || '').trim();
+    if (!intentId) return { ok: false, reason: 'missing_intent' };
+
+    if (intentId === 'preview_post_fallback') {
+      const payload = await runMacroFromAgentUi('post_invoice_to_erp', true, uiButton);
+      return { ok: Boolean(payload), reason: payload ? '' : 'macro_failed' };
+    }
+    if (intentId === 'run_post_fallback') {
+      const payload = await runMacroFromAgentUi('post_invoice_to_erp', false, uiButton);
+      return { ok: Boolean(payload), reason: payload ? '' : 'macro_failed' };
+    }
+    if (intentId === 'preview_collect_w9') {
+      const payload = await runMacroFromAgentUi('collect_w9', true, uiButton);
+      return { ok: Boolean(payload), reason: payload ? '' : 'macro_failed' };
+    }
+    if (intentId === 'run_collect_w9') {
+      const payload = await runMacroFromAgentUi('collect_w9', false, uiButton);
+      return { ok: Boolean(payload), reason: payload ? '' : 'macro_failed' };
+    }
+    if (intentId === 'route_approval') {
+      if (uiButton) uiButton.disabled = true;
+      const result = await queueManager.requestApproval(item);
+      if (uiButton) uiButton.disabled = false;
+      if (result?.status === 'needs_approval') {
+        showToast('Approval routed to Slack/Teams');
+        renderAgentActions();
+        renderThreadContext();
+        return { ok: true };
+      }
+      showToast('Unable to route approval', 'error');
+      return { ok: false, reason: 'approval_route_failed' };
+    }
+    if (intentId === 'nudge_approvers') {
+      if (uiButton) uiButton.disabled = true;
+      const result = await queueManager.nudgeApproval(item);
+      if (uiButton) uiButton.disabled = false;
+      if (result?.status === 'nudged') {
+        agentSummaryState = {
+          itemId: item.id,
+          mode: 'proactive_nudge',
+          loading: false,
+          error: '',
+          data: {
+            kind: 'blocker_summary',
+            title: 'Approver nudge sent',
+            lines: [
+              `Slack: ${String(result?.slack?.status || 'unknown')}${result?.slack?.message_ts ? ` (${result.slack.message_ts})` : ''}`,
+              `Teams: ${String(result?.teams?.status || 'unknown')}`,
+              result?.audit_event_id
+                ? `Audit trail recorded (${result.audit_event_id}).`
+                : 'Use the agent timeline to confirm callback activity and decision status.'
+            ]
+          }
+        };
+        renderAgentActions();
+        renderThreadContext();
+        showToast('Approver nudge sent');
+        return { ok: true };
+      }
+      showToast('Unable to nudge approvers', 'error');
+      return { ok: false, reason: 'approver_nudge_failed' };
+    }
+    if (intentId === 'summarize_blockers') {
+      const summaryCard = buildAgentBlockerSummary(item);
+      agentSummaryState = {
+        itemId: item.id,
+        mode: 'blocker_summary',
+        loading: false,
+        error: '',
+        data: {
+          kind: 'blocker_summary',
+          title: summaryCard.title,
+          lines: summaryCard.lines,
+        }
+      };
+      renderAgentActions();
+      showToast('Blocker summary ready');
+      return { ok: true };
+    }
+    if (intentId === 'summarize_finance_lead') {
+      const summaryCard = buildFinanceLeadExceptionSummary(item, {
+        contextPayload: itemContextPayload,
+        auditEvents
+      });
+      agentSummaryState = {
+        itemId: item.id,
+        mode: 'finance_lead_summary',
+        loading: false,
+        error: '',
+        data: {
+          kind: 'finance_lead_summary',
+          title: summaryCard.title,
+          lines: summaryCard.lines,
+        }
+      };
+      renderAgentActions();
+      showToast('Finance lead summary ready');
+      return { ok: true };
+    }
+    if (intentId === 'preview_finance_summary_share') {
+      const targetSelect = container.querySelector('#cl-agent-share-target');
+      const selectedTarget = String(targetSelect?.value || 'email_draft').trim() || 'email_draft';
+      let recipientEmail = '';
+      if (selectedTarget === 'email_draft') {
+        try {
+          const cfg = queueManager?.runtimeConfig || await queueManager?.getSyncConfig?.();
+          recipientEmail = String(cfg?.financeLeadEmail || '').trim();
+        } catch (_) {
+          recipientEmail = '';
+        }
+        if (!recipientEmail) {
+          const promptValue = window.prompt('Finance lead email (used for the preview):', '');
+          recipientEmail = String(promptValue || '').trim();
+          if (!recipientEmail) {
+            showToast('Finance lead email is required to preview the email draft', 'error');
+            return { ok: false, reason: 'missing_recipient' };
+          }
+        }
+      }
+      if (uiButton) uiButton.disabled = true;
+      const result = await queueManager.previewFinanceSummaryShare(item, {
+        target: selectedTarget,
+        recipientEmail
+      });
+      if (uiButton) uiButton.disabled = false;
+      if (result?.status === 'preview') {
+        const previewCard = buildFinanceSummarySharePreviewCard(result, selectedTarget);
+        agentSummaryState = {
+          itemId: item.id,
+          mode: 'finance_lead_share_preview',
+          loading: false,
+          error: '',
+          data: previewCard
+        };
+        renderAgentActions();
+        showToast(`Finance summary preview ready (${selectedTarget.replace(/_/g, ' ')})`);
+        return { ok: true };
+      }
+      showToast('Unable to preview finance summary share', 'error');
+      return { ok: false, reason: 'finance_summary_share_preview_failed' };
+    }
+    if (intentId === 'share_finance_summary') {
+      const targetSelect = container.querySelector('#cl-agent-share-target');
+      const selectedTarget = String(targetSelect?.value || 'email_draft').trim() || 'email_draft';
+      let recipientEmail = '';
+      if (selectedTarget === 'email_draft') {
+        try {
+          const cfg = queueManager?.runtimeConfig || await queueManager?.getSyncConfig?.();
+          recipientEmail = String(cfg?.financeLeadEmail || '').trim();
+        } catch (_) {
+          recipientEmail = '';
+        }
+        if (!recipientEmail) {
+          const promptValue = window.prompt('Finance lead email (used for the pre-filled draft):', '');
+          recipientEmail = String(promptValue || '').trim();
+          if (!recipientEmail) {
+            showToast('Finance lead email is required to prepare the draft', 'error');
+            return { ok: false, reason: 'missing_recipient' };
+          }
+        }
+      }
+      if (uiButton) uiButton.disabled = true;
+      const result = await queueManager.shareFinanceSummary(item, {
+        target: selectedTarget,
+        recipientEmail
+      });
+      if (uiButton) uiButton.disabled = false;
+      if (result?.status === 'prepared' && result?.draft) {
+        openComposePrefill(result.draft);
+        const summary = result?.summary || {};
+        agentSummaryState = {
+          itemId: item.id,
+          mode: 'finance_lead_share',
+          loading: false,
+          error: '',
+          data: {
+            kind: 'finance_lead_summary',
+            title: String(summary.title || 'Finance summary shared'),
+            lines: [
+              ...(Array.isArray(summary.lines) ? summary.lines.slice(0, 4) : []),
+              result?.audit_event_id ? `Share action audited (${result.audit_event_id}).` : '',
+            ].filter(Boolean)
+          }
+        };
+        renderAgentActions();
+        showToast('Finance summary draft opened');
+        return { ok: true };
+      }
+      if (result?.status === 'shared') {
+        const summary = result?.summary || {};
+        const delivery = result?.delivery || {};
+        agentSummaryState = {
+          itemId: item.id,
+          mode: 'finance_lead_share',
+          loading: false,
+          error: '',
+          data: {
+            kind: 'finance_lead_summary',
+            title: String(summary.title || 'Finance summary shared'),
+            lines: [
+              ...(Array.isArray(summary.lines) ? summary.lines.slice(0, 3) : []),
+              `Delivered to ${String(result?.target || selectedTarget).replace(/_/g, ' ')} (${String(delivery.status || 'unknown')})`,
+              result?.audit_event_id ? `Share action audited (${result.audit_event_id}).` : '',
+            ].filter(Boolean)
+          }
+        };
+        renderAgentActions();
+        showToast(`Finance summary shared (${String(result?.target || selectedTarget).replace(/_/g, ' ')})`);
+        return { ok: true };
+      }
+      showToast('Unable to share finance summary', 'error');
+      return { ok: false, reason: 'finance_summary_share_failed' };
+    }
+    if (intentId === 'draft_vendor_reply') {
+      if (uiButton) uiButton.disabled = true;
+      const result = await openNeedsInfoDraftCompose(item);
+      if (uiButton) uiButton.disabled = false;
+      if (result?.ok) {
+        showToast('Vendor draft opened in Gmail');
+        return { ok: true };
+      }
+      showToast('Unable to prepare vendor draft', 'error');
+      return { ok: false, reason: result?.reason || 'draft_failed' };
+    }
+    showToast('That command is not available for this invoice', 'error');
+    return { ok: false, reason: 'unsupported_intent' };
+  };
 
   container.querySelectorAll('.cl-agent-approve').forEach((button) => {
     button.addEventListener('click', async () => {
@@ -1522,57 +3597,573 @@ function renderAgentActions() {
     });
   });
 
+  container.querySelectorAll('.cl-agent-intent').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const intent = button.getAttribute('data-intent') || '';
+      if (!intent) return;
+      await runAgentIntent(intent, button);
+    });
+  });
+
+  const commandInput = container.querySelector('#cl-agent-command-input');
+  const commandSubmit = container.querySelector('#cl-agent-command-submit');
+  const runBoundedCommand = async () => {
+    const raw = String(commandInput?.value || '').trim();
+    if (!raw) {
+      showToast('Enter a command for the agent', 'error');
+      commandInput?.focus();
+      return;
+    }
+    const parsed = parseAgentIntentCommand(raw, { availableIntents: availableIntentIds });
+    if (!parsed?.intent) {
+      showToast('Command not recognized. Try “retry ERP posting” or “explain blockers”.', 'error');
+      return;
+    }
+    if (commandSubmit) commandSubmit.disabled = true;
+    const result = await runAgentIntent(parsed.intent, commandSubmit);
+    if (commandSubmit) commandSubmit.disabled = false;
+    if (result?.ok && commandInput) {
+      commandInput.value = '';
+    }
+  };
+  if (commandSubmit) {
+    commandSubmit.addEventListener('click', async () => {
+      await runBoundedCommand();
+    });
+  }
+  if (commandInput) {
+    commandInput.addEventListener('keydown', async (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      await runBoundedCommand();
+    });
+  }
+
   container.querySelectorAll('.cl-agent-action').forEach((button) => {
     button.addEventListener('click', async () => {
       const macro = button.getAttribute('data-macro');
       const dryRun = button.getAttribute('data-dry-run') === '1';
       if (!macro) return;
-      agentSummaryState = {
-        itemId: item.id,
-        mode: dryRun ? 'macro_preview' : 'macro_run',
-        loading: true,
-        error: '',
-        data: null
-      };
-      renderAgentActions();
-      const payload = await queueManager.dispatchAgentMacro(session.id, macro, {
-        actorId: 'gmail_user',
-        actorRole: scope.actorRole,
-        workflowId: scope.workflowId,
-        params: {
-          workflow_id: scope.workflowId || undefined,
-          actor_role: scope.actorRole || undefined
-        },
-        dryRun
-      });
-      if (!payload) {
-        agentSummaryState = {
-          itemId: item.id,
-          mode: dryRun ? 'macro_preview' : 'macro_run',
+      await runMacroFromAgentUi(macro, dryRun, button);
+    });
+  });
+}
+
+function renderBatchAgentOps() {
+  if (!globalSidebarEl) return;
+  const container = globalSidebarEl.querySelector('#cl-batch-agent-ops');
+  if (!container) return;
+
+  const policy = normalizeBatchOpsPolicyConfig(batchOpsPolicyState);
+  const snapshot = buildBatchAgentOpsSnapshot(queueState, agentSessionsState, {
+    nowMs: Date.now(),
+    agingApprovalHours: 24,
+    previewLimit: 4
+  });
+  const filteredGroups = {
+    lowRiskReady: applyBatchPolicyToGroup(snapshot.lowRiskReady, policy, { previewLimit: 4 }),
+    failedPostRetryPreview: applyBatchPolicyToGroup(snapshot.failedPostRetryPreview, policy, { previewLimit: 4 }),
+    nudgeAgingApprovals: applyBatchPolicyToGroup(snapshot.nudgeAgingApprovals, policy, { previewLimit: 4 }),
+  };
+
+  const hasAnyBatchCandidates = (
+    (snapshot.lowRiskReady?.count || 0)
+    + (snapshot.failedPostRetryPreview?.count || 0)
+    + (snapshot.nudgeAgingApprovals?.count || 0)
+  ) > 0;
+
+  if (!hasAnyBatchCandidates) {
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-batch', false);
+    return;
+  }
+  setSectionVisibility('cl-section-batch', true);
+
+  const opCards = [
+    {
+      id: 'process_low_risk_ready',
+      title: 'Process low-risk ready items',
+      subtitle: 'Dispatch ERP posting macros for ready-to-post, low-risk invoices (agent sessions required).',
+      counts: filteredGroups.lowRiskReady,
+      runSupported: true,
+      runLabel: 'Run batch',
+      previewLabel: 'Preview batch'
+    },
+    {
+      id: 'retry_failed_posts_preview',
+      title: 'Retry failed posts',
+      subtitle: 'Preview or run retries for failed ERP posts using the canonical retry-post path.',
+      counts: filteredGroups.failedPostRetryPreview,
+      runSupported: true,
+      runLabel: 'Run retries',
+      previewLabel: 'Preview retries'
+    },
+    {
+      id: 'nudge_aging_approvals',
+      title: 'Send approval nudges',
+      subtitle: 'Batch nudge aging approvals through audited Slack/Teams reminder semantics.',
+      counts: filteredGroups.nudgeAgingApprovals,
+      runSupported: true,
+      runLabel: 'Send nudges',
+      previewLabel: 'Preview nudges'
+    }
+  ];
+
+  const itemSummaryState = batchOpsState || {};
+  const summaryHtml = itemSummaryState.loading
+    ? '<div class="cl-agent-brief"><div class="cl-empty">Preparing batch operation...</div></div>'
+    : itemSummaryState.error
+      ? `<div class="cl-agent-brief"><div class="cl-agent-detail-error">${escapeHtml(itemSummaryState.error)}</div></div>`
+      : itemSummaryState.data
+        ? renderAgentSummaryCardHtml(itemSummaryState.data)
+        : '';
+
+  container.innerHTML = `
+    <div class="cl-batch-note">Preview-first batch actions stay inside Gmail and reuse the same per-item audit and agent timelines.</div>
+    <div class="cl-batch-config">
+      <div class="cl-batch-config-row">
+        <label class="cl-batch-config-label" for="cl-batch-max-items">Max items</label>
+        <select id="cl-batch-max-items" class="cl-batch-config-select">
+          <option value="3">3</option>
+          <option value="5">5</option>
+          <option value="10">10</option>
+          <option value="20">20</option>
+        </select>
+        <label class="cl-batch-config-label" for="cl-batch-preset">Order</label>
+        <select id="cl-batch-preset" class="cl-batch-config-select">
+          <option value="queue_order">Queue order</option>
+          <option value="lowest_risk_first">Lowest risk first</option>
+          <option value="oldest_first">Oldest first</option>
+        </select>
+        <label class="cl-batch-config-label" for="cl-batch-amount-cap">Amount cap</label>
+        <input
+          id="cl-batch-amount-cap"
+          class="cl-batch-config-input"
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder="No cap"
+          value="${escapeHtml(policy.amountThresholdInput)}"
+        />
+        <button class="cl-btn cl-btn-secondary cl-batch-clear-cap" id="cl-batch-clear-cap" type="button">Clear</button>
+      </div>
+      <div class="cl-batch-note">Policies apply to both preview and run. Amount cap filters by invoice amount and keeps lower-value items first (current queue sort order).</div>
+    </div>
+    ${opCards.map((op) => {
+      const counts = op.counts || {};
+      const disabled = (counts.selectedCount || 0) === 0;
+      return `
+        <div class="cl-batch-card">
+          <div class="cl-batch-card-title">${escapeHtml(op.title)}</div>
+          <div class="cl-agent-detail">${escapeHtml(op.subtitle)}</div>
+          <div class="cl-batch-card-metrics">
+            <span>${escapeHtml(String(counts.count || 0))} candidate(s)</span>
+            <span>${escapeHtml(String(counts.selectedCount || 0))} selected</span>
+            <span>${escapeHtml(String(counts.withSessionCount || 0))} runnable + session</span>
+            ${counts.blockedCount ? `<span>${escapeHtml(String(counts.blockedCount))} blocked</span>` : ''}
+            ${counts.policyAmountExcludedCount ? `<span>${escapeHtml(String(counts.policyAmountExcludedCount))} amount-excluded</span>` : ''}
+            ${counts.policyLimitExcludedCount ? `<span>${escapeHtml(String(counts.policyLimitExcludedCount))} deferred by limit</span>` : ''}
+          </div>
+          <div class="cl-agent-actions-bar">
+            <button
+              class="cl-btn cl-btn-secondary cl-batch-op-action"
+              data-batch-op="${escapeHtml(op.id)}"
+              data-dry-run="1"
+              ${disabled ? 'disabled' : ''}
+            >
+              ${escapeHtml(op.previewLabel || 'Preview')}
+            </button>
+            ${
+              op.runSupported
+                ? `
+                  <button
+                    class="cl-btn cl-btn-primary cl-batch-op-action"
+                    data-batch-op="${escapeHtml(op.id)}"
+                    data-dry-run="0"
+                    ${disabled ? 'disabled' : ''}
+                  >
+                    ${escapeHtml(op.runLabel || 'Run')}
+                  </button>
+                `
+                : ''
+            }
+          </div>
+        </div>
+      `;
+    }).join('')}
+    ${summaryHtml}
+  `;
+
+  const runBatchOperation = async (opId, dryRun, button, { targetItemIds = null, rerunFailedOnly = false } = {}) => {
+    const op = String(opId || '').trim();
+    if (!op) return { ok: false, reason: 'missing_op' };
+    const targetIdSet = Array.isArray(targetItemIds) && targetItemIds.length > 0
+      ? new Set(targetItemIds.map((id) => String(id || '').trim()).filter(Boolean))
+      : null;
+    const selectByTargetIds = (entries) => {
+      const list = Array.isArray(entries) ? entries : [];
+      if (!targetIdSet) return list;
+      return list.filter((entry) => targetIdSet.has(String(entry?.id || '').trim()));
+    };
+    if (button) button.disabled = true;
+    batchOpsState = { mode: op, loading: true, error: '', data: null };
+    renderBatchAgentOps();
+
+    try {
+      if (dryRun) {
+        const previewSource =
+          op === 'process_low_risk_ready' ? { ...filteredGroups.lowRiskReady, agingApprovalHours: snapshot.agingApprovalHours }
+            : op === 'retry_failed_posts_preview' ? { ...filteredGroups.failedPostRetryPreview, agingApprovalHours: snapshot.agingApprovalHours }
+              : { ...filteredGroups.nudgeAgingApprovals, agingApprovalHours: snapshot.agingApprovalHours };
+        batchOpsState = {
+          mode: op,
           loading: false,
-          error: 'Unable to run macro.',
-          data: null
+          error: '',
+          data: buildBatchOpsPreviewCard(op, previewSource)
         };
-        renderAgentActions();
-        showToast('Macro request failed', 'error');
-        return;
+        renderBatchAgentOps();
+        showToast('Batch preview ready');
+        return { ok: true };
       }
 
-      agentSummaryState = {
-        itemId: item.id,
-        mode: dryRun ? 'macro_preview' : 'macro_run',
+      if (op === 'process_low_risk_ready') {
+        const candidates = selectByTargetIds(filteredGroups.lowRiskReady?.selectedItems || [])
+          .filter((entry) => entry.runnable !== false && entry.hasSession && entry.id)
+          .slice(0, policy.maxItems);
+        let dispatched = 0;
+        let failed = 0;
+        let skipped = 0;
+        const itemResults = [];
+        for (const candidate of candidates) {
+          const label = `${candidate.vendor || 'Unknown vendor'} · ${candidate.invoiceNumber || 'N/A'}`;
+          const item = (Array.isArray(queueState) ? queueState : []).find((q) => q.id === candidate.id);
+          const sessionPayload = candidate.id ? agentSessionsState.get(candidate.id) : null;
+          const sessionId = sessionPayload?.session?.id;
+          if (!item || !sessionId) {
+            skipped += 1;
+            itemResults.push({
+              itemId: candidate.id,
+              ok: false,
+              status: 'skipped',
+              label,
+              detail: 'Missing queue item or agent session',
+              retryable: false
+            });
+            continue;
+          }
+          const scope = getAgentScope(item, sessionPayload);
+          const payload = await queueManager.dispatchAgentMacro(sessionId, 'post_invoice_to_erp', {
+            actorId: 'gmail_user',
+            actorRole: scope.actorRole,
+            workflowId: scope.workflowId,
+            params: {
+              workflow_id: scope.workflowId || undefined,
+              actor_role: scope.actorRole || undefined,
+              invoice_number: item.invoice_number || undefined,
+              vendor_name: item.vendor_name || item.vendor || undefined,
+              amount: item.amount,
+              currency: item.currency || undefined,
+            },
+            dryRun: false
+          });
+          if (payload) {
+            dispatched += 1;
+            itemResults.push({
+              itemId: candidate.id,
+              ok: true,
+              status: String(payload?.status || 'dispatched'),
+              label,
+              detail: 'ERP posting macro dispatched',
+              retryable: false
+            });
+          } else {
+            failed += 1;
+            itemResults.push({
+              itemId: candidate.id,
+              ok: false,
+              status: 'dispatch_failed',
+              label,
+              detail: 'Macro dispatch failed',
+              retryable: true
+            });
+          }
+        }
+        await queueManager.syncAgentSessions();
+        if (queueManager?.syncQueueWithBackend) {
+          await queueManager.syncQueueWithBackend({ updateStatus: false });
+        }
+        const refreshSummary = buildBatchRefreshIndicator(op, candidates.map((entry) => entry.id), queueState);
+        batchOpsState = {
+          mode: op,
+          loading: false,
+          error: '',
+          data: buildBatchOpsRunResultCard(op, {
+            attempted: candidates.length,
+            successCount: dispatched,
+            failureCount: failed,
+            skippedCount: skipped,
+            items: itemResults,
+            policySummary: filteredGroups.lowRiskReady?.policySummary || '',
+            refreshSummary,
+          })
+        };
+        renderBatchAgentOps();
+        showToast(`Batch dispatch complete (${dispatched} item(s))`);
+        return { ok: true };
+      }
+
+      if (op === 'retry_failed_posts_preview') {
+        const candidates = selectByTargetIds(filteredGroups.failedPostRetryPreview?.selectedItems || [])
+          .filter((entry) => entry.runnable !== false && entry.id)
+          .slice(0, policy.maxItems);
+        let posted = 0;
+        let requeued = 0;
+        let failed = 0;
+        let skipped = 0;
+        const itemResults = [];
+        for (const candidate of candidates) {
+          const label = `${candidate.vendor || 'Unknown vendor'} · ${candidate.invoiceNumber || 'N/A'}`;
+          const item = (Array.isArray(queueState) ? queueState : []).find((q) => q.id === candidate.id);
+          if (!item) {
+            skipped += 1;
+            itemResults.push({
+              itemId: candidate.id,
+              ok: false,
+              status: 'skipped',
+              label,
+              detail: 'Item no longer present in queue',
+              retryable: false
+            });
+            continue;
+          }
+          const result = await queueManager.retryFailedPost(item);
+          const status = String(result?.status || 'error').trim() || 'error';
+          if (status === 'posted') {
+            posted += 1;
+            itemResults.push({
+              itemId: candidate.id,
+              ok: true,
+              status,
+              label,
+              detail: result?.erp_reference ? `ERP ref ${result.erp_reference}` : 'Posted to ERP',
+              retryable: false
+            });
+          } else if (status === 'ready_to_post') {
+            requeued += 1;
+            itemResults.push({
+              itemId: candidate.id,
+              partial: true,
+              status,
+              label,
+              detail: result?.message || 'Returned to ready_to_post for follow-up posting',
+              retryable: false
+            });
+          } else {
+            failed += 1;
+            itemResults.push({
+              itemId: candidate.id,
+              ok: false,
+              status,
+              label,
+              detail: String(result?.reason || result?.detail || 'Retry failed'),
+              retryable: true
+            });
+          }
+        }
+        if (queueManager?.syncQueueWithBackend) {
+          await queueManager.syncQueueWithBackend({ updateStatus: false });
+        }
+        const refreshSummary = buildBatchRefreshIndicator(op, candidates.map((entry) => entry.id), queueState);
+        batchOpsState = {
+          mode: op,
+          loading: false,
+          error: '',
+          data: buildBatchOpsRunResultCard(op, {
+            attempted: candidates.length,
+            successCount: posted,
+            partialCount: requeued,
+            failureCount: failed,
+            skippedCount: skipped,
+            items: itemResults,
+            policySummary: filteredGroups.failedPostRetryPreview?.policySummary || '',
+            refreshSummary,
+          })
+        };
+        renderBatchAgentOps();
+        showToast(
+          rerunFailedOnly
+            ? `Failed subset rerun complete (${posted} posted, ${requeued} re-queued)`
+            : `Retry batch complete (${posted} posted, ${requeued} re-queued)`
+        );
+        return { ok: true };
+      }
+
+      if (op === 'nudge_aging_approvals') {
+        const candidates = selectByTargetIds(filteredGroups.nudgeAgingApprovals?.selectedItems || []).slice(0, Math.max(1, policy.maxItems));
+        let nudged = 0;
+        let failed = 0;
+        let skipped = 0;
+        const itemResults = [];
+        for (const candidate of candidates) {
+          const label = `${candidate.vendor || 'Unknown vendor'} · ${candidate.invoiceNumber || 'N/A'}`;
+          const item = (Array.isArray(queueState) ? queueState : []).find((q) => q.id === candidate.id || q.thread_id === candidate.threadId);
+          if (!item) {
+            skipped += 1;
+            itemResults.push({
+              itemId: candidate.id || '',
+              ok: false,
+              status: 'skipped',
+              label,
+              detail: 'Item no longer present in queue',
+              retryable: false
+            });
+            continue;
+          }
+          const result = await queueManager.nudgeApproval(item);
+          if (result?.status === 'nudged') {
+            nudged += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              ok: true,
+              status: 'nudged',
+              label,
+              detail: 'Approver nudge sent',
+              retryable: false
+            });
+          } else {
+            failed += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              ok: false,
+              status: String(result?.status || 'error'),
+              label,
+              detail: String(result?.reason || 'Nudge failed'),
+              retryable: true
+            });
+          }
+        }
+        if (queueManager?.syncQueueWithBackend) {
+          await queueManager.syncQueueWithBackend({ updateStatus: false });
+        }
+        const refreshSummary = buildBatchRefreshIndicator(op, candidates.map((entry) => entry.id), queueState);
+        batchOpsState = {
+          mode: op,
+          loading: false,
+          error: '',
+          data: buildBatchOpsRunResultCard(op, {
+            attempted: candidates.length,
+            successCount: nudged,
+            failureCount: failed,
+            skippedCount: skipped,
+            items: itemResults,
+            policySummary: filteredGroups.nudgeAgingApprovals?.policySummary || '',
+            refreshSummary,
+          })
+        };
+        renderBatchAgentOps();
+        showToast(`Sent ${nudged} approval nudge(s)`);
+        return { ok: true };
+      }
+
+      batchOpsState = {
+        mode: op,
         loading: false,
         error: '',
-        data: payload
+        data: {
+          kind: 'blocker_summary',
+          title: 'Batch action not supported yet',
+          lines: ['This batch operation is preview-only in the current AX4 pass.']
+        }
       };
-      renderAgentActions();
-      if (dryRun) {
-        const stepCount = Array.isArray(payload.commands) ? payload.commands.length : 0;
-        showToast(`Preview ready (${stepCount} steps)`);
-      } else {
-        showToast('Macro dispatched');
-        await queueManager.syncAgentSessions();
+      renderBatchAgentOps();
+      return { ok: false, reason: 'preview_only' };
+    } catch (_) {
+      batchOpsState = {
+        mode: op,
+        loading: false,
+        error: 'Batch action failed. Review per-item state and try again.',
+        data: null
+      };
+      renderBatchAgentOps();
+      showToast('Batch action failed', 'error');
+      return { ok: false, reason: 'exception' };
+    } finally {
+      if (button) button.disabled = false;
+    }
+  };
+
+  container.querySelectorAll('.cl-batch-op-action').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const opId = button.getAttribute('data-batch-op') || '';
+      const dryRun = button.getAttribute('data-dry-run') === '1';
+      await runBatchOperation(opId, dryRun, button);
+    });
+  });
+
+  const maxItemsSelect = container.querySelector('#cl-batch-max-items');
+  if (maxItemsSelect) {
+    maxItemsSelect.value = String(policy.maxItems);
+    maxItemsSelect.addEventListener('change', () => {
+      const next = Number(maxItemsSelect.value);
+      batchOpsPolicyState = {
+        ...batchOpsPolicyState,
+        maxItems: Number.isFinite(next) ? next : 5,
+      };
+      renderBatchAgentOps();
+    });
+  }
+
+  const presetSelect = container.querySelector('#cl-batch-preset');
+  if (presetSelect) {
+    presetSelect.value = String(policy.selectionPreset || 'queue_order');
+    presetSelect.addEventListener('change', () => {
+      batchOpsPolicyState = {
+        ...batchOpsPolicyState,
+        selectionPreset: String(presetSelect.value || 'queue_order').trim() || 'queue_order',
+      };
+      renderBatchAgentOps();
+    });
+  }
+
+  const amountCapInput = container.querySelector('#cl-batch-amount-cap');
+  if (amountCapInput) {
+    amountCapInput.addEventListener('change', () => {
+      batchOpsPolicyState = {
+        ...batchOpsPolicyState,
+        amountThreshold: String(amountCapInput.value || '').trim(),
+      };
+      renderBatchAgentOps();
+    });
+  }
+
+  const clearCapBtn = container.querySelector('#cl-batch-clear-cap');
+  if (clearCapBtn) {
+    clearCapBtn.addEventListener('click', () => {
+      batchOpsPolicyState = {
+        ...batchOpsPolicyState,
+        amountThreshold: '',
+      };
+      renderBatchAgentOps();
+    });
+  }
+
+  container.querySelectorAll('.cl-batch-summary-action').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const actionId = String(button.getAttribute('data-action-id') || '').trim();
+      const opId = String(button.getAttribute('data-batch-op') || '').trim();
+      if (actionId !== 'rerun_failed_subset' || !opId) return;
+      let targetItemIds = [];
+      try {
+        const raw = String(button.getAttribute('data-target-item-ids') || '');
+        targetItemIds = raw.split(',').map((id) => String(id || '').trim()).filter(Boolean);
+      } catch (_) {
+        targetItemIds = [];
       }
+      if (!targetItemIds.length) {
+        showToast('No failed items available to rerun', 'error');
+        return;
+      }
+      await runBatchOperation(opId, false, button, { targetItemIds, rerunFailedOnly: true });
     });
   });
 }
@@ -1628,6 +4219,7 @@ async function refreshAuditTrail(force = false) {
   if (!item || !item.id) {
     auditState = { itemId: null, loading: false, events: [] };
     renderAuditTrail();
+    renderAgentActions();
     return;
   }
 
@@ -1639,11 +4231,13 @@ async function refreshAuditTrail(force = false) {
 
   if (!shouldLoad) {
     renderAuditTrail();
+    renderAgentActions();
     return;
   }
 
   auditState = { itemId: item.id, loading: true, events: [] };
   renderAuditTrail();
+  renderAgentActions();
 
   const events = await queueManager.fetchAuditTrail(item.id, { force });
   const activeItem = getPrimaryItem();
@@ -1651,7 +4245,9 @@ async function refreshAuditTrail(force = false) {
     return;
   }
   auditState = { itemId: item.id, loading: false, events: Array.isArray(events) ? events : [] };
+  renderThreadContext();
   renderAuditTrail();
+  renderAgentActions();
 }
 
 function renderSidebar() {
@@ -1659,6 +4255,7 @@ function renderSidebar() {
   renderThreadContext();
   renderKpiSummary();
   renderAgentActions();
+  renderBatchAgentOps();
   renderScanStatus();
   void refreshAuditTrail();
 }
@@ -1686,10 +4283,33 @@ function renderKpiSummary() {
   const approvals = formatPercentMetric(kpis.on_time_approvals);
   const cycle = formatHoursMetric(kpis.cycle_time_hours);
   const missed = Number(kpis?.missed_discounts_baseline?.candidate_count || 0);
-  const friction = Number(kpis?.approval_friction?.sla_breach_rate || 0);
-  const frictionText = Number.isFinite(friction) ? `${friction.toFixed(1)}%` : 'N/A';
+  const frictionText = formatPercentMetric({ rate: kpis?.approval_friction?.sla_breach_rate });
+  const agentic = kpis?.agentic_telemetry || {};
+  const straightThrough = formatPercentMetric(agentic.straight_through_rate || kpis.touchless_rate);
+  const humanIntervention = formatPercentMetric(agentic.human_intervention_rate);
+  const awaitingApproval = formatHoursMetric(agentic.awaiting_approval_time_hours);
+  const fallbackRate = formatPercentMetric(agentic.erp_browser_fallback_rate);
+  const suggestionAcceptance = formatPercentMetric(agentic.agent_suggestion_acceptance);
+  const manualOverrideRate = formatPercentMetric(agentic.agent_actions_requiring_manual_override);
+  const blockerTop = Array.isArray(agentic?.top_blocker_reasons?.top_reasons)
+    ? agentic.top_blocker_reasons.top_reasons.slice(0, 3)
+    : [];
+  const blockerSummary = blockerTop.length
+    ? blockerTop
+        .map((entry) => {
+          const reason = String(entry?.reason || '').replace(/_/g, ' ');
+          const count = Number(entry?.count || 0);
+          return `${reason} (${Number.isFinite(count) ? count : 0})`;
+        })
+        .join(' · ')
+    : 'No blocker telemetry yet';
+  const telemetryWindowHours = Number(agentic?.window_hours || 0);
+  const telemetryWindowLabel = Number.isFinite(telemetryWindowHours) && telemetryWindowHours > 0
+    ? `${telemetryWindowHours}h window`
+    : '';
 
   container.innerHTML = `
+    <div class="cl-kpi-heading">Workflow health</div>
     <div class="cl-kpi-grid">
       <div class="cl-kpi-tile"><span>Touchless</span><strong>${escapeHtml(touchless)}</strong></div>
       <div class="cl-kpi-tile"><span>Exceptions</span><strong>${escapeHtml(exceptions)}</strong></div>
@@ -1699,6 +4319,18 @@ function renderKpiSummary() {
     <div class="cl-kpi-footnote">
       Missed discount candidates: ${escapeHtml(String(missed))}
       · SLA breach rate: ${escapeHtml(frictionText)}
+    </div>
+    <div class="cl-kpi-heading">Agentic telemetry ${telemetryWindowLabel ? `· ${escapeHtml(telemetryWindowLabel)}` : ''}</div>
+    <div class="cl-kpi-grid">
+      <div class="cl-kpi-tile"><span>Straight-through</span><strong>${escapeHtml(straightThrough)}</strong></div>
+      <div class="cl-kpi-tile"><span>Human intervention</span><strong>${escapeHtml(humanIntervention)}</strong></div>
+      <div class="cl-kpi-tile"><span>Awaiting approval</span><strong>${escapeHtml(awaitingApproval)}</strong></div>
+      <div class="cl-kpi-tile"><span>Browser fallback</span><strong>${escapeHtml(fallbackRate)}</strong></div>
+      <div class="cl-kpi-tile"><span>Agent accepted</span><strong>${escapeHtml(suggestionAcceptance)}</strong></div>
+      <div class="cl-kpi-tile"><span>Manual override req.</span><strong>${escapeHtml(manualOverrideRate)}</strong></div>
+    </div>
+    <div class="cl-kpi-footnote">
+      Top blockers: ${escapeHtml(blockerSummary)}
     </div>
   `;
 }
@@ -1930,6 +4562,61 @@ function initializeSidebar() {
         font-weight: 600;
         text-transform: capitalize;
       }
+      /* Receipt notice banner */
+      .cl-receipt-notice {
+        font-size: 11px;
+        color: #15803d;
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-radius: 6px;
+        padding: 6px 8px;
+        margin: 2px 0 4px;
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        line-height: 1.4;
+      }
+      .cl-receipt-icon {
+        font-size: 13px;
+        flex-shrink: 0;
+      }
+      /* Exception root-cause one-liner */
+      .cl-exception-reason {
+        font-size: 11px;
+        color: #b45309;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        border-radius: 6px;
+        padding: 4px 8px;
+        margin: 2px 0 4px;
+      }
+      /* Per-field confidence collapsible */
+      .cl-field-conf-details {
+        margin-top: 6px;
+      }
+      .cl-field-conf-summary {
+        font-size: 10px;
+        color: var(--cl-muted);
+        cursor: pointer;
+        user-select: none;
+      }
+      .cl-field-conf-grid {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 2px 8px;
+        margin-top: 4px;
+        font-size: 11px;
+      }
+      .cl-field-conf-row {
+        display: contents;
+      }
+      .cl-field-conf-label {
+        color: var(--cl-muted);
+      }
+      .cl-field-conf-value {
+        font-weight: 600;
+        text-align: right;
+      }
       .cl-btn-approve {
         background: #16a34a !important;
         color: white !important;
@@ -2017,6 +4704,41 @@ function initializeSidebar() {
         color: #374151;
         line-height: 1.35;
       }
+      .cl-context-row-browser {
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        background: #ffffff;
+        padding: 6px;
+      }
+      .cl-context-row-browser-main {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+      }
+      .cl-context-row-browser-status {
+        font-size: 9px;
+        text-transform: uppercase;
+        color: #475569;
+      }
+      .cl-context-row-browser-status[data-tone="success"] {
+        color: #166534;
+      }
+      .cl-context-row-browser-status[data-tone="error"] {
+        color: #b91c1c;
+      }
+      .cl-context-row-browser-tag {
+        width: fit-content;
+        font-size: 9px;
+        color: #1d4ed8;
+        background: #dbeafe;
+        border: 1px solid #bfdbfe;
+        border-radius: 999px;
+        padding: 1px 5px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        font-weight: 600;
+      }
       .cl-context-meta {
         font-size: 10px;
         color: #4b5563;
@@ -2025,6 +4747,105 @@ function initializeSidebar() {
       .cl-context-warning {
         color: #b45309;
         font-weight: 600;
+      }
+      .cl-fallback-banner {
+        margin-top: 8px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        background: #f8fafc;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .cl-fallback-banner[data-tone="info"] {
+        border-color: #93c5fd;
+        background: #eff6ff;
+      }
+      .cl-fallback-banner[data-tone="warning"] {
+        border-color: #fbbf24;
+        background: #fffbeb;
+      }
+      .cl-fallback-banner[data-tone="error"] {
+        border-color: #fca5a5;
+        background: #fef2f2;
+      }
+      .cl-fallback-banner[data-tone="success"] {
+        border-color: #86efac;
+        background: #f0fdf4;
+      }
+      .cl-fallback-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .cl-fallback-badge {
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        font-weight: 700;
+        color: #334155;
+        border: 1px solid #cbd5e1;
+        border-radius: 999px;
+        padding: 1px 6px;
+        background: #ffffff;
+      }
+      .cl-fallback-stage {
+        font-size: 9px;
+        text-transform: uppercase;
+        font-weight: 700;
+        color: #475569;
+      }
+      .cl-fallback-title {
+        font-size: 11px;
+        font-weight: 600;
+        color: #1f2937;
+        line-height: 1.3;
+      }
+      .cl-fallback-progress {
+        font-size: 10px;
+        color: #334155;
+        font-weight: 600;
+      }
+      .cl-fallback-detail {
+        font-size: 10px;
+        color: #374151;
+        line-height: 1.35;
+      }
+      .cl-fallback-trust-note {
+        font-size: 10px;
+        color: #334155;
+        border-left: 2px solid #cbd5e1;
+        padding-left: 6px;
+        line-height: 1.35;
+      }
+      .cl-fallback-stage-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .cl-fallback-stage-chip {
+        font-size: 9px;
+        color: #334155;
+        background: rgba(255, 255, 255, 0.8);
+        border: 1px solid #cbd5e1;
+        border-radius: 999px;
+        padding: 1px 5px;
+      }
+      .cl-fallback-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        font-size: 9px;
+        color: #475569;
+      }
+      .cl-fallback-meta span {
+        background: rgba(255, 255, 255, 0.7);
+        border: 1px solid #e2e8f0;
+        border-radius: 999px;
+        padding: 1px 5px;
       }
       .cl-conflict-panel {
         border: 1px solid #fbbf24;
@@ -2219,6 +5040,32 @@ function initializeSidebar() {
         gap: 5px;
         margin-top: 8px;
       }
+      .cl-agent-timeline {
+        margin-top: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .cl-agent-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .cl-agent-group-title {
+        font-size: 10px;
+        font-weight: 700;
+        color: #334155;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .cl-agent-timeline-empty {
+        font-size: 10px;
+        color: var(--cl-muted);
+        border: 1px dashed var(--cl-border);
+        border-radius: 8px;
+        padding: 8px;
+        background: #f8fafc;
+      }
       .cl-agent-row {
         border: 1px solid var(--cl-border);
         border-radius: 8px;
@@ -2227,6 +5074,17 @@ function initializeSidebar() {
         display: flex;
         flex-direction: column;
         gap: 5px;
+      }
+      .cl-agent-row-timeline {
+        padding: 7px;
+        gap: 4px;
+      }
+      .cl-agent-row-timeline[data-source="audit"] {
+        background: #f8fafc;
+      }
+      .cl-agent-row-timeline[data-kind="browser_fallback"] {
+        border-color: #bfdbfe;
+        background: #f8fbff;
       }
       .cl-agent-row-main {
         display: flex;
@@ -2244,7 +5102,36 @@ function initializeSidebar() {
         color: var(--cl-muted);
         text-transform: uppercase;
       }
+      .cl-agent-stage-chip {
+        font-size: 9px;
+        color: #1d4ed8;
+        background: #dbeafe;
+        border: 1px solid #bfdbfe;
+        border-radius: 999px;
+        padding: 1px 5px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
       .cl-agent-detail {
+        font-size: 10px;
+        color: var(--cl-muted);
+      }
+      .cl-agent-timeline-meta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .cl-agent-source {
+        font-size: 9px;
+        text-transform: uppercase;
+        color: #334155;
+        background: #e2e8f0;
+        border-radius: 999px;
+        padding: 1px 6px;
+        font-weight: 600;
+      }
+      .cl-agent-time {
         font-size: 10px;
         color: var(--cl-muted);
       }
@@ -2280,6 +5167,101 @@ function initializeSidebar() {
         display: flex;
         gap: 8px;
       }
+      .cl-agent-command-bar {
+        margin-top: 8px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .cl-agent-command-input {
+        flex: 1;
+        min-width: 0;
+        border: 1px solid var(--cl-border);
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-size: 11px;
+        background: #ffffff;
+        color: var(--cl-text);
+      }
+      .cl-agent-command-input:focus {
+        outline: 2px solid rgba(15, 118, 110, 0.18);
+        border-color: #0f766e;
+      }
+      .cl-agent-command-submit {
+        flex: 0 0 auto;
+        min-width: 56px;
+      }
+      .cl-agent-command-hint {
+        margin-top: 6px;
+        font-size: 10px;
+        color: var(--cl-muted);
+        line-height: 1.35;
+      }
+      .cl-agent-share-target-row {
+        margin-top: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .cl-agent-share-target-label {
+        font-size: 10px;
+        color: var(--cl-muted);
+        font-weight: 600;
+      }
+      .cl-agent-share-target {
+        font-size: 11px;
+      }
+      .cl-agent-intent {
+        display: inline-flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        text-align: left;
+      }
+      .cl-agent-intent-recommended {
+        border-color: #0f766e;
+        box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.15);
+      }
+      .cl-agent-intent-badge {
+        font-size: 9px;
+        text-transform: uppercase;
+        color: #065f46;
+        background: #d1fae5;
+        border-radius: 999px;
+        padding: 1px 6px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .cl-agent-recommendation {
+        margin-top: 8px;
+        border: 1px solid #a7f3d0;
+        background: #ecfdf5;
+        border-radius: 8px;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .cl-agent-recommendation-title {
+        font-size: 11px;
+        font-weight: 700;
+        color: #065f46;
+      }
+      .cl-agent-proactive {
+        margin-top: 8px;
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        border-radius: 8px;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .cl-agent-proactive-title {
+        font-size: 11px;
+        font-weight: 700;
+        color: #1d4ed8;
+      }
       .cl-agent-action {
         flex: 1;
       }
@@ -2298,6 +5280,87 @@ function initializeSidebar() {
         font-weight: 600;
         color: var(--cl-text);
       }
+      .cl-agent-preview-payload {
+        margin: 2px 0 0;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        background: #fff;
+        padding: 8px;
+        font-size: 10px;
+        line-height: 1.35;
+        color: #111827;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 220px;
+        overflow: auto;
+      }
+      .cl-batch-note {
+        font-size: 10px;
+        color: var(--cl-muted);
+        line-height: 1.35;
+      }
+      .cl-batch-config {
+        border: 1px dashed var(--cl-border);
+        border-radius: 8px;
+        padding: 8px;
+        background: #fff;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .cl-batch-config-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+      }
+      .cl-batch-config-label {
+        font-size: 10px;
+        color: var(--cl-muted);
+        font-weight: 600;
+      }
+      .cl-batch-config-select,
+      .cl-batch-config-input {
+        border: 1px solid var(--cl-border);
+        border-radius: 6px;
+        background: #fff;
+        color: var(--cl-text);
+        font-size: 10px;
+        padding: 4px 6px;
+      }
+      .cl-batch-config-select {
+        min-width: 56px;
+      }
+      .cl-batch-config-input {
+        width: 92px;
+      }
+      .cl-batch-card {
+        border: 1px solid var(--cl-border);
+        border-radius: 8px;
+        padding: 8px;
+        background: #ffffff;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .cl-batch-card-title {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--cl-text);
+      }
+      .cl-batch-card-metrics {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        font-size: 10px;
+        color: var(--cl-muted);
+      }
+      .cl-batch-card-metrics span {
+        border: 1px solid #d1d5db;
+        border-radius: 999px;
+        padding: 2px 6px;
+        background: #f9fafb;
+      }
       .cl-agent-related-row {
         border-top: 1px solid var(--cl-border);
         padding-top: 6px;
@@ -2305,6 +5368,85 @@ function initializeSidebar() {
       .cl-agent-related-row:first-child {
         border-top: 0;
         padding-top: 0;
+      }
+      .cl-batch-summary-actions {
+        margin-top: 2px;
+      }
+      .cl-agent-brief-details {
+        border-top: 1px solid var(--cl-border);
+        margin-top: 2px;
+        padding-top: 6px;
+      }
+      .cl-batch-result-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .cl-batch-result-group-title {
+        font-size: 10px;
+        font-weight: 700;
+        color: #374151;
+      }
+      .cl-batch-result-group-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .cl-batch-result-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .cl-batch-result-row {
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        padding: 6px;
+        background: #fff;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .cl-batch-result-main {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .cl-batch-result-status {
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        font-weight: 700;
+        border: 1px solid #d1d5db;
+        border-radius: 999px;
+        padding: 2px 6px;
+        background: #f9fafb;
+        color: #374151;
+      }
+      .cl-batch-result-status-success {
+        border-color: #86efac;
+        color: #166534;
+        background: #f0fdf4;
+      }
+      .cl-batch-result-status-warn {
+        border-color: #fcd34d;
+        color: #92400e;
+        background: #fffbeb;
+      }
+      .cl-batch-result-status-error {
+        border-color: #fecaca;
+        color: #991b1b;
+        background: #fef2f2;
+      }
+      .cl-batch-result-label {
+        font-size: 10px;
+        color: #111827;
+        font-weight: 600;
+      }
+      .cl-batch-result-detail {
+        font-size: 10px;
+        color: #4b5563;
+        line-height: 1.3;
       }
       .cl-agent-related-title {
         font-size: 11px;
@@ -2349,6 +5491,14 @@ function initializeSidebar() {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 6px;
+      }
+      .cl-kpi-heading {
+        margin-top: 6px;
+        font-size: 10px;
+        font-weight: 700;
+        color: #334155;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
       }
       .cl-kpi-tile {
         border: 1px solid var(--cl-border);
@@ -2399,11 +5549,15 @@ function initializeSidebar() {
       <div id="cl-kpi-summary"></div>
     </div>
     <div class="cl-section" id="cl-section-agent">
-      <div class="cl-section-title">Execution status</div>
+      <div class="cl-section-title">Agent timeline</div>
       <div id="cl-agent-actions"></div>
     </div>
+    <div class="cl-section" id="cl-section-batch">
+      <div class="cl-section-title">Batch agent ops</div>
+      <div id="cl-batch-agent-ops"></div>
+    </div>
     <div class="cl-section" id="cl-section-audit">
-      <div class="cl-section-title">Activity log</div>
+      <div class="cl-section-title">Detailed audit</div>
       <div id="cl-audit-trail" class="cl-audit-list"></div>
     </div>
   `;
@@ -2607,6 +5761,20 @@ async function bootstrap() {
     console.error('[Clearledgr] InboxSDK failed to load', error);
     return;
   }
+
+  // Pre-fill compose views opened by the "Draft vendor reply" button.
+  // openNewComposeView() is fire-and-forget; the handler fires when the view opens.
+  sdk.Compose.registerComposeViewHandler((composeView) => {
+    if (_pendingComposePrefill) {
+      const prefill = _pendingComposePrefill;
+      _pendingComposePrefill = null;
+      try {
+        if (prefill.to) composeView.setToRecipients([{ emailAddress: prefill.to }]);
+        if (prefill.subject) composeView.setSubject(prefill.subject);
+        if (prefill.body) composeView.setBodyHTML(prefill.body.replace(/\n/g, '<br>'));
+      } catch (_) { /* ignore if SDK rejects */ }
+    }
+  });
 
   queueManager = new ClearledgrQueueManager();
   await queueManager.init();

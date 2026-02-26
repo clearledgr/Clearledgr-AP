@@ -67,6 +67,9 @@ async def _run_loop():
         try:
             tick += 1
 
+            # Every tick: drain ERP-post retry queue (Gap #5 crash recovery)
+            await _drain_erp_post_retry_queue()
+
             # Every 15 minutes: check overdue and stale tasks
             if tick % 1 == 0:  # runs every iteration (15 min sleep)
                 await _check_overdue_tasks()
@@ -163,6 +166,113 @@ async def _send_daily_digest():
             await _slack_alert("\n".join(lines))
     except Exception as e:
         logger.debug(f"Daily digest generation failed: {e}")
+
+
+async def _drain_erp_post_retry_queue():
+    """Process due erp_post_retry jobs — core of Gap #5 crash recovery.
+
+    For each due job:
+    1. Claim it atomically (prevents concurrent workers from double-processing).
+    2. Call ``InvoiceWorkflowService.resume_workflow(ap_item_id)``.
+    3. On success: mark job ``completed``.
+    4. On still_failing: exponential backoff reschedule or ``dead_letter``.
+    """
+    try:
+        from datetime import timedelta
+
+        from clearledgr.core.database import get_db
+        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+
+        db = get_db()
+        if not hasattr(db, "list_due_agent_retry_jobs"):
+            return
+
+        due_jobs = db.list_due_agent_retry_jobs(job_type="erp_post_retry", limit=25)
+        if not due_jobs:
+            return
+
+        logger.info("ERP post retry drain: %d due job(s)", len(due_jobs))
+
+        for job in due_jobs:
+            job_id = job.get("id")
+            ap_item_id = job.get("ap_item_id")
+            org_id = job.get("organization_id", DEFAULT_ORG_ID)
+            retry_count = int(job.get("retry_count") or 0)
+            max_retries = int(job.get("max_retries") or 3)
+
+            if not job_id or not ap_item_id:
+                continue
+
+            # Claim the job (increments retry_count atomically)
+            claimed = db.claim_agent_retry_job(job_id, worker_id="agent_background")
+            if not claimed:
+                continue  # another worker got it
+
+            new_retry_count = int(claimed.get("retry_count") or retry_count + 1)
+
+            try:
+                svc = InvoiceWorkflowService(organization_id=org_id)
+                result = await svc.resume_workflow(ap_item_id)
+            except Exception as exc:
+                result = {"status": "still_failing", "reason": str(exc)}
+
+            outcome = result.get("status")
+
+            if outcome == "recovered":
+                db.complete_agent_retry_job(
+                    job_id,
+                    status="completed",
+                    result=result,
+                )
+                logger.info(
+                    "ERP post retry: ap_item_id=%s recovered after %d attempt(s)",
+                    ap_item_id,
+                    new_retry_count,
+                )
+            elif outcome == "not_resumable":
+                # Item moved to a terminal state externally — close the job
+                db.complete_agent_retry_job(
+                    job_id,
+                    status="completed",
+                    result=result,
+                    last_error="item_no_longer_resumable",
+                )
+            else:
+                # Still failing — reschedule with exponential backoff or dead-letter
+                if new_retry_count >= max_retries:
+                    db.complete_agent_retry_job(
+                        job_id,
+                        status="dead_letter",
+                        result=result,
+                        last_error=str(result.get("reason") or "max_retries_exceeded"),
+                    )
+                    logger.warning(
+                        "ERP post retry: ap_item_id=%s exhausted %d retries → dead_letter",
+                        ap_item_id,
+                        max_retries,
+                    )
+                else:
+                    # Backoff: 5 min → 15 min → 60 min
+                    backoff_minutes = [5, 15, 60]
+                    delay = backoff_minutes[min(new_retry_count - 1, len(backoff_minutes) - 1)]
+                    next_at = (
+                        datetime.now(timezone.utc) + timedelta(minutes=delay)
+                    ).isoformat()
+                    db.reschedule_agent_retry_job(
+                        job_id,
+                        next_retry_at=next_at,
+                        last_error=str(result.get("reason") or "erp_post_failed"),
+                        status="pending",
+                    )
+                    logger.info(
+                        "ERP post retry: ap_item_id=%s rescheduled in %d min (attempt %d/%d)",
+                        ap_item_id,
+                        delay,
+                        new_retry_count,
+                        max_retries,
+                    )
+    except Exception as exc:
+        logger.debug("ERP post retry drain failed: %s", exc)
 
 
 async def _check_period_end():

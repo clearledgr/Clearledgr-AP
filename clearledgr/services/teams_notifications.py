@@ -361,3 +361,87 @@ async def send_status_update(
         new_state,
     )
     return False
+
+
+def build_finance_summary_reply_activity(
+    item: Dict[str, Any],
+    summary_lines: List[str],
+    *,
+    summary_title: str = "Finance exception summary",
+    reply_to_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a Teams threaded finance-summary reply activity (without sending)."""
+    item_id = str(item.get("id", "unknown"))
+    vendor = str(item.get("vendor") or item.get("vendor_name") or "Unknown vendor")
+    amount = item.get("amount", 0)
+    currency = str(item.get("currency") or "USD")
+    invoice_number = str(item.get("invoice_number") or "N/A")
+    try:
+        amount_value = float(amount)
+    except (TypeError, ValueError):
+        amount_value = 0.0
+
+    bullets = [str(line).strip() for line in (summary_lines or []) if str(line).strip()]
+    bullet_text = "\n".join(f"- {line}" for line in bullets[:8]) or "- No summary details available."
+
+    card_body: List[Dict[str, Any]] = [
+        {
+            "type": "TextBlock",
+            "size": "Medium",
+            "weight": "Bolder",
+            "text": summary_title or "Finance exception summary",
+            "color": "Warning",
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                {"title": "Invoice", "value": item_id},
+                {"title": "Vendor", "value": vendor},
+                {"title": "Amount", "value": f"{currency} {amount_value:,.2f}"},
+                {"title": "Invoice #", "value": invoice_number},
+            ],
+        },
+        {
+            "type": "TextBlock",
+            "text": bullet_text,
+            "wrap": True,
+        },
+    ]
+
+    activity = _make_adaptive_card_activity(
+        card_body, summary=f"Finance summary for invoice {item_id}"
+    )
+    if reply_to_id:
+        activity["replyToId"] = reply_to_id
+    return activity
+
+
+async def send_finance_summary_reply(
+    item: Dict[str, Any],
+    channel_id: str,
+    summary_lines: List[str],
+    *,
+    summary_title: str = "Finance exception summary",
+    service_url: Optional[str] = None,
+    reply_to_id: Optional[str] = None,
+) -> bool:
+    """Send a threaded Teams reply with a finance-lead summary card.
+
+    This is used by the Gmail Agent Actions "Share finance summary" flow.
+    """
+    svc = (service_url or os.getenv("TEAMS_SERVICE_URL", "").strip() or _DEFAULT_SERVICE_URL)
+    item_id = str(item.get("id", "unknown"))
+    activity = build_finance_summary_reply_activity(
+        item,
+        summary_lines,
+        summary_title=summary_title,
+        reply_to_id=reply_to_id,
+    )
+
+    result = await _post_activity(svc, channel_id, activity)
+    if result is not None:
+        logger.info("Sent Teams finance summary reply for item=%s", item_id)
+        return True
+
+    logger.warning("Failed to send Teams finance summary reply for item=%s", item_id)
+    return False

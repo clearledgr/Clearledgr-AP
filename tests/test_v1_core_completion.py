@@ -90,6 +90,29 @@ def test_extension_pipeline_normalizes_exception_taxonomy(client, db):
 
 
 def test_worklist_derives_budget_exception_and_teams_interactive(monkeypatch, client, db):
+    from datetime import datetime, timezone
+
+    from clearledgr.core.auth import TokenData, get_current_user
+    from main import app
+
+    def _mock_user():
+        return TokenData(
+            user_id="test-user",
+            email="test@default.com",
+            organization_id="default",
+            role="user",
+            exp=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        )
+
+    app.dependency_overrides[get_current_user] = _mock_user
+
+    try:
+        _run_worklist_test(monkeypatch, client, db)
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+def _run_worklist_test(monkeypatch, client, db):
     item = _create_ap_item(
         db,
         item_id="TEAM-BUDGET-1",
@@ -179,12 +202,11 @@ def test_worklist_derives_budget_exception_and_teams_interactive(monkeypatch, cl
     payload = interactive_response.json()
     assert payload["status"] == "approved"
 
-    stored = db.get_ap_item(item["id"])
-    metadata_raw = stored.get("metadata")
-    if isinstance(metadata_raw, str):
-        metadata = json.loads(metadata_raw or "{}")
-    else:
-        metadata = dict(metadata_raw or {})
-    assert metadata["teams"]["state"] == "approved"
-    assert metadata["teams"]["channel"] == "19:finance"
-    assert metadata["teams"]["message_id"] == "msg-001"
+    # Teams state is now stored in channel_threads (Gap #11) instead of
+    # the AP item metadata blob.
+    threads = db.get_channel_threads(item["id"])
+    teams_thread = next((t for t in threads if t.get("channel") == "teams"), None)
+    assert teams_thread is not None, f"No teams channel_thread found; threads={threads}"
+    assert teams_thread["state"] == "approved"
+    assert teams_thread["conversation_id"] == "19:finance"
+    assert teams_thread["message_id"] == "msg-001"

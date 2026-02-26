@@ -62510,6 +62510,8 @@ let agentPreviewState = {
 };
 let toastTimer = null;
 let rowDecorated = new Set();
+// Holds { to, subject, body } when a draft-reply is initiated; consumed by the compose handler.
+let _pendingComposePrefill = null;
 let auditState = {
   itemId: null,
   loading: false,
@@ -62805,6 +62807,19 @@ function getIssueSummary(item) {
   if (state === 'ready_to_post') return 'Ready to post to ERP';
   if (state === 'posted_to_erp' || state === 'closed') return 'Posted successfully';
   return 'Under AP review';
+}
+
+function getExceptionReason(exceptionCode) {
+  const code = String(exceptionCode || '').trim().toLowerCase();
+  if (code === 'po_missing_reference') return 'PO reference required for this vendor/category';
+  if (code === 'po_amount_mismatch') return 'Invoice amount does not match approved PO';
+  if (code === 'receipt_missing') return 'Goods receipt confirmation pending';
+  if (code === 'budget_overrun') return 'Invoice exceeds approved budget limit';
+  if (code === 'missing_budget_context') return 'No budget context found for this cost center';
+  if (code === 'policy_validation_failed') return 'AP policy check failed — review required';
+  if (code === 'duplicate_invoice') return 'Duplicate invoice detected for this vendor';
+  if (code === 'confidence_low') return 'Extraction confidence too low for auto-posting';
+  return '';
 }
 
 function getDueRiskLabel(dueDateValue) {
@@ -63266,6 +63281,11 @@ function renderThreadContext() {
   const invoiceNumber = item.invoice_number || 'N/A';
   const dueDate = item.due_date || 'N/A';
   const amount = formatAmount(item.amount, item.currency || 'USD');
+  const poNumber = item.po_number || null;
+  // Per-field confidence map: { vendor: 0.87, amount: 0.99, ... }
+  const fieldConfidences = (typeof item.field_confidences === 'object' && item.field_confidences !== null)
+    ? item.field_confidences
+    : {};
   const state = item.state || 'received';
   const stateLabel = getStateLabel(state);
   const sourceSubject = trimText(item.subject || 'Subject unavailable', 96);
@@ -63281,6 +63301,12 @@ function renderThreadContext() {
   const mergeReason = item.merge_reason ? String(item.merge_reason).replace(/_/g, ' ') : '';
   const exceptionSeverity = item.exception_severity ? String(item.exception_severity).toLowerCase() : '';
   const exceptionCode = item.exception_code ? String(item.exception_code).replace(/_/g, ' ') : '';
+  const documentType = String(item.document_type || 'invoice').toLowerCase();
+  const isReceipt = documentType === 'receipt';
+  const docLabel = isReceipt ? 'Receipt' : 'Invoice';
+  // Correction learning fields — populated by build_worklist_item on the backend
+  const glSuggestion = (item.gl_suggestion && item.gl_suggestion.value) ? item.gl_suggestion : null;
+  const correctionHints = Array.isArray(item.correction_hints) ? item.correction_hints : [];
   const riskSignals = item.risk_signals || {};
   const latePaymentRisk = String(riskSignals?.late_payment_risk?.level || '').trim();
   const discountSignal = Boolean(riskSignals?.discount_opportunity?.available);
@@ -63354,7 +63380,7 @@ function renderThreadContext() {
   context.innerHTML = `
     <div class="cl-thread-card">
       <div class="cl-navigator">
-        <div class="cl-thread-main">Invoice ${escapeHtml(humanIndex)} of ${escapeHtml(items.length || 1)}</div>
+        <div class="cl-thread-main">${escapeHtml(docLabel)} ${escapeHtml(humanIndex)} of ${escapeHtml(items.length || 1)}</div>
         <div class="cl-nav-buttons">
           <button class="cl-btn cl-btn-secondary cl-nav-btn" id="cl-prev-item" ${itemIndex <= 0 ? 'disabled' : ''}>Prev</button>
           <button class="cl-btn cl-btn-secondary cl-nav-btn" id="cl-next-item" ${itemIndex >= items.length - 1 ? 'disabled' : ''}>Next</button>
@@ -63364,7 +63390,12 @@ function renderThreadContext() {
         <div class="cl-thread-title">${escapeHtml(vendor)}</div>
         <span class="cl-pill" style="color:${stateColor}; border-color:${stateColor};">${escapeHtml(stateLabel)}</span>
       </div>
-      <div class="cl-thread-main">${escapeHtml(amount)} · Invoice ${escapeHtml(invoiceNumber)} · Due ${escapeHtml(dueDate)}</div>
+      <div class="cl-thread-main">${escapeHtml(amount)} · ${escapeHtml(docLabel)} ${escapeHtml(invoiceNumber)}${isReceipt ? ' · Already paid' : ` · Due ${escapeHtml(dueDate)}`}${!isReceipt && poNumber ? ` · PO ${escapeHtml(poNumber)}` : !isReceipt ? ' · No PO' : ''}</div>
+      ${
+        item.exception_code && getExceptionReason(item.exception_code)
+          ? `<div class="cl-exception-reason">⚠ ${escapeHtml(getExceptionReason(item.exception_code))}</div>`
+          : ''
+      }
       <div class="cl-decision-banner ${decisionToneClass}">
         <div class="cl-decision-title">${escapeHtml(decisionSummary.title)}</div>
         <div class="cl-decision-detail">${escapeHtml(decisionSummary.detail)}</div>
@@ -63435,12 +63466,41 @@ function renderThreadContext() {
           }">${hasConfidence ? `${confidencePercent}%` : 'Checking...'}</span>
           <span class="cl-confidence-threshold">Threshold: 95%</span>
         </div>
+        ${
+          Object.keys(fieldConfidences).length > 0
+            ? `<details class="cl-field-conf-details">
+                <summary class="cl-field-conf-summary">Field validation</summary>
+                <div class="cl-field-conf-grid">
+                  ${['vendor', 'amount', 'invoice_number', 'due_date'].map(field => {
+                    const conf = fieldConfidences[field];
+                    if (conf === undefined) return '';
+                    const pct = Math.round(Math.max(0, Math.min(1, Number(conf))) * 100);
+                    const cls = pct >= 95 ? 'cl-conf-high' : pct >= 75 ? 'cl-conf-med' : 'cl-conf-low';
+                    const icon = pct >= 95 ? '✓' : pct >= 75 ? '⚠' : '✗';
+                    const label = field.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                    return `<div class="cl-field-conf-row">
+                      <span class="cl-field-conf-label">${escapeHtml(label)}</span>
+                      <span class="cl-field-conf-value ${cls}">${icon} ${pct}%</span>
+                    </div>`;
+                  }).join('')}
+                </div>
+              </details>`
+            : ''
+        }
         <div id="cl-mismatches"></div>
       </div>
+      ${isReceipt
+        ? `<div class="cl-receipt-notice">
+             <span class="cl-receipt-icon">✓</span>
+             This is a <strong>payment receipt</strong> — the payment has already been made. No AP approval is required.
+           </div>`
+        : ''}
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary" id="cl-open-source-email">Open email</button>
         ${
-          budgetContext.requiresDecision
+          isReceipt
+            ? `<button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-escalate-to-slack">Share to Slack</button>`
+            : budgetContext.requiresDecision
             ? `
               <button class="cl-btn" id="cl-budget-approve-override">Approve with override</button>
               <button class="cl-btn cl-btn-secondary" id="cl-budget-request-adjustment">Escalate budget</button>
@@ -63452,6 +63512,9 @@ function renderThreadContext() {
               </button>
               <button class="cl-btn cl-btn-secondary" id="cl-reject-inline">Reject</button>
               <button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-escalate-to-slack">Escalate to Slack</button>
+              ${state === 'needs_info'
+                ? `<button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-draft-vendor-reply">Draft vendor reply</button>`
+                : ''}
             `
         }
       </div>
@@ -63479,6 +63542,18 @@ function renderThreadContext() {
           <div class="cl-detail-row"><span>Source subject</span><span>${escapeHtml(sourceSubject || 'N/A')}</span></div>
           <div class="cl-detail-row"><span>Merge reason</span><span>${escapeHtml(mergeReason || 'N/A')}</span></div>
           <div class="cl-detail-row"><span>Confidence</span><span>${escapeHtml(hasConfidence ? `${confidencePercent}%` : 'N/A')}</span></div>
+          ${glSuggestion
+            ? `<div class="cl-detail-row">
+                 <span>Suggested GL</span>
+                 <span class="cl-conf-med">${escapeHtml(glSuggestion.value)}<span class="cl-field-conf-label"> (${glSuggestion.learned_from || 0}× learned)</span></span>
+               </div>`
+            : ''}
+          ${correctionHints.length > 0
+            ? `<div class="cl-detail-row">
+                 <span>Prior corrections</span>
+                 <span class="cl-conf-med">${escapeHtml(correctionHints.map(h => h.field).join(', '))}</span>
+               </div>`
+            : ''}
           <div class="cl-detail-row"><span>Exception</span><span>${escapeHtml(exceptionSeverity || 'N/A')} ${escapeHtml(exceptionCode || '')}</span></div>
           <div class="cl-detail-row"><span>Thread</span><span>${escapeHtml(getSourceThreadId(item) || 'N/A')}</span></div>
           <div class="cl-detail-row"><span>Message</span><span>${escapeHtml(getSourceMessageId(item) || 'N/A')}</span></div>
@@ -63742,6 +63817,29 @@ function renderThreadContext() {
       }
     });
   }
+
+  const draftReplyBtn = context.querySelector('#cl-draft-vendor-reply');
+  if (draftReplyBtn) {
+    draftReplyBtn.addEventListener('click', async () => {
+      try {
+        const settings = await queueManager.getSyncConfig();
+        const url = `${settings.backendUrl}/extension/needs-info-draft/${encodeURIComponent(item.id)}`;
+        const resp = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+        if (!resp.ok) throw new Error('Draft fetch failed');
+        const draft = await resp.json();
+        // Open a floating compose panel inside Gmail (no new window/tab).
+        // The compose handler registered at boot will pre-fill to/subject/body.
+        _pendingComposePrefill = {
+          to: draft.to || '',
+          subject: draft.subject || '',
+          body: draft.body || '',
+        };
+        sdk.Compose.openNewComposeView();
+      } catch (_) {
+        // silently fail — operator can still compose manually
+      }
+    });
+  }
 }
 
 function renderAgentActions() {
@@ -63766,6 +63864,7 @@ function renderAgentActions() {
   const pending = Array.isArray(sessionPayload.pending_approvals) ? sessionPayload.pending_approvals : [];
   const queued = Array.isArray(sessionPayload.queued_commands) ? sessionPayload.queued_commands : [];
   const allEvents = Array.isArray(sessionPayload.events) ? sessionPayload.events : [];
+  const debugUiEnabled = Boolean(queueManager?.isDebugUiEnabled?.());
   const scope = getAgentScope(item, sessionPayload);
   const summary = summarizeAgentEvents(allEvents, 8);
   const historyEvents = summary.events;
@@ -63835,7 +63934,7 @@ function renderAgentActions() {
     }
   }
 
-  const itemSummaryState = agentSummaryState.itemId === item.id ? agentSummaryState : null;
+  const itemSummaryState = debugUiEnabled && agentSummaryState.itemId === item.id ? agentSummaryState : null;
   let macroSummaryHtml = '';
   if (itemSummaryState) {
     if (itemSummaryState.loading) {
@@ -63898,6 +63997,21 @@ function renderAgentActions() {
     })
     .join('');
 
+  const debugAgentToolsHtml = debugUiEnabled
+    ? `
+    <details class="cl-details">
+      <summary>Debug agent tools</summary>
+      <div class="cl-agent-actions-bar">
+        <button class="cl-btn cl-btn-secondary cl-agent-action" data-macro="ingest_invoice_match_po" data-dry-run="1">Preview intake macro</button>
+        <button class="cl-btn cl-btn-primary cl-agent-action" data-macro="ingest_invoice_match_po" data-dry-run="0">Run intake macro</button>
+      </div>
+      <div class="cl-agent-actions-bar">
+        <button class="cl-btn cl-btn-secondary cl-agent-action" data-macro="collect_w9" data-dry-run="1">Preview W-9 macro</button>
+      </div>
+    </details>
+  `
+    : '';
+
   container.innerHTML = `
     <div class="cl-agent-meta">
       <span class="cl-agent-chip" style="color:${stateTone}; border-color:${stateTone};">${escapeHtml(stateLabel)}</span>
@@ -63917,13 +64031,7 @@ function renderAgentActions() {
       }
       ${previewHtml}
     </div>
-    <div class="cl-agent-actions-bar">
-      <button class="cl-btn cl-btn-secondary cl-agent-action" data-macro="ingest_invoice_match_po" data-dry-run="1">Preview intake macro</button>
-      <button class="cl-btn cl-btn-primary cl-agent-action" data-macro="ingest_invoice_match_po" data-dry-run="0">Run intake macro</button>
-    </div>
-    <div class="cl-agent-actions-bar">
-      <button class="cl-btn cl-btn-secondary cl-agent-action" data-macro="collect_w9" data-dry-run="1">Preview W-9 macro</button>
-    </div>
+    ${debugAgentToolsHtml}
     ${macroSummaryHtml}
     <details class="cl-details">
       <summary>View history</summary>
@@ -64098,6 +64206,12 @@ function renderKpiSummary() {
   if (!globalSidebarEl) return;
   const container = globalSidebarEl.querySelector('#cl-kpi-summary');
   if (!container) return;
+  const debugUiEnabled = Boolean(queueManager?.isDebugUiEnabled?.());
+  if (!debugUiEnabled) {
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-kpi', false);
+    return;
+  }
   const kpis = kpiSnapshotState || queueManager?.getKpiSnapshot?.() || null;
   if (!kpis) {
     container.innerHTML = '';
@@ -64354,6 +64468,61 @@ function initializeSidebar() {
       .cl-mismatch-field {
         font-weight: 600;
         text-transform: capitalize;
+      }
+      /* Receipt notice banner */
+      .cl-receipt-notice {
+        font-size: 11px;
+        color: #15803d;
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-radius: 6px;
+        padding: 6px 8px;
+        margin: 2px 0 4px;
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        line-height: 1.4;
+      }
+      .cl-receipt-icon {
+        font-size: 13px;
+        flex-shrink: 0;
+      }
+      /* Exception root-cause one-liner */
+      .cl-exception-reason {
+        font-size: 11px;
+        color: #b45309;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        border-radius: 6px;
+        padding: 4px 8px;
+        margin: 2px 0 4px;
+      }
+      /* Per-field confidence collapsible */
+      .cl-field-conf-details {
+        margin-top: 6px;
+      }
+      .cl-field-conf-summary {
+        font-size: 10px;
+        color: var(--cl-muted);
+        cursor: pointer;
+        user-select: none;
+      }
+      .cl-field-conf-grid {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 2px 8px;
+        margin-top: 4px;
+        font-size: 11px;
+      }
+      .cl-field-conf-row {
+        display: contents;
+      }
+      .cl-field-conf-label {
+        color: var(--cl-muted);
+      }
+      .cl-field-conf-value {
+        font-weight: 600;
+        text-align: right;
       }
       .cl-btn-approve {
         background: #16a34a !important;
@@ -64824,7 +64993,7 @@ function initializeSidebar() {
       <div id="cl-kpi-summary"></div>
     </div>
     <div class="cl-section" id="cl-section-agent">
-      <div class="cl-section-title">Workflow assistant</div>
+      <div class="cl-section-title">Execution status</div>
       <div id="cl-agent-actions"></div>
     </div>
     <div class="cl-section" id="cl-section-audit">
@@ -65032,6 +65201,20 @@ async function bootstrap() {
     console.error('[Clearledgr] InboxSDK failed to load', error);
     return;
   }
+
+  // Pre-fill compose views opened by the "Draft vendor reply" button.
+  // openNewComposeView() is fire-and-forget; the handler fires when the view opens.
+  sdk.Compose.registerComposeViewHandler((composeView) => {
+    if (_pendingComposePrefill) {
+      const prefill = _pendingComposePrefill;
+      _pendingComposePrefill = null;
+      try {
+        if (prefill.to) composeView.setToRecipients([{ emailAddress: prefill.to }]);
+        if (prefill.subject) composeView.setSubject(prefill.subject);
+        if (prefill.body) composeView.setBodyHTML(prefill.body.replace(/\n/g, '<br>'));
+      } catch (_) { /* ignore if SDK rejects */ }
+    }
+  });
 
   queueManager = new _queue_manager_js__WEBPACK_IMPORTED_MODULE_1__.ClearledgrQueueManager();
   await queueManager.init();

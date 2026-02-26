@@ -107,10 +107,26 @@ def test_slack_and_teams_card_builders_include_request_info_action():
         currency="USD",
         invoice_number="INV-123",
         budget={"status": "healthy", "requires_decision": False, "checks": []},
+        decision_reason_summary="Approval is required before posting to ERP.",
+        next_step_lines=[
+            "Approve / Post to ERP: the AP workflow attempts ERP posting automatically.",
+            "Request info: returns the invoice to needs-info.",
+            "Reject: records the rejection.",
+        ],
     )
+    teams_content = teams_card["attachments"][0]["content"]
     actions = teams_card["attachments"][0]["content"]["actions"]
     action_names = [a.get("data", {}).get("action") for a in actions]
     assert "request_info" in action_names
+    assert any(
+        a.get("type") == "Action.OpenUrl" and "mail.google.com" in str(a.get("url", "")).lower()
+        for a in actions
+    )
+    body_text = " ".join(str(block.get("text") or "") for block in (teams_content.get("body") or []) if isinstance(block, dict))
+    assert "Why this needs your decision" in body_text
+    assert "What happens next" in body_text
+    assert "Requested by Clearledgr AP Agent" in body_text
+    assert "Source of truth" in body_text
 
     teams_budget_card = TeamsAPIClient.build_invoice_budget_card(
         email_id="thread-123",
@@ -148,11 +164,45 @@ def test_invoice_workflow_slack_blocks_include_request_info_for_standard_and_bud
     standard_actions = next(block for block in standard_blocks if block.get("type") == "actions")
     standard_ids = [el.get("action_id") for el in (standard_actions.get("elements") or []) if isinstance(el, dict)]
     assert any(str(action_id).startswith("request_info_") for action_id in standard_ids)
+    standard_text = " ".join(
+        str(block.get("text", {}).get("text") or "")
+        for block in standard_blocks
+        if isinstance(block, dict) and isinstance(block.get("text"), dict)
+    )
+    standard_context_text = " ".join(
+        str(el.get("text") or "")
+        for block in standard_blocks
+        if isinstance(block, dict) and block.get("type") == "context"
+        for el in (block.get("elements") or [])
+        if isinstance(el, dict)
+    )
+    assert "Why this needs your decision" in standard_text
+    assert "What happens next" in standard_text
+    assert "Requested by Clearledgr AP Agent" in standard_context_text
+    assert "Source of truth" in standard_context_text
 
-    budget_blocks = svc._build_approval_blocks(invoice, extra_context={"budget": {"status": "critical", "requires_decision": True}})
+    budget_blocks = svc._build_approval_blocks(
+        invoice,
+        extra_context={
+            "budget": {"status": "critical", "requires_decision": True},
+            "budget_impact": [
+                {
+                    "name": "Marketing",
+                    "after_approval_status": "critical",
+                    "after_approval_percent": 93,
+                }
+            ],
+        },
+    )
     budget_actions = next(block for block in budget_blocks if block.get("type") == "actions")
     budget_ids = [el.get("action_id") for el in (budget_actions.get("elements") or []) if isinstance(el, dict)]
     assert any(str(action_id).startswith("request_info_") for action_id in budget_ids)
+    budget_text = " ".join(
+        str(block.get("text", {}).get("text") or "")
+        for block in budget_blocks
+        if isinstance(block, dict) and isinstance(block.get("text"), dict)
+    )
+    assert "Budget check is critical" in budget_text or "Budget check requires" in budget_text
 
 
 def test_slack_interactive_rejects_invalid_signature_and_audits(monkeypatch, client, db):

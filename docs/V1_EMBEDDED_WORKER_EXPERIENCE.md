@@ -6,6 +6,10 @@ It aligns to the canonical doctrine in:
 
 - `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
 
+Related implementation roadmap (post-hardening product-expression work):
+
+- `/Users/mombalam/Desktop/Clearledgr.v1/docs/AGENTIC_UX_V1_5_IMPLEMENTATION_PLAN.md`
+
 ## Purpose
 
 Define the user-facing behavior of the AP v1 embedded experience so the product feels:
@@ -13,6 +17,8 @@ Define the user-facing behavior of the AP v1 embedded experience so the product 
 2. agentic (not a generic automation tool)
 3. trustworthy
 4. low-clutter
+
+Note: The current codebase already contains agent runtime, browser-agent tooling, and Gmail agent session rendering primitives. The v1.5 roadmap focuses on making those capabilities more visible and operator-centric without changing AP v1 doctrine.
 
 ## Product Shape (AP v1)
 

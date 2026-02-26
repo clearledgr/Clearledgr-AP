@@ -288,7 +288,7 @@ def test_approve_invoice_allows_budget_override_with_justification(monkeypatch):
         ],
     )
 
-    async def fake_post(_invoice):
+    async def fake_post(_invoice, **_kwargs):
         return {"status": "success", "bill_id": "BILL-1", "vendor_id": "VEN-1"}
 
     async def fake_update(*_args, **_kwargs):

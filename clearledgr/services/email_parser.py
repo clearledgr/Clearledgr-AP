@@ -139,11 +139,27 @@ class EmailParser:
         'reimburse', 'reimbursement', 'expense report',
         'wire to', 'transfer to', 'pay to', 'contractor payment'
     ]
-    
+
     INVOICE_KEYWORDS = [
         'invoice', 'bill', 'amount due', 'balance due',
         'total due', 'payable', 'payment terms', 'due date', 'invoice number'
     ]
+
+    RECEIPT_KEYWORDS = [
+        'your receipt', 'payment receipt', 'receipt from', 'receipt for',
+        'payment confirmation', 'payment received', 'payment processed',
+        'thank you for your payment', 'thank you for your purchase',
+        'order confirmation', 'subscription receipt', 'order receipt',
+    ]
+
+    # Domains that act as payment processors / billing platforms.
+    # When the sender is one of these, the actual vendor is in the email body.
+    PAYMENT_PROCESSOR_DOMAINS = {
+        'stripe.com', 'paypal.com', 'square.com', 'squareup.com',
+        'braintree.com', 'paddle.com', 'chargebee.com', 'recurly.com',
+        'fastspring.com', 'gumroad.com', 'lemonsqueezy.com',
+        'bill.com', 'payoneer.com', 'wise.com', 'transferwise.com',
+    }
     
     def __init__(self):
         self.supported_currencies = [
@@ -178,8 +194,8 @@ class EmailParser:
         # Determine email type
         email_type = self._classify_email(subject, body)
         
-        # Extract vendor from sender
-        vendor = self._extract_vendor(sender)
+        # Extract vendor from sender (passes subject+body for payment-processor senders)
+        vendor = self._extract_vendor(sender, subject=subject, body=body)
         
         # Extract amounts
         amounts = self._extract_amounts(subject + " " + body)
@@ -351,8 +367,16 @@ class EmailParser:
         }
     
     def _classify_email(self, subject: str, body: str) -> str:
-        """Classify email type based on content."""
+        """Classify email type based on content.
+
+        Receipt check runs first — receipt emails often mention 'invoice'
+        in the body but are fundamentally payment confirmations, not AP items.
+        """
         text = (subject + " " + body).lower()
+
+        # Receipts must be detected before invoice keywords to avoid misclassification.
+        if any(kw in text for kw in self.RECEIPT_KEYWORDS):
+            return "receipt"
 
         if any(kw in text for kw in self.INVOICE_KEYWORDS):
             return "invoice"
@@ -361,15 +385,55 @@ class EmailParser:
             return "payment_request"
 
         return "general"
-    
-    def _extract_vendor(self, sender: str) -> str:
-        """Extract vendor name from sender email with fuzzy matching."""
+
+    def _extract_vendor_from_email_context(self, subject: str, body: str) -> Optional[str]:
+        """Extract actual vendor name from subject/body when the sender is a payment processor.
+
+        Handles common patterns:
+          - "Your receipt from Replit #2462-2703"  → "Replit"
+          - "Invoice from Acme Corp"                → "Acme Corp"
+        """
+        import re
+        patterns = [
+            # "receipt from X #123" or "invoice from Acme Corp"
+            r'(?:receipt|invoice|bill|statement)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|\s+for\b|[,\.]|$)',
+            # "Your receipt from X" at the start of the subject
+            r'^(?:your\s+)?(?:receipt|invoice|bill|statement|order)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|[,\.]|$)',
+            # "Acme invoice", "Acme receipt" — vendor name before the document type
+            r'^([A-Z][A-Za-z0-9\s&\.\-]+?)\s+(?:invoice|receipt|bill)\b',
+        ]
+        for text in [subject, (body or '')[:300]]:
+            for pattern in patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    candidate = match.group(1).strip().rstrip('.')
+                    if 2 < len(candidate) < 50 and candidate.lower() not in {
+                        'your', 'the', 'a', 'an', 'this', 'our', 'my'
+                    }:
+                        return self._normalize_vendor_candidate(candidate)
+        return None
+
+    def _extract_vendor(self, sender: str, subject: str = '', body: str = '') -> str:
+        """Extract vendor name from sender email with fuzzy matching.
+
+        For known payment-processor domains (Stripe, PayPal, etc.) the real
+        vendor is the merchant, not the processor.  Fall back to extracting
+        the vendor name from the subject/body in those cases.
+        """
         if '@' in sender:
-            domain = sender.split('@')[1]
-            # Remove common TLDs and clean up
+            domain = sender.split('@')[1].lower()
+            # Strip subdomains to get the base domain (e.g. "invoice.stripe.com" → "stripe.com")
+            parts = domain.rsplit('.', 2)
+            base_domain = '.'.join(parts[-2:]) if len(parts) >= 2 else domain
+
+            if base_domain in self.PAYMENT_PROCESSOR_DOMAINS:
+                extracted = self._extract_vendor_from_email_context(subject, body)
+                if extracted:
+                    return extracted
+                # Fall through to domain-based extraction as last resort
+
             name = domain.split('.')[0]
             capitalized = name.title()
-
             return self._normalize_vendor_candidate(capitalized)
         return sender
 
@@ -1385,9 +1449,17 @@ def parse_email(
     sender: str,
     attachments: List[Dict] = None
 ) -> Dict[str, Any]:
-    """Parse an email and extract financial data."""
-    parser = EmailParser()
-    return parser.parse_email(subject, body, sender, attachments)
+    """Parse an email and extract financial data.
+
+    Primary path: LLMEmailParser (Claude Haiku for text, Sonnet for vision).
+    Automatic fallback: regex EmailParser when Claude is unavailable or fails.
+
+    All callers get the same dict shape regardless of which path ran, with
+    additional LLM-enriched fields (field_confidences, reasoning_summary,
+    payment_processor, extraction_method) when LLM is available.
+    """
+    from clearledgr.services.llm_email_parser import parse_email_with_llm
+    return parse_email_with_llm(subject, body, sender, attachments)
 
 
 def parse_invoice_text(text: str) -> Dict[str, Any]:

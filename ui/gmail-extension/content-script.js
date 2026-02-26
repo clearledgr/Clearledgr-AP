@@ -530,9 +530,39 @@ import { ClearledgrQueueManager } from './queue-manager.js';
     const email = findQueueItemById(emailId);
     if (!email) return;
 
-    // Apply updates locally; backend re-triage can be triggered separately if needed.
-    email.detected = { ...(email.detected || {}), ...(updates || {}) };
+    // Apply updates locally so the sidebar reflects changes immediately.
+    const prevDetected = { ...(email.detected || {}) };
+    email.detected = { ...prevDetected, ...(updates || {}) };
     await queueManager.saveQueue?.();
+
+    // Wire corrections to the backend learning service so accuracy compounds
+    // over time. Fire-and-forget: don't block the UI on network latency.
+    if (updates && Object.keys(updates).length > 0) {
+      try {
+        const settings = await getRuntimeSettings();
+        const apItemId = email.id || emailId;
+        const actorId = settings.userEmail || null;
+
+        for (const [field, correctedValue] of Object.entries(updates)) {
+          const originalValue = prevDetected[field] ?? null;
+          fetch(`${settings.backendUrl}/extension/record-field-correction`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ap_item_id: apItemId,
+              field,
+              original_value: originalValue,
+              corrected_value: correctedValue,
+              actor_id: actorId,
+            }),
+          }).catch(() => {
+            // Non-blocking: correction learning failure should not interrupt the UX
+          });
+        }
+      } catch (_settingsErr) {
+        // Settings fetch failed — corrections still applied locally
+      }
+    }
 
     toast('Invoice updated', 'success');
     dispatchPipelineData({ source: 'fix' });

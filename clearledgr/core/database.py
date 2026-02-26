@@ -759,6 +759,8 @@ class ClearledgrDB(
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_thread ON ap_items(thread_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_org_message ON ap_items(organization_id, message_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_org_state_updated ON ap_items(organization_id, state, updated_at)")
+            self._ensure_column(cur, "ap_items", "supersedes_ap_item_id", "TEXT")
+            self._ensure_column(cur, "ap_items", "superseded_by_ap_item_id", "TEXT")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_supersedes ON ap_items(supersedes_ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_superseded_by ON ap_items(superseded_by_ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_item_sources_item ON ap_item_sources(ap_item_id)")
@@ -788,8 +790,6 @@ class ClearledgrDB(
             self._ensure_column(cur, "ap_items", "approval_surface", "TEXT DEFAULT 'hybrid'")
             self._ensure_column(cur, "ap_items", "approval_policy_version", "TEXT")
             self._ensure_column(cur, "ap_items", "post_attempted_at", "TEXT")
-            self._ensure_column(cur, "ap_items", "supersedes_ap_item_id", "TEXT")
-            self._ensure_column(cur, "ap_items", "superseded_by_ap_item_id", "TEXT")
             self._ensure_column(cur, "ap_items", "resubmission_reason", "TEXT")
 
             self._ensure_column(cur, "audit_events", "source", "TEXT")
@@ -831,6 +831,10 @@ class ClearledgrDB(
             self._ensure_column(cur, "slack_installations", "metadata_json", "TEXT")
             self._ensure_column(cur, "subscriptions", "onboarding_completed", "INTEGER DEFAULT 0")
             self._ensure_column(cur, "subscriptions", "onboarding_step", "INTEGER DEFAULT 0")
+
+            # Extraction confidence: field-level scores stored as JSON blob so accuracy
+            # trends are queryable per-field without parsing audit events.
+            self._ensure_column(cur, "ap_items", "field_confidences", "TEXT")
 
             # Gap #10 — exception_code / exception_severity as first-class indexed columns.
             # Previously these were buried in the metadata JSON blob, making them

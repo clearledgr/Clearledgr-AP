@@ -9,6 +9,8 @@ KEY DIFFERENTIATORS:
 3. Multi-System Routing - Approval triggers both ERP post AND Slack thread update
 4. Intelligent Agent - Vendor intelligence, policy compliance, priority detection
 """
+import json
+import os
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from pydantic import BaseModel
@@ -963,6 +965,159 @@ class BudgetDecisionRequest(BaseModel):
     user_email: Optional[str] = None
 
 
+class ApprovalNudgeRequest(BaseModel):
+    """Request to nudge pending approvers for an invoice."""
+    email_id: str
+    message: Optional[str] = None
+    organization_id: Optional[str] = None
+    user_email: Optional[str] = None
+
+
+class FinanceSummaryShareRequest(BaseModel):
+    """Request to prepare/share a finance-lead exception summary."""
+    email_id: str
+    target: str = "email_draft"  # email_draft | slack_thread | teams_reply
+    preview_only: bool = False
+    recipient_email: Optional[str] = None
+    note: Optional[str] = None
+    organization_id: Optional[str] = None
+    user_email: Optional[str] = None
+
+
+def _parse_json_dict(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _resolve_ap_item_for_extension_action(db: Any, organization_id: str, email_id: str) -> Optional[Dict[str, Any]]:
+    item = None
+    getter = getattr(db, "get_ap_item", None)
+    if callable(getter):
+        item = getter(email_id)
+        if item and str(item.get("organization_id") or organization_id) != organization_id:
+            item = None
+    if not item and hasattr(db, "get_ap_item_by_thread"):
+        item = db.get_ap_item_by_thread(organization_id, email_id)
+    if not item and hasattr(db, "get_ap_item_by_message_id"):
+        item = db.get_ap_item_by_message_id(organization_id, email_id)
+    return item
+
+
+def _append_extension_ap_audit(
+    db: Any,
+    *,
+    ap_item_id: str,
+    organization_id: str,
+    event_type: str,
+    actor_id: str,
+    reason: str,
+    metadata: Optional[Dict[str, Any]] = None,
+    correlation_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if not hasattr(db, "append_ap_audit_event"):
+        return None
+    return db.append_ap_audit_event(
+        {
+            "ap_item_id": ap_item_id,
+            "event_type": event_type,
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "reason": reason,
+            "metadata": metadata or {},
+            "organization_id": organization_id,
+            "source": "gmail_extension",
+            "correlation_id": correlation_id,
+        }
+    )
+
+
+def _build_finance_lead_summary_payload(
+    ap_item: Dict[str, Any],
+    *,
+    audit_events: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    state = str(ap_item.get("state") or "received").strip().lower()
+    next_action = str(ap_item.get("next_action") or "").strip().replace("_", " ")
+    vendor = str(ap_item.get("vendor_name") or ap_item.get("vendor") or "Unknown vendor").strip()
+    invoice_number = str(ap_item.get("invoice_number") or "N/A").strip()
+    amount = ap_item.get("amount")
+    currency = str(ap_item.get("currency") or "USD").strip().upper()
+    due_date = str(ap_item.get("due_date") or "").strip()
+    exception_code = str(ap_item.get("exception_code") or "").strip()
+    exception_severity = str(ap_item.get("exception_severity") or "").strip()
+    requires_field_review = bool(ap_item.get("requires_field_review"))
+    confidence_blockers = ap_item.get("confidence_blockers") if isinstance(ap_item.get("confidence_blockers"), list) else []
+    context_summary = ""
+    metadata = _parse_json_dict(ap_item.get("metadata"))
+    if isinstance(metadata.get("context_summary"), str):
+        context_summary = metadata.get("context_summary", "").strip()
+
+    amount_text = f"{currency} {float(amount):,.2f}" if isinstance(amount, (int, float)) else f"{currency} amount unavailable"
+    lines: List[str] = [
+        f"{vendor} · Invoice {invoice_number} · {amount_text}",
+        f"Current state: {state.replace('_', ' ')}" + (f" · Next action: {next_action}" if next_action else ""),
+    ]
+
+    if exception_code:
+        ex_line = f"Exception: {exception_code.replace('_', ' ')}"
+        if exception_severity:
+            ex_line += f" ({exception_severity})"
+        lines.append(ex_line)
+    if due_date:
+        lines.append(f"Due date: {due_date}")
+    if requires_field_review:
+        fields = []
+        for entry in confidence_blockers[:4]:
+            if isinstance(entry, str):
+                fields.append(entry)
+            elif isinstance(entry, dict):
+                fields.append(str(entry.get('field') or entry.get('code') or '').strip())
+        fields = [f for f in fields if f]
+        lines.append(
+            f"Field review blockers: {', '.join(fields)}" if fields else "Field review blockers require review before posting."
+        )
+    if bool(ap_item.get("budget_requires_decision")):
+        budget_status = str(ap_item.get("budget_status") or "review").replace("_", " ")
+        lines.append(f"Budget decision required ({budget_status}).")
+    if context_summary:
+        lines.append(f"Context: {context_summary[:180]}")
+
+    recent = []
+    for event in (audit_events or [])[:4]:
+        event_type = str(event.get("event_type") or event.get("eventType") or "").strip()
+        if event_type:
+            recent.append(event_type.replace("_", " "))
+    if recent:
+        lines.append(f"Recent activity: {' -> '.join(recent)}")
+
+    # de-duplicate while preserving order
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        text = str(line or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(text)
+
+    return {
+        "title": "Finance lead exception summary",
+        "lines": deduped[:8],
+        "state": state,
+        "next_action": str(ap_item.get("next_action") or ""),
+    }
+
+
 @router.post("/submit-for-approval", dependencies=[Depends(get_current_user)])
 async def submit_for_approval(
     request: SubmitForApprovalRequest,
@@ -1213,6 +1368,419 @@ async def budget_decision(
         },
     )
     return result
+
+
+@router.post("/approval-nudge", dependencies=[Depends(get_current_user)])
+async def approval_nudge(
+    request: ApprovalNudgeRequest,
+    audit: AuditTrailService = Depends(get_audit_service),
+    user = Depends(get_current_user),
+):
+    """Send a dedicated approver nudge for pending approvals (Slack/Teams best effort)."""
+    from clearledgr.services.invoice_workflow import get_invoice_workflow
+
+    org_id = request.organization_id or getattr(user, "organization_id", None) or "default"
+    actor_email = request.user_email or getattr(user, "email", None) or "extension"
+    db = get_db()
+    ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.email_id)
+    if not ap_item:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+
+    state = str(ap_item.get("state") or "").strip().lower()
+    if state not in {"needs_approval", "pending_approval"}:
+        raise HTTPException(status_code=400, detail="item_not_waiting_for_approval")
+
+    gmail_id = str(ap_item.get("thread_id") or request.email_id or "").strip()
+    if not gmail_id:
+        raise HTTPException(status_code=400, detail="missing_gmail_reference")
+
+    workflow = get_invoice_workflow(org_id)
+    try:
+        amount_num = float(ap_item.get("amount") or 0.0)
+    except (TypeError, ValueError):
+        amount_num = 0.0
+
+    nudge_text = (
+        str(request.message).strip()
+        if request.message and str(request.message).strip()
+        else (
+            f"Reminder: approval is still pending for "
+            f"{ap_item.get('vendor_name') or ap_item.get('vendor') or 'invoice'} "
+            f"({ap_item.get('currency') or 'USD'} {amount_num:,.2f}). "
+            "Please review when available."
+        )
+    )
+
+    slack_result: Dict[str, Any] = {"status": "skipped", "reason": "no_slack_thread"}
+    teams_result: Dict[str, Any] = {"status": "skipped", "reason": "teams_unavailable"}
+
+    slack_thread = db.get_slack_thread(gmail_id) if hasattr(db, "get_slack_thread") else None
+    if slack_thread and getattr(workflow, "slack_client", None):
+        try:
+            sent = await workflow.slack_client.send_message(
+                channel=str(slack_thread.get("channel_id") or ""),
+                thread_ts=str(slack_thread.get("thread_ts") or slack_thread.get("thread_id") or ""),
+                text=nudge_text,
+            )
+            slack_result = {
+                "status": "sent",
+                "channel_id": sent.channel,
+                "thread_ts": sent.thread_ts or sent.ts,
+                "message_ts": sent.ts,
+            }
+        except Exception as exc:
+            slack_result = {"status": "error", "reason": str(exc)}
+
+    teams_meta = _parse_json_dict(ap_item.get("metadata")).get("teams")
+    if isinstance(teams_meta, dict) and getattr(workflow, "teams_client", None):
+        try:
+            budget_payload = {
+                "status": ap_item.get("budget_status") or "unknown",
+                "requires_decision": bool(ap_item.get("budget_requires_decision")),
+            }
+            result = workflow.teams_client.send_invoice_budget_card(
+                email_id=gmail_id,
+                organization_id=org_id,
+                vendor=str(ap_item.get("vendor_name") or ap_item.get("vendor") or "Unknown"),
+                amount=amount_num,
+                currency=str(ap_item.get("currency") or "USD"),
+                invoice_number=ap_item.get("invoice_number"),
+                budget=budget_payload,
+            )
+            teams_result = result if isinstance(result, dict) else {"status": "sent"}
+        except Exception as exc:
+            teams_result = {"status": "error", "reason": str(exc)}
+
+    correlation_id = str(
+        ap_item.get("correlation_id")
+        or _parse_json_dict(ap_item.get("metadata")).get("correlation_id")
+        or ""
+    ).strip() or None
+
+    audit_row = _append_extension_ap_audit(
+        db,
+        ap_item_id=str(ap_item.get("id") or request.email_id),
+        organization_id=org_id,
+        event_type="approval_nudge_sent" if slack_result.get("status") == "sent" or teams_result.get("status") == "sent" else "approval_nudge_failed",
+        actor_id=actor_email,
+        reason="approval_nudge",
+        metadata={
+            "slack": slack_result,
+            "teams": teams_result,
+            "message": nudge_text[:400],
+        },
+        correlation_id=correlation_id,
+    )
+
+    audit.record_event(
+        user_email=actor_email,
+        action="approval_nudge",
+        entity_type="invoice",
+        entity_id=str(ap_item.get("id") or request.email_id),
+        organization_id=org_id,
+        metadata={
+            "email_id": request.email_id,
+            "slack": slack_result,
+            "teams": teams_result,
+            "audit_event_id": (audit_row or {}).get("id"),
+        },
+    )
+
+    return {
+        "status": "nudged" if slack_result.get("status") == "sent" or teams_result.get("status") == "sent" else "error",
+        "email_id": request.email_id,
+        "ap_item_id": str(ap_item.get("id") or ""),
+        "slack": slack_result,
+        "teams": teams_result,
+        "audit_event_id": (audit_row or {}).get("id"),
+    }
+
+
+@router.post("/finance-summary-share", dependencies=[Depends(get_current_user)])
+async def finance_summary_share(
+    request: FinanceSummaryShareRequest,
+    audit: AuditTrailService = Depends(get_audit_service),
+    user = Depends(get_current_user),
+):
+    """Prepare or deliver a finance-lead exception summary share action."""
+    from clearledgr.services.invoice_workflow import get_invoice_workflow
+    from clearledgr.services.teams_notifications import (
+        build_finance_summary_reply_activity,
+        send_finance_summary_reply,
+    )
+
+    org_id = request.organization_id or getattr(user, "organization_id", None) or "default"
+    actor_email = request.user_email or getattr(user, "email", None) or "extension"
+    db = get_db()
+    ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.email_id)
+    if not ap_item:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+
+    target = str(request.target or "email_draft").strip().lower()
+    if target not in {"email_draft", "slack_thread", "teams_reply"}:
+        raise HTTPException(status_code=400, detail="unsupported_share_target")
+
+    audit_events = db.list_ap_audit_events(str(ap_item.get("id"))) if hasattr(db, "list_ap_audit_events") else []
+    summary = _build_finance_lead_summary_payload(ap_item, audit_events=audit_events)
+
+    recipient_email = (
+        str(request.recipient_email or "").strip()
+        or os.getenv("CLEARLEDGR_FINANCE_LEAD_EMAIL", "").strip()
+        or os.getenv("FINANCE_LEAD_EMAIL", "").strip()
+        or ""
+    )
+    note = str(request.note or "").strip()
+    vendor = str(ap_item.get("vendor_name") or ap_item.get("vendor") or "Unknown vendor").strip()
+    invoice_number = str(ap_item.get("invoice_number") or "N/A").strip()
+    subject = f"[Clearledgr] Exception summary: {vendor} · Invoice {invoice_number}"
+    body_lines = [
+        "Hi,",
+        "",
+        "Clearledgr prepared the following AP exception summary for review:",
+        "",
+        *[f"- {line}" for line in (summary.get("lines") or [])],
+    ]
+    if note:
+        body_lines.extend(["", "Operator note:", note])
+    body_lines.extend(["", "Sent from Clearledgr Gmail Agent Actions."])
+    draft = {
+        "to": recipient_email,
+        "subject": subject,
+        "body": "\n".join(body_lines),
+    }
+
+    correlation_id = str(
+        ap_item.get("correlation_id")
+        or _parse_json_dict(ap_item.get("metadata")).get("correlation_id")
+        or ""
+    ).strip() or None
+    ap_item_id = str(ap_item.get("id") or request.email_id)
+
+    if request.preview_only:
+        preview_payload: Dict[str, Any]
+        if target == "email_draft":
+            preview_payload = {
+                "kind": "email_draft",
+                "draft": draft,
+                "recipient_email": recipient_email,
+            }
+        elif target == "slack_thread":
+            gmail_id = str(ap_item.get("thread_id") or request.email_id or "").strip()
+            slack_thread = db.get_slack_thread(gmail_id) if hasattr(db, "get_slack_thread") else None
+            if not slack_thread:
+                raise HTTPException(status_code=400, detail="slack_thread_not_found")
+            text_lines = [f"*{summary.get('title') or 'Finance exception summary'}*"]
+            text_lines.extend([f"• {line}" for line in (summary.get("lines") or [])[:8]])
+            if note:
+                text_lines.extend(["", f"_Operator note:_ {note}"])
+            preview_payload = {
+                "kind": "slack_thread",
+                "channel_id": str(slack_thread.get("channel_id") or ""),
+                "thread_ts": str(slack_thread.get("thread_ts") or slack_thread.get("thread_id") or ""),
+                "text": "\n".join(text_lines),
+            }
+        else:  # teams_reply
+            metadata = _parse_json_dict(ap_item.get("metadata"))
+            teams_meta = metadata.get("teams") if isinstance(metadata.get("teams"), dict) else {}
+            channel_id = str((teams_meta or {}).get("channel") or "").strip()
+            reply_to_id = str((teams_meta or {}).get("message_id") or "").strip()
+            if not channel_id:
+                raise HTTPException(status_code=400, detail="teams_channel_not_found")
+            item_payload = {
+                "id": ap_item_id,
+                "vendor": vendor,
+                "amount": ap_item.get("amount") or 0,
+                "currency": ap_item.get("currency") or "USD",
+                "invoice_number": invoice_number,
+            }
+            preview_payload = {
+                "kind": "teams_reply",
+                "channel_id": channel_id,
+                "reply_to_id": reply_to_id or None,
+                "activity": build_finance_summary_reply_activity(
+                    item_payload,
+                    list(summary.get("lines") or []),
+                    summary_title=str(summary.get("title") or "Finance exception summary"),
+                    reply_to_id=reply_to_id or None,
+                ),
+            }
+
+        audit_row = _append_extension_ap_audit(
+            db,
+            ap_item_id=ap_item_id,
+            organization_id=org_id,
+            event_type="finance_summary_share_previewed",
+            actor_id=actor_email,
+            reason=f"finance_summary_preview_{target}",
+            metadata={
+                "target": target,
+                "summary_title": summary.get("title"),
+                "summary_lines": summary.get("lines"),
+                "preview_kind": preview_payload.get("kind"),
+                "recipient_email": recipient_email if target == "email_draft" else None,
+                "slack_channel_id": preview_payload.get("channel_id") if target == "slack_thread" else None,
+                "teams_channel_id": preview_payload.get("channel_id") if target == "teams_reply" else None,
+            },
+            correlation_id=correlation_id,
+        )
+        audit.record_event(
+            user_email=actor_email,
+            action="finance_summary_share_previewed",
+            entity_type="invoice",
+            entity_id=ap_item_id,
+            organization_id=org_id,
+            metadata={
+                "email_id": request.email_id,
+                "target": target,
+                "audit_event_id": (audit_row or {}).get("id"),
+            },
+        )
+        return {
+            "status": "preview",
+            "target": target,
+            "email_id": request.email_id,
+            "ap_item_id": ap_item_id,
+            "summary": summary,
+            "preview": preview_payload,
+            "audit_event_id": (audit_row or {}).get("id"),
+        }
+
+    if target == "email_draft":
+        audit_row = _append_extension_ap_audit(
+            db,
+            ap_item_id=ap_item_id,
+            organization_id=org_id,
+            event_type="finance_summary_share_prepared",
+            actor_id=actor_email,
+            reason="finance_summary_email_draft",
+            metadata={
+                "target": target,
+                "recipient_email": recipient_email,
+                "summary_title": summary.get("title"),
+                "summary_lines": summary.get("lines"),
+            },
+            correlation_id=correlation_id,
+        )
+        audit.record_event(
+            user_email=actor_email,
+            action="finance_summary_share_prepared",
+            entity_type="invoice",
+            entity_id=ap_item_id,
+            organization_id=org_id,
+            metadata={
+                "email_id": request.email_id,
+                "target": target,
+                "recipient_email": recipient_email,
+                "audit_event_id": (audit_row or {}).get("id"),
+            },
+        )
+        return {
+            "status": "prepared",
+            "target": target,
+            "email_id": request.email_id,
+            "ap_item_id": ap_item_id,
+            "summary": summary,
+            "draft": draft,
+            "audit_event_id": (audit_row or {}).get("id"),
+        }
+
+    workflow = get_invoice_workflow(org_id)
+    delivery: Dict[str, Any]
+    delivered = False
+
+    if target == "slack_thread":
+        gmail_id = str(ap_item.get("thread_id") or request.email_id or "").strip()
+        slack_thread = db.get_slack_thread(gmail_id) if hasattr(db, "get_slack_thread") else None
+        if not slack_thread:
+            raise HTTPException(status_code=400, detail="slack_thread_not_found")
+        if not getattr(workflow, "slack_client", None):
+            raise HTTPException(status_code=400, detail="slack_client_unavailable")
+        text_lines = [f"*{summary.get('title') or 'Finance exception summary'}*"]
+        text_lines.extend([f"• {line}" for line in (summary.get("lines") or [])[:8]])
+        if note:
+            text_lines.extend(["", f"_Operator note:_ {note}"])
+        try:
+            sent = await workflow.slack_client.send_message(
+                channel=str(slack_thread.get("channel_id") or ""),
+                thread_ts=str(slack_thread.get("thread_ts") or slack_thread.get("thread_id") or ""),
+                text="\n".join(text_lines),
+            )
+            delivery = {
+                "channel_id": sent.channel,
+                "thread_ts": sent.thread_ts or sent.ts,
+                "message_ts": sent.ts,
+                "status": "sent",
+            }
+            delivered = True
+        except Exception as exc:
+            delivery = {"status": "error", "reason": str(exc)}
+    else:  # teams_reply
+        metadata = _parse_json_dict(ap_item.get("metadata"))
+        teams_meta = metadata.get("teams") if isinstance(metadata.get("teams"), dict) else {}
+        channel_id = str((teams_meta or {}).get("channel") or "").strip()
+        reply_to_id = str((teams_meta or {}).get("message_id") or "").strip()
+        if not channel_id:
+            raise HTTPException(status_code=400, detail="teams_channel_not_found")
+        item_payload = {
+            "id": ap_item_id,
+            "vendor": vendor,
+            "amount": ap_item.get("amount") or 0,
+            "currency": ap_item.get("currency") or "USD",
+            "invoice_number": invoice_number,
+        }
+        ok = await send_finance_summary_reply(
+            item_payload,
+            channel_id,
+            list(summary.get("lines") or []),
+            summary_title=str(summary.get("title") or "Finance exception summary"),
+            reply_to_id=reply_to_id or None,
+        )
+        delivery = {
+            "channel_id": channel_id,
+            "reply_to_id": reply_to_id or None,
+            "status": "sent" if ok else "error",
+        }
+        delivered = bool(ok)
+
+    audit_row = _append_extension_ap_audit(
+        db,
+        ap_item_id=ap_item_id,
+        organization_id=org_id,
+        event_type="finance_summary_shared" if delivered else "finance_summary_share_failed",
+        actor_id=actor_email,
+        reason=f"finance_summary_{target}",
+        metadata={
+            "target": target,
+            "summary_title": summary.get("title"),
+            "summary_lines": summary.get("lines"),
+            "delivery": delivery,
+        },
+        correlation_id=correlation_id,
+    )
+
+    audit.record_event(
+        user_email=actor_email,
+        action="finance_summary_shared" if delivered else "finance_summary_share_failed",
+        entity_type="invoice",
+        entity_id=ap_item_id,
+        organization_id=org_id,
+        metadata={
+            "email_id": request.email_id,
+            "target": target,
+            "delivery": delivery,
+            "audit_event_id": (audit_row or {}).get("id"),
+        },
+    )
+
+    return {
+        "status": "shared" if delivered else "error",
+        "target": target,
+        "email_id": request.email_id,
+        "ap_item_id": ap_item_id,
+        "summary": summary,
+        "delivery": delivery,
+        "audit_event_id": (audit_row or {}).get("id"),
+    }
 
 
 @router.get("/invoice-status/{gmail_id}")
@@ -1517,4 +2085,155 @@ async def get_form_prefill(
             "invoice_date": invoice.get("invoice_date"),
             "due_date": invoice.get("due_date"),
         },
+    }
+
+
+# ==================== CORRECTION LEARNING ====================
+
+class FieldCorrectionRequest(BaseModel):
+    """Payload sent by the Gmail extension when an operator edits an extracted field."""
+    ap_item_id: str
+    field: str  # e.g. "vendor", "amount", "invoice_number", "due_date"
+    original_value: Optional[Any] = None
+    corrected_value: Any
+    actor_id: Optional[str] = None  # email of the operator; falls back to token identity
+    feedback: Optional[str] = None  # optional free-text reason
+
+
+@router.get("/needs-info-draft/{ap_item_id}")
+async def get_needs_info_draft(
+    ap_item_id: str,
+    reason: Optional[str] = Query(None, description="What information is needed — pre-fills the email body"),
+):
+    """Generate a pre-filled vendor reply template for a needs_info AP item.
+    Returns {to, subject, body} ready for Gmail compose URL construction.
+    No auth required — callable from content-script.js without token."""
+    db = get_db()
+    ap_item = db.get_ap_item(ap_item_id)
+    if not ap_item:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+    if ap_item.get("state") != "needs_info":
+        raise HTTPException(status_code=400, detail="item_not_in_needs_info_state")
+
+    vendor = ap_item.get("vendor_name") or "Vendor"
+    invoice_number = ap_item.get("invoice_number") or "your recent invoice"
+    sender_email = ap_item.get("sender") or ""
+    original_subject = ap_item.get("subject") or f"Invoice {invoice_number}"
+
+    # Map exception_code to a human-readable request for the vendor.
+    _EXCEPTION_REASON_MAP = {
+        "po_reference_required": "Please provide a valid Purchase Order (PO) number for this invoice. Our system requires a PO reference before we can process payment.",
+        "missing_po": "Please provide a valid Purchase Order (PO) number for this invoice.",
+        "missing_invoice_number": "Please provide a valid invoice number. The invoice number was missing or could not be read from your submission.",
+        "invalid_invoice_number": "The invoice number on your submission appears to be invalid. Please re-send with a clearly formatted invoice number.",
+        "amount_mismatch": "The invoice amount does not match our purchase order or approval records. Please confirm the correct total and any line-item breakdown.",
+        "duplicate_invoice": "This invoice appears to be a duplicate of a previous submission. Please confirm the invoice number and date, or advise if this is a revised invoice.",
+        "vendor_not_recognized": "We were unable to match your company to our vendor records. Please confirm your registered company name, VAT/tax ID, and remittance address.",
+        "currency_mismatch": "The invoice currency does not match the currency on our purchase order. Please re-issue in the agreed contract currency.",
+        "missing_line_items": "Please re-send the invoice with itemised line items (description, quantity, unit price) so we can match it against our purchase order.",
+        "policy_attribute_failure": "Additional details are required to process this invoice under our accounting policy. Please confirm the PO number, cost centre, and project code associated with this charge.",
+        "approval_limit_exceeded": "This invoice exceeds the approval limit for automatic processing. We are escalating internally — no action is needed from you at this time.",
+        "tax_id_required": "Please include your VAT/tax identification number on the invoice. This is required for our accounts payable records.",
+    }
+    exception_code = str(ap_item.get("exception_code") or "").strip()
+    reason_text = (
+        str(reason).strip()
+        if reason and str(reason).strip()
+        else _EXCEPTION_REASON_MAP.get(exception_code)
+        or str(ap_item.get("last_error") or "").strip()
+        or "additional information is required before we can process this invoice"
+    )
+
+    body = (
+        f"Dear {vendor},\n\n"
+        f"Thank you for submitting invoice {invoice_number}.\n\n"
+        f"We need the following before we can complete processing:\n\n"
+        f"    {reason_text}\n\n"
+        f"Please reply to this email with the requested information and we will "
+        f"process your invoice promptly.\n\n"
+        f"Best regards"
+    )
+
+    return {
+        "ap_item_id": ap_item_id,
+        "to": sender_email,
+        "subject": f"Re: {original_subject}",
+        "body": body,
+    }
+
+
+@router.post("/record-field-correction")
+async def record_field_correction(
+    request: FieldCorrectionRequest,
+):
+    """Record a field-level correction made by an operator in the Gmail sidebar.
+
+    Persists to ``agent_corrections`` for accuracy trend analysis and fires a
+    ``field_correction`` audit event so the correction appears in the audit trail.
+    This is the missing link that allows org-specific extraction accuracy to
+    compound over time.
+
+    Note: no auth dependency to match the pattern of other extension endpoints
+    (content-script.js callers don't carry Bearer tokens). The actor_id in the
+    request body identifies the operator.
+    """
+    import json as _json
+    from clearledgr.services.correction_learning import CorrectionLearningService
+    from clearledgr.services.audit_trail import get_audit_trail, AuditEventType
+
+    db = get_db()
+    ap_item = db.get_ap_item(request.ap_item_id)
+    if not ap_item:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+
+    organization_id = ap_item.get("organization_id") or "default"
+    actor_id = request.actor_id or "operator"
+
+    # 1) Persist to correction learning service (updates agent_corrections table)
+    learning_svc = CorrectionLearningService(organization_id)
+    try:
+        learning_result = learning_svc.record_correction(
+            correction_type=request.field,
+            original_value=request.original_value,
+            corrected_value=request.corrected_value,
+            context={
+                "ap_item_id": request.ap_item_id,
+                "field": request.field,
+                "vendor": ap_item.get("vendor_name"),
+            },
+            user_id=actor_id,
+            invoice_id=ap_item.get("thread_id"),
+            feedback=request.feedback,
+        )
+    except Exception as _learn_err:
+        logger.warning("correction_learning.record_correction failed: %s", _learn_err)
+        learning_result = {}
+
+    # 2) Write audit event so the correction appears in the audit trail and
+    #    is counted by GET /api/ops/extraction-quality.
+    audit_meta = {
+        "field": request.field,
+        "original_value": str(request.original_value) if request.original_value is not None else None,
+        "corrected_value": str(request.corrected_value),
+        "actor_id": actor_id,
+        "feedback": request.feedback,
+        "learning_result": learning_result,
+    }
+    try:
+        audit_svc = get_audit_trail(organization_id)
+        audit_svc.record_event(
+            event_type="field_correction",
+            invoice_id=ap_item.get("thread_id") or request.ap_item_id,
+            actor_type="operator",
+            actor_id=actor_id,
+            metadata=audit_meta,
+        )
+    except Exception as _audit_err:
+        logger.warning("audit field_correction event failed: %s", _audit_err)
+
+    return {
+        "status": "recorded",
+        "ap_item_id": request.ap_item_id,
+        "field": request.field,
+        "learning_result": learning_result,
     }

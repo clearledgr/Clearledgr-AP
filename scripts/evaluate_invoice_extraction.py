@@ -17,8 +17,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+
+# Ensure project root is on sys.path when script is run directly
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from clearledgr.services.email_parser import EmailParser
 

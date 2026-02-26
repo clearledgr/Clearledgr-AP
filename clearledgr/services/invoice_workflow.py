@@ -1275,7 +1275,7 @@ class InvoiceWorkflowService:
                     "approval_context": context_payload.get("approval_context"),
                 },
             )
-            teams_status = self._send_teams_budget_card(invoice, budget_summary)
+            teams_status = self._send_teams_budget_card(invoice, budget_summary, context_payload)
             if isinstance(teams_status, dict):
                 teams_state = str(teams_status.get("status") or "unknown")
                 self._update_ap_item_metadata(
@@ -1365,7 +1365,7 @@ class InvoiceWorkflowService:
                     "approval_context": context_payload.get("approval_context"),
                 },
             )
-            teams_status = self._send_teams_budget_card(invoice, budget_summary)
+            teams_status = self._send_teams_budget_card(invoice, budget_summary, context_payload)
             if isinstance(teams_status, dict):
                 teams_state = str(teams_status.get("status") or "unknown")
                 self._update_ap_item_metadata(
@@ -1415,12 +1415,22 @@ class InvoiceWorkflowService:
                 "error": str(e),
             }
 
-    def _send_teams_budget_card(self, invoice: InvoiceData, budget_summary: Dict[str, Any]) -> Dict[str, Any]:
+    def _send_teams_budget_card(
+        self,
+        invoice: InvoiceData,
+        budget_summary: Dict[str, Any],
+        extra_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Best-effort Teams delivery for approval/budget decisions."""
         client = self.teams_client
         if client is None:
             return {"status": "skipped", "reason": "teams_client_unavailable"}
         try:
+            approval_copy = self._build_approval_surface_copy(
+                invoice=invoice,
+                extra_context=extra_context or {"budget": budget_summary},
+                budget_summary=budget_summary,
+            )
             result = client.send_invoice_budget_card(
                 email_id=invoice.gmail_id,
                 organization_id=self.organization_id,
@@ -1429,6 +1439,11 @@ class InvoiceWorkflowService:
                 currency=invoice.currency,
                 invoice_number=invoice.invoice_number,
                 budget=budget_summary,
+                decision_reason_summary=approval_copy.get("why_summary"),
+                next_step_lines=approval_copy.get("what_happens_next") or [],
+                requested_by_text=approval_copy.get("requested_by_text"),
+                source_of_truth_text=approval_copy.get("source_of_truth_text"),
+                source_url=approval_copy.get("gmail_url"),
             )
             if isinstance(result, dict):
                 return result
@@ -1495,6 +1510,105 @@ class InvoiceWorkflowService:
             except (TypeError, ValueError):
                 summary["source_count"] = 0
         return summary
+
+    @staticmethod
+    def _humanize_reason_code(code: Any) -> str:
+        raw = str(code or "").strip()
+        if not raw:
+            return ""
+        return raw.replace("_", " ")
+
+    def _build_approval_surface_copy(
+        self,
+        invoice: InvoiceData,
+        extra_context: Optional[Dict[str, Any]] = None,
+        budget_summary: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Build parity copy for Slack/Teams approval cards (AX7)."""
+        extra_context = extra_context or {}
+        budget_summary = budget_summary or {}
+        gmail_url = f"https://mail.google.com/mail/u/0/#search/{invoice.gmail_id}"
+
+        why_candidates: List[str] = []
+        budget_status = str((budget_summary or {}).get("status") or "").strip().lower()
+        if bool((budget_summary or {}).get("requires_decision")) or budget_status in {"critical", "exceeded"}:
+            if budget_status in {"critical", "exceeded"}:
+                why_candidates.append(
+                    f"Budget check is {budget_status.replace('_', ' ')} and requires an approval decision."
+                )
+            else:
+                why_candidates.append("Budget check requires an approval decision before posting.")
+
+        confidence_gate = extra_context.get("confidence_gate")
+        confidence_gate = confidence_gate if isinstance(confidence_gate, dict) else {}
+        confidence_blockers = confidence_gate.get("blockers")
+        if not isinstance(confidence_blockers, list):
+            confidence_blockers = []
+        if bool(confidence_gate.get("requires_field_review")) or confidence_blockers:
+            blocker = confidence_blockers[0] if confidence_blockers else {}
+            if isinstance(blocker, dict):
+                field = str(blocker.get("field") or blocker.get("code") or "critical field").replace("_", " ")
+                why_candidates.append(f"Extraction confidence is low for {field}; human review is required.")
+            else:
+                why_candidates.append("Extraction confidence is low for a critical field; human review is required.")
+        elif float(invoice.confidence or 0.0) < 0.95:
+            why_candidates.append(
+                f"Extraction confidence is {invoice.confidence * 100:.0f}%, so the agent is asking for a review before posting."
+            )
+
+        validation_gate = extra_context.get("validation_gate")
+        validation_gate = validation_gate if isinstance(validation_gate, dict) else {}
+        validation_reasons = validation_gate.get("reasons")
+        if not isinstance(validation_reasons, list):
+            validation_reasons = []
+        for reason in validation_reasons[:2]:
+            if not isinstance(reason, dict):
+                continue
+            message = str(reason.get("message") or "").strip()
+            code = self._humanize_reason_code(reason.get("code"))
+            if message:
+                why_candidates.append(message)
+            elif code:
+                why_candidates.append(f"Validation flagged: {code}.")
+        if not why_candidates:
+            reason_codes = validation_gate.get("reason_codes")
+            if isinstance(reason_codes, list):
+                for code in reason_codes[:2]:
+                    text = self._humanize_reason_code(code)
+                    if text:
+                        why_candidates.append(f"Validation flagged: {text}.")
+
+        if int(invoice.potential_duplicates or 0) > 0:
+            why_candidates.append(
+                f"Potential duplicate risk detected ({int(invoice.potential_duplicates)} similar invoice(s))."
+            )
+
+        if not why_candidates:
+            why_candidates.append("Approval is required before the AP workflow can post this invoice to ERP.")
+
+        why_summary = " ".join(why_candidates[:2]).strip()
+
+        requires_budget_decision = bool((budget_summary or {}).get("requires_decision"))
+        if requires_budget_decision:
+            next_lines = [
+                "Approve override: records justification, then the AP workflow posts to ERP (API-first, browser fallback if needed).",
+                "Request info: sends the invoice back for clarification and keeps the audit trail intact.",
+                "Reject: marks the invoice rejected and records the decision in the AP audit trail.",
+            ]
+        else:
+            next_lines = [
+                "Approve / Post to ERP: the AP workflow attempts ERP posting automatically (API-first, browser fallback if needed).",
+                "Request info: returns the invoice to needs-info so the agent can collect missing details.",
+                "Reject: records the rejection and stops further posting for this invoice.",
+            ]
+
+        return {
+            "why_summary": why_summary,
+            "what_happens_next": next_lines,
+            "requested_by_text": "Requested by Clearledgr AP Agent on behalf of the AP workflow.",
+            "source_of_truth_text": "Source of truth: Gmail thread and Clearledgr AP context (Open in Gmail / View in Gmail).",
+            "gmail_url": gmail_url,
+        }
     
     def _build_approval_blocks(
         self,
@@ -1648,6 +1762,11 @@ class InvoiceWorkflowService:
             "status": "healthy",
             "requires_decision": False,
         }
+        approval_copy = self._build_approval_surface_copy(
+            invoice=invoice,
+            extra_context=extra_context or {},
+            budget_summary=budget_summary,
+        )
 
         flagged_budgets = [b for b in (budget_checks or []) if str(b.get("after_approval_status") or b.get("status") or "").lower() in ("warning", "critical", "exceeded")]
         if flagged_budgets:
@@ -1693,6 +1812,26 @@ class InvoiceWorkflowService:
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": "*Validation:* " + " | ".join(gate_msgs)}
                 })
+
+        why_summary = str(approval_copy.get("why_summary") or "").strip()
+        if why_summary:
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*Why this needs your decision:*\n{why_summary}"},
+                }
+            )
+
+        what_happens_next = approval_copy.get("what_happens_next")
+        if isinstance(what_happens_next, list) and what_happens_next:
+            next_lines = [f"• {str(line).strip()}" for line in what_happens_next[:3] if str(line).strip()]
+            if next_lines:
+                blocks.append(
+                    {
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": "*What happens next:*\n" + "\n".join(next_lines)},
+                    }
+                )
 
         # ========== ACTIONS ==========
         requires_budget_decision = bool(budget_summary.get("requires_decision"))
@@ -1771,7 +1910,11 @@ class InvoiceWorkflowService:
         # Footer
         blocks.append({
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": f"From: {invoice.sender} | {invoice.gmail_id}"}]
+            "elements": [
+                {"type": "mrkdwn", "text": f"From: {invoice.sender} | {invoice.gmail_id}"},
+                {"type": "mrkdwn", "text": str(approval_copy.get("requested_by_text") or "Requested by Clearledgr AP Agent on behalf of the AP workflow.")},
+                {"type": "mrkdwn", "text": str(approval_copy.get("source_of_truth_text") or "Source of truth: Gmail thread and Clearledgr AP context.")},
+            ]
         })
 
         return blocks
@@ -1869,6 +2012,21 @@ class InvoiceWorkflowService:
             field_confidences_override=field_confidences,
         )
         confidence_blockers = confidence_gate.get("confidence_blockers") or []
+
+        # Persist per-field confidences to the AP item row so accuracy trends
+        # are queryable without re-parsing audit events.
+        if ap_item_id:
+            gate_field_confidences = confidence_gate.get("field_confidences") or {}
+            if gate_field_confidences:
+                try:
+                    self.db.update_ap_item(
+                        ap_item_id,
+                        field_confidences=json.dumps(gate_field_confidences),
+                        _actor_type="system",
+                        _actor_id="confidence_gate",
+                    )
+                except Exception as _fc_err:
+                    logger.warning("field_confidences persist failed: %s", _fc_err)
 
         # Hard block: budget exceeded cannot be overridden with justification alone
         if budget_summary.get("hard_block"):
@@ -2230,7 +2388,15 @@ class InvoiceWorkflowService:
                 },
                 decision_idempotency_key=decision_idempotency_key,
             )
-        
+            # Gap #5: Enqueue durable retry so the background loop can recover
+            # items stuck in failed_post after a crash or transient ERP error.
+            if ap_item_id:
+                self._enqueue_erp_post_retry(
+                    ap_item_id=ap_item_id,
+                    gmail_id=gmail_id,
+                    correlation_id=correlation_id,
+                )
+
         return {
             "status": "approved" if result.get("status") == "success" else "error",
             "invoice_id": gmail_id,
@@ -2386,6 +2552,193 @@ class InvoiceWorkflowService:
             "rejected_by": rejected_by,
             "reason": reason,
             "decision_idempotency_key": decision_idempotency_key,
+        }
+
+    def _enqueue_erp_post_retry(
+        self,
+        *,
+        ap_item_id: str,
+        gmail_id: str,
+        correlation_id: Optional[str] = None,
+        max_retries: int = 3,
+    ) -> None:
+        """Create a durable retry job for ERP post recovery.
+
+        Called after an item lands in ``failed_post`` so the background loop
+        can attempt ``resume_workflow`` on the next tick.  Idempotent: a second
+        call for the same ap_item_id is a no-op (same idempotency_key).
+        """
+        if not hasattr(self.db, "create_agent_retry_job"):
+            return
+        idem_key = f"erp_post_retry:{ap_item_id}"
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            self.db.create_agent_retry_job(
+                {
+                    "organization_id": self.organization_id,
+                    "ap_item_id": ap_item_id,
+                    "gmail_id": gmail_id,
+                    "job_type": "erp_post_retry",
+                    "status": "pending",
+                    "retry_count": 0,
+                    "max_retries": max_retries,
+                    "next_retry_at": now,
+                    "idempotency_key": idem_key,
+                    "correlation_id": correlation_id,
+                }
+            )
+            logger.info(
+                "Enqueued erp_post_retry job for ap_item_id=%s (corr=%s)",
+                ap_item_id,
+                correlation_id,
+            )
+        except Exception as exc:
+            logger.warning("Failed to enqueue erp_post_retry for %s: %s", ap_item_id, exc)
+
+    async def resume_workflow(self, ap_item_id: str) -> Dict[str, Any]:
+        """Re-enter the ERP post step for an AP item stuck in a recoverable state.
+
+        Safe to call multiple times — each step is idempotent:
+        - ``ready_to_post``: re-runs ERP post directly.
+        - ``failed_post``: transitions back to ``ready_to_post``, then re-runs.
+        - Any other state: returns ``{"status": "not_resumable", ...}``.
+
+        Uses a stable idempotency key ``resume:<ap_item_id>:erp_post`` so
+        a duplicate network call never double-posts to the ERP.
+        """
+        if not hasattr(self.db, "get_ap_item"):
+            return {"status": "error", "reason": "db_not_supported"}
+
+        row = self.db.get_ap_item(ap_item_id)
+        if not row:
+            return {"status": "error", "reason": "ap_item_not_found", "ap_item_id": ap_item_id}
+
+        current_state = self._canonical_invoice_state(row)
+        gmail_id = str(row.get("thread_id") or "")
+        correlation_id = self._get_ap_item_correlation_id(ap_item_id=ap_item_id)
+
+        if current_state not in {"failed_post", "ready_to_post"}:
+            return {
+                "status": "not_resumable",
+                "ap_item_id": ap_item_id,
+                "current_state": current_state,
+                "reason": "state_does_not_support_resume",
+            }
+
+        if not gmail_id:
+            return {
+                "status": "error",
+                "ap_item_id": ap_item_id,
+                "reason": "missing_gmail_id_on_ap_item",
+            }
+
+        # If in failed_post, step back to ready_to_post first (idempotent if already there)
+        if current_state == "failed_post":
+            self._transition_invoice_state(
+                gmail_id,
+                "ready_to_post",
+                correlation_id=correlation_id,
+                source="resume_workflow",
+            )
+
+        # Build InvoiceData from the persisted row
+        invoice = InvoiceData(
+            gmail_id=gmail_id,
+            subject=str(row.get("subject") or ""),
+            sender=str(row.get("sender") or ""),
+            vendor_name=str(row.get("vendor_name") or "Unknown"),
+            amount=float(row.get("amount") or 0),
+            currency=str(row.get("currency") or "USD"),
+            invoice_number=row.get("invoice_number"),
+            due_date=row.get("due_date"),
+            organization_id=self.organization_id,
+            correlation_id=correlation_id,
+        )
+
+        # Stable idempotency key ensures the ERP never double-posts on resume
+        idempotency_key = f"resume:{ap_item_id}:erp_post"
+        result = await self._post_to_erp(
+            invoice,
+            idempotency_key=idempotency_key,
+            correlation_id=correlation_id,
+        )
+        post_attempted_at = datetime.now(timezone.utc).isoformat()
+
+        if result.get("status") == "success":
+            erp_reference = (
+                result.get("erp_reference")
+                or result.get("bill_id")
+                or result.get("reference_id")
+                or result.get("doc_num")
+            )
+            self._transition_invoice_state(
+                gmail_id,
+                "posted_to_erp",
+                correlation_id=correlation_id,
+                source="resume_workflow",
+                erp_reference=erp_reference,
+                erp_posted_at=post_attempted_at,
+                post_attempted_at=post_attempted_at,
+                last_error=None,
+            )
+            if ap_item_id and hasattr(self.db, "append_ap_audit_event"):
+                try:
+                    self.db.append_ap_audit_event(
+                        {
+                            "ap_item_id": ap_item_id,
+                            "event_type": "erp_post_resumed",
+                            "actor_type": "system",
+                            "actor_id": "resume_workflow",
+                            "reason": "workflow_crash_recovery",
+                            "metadata": {
+                                "erp_reference": erp_reference,
+                                "idempotency_key": idempotency_key,
+                                "recovered_from_state": current_state,
+                            },
+                            "organization_id": self.organization_id,
+                            "correlation_id": correlation_id,
+                            "source": "resume_workflow",
+                        }
+                    )
+                except Exception as exc:
+                    logger.debug("Could not append erp_post_resumed audit event: %s", exc)
+            logger.info(
+                "resume_workflow: ap_item_id=%s recovered to posted_to_erp (ref=%s)",
+                ap_item_id,
+                erp_reference,
+            )
+            return {
+                "status": "recovered",
+                "ap_item_id": ap_item_id,
+                "erp_reference": erp_reference,
+                "erp_result": result,
+            }
+
+        # Post still failed — leave in failed_post with updated error
+        failure_reason = (
+            str(result.get("error_message") or "")
+            or str(result.get("reason") or "")
+            or str(result.get("status") or "")
+            or "erp_post_failed"
+        )
+        self._transition_invoice_state(
+            gmail_id,
+            "failed_post",
+            correlation_id=correlation_id,
+            source="resume_workflow",
+            post_attempted_at=post_attempted_at,
+            last_error=failure_reason,
+        )
+        logger.warning(
+            "resume_workflow: ap_item_id=%s ERP post still failing: %s",
+            ap_item_id,
+            failure_reason,
+        )
+        return {
+            "status": "still_failing",
+            "ap_item_id": ap_item_id,
+            "reason": failure_reason,
+            "erp_result": result,
         }
 
     async def request_budget_adjustment(

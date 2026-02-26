@@ -611,3 +611,128 @@ def test_auto_approve_failure_transitions_to_failed_post(service, db, monkeypatc
     assert ("needs_approval", "approved") in transitions
     assert ("approved", "ready_to_post") in transitions
     assert ("ready_to_post", "failed_post") in transitions
+
+# ---------------------------------------------------------------------------
+# Gap #5 — resume_workflow crash-recovery tests
+# ---------------------------------------------------------------------------
+
+def test_resume_workflow_from_failed_post_succeeds(service, db, monkeypatch):
+    """resume_workflow: failed_post → ready_to_post → posted_to_erp on success."""
+    item = _create_ap_item(db, gmail_id="gmail-resume-ok", state="failed_post")
+
+    async def _fake_post(_invoice, **_kwargs):
+        return {"status": "success", "bill_id": "BILL-RESUME-1", "vendor_id": "VEN-R1"}
+
+    monkeypatch.setattr(service, "_post_to_erp", _fake_post)
+
+    result = asyncio.run(service.resume_workflow(item["id"]))
+
+    assert result["status"] == "recovered"
+    assert result["erp_reference"] == "BILL-RESUME-1"
+
+    row = db.get_invoice_status("gmail-resume-ok")
+    assert row["state"] == "posted_to_erp"
+    assert row["erp_reference"] == "BILL-RESUME-1"
+
+    audit_events = db.list_ap_audit_events(item["id"])
+    event_types = [e["event_type"] for e in audit_events]
+    assert "erp_post_resumed" in event_types
+
+
+def test_resume_workflow_from_ready_to_post_succeeds(service, db, monkeypatch):
+    """resume_workflow: ready_to_post → posted_to_erp — no state regression."""
+    item = _create_ap_item(db, gmail_id="gmail-resume-rtp", state="ready_to_post")
+
+    async def _fake_post(_invoice, **_kwargs):
+        return {"status": "success", "bill_id": "BILL-RTP-1"}
+
+    monkeypatch.setattr(service, "_post_to_erp", _fake_post)
+
+    result = asyncio.run(service.resume_workflow(item["id"]))
+
+    assert result["status"] == "recovered"
+    row = db.get_invoice_status("gmail-resume-rtp")
+    assert row["state"] == "posted_to_erp"
+
+
+def test_resume_workflow_still_failing_stays_in_failed_post(service, db, monkeypatch):
+    """resume_workflow: ERP still down → stays failed_post, returns still_failing."""
+    item = _create_ap_item(db, gmail_id="gmail-resume-fail", state="failed_post")
+
+    async def _fake_post(_invoice, **_kwargs):
+        return {"status": "error", "reason": "erp_timeout"}
+
+    monkeypatch.setattr(service, "_post_to_erp", _fake_post)
+
+    result = asyncio.run(service.resume_workflow(item["id"]))
+
+    assert result["status"] == "still_failing"
+    assert result["reason"] == "erp_timeout"
+
+    row = db.get_invoice_status("gmail-resume-fail")
+    assert row["state"] == "failed_post"
+
+
+def test_resume_workflow_not_resumable_for_posted_state(service, db, monkeypatch):
+    """resume_workflow: posted_to_erp is terminal — returns not_resumable."""
+    item = _create_ap_item(db, gmail_id="gmail-resume-posted", state="posted_to_erp")
+
+    result = asyncio.run(service.resume_workflow(item["id"]))
+
+    assert result["status"] == "not_resumable"
+    assert result["current_state"] == "posted_to_erp"
+
+
+def test_resume_workflow_not_resumable_for_needs_approval(service, db, monkeypatch):
+    """resume_workflow: needs_approval requires human decision — not resumable."""
+    item = _create_ap_item(db, gmail_id="gmail-resume-needs-appr", state="needs_approval")
+
+    result = asyncio.run(service.resume_workflow(item["id"]))
+
+    assert result["status"] == "not_resumable"
+
+
+def test_approve_invoice_failure_enqueues_retry_job(service, db, monkeypatch):
+    """Failed ERP post should create an erp_post_retry job for background recovery."""
+    item = _create_ap_item(db, gmail_id="gmail-retry-enqueue", state="needs_approval")
+
+    monkeypatch.setattr(service, "_load_budget_context_from_invoice_row", lambda _row: [])
+    monkeypatch.setattr(service, "_check_po_exception_block", lambda _row: {"blocked": False, "exceptions": []})
+
+    async def _fake_post(_invoice, **_kwargs):
+        return {"status": "error", "reason": "erp_unavailable"}
+
+    monkeypatch.setattr(service, "_post_to_erp", _fake_post)
+
+    asyncio.run(
+        service.approve_invoice(
+            gmail_id="gmail-retry-enqueue",
+            approved_by="approver@example.com",
+        )
+    )
+
+    row = db.get_invoice_status("gmail-retry-enqueue")
+    assert row["state"] == "failed_post"
+
+    # The retry job must be enqueued
+    jobs = db.list_agent_retry_jobs("default", ap_item_id=item["id"], status="pending")
+    assert jobs, "Expected a pending erp_post_retry job after failed_post"
+    assert jobs[0]["job_type"] == "erp_post_retry"
+    assert jobs[0]["ap_item_id"] == item["id"]
+
+
+def test_enqueue_erp_post_retry_is_idempotent(service, db, monkeypatch):
+    """Second _enqueue_erp_post_retry call for same ap_item_id is a no-op."""
+    item = _create_ap_item(db, gmail_id="gmail-retry-idem", state="failed_post")
+
+    service._enqueue_erp_post_retry(
+        ap_item_id=item["id"],
+        gmail_id="gmail-retry-idem",
+    )
+    service._enqueue_erp_post_retry(
+        ap_item_id=item["id"],
+        gmail_id="gmail-retry-idem",
+    )
+
+    jobs = db.list_agent_retry_jobs("default", ap_item_id=item["id"])
+    assert len(jobs) == 1, "Idempotency key must prevent duplicate retry jobs"

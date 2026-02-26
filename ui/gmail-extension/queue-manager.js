@@ -524,7 +524,7 @@ class ClearledgrQueueManager {
 
   async getSyncConfig() {
     const data = await new Promise((resolve) => {
-      chrome.storage.sync.get(['settings', 'backendUrl', 'organizationId', 'userEmail', 'slackChannel'], resolve);
+      chrome.storage.sync.get(['settings', 'backendUrl', 'organizationId', 'userEmail', 'slackChannel', 'financeLeadEmail'], resolve);
     });
     const nested = data.settings || {};
     const globalDebugDefault =
@@ -537,6 +537,7 @@ class ClearledgrQueueManager {
       organizationId: data.organizationId || nested.organizationId || null,
       userEmail: data.userEmail || nested.userEmail || null,
       slackChannel: data.slackChannel || nested.slackChannel || null,
+      financeLeadEmail: data.financeLeadEmail || nested.financeLeadEmail || null,
       debugManualScan: nested.debugManualScan ?? globalDebugDefault
     };
 
@@ -570,6 +571,7 @@ class ClearledgrQueueManager {
       organizationId: String(raw.organizationId || 'default').trim(),
       userEmail: raw.userEmail || null,
       slackChannel: String(raw.slackChannel || '#finance-approvals').trim(),
+      financeLeadEmail: raw.financeLeadEmail || null,
       confidenceThreshold: 0.85,
       amountAnomalyThreshold: 0.35,
       erpWritebackEnabled: false,
@@ -1482,6 +1484,104 @@ class ClearledgrQueueManager {
     if (result.ap_item) this.upsertQueueItem(result.ap_item);
     this.emitQueueUpdated();
     return result;
+  }
+
+  async nudgeApproval(item, { message = '' } = {}) {
+    if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/approval-nudge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email_id: item.thread_id || item.message_id || item.id,
+          message: message || undefined,
+          organization_id: this.runtimeConfig.organizationId || 'default',
+          user_email: this.runtimeConfig.userEmail || 'gmail_extension',
+        })
+      });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const errPayload = await response.json();
+          detail = errPayload?.detail || '';
+        } catch (_) {}
+        return { status: 'error', reason: detail || `http_${response.status}` };
+      }
+      const result = await response.json();
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result || { status: 'nudged' };
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async retryFailedPost(item) {
+    if (!item?.id || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    try {
+      const orgId = this.runtimeConfig.organizationId || 'default';
+      const url = new URL(
+        `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/retry-post`
+      );
+      url.searchParams.set('organization_id', orgId);
+      const response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const errPayload = await response.json();
+          detail = errPayload?.detail || '';
+        } catch (_) {}
+        return { status: 'error', reason: detail || `http_${response.status}` };
+      }
+      const result = await response.json();
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result || { status: 'ready_to_post' };
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async shareFinanceSummary(item, {
+    target = 'email_draft',
+    recipientEmail = '',
+    note = '',
+    previewOnly = false
+  } = {}) {
+    if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/finance-summary-share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email_id: item.thread_id || item.message_id || item.id,
+          target,
+          preview_only: Boolean(previewOnly),
+          recipient_email: recipientEmail || this.runtimeConfig.financeLeadEmail || undefined,
+          note: note || undefined,
+          organization_id: this.runtimeConfig.organizationId || 'default',
+          user_email: this.runtimeConfig.userEmail || 'gmail_extension',
+        })
+      });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const errPayload = await response.json();
+          detail = errPayload?.detail || '';
+        } catch (_) {}
+        return { status: 'error', reason: detail || `http_${response.status}` };
+      }
+      return await response.json();
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async previewFinanceSummaryShare(item, options = {}) {
+    return this.shareFinanceSummary(item, { ...options, previewOnly: true });
   }
 
   async submitBudgetDecision(item, decision, justification = '') {

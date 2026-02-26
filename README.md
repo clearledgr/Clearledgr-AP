@@ -46,6 +46,10 @@ Key doctrine points:
   - Point-in-time readiness audit (dated, not canonical doctrine)
 - `/Users/mombalam/Desktop/Clearledgr.v1/docs/HOW_IT_WORKS.md`
   - AP v1 user-facing flow overview aligned to the current doctrine
+- `/Users/mombalam/Desktop/Clearledgr.v1/docs/AGENTIC_UX_V1_5_IMPLEMENTATION_PLAN.md`
+  - Product-expression roadmap to make AP v1 visibly agentic using the current runtime/tooling stack
+- `/Users/mombalam/Desktop/Clearledgr.v1/docs/ENGINEERING_HANDOFF_2026-02-26.md`
+  - Branch handoff summary (what landed, validation snapshot, launch docs, and merge caveats)
 - `/Users/mombalam/Desktop/Clearledgr.v1/docs/archive/MVP_SCOPE.md`
   - Historical MVP framing (archived; not canonical)
 
@@ -172,6 +176,14 @@ For pilot deployments using the browser fallback runner:
 Repository + external artifact workflow for ERP parity, runbooks, and signoff evidence:
 
 - `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_READINESS_EVIDENCE_PROCESS.md`
+
+## Agentic UX Roadmap (AP v1.5)
+
+If the backend feels stronger than the visible UX (for example, the product looks workflow-driven rather than agentic), use:
+
+- `/Users/mombalam/Desktop/Clearledgr.v1/docs/AGENTIC_UX_V1_5_IMPLEMENTATION_PLAN.md`
+
+This roadmap is additive to AP v1 launch hardening and preserves the embedded Gmail/Slack/Teams/ERP product shape.
 
 ## Legacy / Historical Notes
 

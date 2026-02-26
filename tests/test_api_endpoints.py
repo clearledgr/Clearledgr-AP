@@ -286,6 +286,246 @@ class TestExtensionEndpoints:
         response = client.get("/extension/invoice-pipeline/default")
         assert response.status_code == 200
 
+    class _FakeAuditService:
+        def __init__(self):
+            self.events = []
+
+        def record_event(self, **kwargs):
+            self.events.append(kwargs)
+
+    class _FakeExtensionDB:
+        def __init__(self, *, ap_item=None, slack_thread=None, audit_events=None):
+            self.ap_item = ap_item or {
+                "id": "ap-item-1",
+                "organization_id": "default",
+                "thread_id": "gmail-thread-1",
+                "state": "needs_approval",
+                "vendor_name": "Acme Corp",
+                "invoice_number": "INV-1001",
+                "amount": 1250.50,
+                "currency": "USD",
+                "next_action": "approve_or_reject",
+                "exception_code": "approval_required",
+                "metadata": {
+                    "correlation_id": "corr-123",
+                    "teams": {"channel": "19:teams-channel", "message_id": "teams-message-1"},
+                },
+            }
+            self.slack_thread = slack_thread or {
+                "channel_id": "C123",
+                "thread_ts": "171.100",
+                "thread_id": "171.100",
+            }
+            self.audit_events = audit_events or [
+                {"event_type": "state_transition"},
+                {"event_type": "approval_requested"},
+            ]
+            self.audit_rows = []
+
+        def get_ap_item(self, email_id):
+            candidates = {
+                str(self.ap_item.get("id") or ""),
+                str(self.ap_item.get("thread_id") or ""),
+                str(self.ap_item.get("message_id") or ""),
+            }
+            return self.ap_item if str(email_id) in candidates else None
+
+        def get_ap_item_by_thread(self, organization_id, thread_id):
+            if str(organization_id or "") != str(self.ap_item.get("organization_id") or ""):
+                return None
+            return self.ap_item if str(thread_id) == str(self.ap_item.get("thread_id") or "") else None
+
+        def get_ap_item_by_message_id(self, organization_id, message_id):
+            if str(organization_id or "") != str(self.ap_item.get("organization_id") or ""):
+                return None
+            return self.ap_item if str(message_id) == str(self.ap_item.get("message_id") or "") else None
+
+        def list_ap_audit_events(self, ap_item_id):
+            return list(self.audit_events) if str(ap_item_id) == str(self.ap_item.get("id") or "") else []
+
+        def append_ap_audit_event(self, payload):
+            row = {"id": f"audit-{len(self.audit_rows) + 1}", **dict(payload or {})}
+            self.audit_rows.append(row)
+            return row
+
+        def get_slack_thread(self, gmail_id):
+            if str(gmail_id) == str(self.ap_item.get("thread_id") or ""):
+                return dict(self.slack_thread or {})
+            return None
+
+    def test_approval_nudge_endpoint_sends_slack_and_audits(self):
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+
+        fake_db = self._FakeExtensionDB()
+        fake_slack_client = MagicMock()
+        fake_slack_client.send_message = AsyncMock(
+            return_value=MagicMock(channel="C123", thread_ts="171.100", ts="171.200")
+        )
+        fake_workflow = MagicMock()
+        fake_workflow.slack_client = fake_slack_client
+        fake_workflow.teams_client = None
+
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=fake_workflow):
+                    response = client.post(
+                        "/extension/approval-nudge",
+                        json={
+                            "email_id": "gmail-thread-1",
+                            "message": "Please review today",
+                            "organization_id": "default",
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "nudged"
+        assert data["slack"]["status"] == "sent"
+        assert data["audit_event_id"]
+        assert fake_db.audit_rows[-1]["event_type"] == "approval_nudge_sent"
+        assert fake_audit.events[-1]["action"] == "approval_nudge"
+
+    def test_finance_summary_share_preview_email_draft_returns_preview_and_audits(self):
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        fake_db = self._FakeExtensionDB(
+            ap_item={
+                "id": "ap-item-2",
+                "organization_id": "default",
+                "thread_id": "gmail-thread-2",
+                "state": "failed_post",
+                "vendor_name": "Vendor Ops",
+                "invoice_number": "INV-2002",
+                "amount": 902.14,
+                "currency": "USD",
+                "next_action": "retry_posting",
+                "exception_code": "erp_post_failed",
+                "metadata": {"correlation_id": "corr-456"},
+            }
+        )
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                response = client.post(
+                    "/extension/finance-summary-share",
+                    json={
+                        "email_id": "gmail-thread-2",
+                        "target": "email_draft",
+                        "preview_only": True,
+                        "recipient_email": "financelead@example.com",
+                        "organization_id": "default",
+                    },
+                )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "preview"
+        assert data["target"] == "email_draft"
+        assert data["preview"]["kind"] == "email_draft"
+        assert data["preview"]["draft"]["to"] == "financelead@example.com"
+        assert data["audit_event_id"]
+        assert fake_db.audit_rows[-1]["event_type"] == "finance_summary_share_previewed"
+        assert fake_audit.events[-1]["action"] == "finance_summary_share_previewed"
+
+    def test_finance_summary_share_preview_slack_thread_returns_message_preview(self):
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        fake_db = self._FakeExtensionDB(
+            ap_item={
+                "id": "ap-item-3",
+                "organization_id": "default",
+                "thread_id": "gmail-thread-3",
+                "state": "needs_approval",
+                "vendor_name": "Blue Supply",
+                "invoice_number": "INV-3003",
+                "amount": 450.00,
+                "currency": "USD",
+                "next_action": "approve_or_reject",
+                "exception_code": "approval_required",
+                "metadata": {"correlation_id": "corr-789"},
+            },
+            slack_thread={"channel_id": "C999", "thread_ts": "333.10", "thread_id": "333.10"},
+        )
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                response = client.post(
+                    "/extension/finance-summary-share",
+                    json={
+                        "email_id": "gmail-thread-3",
+                        "target": "slack_thread",
+                        "preview_only": True,
+                        "organization_id": "default",
+                    },
+                )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "preview"
+        assert data["target"] == "slack_thread"
+        assert data["preview"]["kind"] == "slack_thread"
+        assert data["preview"]["channel_id"] == "C999"
+        assert "Finance lead exception summary" in data["preview"]["text"]
+
+    def test_finance_summary_share_preview_teams_reply_returns_activity_preview(self):
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        fake_db = self._FakeExtensionDB(
+            ap_item={
+                "id": "ap-item-4",
+                "organization_id": "default",
+                "thread_id": "gmail-thread-4",
+                "state": "needs_info",
+                "vendor_name": "Northwind",
+                "invoice_number": "INV-4004",
+                "amount": 120.75,
+                "currency": "USD",
+                "next_action": "request_info",
+                "exception_code": "missing_fields",
+                "metadata": {
+                    "correlation_id": "corr-101",
+                    "teams": {"channel": "19:chan", "message_id": "msg-42"},
+                },
+            }
+        )
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                response = client.post(
+                    "/extension/finance-summary-share",
+                    json={
+                        "email_id": "gmail-thread-4",
+                        "target": "teams_reply",
+                        "preview_only": True,
+                        "organization_id": "default",
+                    },
+                )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "preview"
+        assert data["target"] == "teams_reply"
+        assert data["preview"]["kind"] == "teams_reply"
+        assert data["preview"]["channel_id"] == "19:chan"
+        activity = data["preview"]["activity"]
+        assert isinstance(activity, dict)
+        assert activity.get("replyToId") == "msg-42"
+        assert "attachments" in activity
+
 
 class TestSettingsEndpoints:
     """Test organization settings endpoints."""

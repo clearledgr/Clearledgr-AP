@@ -20,6 +20,7 @@ All methods are copied verbatim from ``clearledgr/core/database.py`` so that
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -56,6 +57,26 @@ class MetricsStore:
     @staticmethod
     def _p95(values: List[float]) -> Optional[float]:
         return MetricsStore._percentile(values, 0.95)
+
+    def _decode_json_any(self, value: Any) -> Any:
+        if isinstance(value, (dict, list)):
+            return value
+        if isinstance(value, str) and value.strip():
+            try:
+                return json.loads(value)
+            except Exception:
+                return value
+        return value
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
     # ------------------------------------------------------------------
     # Audit events (query)
@@ -340,6 +361,199 @@ class MetricsStore:
                     if str(item.get("state") or "") == "needs_approval" and open_wait > approval_sla_minutes:
                         sla_breach_count += 1
 
+        # Agentic telemetry (AX6): derive transparent, operator-facing metrics
+        # from existing AP, approval, audit, and browser-agent records.
+        human_intervention_count = max(0, touchless_eligible - touchless_count)
+
+        approval_override_count = 0
+        approval_override_breakdown = {
+            "budget": 0,
+            "confidence": 0,
+            "po_exception": 0,
+            "other": 0,
+        }
+        approval_decision_population = 0
+        for approval in approvals:
+            status = str(approval.get("status") or "").strip().lower()
+            if status not in {"approved", "rejected", "needs_info", "failed"}:
+                continue
+            approval_decision_population += 1
+            payload = self._decode_json_any(approval.get("decision_payload"))
+            payload_dict = payload if isinstance(payload, dict) else {}
+            decision = str(payload_dict.get("decision") or "").strip().lower()
+            budget_override = self._coerce_bool(payload_dict.get("budget_override"))
+            confidence_override = self._coerce_bool(payload_dict.get("confidence_override"))
+            po_override = self._coerce_bool(payload_dict.get("po_override")) or bool(
+                str(payload_dict.get("po_override_reason") or "").strip()
+            )
+            is_override = (
+                decision == "approve_override"
+                or budget_override
+                or confidence_override
+                or po_override
+            )
+            if not is_override:
+                continue
+            approval_override_count += 1
+            bucketed = False
+            if budget_override:
+                approval_override_breakdown["budget"] += 1
+                bucketed = True
+            if confidence_override:
+                approval_override_breakdown["confidence"] += 1
+                bucketed = True
+            if po_override:
+                approval_override_breakdown["po_exception"] += 1
+                bucketed = True
+            if not bucketed:
+                approval_override_breakdown["other"] += 1
+
+        browser_metrics_window_hours = 24 * 7
+        try:
+            browser_metrics = self.get_browser_agent_metrics(
+                organization_id=organization_id,
+                window_hours=browser_metrics_window_hours,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to compute browser agent metrics for AX6 KPI bundle: %s", exc)
+            browser_metrics = {
+                "window_hours": browser_metrics_window_hours,
+                "api_first_routing": {"attempt_count": 0, "fallback_requested_count": 0, "fallback_rate": 0.0},
+                "human_control": {
+                    "manual_override_required_count": 0,
+                    "manual_override_required_rate": 0.0,
+                    "suggestion_accepted_count": 0,
+                    "suggestion_acceptance_rate": 0.0,
+                },
+                "totals": {"events": 0},
+            }
+
+        blocker_category_counts: Dict[str, int] = {
+            "confidence": 0,
+            "policy": 0,
+            "budget": 0,
+            "erp": 0,
+            "other": 0,
+        }
+        blocker_reason_counts: Dict[str, int] = {}
+        blocker_open_population = 0
+        open_states = {"received", "validated", "needs_info", "needs_approval", "pending_approval", "approved", "ready_to_post", "failed_post"}
+
+        def _inc_reason(reason: str) -> None:
+            text = str(reason or "").strip().lower()
+            if not text:
+                return
+            blocker_reason_counts[text] = blocker_reason_counts.get(text, 0) + 1
+
+        for item in items:
+            state = str(item.get("state") or "").strip().lower()
+            if state not in open_states:
+                continue
+            blocker_open_population += 1
+
+            metadata = self._decode_json_any(item.get("metadata"))
+            metadata_dict = metadata if isinstance(metadata, dict) else {}
+            categories_for_item = set()
+
+            confidence_blockers_raw = (
+                item.get("confidence_blockers")
+                if item.get("confidence_blockers") is not None
+                else metadata_dict.get("confidence_blockers")
+            )
+            confidence_blockers = self._decode_json_any(confidence_blockers_raw)
+            if not isinstance(confidence_blockers, list):
+                confidence_blockers = []
+            requires_field_review = self._coerce_bool(
+                item.get("requires_field_review")
+                if item.get("requires_field_review") is not None
+                else metadata_dict.get("requires_field_review")
+            )
+            if requires_field_review or confidence_blockers:
+                categories_for_item.add("confidence")
+                if confidence_blockers:
+                    for blocker in confidence_blockers[:6]:
+                        if isinstance(blocker, dict):
+                            field = str(blocker.get("field") or blocker.get("code") or "critical_field").strip().lower()
+                            _inc_reason(f"confidence:{field or 'critical_field'}")
+                        else:
+                            _inc_reason(f"confidence:{str(blocker).strip().lower() or 'critical_field'}")
+                else:
+                    _inc_reason("confidence:field_review_required")
+
+            budget_status = str(
+                item.get("budget_status")
+                or metadata_dict.get("budget_status")
+                or (metadata_dict.get("budget_summary") or {}).get("status")
+                or ""
+            ).strip().lower()
+            budget_requires_decision = self._coerce_bool(
+                item.get("budget_requires_decision")
+                if item.get("budget_requires_decision") is not None
+                else metadata_dict.get("budget_requires_decision")
+            )
+            if budget_requires_decision or budget_status in {"critical", "exceeded"}:
+                categories_for_item.add("budget")
+                _inc_reason(f"budget:{budget_status or 'requires_decision'}")
+
+            validation_gate = metadata_dict.get("validation_gate")
+            if not isinstance(validation_gate, dict):
+                validation_gate = {}
+            reason_codes = validation_gate.get("reason_codes")
+            if not isinstance(reason_codes, list):
+                reason_codes = []
+            policy_codes = [
+                str(code or "").strip().lower()
+                for code in reason_codes
+                if str(code or "").strip()
+                and (
+                    str(code).strip().lower().startswith("policy_")
+                    or str(code).strip().lower().startswith("po_")
+                    or "policy" in str(code).strip().lower()
+                )
+            ]
+            if policy_codes:
+                categories_for_item.add("policy")
+                for code in policy_codes[:6]:
+                    _inc_reason(f"policy:{code}")
+
+            exception_code = str(item.get("exception_code") or metadata_dict.get("exception_code") or "").strip().lower()
+            next_action = str(item.get("next_action") or "").strip().lower()
+            last_error = str(item.get("last_error") or metadata_dict.get("last_error") or "").strip().lower()
+            if (
+                state == "failed_post"
+                or next_action == "retry_posting"
+                or exception_code.startswith("erp_")
+                or "erp" in exception_code
+                or "erp" in last_error
+            ):
+                categories_for_item.add("erp")
+                _inc_reason(f"erp:{exception_code or next_action or last_error or 'posting_failure'}")
+
+            if state == "needs_info":
+                _inc_reason("other:needs_info")
+                if not categories_for_item:
+                    categories_for_item.add("other")
+
+            if not categories_for_item and exception_count and exception_code:
+                categories_for_item.add("other")
+                _inc_reason(f"other:{exception_code}")
+
+            for category in categories_for_item:
+                blocker_category_counts[category] = blocker_category_counts.get(category, 0) + 1
+
+        top_blocker_reasons = [
+            {"reason": reason, "count": count}
+            for reason, count in sorted(
+                blocker_reason_counts.items(),
+                key=lambda pair: (-pair[1], pair[0]),
+            )[:7]
+        ]
+
+        approval_wait_avg_minutes = round(sum(approval_wait_minutes) / len(approval_wait_minutes), 2) if approval_wait_minutes else 0.0
+        approval_wait_p95_minutes = round(self._p95(approval_wait_minutes) or 0.0, 2)
+        browser_human_control = browser_metrics.get("human_control") if isinstance(browser_metrics, dict) else {}
+        browser_routing = browser_metrics.get("api_first_routing") if isinstance(browser_metrics, dict) else {}
+
         total_items = len(items)
         return {
             "organization_id": organization_id,
@@ -393,6 +607,61 @@ class MetricsStore:
                     4,
                 ),
                 "channel_distribution": channel_distribution,
+            },
+            "agentic_telemetry": {
+                "window_hours": int(browser_metrics.get("window_hours") or browser_metrics_window_hours) if isinstance(browser_metrics, dict) else browser_metrics_window_hours,
+                "definitions": {
+                    "straight_through_rate": "completed invoices with no approval handoff record (proxy for touchless AP flow)",
+                    "human_intervention_rate": "completed invoices that were not straight-through",
+                    "awaiting_approval_time_hours": "approval wait time derived from approval records and open approval items",
+                    "erp_browser_fallback_rate": "fallback_requested / erp_api_attempt within window",
+                    "agent_suggestion_acceptance": "browser_command_confirmed / browser actions requiring confirmation within window",
+                    "agent_actions_requiring_manual_override": "browser actions requiring confirmation / total browser actions within window",
+                    "approval_override_rate": "approval decisions that used budget/confidence/PO override semantics",
+                    "top_blocker_reasons": "open-item blocker categories/reasons derived from AP item state, validation gates, confidence blockers, and ERP failures",
+                },
+                "straight_through_rate": {
+                    "eligible_count": int(touchless_eligible),
+                    "count": int(touchless_count),
+                    "rate": round((touchless_count / touchless_eligible) if touchless_eligible else 0.0, 4),
+                },
+                "human_intervention_rate": {
+                    "eligible_count": int(touchless_eligible),
+                    "count": int(human_intervention_count),
+                    "rate": round((human_intervention_count / touchless_eligible) if touchless_eligible else 0.0, 4),
+                },
+                "awaiting_approval_time_hours": {
+                    "population_count": int(approval_population),
+                    "avg": round(approval_wait_avg_minutes / 60.0, 2),
+                    "p95": round(approval_wait_p95_minutes / 60.0, 2),
+                    "sla_hours": round(float(approval_sla_minutes) / 60.0, 2),
+                },
+                "erp_browser_fallback_rate": {
+                    "attempt_count": int(browser_routing.get("attempt_count") or 0),
+                    "fallback_requested_count": int(browser_routing.get("fallback_requested_count") or 0),
+                    "rate": round(float(browser_routing.get("fallback_rate") or 0.0), 4),
+                },
+                "agent_suggestion_acceptance": {
+                    "prompted_count": int(browser_human_control.get("manual_override_required_count") or 0),
+                    "accepted_count": int(browser_human_control.get("suggestion_accepted_count") or 0),
+                    "rate": round(float(browser_human_control.get("suggestion_acceptance_rate") or 0.0), 4),
+                },
+                "agent_actions_requiring_manual_override": {
+                    "total_actions": int((browser_metrics.get("totals") or {}).get("events") or 0) if isinstance(browser_metrics, dict) else 0,
+                    "count": int(browser_human_control.get("manual_override_required_count") or 0),
+                    "rate": round(float(browser_human_control.get("manual_override_required_rate") or 0.0), 4),
+                },
+                "approval_override_rate": {
+                    "decision_population": int(approval_decision_population),
+                    "override_count": int(approval_override_count),
+                    "rate": round((approval_override_count / approval_decision_population) if approval_decision_population else 0.0, 4),
+                    "breakdown": approval_override_breakdown,
+                },
+                "top_blocker_reasons": {
+                    "open_population": int(blocker_open_population),
+                    "by_category": blocker_category_counts,
+                    "top_reasons": top_blocker_reasons,
+                },
             },
         }
 
@@ -548,7 +817,7 @@ class MetricsStore:
         )
         audit_sql = self._prepare_sql(
             "SELECT event_type, ts FROM audit_events WHERE organization_id = ? "
-            "AND event_type IN ('erp_api_attempt', 'erp_api_success', 'erp_api_fallback_requested', 'erp_api_failed') "
+            "AND event_type IN ('erp_api_attempt', 'erp_api_success', 'erp_api_fallback_requested', 'erp_api_failed', 'browser_command_confirmed') "
             "ORDER BY ts DESC LIMIT ?"
         )
         with self.connect() as conn:
@@ -627,6 +896,7 @@ class MetricsStore:
             "erp_api_fallback_requested": 0,
             "erp_api_failed": 0,
         }
+        browser_command_confirmed_count = 0
         for raw_row in audit_rows:
             row = dict(raw_row)
             ts = self._parse_iso(row.get("ts"))
@@ -635,11 +905,25 @@ class MetricsStore:
             event_type = str(row.get("event_type") or "")
             if event_type in routing_counts:
                 routing_counts[event_type] = routing_counts.get(event_type, 0) + 1
+            if event_type == "browser_command_confirmed":
+                browser_command_confirmed_count += 1
 
         attempt_count = int(routing_counts.get("erp_api_attempt") or 0)
         api_success_count = int(routing_counts.get("erp_api_success") or 0)
         fallback_requested_count = int(routing_counts.get("erp_api_fallback_requested") or 0)
         api_failed_count = int(routing_counts.get("erp_api_failed") or 0)
+        manual_override_required_count = int(confirmation_required)
+        suggestion_accepted_count = int(browser_command_confirmed_count)
+        suggestion_acceptance_rate = (
+            suggestion_accepted_count / manual_override_required_count
+            if manual_override_required_count
+            else 0.0
+        )
+        manual_override_required_rate = (
+            manual_override_required_count / total_events
+            if total_events
+            else 0.0
+        )
 
         return {
             "organization_id": organization_id,
@@ -657,6 +941,16 @@ class MetricsStore:
                 "confirmation_required_count": int(confirmation_required),
                 "high_risk_count": int(high_risk_count),
                 "denied_policy_count": int(denied),
+            },
+            "human_control": {
+                "manual_override_required_count": manual_override_required_count,
+                "manual_override_required_rate": round(manual_override_required_rate, 4),
+                "suggestion_accepted_count": suggestion_accepted_count,
+                "suggestion_acceptance_rate": round(suggestion_acceptance_rate, 4),
+                "definition": {
+                    "manual_override_required_count": "browser_action_events requiring human confirmation",
+                    "suggestion_accepted_count": "browser_command_confirmed audit events",
+                },
             },
             "execution": {
                 "success_rate": round((completed / terminal_count) if terminal_count else 0.0, 4),

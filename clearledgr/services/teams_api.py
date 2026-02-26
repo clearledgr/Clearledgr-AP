@@ -90,9 +90,20 @@ class TeamsAPIClient:
         currency: str,
         invoice_number: Optional[str],
         budget: Dict[str, Any],
+        decision_reason_summary: Optional[str] = None,
+        next_step_lines: Optional[List[str]] = None,
+        requested_by_text: Optional[str] = None,
+        source_of_truth_text: Optional[str] = None,
+        source_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         status = str((budget or {}).get("status") or "unknown")
         requires_decision = bool((budget or {}).get("requires_decision"))
+        normalized_reason = str(decision_reason_summary or "").strip()
+        next_step_lines = [str(line).strip() for line in (next_step_lines or []) if str(line).strip()]
+        requested_by = str(requested_by_text or "Requested by Clearledgr AP Agent on behalf of the AP workflow.").strip()
+        source_of_truth = str(source_of_truth_text or "Source of truth: Gmail thread and Clearledgr AP context.").strip()
+        gmail_url = str(source_url or f"https://mail.google.com/mail/u/0/#search/{email_id}").strip()
+
         body: List[Dict[str, Any]] = [
             {"type": "TextBlock", "size": "Medium", "weight": "Bolder", "text": "Invoice Approval Required"},
             {
@@ -106,6 +117,18 @@ class TeamsAPIClient:
             },
         ]
         body.extend(cls._budget_rows(budget or {}))
+        if normalized_reason:
+            body.append(
+                {
+                    "type": "TextBlock",
+                    "wrap": True,
+                    "text": f"**Why this needs your decision:** {normalized_reason}",
+                }
+            )
+        if next_step_lines:
+            body.append({"type": "TextBlock", "wrap": True, "text": "**What happens next**"})
+            for line in next_step_lines[:3]:
+                body.append({"type": "TextBlock", "wrap": True, "spacing": "None", "text": f"• {line}"})
         if requires_decision:
             body.append(
                 {
@@ -115,6 +138,8 @@ class TeamsAPIClient:
                     "text": "Decision required: Approve override (with justification), request budget adjustment, or reject.",
                 }
             )
+        body.append({"type": "TextBlock", "wrap": True, "isSubtle": True, "spacing": "Small", "text": requested_by})
+        body.append({"type": "TextBlock", "wrap": True, "isSubtle": True, "spacing": "None", "text": source_of_truth})
 
         actions: List[Dict[str, Any]] = []
         if requires_decision:
@@ -185,6 +210,14 @@ class TeamsAPIClient:
                         },
                     },
                 ]
+            )
+        if gmail_url:
+            actions.append(
+                {
+                    "type": "Action.OpenUrl",
+                    "title": "Open Gmail context",
+                    "url": gmail_url,
+                }
             )
 
         return {
@@ -346,6 +379,11 @@ class TeamsAPIClient:
         currency: str,
         invoice_number: Optional[str],
         budget: Dict[str, Any],
+        decision_reason_summary: Optional[str] = None,
+        next_step_lines: Optional[List[str]] = None,
+        requested_by_text: Optional[str] = None,
+        source_of_truth_text: Optional[str] = None,
+        source_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         card = self.build_invoice_budget_card(
             email_id=email_id,
@@ -355,6 +393,11 @@ class TeamsAPIClient:
             currency=currency,
             invoice_number=invoice_number,
             budget=budget,
+            decision_reason_summary=decision_reason_summary,
+            next_step_lines=next_step_lines,
+            requested_by_text=requested_by_text,
+            source_of_truth_text=source_of_truth_text,
+            source_url=source_url,
         )
         result = self._post_json(card)
         result["card"] = card
