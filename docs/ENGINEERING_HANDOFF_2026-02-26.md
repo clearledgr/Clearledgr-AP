@@ -131,16 +131,16 @@ Note:
 
 ## Merge / Repo Hygiene Caveats (Important)
 
-This branch currently includes local/test artifacts because the explicit instruction was to commit everything:
+Local/test artifacts were temporarily committed during the workstream and then cleaned up in a follow-up hygiene commit.
+They are now ignored to avoid reintroduction.
 
-- `state.sqlite3` (local DB state)
-- `.claude/settings.local.json` (local tooling config)
-- image files/screenshots in repo root (e.g., `Screenshot ...png`, `Claude rules.jpeg`)
+Ignore coverage now includes:
 
-Engineering should decide before merging `PR #1` whether these belong in `main`:
+- `*.sqlite3` / local DB state files
+- `.claude/settings.local.json`
+- repo-root local screenshots (e.g., `Screenshot *.png`, `Claude rules.jpeg`)
 
-- keep as evidence/reference, or
-- remove and add ignore rules (preferred for long-term repo hygiene)
+Engineering can still choose to store demonstration screenshots/evidence in a dedicated docs asset path, but they should be intentionally placed and named (not left as local desktop exports in repo root).
 
 ## Suggested Immediate Next Steps After Handoff
 
@@ -154,4 +154,3 @@ Engineering should decide before merging `PR #1` whether these belong in `main`:
 - Branch is implementation-heavy and documentation-backed.
 - Core AP v1 hardening and agentic UX v1.5 initial passes are in place.
 - Launch execution/proof work is the main remaining program.
-
