@@ -180,6 +180,7 @@ def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(m
     new_ap_item_id = response["new_ap_item_id"]
     assert new_ap_item_id != rejected["id"]
     assert response["linkage"]["supersedes_ap_item_id"] == rejected["id"]
+    assert response["linkage"]["supersedes_invoice_key"] == rejected["invoice_key"]
     assert response["linkage"]["superseded_by_ap_item_id"] == new_ap_item_id
     assert response["linkage"]["resubmission_reason"] == "corrected_vendor_and_amount"
     assert response["copied_sources"] >= 1
@@ -193,6 +194,7 @@ def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(m
     assert new_item is not None
     assert new_item["state"] == "received"
     assert new_item["supersedes_ap_item_id"] == rejected["id"]
+    assert new_item["supersedes_invoice_key"] == rejected["invoice_key"]
     assert new_item["resubmission_reason"] == "corrected_vendor_and_amount"
     assert new_item["message_id"] == "msg-thread-rej-v2"
     assert float(new_item["amount"]) == 125.50
@@ -208,6 +210,7 @@ def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(m
     new_context = ap_items_api.get_ap_item_context(new_ap_item_id, refresh=True)
     supersession = new_context.get("supersession") or {}
     assert supersession["supersedes_ap_item_id"] == rejected["id"]
+    assert supersession["supersedes_invoice_key"] == rejected["invoice_key"]
     assert supersession["resubmission_reason"] == "corrected_vendor_and_amount"
 
     source_events = [e.get("event_type") for e in db.list_ap_audit_events(rejected["id"])]

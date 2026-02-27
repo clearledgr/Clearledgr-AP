@@ -1,7 +1,7 @@
 """
 Clearledgr v1 - FastAPI Backend
 
-Clearledgr v1: Transaction Reconciliation & Categorization
+Clearledgr v1: Agentic Finance Execution Layer (AP-first)
 
 Run Instructions:
 -----------------
@@ -14,19 +14,20 @@ Run Instructions:
 3. Test /health endpoint:
    curl http://localhost:8000/health
 
-4. Test reconciliation endpoint:
-   curl -X POST http://localhost:8000/run-reconciliation \
-     -F "config={...}" -F "period_start=2025-11-01" ...
+4. Test runtime intent preview endpoint:
+   curl -X POST http://localhost:8000/api/agent/intents/preview \
+     -H "Content-Type: application/json" \
+     -d '{"intent":"read_ap_workflow_health","input":{"limit":25},"organization_id":"default"}'
 """
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
 import json
 import os
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from clearledgr.services.auth import verify_api_key, get_api_key_optional
 from clearledgr.services.rate_limit import RateLimitMiddleware
 from clearledgr.services.errors import ClearledgrError, ReconciliationError, to_http_exception
@@ -45,34 +46,33 @@ from clearledgr.api import (
     gmail_extension_router,
     slack_invoices_router,
     teams_invoices_router,
-    ai_enhanced_router,
-    ap_workflow_router,
-    ap_advanced_router,
 )
 
 app = FastAPI(
     title="Clearledgr API",
     description="""
-    Clearledgr API v1 - Transaction Reconciliation & Categorization
+    Clearledgr API v1 - Agentic Finance Execution Layer (AP-first)
     
-    **Clearledgr is a unifying intelligent layer for finance teams, embedding AI agents into tools finance teams already use.**
+    **Clearledgr is a finance execution agent platform: one runtime, AP-first skills, embedded where operators already work.**
     
-    This API powers embedded intelligence within Google Sheets, Gmail, and Slack.
+    This API powers an embedded AP operating model across Gmail, Slack/Teams approvals, and ERP write-back.
     
-    ## Transaction Reconciliation
-    - Multi-source reconciliation (CSV, Google Sheets)
-    - Intelligent 3-way/2-way transaction matching with tolerance and date windows
-    - LLM-powered exception explanations
-    - Real-time notifications (Slack app)
+    ## Agent Runtime
+    - Canonical intent contract: `/api/agent/intents/preview` and `/api/agent/intents/execute`
+    - Skill-packaged execution (AP skills first; expandable to adjacent finance workflows)
+    - Deterministic policy prechecks before execution
+    - Idempotency-aware execution and auditable outcomes
     
-    ## Transaction Categorization
-    - Auto-classify transactions to GL accounts
-    - Keyword, pattern, and historical matching
-    - Learns from user corrections
+    ## AP Workflow (v1)
+    - Invoice/AP intake, extraction, and routing
+    - Needs-info follow-up loop (draft-first)
+    - Low-risk approval routing and recoverable retry handling
+    - ERP posting with API-first + controlled fallback patterns
     
-    ## Email Integration
-    - Autonomous processing of invoices and settlements
-    - Auto-categorization and matching
+    ## Embedded Surfaces
+    - Gmail-first operator workflow
+    - Slack/Teams approval decisions
+    - Ops and audit visibility for finance operators
     
     ## Authentication
     API key authentication is optional. Set `API_KEY` environment variable to enable.
@@ -96,15 +96,76 @@ app = FastAPI(
     ],
 )
 
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ap_v1_strict_surfaces_enabled() -> bool:
+    env_name = str(os.getenv("ENV", "dev")).strip().lower()
+    default_strict = env_name in {"production", "prod", "staging", "stage"}
+    strict_requested = _env_flag("AP_V1_STRICT_SURFACES", default=default_strict)
+    legacy_override = _env_flag("CLEARLEDGR_ENABLE_LEGACY_SURFACES", default=False)
+    return bool(strict_requested and not legacy_override)
+
+
+LEGACY_SURFACE_PREFIXES = (
+    "/email",
+    "/audit",
+    "/payments",
+    "/bank-feeds",
+    "/learning",
+    "/payment-requests",
+    "/ap",
+    "/ap-advanced",
+    "/subscription",
+    "/llm",
+    "/ai",
+)
+
+
+def _is_legacy_surface_path(path: str) -> bool:
+    normalized = path if path.startswith("/") else f"/{path}"
+    for prefix in LEGACY_SURFACE_PREFIXES:
+        if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return True
+    return False
+
+
+def _apply_runtime_surface_profile() -> None:
+    """Apply strict/full AP-v1 route profile by mutating mounted routes."""
+    full_routes = getattr(app.state, "_full_route_table", None)
+    if full_routes is None:
+        full_routes = tuple(app.router.routes)
+        app.state._full_route_table = full_routes
+
+    strict_mode = _ap_v1_strict_surfaces_enabled()
+    if strict_mode:
+        selected_routes = []
+        for route in full_routes:
+            route_path = getattr(route, "path", None)
+            if isinstance(route_path, str) and _is_legacy_surface_path(route_path):
+                continue
+            selected_routes.append(route)
+    else:
+        selected_routes = list(full_routes)
+
+    app.router.routes = list(selected_routes)
+    mode = "strict" if strict_mode else "full"
+    if getattr(app.state, "_runtime_surface_mode", None) != mode:
+        app.openapi_schema = None
+        app.state._openapi_cache = {}
+        app.state._runtime_surface_mode = mode
+
+
 app.include_router(v1_router)
 app.include_router(erp_router)
 app.include_router(gmail_extension_router)
 app.include_router(slack_invoices_router)
 app.include_router(teams_invoices_router)
-
-for optional_router in (ai_enhanced_router, ap_workflow_router, ap_advanced_router):
-    if optional_router:
-        app.include_router(optional_router)
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
     """Inject a correlation ID on every request and echo it back in the response.
@@ -162,12 +223,51 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_error("request_exception", str(e), {"path": request.url.path, "method": request.method})
             raise
 
+
+class LegacySurfaceGuardMiddleware(BaseHTTPMiddleware):
+    """Block non-canonical legacy surfaces when strict AP-v1 mode is active."""
+
+    async def dispatch(self, request: Request, call_next):
+        if _ap_v1_strict_surfaces_enabled() and _is_legacy_surface_path(request.url.path):
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "detail": "endpoint_disabled_in_ap_v1_profile",
+                    "reason": "legacy_or_non_canonical_surface_disabled",
+                    "path": request.url.path,
+                },
+            )
+        return await call_next(request)
+
 # Add middleware in order (last added = outermost, executed first).
 # CorrelationIdMiddleware must be outermost so correlation_id is available to
 # all downstream middleware and handlers.
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(LegacySurfaceGuardMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
+
+
+def custom_openapi():
+    _apply_runtime_surface_profile()
+    strict_mode = _ap_v1_strict_surfaces_enabled()
+    cache_key = "strict" if strict_mode else "full"
+    cached = getattr(app.state, "_openapi_cache", {})
+    if cache_key in cached:
+        return cached[cache_key]
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    cached[cache_key] = schema
+    app.state._openapi_cache = cached
+    return schema
+
+
+app.openapi = custom_openapi
 
 
 # Global exception handler for ClearledgrErrors
@@ -288,8 +388,8 @@ app.add_middleware(
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database on startup."""
-    pass  # ClearledgrDB initializes lazily via get_db()
+    """Initialize startup route profile and lazy DB initialization."""
+    _apply_runtime_surface_profile()
 
 # Include Slack app
 try:
@@ -440,6 +540,13 @@ try:
 except ImportError:
     pass
 
+# Agent intent runtime contract (preview/execute)
+try:
+    from clearledgr.api.agent_intents import router as agent_intents_router
+    app.include_router(agent_intents_router)
+except ImportError:
+    pass
+
 # AP item routes (sources/context/audit/merge/split)
 try:
     from clearledgr.api.ap_items import router as ap_items_router
@@ -498,6 +605,21 @@ async def startup_agent_background():
         logger.warning(f"Agent background not started: {e}")
 
 
+@app.on_event("startup")
+async def startup_agent_runtime():
+    """Start the finance agent runtime and resume interrupted planner tasks."""
+    try:
+        from clearledgr.services.agent_orchestrator import get_orchestrator
+        from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
+
+        runtime = get_platform_finance_runtime("default")
+        resumed = await runtime.resume_pending_agent_tasks()
+        get_orchestrator("default").start_durable_workers()
+        logger.info("Finance agent runtime started (%d planner tasks resumed)", resumed)
+    except Exception as e:
+        logger.warning(f"Agent runtime not started: {e}")
+
+
 @app.on_event("shutdown")
 async def shutdown_gmail_autopilot():
     """Stop Gmail autopilot background service."""
@@ -513,7 +635,10 @@ async def shutdown_agent_background():
     """Stop agent background intelligence loop."""
     try:
         from clearledgr.services.agent_background import stop_agent_background
+        from clearledgr.services.agent_orchestrator import get_orchestrator
+
         await stop_agent_background()
+        await get_orchestrator("default").stop_durable_workers()
     except Exception as e:
         logger.warning(f"Agent background stop failed: {e}")
 
@@ -769,14 +894,14 @@ async def parse_email_endpoint(
     "/email/match-invoice",
     tags=["Email Integration"],
     summary="Match Invoice to Transactions",
-    description="Match a parsed invoice to bank and internal transactions"
+    description="Match a parsed invoice to source and internal transactions"
 )
 async def match_invoice_endpoint(
     request: MatchInvoiceRequest,
     api_key: str = Depends(get_api_key_optional),
 ):
     """
-    Match invoice to transactions.
+    Match invoice to candidate source transactions.
     
     Performs 3-way or 2-way matching and returns match confidence.
     Auto-approves high-confidence matches (>= 90%).
@@ -1024,7 +1149,7 @@ async def create_task_endpoint(
             organization_id=request.organization_id
         )
         
-        # Send Slack/Teams notification (skip reconciliation exceptions to avoid spam)
+        # Send Slack/Teams notification (skip low-signal system exceptions to avoid noise)
         should_notify = request.task_type != "reconciliation_exception"
         if request.tags and "silent" in request.tags:
             should_notify = False
@@ -1436,3 +1561,7 @@ async def get_user_activity_endpoint(
             status_code=500,
             detail=safe_error(e, "user activity")
         )
+
+
+# Apply route profile once after all routes are registered.
+_apply_runtime_surface_profile()

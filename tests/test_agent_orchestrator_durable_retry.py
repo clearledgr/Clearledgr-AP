@@ -8,6 +8,8 @@ import asyncio
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -68,6 +70,29 @@ def _create_failed_post_item(db, *, gmail_id: str = "thread-retry-1", correlatio
     return db.get_ap_item(item["id"])
 
 
+def _create_validated_item(db, *, gmail_id: str = "thread-post-process-1", correlation_id: str = "corr-post-process-1"):
+    return db.create_ap_item(
+        {
+            "invoice_key": f"vendor|{gmail_id}|100.00|",
+            "thread_id": gmail_id,
+            "message_id": f"msg-{gmail_id}",
+            "subject": f"Invoice {gmail_id}",
+            "sender": "billing@example.com",
+            "vendor_name": "PostProcess Vendor",
+            "amount": 100.0,
+            "currency": "USD",
+            "invoice_number": f"INV-{gmail_id.upper()}",
+            "due_date": "2026-03-10",
+            "state": "validated",
+            "confidence": 0.98,
+            "approval_required": True,
+            "organization_id": "default",
+            "user_id": "user-1",
+            "metadata": {"correlation_id": correlation_id},
+        }
+    )
+
+
 def _invoice_from_item(item):
     return InvoiceData(
         gmail_id=item["thread_id"],
@@ -92,6 +117,83 @@ def _new_orchestrator(db):
     return orch
 
 
+def _minimal_invoice() -> InvoiceData:
+    return InvoiceData(
+        gmail_id="thread-agentic-1",
+        subject="Invoice INV-AGENTIC-1",
+        sender="billing@example.com",
+        vendor_name="Agentic Vendor",
+        amount=99.5,
+        currency="USD",
+        invoice_number="INV-AGENTIC-1",
+        due_date="2026-03-15",
+        organization_id="default",
+        confidence=0.98,
+        correlation_id="corr-agentic-1",
+    )
+
+
+def test_process_invoice_defaults_to_agentic_runtime(monkeypatch):
+    monkeypatch.delenv("AGENT_PLANNING_LOOP", raising=False)
+    orch = AgentOrchestrator("default")
+    invoice = _minimal_invoice()
+
+    with patch(
+        "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
+        new=AsyncMock(return_value={"status": "completed", "task_run_id": "task-1"}),
+    ):
+        with patch.object(
+            orch,
+            "_process_invoice_legacy",
+            AsyncMock(return_value={"status": "legacy"}),
+        ) as legacy_mock:
+            result = asyncio.run(orch.process_invoice(invoice))
+
+    assert result["status"] == "completed"
+    legacy_mock.assert_not_awaited()
+
+
+def test_process_invoice_falls_back_to_legacy_when_agentic_runtime_fails(monkeypatch):
+    monkeypatch.delenv("AGENT_PLANNING_LOOP", raising=False)
+    orch = AgentOrchestrator("default")
+    invoice = _minimal_invoice()
+
+    with patch(
+        "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
+        new=AsyncMock(side_effect=RuntimeError("anthropic_api_key_missing")),
+    ):
+        with patch.object(
+            orch,
+            "_process_invoice_legacy",
+            AsyncMock(return_value={"status": "legacy"}),
+        ) as legacy_mock:
+            result = asyncio.run(orch.process_invoice(invoice))
+
+    assert result["status"] == "legacy"
+    legacy_mock.assert_awaited_once()
+
+
+def test_process_invoice_supports_explicit_agentic_opt_out(monkeypatch):
+    monkeypatch.setenv("AGENT_PLANNING_LOOP", "false")
+    orch = AgentOrchestrator("default")
+    invoice = _minimal_invoice()
+
+    with patch(
+        "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
+        new=AsyncMock(return_value={"status": "completed", "task_run_id": "task-2"}),
+    ) as runtime_mock:
+        with patch.object(
+            orch,
+            "_process_invoice_legacy",
+            AsyncMock(return_value={"status": "legacy"}),
+        ) as legacy_mock:
+            result = asyncio.run(orch.process_invoice(invoice))
+
+    assert result["status"] == "legacy"
+    runtime_mock.assert_not_awaited()
+    legacy_mock.assert_awaited_once()
+
+
 def test_durable_retry_runtime_status_reports_db_queue(monkeypatch):
     monkeypatch.setenv("AP_AGENT_AUTONOMOUS_RETRY_ENABLED", "true")
     monkeypatch.setenv("AP_AGENT_RETRY_BACKOFF_SECONDS", "1,2,3")
@@ -103,6 +205,44 @@ def test_durable_retry_runtime_status_reports_db_queue(monkeypatch):
     assert status["mode"] == "durable_db_retry_queue"
     assert status["backoff_seconds"] == [1, 2, 3]
     assert status["poll_interval_seconds"] == 4
+
+
+def test_durable_post_process_runtime_status_reports_db_queue(monkeypatch):
+    monkeypatch.setenv("AP_AGENT_POST_PROCESS_DURABLE_ENABLED", "true")
+    monkeypatch.setenv("AP_AGENT_POST_PROCESS_BACKOFF_SECONDS", "2,6,10")
+    monkeypatch.setenv("AP_AGENT_POST_PROCESS_MAX_ATTEMPTS", "4")
+    orch = AgentOrchestrator("default")
+    status = orch.post_process_runtime_status()
+    assert status["enabled"] is True
+    assert status["durable"] is True
+    assert status["mode"] == "durable_db_post_process_queue"
+    assert status["backoff_seconds"] == [2, 6, 10]
+    assert status["max_attempts"] == 4
+
+
+def test_post_process_runtime_status_disables_non_durable_fallback_in_production(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    orch = AgentOrchestrator("default")
+    status = orch.post_process_runtime_status()
+    assert status["allow_non_durable"] is False
+
+
+def test_legacy_flow_records_post_process_skipped_when_durable_queue_disabled(monkeypatch):
+    monkeypatch.setenv("AP_AGENT_POST_PROCESS_DURABLE_ENABLED", "false")
+
+    orch = AgentOrchestrator("default")
+    orch._workflow = SimpleNamespace(process_new_invoice=AsyncMock(return_value={"status": "approved", "erp_status": "success"}))
+    orch._reasoning = MagicMock()
+    orch._reasoning.reason_about_invoice.side_effect = RuntimeError("skip_reasoning")
+
+    invoice = _minimal_invoice()
+    with patch.object(orch, "_enqueue_post_process_job", return_value=None):
+        with patch.object(orch, "_record_post_process_gated_event") as gated_mock:
+            result = asyncio.run(orch._process_invoice_legacy(invoice))
+
+    assert result["status"] == "approved"
+    gated_mock.assert_called_once()
+    assert gated_mock.call_args.kwargs["reason"] == "post_process_disabled_by_config"
 
 
 def test_durable_retry_job_survives_restart_and_posts_to_erp(db, monkeypatch):
@@ -220,3 +360,87 @@ def test_durable_retry_reschedules_then_dead_letters_after_max_attempts(db, monk
     assert "agent_retry_rescheduled" in event_types
     assert "agent_retry_dead_letter" in event_types
 
+
+def test_durable_post_process_job_survives_restart_and_completes(db, monkeypatch):
+    monkeypatch.setenv("AP_AGENT_POST_PROCESS_DURABLE_ENABLED", "true")
+    monkeypatch.setenv("AP_AGENT_POST_PROCESS_BACKOFF_SECONDS", "0,0,0")
+    monkeypatch.setenv("AP_AGENT_POST_PROCESS_MAX_ATTEMPTS", "3")
+    item = _create_validated_item(db, gmail_id="thread-post-process-success")
+    invoice = _invoice_from_item(item)
+
+    orch1 = _new_orchestrator(db)
+    job = orch1._enqueue_post_process_job(
+        invoice,
+        agent_decision=None,
+        workflow_result={"status": "approved", "erp_status": "success"},
+    )
+    assert job is not None
+    assert job["status"] == "pending"
+    assert job["job_type"] == "post_process"
+
+    queued = [j for j in db.list_agent_retry_jobs("default", ap_item_id=item["id"]) if j.get("job_type") == "post_process"]
+    assert queued and queued[0]["status"] == "pending"
+
+    orch2 = _new_orchestrator(db)
+    monkeypatch.setattr(orch2, "_run_post_process_steps", AsyncMock(return_value=None))
+    summary = asyncio.run(orch2.process_due_post_process_jobs(limit=10))
+    assert summary["claimed"] == 1
+    assert summary["succeeded"] == 1
+
+    jobs = [j for j in db.list_agent_retry_jobs("default", ap_item_id=item["id"]) if j.get("job_type") == "post_process"]
+    assert jobs[0]["status"] == "completed"
+    assert int(jobs[0]["retry_count"]) == 1
+
+    audits = db.list_ap_audit_events(item["id"])
+    event_types = [a.get("event_type") for a in audits]
+    assert "agent_post_process_enqueued" in event_types
+    assert "agent_post_process_completed" in event_types
+
+
+def test_durable_post_process_reschedules_then_dead_letters_after_max_attempts(db, monkeypatch):
+    monkeypatch.setenv("AP_AGENT_POST_PROCESS_DURABLE_ENABLED", "true")
+    monkeypatch.setenv("AP_AGENT_POST_PROCESS_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("AP_AGENT_POST_PROCESS_BACKOFF_SECONDS", "0,0,0")
+    item = _create_validated_item(db, gmail_id="thread-post-process-fail", correlation_id="corr-post-process-dead")
+    invoice = _invoice_from_item(item)
+
+    orch = _new_orchestrator(db)
+    job = orch._enqueue_post_process_job(
+        invoice,
+        agent_decision=None,
+        workflow_result={"status": "approved", "erp_status": "success"},
+    )
+    assert job is not None
+
+    monkeypatch.setattr(orch, "_run_post_process_steps", AsyncMock(side_effect=RuntimeError("post_process_fail")))
+
+    first = asyncio.run(orch.process_due_post_process_jobs(limit=10))
+    assert first["claimed"] == 1
+    assert first["rescheduled"] == 1
+
+    jobs_after_first = [j for j in db.list_agent_retry_jobs("default", ap_item_id=item["id"]) if j.get("job_type") == "post_process"]
+    assert jobs_after_first[0]["status"] == "pending"
+    assert int(jobs_after_first[0]["retry_count"]) == 1
+
+    db.reschedule_agent_retry_job(
+        jobs_after_first[0]["id"],
+        next_retry_at=datetime.now(timezone.utc).isoformat(),
+        last_error=jobs_after_first[0].get("last_error"),
+        result=jobs_after_first[0].get("result") or {},
+        status="pending",
+    )
+
+    orch_restart = _new_orchestrator(db)
+    monkeypatch.setattr(orch_restart, "_run_post_process_steps", AsyncMock(side_effect=RuntimeError("post_process_fail")))
+    second = asyncio.run(orch_restart.process_due_post_process_jobs(limit=10))
+    assert second["claimed"] == 1
+    assert second["dead_letter"] == 1
+
+    final_jobs = [j for j in db.list_agent_retry_jobs("default", ap_item_id=item["id"]) if j.get("job_type") == "post_process"]
+    assert final_jobs[0]["status"] == "dead_letter"
+    assert int(final_jobs[0]["retry_count"]) == 2
+
+    audits = db.list_ap_audit_events(item["id"])
+    event_types = [a.get("event_type") for a in audits]
+    assert "agent_post_process_rescheduled" in event_types
+    assert "agent_post_process_dead_letter" in event_types

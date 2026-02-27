@@ -1,9 +1,9 @@
 {
   "display_information": {
     "name": "Clearledgr",
-    "description": "AI-powered reconciliation and categorization for finance teams",
+    "description": "Embedded AP approvals and exception actions for finance teams",
     "background_color": "#0a1628",
-    "long_description": "Clearledgr is an intelligent layer for finance teams. Get real-time reconciliation alerts, resolve exceptions, review categorization suggestions, and manage tasks - all without leaving Slack."
+    "long_description": "Clearledgr is an embedded finance execution agent. In Slack, teams review AP exceptions, approve/reject invoices, and track AP execution outcomes without leaving chat."
   },
   "features": {
     "app_home": {
@@ -26,15 +26,15 @@
       {
         "command": "/reconcile",
         "url": "https://YOUR_DOMAIN/slack/commands",
-        "description": "Run reconciliation now",
+        "description": "Run AP queue health check (legacy command name)",
         "usage_hint": "",
         "should_escape": false
       },
       {
         "command": "/categorize",
         "url": "https://YOUR_DOMAIN/slack/commands",
-        "description": "Review categorization suggestions",
-        "usage_hint": "[review | patterns | learn]",
+        "description": "Review AP exception routing suggestions (legacy command name)",
+        "usage_hint": "[review | patterns | learn | exceptions]",
         "should_escape": false
       }
     ],
@@ -46,10 +46,10 @@
         "description": "Turn this message into a Clearledgr task"
       },
       {
-        "name": "Run Reconciliation",
+        "name": "Run AP Health Check",
         "type": "global",
         "callback_id": "run_reconciliation",
-        "description": "Run reconciliation on your connected spreadsheet"
+        "description": "Run AP queue/exception health on your connected workspace"
       }
     ]
   },
@@ -93,4 +93,3 @@
     "token_rotation_enabled": false
   }
 }
-

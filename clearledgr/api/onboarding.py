@@ -11,6 +11,7 @@ The setup flow:
 No schedules to configure. Just connect and go.
 """
 
+import json
 import logging
 import os
 from typing import Dict, Any, Optional, List
@@ -18,6 +19,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
+from clearledgr.core.database import get_db
 from clearledgr.integrations.erp_router import ERPConnection, set_erp_connection
 
 logger = logging.getLogger(__name__)
@@ -98,20 +100,45 @@ class OnboardingStatus(BaseModel):
     is_complete: bool = False
 
 
-# In-memory store for demo - would be database in production
-_org_setup: Dict[str, Dict[str, Any]] = {}
-
-
 def get_org_setup(organization_id: str) -> Dict[str, Any]:
-    if organization_id not in _org_setup:
-        _org_setup[organization_id] = {
+    """Read onboarding state from DB. Returns empty default if org not found."""
+    db = get_db()
+    org = db.get_organization(organization_id)
+    if not org:
+        return {
             "created_at": datetime.now(timezone.utc).isoformat(),
             "bank": None,
             "gateway": None,
             "erp": None,
             "gl_mapping": None,
         }
-    return _org_setup[organization_id]
+    settings = org.get("settings_json") or {}
+    if not isinstance(settings, dict):
+        try:
+            settings = json.loads(settings)
+        except Exception:
+            settings = {}
+    return settings.get("onboarding") or {
+        "created_at": org.get("created_at", datetime.now(timezone.utc).isoformat()),
+        "bank": None,
+        "gateway": None,
+        "erp": None,
+        "gl_mapping": None,
+    }
+
+
+def _save_onboarding(organization_id: str, setup: Dict[str, Any]) -> None:
+    """Persist onboarding state to the organizations.settings_json column."""
+    db = get_db()
+    org = db.get_organization(organization_id)
+    if not org:
+        logger.warning("[Onboarding] cannot save: org %s not found in DB", organization_id)
+        return
+    settings = dict(org.get("settings_json") or {})
+    if not isinstance(settings, dict):
+        settings = {}
+    settings["onboarding"] = setup
+    db.update_organization(organization_id, settings=settings)
 
 
 # ==================== ENDPOINTS ====================
@@ -122,10 +149,10 @@ async def setup_organization(request: OrganizationSetup) -> Dict[str, Any]:
     Step 0: Create/configure organization.
     """
     import uuid
-    
+
     org_id = str(uuid.uuid4())[:8]
-    
-    _org_setup[org_id] = {
+
+    onboarding: Dict[str, Any] = {
         "id": org_id,
         "name": request.name,
         "industry": request.industry,
@@ -137,7 +164,13 @@ async def setup_organization(request: OrganizationSetup) -> Dict[str, Any]:
         "erp": None,
         "gl_mapping": None,
     }
-    
+    db = get_db()
+    db.create_organization(
+        organization_id=org_id,
+        name=request.name,
+        settings={"onboarding": onboarding},
+    )
+
     logger.info(f"Created organization: {org_id} - {request.name}")
     
     return {
@@ -188,7 +221,8 @@ async def connect_bank(
             "account_name": request.account_name or "Primary Account",
         }
         message = "Bank configured. Upload statements when ready."
-    
+
+    _save_onboarding(organization_id, setup)
     logger.info(f"Bank connected for {organization_id}: {request.method}")
     
     return {
@@ -269,10 +303,8 @@ async def connect_gateway(
         "connected_at": datetime.now(timezone.utc).isoformat(),
         "webhook_configured": bool(request.webhook_secret),
     }
-    
-    # Store the full key securely (in production, use secrets manager)
-    # For demo, store in environment or encrypted storage
-    
+
+    _save_onboarding(organization_id, setup)
     logger.info(f"Gateway connected for {organization_id}: {request.gateway}")
     
     # Generate webhook URL
@@ -364,12 +396,12 @@ async def connect_erp(
     
     # Store connection
     set_erp_connection(organization_id, connection)
-    
+
     setup["erp"] = {
         "type": request.erp_type,
         "connected_at": datetime.now(timezone.utc).isoformat(),
     }
-    
+    _save_onboarding(organization_id, setup)
     logger.info(f"ERP connected for {organization_id}: {request.erp_type}")
     
     return {
@@ -628,7 +660,7 @@ async def configure_gl_mapping(
         "custom": request.custom_mappings or {},
         "configured_at": datetime.now(timezone.utc).isoformat(),
     }
-    
+    _save_onboarding(organization_id, setup)
     logger.info(f"GL mapping configured for {organization_id}")
     
     return {
@@ -689,7 +721,8 @@ async def skip_erp_connection(organization_id: str) -> Dict[str, Any]:
         "type": "none",
         "skipped_at": datetime.now(timezone.utc).isoformat(),
     }
-    
+    _save_onboarding(organization_id, setup)
+
     return {
         "status": "skipped",
         "message": "ERP connection skipped. Journal entries will be generated but not posted.",

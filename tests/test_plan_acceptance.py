@@ -30,6 +30,7 @@ from clearledgr.core.ap_states import (
     APState,
     IllegalTransitionError,
     VALID_TRANSITIONS,
+    classify_post_failure_recoverability,
     normalize_state,
     transition_or_raise,
     validate_transition,
@@ -461,3 +462,19 @@ class TestSecurityHardening:
             os.environ.pop("__TEST_SECRET__", None)
             with pytest.raises(RuntimeError, match="not set"):
                 require_secret("__TEST_SECRET__")
+
+
+class TestBatchRetryRecoverability:
+    def test_retry_recoverability_allows_transient_errors(self):
+        verdict = classify_post_failure_recoverability(
+            last_error="connector timeout while posting",
+            exception_code="erp_post_failed",
+        )
+        assert verdict["recoverable"] is True
+
+    def test_retry_recoverability_blocks_non_recoverable_errors(self):
+        verdict = classify_post_failure_recoverability(
+            last_error="duplicate invoice already posted in ERP",
+            exception_code="duplicate",
+        )
+        assert verdict["recoverable"] is False

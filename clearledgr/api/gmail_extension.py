@@ -11,6 +11,7 @@ KEY DIFFERENTIATORS:
 """
 import json
 import os
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from pydantic import BaseModel
@@ -715,6 +716,7 @@ async def approve_and_post(
 @router.post("/verify-confidence")
 async def verify_confidence(
     request: VerifyConfidenceRequest,
+    _user=Depends(get_current_user),
 ):
     """
     Verify extraction confidence and surface mismatches for HITL review.
@@ -820,6 +822,7 @@ async def verify_confidence(
 @router.post("/match-bank")
 async def match_bank_feed(
     request: MatchBankRequest,
+    _user=Depends(get_current_user),
 ):
     """
     Match extracted data against bank feed.
@@ -837,6 +840,7 @@ async def match_bank_feed(
 @router.post("/match-erp")
 async def match_erp(
     request: MatchERPRequest,
+    _user=Depends(get_current_user),
 ):
     """
     Match extracted data against ERP records (PO, vendor).
@@ -946,6 +950,7 @@ class SubmitForApprovalRequest(BaseModel):
     reasoning_summary: Optional[str] = None
     reasoning_factors: Optional[List[Dict[str, Any]]] = None
     reasoning_risks: Optional[List[str]] = None
+    idempotency_key: Optional[str] = None
 
 
 class RejectInvoiceRequest(BaseModel):
@@ -969,6 +974,17 @@ class ApprovalNudgeRequest(BaseModel):
     """Request to nudge pending approvers for an invoice."""
     email_id: str
     message: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    organization_id: Optional[str] = None
+    user_email: Optional[str] = None
+
+
+class VendorFollowupRequest(BaseModel):
+    """Request to prepare/refresh a vendor follow-up draft for needs_info items."""
+    email_id: str
+    reason: Optional[str] = None
+    force: bool = False
+    idempotency_key: Optional[str] = None
     organization_id: Optional[str] = None
     user_email: Optional[str] = None
 
@@ -984,6 +1000,24 @@ class FinanceSummaryShareRequest(BaseModel):
     user_email: Optional[str] = None
 
 
+class RouteLowRiskApprovalRequest(BaseModel):
+    """Batch route low-risk validated item into approval surfaces."""
+    email_id: str
+    reason: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    organization_id: Optional[str] = None
+    user_email: Optional[str] = None
+
+
+class RetryRecoverableFailureRequest(BaseModel):
+    """Batch retry for recoverable failed_post AP items."""
+    email_id: str
+    reason: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    organization_id: Optional[str] = None
+    user_email: Optional[str] = None
+
+
 def _parse_json_dict(raw: Any) -> Dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -994,6 +1028,50 @@ def _parse_json_dict(raw: Any) -> Dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return {}
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_iso_utc(raw: Any) -> Optional[datetime]:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _vendor_followup_sla_hours() -> int:
+    try:
+        hours = int(os.getenv("CLEARLEDGR_VENDOR_FOLLOWUP_SLA_HOURS", "24"))
+    except (TypeError, ValueError):
+        hours = 24
+    return max(1, min(hours, 168))
+
+
+def _vendor_followup_max_attempts() -> int:
+    try:
+        attempts = int(os.getenv("CLEARLEDGR_VENDOR_FOLLOWUP_MAX_ATTEMPTS", "3"))
+    except (TypeError, ValueError):
+        attempts = 3
+    return max(1, min(attempts, 10))
+
+
+def _merge_ap_item_metadata(db: Any, ap_item: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = _parse_json_dict(ap_item.get("metadata"))
+    metadata.update(updates or {})
+    if hasattr(db, "update_ap_item"):
+        db.update_ap_item(str(ap_item.get("id")), metadata=metadata)
+    ap_item["metadata"] = metadata
+    return metadata
 
 
 def _resolve_ap_item_for_extension_action(db: Any, organization_id: str, email_id: str) -> Optional[Dict[str, Any]]:
@@ -1020,6 +1098,7 @@ def _append_extension_ap_audit(
     reason: str,
     metadata: Optional[Dict[str, Any]] = None,
     correlation_id: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     if not hasattr(db, "append_ap_audit_event"):
         return None
@@ -1034,8 +1113,31 @@ def _append_extension_ap_audit(
             "organization_id": organization_id,
             "source": "gmail_extension",
             "correlation_id": correlation_id,
+            "idempotency_key": idempotency_key,
         }
     )
+
+
+def _load_idempotent_extension_response(db: Any, idempotency_key: Optional[str]) -> Optional[Dict[str, Any]]:
+    key = str(idempotency_key or "").strip()
+    if not key or not hasattr(db, "get_ap_audit_event_by_key"):
+        return None
+    existing = db.get_ap_audit_event_by_key(key)
+    if not existing:
+        return None
+    payload = existing.get("payload_json") if isinstance(existing, dict) else {}
+    payload = payload if isinstance(payload, dict) else {}
+    response = payload.get("response")
+    if isinstance(response, dict):
+        replay = dict(response)
+        replay.setdefault("audit_event_id", existing.get("id"))
+        replay["idempotency_replayed"] = True
+        return replay
+    return {
+        "status": "idempotent_replay",
+        "audit_event_id": existing.get("id"),
+        "idempotency_replayed": True,
+    }
 
 
 def _build_finance_lead_summary_payload(
@@ -1138,6 +1240,10 @@ async def submit_for_approval(
     from clearledgr.services.invoice_workflow import InvoiceData, get_invoice_workflow
     
     org_id = request.organization_id or "default"
+    db = get_db()
+    replay = _load_idempotent_extension_response(db, request.idempotency_key)
+    if replay:
+        return replay
     
     # If intelligence not provided, generate it now
     vendor_intel = request.vendor_intelligence
@@ -1273,8 +1379,37 @@ async def submit_for_approval(
             "priority": priority_data.get("priority") if priority_data else None,
         },
     )
-    
-    return result
+
+    ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.email_id)
+    correlation_id = None
+    ap_item_id = request.email_id
+    if ap_item:
+        metadata = _parse_json_dict(ap_item.get("metadata"))
+        correlation_id = str(ap_item.get("correlation_id") or metadata.get("correlation_id") or "").strip() or None
+        ap_item_id = str(ap_item.get("id") or request.email_id)
+    response_payload = {
+        **(result if isinstance(result, dict) else {"status": "unknown"}),
+        "email_id": request.email_id,
+        "ap_item_id": ap_item_id,
+    }
+    audit_row = _append_extension_ap_audit(
+        db,
+        ap_item_id=ap_item_id,
+        organization_id=org_id,
+        event_type="approval_routed_from_extension",
+        actor_id=request.user_email or "extension",
+        reason="route_for_approval",
+        metadata={
+            "response": response_payload,
+            "email_id": request.email_id,
+            "batch_intent": "route_low_risk_for_approval",
+        },
+        correlation_id=correlation_id,
+        idempotency_key=request.idempotency_key,
+    )
+    if audit_row and isinstance(response_payload, dict):
+        response_payload["audit_event_id"] = audit_row.get("id")
+    return response_payload
 
 
 @router.post("/reject-invoice", dependencies=[Depends(get_current_user)])
@@ -1382,6 +1517,9 @@ async def approval_nudge(
     org_id = request.organization_id or getattr(user, "organization_id", None) or "default"
     actor_email = request.user_email or getattr(user, "email", None) or "extension"
     db = get_db()
+    replay = _load_idempotent_extension_response(db, request.idempotency_key)
+    if replay:
+        return replay
     ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.email_id)
     if not ap_item:
         raise HTTPException(status_code=404, detail="ap_item_not_found")
@@ -1468,8 +1606,16 @@ async def approval_nudge(
             "slack": slack_result,
             "teams": teams_result,
             "message": nudge_text[:400],
+            "response": {
+                "status": "nudged" if slack_result.get("status") == "sent" or teams_result.get("status") == "sent" else "error",
+                "email_id": request.email_id,
+                "ap_item_id": str(ap_item.get("id") or ""),
+                "slack": slack_result,
+                "teams": teams_result,
+            },
         },
         correlation_id=correlation_id,
+        idempotency_key=request.idempotency_key,
     )
 
     audit.record_event(
@@ -1494,6 +1640,182 @@ async def approval_nudge(
         "teams": teams_result,
         "audit_event_id": (audit_row or {}).get("id"),
     }
+
+
+@router.post("/vendor-followup", dependencies=[Depends(get_current_user)])
+async def vendor_followup(
+    request: VendorFollowupRequest,
+    audit: AuditTrailService = Depends(get_audit_service),
+    user=Depends(get_current_user),
+):
+    """Prepare a vendor follow-up draft through the canonical finance runtime."""
+    from clearledgr.services.finance_agent_runtime import (
+        FinanceAgentRuntime,
+        IntentNotSupportedError,
+    )
+
+    org_id = request.organization_id or getattr(user, "organization_id", None) or "default"
+    actor_email = request.user_email or getattr(user, "email", None) or "extension"
+    runtime = FinanceAgentRuntime(
+        organization_id=org_id,
+        actor_id=getattr(user, "user_id", None) or actor_email,
+        actor_email=actor_email,
+        db=get_db(),
+    )
+    try:
+        response = await runtime.execute_intent(
+            "prepare_vendor_followups",
+            {
+                "email_id": request.email_id,
+                "reason": request.reason,
+                "force": request.force,
+            },
+            idempotency_key=request.idempotency_key,
+        )
+    except IntentNotSupportedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    action = {
+        "prepared": "vendor_followup_prepared",
+        "waiting_sla": "vendor_followup_waiting_sla",
+        "blocked": "vendor_followup_blocked",
+        "draft_unavailable": "vendor_followup_failed",
+    }.get(str(response.get("status") or "").strip().lower(), "vendor_followup_executed")
+    audit.record_event(
+        user_email=actor_email,
+        action=action,
+        entity_type="invoice",
+        entity_id=str(response.get("ap_item_id") or request.email_id),
+        organization_id=org_id,
+        metadata={
+            "email_id": request.email_id,
+            "ap_item_id": str(response.get("ap_item_id") or request.email_id),
+            "status": response.get("status"),
+            "reason": response.get("reason"),
+            "policy_precheck": response.get("policy_precheck"),
+            "draft_id": response.get("draft_id"),
+            "followup_attempt_count": response.get("followup_attempt_count"),
+            "next_due_at": response.get("followup_sla_due_at"),
+            "audit_event_id": response.get("audit_event_id"),
+        },
+    )
+    return response
+
+
+@router.post("/route-low-risk-approval", dependencies=[Depends(get_current_user)])
+async def route_low_risk_approval(
+    request: RouteLowRiskApprovalRequest,
+    audit: AuditTrailService = Depends(get_audit_service),
+    user=Depends(get_current_user),
+):
+    """Route a validated low-risk item into approval surfaces with policy prechecks."""
+    from clearledgr.services.finance_agent_runtime import (
+        FinanceAgentRuntime,
+        IntentNotSupportedError,
+    )
+
+    org_id = request.organization_id or getattr(user, "organization_id", None) or "default"
+    actor_email = request.user_email or getattr(user, "email", None) or "extension"
+    db = get_db()
+    runtime = FinanceAgentRuntime(
+        organization_id=org_id,
+        actor_id=getattr(user, "user_id", None) or actor_email,
+        actor_email=actor_email,
+        db=db,
+    )
+    try:
+        response = await runtime.execute_intent(
+            "route_low_risk_for_approval",
+            {
+                "email_id": request.email_id,
+                "reason": request.reason,
+            },
+            idempotency_key=request.idempotency_key,
+        )
+    except IntentNotSupportedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    audit.record_event(
+        user_email=actor_email,
+        action="route_low_risk_for_approval",
+        entity_type="invoice",
+        entity_id=str(response.get("ap_item_id") or request.email_id),
+        organization_id=org_id,
+        metadata={
+            "email_id": request.email_id,
+            "status": response.get("status"),
+            "policy_precheck": response.get("policy_precheck"),
+            "audit_event_id": response.get("audit_event_id"),
+        },
+    )
+    return response
+
+
+@router.post("/retry-recoverable-failure", dependencies=[Depends(get_current_user)])
+async def retry_recoverable_failure(
+    request: RetryRecoverableFailureRequest,
+    audit: AuditTrailService = Depends(get_audit_service),
+    user=Depends(get_current_user),
+):
+    """Retry a recoverable failed-post item through the canonical finance runtime."""
+    from clearledgr.services.finance_agent_runtime import (
+        FinanceAgentRuntime,
+        IntentNotSupportedError,
+    )
+
+    org_id = request.organization_id or getattr(user, "organization_id", None) or "default"
+    actor_email = request.user_email or getattr(user, "email", None) or "extension"
+    runtime = FinanceAgentRuntime(
+        organization_id=org_id,
+        actor_id=getattr(user, "user_id", None) or actor_email,
+        actor_email=actor_email,
+        db=get_db(),
+    )
+    try:
+        response = await runtime.execute_intent(
+            "retry_recoverable_failures",
+            {
+                "email_id": request.email_id,
+                "reason": request.reason,
+            },
+            idempotency_key=request.idempotency_key,
+        )
+    except IntentNotSupportedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    audit.record_event(
+        user_email=actor_email,
+        action="retry_recoverable_failure",
+        entity_type="invoice",
+        entity_id=str(response.get("ap_item_id") or request.email_id),
+        organization_id=org_id,
+        metadata={
+            "email_id": request.email_id,
+            "status": response.get("status"),
+            "reason": response.get("reason"),
+            "policy_precheck": response.get("policy_precheck"),
+            "audit_event_id": response.get("audit_event_id"),
+        },
+    )
+    return response
 
 
 @router.post("/finance-summary-share", dependencies=[Depends(get_current_user)])
@@ -2143,7 +2465,10 @@ class VendorSuggestionRequest(BaseModel):
 
 
 @router.post("/suggestions/gl-code")
-async def suggest_gl_code(request: GLSuggestionRequest):
+async def suggest_gl_code(
+    request: GLSuggestionRequest,
+    _user=Depends(get_current_user),
+):
     """
     Get AI-suggested GL code for a vendor.
     
@@ -2211,7 +2536,10 @@ async def suggest_gl_code(request: GLSuggestionRequest):
 
 
 @router.post("/suggestions/vendor")
-async def suggest_vendor(request: VendorSuggestionRequest):
+async def suggest_vendor(
+    request: VendorSuggestionRequest,
+    _user=Depends(get_current_user),
+):
     """
     Get AI-suggested vendor match from email context.
     
@@ -2275,6 +2603,7 @@ async def validate_amount(
     vendor_name: str = Body(...),
     amount: float = Body(...),
     organization_id: str = Body("default"),
+    _user=Depends(get_current_user),
 ):
     """
     Validate invoice amount against vendor history.
@@ -2299,6 +2628,7 @@ async def validate_amount(
 async def get_form_prefill(
     email_id: str,
     organization_id: str = "default",
+    _user=Depends(get_current_user),
 ):
     """
     Get all AI suggestions to pre-fill a form for an invoice.
@@ -2377,6 +2707,7 @@ class FieldCorrectionRequest(BaseModel):
 async def get_needs_info_draft(
     ap_item_id: str,
     reason: Optional[str] = Query(None, description="What information is needed — pre-fills the email body"),
+    _user=Depends(get_current_user),
 ):
     """Generate a pre-filled vendor reply template for a needs_info AP item.
     Returns {to, subject, body} ready for Gmail compose URL construction.
@@ -2438,6 +2769,7 @@ async def get_needs_info_draft(
 @router.post("/record-field-correction")
 async def record_field_correction(
     request: FieldCorrectionRequest,
+    user=Depends(get_current_user),
 ):
     """Record a field-level correction made by an operator in the Gmail sidebar.
 
@@ -2446,9 +2778,7 @@ async def record_field_correction(
     This is the missing link that allows org-specific extraction accuracy to
     compound over time.
 
-    Note: no auth dependency to match the pattern of other extension endpoints
-    (content-script.js callers don't carry Bearer tokens). The actor_id in the
-    request body identifies the operator.
+    The endpoint requires auth and uses the authenticated identity for actor attribution.
     """
     import json as _json
     from clearledgr.services.correction_learning import CorrectionLearningService
@@ -2460,7 +2790,12 @@ async def record_field_correction(
         raise HTTPException(status_code=404, detail="ap_item_not_found")
 
     organization_id = ap_item.get("organization_id") or "default"
-    actor_id = request.actor_id or "operator"
+    actor_id = (
+        getattr(user, "email", None)
+        or getattr(user, "user_id", None)
+        or request.actor_id
+        or "operator"
+    )
 
     # 1) Persist to correction learning service (updates agent_corrections table)
     learning_svc = CorrectionLearningService(organization_id)

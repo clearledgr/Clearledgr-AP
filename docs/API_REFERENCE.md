@@ -348,6 +348,7 @@ Rules for AP v1 work:
 2. Use `PLAN.md` for scope and launch-gate truth.
 3. Use `V1_BACKEND_CONTRACTS.md` for AP v1 contract semantics.
 4. Treat this `API_REFERENCE.md` as the AP v1-aligned operational map, not an exhaustive generated spec.
+5. In production/staging strict profile mode (`AP_V1_STRICT_SURFACES=true`), legacy/non-canonical route families are disabled unless `CLEARLEDGR_ENABLE_LEGACY_SURFACES=true` is explicitly set.
 
 ---
 

@@ -1076,7 +1076,7 @@
           <div class="channel-list">
             <div class="channel-item"><span class="hash">#</span> general</div>
             <div class="channel-item active"><span class="hash">#</span> finance-ops</div>
-            <div class="channel-item unread"><span class="hash">#</span> reconciliation-alerts</div>
+            <div class="channel-item unread"><span class="hash">#</span> ap-exceptions</div>
             <div class="channel-item"><span class="hash">#</span> month-end-close</div>
           </div>
         </div>
@@ -1212,7 +1212,7 @@
       bank: '<svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z"/><path fill-rule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clip-rule="evenodd"/></svg>'
     };
 
-    // Demo data aligned with Gmail and Sheets
+    // Demo data aligned with Gmail + Slack AP workflow
     const DEMO_DATA = {
       stats: {
         matched: 2801,
@@ -1706,7 +1706,7 @@
           </div>
           <div style="margin-bottom: 12px;">
             <label style="color: #616061; font-weight: 600; display: block; margin-bottom: 4px;">Message:</label>
-            <textarea style="width: 100%; padding: 8px; border: 1px solid #e1e1e1; border-radius: 4px; font-size: 14px; min-height: 60px; resize: vertical;">Can you please provide more details about this transfer of €5,234.00? We need to identify the source and purpose for proper categorization.</textarea>
+            <textarea style="width: 100%; padding: 8px; border: 1px solid #e1e1e1; border-radius: 4px; font-size: 14px; min-height: 60px; resize: vertical;">Can you please provide more details about this transfer of €5,234.00? We need source and purpose details for proper AP handling.</textarea>
           </div>
           <div style="display: flex; gap: 8px;">
             <button class="slack-btn slack-btn-primary" onclick="sendInfoRequest('${id}')">Send Request</button>
@@ -1824,7 +1824,7 @@
             </div>
             <div class="message-text">
               <strong>Clearledgr Commands</strong><br><br>
-              <code>/clearledgr status</code> — View reconciliation status<br>
+              <code>/clearledgr status</code> — View AP queue status<br>
               <code>/clearledgr exceptions</code> — View open exceptions<br>
               <code>/clearledgr drafts</code> — View pending draft entries<br>
               <code>/clearledgr approve [id]</code> — Approve a draft entry<br><br>
@@ -1850,12 +1850,12 @@
               <div class="slack-block-section">
                 <div class="slack-block-fields">
                   <div class="slack-field">
-                    <div class="slack-field-label">Match Rate</div>
+                    <div class="slack-field-label">Auto-ready rate</div>
                     <div class="slack-field-value" style="color: #2bac76;">98.4%</div>
                   </div>
                   <div class="slack-field">
-                    <div class="slack-field-label">Matched</div>
-                    <div class="slack-field-value">2,801 transactions</div>
+                    <div class="slack-field-label">Processed</div>
+                    <div class="slack-field-value">2,801 AP items</div>
                   </div>
                   <div class="slack-field">
                     <div class="slack-field-label">Exceptions</div>
@@ -1868,7 +1868,7 @@
                 </div>
               </div>
               <div class="slack-block-context">
-                3-way match: Stripe ↔ Deutsche Bank ↔ SAP GL
+                Policy + PO checks: Stripe invoice ready for SAP AP posting
               </div>
             </div>
           </div>

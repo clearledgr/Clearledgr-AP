@@ -1,81 +1,81 @@
 # Clearledgr AP v1
 
-Clearledgr is an **embedded finance execution layer** for finance teams.
+Clearledgr is the finance execution agent platform.
 
-AP v1 starts in Gmail, routes approvals in Slack and Teams, and writes back to ERP systems with policy checks, deterministic workflow orchestration, and an auditable execution trail.
+AP v1 is the first production skill domain: Gmail-first intake, Slack/Teams approvals, ERP write-back, and full audit traceability.
 
-Clearledgr is not a generic automation builder and not a standalone AP dashboard for daily work.
+## Canonical Doctrine
 
-## Current Product Focus (AP v1)
+Use these documents as source of truth:
 
-Clearledgr AP v1 is focused on an inbox-native AP workflow:
+1. `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
+2. `/Users/mombalam/Desktop/Clearledgr.v1/docs/HOW_IT_WORKS.md`
+3. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_EMBEDDED_WORKER_EXPERIENCE.md`
+4. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
+5. `/Users/mombalam/Desktop/Clearledgr.v1/docs/API_REFERENCE.md`
 
-1. Detect invoice and AP requests from Gmail
-2. Extract invoice fields from email bodies and attachments
-3. Run deterministic validation (including policy and exception checks)
-4. Surface status, exceptions, and next action inside Gmail
-5. Route approvals to Slack and Teams
-6. Post approved invoices to ERP systems (with idempotency and audit)
-7. Record immutable audit breadcrumbs and operator-visible outcomes
+If any document conflicts with `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `PLAN.md` wins.
 
-## Product Doctrine (Canonical)
+## Product Direction (Locked)
 
-The canonical AP v1 doctrine, contracts, and launch gates live in:
+1. One Clearledgr finance execution agent runtime.
+2. AP is the first production skill domain.
+3. Gmail is the primary AP operator surface.
+4. Slack and Teams are approval/decision surfaces.
+5. ERP is the system of record.
+6. Human-in-the-loop is intentional for risky actions.
+7. Policy, audit, idempotency, and durability are mandatory.
 
-- `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
+Clearledgr is not a generic automation builder and not a dashboard-first AP tool.
 
-Key doctrine points:
+## AP v1 Workflow
 
-- Clearledgr is an **embedded finance execution layer**
-- Gmail is the AP **entry point**, not the product boundary
-- Slack and Teams are approval/decision surfaces
-- ERP is the system of record
-- Admin Console is setup/ops infrastructure, not the daily AP workflow UI
-- "Streak-like" is an **internal UX doctrine** only (not external positioning)
-- WhatsApp/Telegram are **not** product surfaces
+1. AP email arrives in Gmail.
+2. Clearledgr classifies and extracts invoice/AP fields.
+3. Deterministic validation + policy/confidence checks run.
+4. If required, approval is routed to Slack/Teams.
+5. On approval and eligibility, Clearledgr posts to ERP.
+6. End-to-end audit events are recorded and surfaced.
 
-## Document Map (Use These Deliberately)
+## Runtime Shape (Agent + Skills)
 
-- `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
-  - Canonical doctrine, API/interface contracts, launch gates, release taxonomy (pilot vs GA)
-- `/Users/mombalam/Desktop/Clearledgr.v1/TODO_BACKLOG.md`
-  - Execution backlog and sequencing
-- `/Users/mombalam/Desktop/Clearledgr.v1/gaps_opportunities`
-  - Strategic gaps and expansion opportunities
-- `/Users/mombalam/Desktop/Clearledgr.v1/docs/GO_LIVE_ASSESSMENT.md`
-  - Point-in-time readiness audit (dated, not canonical doctrine)
-- `/Users/mombalam/Desktop/Clearledgr.v1/docs/HOW_IT_WORKS.md`
-  - AP v1 user-facing flow overview aligned to the current doctrine
-- `/Users/mombalam/Desktop/Clearledgr.v1/docs/AGENTIC_UX_V1_5_IMPLEMENTATION_PLAN.md`
-  - Product-expression roadmap to make AP v1 visibly agentic using the current runtime/tooling stack
-- `/Users/mombalam/Desktop/Clearledgr.v1/docs/ENGINEERING_HANDOFF_2026-02-26.md`
-  - Branch handoff summary (what landed, validation snapshot, launch docs, and merge caveats)
-- `/Users/mombalam/Desktop/Clearledgr.v1/docs/archive/MVP_SCOPE.md`
-  - Historical MVP framing (archived; not canonical)
+Clearledgr runs one core agent runtime and domain skills:
 
-## What This Repository Contains
+- Runtime intent APIs:
+  - `POST /api/agent/intents/preview`
+  - `POST /api/agent/intents/execute`
+- AP skill execution (current production domain)
+- Shared controls:
+  - policy prechecks
+  - HITL gates
+  - auditable state transitions
+  - idempotent mutating actions
+  - retry/durability semantics
 
-This repository contains the AP v1 implementation and supporting infrastructure, plus some legacy/experimental modules from earlier product directions (for example reconciliation and spreadsheet-heavy flows).
+## Repository Map
 
-Those modules may remain in the codebase, but they are not the canonical product scope for AP v1.
+### Backend
 
-## AP v1 Runtime Surfaces
+- `/Users/mombalam/Desktop/Clearledgr.v1/main.py`
+- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py`
+- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/finance_agent_runtime.py`
+- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/finance_skills/`
+- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/`
 
-1. **Gmail extension** (primary operator surface)
-   - Thread-level AP workspace
-   - Status, exceptions, next action
-   - Progressive disclosure for context and audit details
-2. **Slack / Teams**
-   - Approval and exception decisions
-   - Action callbacks with audit propagation
-3. **ERP connectors**
-   - System-of-record write-back for approved invoices
-4. **Backend API**
-   - State machine, policy checks, execution orchestration, audit
-5. **Admin Console (`/console`)**
-   - Setup, integration configuration, health checks, policies, team/admin operations
+### Embedded Surfaces
 
-## Local Development (AP v1)
+- Gmail extension: `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/`
+- Slack app: `/Users/mombalam/Desktop/Clearledgr.v1/ui/slack/`
+- Admin console surface: served from `/console` (when enabled)
+
+### Launch and Readiness Docs
+
+- Getting started: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GETTING_STARTED.md`
+- Runbooks: `/Users/mombalam/Desktop/Clearledgr.v1/docs/RUNBOOKS.md`
+- Staging drill runbook: `/Users/mombalam/Desktop/Clearledgr.v1/docs/STAGING_DRILL_RUNBOOK.md`
+- GA evidence process: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_READINESS_EVIDENCE_PROCESS.md`
+
+## Local Development
 
 ### 1. Install dependencies
 
@@ -87,232 +87,46 @@ pip install -r requirements.txt
 
 ```bash
 cp env.example .env
-# Edit .env
 ```
 
-At minimum for useful AP v1 local testing, configure:
-
-- Gmail OAuth credentials
-- Slack app credentials (including `SLACK_SIGNING_SECRET`)
-- Teams app creds if testing Teams flows (including `TEAMS_APP_ID`)
-- Anthropic key (for attachment/image extraction where applicable)
-- ERP connector credentials for the ERP(s) you are testing
-- AP runtime flags appropriate to your environment (`AP_TEMPORAL_*`, retry gating, runner trust mode)
-
-### 3. Run the backend
+### 3. Run backend
 
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 4. Useful local URLs
+### 4. Open local surfaces
 
 - API docs: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
-- Admin Console (if enabled): `http://localhost:8000/console`
+- Admin console (if enabled): `http://localhost:8000/console`
 
-If the console is feature-gated in your environment, enable the admin console flag before startup.
+### 5. Run core regression slices
 
-## Gmail Extension (AP v1)
+```bash
+PYTHONPATH=. pytest -q tests/test_finance_agent_runtime.py tests/test_api_endpoints.py::TestAgentIntentEndpoints tests/test_api_endpoints.py::TestExtensionEndpoints
+node --test ui/gmail-extension/tests/*.test.cjs
+```
 
-The Gmail extension is the primary AP operator surface.
+## Security and Operational Expectations
 
-Relevant code:
+AP v1 must enforce:
 
-- `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/`
+1. Auth boundaries on sensitive/mutating surfaces.
+2. Verified Slack/Teams callback handling.
+3. Server-side AP state-machine enforcement.
+4. Policy checks before mutating operations.
+5. Idempotent approval and posting behavior.
+6. Complete, queryable audit trail.
+7. Truthful runtime/durability reporting.
+8. Production/staging strict AP-v1 surface mode (`AP_V1_STRICT_SURFACES=true`) unless legacy compatibility is explicitly required.
 
-Notes:
+## Legacy Notes
 
-- The extension should point to your local backend URL (typically `http://127.0.0.1:8000`) for development.
-- Reload the unpacked extension in Chrome after frontend changes.
-- The AP experience should stay decision-first and low-clutter (see `PLAN.md` UX doctrine).
+This repo still contains legacy and experimental modules/docs from earlier directions.
 
-## Integrations (AP v1 Focus)
-
-### Approvals
-
-- Slack
-- Teams
-
-### ERP (AP posting target set for v1 GA doctrine)
-
-- QuickBooks
-- Xero
-- NetSuite
-- SAP
-
-Actual connector readiness and enablement are governed by the parity and launch-gate rules in `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`.
-
-## Security and Reliability Expectations (AP v1)
-
-AP v1 is expected to enforce:
-
-1. Server-side state transition validation
-2. Policy checks before mutating actions
-3. Idempotent approval actions and ERP posting
-4. Immutable audit trail coverage for transitions and external writes
-5. Clear exception handling and operator-visible outcomes
-
-These are launch-gate requirements, not optional hardening items.
-
-## Deployment Config Notes (AP v1)
-
-The AP v1 implementation now expects the following to be explicitly configured in non-local environments:
-
-- Slack callback verification: `SLACK_SIGNING_SECRET`
-- Teams callback verification: `TEAMS_APP_ID`
-- Runtime/orchestration truth flags: `AP_TEMPORAL_ENABLED`, `AP_TEMPORAL_REQUIRED`
-- Autonomous retry gating: `AP_AGENT_AUTONOMOUS_RETRY_ENABLED`, `AP_AGENT_NON_DURABLE_RETRY_ALLOWED`
-- Browser runner callback trust mode: `AP_BROWSER_RUNNER_TRUST_MODE`
-
-For pilot deployments using the browser fallback runner:
-
-- Protect `/api/agent/*` with JWT/API key auth (already enforced in-app)
-- Use service/API-key credentials for external runner callbacks (`/results`, `/complete`)
-- Prefer `AP_BROWSER_RUNNER_TRUST_MODE=api_or_admin` or tighter (`api_only`)
-
-## GA Readiness Evidence Process
-
-Repository + external artifact workflow for ERP parity, runbooks, and signoff evidence:
-
-- `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_READINESS_EVIDENCE_PROCESS.md`
-
-## Agentic UX Roadmap (AP v1.5)
-
-If the backend feels stronger than the visible UX (for example, the product looks workflow-driven rather than agentic), use:
-
-- `/Users/mombalam/Desktop/Clearledgr.v1/docs/AGENTIC_UX_V1_5_IMPLEMENTATION_PLAN.md`
-
-This roadmap is additive to AP v1 launch hardening and preserves the embedded Gmail/Slack/Teams/ERP product shape.
-
-## Legacy / Historical Notes
-
-- This repo includes historical docs and modules from earlier product iterations.
-- If a document conflicts with `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, treat `PLAN.md` as canonical.
-- Historical MVP framing has been archived at:
-  - `/Users/mombalam/Desktop/Clearledgr.v1/docs/archive/MVP_SCOPE.md`
+They are non-canonical for AP v1 unless explicitly referenced by `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`.
 
 ## License
 
-Proprietary
-Clearledgr
-
-Clearledgr builds the execution layer for finance workflows.
-
-Today, that means shipping one product only:
-
-Clearledgr AP v1  
-Embedded execution for Accounts Payable
-
-Clearledgr AP v1 is an embedded system that executes Accounts Payable workflows end-to-end inside the tools finance teams already use.
-
-It does not surface dashboards, insights, or tasks.  
-It does the work.
-
-
-What Clearledgr AP v1 does
-
-Clearledgr AP v1 runs a single, complete loop:
-
-1. Starts in email  
-   An invoice or payment request arrives in Gmail or Outlook.
-
-2. Executes inside existing tools  
-   The Clearledgr agent activates contextually in email, validates the invoice against known data, and orchestrates approvals in Slack or Teams.
-
-3. Posts to the ERP  
-   Once approved, Clearledgr writes the payable entry directly to the ERP.
-
-4. Leaves a complete audit trail 
-   Every action, decision, approval, and posting is recorded and explainable.
-
-If an invoice reaches the ERP without manual copy-paste, chasing, or stitching, Clearledgr has done its job.
-
-
-What Clearledgr is
-
-- An embedded execution system** for finance workflows  
-- An agent that coordinates humans where required and executes the rest 
-- A layer that removes manual stitching between:
-  - Email
-  - Spreadsheets
-  - Chat
-  - ERP systems
-
-Clearledgr executes work where it already happens.
-
-
-What Clearledgr is not
-
-Clearledgr is explicitly not:
-
-- A dashboard  
-- A reporting or analytics tool  
-- A finance data warehouse  
-- An AI copilot that only suggests next steps  
-- An RPA tool that clicks buttons  
-- A replacement for the ERP  
-- A generic workflow builder  
-
-If a feature does not move an invoice from email to an approved ERP entry, it does not belong here.
-
-
-Product scope
-
-Included in v1
-
-- Invoice and payment request intake from Gmail and Outlook  
-- Parsing invoices and email-based requests  
-- Vendor, amount, and duplicate validation  
-- Human approval loop via Slack or Teams  
-- ERP write-back for approved invoices  
-- Immutable audit log per invoice  
-- Clear success, rejection, or pending state  
-
-Explicitly not included
-
-- Payment execution  
-- Reconciliation  
-- FP&A  
-- Close management  
-- Dashboards or analytics  
-- Vendor onboarding workflows  
-- Multi-entity accounting  
-- Permissions or role management  
-- Zero-data-transfer guarantees  
-- Generic agent features  
-
-No other workflows exist until AP works in production.
-
-Core belief
-
-The bottleneck in modern finance is not intelligence.
-
-It is the manual stitching of work across disconnected systems.
-
-Finance teams spend their time:
-- Copy-pasting between tools  
-- Chasing approvals  
-- Explaining discrepancies they did not create  
-
-Clearledgr exists to remove that stitching.
-
-Why this wins
-
-Clearledgr does not compete with:
-- Checklists  
-- Dashboards  
-- Task trackers  
-- RPA scripts  
-
-Clearledgr replaces this sentence:
-
-> “I have to move this from email to a sheet, chase approval in Slack, and then enter it into the ERP.”
-
-That human glue is the product we remove.
-
-
-Status
-
-Clearledgr AP v1 is the only active product.  
-Everything else is out of scope until this works reliably in production.
+Proprietary.

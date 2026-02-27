@@ -4,18 +4,18 @@
 
 ## Overview
 
-Clearledgr ("we", "our", or "us") is a Chrome extension that helps finance teams process invoices, bank statements, and financial emails directly within Gmail. This privacy policy explains how we collect, use, and protect your data.
+Clearledgr ("we", "our", or "us") is a Chrome extension that helps finance teams run AP workflows directly within Gmail. This privacy policy explains how we collect, use, and protect your data.
 
 ## Data We Collect
 
 ### Email Data (Processed Locally)
 - **What**: Subject lines, sender addresses, and email content of emails you explicitly interact with
-- **Why**: To detect and process financial documents (invoices, bank statements, payment confirmations)
-- **Where**: Processed locally in your browser. Only extracted financial data (amounts, dates, vendor names) is sent to our servers for reconciliation
+- **Why**: To detect and process AP-relevant documents (invoices, payment requests, and remittance-related context)
+- **Where**: Processed in extension + backend runtime surfaces. Extracted finance fields and workflow metadata are sent to backend services for AP execution, policy checks, and auditability.
 
 ### Financial Data
 - **What**: Transaction amounts, dates, vendor names, invoice numbers
-- **Why**: To perform reconciliation, categorization, and journal entry generation
+- **Why**: To run AP workflow decisions, approvals, ERP posting, and exception handling
 - **Where**: Stored securely on our servers, encrypted at rest and in transit
 
 ### Usage Data
@@ -33,10 +33,10 @@ Clearledgr ("we", "our", or "us") is a Chrome extension that helps finance teams
 
 ## How We Use Your Data
 
-1. **Reconciliation**: Match transactions across payment gateways, bank statements, and internal records
-2. **Categorization**: Suggest GL account codes based on transaction patterns
-3. **Journal Entries**: Generate draft entries for approval before posting to your ERP
-4. **Audit Trail**: Maintain compliance-ready logs of all financial operations
+1. **Invoice/AP Processing**: Detect and extract invoice/AP request details from finance emails
+2. **Approval Routing**: Send AP approval decisions to Slack/Teams surfaces
+3. **ERP Posting**: Post approved invoices to ERP with idempotency controls
+4. **Audit Trail**: Maintain compliance-ready logs of AP state transitions and external writes
 
 ## Data Security
 
@@ -64,9 +64,9 @@ You have the right to:
 ## Third-Party Services
 
 We integrate with:
-- **Google Sheets**: For reconciliation workflows (with your explicit authorization)
-- **Slack**: For notifications and approvals (with your explicit authorization)
-- **SAP**: For ERP integration (with your explicit authorization)
+- **Slack / Teams**: For approval decisions and notifications (with your explicit authorization)
+- **ERP systems**: For AP write-back (for example SAP, NetSuite, QuickBooks, Xero)
+- **Google APIs**: For Gmail operator and runtime integration
 
 Each integration requires separate authorization and can be revoked at any time.
 

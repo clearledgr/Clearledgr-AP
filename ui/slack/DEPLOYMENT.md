@@ -65,11 +65,11 @@ Once installed, users can:
 
 | Command | Description |
 |---------|-------------|
-| `/clearledgr status` | View reconciliation status |
-| `/clearledgr run` | Trigger reconciliation |
-| `/clearledgr exceptions` | List open exceptions |
-| `/clearledgr tasks` | View pending tasks |
-| `/reconcile` | Quick reconciliation |
+| `/clearledgr status` | View AP execution status |
+| `/clearledgr run` | Trigger AP queue checks |
+| `/clearledgr exceptions` | List open AP exceptions |
+| `/clearledgr tasks` | View pending finance tasks |
+| `/reconcile` | Legacy quick AP health check command |
 
 ## Features
 

@@ -1010,10 +1010,38 @@ function buildOperatorDecisionBrief(item, {
     || metadata?.ap_decision_recommendation
     || ''
   ).trim().toLowerCase();
+  const followupAttemptCount = Number(
+    item?.followup_attempt_count
+    ?? metadata?.followup_attempt_count
+    ?? 0
+  ) || 0;
+  const followupLastSentAt = String(
+    item?.followup_last_sent_at
+    || metadata?.followup_last_sent_at
+    || ''
+  ).trim();
+  const followupNextAction = String(
+    item?.followup_next_action
+    || metadata?.followup_next_action
+    || ''
+  ).trim().toLowerCase();
+  const followupSlaDueAt = String(
+    item?.followup_sla_due_at
+    || metadata?.followup_sla_due_at
+    || ''
+  ).trim();
 
   const whatParts = [`Invoice is currently ${stateLabel}.`];
   if (nextAction) {
     whatParts.push(`Queue next action: ${nextAction.replace(/_/g, ' ')}.`);
+  }
+  if (state === 'needs_info') {
+    if (followupAttemptCount > 0) {
+      whatParts.push(`Vendor follow-up attempts: ${followupAttemptCount}.`);
+    }
+    if (followupLastSentAt) {
+      whatParts.push(`Last follow-up draft prepared ${formatDateTime(followupLastSentAt)}.`);
+    }
   }
   if (state === 'failed_post' && browserFallbackStatus?.stage) {
     whatParts.push(`Fallback status: ${String(browserFallbackStatus.stage).toLowerCase()}.`);
@@ -1043,6 +1071,17 @@ function buildOperatorDecisionBrief(item, {
     tone = 'warning';
   } else if (state === 'needs_info') {
     nextStep = 'Draft a vendor info request and collect the missing fields before attempting posting.';
+    if (followupNextAction === 'nudge_vendor_followup') {
+      nextStep = 'SLA window elapsed. Prepare the next vendor nudge draft and send after review.';
+    } else if (followupNextAction === 'await_vendor_response') {
+      nextStep = followupSlaDueAt
+        ? `Wait for vendor response until ${formatDateTime(followupSlaDueAt)}, then nudge if still unanswered.`
+        : 'Wait for vendor response, then nudge if still unanswered.';
+    } else if (followupNextAction === 'manual_vendor_escalation') {
+      nextStep = 'Follow-up attempt limit reached. Escalate to manual vendor outreach and policy review.';
+    } else if (followupNextAction === 'prepare_vendor_followup_draft') {
+      nextStep = 'Prepare and review the initial vendor follow-up draft before sending.';
+    }
     expectedOutcome = 'Invoice returns to validated/approval flow after missing details are confirmed.';
     tone = 'warning';
   } else if (state === 'needs_approval' || state === 'pending_approval') {
@@ -1372,6 +1411,21 @@ async function openNeedsInfoDraftCompose(item) {
     return { ok: false, reason: 'unavailable' };
   }
   try {
+    const followup = await queueManager.prepareVendorFollowup(item);
+    const followupStatus = String(followup?.status || '').trim().toLowerCase();
+    const followupDraftId = String(
+      followup?.needs_info_draft_id
+      || followup?.draft_id
+      || item?.needs_info_draft_id
+      || ''
+    ).trim();
+    if (followupDraftId) {
+      window.open(`https://mail.google.com/#drafts/${encodeURIComponent(followupDraftId)}`, '_blank', 'noopener');
+      return { ok: true, mode: 'draft_link', status: followupStatus || 'prepared' };
+    }
+    if (followupStatus === 'blocked') {
+      return { ok: false, reason: 'followup_attempt_limit_reached' };
+    }
     const settings = await queueManager.getSyncConfig();
     const backendUrl = String(settings?.backendUrl || '').trim();
     if (!backendUrl) {
@@ -1427,6 +1481,29 @@ function buildBatchAgentOpsSnapshot(items, agentSessionsByItem = new Map(), {
   const list = Array.isArray(items) ? items : [];
   const sessionsMap = agentSessionsByItem instanceof Map ? agentSessionsByItem : new Map();
   const thresholdMs = Number(agingApprovalHours) > 0 ? Number(agingApprovalHours) * 3600 * 1000 : 24 * 3600 * 1000;
+  const classifyRecoverability = (item) => {
+    const joined = `${String(item?.last_error || '').toLowerCase()} ${String(item?.exception_code || '').toLowerCase()}`.trim();
+    if (!joined) return { recoverable: true, reason: 'recoverable_unknown_failure' };
+    const nonRecoverableTokens = [
+      'validation', 'invalid', 'schema', 'duplicate', 'already posted',
+      'already_exists', 'permission', 'forbidden', 'unauthorized', 'auth_failed',
+      'missing required', 'unmapped', 'policy_blocked',
+    ];
+    const recoverableTokens = [
+      'timeout', 'timed out', 'temporar', 'transient', 'service unavailable',
+      'network', 'connection', 'rate limit', 'throttle', 'gateway',
+      'http_502', 'http_503', 'http_504', 'retryable', 'connector_timeout',
+    ];
+    const blocked = nonRecoverableTokens.find((token) => joined.includes(token));
+    if (blocked) {
+      return { recoverable: false, reason: `non_recoverable_${blocked.replace(/\s+/g, '_')}` };
+    }
+    const allowed = recoverableTokens.find((token) => joined.includes(token));
+    if (allowed) {
+      return { recoverable: true, reason: `recoverable_${allowed.replace(/\s+/g, '_')}` };
+    }
+    return { recoverable: true, reason: 'recoverable_unspecified' };
+  };
 
   const summarizeItem = (item, extra = {}) => {
     const ts = getItemActivityTimestampMs(item);
@@ -1442,6 +1519,10 @@ function buildBatchAgentOpsSnapshot(items, agentSessionsByItem = new Map(), {
       amountText: formatAmount(item?.amount, item?.currency || 'USD'),
       state: String(item?.state || 'received').toLowerCase(),
       nextAction: String(item?.next_action || '').trim(),
+      followupNextAction: String(item?.followup_next_action || '').trim(),
+      exceptionCode: String(item?.exception_code || '').trim(),
+      documentType: String(item?.document_type || item?.email_type || 'invoice').trim().toLowerCase(),
+      lastError: String(item?.last_error || '').trim(),
       hasSession,
       ageHours,
       ageUnknown: ageHours === null,
@@ -1478,6 +1559,57 @@ function buildBatchAgentOpsSnapshot(items, agentSessionsByItem = new Map(), {
       return bAge - aAge;
     });
 
+  const vendorFollowupCandidates = list
+    .filter((item) => String(item?.state || '').toLowerCase() === 'needs_info')
+    .map((item) => {
+      const followupAction = String(item?.followup_next_action || item?.next_action || '').trim().toLowerCase();
+      const blockedReasons = [];
+      if (!item?.id) blockedReasons.push('missing AP item id');
+      if (followupAction === 'await_vendor_response') blockedReasons.push('awaiting vendor response SLA');
+      if (followupAction === 'manual_vendor_escalation') blockedReasons.push('manual escalation required');
+      if (String(item?.next_action || '').trim().toLowerCase() === 'none') blockedReasons.push('merged/suppressed');
+      return summarizeItem(item, {
+        runnable: blockedReasons.length === 0,
+        blockedReasons,
+      });
+    });
+
+  const routeApprovalCandidates = list
+    .filter((item) => String(item?.state || '').toLowerCase() === 'validated')
+    .map((item) => {
+      const blockedReasons = [];
+      if (!item?.id) blockedReasons.push('missing AP item id');
+      if (item?.requires_field_review) blockedReasons.push('field review required');
+      if (Array.isArray(item?.confidence_blockers) && item.confidence_blockers.length > 0) blockedReasons.push('confidence blockers');
+      if (item?.budget_requires_decision) blockedReasons.push('budget decision required');
+      if (item?.exception_code) blockedReasons.push(String(item.exception_code).replace(/_/g, ' '));
+      const docType = String(item?.document_type || item?.email_type || 'invoice').trim().toLowerCase();
+      if (docType && docType !== 'invoice') blockedReasons.push('non-invoice document');
+      if (String(item?.next_action || '').trim().toLowerCase() === 'none') blockedReasons.push('merged/suppressed');
+      return summarizeItem(item, {
+        runnable: blockedReasons.length === 0,
+        blockedReasons,
+      });
+    });
+
+  const recoverableFailureCandidates = list
+    .filter((item) => String(item?.state || '').toLowerCase() === 'failed_post')
+    .map((item) => {
+      const recoverability = classifyRecoverability(item);
+      const blockedReasons = [];
+      if (!item?.id) blockedReasons.push('missing AP item id');
+      if (!recoverability.recoverable) {
+        blockedReasons.push(
+          String(recoverability.reason || 'non_recoverable_failure').replace(/^non_recoverable_/, '').replace(/_/g, ' ')
+        );
+      }
+      return summarizeItem(item, {
+        runnable: blockedReasons.length === 0,
+        blockedReasons,
+        recoverability,
+      });
+    });
+
   const summarizeGroup = (itemsList, {
     runSupported = false,
     previewOnly = false
@@ -1506,12 +1638,24 @@ function buildBatchAgentOpsSnapshot(items, agentSessionsByItem = new Map(), {
     lowRiskReady: summarizeGroup(lowRiskReadyCandidates, { runSupported: true }),
     failedPostRetryPreview: summarizeGroup(failedPostCandidates, { runSupported: false, previewOnly: true }),
     nudgeAgingApprovals: summarizeGroup(agingApprovalCandidates, { runSupported: true }),
+    prepareVendorFollowups: summarizeGroup(vendorFollowupCandidates, { runSupported: true }),
+    routeLowRiskForApproval: summarizeGroup(routeApprovalCandidates, { runSupported: true }),
+    retryRecoverableFailures: summarizeGroup(recoverableFailureCandidates, { runSupported: true }),
   };
 }
 
 function buildBatchOpsPreviewCard(operationId, snapshot) {
   const op = String(operationId || '').trim();
   const previewItems = Array.isArray(snapshot?.previewItems) ? snapshot.previewItems : [];
+  const selectedReasonCounts = snapshot?.selectedReasonCounts && typeof snapshot.selectedReasonCounts === 'object'
+    ? snapshot.selectedReasonCounts
+    : {};
+  const excludedReasonCounts = snapshot?.excludedReasonCounts && typeof snapshot.excludedReasonCounts === 'object'
+    ? snapshot.excludedReasonCounts
+    : {};
+  const reasonLines = (counts, label) => Object.entries(counts)
+    .slice(0, 4)
+    .map(([reason, count]) => `${label}: ${String(reason).replace(/[:_]/g, ' ')} (${count})`);
   const itemLines = previewItems.map((entry) => {
     const ageText = entry.ageUnknown ? 'age unknown' : entry.ageHours !== null ? `${entry.ageHours}h old` : '';
     const sessionText = entry.hasSession ? 'agent session ready' : 'no agent session';
@@ -1534,6 +1678,8 @@ function buildBatchOpsPreviewCard(operationId, snapshot) {
         `${snapshot?.runnableCount || 0} runnable now · ${snapshot?.withSessionCount || 0} with agent sessions · ${snapshot?.missingSessionCount || 0} missing sessions.`,
         `${snapshot?.blockedCount || 0} item(s) excluded due to field review, confidence blockers, budget decisions, or suppression.`,
         snapshot?.policySummary || '',
+        ...reasonLines(selectedReasonCounts, 'Selected reason'),
+        ...reasonLines(excludedReasonCounts, 'Excluded reason'),
         'Run dispatches the ERP posting macro to existing item agent sessions (preview-first; per-item confirmations may still be required).',
         ...itemLines,
       ].filter(Boolean)
@@ -1549,6 +1695,8 @@ function buildBatchOpsPreviewCard(operationId, snapshot) {
         snapshot?.selectedCount !== undefined ? `${snapshot?.selectedCount || 0} item(s) selected by current batch policy.` : '',
         `${snapshot?.withSessionCount || 0} have active agent sessions and are eligible for retry previews.`,
         snapshot?.policySummary || '',
+        ...reasonLines(selectedReasonCounts, 'Selected reason'),
+        ...reasonLines(excludedReasonCounts, 'Excluded reason'),
         'Run retries uses the canonical AP retry-post path and preserves per-item audit/state transitions.',
         ...itemLines,
       ].filter(Boolean)
@@ -1564,7 +1712,60 @@ function buildBatchOpsPreviewCard(operationId, snapshot) {
         snapshot?.selectedCount !== undefined ? `${snapshot?.selectedCount || 0} item(s) selected by current batch policy.` : '',
         `${snapshot?.withSessionCount || 0} with agent sessions · ${snapshot?.missingSessionCount || 0} without sessions (nudge path still uses audited channel callbacks).`,
         snapshot?.policySummary || '',
+        ...reasonLines(selectedReasonCounts, 'Selected reason'),
+        ...reasonLines(excludedReasonCounts, 'Excluded reason'),
         'Run sends approver nudges via the audited `/extension/approval-nudge` path and records per-item nudge events.',
+        ...itemLines,
+      ].filter(Boolean)
+    };
+  }
+
+  if (op === 'prepare_vendor_followups') {
+    return {
+      kind: 'blocker_summary',
+      title: 'Preview batch: prepare vendor follow-ups',
+      lines: [
+        `${snapshot?.count || 0} needs-info item(s) found.`,
+        snapshot?.selectedCount !== undefined ? `${snapshot?.selectedCount || 0} item(s) selected by current batch policy.` : '',
+        `${snapshot?.runnableCount || 0} eligible now · ${snapshot?.blockedCount || 0} excluded by policy prechecks.`,
+        snapshot?.policySummary || '',
+        ...reasonLines(selectedReasonCounts, 'Selected reason'),
+        ...reasonLines(excludedReasonCounts, 'Excluded reason'),
+        'Run prepares Gmail follow-up drafts for selected items and records per-item audit events.',
+        ...itemLines,
+      ].filter(Boolean)
+    };
+  }
+
+  if (op === 'route_low_risk_for_approval') {
+    return {
+      kind: 'blocker_summary',
+      title: 'Preview batch: route low-risk for approval',
+      lines: [
+        `${snapshot?.count || 0} validated item(s) found.`,
+        snapshot?.selectedCount !== undefined ? `${snapshot?.selectedCount || 0} item(s) selected by current batch policy.` : '',
+        `${snapshot?.runnableCount || 0} eligible now · ${snapshot?.blockedCount || 0} excluded by policy prechecks.`,
+        snapshot?.policySummary || '',
+        ...reasonLines(selectedReasonCounts, 'Selected reason'),
+        ...reasonLines(excludedReasonCounts, 'Excluded reason'),
+        'Run routes selected invoices into approval surfaces via audited finance-agent runtime intents.',
+        ...itemLines,
+      ].filter(Boolean)
+    };
+  }
+
+  if (op === 'retry_recoverable_failures') {
+    return {
+      kind: 'blocker_summary',
+      title: 'Preview batch: retry recoverable failures',
+      lines: [
+        `${snapshot?.count || 0} failed-post item(s) found.`,
+        snapshot?.selectedCount !== undefined ? `${snapshot?.selectedCount || 0} item(s) selected by current batch policy.` : '',
+        `${snapshot?.runnableCount || 0} eligible now · ${snapshot?.blockedCount || 0} excluded by recoverability prechecks.`,
+        snapshot?.policySummary || '',
+        ...reasonLines(selectedReasonCounts, 'Selected reason'),
+        ...reasonLines(excludedReasonCounts, 'Excluded reason'),
+        'Run calls the recoverable retry intent and reconciles result states per item.',
         ...itemLines,
       ].filter(Boolean)
     };
@@ -1600,10 +1801,12 @@ function applyBatchPolicyToGroup(group, policyConfig, { previewLimit = 4 } = {})
   const groupSafe = group || {};
   const items = Array.isArray(groupSafe.items) ? groupSafe.items : [];
   const policy = normalizeBatchOpsPolicyConfig(policyConfig);
+  const runnableItems = items.filter((entry) => entry?.runnable !== false);
+  const precheckExcluded = items.filter((entry) => entry?.runnable === false);
   const amountFiltered = [];
   const amountExcluded = [];
 
-  for (const item of items) {
+  for (const item of runnableItems) {
     const amountThreshold = policy.amountThreshold;
     if (amountThreshold === null) {
       amountFiltered.push(item);
@@ -1648,11 +1851,47 @@ function applyBatchPolicyToGroup(group, policyConfig, { previewLimit = 4 } = {})
   }
 
   const selectedItems = orderedItems.slice(0, policy.maxItems);
-  const limitExcludedCount = Math.max(0, amountFiltered.length - selectedItems.length);
-  const runnable = selectedItems.filter((entry) => entry.runnable !== false);
-  const withSession = runnable.filter((entry) => entry.hasSession);
-  const missingSession = runnable.filter((entry) => !entry.hasSession);
-  const blocked = selectedItems.filter((entry) => entry.runnable === false);
+  const limitExcluded = orderedItems.slice(selectedItems.length);
+  const limitExcludedCount = limitExcluded.length;
+  const withSession = selectedItems.filter((entry) => entry.hasSession);
+  const missingSession = selectedItems.filter((entry) => !entry.hasSession);
+
+  const summarizeReasons = (entries = []) => {
+    const counts = {};
+    for (const entry of entries) {
+      const reasons = Array.isArray(entry?.reasons) && entry.reasons.length > 0
+        ? entry.reasons
+        : ['policy_reason_unspecified'];
+      for (const reason of reasons) {
+        const key = String(reason || 'policy_reason_unspecified').trim().toLowerCase() || 'policy_reason_unspecified';
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    }
+    return counts;
+  };
+
+  const toDetail = (entry, reasons = []) => ({
+    id: String(entry?.id || ''),
+    label: `${String(entry?.vendor || 'Unknown vendor')} · ${String(entry?.invoiceNumber || 'N/A')}`,
+    reasons: Array.isArray(reasons) && reasons.length > 0 ? reasons : ['policy_reason_unspecified'],
+    hasSession: Boolean(entry?.hasSession),
+    runnable: entry?.runnable !== false,
+  });
+
+  const selectedDetails = selectedItems.map((entry) => toDetail(entry, ['selected_by_policy']));
+  const excludedDetails = [
+    ...precheckExcluded.map((entry) => toDetail(
+      entry,
+      Array.isArray(entry?.blockedReasons) && entry.blockedReasons.length > 0
+        ? entry.blockedReasons.map((reason) => `precheck:${String(reason).toLowerCase().replace(/\s+/g, '_')}`)
+        : ['precheck:policy_blocked']
+    )),
+    ...amountExcluded.map((entry) => toDetail(entry, ['policy:amount_cap_exceeded'])),
+    ...limitExcluded.map((entry) => toDetail(entry, ['policy:deferred_by_limit'])),
+  ];
+
+  const selectedReasonCounts = summarizeReasons(selectedDetails);
+  const excludedReasonCounts = summarizeReasons(excludedDetails);
 
   const policySummaryParts = [];
   policySummaryParts.push(`Policy: top ${policy.maxItems} item(s)`);
@@ -1672,6 +1911,10 @@ function applyBatchPolicyToGroup(group, policyConfig, { previewLimit = 4 } = {})
   if (limitExcludedCount > 0) {
     policySummaryParts.push(`${limitExcludedCount} deferred by limit`);
   }
+  const precheckExcludedCount = precheckExcluded.length;
+  if (precheckExcludedCount > 0) {
+    policySummaryParts.push(`${precheckExcludedCount} excluded by prechecks`);
+  }
 
   return {
     ...groupSafe,
@@ -1679,13 +1922,17 @@ function applyBatchPolicyToGroup(group, policyConfig, { previewLimit = 4 } = {})
     selectedItems,
     selectedCount: selectedItems.length,
     previewItems: selectedItems.slice(0, Math.max(1, Number(previewLimit) || 4)),
-    runnableCount: runnable.length,
+    runnableCount: selectedItems.length,
     withSessionCount: withSession.length,
     missingSessionCount: missingSession.length,
-    blockedCount: blocked.length,
+    blockedCount: precheckExcludedCount,
     policyAmountExcludedCount: amountExcluded.length,
     policyLimitExcludedCount: limitExcludedCount,
-    policySummary: policySummaryParts.join(' · ')
+    policySummary: policySummaryParts.join(' · '),
+    selectedDetails,
+    excludedDetails,
+    selectedReasonCounts,
+    excludedReasonCounts,
   };
 }
 
@@ -1700,6 +1947,7 @@ function buildBatchRefreshIndicator(operationId, targetedIds = [], queueItems = 
   let ready = 0;
   let failed = 0;
   let awaitingApproval = 0;
+  let needsInfo = 0;
   let other = 0;
   let missing = 0;
 
@@ -1713,6 +1961,7 @@ function buildBatchRefreshIndicator(operationId, targetedIds = [], queueItems = 
     else if (state === 'ready_to_post') ready += 1;
     else if (state === 'failed_post') failed += 1;
     else if (state === 'needs_approval' || state === 'pending_approval') awaitingApproval += 1;
+    else if (state === 'needs_info') needsInfo += 1;
     else other += 1;
   }
 
@@ -1724,6 +1973,15 @@ function buildBatchRefreshIndicator(operationId, targetedIds = [], queueItems = 
   }
   if (op === 'nudge_aging_approvals') {
     return `Refresh check: ${awaitingApproval} still awaiting approval, ${other} moved to other states, ${missing} missing from current queue snapshot.`;
+  }
+  if (op === 'prepare_vendor_followups') {
+    return `Refresh check: ${needsInfo} still needs info, ${awaitingApproval} awaiting approval, ${other} other states, ${missing} missing from current queue snapshot.`;
+  }
+  if (op === 'route_low_risk_for_approval') {
+    return `Refresh check: ${awaitingApproval} now awaiting approval, ${other} moved to other states, ${missing} missing from current queue snapshot.`;
+  }
+  if (op === 'retry_recoverable_failures') {
+    return `Refresh check: ${posted} posted, ${ready} ready_to_post, ${failed} still failed_post, ${other} other, ${missing} missing from current queue snapshot.`;
   }
   return `Refresh check: ${posted} posted, ${ready} ready_to_post, ${failed} failed_post, ${other} other, ${missing} missing from current queue snapshot.`;
 }
@@ -1797,6 +2055,51 @@ function buildBatchOpsRunResultCard(operationId, {
         `Attempted ${attempted} item(s): ${successCount} nudged, ${failureCount} failed, ${skippedCount} skipped.`,
         policySummary,
         'Per-item nudge outcomes are audited and appear in the item timeline/audit trail.',
+        refreshSummary,
+      ].filter(Boolean),
+      detailItems: normalizedDetailItems,
+      actions: rerunActions,
+    };
+  }
+
+  if (op === 'prepare_vendor_followups') {
+    return {
+      kind: 'batch_run_result',
+      title: 'Batch run completed: vendor follow-ups',
+      lines: [
+        `Attempted ${attempted} item(s): ${successCount} prepared, ${partialCount} waiting, ${failureCount} failed, ${skippedCount} skipped.`,
+        policySummary,
+        'Per-item follow-up outcomes are audited and keep Gmail draft state in sync.',
+        refreshSummary,
+      ].filter(Boolean),
+      detailItems: normalizedDetailItems,
+      actions: rerunActions,
+    };
+  }
+
+  if (op === 'route_low_risk_for_approval') {
+    return {
+      kind: 'batch_run_result',
+      title: 'Batch run completed: route low-risk for approval',
+      lines: [
+        `Attempted ${attempted} item(s): ${successCount} routed, ${failureCount} failed, ${skippedCount} skipped.`,
+        policySummary,
+        'Routing uses approval surfaces and emits per-item audit events.',
+        refreshSummary,
+      ].filter(Boolean),
+      detailItems: normalizedDetailItems,
+      actions: rerunActions,
+    };
+  }
+
+  if (op === 'retry_recoverable_failures') {
+    return {
+      kind: 'batch_run_result',
+      title: 'Batch run completed: retry recoverable failures',
+      lines: [
+        `Attempted ${attempted} item(s): ${successCount} posted, ${partialCount} re-queued, ${failureCount} failed, ${skippedCount} skipped.`,
+        policySummary,
+        'Retries use recoverability prechecks and workflow resume semantics.',
         refreshSummary,
       ].filter(Boolean),
       detailItems: normalizedDetailItems,
@@ -2568,6 +2871,26 @@ function renderThreadContext() {
   // needs_info follow-up — question + Gmail draft link
   const needsInfoQuestion = item.needs_info_question || metadata?.needs_info_question || null;
   const needsInfoDraftId = item.needs_info_draft_id || metadata?.needs_info_draft_id || null;
+  const followupAttemptCount = Number(item.followup_attempt_count ?? metadata?.followup_attempt_count ?? 0) || 0;
+  const followupLastSentAt = String(item.followup_last_sent_at || metadata?.followup_last_sent_at || '').trim();
+  const followupNextAction = String(item.followup_next_action || metadata?.followup_next_action || '').trim().toLowerCase();
+  const followupSlaDueAt = String(item.followup_sla_due_at || metadata?.followup_sla_due_at || '').trim();
+  const needsInfoFollowupLines = [];
+  if (followupAttemptCount > 0) {
+    needsInfoFollowupLines.push(`Follow-up attempts: ${followupAttemptCount}`);
+  }
+  if (followupLastSentAt) {
+    needsInfoFollowupLines.push(`Last draft: ${formatDateTime(followupLastSentAt)}`);
+  }
+  if (followupNextAction === 'nudge_vendor_followup') {
+    needsInfoFollowupLines.push('Next action: SLA window elapsed — prepare next nudge draft');
+  } else if (followupNextAction === 'await_vendor_response' && followupSlaDueAt) {
+    needsInfoFollowupLines.push(`Next action: Await response until ${formatDateTime(followupSlaDueAt)}`);
+  } else if (followupNextAction === 'manual_vendor_escalation') {
+    needsInfoFollowupLines.push('Next action: Escalate manually (attempt limit reached)');
+  } else if (followupNextAction === 'prepare_vendor_followup_draft') {
+    needsInfoFollowupLines.push('Next action: Prepare vendor follow-up draft');
+  }
   const stateColor = STATE_COLORS[state] || '#0f172a';
   const sourceRows = linkedSources
     .slice(0, 12)
@@ -2650,6 +2973,7 @@ function renderThreadContext() {
         <div class="cl-needs-info-banner">
           <span class="cl-needs-info-label">Info needed:</span> ${escapeHtml(needsInfoQuestion)}
           ${needsInfoDraftId ? `<a class="cl-draft-link" href="https://mail.google.com/#drafts/${escapeHtml(needsInfoDraftId)}" target="_blank" rel="noopener noreferrer">Review Draft</a>` : ''}
+          ${needsInfoFollowupLines.length ? `<div class="cl-needs-info-meta">${needsInfoFollowupLines.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}</div>` : ''}
         </div>
       ` : ''}
       ${browserFallbackStatus ? renderBrowserFallbackStatusBannerHtml(browserFallbackStatus) : ''}
@@ -3870,12 +4194,18 @@ function renderBatchAgentOps() {
     lowRiskReady: applyBatchPolicyToGroup(snapshot.lowRiskReady, policy, { previewLimit: 4 }),
     failedPostRetryPreview: applyBatchPolicyToGroup(snapshot.failedPostRetryPreview, policy, { previewLimit: 4 }),
     nudgeAgingApprovals: applyBatchPolicyToGroup(snapshot.nudgeAgingApprovals, policy, { previewLimit: 4 }),
+    prepareVendorFollowups: applyBatchPolicyToGroup(snapshot.prepareVendorFollowups, policy, { previewLimit: 4 }),
+    routeLowRiskForApproval: applyBatchPolicyToGroup(snapshot.routeLowRiskForApproval, policy, { previewLimit: 4 }),
+    retryRecoverableFailures: applyBatchPolicyToGroup(snapshot.retryRecoverableFailures, policy, { previewLimit: 4 }),
   };
 
   const hasAnyBatchCandidates = (
     (snapshot.lowRiskReady?.count || 0)
     + (snapshot.failedPostRetryPreview?.count || 0)
     + (snapshot.nudgeAgingApprovals?.count || 0)
+    + (snapshot.prepareVendorFollowups?.count || 0)
+    + (snapshot.routeLowRiskForApproval?.count || 0)
+    + (snapshot.retryRecoverableFailures?.count || 0)
   ) > 0;
 
   if (!hasAnyBatchCandidates) {
@@ -3912,6 +4242,33 @@ function renderBatchAgentOps() {
       runSupported: true,
       runLabel: 'Send nudges',
       previewLabel: 'Preview nudges'
+    },
+    {
+      id: 'prepare_vendor_followups',
+      title: 'Prepare vendor follow-ups',
+      subtitle: 'Batch prepare needs-info follow-up drafts with SLA/attempt prechecks.',
+      counts: filteredGroups.prepareVendorFollowups,
+      runSupported: true,
+      runLabel: 'Prepare drafts',
+      previewLabel: 'Preview follow-ups'
+    },
+    {
+      id: 'route_low_risk_for_approval',
+      title: 'Route low-risk for approval',
+      subtitle: 'Batch route validated low-risk invoices into approval surfaces.',
+      counts: filteredGroups.routeLowRiskForApproval,
+      runSupported: true,
+      runLabel: 'Route approvals',
+      previewLabel: 'Preview routing'
+    },
+    {
+      id: 'retry_recoverable_failures',
+      title: 'Retry recoverable failures',
+      subtitle: 'Batch retry failed-post items that pass recoverability checks.',
+      counts: filteredGroups.retryRecoverableFailures,
+      runSupported: true,
+      runLabel: 'Run recoverable retries',
+      previewLabel: 'Preview retries'
     }
   ];
 
@@ -4006,6 +4363,10 @@ function renderBatchAgentOps() {
     const targetIdSet = Array.isArray(targetItemIds) && targetItemIds.length > 0
       ? new Set(targetItemIds.map((id) => String(id || '').trim()).filter(Boolean))
       : null;
+    const targetSignature = targetIdSet ? Array.from(targetIdSet).sort().join(',') : 'auto';
+    const runWindow = Math.floor(Date.now() / 10000);
+    const batchRunId = `batch:${op}:${targetSignature}:${runWindow}`;
+    const batchItemIdempotencyKey = (itemId) => `${batchRunId}:${String(itemId || 'unknown')}`;
     const selectByTargetIds = (entries) => {
       const list = Array.isArray(entries) ? entries : [];
       if (!targetIdSet) return list;
@@ -4017,10 +4378,12 @@ function renderBatchAgentOps() {
 
     try {
       if (dryRun) {
-        const previewSource =
-          op === 'process_low_risk_ready' ? { ...filteredGroups.lowRiskReady, agingApprovalHours: snapshot.agingApprovalHours }
-            : op === 'retry_failed_posts_preview' ? { ...filteredGroups.failedPostRetryPreview, agingApprovalHours: snapshot.agingApprovalHours }
-              : { ...filteredGroups.nudgeAgingApprovals, agingApprovalHours: snapshot.agingApprovalHours };
+        let previewSource = { ...filteredGroups.nudgeAgingApprovals, agingApprovalHours: snapshot.agingApprovalHours };
+        if (op === 'process_low_risk_ready') previewSource = { ...filteredGroups.lowRiskReady, agingApprovalHours: snapshot.agingApprovalHours };
+        if (op === 'retry_failed_posts_preview') previewSource = { ...filteredGroups.failedPostRetryPreview, agingApprovalHours: snapshot.agingApprovalHours };
+        if (op === 'prepare_vendor_followups') previewSource = { ...filteredGroups.prepareVendorFollowups, agingApprovalHours: snapshot.agingApprovalHours };
+        if (op === 'route_low_risk_for_approval') previewSource = { ...filteredGroups.routeLowRiskForApproval, agingApprovalHours: snapshot.agingApprovalHours };
+        if (op === 'retry_recoverable_failures') previewSource = { ...filteredGroups.retryRecoverableFailures, agingApprovalHours: snapshot.agingApprovalHours };
         batchOpsState = {
           mode: op,
           loading: false,
@@ -4268,6 +4631,270 @@ function renderBatchAgentOps() {
         };
         renderBatchAgentOps();
         showToast(`Sent ${nudged} approval nudge(s)`);
+        return { ok: true };
+      }
+
+      if (op === 'prepare_vendor_followups') {
+        const candidates = selectByTargetIds(filteredGroups.prepareVendorFollowups?.selectedItems || [])
+          .filter((entry) => entry.id)
+          .slice(0, Math.max(1, policy.maxItems));
+        let prepared = 0;
+        let waiting = 0;
+        let failed = 0;
+        let skipped = 0;
+        const itemResults = [];
+        for (const candidate of candidates) {
+          const label = `${candidate.vendor || 'Unknown vendor'} · ${candidate.invoiceNumber || 'N/A'}`;
+          const item = (Array.isArray(queueState) ? queueState : []).find((q) => q.id === candidate.id || q.thread_id === candidate.threadId);
+          if (!item) {
+            skipped += 1;
+            itemResults.push({
+              itemId: candidate.id || '',
+              ok: false,
+              status: 'skipped',
+              label,
+              detail: 'Item no longer present in queue',
+              retryable: false
+            });
+            continue;
+          }
+          const result = await queueManager.prepareVendorFollowup(item, {
+            reason: 'batch_prepare_vendor_followups',
+            force: false,
+            idempotencyKey: batchItemIdempotencyKey(item.id || candidate.id || candidate.threadId || ''),
+          });
+          const status = String(result?.status || 'error').trim().toLowerCase() || 'error';
+          if (status === 'prepared') {
+            prepared += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              ok: true,
+              status,
+              label,
+              detail: result?.draft_id ? `Draft prepared (${result.draft_id})` : 'Draft prepared',
+              retryable: false
+            });
+          } else if (status === 'waiting_sla') {
+            waiting += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              partial: true,
+              status,
+              label,
+              detail: result?.next_allowed_at ? `Waiting until ${result.next_allowed_at}` : 'Waiting for SLA window',
+              retryable: false
+            });
+          } else {
+            failed += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              ok: false,
+              status,
+              label,
+              detail: String(result?.reason || result?.detail || 'Follow-up preparation failed'),
+              retryable: true
+            });
+          }
+        }
+        if (queueManager?.syncQueueWithBackend) {
+          await queueManager.syncQueueWithBackend({ updateStatus: false });
+        }
+        const refreshSummary = buildBatchRefreshIndicator(op, candidates.map((entry) => entry.id), queueState);
+        batchOpsState = {
+          mode: op,
+          loading: false,
+          error: '',
+          data: buildBatchOpsRunResultCard(op, {
+            attempted: candidates.length,
+            successCount: prepared,
+            partialCount: waiting,
+            failureCount: failed,
+            skippedCount: skipped,
+            items: itemResults,
+            policySummary: filteredGroups.prepareVendorFollowups?.policySummary || '',
+            refreshSummary,
+          })
+        };
+        renderBatchAgentOps();
+        showToast(`Prepared ${prepared} vendor follow-up draft(s)`);
+        return { ok: true };
+      }
+
+      if (op === 'route_low_risk_for_approval') {
+        const candidates = selectByTargetIds(filteredGroups.routeLowRiskForApproval?.selectedItems || [])
+          .filter((entry) => entry.id)
+          .slice(0, Math.max(1, policy.maxItems));
+        let routed = 0;
+        let failed = 0;
+        let skipped = 0;
+        const itemResults = [];
+        for (const candidate of candidates) {
+          const label = `${candidate.vendor || 'Unknown vendor'} · ${candidate.invoiceNumber || 'N/A'}`;
+          const item = (Array.isArray(queueState) ? queueState : []).find((q) => q.id === candidate.id || q.thread_id === candidate.threadId);
+          if (!item) {
+            skipped += 1;
+            itemResults.push({
+              itemId: candidate.id || '',
+              ok: false,
+              status: 'skipped',
+              label,
+              detail: 'Item no longer present in queue',
+              retryable: false
+            });
+            continue;
+          }
+          const result = await queueManager.routeLowRiskForApproval(item, {
+            reason: 'batch_route_low_risk_for_approval',
+            idempotencyKey: batchItemIdempotencyKey(item.id || candidate.id || candidate.threadId || ''),
+          });
+          const status = String(result?.status || 'error').trim().toLowerCase() || 'error';
+          if (status === 'pending_approval') {
+            routed += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              ok: true,
+              status,
+              label,
+              detail: 'Routed to approval surfaces',
+              retryable: false
+            });
+          } else if (status === 'blocked') {
+            skipped += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              partial: true,
+              status,
+              label,
+              detail: String(result?.reason || 'Policy precheck blocked routing'),
+              retryable: false
+            });
+          } else {
+            failed += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              ok: false,
+              status,
+              label,
+              detail: String(result?.reason || result?.detail || 'Approval routing failed'),
+              retryable: true
+            });
+          }
+        }
+        if (queueManager?.syncQueueWithBackend) {
+          await queueManager.syncQueueWithBackend({ updateStatus: false });
+        }
+        const refreshSummary = buildBatchRefreshIndicator(op, candidates.map((entry) => entry.id), queueState);
+        batchOpsState = {
+          mode: op,
+          loading: false,
+          error: '',
+          data: buildBatchOpsRunResultCard(op, {
+            attempted: candidates.length,
+            successCount: routed,
+            failureCount: failed,
+            skippedCount: skipped,
+            items: itemResults,
+            policySummary: filteredGroups.routeLowRiskForApproval?.policySummary || '',
+            refreshSummary,
+          })
+        };
+        renderBatchAgentOps();
+        showToast(`Routed ${routed} item(s) for approval`);
+        return { ok: true };
+      }
+
+      if (op === 'retry_recoverable_failures') {
+        const candidates = selectByTargetIds(filteredGroups.retryRecoverableFailures?.selectedItems || [])
+          .filter((entry) => entry.id)
+          .slice(0, Math.max(1, policy.maxItems));
+        let posted = 0;
+        let requeued = 0;
+        let failed = 0;
+        let skipped = 0;
+        const itemResults = [];
+        for (const candidate of candidates) {
+          const label = `${candidate.vendor || 'Unknown vendor'} · ${candidate.invoiceNumber || 'N/A'}`;
+          const item = (Array.isArray(queueState) ? queueState : []).find((q) => q.id === candidate.id || q.thread_id === candidate.threadId);
+          if (!item) {
+            skipped += 1;
+            itemResults.push({
+              itemId: candidate.id || '',
+              ok: false,
+              status: 'skipped',
+              label,
+              detail: 'Item no longer present in queue',
+              retryable: false
+            });
+            continue;
+          }
+          const result = await queueManager.retryRecoverableFailure(item, {
+            reason: 'batch_retry_recoverable_failures',
+            idempotencyKey: batchItemIdempotencyKey(item.id || candidate.id || candidate.threadId || ''),
+          });
+          const status = String(result?.status || 'error').trim().toLowerCase() || 'error';
+          if (status === 'posted') {
+            posted += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              ok: true,
+              status,
+              label,
+              detail: result?.erp_reference ? `ERP ref ${result.erp_reference}` : 'Posted to ERP',
+              retryable: false
+            });
+          } else if (status === 'ready_to_post') {
+            requeued += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              partial: true,
+              status,
+              label,
+              detail: 'Returned to ready_to_post',
+              retryable: false
+            });
+          } else if (status === 'blocked') {
+            skipped += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              partial: true,
+              status,
+              label,
+              detail: String(result?.reason || 'Recoverability precheck blocked retry'),
+              retryable: false
+            });
+          } else {
+            failed += 1;
+            itemResults.push({
+              itemId: item.id || candidate.id || '',
+              ok: false,
+              status,
+              label,
+              detail: String(result?.reason || result?.detail || 'Recoverable retry failed'),
+              retryable: true
+            });
+          }
+        }
+        if (queueManager?.syncQueueWithBackend) {
+          await queueManager.syncQueueWithBackend({ updateStatus: false });
+        }
+        const refreshSummary = buildBatchRefreshIndicator(op, candidates.map((entry) => entry.id), queueState);
+        batchOpsState = {
+          mode: op,
+          loading: false,
+          error: '',
+          data: buildBatchOpsRunResultCard(op, {
+            attempted: candidates.length,
+            successCount: posted,
+            partialCount: requeued,
+            failureCount: failed,
+            skippedCount: skipped,
+            items: itemResults,
+            policySummary: filteredGroups.retryRecoverableFailures?.policySummary || '',
+            refreshSummary,
+          })
+        };
+        renderBatchAgentOps();
+        showToast(`Recoverable retries complete (${posted} posted, ${requeued} re-queued)`);
         return { ok: true };
       }
 
@@ -4805,6 +5432,10 @@ function initializeSidebar() {
         font-weight: 600;
         color: #b45309;
         margin-right: 3px;
+      }
+      .cl-needs-info-meta {
+        margin-top: 4px;
+        color: #92400e;
       }
       .cl-draft-link {
         display: inline-block;

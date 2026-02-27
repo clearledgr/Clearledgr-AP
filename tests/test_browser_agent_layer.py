@@ -13,6 +13,7 @@ from main import app
 from clearledgr.api import agent_sessions as agent_sessions_module
 from clearledgr.api import admin_console as admin_console_module
 from clearledgr.api import ops as ops_module
+from clearledgr.api import ap_items as ap_items_module
 from clearledgr.core import database as db_module
 from clearledgr.core.auth import TokenData
 from clearledgr.services import browser_agent as browser_agent_module
@@ -44,12 +45,14 @@ def client(db):
     app.dependency_overrides[agent_sessions_module.get_current_user] = _fake_user
     app.dependency_overrides[ops_module.get_current_user] = _fake_user
     app.dependency_overrides[admin_console_module.get_current_user] = _fake_user
+    app.dependency_overrides[ap_items_module.get_current_user] = _fake_user
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
         app.dependency_overrides.pop(ops_module.get_current_user, None)
         app.dependency_overrides.pop(admin_console_module.get_current_user, None)
+        app.dependency_overrides.pop(ap_items_module.get_current_user, None)
 
 
 @pytest.fixture()
@@ -57,6 +60,7 @@ def unauth_client(db):
     app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
     app.dependency_overrides.pop(ops_module.get_current_user, None)
     app.dependency_overrides.pop(admin_console_module.get_current_user, None)
+    app.dependency_overrides.pop(ap_items_module.get_current_user, None)
     return TestClient(app)
 
 
@@ -245,6 +249,34 @@ def test_browser_fallback_complete_endpoint_requires_auth(unauth_client, db):
 def test_ops_endpoints_require_auth(unauth_client):
     response = unauth_client.get("/api/ops/browser-agent?organization_id=default")
     assert response.status_code == 401
+
+
+def test_ap_items_endpoints_require_auth(unauth_client, db):
+    item = _create_item(db)
+    ap_item_id = str(item["id"])
+
+    assert unauth_client.get(f"/api/ap/items/{ap_item_id}/audit").status_code == 401
+    assert unauth_client.get(f"/api/ap/items/{ap_item_id}/sources").status_code == 401
+    assert unauth_client.get(f"/api/ap/items/{ap_item_id}/context").status_code == 401
+    assert unauth_client.post(
+        f"/api/ap/items/{ap_item_id}/sources/link",
+        json={"source_type": "gmail_thread", "source_ref": "thread-1"},
+    ).status_code == 401
+    assert unauth_client.post(
+        f"/api/ap/items/{ap_item_id}/resubmit",
+        json={"actor_id": "user", "reason": "fix"},
+    ).status_code == 401
+    assert unauth_client.post(
+        f"/api/ap/items/{ap_item_id}/merge",
+        json={"source_ap_item_id": "AP-OTHER", "actor_id": "user", "reason": "duplicate"},
+    ).status_code == 401
+    assert unauth_client.post(
+        f"/api/ap/items/{ap_item_id}/split",
+        json={"actor_id": "user", "reason": "split", "sources": []},
+    ).status_code == 401
+    assert unauth_client.post(
+        f"/api/ap/items/{ap_item_id}/retry-post?organization_id=default",
+    ).status_code == 401
 
 
 def test_read_action_allowed_and_audited(client, db):

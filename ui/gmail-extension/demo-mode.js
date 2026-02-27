@@ -208,9 +208,14 @@ const DEMO_RECONCILIATION_RESULT = {
 };
 
 const DEMO_VITA_RESPONSES = {
+  "ap queue status": {
+    text: "Here's your AP queue status:\n\n**44 items** processed in the last run\n**3 items** need review before posting\n\nOpen exceptions:\n1. Missing PO number for AWS invoice\n2. Potential duplicate invoice for Zoom\n3. Needs vendor clarification for transfer reference\n\nDo you want me to route the eligible low-risk items for approval?",
+    suggestions: ["Route low-risk approvals", "Show exceptions", "Open audit trail"]
+  },
+  // Backward-compatible alias for older prompt phrasing.
   "reconciliation status": {
-    text: "Here's your reconciliation status:\n\n**44 transactions** auto-matched (93.6% match rate)\n**3 items** need your review\n\nThe exceptions are:\n1. Unknown transfer of $5,234 - looks like a customer prepayment\n2. Duplicate charge from AWS - I've flagged for dispute\n3. Missing invoice for Zoom payment\n\nWant me to create journal entries for the matched items?",
-    suggestions: ["Create journal entries", "Show exceptions", "Export to Sheets"]
+    text: "Here's your AP queue status:\n\n**44 items** processed in the last run\n**3 items** need review before posting\n\nOpen exceptions:\n1. Missing PO number for AWS invoice\n2. Potential duplicate invoice for Zoom\n3. Needs vendor clarification for transfer reference\n\nDo you want me to route the eligible low-risk items for approval?",
+    suggestions: ["Route low-risk approvals", "Show exceptions", "Open audit trail"]
   },
   "pending invoices": {
     text: "You have **4 pending invoices** totaling **$18,051.71**:\n\n1. **AWS** - $12,847.32 (due Feb 15)\n2. **Stripe** - $3,421.89 (due Jan 28)\n3. **Gusto** - $892.50 (due Jan 17) Due soon.\n4. **HubSpot** - $890.00 (due Jan 26)\n\nThe Gusto invoice is due in 2 days. Should I schedule the payment?",
@@ -221,8 +226,8 @@ const DEMO_VITA_RESPONSES = {
     suggestions: ["View in QuickBooks", "Generate AP report", "Schedule payments"]
   },
   "default": {
-    text: "I can help you with:\n\n• **Reconciliation** - Match bank transactions to invoices\n• **Invoice processing** - Extract and categorize invoices\n• **Journal entries** - Create and post entries to your ERP\n• **Reports** - Generate financial summaries\n\nWhat would you like to do?",
-    suggestions: ["Show pending invoices", "Reconciliation status", "Process bank statement"]
+    text: "I can help you with:\n\n• **Invoice/AP processing** - Extract and validate invoice fields\n• **Approval routing** - Send decisions to Slack/Teams\n• **ERP posting** - Post approved invoices with audit trace\n• **Exception handling** - Resolve blocked AP items with next-step guidance\n\nWhat would you like to do?",
+    suggestions: ["Show pending invoices", "AP queue status", "Show exceptions"]
   }
 };
 
@@ -252,8 +257,12 @@ function getDemoEmailById(id) {
 function getDemoVitaResponse(message) {
   const lowerMessage = message.toLowerCase();
   
-  if (lowerMessage.includes("reconcil") || lowerMessage.includes("match")) {
-    return DEMO_VITA_RESPONSES["reconciliation status"];
+  if (
+    lowerMessage.includes("reconcil") ||
+    lowerMessage.includes("match") ||
+    (lowerMessage.includes("ap") && lowerMessage.includes("queue"))
+  ) {
+    return DEMO_VITA_RESPONSES["ap queue status"];
   }
   if (lowerMessage.includes("pending") || lowerMessage.includes("invoice")) {
     return DEMO_VITA_RESPONSES["pending invoices"];

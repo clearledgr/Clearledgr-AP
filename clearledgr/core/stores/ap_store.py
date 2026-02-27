@@ -38,7 +38,7 @@ class APStore:
         "invoice_key", "invoice_date", "due_date", "subject", "sender",
         "confidence", "approval_required",
         "approved_by", "approved_at", "rejected_by", "rejected_at",
-        "rejection_reason", "supersedes_ap_item_id", "superseded_by_ap_item_id",
+        "rejection_reason", "supersedes_ap_item_id", "supersedes_invoice_key", "superseded_by_ap_item_id",
         "resubmission_reason", "erp_reference", "erp_posted_at",
         "last_error", "metadata", "updated_at",
         "workflow_id", "run_id", "approval_surface",
@@ -76,10 +76,10 @@ class APStore:
             (id, invoice_key, thread_id, message_id, subject, sender, vendor_name, amount, currency,
             invoice_number, invoice_date, due_date, state, confidence, approval_required,
              approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
-             supersedes_ap_item_id, superseded_by_ap_item_id, resubmission_reason, erp_reference,
+             supersedes_ap_item_id, supersedes_invoice_key, superseded_by_ap_item_id, resubmission_reason, erp_reference,
              erp_posted_at, workflow_id, run_id, approval_surface, approval_policy_version, post_attempted_at,
              last_error, organization_id, user_id, created_at, updated_at, metadata, field_confidences)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         values = (
             item_id,
@@ -103,6 +103,7 @@ class APStore:
             payload.get("rejected_at"),
             payload.get("rejection_reason"),
             payload.get("supersedes_ap_item_id"),
+            payload.get("supersedes_invoice_key"),
             payload.get("superseded_by_ap_item_id"),
             payload.get("resubmission_reason"),
             payload.get("erp_reference"),

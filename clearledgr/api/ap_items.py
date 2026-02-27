@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
-from clearledgr.core.auth import get_optional_user
+from clearledgr.core.auth import get_current_user
 from clearledgr.core.database import ClearledgrDB, get_db
 from clearledgr.core.ap_states import APState
 from clearledgr.core.errors import safe_error
@@ -88,6 +89,57 @@ def _parse_iso(raw: Any) -> Optional[datetime]:
         return None
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _vendor_followup_sla_hours() -> int:
+    try:
+        hours = int(os.getenv("CLEARLEDGR_VENDOR_FOLLOWUP_SLA_HOURS", "24"))
+    except (TypeError, ValueError):
+        hours = 24
+    return max(1, min(hours, 168))
+
+
+def _vendor_followup_max_attempts() -> int:
+    try:
+        attempts = int(os.getenv("CLEARLEDGR_VENDOR_FOLLOWUP_MAX_ATTEMPTS", "3"))
+    except (TypeError, ValueError):
+        attempts = 3
+    return max(1, min(attempts, 10))
+
+
+def _derive_followup_next_action(
+    *,
+    state: str,
+    metadata: Dict[str, Any],
+    now: Optional[datetime] = None,
+) -> Optional[str]:
+    if state != APState.NEEDS_INFO.value:
+        return None
+    normalized = str(metadata.get("followup_next_action") or "").strip().lower()
+    attempts = max(0, _safe_int(metadata.get("followup_attempt_count"), 0))
+    max_attempts = _vendor_followup_max_attempts()
+    now_utc = now or datetime.now(timezone.utc)
+
+    due_at = _parse_iso(metadata.get("followup_sla_due_at"))
+    if due_at is None:
+        last_sent_at = _parse_iso(metadata.get("followup_last_sent_at"))
+        if last_sent_at is not None:
+            due_at = last_sent_at + timedelta(hours=_vendor_followup_sla_hours())
+
+    if attempts >= max_attempts:
+        return "manual_vendor_escalation"
+    if due_at is not None and due_at <= now_utc:
+        return "nudge_vendor_followup"
+    if attempts <= 0 and not str(metadata.get("needs_info_draft_id") or "").strip():
+        return "prepare_vendor_followup_draft"
+    return normalized or "await_vendor_response"
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -131,7 +183,8 @@ def _derive_next_action(payload: Dict[str, Any]) -> str:
     if payload.get("requires_field_review"):
         return "review_fields"
     if state in {APState.NEEDS_INFO.value}:
-        return "request_info"
+        followup_next = str(payload.get("followup_next_action") or "").strip().lower()
+        return followup_next or "request_info"
     if state in {APState.FAILED_POST.value}:
         return "retry_post"
     if state in {APState.READY_TO_POST.value, APState.APPROVED.value}:
@@ -158,17 +211,22 @@ def _normalized_state_value(raw: Any) -> str:
     return value
 
 
-def _resubmission_invoice_key(source: Dict[str, Any], request: ResubmitRejectedItemRequest) -> str:
+def _superseded_invoice_key(source: Dict[str, Any], request: ResubmitRejectedItemRequest) -> str:
     base_key = str(source.get("invoice_key") or "").strip()
-    if not base_key:
-        base_key = "|".join(
-            [
-                str(request.vendor_name or source.get("vendor_name") or "").strip().lower(),
-                str(request.invoice_number or source.get("invoice_number") or "").strip(),
-                str(request.amount if request.amount is not None else source.get("amount") or "").strip(),
-                str(request.currency or source.get("currency") or "USD").strip().upper(),
-            ]
-        )
+    if base_key:
+        return base_key
+    return "|".join(
+        [
+            str(request.vendor_name or source.get("vendor_name") or "").strip().lower(),
+            str(request.invoice_number or source.get("invoice_number") or "").strip(),
+            str(request.amount if request.amount is not None else source.get("amount") or "").strip(),
+            str(request.currency or source.get("currency") or "USD").strip().upper(),
+        ]
+    )
+
+
+def _resubmission_invoice_key(source: Dict[str, Any], request: ResubmitRejectedItemRequest) -> str:
+    base_key = _superseded_invoice_key(source, request)
     source_hint = (
         str(request.message_id or "").strip()
         or str(request.thread_id or "").strip()
@@ -424,6 +482,7 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
     payload["source_count"] = max(parsed_meta_source_count, len(sources))
     payload["primary_source"] = _build_primary_source(payload, sources)
     payload["supersedes_ap_item_id"] = payload.get("supersedes_ap_item_id") or metadata.get("supersedes_ap_item_id")
+    payload["supersedes_invoice_key"] = payload.get("supersedes_invoice_key") or metadata.get("supersedes_invoice_key")
     payload["superseded_by_ap_item_id"] = payload.get("superseded_by_ap_item_id") or metadata.get("superseded_by_ap_item_id")
     payload["resubmission_reason"] = payload.get("resubmission_reason") or metadata.get("resubmission_reason")
     payload["is_resubmission"] = bool(payload.get("supersedes_ap_item_id"))
@@ -482,7 +541,6 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         _doc_type = "receipt" if any(kw in _subject_lc for kw in _receipt_kw) else "invoice"
     payload["document_type"] = _doc_type
     payload["conflict_actions"] = metadata.get("conflict_actions") if isinstance(metadata.get("conflict_actions"), list) else []
-    payload["next_action"] = _derive_next_action(payload)
     if metadata.get("priority_score") is not None:
         payload["priority_score"] = metadata.get("priority_score")
     elif hasattr(db, "_worklist_priority_score"):
@@ -516,6 +574,16 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
     payload["needs_info_question"] = needs_info_question if needs_info_question else None
     needs_info_draft_id = metadata.get("needs_info_draft_id")
     payload["needs_info_draft_id"] = needs_info_draft_id if needs_info_draft_id else None
+    followup_last_sent_at = metadata.get("followup_last_sent_at")
+    payload["followup_last_sent_at"] = str(followup_last_sent_at).strip() if followup_last_sent_at else None
+    payload["followup_attempt_count"] = max(0, _safe_int(metadata.get("followup_attempt_count"), 0))
+    followup_sla_due_at = metadata.get("followup_sla_due_at")
+    payload["followup_sla_due_at"] = str(followup_sla_due_at).strip() if followup_sla_due_at else None
+    payload["followup_next_action"] = _derive_followup_next_action(
+        state=str(payload.get("state") or "").strip().lower(),
+        metadata=metadata,
+    )
+    payload["next_action"] = _derive_next_action(payload)
 
     # Correction learning: surface GL suggestion + previously-corrected fields.
     # suggest() is in-memory after rule load — fast per call.
@@ -761,6 +829,7 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
         },
         "supersession": {
             "supersedes_ap_item_id": item.get("supersedes_ap_item_id") or metadata.get("supersedes_ap_item_id"),
+            "supersedes_invoice_key": item.get("supersedes_invoice_key") or metadata.get("supersedes_invoice_key"),
             "superseded_by_ap_item_id": item.get("superseded_by_ap_item_id") or metadata.get("superseded_by_ap_item_id"),
             "resubmission_reason": item.get("resubmission_reason") or metadata.get("resubmission_reason"),
         },
@@ -794,7 +863,7 @@ def get_ap_aggregation_metrics(
     organization_id: str = Query(default="default"),
     limit: int = Query(default=10000, ge=100, le=50000),
     vendor_limit: int = Query(default=10, ge=1, le=50),
-    _user=Depends(get_optional_user),
+    _user=Depends(get_current_user),
 ) -> Dict[str, Any]:
     """AP aggregation metrics for embedded approvals and ops consumers."""
     verify_org_access(organization_id, _user)
@@ -808,9 +877,14 @@ def get_ap_aggregation_metrics(
 
 
 @router.get("/{ap_item_id}/audit")
-def get_ap_item_audit(ap_item_id: str, browser_only: bool = Query(False)) -> Dict[str, Any]:
+def get_ap_item_audit(
+    ap_item_id: str,
+    browser_only: bool = Query(False),
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
     db = get_db()
-    _require_item(db, ap_item_id)
+    item = _require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
     events = db.list_ap_audit_events(ap_item_id)
     if browser_only:
         events = [event for event in events if str(event.get("event_type") or "").startswith("browser_")]
@@ -818,17 +892,26 @@ def get_ap_item_audit(ap_item_id: str, browser_only: bool = Query(False)) -> Dic
 
 
 @router.get("/{ap_item_id}/sources")
-def get_ap_item_sources(ap_item_id: str) -> Dict[str, Any]:
+def get_ap_item_sources(
+    ap_item_id: str,
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
     db = get_db()
-    _require_item(db, ap_item_id)
+    item = _require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
     sources = db.list_ap_item_sources(ap_item_id)
     return {"sources": sources, "source_count": len(sources)}
 
 
 @router.post("/{ap_item_id}/sources/link")
-def link_ap_item_source(ap_item_id: str, request: LinkSourceRequest) -> Dict[str, Any]:
+def link_ap_item_source(
+    ap_item_id: str,
+    request: LinkSourceRequest,
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
     db = get_db()
-    _require_item(db, ap_item_id)
+    item = _require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
     source = db.link_ap_item_source(
         {
             "ap_item_id": ap_item_id,
@@ -844,9 +927,14 @@ def link_ap_item_source(ap_item_id: str, request: LinkSourceRequest) -> Dict[str
 
 
 @router.get("/{ap_item_id}/context")
-def get_ap_item_context(ap_item_id: str, refresh: bool = Query(False)) -> Dict[str, Any]:
+def get_ap_item_context(
+    ap_item_id: str,
+    refresh: bool = Query(False),
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
     db = get_db()
     item = _require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
 
     if not refresh:
         cached = db.get_ap_item_context_cache(ap_item_id)
@@ -874,7 +962,7 @@ def get_ap_item_context(ap_item_id: str, refresh: bool = Query(False)) -> Dict[s
 def resubmit_rejected_item(
     ap_item_id: str,
     request: ResubmitRejectedItemRequest,
-    _user=Depends(get_optional_user),
+    _user=Depends(get_current_user),
 ) -> Dict[str, Any]:
     db = get_db()
     source = _require_item(db, ap_item_id)
@@ -894,6 +982,8 @@ def resubmit_rejected_item(
                 "ap_item": build_worklist_item(db, existing_child),
                 "linkage": {
                     "supersedes_ap_item_id": source["id"],
+                    "supersedes_invoice_key": existing_child.get("supersedes_invoice_key")
+                    or source.get("invoice_key"),
                     "superseded_by_ap_item_id": existing_child_id,
                 },
             }
@@ -913,6 +1003,7 @@ def resubmit_rejected_item(
     ):
         new_meta.pop(stale_key, None)
     new_meta["supersedes_ap_item_id"] = source["id"]
+    new_meta["supersedes_invoice_key"] = _superseded_invoice_key(source, request)
     new_meta["resubmission_reason"] = request.reason
     new_meta["resubmission"] = {
         "source_ap_item_id": source["id"],
@@ -949,6 +1040,7 @@ def resubmit_rejected_item(
         "po_number": source.get("po_number"),
         "attachment_url": source.get("attachment_url"),
         "supersedes_ap_item_id": source["id"],
+        "supersedes_invoice_key": _superseded_invoice_key(source, request),
         "superseded_by_ap_item_id": None,
         "resubmission_reason": request.reason,
         "metadata": new_meta,
@@ -1021,6 +1113,8 @@ def resubmit_rejected_item(
         "copied_sources": copied_sources,
         "linkage": {
             "supersedes_ap_item_id": source["id"],
+            "supersedes_invoice_key": created.get("supersedes_invoice_key")
+            or _superseded_invoice_key(source, request),
             "superseded_by_ap_item_id": created["id"],
             "resubmission_reason": request.reason,
         },
@@ -1029,7 +1123,7 @@ def resubmit_rejected_item(
 
 
 @router.post("/{ap_item_id}/merge")
-def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(get_optional_user)) -> Dict[str, Any]:
+def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(get_current_user)) -> Dict[str, Any]:
     db = get_db()
     target = _require_item(db, ap_item_id)
     verify_org_access(target.get("organization_id") or "default", _user)
@@ -1153,7 +1247,7 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(ge
 
 
 @router.post("/{ap_item_id}/split")
-def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(get_optional_user)) -> Dict[str, Any]:
+def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(get_current_user)) -> Dict[str, Any]:
     db = get_db()
     parent = _require_item(db, ap_item_id)
     verify_org_access(parent.get("organization_id") or "default", _user)
@@ -1244,7 +1338,7 @@ def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(get_
 async def retry_erp_post(
     ap_item_id: str,
     organization_id: str = "default",
-    _user=Depends(get_optional_user),
+    _user=Depends(get_current_user),
 ):
     """Retry posting an AP item to the ERP after a previous failure.
 

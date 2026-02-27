@@ -453,6 +453,57 @@ def test_request_budget_adjustment_records_vendor_feedback_summary(service, db, 
     assert summary["request_info_after_approve_count"] >= 1
 
 
+def test_request_budget_adjustment_creates_followup_metadata_and_draft(service, db, monkeypatch):
+    item = _create_ap_item(
+        db,
+        gmail_id="gmail-request-info-followup",
+        state="needs_approval",
+        metadata={"needs_info_question": "Please provide PO number."},
+    )
+    monkeypatch.setattr(db, "get_slack_thread", lambda _gmail_id: None)
+
+    async def _noop_async(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(service, "_update_slack_budget_adjustment_requested", _noop_async)
+
+    class _FakeGmailClient:
+        def __init__(self, user_id):
+            self.user_id = user_id
+
+        async def ensure_authenticated(self):
+            return True
+
+        async def create_draft(self, **_kwargs):
+            return "draft-followup-test-1"
+
+    monkeypatch.setattr("clearledgr.services.gmail_api.GmailAPIClient", _FakeGmailClient)
+
+    result = asyncio.run(
+        service.request_budget_adjustment(
+            gmail_id="gmail-request-info-followup",
+            requested_by="approver@example.com",
+            reason="need_po_number",
+            source_channel="slack",
+            source_channel_id="C-APPROVALS",
+            source_message_ref="1710000000.888",
+        )
+    )
+    assert result["status"] == "needs_info"
+
+    row = db.get_ap_item(item["id"])
+    assert row is not None
+    metadata = json.loads(row["metadata"]) if isinstance(row.get("metadata"), str) else dict(row.get("metadata") or {})
+    assert metadata.get("needs_info_draft_id") == "draft-followup-test-1"
+    assert metadata.get("followup_attempt_count") == 1
+    assert metadata.get("followup_next_action") == "await_vendor_response"
+    assert metadata.get("followup_last_sent_at")
+    assert metadata.get("followup_sla_due_at")
+
+    events = db.list_ap_audit_events(item["id"])
+    assert any(ev.get("event_type") == "vendor_followup_draft_prepared" for ev in events)
+
+
 def test_approve_invoice_records_vendor_outcome_and_feedback(service, db, monkeypatch):
     _create_ap_item(
         db,
@@ -840,3 +891,55 @@ def test_enqueue_erp_post_retry_is_idempotent(service, db, monkeypatch):
 
     jobs = db.list_agent_retry_jobs("default", ap_item_id=item["id"])
     assert len(jobs) == 1, "Idempotency key must prevent duplicate retry jobs"
+
+
+def test_batch_route_low_risk_precheck_allows_clean_validated_item(service):
+    row = {
+        "id": "ap-route-ok",
+        "state": "validated",
+        "document_type": "invoice",
+        "metadata": {},
+    }
+    precheck = service.evaluate_batch_route_low_risk_for_approval(row)
+    assert precheck["eligible"] is True
+    assert precheck["reason_codes"] == []
+
+
+def test_batch_route_low_risk_precheck_blocks_policy_risk_fields(service):
+    row = {
+        "id": "ap-route-blocked",
+        "state": "validated",
+        "document_type": "invoice",
+        "exception_code": "policy_validation_failed",
+        "requires_field_review": True,
+        "confidence_blockers": [{"field": "vendor"}],
+        "metadata": {},
+    }
+    precheck = service.evaluate_batch_route_low_risk_for_approval(row)
+    assert precheck["eligible"] is False
+    assert "exception_present" in precheck["reason_codes"]
+    assert "field_review_required" in precheck["reason_codes"]
+
+
+def test_batch_retry_recoverable_precheck_allows_transient_failed_post(service):
+    row = {
+        "id": "ap-retry-ok",
+        "state": "failed_post",
+        "last_error": "connector timeout",
+        "metadata": {},
+    }
+    precheck = service.evaluate_batch_retry_recoverable_failure(row)
+    assert precheck["eligible"] is True
+    assert precheck["recoverability"]["recoverable"] is True
+
+
+def test_batch_retry_recoverable_precheck_blocks_non_recoverable_failed_post(service):
+    row = {
+        "id": "ap-retry-blocked",
+        "state": "failed_post",
+        "last_error": "duplicate invoice already posted",
+        "metadata": {},
+    }
+    precheck = service.evaluate_batch_retry_recoverable_failure(row)
+    assert precheck["eligible"] is False
+    assert precheck["recoverability"]["recoverable"] is False

@@ -353,3 +353,89 @@ test('AX4 batch snapshot filters low-risk ready, failed-post previews, and aging
   assert.match(retryRunHtml, /Failed \(1\)/);
   assert.match(retryRunHtml, /Rerun failed subset/);
 });
+
+test('A2 batch intents expose deterministic selected/excluded reason sets', () => {
+  const items = [
+    {
+      id: 'needs-info-eligible',
+      state: 'needs_info',
+      vendor_name: 'Vendor One',
+      invoice_number: 'INV-N1',
+      amount: 100,
+      followup_next_action: 'prepare_vendor_followup_draft',
+      next_action: 'prepare_vendor_followup_draft',
+    },
+    {
+      id: 'needs-info-waiting',
+      state: 'needs_info',
+      vendor_name: 'Vendor Two',
+      invoice_number: 'INV-N2',
+      amount: 120,
+      followup_next_action: 'await_vendor_response',
+      next_action: 'await_vendor_response',
+    },
+    {
+      id: 'validated-eligible',
+      state: 'validated',
+      vendor_name: 'Vendor Three',
+      invoice_number: 'INV-V1',
+      amount: 130,
+      document_type: 'invoice',
+      next_action: 'route_for_approval',
+    },
+    {
+      id: 'validated-blocked',
+      state: 'validated',
+      vendor_name: 'Vendor Four',
+      invoice_number: 'INV-V2',
+      amount: 140,
+      exception_code: 'policy_validation_failed',
+      next_action: 'review_exception',
+    },
+    {
+      id: 'failed-recoverable',
+      state: 'failed_post',
+      vendor_name: 'Vendor Five',
+      invoice_number: 'INV-F1',
+      amount: 150,
+      last_error: 'connector timeout while posting',
+      next_action: 'retry_post',
+    },
+    {
+      id: 'failed-blocked',
+      state: 'failed_post',
+      vendor_name: 'Vendor Six',
+      invoice_number: 'INV-F2',
+      amount: 160,
+      last_error: 'duplicate invoice already posted',
+      next_action: 'retry_post',
+    },
+  ];
+
+  const snapshot = fns.buildBatchAgentOpsSnapshot(items, new Map(), {
+    nowMs: Date.parse('2026-02-27T12:00:00Z'),
+    agingApprovalHours: 24,
+    previewLimit: 4,
+  });
+  const policy = fns.normalizeBatchOpsPolicyConfig({ maxItems: 5, selectionPreset: 'queue_order' });
+
+  const followup = fns.applyBatchPolicyToGroup(snapshot.prepareVendorFollowups, policy, { previewLimit: 4 });
+  assert.equal(followup.selectedCount, 1);
+  assert.equal(followup.excludedDetails.length, 1);
+  assert.ok(followup.excludedDetails[0].reasons.some((reason) => String(reason).includes('precheck')));
+
+  const routeApproval = fns.applyBatchPolicyToGroup(snapshot.routeLowRiskForApproval, policy, { previewLimit: 4 });
+  assert.equal(routeApproval.selectedCount, 1);
+  assert.equal(routeApproval.excludedDetails.length, 1);
+  assert.ok(routeApproval.excludedReasonCounts['precheck:policy_validation_failed'] >= 1);
+
+  const retryRecoverable = fns.applyBatchPolicyToGroup(snapshot.retryRecoverableFailures, policy, { previewLimit: 4 });
+  assert.equal(retryRecoverable.selectedCount, 1);
+  assert.equal(retryRecoverable.excludedDetails.length, 1);
+  assert.ok(Object.keys(retryRecoverable.excludedReasonCounts).some((key) => key.startsWith('precheck:')));
+
+  const previewCard = fns.buildBatchOpsPreviewCard('retry_recoverable_failures', retryRecoverable);
+  assert.match(previewCard.title, /retry recoverable failures/i);
+  assert.ok(previewCard.lines.some((line) => /Selected reason:/i.test(line)));
+  assert.ok(previewCard.lines.some((line) => /Excluded reason:/i.test(line)));
+});

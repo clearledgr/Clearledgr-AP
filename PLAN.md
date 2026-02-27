@@ -23,6 +23,7 @@ Clearledgr AP v1 is an **embedded finance execution layer**. It is not a generic
 8. **"v1 launch" means GA launch**, not pilot launch.
 9. **ERP commitment at v1 GA is operational parity all enabled** for **QuickBooks + Xero + NetSuite + SAP**.
 10. **Execution is agentic and audit-safe**; mutating/high-risk actions are human-confirmed by default unless policy explicitly allows autopilot.
+11. **Clearledgr runs one finance agent runtime with AP as the first production skill**; future workflows expand as skills on the same runtime rather than separate product runtimes.
 
 ---
 
@@ -593,7 +594,7 @@ After GA:
 1. Expand tenant cohorts and volumes in controlled increments
 2. Tighten SLOs and error budgets
 3. Continue AP hardening before expanding to new finance workflows
-4. Reuse AP primitives for future reconciliation/close/FP&A workflows only after AP stability targets are sustained
+4. Reuse AP primitives for future finance skills (for example disputes, collections, close support) only after AP stability targets are sustained
 
 ---
 
@@ -606,19 +607,19 @@ This matrix prevents contradictions across strategy, backlog, and assessment doc
 |---|---|---|---|---|
 | `PLAN.md` | Doctrine + contracts + launch spec | Product doctrine, AP v1 release taxonomy, channel/ERP parity, GA launch gates | Point-in-time implementation status, backlog sequencing | Product/engineering doctrine change, launch-gate changes |
 | `TODO_BACKLOG.md` | Execution backlog | Work sequencing, ownership, implementation streams, release buckets | Product doctrine, launch definitions | Backlog grooming / implementation progress |
-| `gaps_opportunities` | Strategic analysis | Gap analysis, opportunities, future expansion thinking | Canonical launch gates or release taxonomy | Strategic review / roadmap updates |
-| `docs/GO_LIVE_ASSESSMENT.md` | Point-in-time audit report | Readiness assessment findings for a specific date/branch | Canonical product doctrine or future release commitments | New readiness audit run |
+| `VISION.md` | Product direction framing | Long-range positioning and runtime expansion direction | Canonical launch gates or release taxonomy | Strategy updates |
+| `docs/GA_LAUNCH_READINESS_TRACKER.md` | Point-in-time readiness report | Current launch-readiness findings and evidence checklist status | Canonical product doctrine or future release commitments | New readiness audit run |
 
 ### 10.2 Required cross-doc consistency rules
 1. `PLAN.md` defines release terminology (`pilot`, `GA`, `launch`).
 2. `TODO_BACKLOG.md` must not redefine launch doctrine; it maps work to the doctrine in `PLAN.md`.
-3. `gaps_opportunities` may describe open/closed gaps, but not override `PLAN.md` contracts.
-4. `GO_LIVE_ASSESSMENT.md` must be treated as a dated report and cite the `PLAN.md` version/assumptions it assessed.
+3. `VISION.md` may describe future direction and expansion, but must not override `PLAN.md` contracts.
+4. `docs/GA_LAUNCH_READINESS_TRACKER.md` must be treated as a dated report and cite the `PLAN.md` version/assumptions it assessed.
 
-### 10.3 Current reconciliation notes (as of 2026-02-25)
-1. `/Users/mombalam/Desktop/Clearledgr.v1/docs/GO_LIVE_ASSESSMENT.md` is a point-in-time readiness assessment dated **2026-02-18**, performed against an earlier `PLAN.md` variant ("Execution Layer Build Plan, AP-First").
-2. Findings in `GO_LIVE_ASSESSMENT.md` remain valuable as engineering risk inputs, but that document is **not** the canonical source for AP v1 doctrine or launch definitions.
-3. `/Users/mombalam/Desktop/Clearledgr.v1/TODO_BACKLOG.md` and `/Users/mombalam/Desktop/Clearledgr.v1/gaps_opportunities` should be interpreted as execution and strategy inputs aligned to this `PLAN.md`.
+### 10.3 Current cross-doc notes (as of 2026-02-25)
+1. `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_LAUNCH_READINESS_TRACKER.md` is a point-in-time readiness assessment and must be interpreted against this `PLAN.md` revision.
+2. Findings in dated readiness docs are valuable as engineering risk inputs, but those documents are **not** the canonical source for AP v1 doctrine or launch definitions.
+3. `/Users/mombalam/Desktop/Clearledgr.v1/TODO_BACKLOG.md` and `/Users/mombalam/Desktop/Clearledgr.v1/VISION.md` should be interpreted as execution and strategy inputs aligned to this `PLAN.md`.
 
 ### 10.4 Terminology normalization (mandatory)
 To avoid scope drift and false completion claims, all future docs and tickets must distinguish:

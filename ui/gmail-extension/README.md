@@ -91,6 +91,12 @@ Run deterministic local coverage:
 
 - `npm test`
 - `npm run test:integration`
+- `npm run test:browser-harness` (real-browser DOM lifecycle harness; Playwright required)
+
+Browser runtime prerequisites (one-time):
+
+- `npm i -D playwright`
+- `npx playwright install chromium`
 
 Run manual-gated real Chrome/Gmail smoke:
 
@@ -107,6 +113,17 @@ Optional environment variables for E2E:
 - `GMAIL_E2E_EXPECT_SELECTOR`: selector to assert in authenticated mode (default `#cl-scan-status`)
 - `GMAIL_E2E_TIMEOUT_MS`: wait timeout (default `180000`)
 - `GMAIL_E2E_CAPTURE_PATH`: screenshot output path for evidence capture
+- `GMAIL_E2E_EVIDENCE_JSON`: write JSON evidence payload for smoke/auth run (status, URL, mounted sections, errors)
+- `GMAIL_BROWSER_HARNESS_TIMEOUT_MS`: timeout for browser harness test (default `120000`)
+- `GMAIL_BROWSER_HARNESS_CHANNEL`: browser channel override for harness launch (for example `chrome`)
+- `GMAIL_BROWSER_HARNESS_HEADFUL`: set `1` to run harness in headed mode
+
+Browser harness troubleshooting:
+
+- If the default Playwright Chromium launch fails on macOS, run:
+  - `GMAIL_BROWSER_HARNESS_CHANNEL=chrome npm run test:browser-harness`
+- If needed, install browser binaries:
+  - `npx playwright install chromium`
 
 ## Support
 

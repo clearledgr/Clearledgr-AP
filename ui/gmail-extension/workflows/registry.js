@@ -3,7 +3,7 @@
     invoice_exception_v1: {
       id: 'invoice_exception_v1',
       name: 'Invoice Exception Workflow',
-      plan: 'Classify email, extract finance fields, match transactions, categorize, route exceptions.',
+      plan: 'Classify AP email, extract invoice fields, run policy checks, route approvals/exceptions, and reconcile ERP outcomes.',
       clients: [
         'ClassificationClient',
         'ExtractionClient',

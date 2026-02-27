@@ -155,6 +155,61 @@ test('decision workspace renders operator brief with clear next-step guidance', 
   assert.match(threadContext.innerHTML, /Expected outcome:/i);
 });
 
+test('A1 needs_info follow-up metadata renders attempt tracking and SLA next step', async () => {
+  const runtime = await createInboxSdkIntegrationRuntime({ queueManager: { debugUiEnabled: false } });
+  const queueManager = runtime.getQueueManager();
+  const sidebar = runtime.getState().globalSidebarEl;
+
+  const item = {
+    id: 'item-followup-1',
+    thread_id: 'thread-followup-1',
+    state: 'needs_info',
+    vendor_name: 'Acme Corp',
+    invoice_number: 'INV-FOLLOWUP-1',
+    amount: 510.0,
+    currency: 'USD',
+    subject: 'PO clarification required',
+    sender: 'billing@acme.example',
+    confidence: 0.9,
+    next_action: 'await_vendor_response',
+    followup_attempt_count: 2,
+    followup_last_sent_at: '2026-02-27T09:30:00Z',
+    followup_sla_due_at: '2026-02-28T09:30:00Z',
+    followup_next_action: 'await_vendor_response',
+    needs_info_question: 'Please provide the PO number for this invoice.',
+    needs_info_draft_id: 'draft-followup-1',
+    metadata: {},
+  };
+  const contexts = new Map([
+    ['item-followup-1', {
+      freshness: { is_stale: false, age_seconds: 42 },
+      source_quality: { distribution: 'gmail_thread:1', total_sources: 1 },
+      email: { source_count: 1, sources: [] },
+      web: { browser_event_count: 0, recent_browser_events: [], related_portals: [], payment_portals: [], procurement: [], dms_documents: [], bank_transactions: [], spreadsheets: [], connector_coverage: {} },
+      approvals: { count: 0, latest: null, slack: { thread_preview: [] }, teams: {} },
+      erp: { connector_available: true, state: 'needs_info', erp_reference: null },
+      po_match: { status: 'missing_po' },
+      budget: { status: 'healthy', requires_decision: false, checks: [] },
+    }],
+  ]);
+
+  queueManager.emitQueueUpdated([item], { state: 'idle' }, new Map(), [], new Map(), new Map(), contexts);
+  await runtime.flush();
+
+  const threadHandler = runtime.records.sdkHandlers.threadView;
+  const threadView = runtime.createThreadView('thread-followup-1');
+  threadHandler(threadView);
+  runtime.api.renderSidebar();
+  await runtime.flush();
+  await runtime.flush();
+
+  const threadContext = sidebar.querySelector('#cl-thread-context');
+  assert.ok(threadContext);
+  assert.match(threadContext.innerHTML, /Follow-up attempts: 2/i);
+  assert.match(threadContext.innerHTML, /Last draft:/i);
+  assert.match(threadContext.innerHTML, /Await response until/i);
+});
+
 test('AX6 debug KPI panel renders agentic telemetry metrics with ratio-to-percent formatting', async () => {
   const runtime = await createInboxSdkIntegrationRuntime({ queueManager: { debugUiEnabled: true } });
   const queueManager = runtime.getQueueManager();
@@ -483,6 +538,100 @@ test('AX4 rerun failed subset action re-executes only failed retry items', async
   } else {
     assert.equal(batchSection.innerHTML, '');
   }
+});
+
+test('A2 batch intents execute vendor follow-up, low-risk approval routing, and recoverable retries', async () => {
+  const runtime = await createInboxSdkIntegrationRuntime({ queueManager: { debugUiEnabled: false } });
+  const queueManager = runtime.getQueueManager();
+  const sidebar = runtime.getState().globalSidebarEl;
+
+  queueManager.emitQueueUpdated([
+    {
+      id: 'needs-info-a2',
+      thread_id: 't-needs-info-a2',
+      state: 'needs_info',
+      vendor_name: 'Need Info Co',
+      invoice_number: 'INV-N-A2',
+      amount: 95,
+      currency: 'USD',
+      followup_next_action: 'prepare_vendor_followup_draft',
+      next_action: 'prepare_vendor_followup_draft',
+      updated_at: '2026-02-26T09:00:00Z',
+      metadata: {},
+      confidence: 0.94,
+    },
+    {
+      id: 'validated-a2',
+      thread_id: 't-validated-a2',
+      state: 'validated',
+      vendor_name: 'Validated Co',
+      invoice_number: 'INV-V-A2',
+      amount: 110,
+      currency: 'USD',
+      document_type: 'invoice',
+      next_action: 'route_for_approval',
+      updated_at: '2026-02-26T10:00:00Z',
+      metadata: {},
+      confidence: 0.97,
+    },
+    {
+      id: 'failed-a2',
+      thread_id: 't-failed-a2',
+      state: 'failed_post',
+      vendor_name: 'Recoverable Co',
+      invoice_number: 'INV-F-A2',
+      amount: 120,
+      currency: 'USD',
+      last_error: 'connector timeout',
+      next_action: 'retry_post',
+      updated_at: '2026-02-26T11:00:00Z',
+      metadata: {},
+      confidence: 0.98,
+    },
+  ], { state: 'idle' });
+  await runtime.flush();
+
+  let batchSection = sidebar.querySelector('#cl-batch-agent-ops');
+  assert.ok(batchSection);
+  assert.match(batchSection.innerHTML, /prepare vendor follow-ups/i);
+  assert.match(batchSection.innerHTML, /route low-risk for approval/i);
+  assert.match(batchSection.innerHTML, /retry recoverable failures/i);
+
+  let runButtons = batchSection.querySelectorAll('.cl-batch-op-action');
+  const runFollowups = runButtons.find((btn) =>
+    btn.getAttribute('data-batch-op') === 'prepare_vendor_followups'
+    && btn.getAttribute('data-dry-run') === '0'
+  );
+  assert.ok(runFollowups);
+  await runFollowups.click();
+  await runtime.flush();
+  assert.equal(queueManager.calls.prepareVendorFollowup, 1);
+  batchSection = sidebar.querySelector('#cl-batch-agent-ops');
+  assert.match(batchSection.innerHTML, /Batch run completed: vendor follow-ups/i);
+
+  runButtons = batchSection.querySelectorAll('.cl-batch-op-action');
+  const runRoute = runButtons.find((btn) =>
+    btn.getAttribute('data-batch-op') === 'route_low_risk_for_approval'
+    && btn.getAttribute('data-dry-run') === '0'
+  );
+  assert.ok(runRoute);
+  await runRoute.click();
+  await runtime.flush();
+  assert.equal(queueManager.calls.routeLowRiskForApproval, 1);
+  batchSection = sidebar.querySelector('#cl-batch-agent-ops');
+  assert.match(batchSection.innerHTML, /Batch run completed: route low-risk for approval/i);
+
+  runButtons = batchSection.querySelectorAll('.cl-batch-op-action');
+  const runRetryRecoverable = runButtons.find((btn) =>
+    btn.getAttribute('data-batch-op') === 'retry_recoverable_failures'
+    && btn.getAttribute('data-dry-run') === '0'
+  );
+  assert.ok(runRetryRecoverable);
+  await runRetryRecoverable.click();
+  await runtime.flush();
+  assert.equal(queueManager.calls.retryRecoverableFailure, 1);
+  batchSection = sidebar.querySelector('#cl-batch-agent-ops');
+  assert.match(batchSection.innerHTML, /Batch run completed: retry recoverable failures/i);
 });
 
 test('AX5 shows browser fallback trust state in thread context and agent timeline, with readable web events', async () => {

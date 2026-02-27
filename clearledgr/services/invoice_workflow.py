@@ -13,14 +13,18 @@ import logging
 import os
 import uuid
 from typing import Any, Dict, List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 
 from clearledgr.core.ap_confidence import (
     DEFAULT_CRITICAL_FIELD_CONFIDENCE_THRESHOLD,
     evaluate_critical_field_confidence,
 )
-from clearledgr.core.ap_states import OverrideContext
+from clearledgr.core.ap_states import (
+    APState,
+    OverrideContext,
+    classify_post_failure_recoverability,
+)
 from clearledgr.core.database import get_db
 from clearledgr.services.slack_api import SlackAPIClient, get_slack_client
 try:
@@ -457,6 +461,145 @@ class InvoiceWorkflowService:
         except Exception:
             return str(raw_state)
 
+    def build_invoice_data_from_ap_item(
+        self,
+        ap_item: Dict[str, Any],
+        *,
+        actor_id: Optional[str] = None,
+    ) -> InvoiceData:
+        """Build `InvoiceData` from a persisted AP row."""
+        metadata = self._parse_metadata_dict((ap_item or {}).get("metadata"))
+        return InvoiceData(
+            gmail_id=str(ap_item.get("thread_id") or ap_item.get("id") or ""),
+            subject=str(ap_item.get("subject") or ""),
+            sender=str(ap_item.get("sender") or ""),
+            vendor_name=str(ap_item.get("vendor_name") or ap_item.get("vendor") or "Unknown"),
+            amount=float(ap_item.get("amount") or 0.0),
+            currency=str(ap_item.get("currency") or "USD"),
+            invoice_number=ap_item.get("invoice_number"),
+            due_date=ap_item.get("due_date"),
+            organization_id=str(ap_item.get("organization_id") or self.organization_id),
+            user_id=actor_id or str(ap_item.get("user_id") or ""),
+            confidence=float(ap_item.get("confidence") or 0.0),
+            field_confidences=(
+                ap_item.get("field_confidences")
+                if isinstance(ap_item.get("field_confidences"), dict)
+                else metadata.get("field_confidences")
+            ),
+            correlation_id=str(
+                ap_item.get("correlation_id")
+                or metadata.get("correlation_id")
+                or ""
+            ).strip()
+            or None,
+        )
+
+    def evaluate_batch_route_low_risk_for_approval(self, ap_item: Dict[str, Any]) -> Dict[str, Any]:
+        """Evaluate deterministic prechecks for batch `route_low_risk_for_approval`."""
+        state = self._canonical_invoice_state(ap_item) or ""
+        metadata = self._parse_metadata_dict((ap_item or {}).get("metadata"))
+        reason_codes: List[str] = []
+
+        if state != APState.VALIDATED.value:
+            reason_codes.append("state_not_validated")
+
+        requires_field_review = bool(
+            ap_item.get("requires_field_review")
+            or metadata.get("requires_field_review")
+        )
+        if requires_field_review:
+            reason_codes.append("field_review_required")
+
+        confidence_blockers = []
+        raw_blockers = ap_item.get("confidence_blockers")
+        if isinstance(raw_blockers, list):
+            confidence_blockers = [entry for entry in raw_blockers if entry]
+        elif isinstance(metadata.get("confidence_blockers"), list):
+            confidence_blockers = [entry for entry in metadata.get("confidence_blockers") if entry]
+        if confidence_blockers:
+            reason_codes.append("confidence_blockers_present")
+
+        budget_requires_decision = bool(
+            ap_item.get("budget_requires_decision")
+            or metadata.get("budget_requires_decision")
+        )
+        if budget_requires_decision:
+            reason_codes.append("budget_decision_required")
+
+        exception_code = str(
+            ap_item.get("exception_code")
+            or metadata.get("exception_code")
+            or ""
+        ).strip()
+        if exception_code:
+            reason_codes.append("exception_present")
+
+        document_type = str(
+            ap_item.get("document_type")
+            or metadata.get("document_type")
+            or metadata.get("email_type")
+            or "invoice"
+        ).strip().lower()
+        if document_type and document_type != "invoice":
+            reason_codes.append("non_invoice_document")
+
+        if metadata.get("merged_into") or ap_item.get("is_merged_source"):
+            reason_codes.append("merged_source")
+
+        return {
+            "eligible": len(reason_codes) == 0,
+            "state": state or None,
+            "reason_codes": reason_codes,
+            "requires_field_review": requires_field_review,
+            "confidence_blockers": confidence_blockers,
+            "budget_requires_decision": budget_requires_decision,
+            "exception_code": exception_code or None,
+            "document_type": document_type or "invoice",
+        }
+
+    def evaluate_batch_retry_recoverable_failure(self, ap_item: Dict[str, Any]) -> Dict[str, Any]:
+        """Evaluate deterministic prechecks for batch `retry_recoverable_failures`."""
+        state = self._canonical_invoice_state(ap_item) or ""
+        metadata = self._parse_metadata_dict((ap_item or {}).get("metadata"))
+        last_error = str(
+            ap_item.get("last_error")
+            or metadata.get("last_error")
+            or ""
+        ).strip()
+        exception_code = str(
+            ap_item.get("exception_code")
+            or metadata.get("exception_code")
+            or ""
+        ).strip()
+
+        if state != APState.FAILED_POST.value:
+            return {
+                "eligible": False,
+                "state": state or None,
+                "reason_codes": ["state_not_failed_post"],
+                "recoverability": {
+                    "recoverable": False,
+                    "reason": "state_not_failed_post",
+                },
+            }
+
+        recoverability = classify_post_failure_recoverability(
+            last_error=last_error,
+            exception_code=exception_code,
+        )
+        reason_codes: List[str] = []
+        if not recoverability.get("recoverable"):
+            reason_codes.append(str(recoverability.get("reason") or "non_recoverable_failure"))
+
+        return {
+            "eligible": len(reason_codes) == 0,
+            "state": state,
+            "reason_codes": reason_codes,
+            "recoverability": recoverability,
+            "last_error": last_error or None,
+            "exception_code": exception_code or None,
+        }
+
     def _transition_invoice_state(
         self,
         gmail_id: str,
@@ -656,6 +799,169 @@ class InvoiceWorkflowService:
             self.db.update_ap_item(ap_item_id, metadata=metadata)
         except Exception as exc:
             logger.debug("Could not update AP metadata for %s: %s", ap_item_id, exc)
+
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _vendor_followup_sla_hours() -> int:
+        try:
+            hours = int(os.getenv("CLEARLEDGR_VENDOR_FOLLOWUP_SLA_HOURS", "24"))
+        except (TypeError, ValueError):
+            hours = 24
+        return max(1, min(hours, 168))
+
+    def _record_vendor_followup_event(
+        self,
+        *,
+        ap_item_id: Optional[str],
+        event_type: str,
+        actor_type: str,
+        actor_id: str,
+        reason: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        source: str = "invoice_workflow",
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        if not ap_item_id or not hasattr(self.db, "append_ap_audit_event"):
+            return
+        try:
+            self.db.append_ap_audit_event(
+                {
+                    "ap_item_id": ap_item_id,
+                    "event_type": event_type,
+                    "actor_type": actor_type,
+                    "actor_id": actor_id,
+                    "reason": reason,
+                    "metadata": metadata or {},
+                    "organization_id": self.organization_id,
+                    "source": source,
+                    "correlation_id": correlation_id,
+                }
+            )
+        except Exception as exc:
+            logger.debug("Could not record vendor follow-up event for %s: %s", ap_item_id, exc)
+
+    def _apply_needs_info_followup_metadata(
+        self,
+        *,
+        ap_item_id: Optional[str],
+        draft_id: Optional[str],
+        question: Optional[str] = None,
+        actor_type: str = "system",
+        actor_id: str = "system",
+        source: str = "invoice_workflow",
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """Persist normalized follow-up metadata for needs_info items.
+
+        The metadata is intentionally lightweight and operator-facing:
+        - needs_info_draft_id
+        - followup_last_sent_at
+        - followup_attempt_count
+        - followup_next_action
+        - followup_sla_due_at
+        """
+        if not ap_item_id:
+            return
+        try:
+            row = self.db.get_ap_item(ap_item_id) if hasattr(self.db, "get_ap_item") else None
+            metadata = self._parse_metadata_dict((row or {}).get("metadata"))
+        except Exception:
+            metadata = {}
+
+        attempts = max(0, self._safe_int(metadata.get("followup_attempt_count"), 0))
+        updates: Dict[str, Any] = {}
+        if question and str(question).strip():
+            updates["needs_info_question"] = str(question).strip()
+
+        if draft_id:
+            now = datetime.now(timezone.utc)
+            due_at = now + timedelta(hours=self._vendor_followup_sla_hours())
+            attempts += 1
+            updates.update(
+                {
+                    "needs_info_draft_id": str(draft_id),
+                    "followup_last_sent_at": now.isoformat(),
+                    "followup_attempt_count": attempts,
+                    "followup_next_action": "await_vendor_response",
+                    "followup_sla_due_at": due_at.isoformat(),
+                }
+            )
+            self._update_ap_item_metadata(ap_item_id, updates)
+            self._record_vendor_followup_event(
+                ap_item_id=ap_item_id,
+                event_type="vendor_followup_draft_prepared",
+                actor_type=actor_type,
+                actor_id=actor_id,
+                reason="needs_info_followup_draft_prepared",
+                metadata={
+                    "draft_id": str(draft_id),
+                    "followup_attempt_count": attempts,
+                    "followup_sla_due_at": due_at.isoformat(),
+                },
+                source=source,
+                correlation_id=correlation_id,
+            )
+            return
+
+        updates.setdefault("followup_attempt_count", attempts)
+        updates.setdefault("followup_next_action", "prepare_vendor_followup_draft")
+        if updates:
+            self._update_ap_item_metadata(ap_item_id, updates)
+        self._record_vendor_followup_event(
+            ap_item_id=ap_item_id,
+            event_type="vendor_followup_draft_pending",
+            actor_type=actor_type,
+            actor_id=actor_id,
+            reason="needs_info_followup_draft_pending",
+            metadata={
+                "followup_attempt_count": attempts,
+                "followup_next_action": updates.get("followup_next_action", "prepare_vendor_followup_draft"),
+            },
+            source=source,
+            correlation_id=correlation_id,
+        )
+
+    async def _create_needs_info_vendor_draft(
+        self,
+        *,
+        ap_item_id: Optional[str],
+        thread_id: str,
+        to_email: str,
+        invoice_data: Dict[str, Any],
+        question: Optional[str],
+        user_id: Optional[str],
+    ) -> Optional[str]:
+        """Create a Gmail follow-up draft for needs_info state (best effort)."""
+        if not ap_item_id:
+            return None
+        try:
+            from clearledgr.services.auto_followup import AutoFollowUpService
+            from clearledgr.services.gmail_api import GmailAPIClient
+
+            gmail_user_id = str(user_id or "me").strip() or "me"
+            gmail_client = GmailAPIClient(user_id=gmail_user_id)
+            authenticated = await gmail_client.ensure_authenticated()
+            if not authenticated:
+                return None
+
+            followup_svc = AutoFollowUpService(organization_id=self.organization_id)
+            return await followup_svc.create_gmail_draft(
+                gmail_client=gmail_client,
+                ap_item_id=ap_item_id,
+                thread_id=thread_id,
+                to_email=to_email,
+                invoice_data=invoice_data,
+                question=question,
+            )
+        except Exception as exc:
+            logger.debug("needs_info draft creation skipped for %s: %s", ap_item_id, exc)
+            return None
 
     @staticmethod
     def _normalize_human_action(action: str) -> str:
@@ -1347,35 +1653,28 @@ class InvoiceWorkflowService:
                     "ap_decision_risk_flags": ap_decision.risk_flags,
                 },
             )
-            # Create a Gmail draft so the finance user can review and send it —
-            # never auto-sends; follows "high-risk actions human-confirmed" rule.
-            try:
-                from clearledgr.services.auto_followup import AutoFollowUpService
-                from clearledgr.services.gmail_api import GmailAPIClient
-
-                gmail_user_id = invoice.user_id or "me"
-                gmail_client = GmailAPIClient(user_id=gmail_user_id)
-                authenticated = await gmail_client.ensure_authenticated()
-                if authenticated:
-                    followup_svc = AutoFollowUpService(organization_id=self.organization_id)
-                    invoice_data = {
-                        "subject": invoice.subject,
-                        "vendor_name": invoice.vendor_name,
-                        "amount": invoice.amount,
-                        "invoice_number": invoice.invoice_number,
-                    }
-                    draft_id = await followup_svc.create_gmail_draft(
-                        gmail_client=gmail_client,
-                        ap_item_id=ap_item_id,
-                        thread_id=invoice.gmail_id,
-                        to_email=invoice.sender,
-                        invoice_data=invoice_data,
-                        question=ap_decision.info_needed,
-                    )
-                    if draft_id:
-                        self._update_ap_item_metadata(ap_item_id, {"needs_info_draft_id": draft_id})
-            except Exception as _draft_exc:
-                logger.debug("needs_info draft creation skipped: %s", _draft_exc)
+            draft_id = await self._create_needs_info_vendor_draft(
+                ap_item_id=ap_item_id,
+                thread_id=invoice.gmail_id,
+                to_email=invoice.sender,
+                invoice_data={
+                    "subject": invoice.subject,
+                    "vendor_name": invoice.vendor_name,
+                    "amount": invoice.amount,
+                    "invoice_number": invoice.invoice_number,
+                },
+                question=ap_decision.info_needed,
+                user_id=invoice.user_id,
+            )
+            self._apply_needs_info_followup_metadata(
+                ap_item_id=ap_item_id,
+                draft_id=draft_id,
+                question=ap_decision.info_needed,
+                actor_type="system",
+                actor_id="ap_agent",
+                source="invoice_workflow",
+                correlation_id=correlation_id,
+            )
 
             return {
                 "status": "needs_info",
@@ -3381,6 +3680,35 @@ class InvoiceWorkflowService:
             correlation_id=correlation_id,
             reason=reason_text,
             action_outcome="needs_info",
+        )
+
+        ap_row = self.db.get_ap_item(ap_item_id) if ap_item_id and hasattr(self.db, "get_ap_item") else None
+        ap_meta = self._parse_metadata_dict((ap_row or {}).get("metadata"))
+        followup_question = str(ap_meta.get("needs_info_question") or reason_text).strip() or reason_text
+        if followup_question:
+            self._update_ap_item_metadata(ap_item_id, {"needs_info_question": followup_question})
+
+        draft_id = await self._create_needs_info_vendor_draft(
+            ap_item_id=ap_item_id,
+            thread_id=gmail_id,
+            to_email=str(invoice_data.get("sender") or ""),
+            invoice_data={
+                "subject": invoice_data.get("email_subject") or invoice_data.get("subject") or "",
+                "vendor_name": invoice_data.get("vendor") or invoice_data.get("vendor_name") or "",
+                "amount": invoice_data.get("amount") or 0.0,
+                "invoice_number": invoice_data.get("invoice_number") or "",
+            },
+            question=followup_question,
+            user_id=invoice_data.get("user_id"),
+        )
+        self._apply_needs_info_followup_metadata(
+            ap_item_id=ap_item_id,
+            draft_id=draft_id,
+            question=followup_question,
+            actor_type="user",
+            actor_id=requested_by,
+            source=resolved_source_channel,
+            correlation_id=correlation_id,
         )
 
         return {

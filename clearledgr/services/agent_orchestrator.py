@@ -21,6 +21,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
@@ -86,6 +87,35 @@ class AgentOrchestrator:
     def _retry_poll_interval_seconds(self) -> int:
         return max(1, self._env_int("AP_AGENT_RETRY_POLL_SECONDS", 5))
 
+    def _post_process_backoff_schedule_seconds(self) -> List[int]:
+        raw = str(os.getenv("AP_AGENT_POST_PROCESS_BACKOFF_SECONDS", "5,15,45")).strip()
+        schedule: List[int] = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                schedule.append(max(0, int(part)))
+            except ValueError:
+                continue
+        return schedule or [5, 15, 45]
+
+    def _post_process_max_attempts(self) -> int:
+        return max(1, self._env_int("AP_AGENT_POST_PROCESS_MAX_ATTEMPTS", 3))
+
+    def post_process_runtime_status(self) -> Dict[str, Any]:
+        enabled = self._env_flag("AP_AGENT_POST_PROCESS_DURABLE_ENABLED", True)
+        return {
+            "enabled": bool(enabled),
+            "durable": True,
+            "mode": "durable_db_post_process_queue",
+            "backoff_seconds": self._post_process_backoff_schedule_seconds(),
+            "max_attempts": self._post_process_max_attempts(),
+            "allow_non_durable": False,
+            "worker_running": bool(self._retry_worker_task and not self._retry_worker_task.done()),
+            "reason": None if enabled else "post_process_disabled_by_config",
+        }
+
     def autonomous_retry_runtime_status(self) -> Dict[str, Any]:
         enabled_by_config = self._env_flag("AP_AGENT_AUTONOMOUS_RETRY_ENABLED", True)
         allow_non_durable_default = not self._is_production_env()
@@ -104,7 +134,7 @@ class AgentOrchestrator:
             "enabled": enabled,
             "durable": durable,
             "mode": "durable_db_retry_queue",
-            "post_process_mode": "enqueue_durable_retry_job",
+            "post_process_mode": "enqueue_durable_post_process_job",
             "allow_non_durable": allow_non_durable,
             "backoff_seconds": self._retry_backoff_schedule_seconds(),
             "poll_interval_seconds": self._retry_poll_interval_seconds(),
@@ -115,10 +145,7 @@ class AgentOrchestrator:
     def runtime_status(self) -> Dict[str, Any]:
         return {
             "autonomous_retry": self.autonomous_retry_runtime_status(),
-            "post_process": {
-                "mode": "fire_and_forget_asyncio_task",
-                "durable": False,
-            },
+            "post_process": self.post_process_runtime_status(),
         }
 
     # ------------------------------------------------------------------
@@ -190,7 +217,10 @@ class AgentOrchestrator:
         attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
-        Process a new invoice through the full agent pipeline.
+        Process a new invoice through the agent pipeline.
+
+        Agentic planning is the default path and runs through FinanceAgentRuntime.
+        Set AGENT_PLANNING_LOOP=false only as an explicit opt-out.
 
         1. Reason (chain-of-thought LLM analysis)
         2. Reflect (self-validate and correct)
@@ -200,6 +230,39 @@ class AgentOrchestrator:
         6. Delegate to InvoiceWorkflowService
         7. Post-process (follow-up, insights, clarifying questions)
         """
+        # ---------------------------------------------------------------
+        # AGENT_PLANNING_LOOP dispatch
+        # ---------------------------------------------------------------
+        _flag = os.getenv("AGENT_PLANNING_LOOP", "true").strip().lower()
+        if _flag in ("1", "true", "yes"):
+            try:
+                from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+
+                runtime = FinanceAgentRuntime(
+                    organization_id=self.organization_id,
+                    actor_id=str(getattr(invoice, "user_id", None) or "system"),
+                    actor_email=str(getattr(invoice, "sender", None) or "system@clearledgr.local"),
+                )
+                return await runtime.execute_ap_invoice_processing(
+                    invoice_payload=invoice.__dict__,
+                    attachments=attachments or [],
+                    idempotency_key=f"invoice:{invoice.gmail_id}",
+                    correlation_id=getattr(invoice, "correlation_id", None),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[AgentOrchestrator] planning loop failed, falling back to legacy: %s", exc
+                )
+                # Fall through to legacy path on any error
+
+        return await self._process_invoice_legacy(invoice, attachments)
+
+    async def _process_invoice_legacy(
+        self,
+        invoice: InvoiceData,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Legacy hardcoded 8-step orchestration pipeline (unchanged)."""
         original_confidence = invoice.confidence
 
         # --- Step 1: Agent Reasoning ---
@@ -337,8 +400,19 @@ class AgentOrchestrator:
         # --- Step 7: Delegate to workflow ---
         result = await self.workflow.process_new_invoice(invoice)
 
-        # --- Step 8: Post-process (fire-and-forget) ---
-        asyncio.create_task(self._post_process(invoice, agent_decision, result))
+        # --- Step 8: Post-process (durable queue only) ---
+        queued_post_process = self._enqueue_post_process_job(invoice, agent_decision, result)
+        if queued_post_process:
+            self._ensure_retry_worker()
+        else:
+            post_process_status = self.post_process_runtime_status()
+            reason = str(post_process_status.get("reason") or "post_process_enqueue_unavailable")
+            self._record_post_process_gated_event(
+                invoice,
+                result,
+                post_process_status,
+                reason=reason,
+            )
 
         return result
 
@@ -473,15 +547,16 @@ class AgentOrchestrator:
         )
 
     # ------------------------------------------------------------------
-    # Post-processing (fire-and-forget async tasks)
+    # Post-processing (durable queue worker execution)
     # ------------------------------------------------------------------
 
-    async def _post_process(
+    async def _run_post_process_steps(
         self,
+        *,
         invoice: InvoiceData,
         agent_decision,
         workflow_result: Dict[str, Any],
-    ):
+    ) -> None:
         """
         Post-processing tasks after workflow execution:
         - Autonomous ERP retry on failure
@@ -519,6 +594,65 @@ class AgentOrchestrator:
             await self._check_insights(invoice)
         except Exception as e:
             logger.debug(f"Insights check failed: {e}")
+
+    @staticmethod
+    def _serialize_agent_decision(agent_decision: Any) -> Dict[str, Any]:
+        if not agent_decision:
+            return {}
+
+        factors: List[Dict[str, Any]] = []
+        raw_factors = getattr(agent_decision, "factors", None) or []
+        for raw in raw_factors:
+            if isinstance(raw, dict):
+                factors.append(
+                    {
+                        "factor": raw.get("factor"),
+                        "score": raw.get("score"),
+                        "detail": raw.get("detail"),
+                    }
+                )
+                continue
+            factors.append(
+                {
+                    "factor": getattr(raw, "factor", None),
+                    "score": getattr(raw, "score", None),
+                    "detail": getattr(raw, "detail", None),
+                }
+            )
+
+        return {
+            "decision": getattr(agent_decision, "decision", None),
+            "confidence": getattr(agent_decision, "confidence", None),
+            "extraction": getattr(agent_decision, "extraction", None) or {},
+            "risks": getattr(agent_decision, "risks", None) or [],
+            "summary": getattr(agent_decision, "summary", None),
+            "factors": factors,
+        }
+
+    @staticmethod
+    def _deserialize_agent_decision(snapshot: Dict[str, Any]) -> Optional[Any]:
+        if not isinstance(snapshot, dict) or not snapshot:
+            return None
+
+        factors = []
+        for raw in snapshot.get("factors") or []:
+            if not isinstance(raw, dict):
+                continue
+            factors.append(
+                SimpleNamespace(
+                    factor=raw.get("factor"),
+                    score=raw.get("score"),
+                    detail=raw.get("detail"),
+                )
+            )
+        return SimpleNamespace(
+            decision=snapshot.get("decision"),
+            confidence=float(snapshot.get("confidence") or 0.0),
+            extraction=snapshot.get("extraction") if isinstance(snapshot.get("extraction"), dict) else {},
+            risks=list(snapshot.get("risks") or []),
+            summary=snapshot.get("summary"),
+            factors=factors,
+        )
 
     async def _check_follow_up(self, invoice: InvoiceData):
         """Check if follow-up is needed for missing info."""
@@ -714,9 +848,29 @@ class AgentOrchestrator:
             ap_item = db.get_ap_item_by_message_id(self.organization_id, invoice.gmail_id)
         return ap_item
 
+    def start_durable_workers(self) -> None:
+        """Start background durable workers for retry/post-process queues."""
+        self._ensure_retry_worker()
+
+    async def stop_durable_workers(self) -> None:
+        """Stop background durable workers gracefully."""
+        self._retry_worker_stopping = True
+        worker = self._retry_worker_task
+        if not worker:
+            return
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._retry_worker_task = None
+
     def _ensure_retry_worker(self) -> None:
-        status = self.autonomous_retry_runtime_status()
-        if not status.get("enabled"):
+        if not (
+            self.post_process_runtime_status().get("enabled")
+            or self.autonomous_retry_runtime_status().get("enabled")
+        ):
             return
         if self._retry_worker_task and not self._retry_worker_task.done():
             return
@@ -731,10 +885,19 @@ class AgentOrchestrator:
         poll_seconds = self._retry_poll_interval_seconds()
         try:
             while not self._retry_worker_stopping:
-                try:
-                    await self.process_due_retry_jobs(limit=10)
-                except Exception as exc:  # pragma: no cover - safety net for background task
-                    logger.debug("Durable retry worker iteration failed: %s", exc)
+                post_process_status = self.post_process_runtime_status()
+                if post_process_status.get("enabled"):
+                    try:
+                        await self.process_due_post_process_jobs(limit=10)
+                    except Exception as exc:  # pragma: no cover - safety net for background task
+                        logger.debug("Durable post-process worker iteration failed: %s", exc)
+
+                retry_status = self.autonomous_retry_runtime_status()
+                if retry_status.get("enabled"):
+                    try:
+                        await self.process_due_retry_jobs(limit=10)
+                    except Exception as exc:  # pragma: no cover - safety net for background task
+                        logger.debug("Durable retry worker iteration failed: %s", exc)
                 await asyncio.sleep(poll_seconds)
         except asyncio.CancelledError:  # pragma: no cover
             raise
@@ -749,6 +912,93 @@ class AgentOrchestrator:
         idx = min(max(int(attempt_number), 0), len(schedule) - 1)
         delay = schedule[idx]
         return (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
+
+    def _first_post_process_eta(self) -> str:
+        schedule = self._post_process_backoff_schedule_seconds()
+        delay = schedule[0] if schedule else 0
+        return (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
+
+    def _next_post_process_eta_after_attempt(self, attempt_number: int) -> str:
+        schedule = self._post_process_backoff_schedule_seconds()
+        idx = min(max(int(attempt_number), 0), len(schedule) - 1)
+        delay = schedule[idx]
+        return (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
+
+    def _enqueue_post_process_job(
+        self,
+        invoice: InvoiceData,
+        agent_decision: Any,
+        workflow_result: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        status = self.post_process_runtime_status()
+        if not status.get("enabled"):
+            return None
+
+        db = self.workflow.db
+        ap_item = self._lookup_ap_item_for_invoice(invoice)
+        if not ap_item:
+            return None
+
+        ap_item_id = str(ap_item.get("id") or "")
+        correlation_id = (
+            invoice.correlation_id
+            or self.workflow._get_ap_item_correlation_id(ap_item_id=ap_item_id, gmail_id=invoice.gmail_id)
+        )
+        if correlation_id:
+            invoice.correlation_id = correlation_id
+
+        source_hint = str(ap_item.get("updated_at") or ap_item.get("created_at") or "")
+        idempotency_key = (
+            f"agent_post_process_job:{ap_item_id}:{source_hint}:{correlation_id or invoice.gmail_id}"
+        )
+        existing = db.get_agent_retry_job_by_key(idempotency_key)
+        if existing and str(existing.get("status") or "") in {"pending", "running", "completed"}:
+            return existing
+
+        job = db.create_agent_retry_job(
+            {
+                "organization_id": self.organization_id,
+                "ap_item_id": ap_item_id,
+                "gmail_id": invoice.gmail_id,
+                "job_type": "post_process",
+                "status": "pending",
+                "retry_count": 0,
+                "max_retries": self._post_process_max_attempts(),
+                "next_retry_at": self._first_post_process_eta(),
+                "idempotency_key": idempotency_key,
+                "correlation_id": correlation_id,
+                "payload": {
+                    "invoice": self._serialize_invoice_for_retry(invoice),
+                    "workflow_result": dict(workflow_result or {}),
+                    "agent_decision": self._serialize_agent_decision(agent_decision),
+                },
+            }
+        )
+        try:
+            db.append_ap_audit_event(
+                {
+                    "ap_item_id": ap_item_id,
+                    "event_type": "agent_post_process_enqueued",
+                    "actor_type": "system",
+                    "actor_id": "agent_orchestrator",
+                    "reason": "post_process_enqueued",
+                    "organization_id": self.organization_id,
+                    "source": "agent_orchestrator",
+                    "correlation_id": correlation_id,
+                    "workflow_id": "agent_post_process",
+                    "run_id": job.get("id"),
+                    "metadata": {
+                        "gmail_id": invoice.gmail_id,
+                        "next_retry_at": job.get("next_retry_at"),
+                        "max_retries": job.get("max_retries"),
+                        "post_process_runtime": status,
+                    },
+                    "idempotency_key": f"agent_post_process_enqueued:{job.get('id')}",
+                }
+            )
+        except Exception as exc:
+            logger.debug("Could not record durable post-process enqueue audit event: %s", exc)
+        return job
 
     def _enqueue_erp_retry_job(
         self,
@@ -872,6 +1122,195 @@ class AgentOrchestrator:
             else:
                 summary["errors"] += 1
         return summary
+
+    async def process_due_post_process_jobs(self, limit: int = 10) -> Dict[str, Any]:
+        """Process due durable post-process jobs for this organization."""
+        summary = {
+            "organization_id": self.organization_id,
+            "fetched": 0,
+            "claimed": 0,
+            "processed": 0,
+            "succeeded": 0,
+            "rescheduled": 0,
+            "dead_letter": 0,
+            "skipped": 0,
+            "errors": 0,
+        }
+        jobs = self.workflow.db.list_due_agent_retry_jobs(
+            organization_id=self.organization_id,
+            job_type="post_process",
+            limit=max(1, int(limit or 10)),
+        )
+        summary["fetched"] = len(jobs)
+        for candidate in jobs:
+            job_id = str(candidate.get("id") or "")
+            if not job_id:
+                continue
+            claimed = self.workflow.db.claim_agent_retry_job(job_id, worker_id=self._retry_worker_id())
+            if not claimed:
+                continue
+            summary["claimed"] += 1
+            outcome = await self._process_post_process_job(claimed)
+            summary["processed"] += 1
+            bucket = str(outcome.get("result") or "errors")
+            if bucket in summary:
+                summary[bucket] += 1
+            else:
+                summary["errors"] += 1
+        return summary
+
+    async def _process_post_process_job(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        db = self.workflow.db
+        job_id = str(job.get("id") or "")
+        ap_item_id = str(job.get("ap_item_id") or "")
+        correlation_id = job.get("correlation_id")
+        payload = job.get("payload") or job.get("payload_json") or {}
+        payload = payload if isinstance(payload, dict) else {}
+
+        if not ap_item_id:
+            db.complete_agent_retry_job(
+                job_id,
+                status="dead_letter",
+                last_error="post_process_missing_ap_item_id",
+                result={"error": "post_process_missing_ap_item_id"},
+            )
+            return {"result": "dead_letter"}
+
+        ap_item = db.get_ap_item(ap_item_id)
+        if not ap_item:
+            db.complete_agent_retry_job(
+                job_id,
+                status="dead_letter",
+                last_error="post_process_ap_item_not_found",
+                result={"error": "post_process_ap_item_not_found"},
+            )
+            return {"result": "dead_letter"}
+
+        invoice_payload = payload.get("invoice") if isinstance(payload.get("invoice"), dict) else {}
+        workflow_result = payload.get("workflow_result") if isinstance(payload.get("workflow_result"), dict) else {}
+        decision_payload = payload.get("agent_decision") if isinstance(payload.get("agent_decision"), dict) else {}
+
+        invoice = self._invoice_from_retry_snapshot(invoice_payload)
+        if not invoice.gmail_id:
+            invoice.gmail_id = str(ap_item.get("thread_id") or job.get("gmail_id") or "")
+        if not invoice.gmail_id:
+            db.complete_agent_retry_job(
+                job_id,
+                status="dead_letter",
+                last_error="post_process_missing_gmail_id",
+                result={"error": "post_process_missing_gmail_id"},
+            )
+            return {"result": "dead_letter"}
+        if correlation_id:
+            invoice.correlation_id = str(correlation_id)
+        elif not invoice.correlation_id:
+            invoice.correlation_id = self.workflow._get_ap_item_correlation_id(
+                ap_item_id=ap_item_id,
+                gmail_id=invoice.gmail_id,
+            )
+
+        agent_decision = self._deserialize_agent_decision(decision_payload)
+        attempt_number = int(job.get("retry_count") or 1)
+        max_retries = max(1, int(job.get("max_retries") or self._post_process_max_attempts()))
+
+        try:
+            await self._run_post_process_steps(
+                invoice=invoice,
+                agent_decision=agent_decision,
+                workflow_result=workflow_result,
+            )
+            db.complete_agent_retry_job(
+                job_id,
+                status="completed",
+                result={
+                    "status": "completed",
+                    "attempt": attempt_number,
+                },
+            )
+            try:
+                db.append_ap_audit_event(
+                    {
+                        "ap_item_id": ap_item_id,
+                        "event_type": "agent_post_process_completed",
+                        "actor_type": "system",
+                        "actor_id": "agent_orchestrator",
+                        "reason": "post_process_completed",
+                        "organization_id": self.organization_id,
+                        "source": "agent_orchestrator",
+                        "correlation_id": invoice.correlation_id,
+                        "workflow_id": "agent_post_process",
+                        "run_id": job_id,
+                        "metadata": {
+                            "attempt": attempt_number,
+                            "max_retries": max_retries,
+                        },
+                        "idempotency_key": f"agent_post_process_completed:{job_id}:{attempt_number}",
+                    }
+                )
+            except Exception as exc:
+                logger.debug("Could not record post-process completion audit event: %s", exc)
+            return {"result": "succeeded"}
+        except Exception as exc:
+            error_message = str(exc) or "post_process_failed"
+            if attempt_number >= max_retries:
+                db.complete_agent_retry_job(
+                    job_id,
+                    status="dead_letter",
+                    last_error=error_message,
+                    result={
+                        "status": "dead_letter",
+                        "attempt": attempt_number,
+                        "max_retries": max_retries,
+                        "error": error_message,
+                    },
+                )
+                event_type = "agent_post_process_dead_letter"
+                summary_key = "dead_letter"
+            else:
+                next_retry_at = self._next_post_process_eta_after_attempt(attempt_number)
+                db.reschedule_agent_retry_job(
+                    job_id,
+                    next_retry_at=next_retry_at,
+                    last_error=error_message,
+                    result={
+                        "status": "retry_scheduled",
+                        "attempt": attempt_number,
+                        "max_retries": max_retries,
+                        "error": error_message,
+                        "next_retry_at": next_retry_at,
+                    },
+                    status="pending",
+                )
+                event_type = "agent_post_process_rescheduled"
+                summary_key = "rescheduled"
+
+            try:
+                metadata: Dict[str, Any] = {
+                    "attempt": attempt_number,
+                    "max_retries": max_retries,
+                    "error": error_message,
+                }
+                if summary_key == "rescheduled":
+                    metadata["next_retry_at"] = self.workflow.db.get_agent_retry_job(job_id).get("next_retry_at")
+                db.append_ap_audit_event(
+                    {
+                        "ap_item_id": ap_item_id,
+                        "event_type": event_type,
+                        "actor_type": "system",
+                        "actor_id": "agent_orchestrator",
+                        "reason": "post_process_failed",
+                        "organization_id": self.organization_id,
+                        "source": "agent_orchestrator",
+                        "correlation_id": invoice.correlation_id,
+                        "workflow_id": "agent_post_process",
+                        "run_id": job_id,
+                        "metadata": metadata,
+                        "idempotency_key": f"{event_type}:{job_id}:{attempt_number}",
+                    }
+                )
+            except Exception as audit_exc:
+                logger.debug("Could not record post-process failure audit event: %s", audit_exc)
+            return {"result": summary_key}
 
     async def _process_erp_retry_job(self, job: Dict[str, Any]) -> Dict[str, Any]:
         db = self.workflow.db
@@ -1126,6 +1565,46 @@ class AgentOrchestrator:
             )
         except Exception as exc:
             logger.debug("Could not record retry gated audit event: %s", exc)
+
+    def _record_post_process_gated_event(
+        self,
+        invoice: InvoiceData,
+        workflow_result: Dict[str, Any],
+        post_process_status: Dict[str, Any],
+        *,
+        reason: Optional[str] = None,
+    ) -> None:
+        try:
+            db = self.workflow.db
+            ap_item = db.get_ap_item_by_thread(self.organization_id, invoice.gmail_id)
+            if not ap_item:
+                ap_item = db.get_ap_item_by_message_id(self.organization_id, invoice.gmail_id)
+            if not ap_item:
+                return
+            event_reason = str(reason or post_process_status.get("reason") or "post_process_queue_unavailable")
+            db.append_ap_audit_event(
+                {
+                    "ap_item_id": ap_item["id"],
+                    "event_type": "agent_post_process_skipped",
+                    "actor_type": "system",
+                    "actor_id": "agent_orchestrator",
+                    "reason": event_reason,
+                    "organization_id": self.organization_id,
+                    "source": "agent_orchestrator",
+                    "metadata": {
+                        "gmail_id": invoice.gmail_id,
+                        "workflow_result_status": workflow_result.get("status"),
+                        "erp_status": workflow_result.get("erp_status"),
+                        "post_process_runtime": post_process_status,
+                    },
+                    "idempotency_key": (
+                        f"agent_post_process_skipped:{ap_item['id']}:{event_reason}:"
+                        f"{workflow_result.get('status')}:{workflow_result.get('erp_status')}"
+                    ),
+                }
+            )
+        except Exception as exc:
+            logger.debug("Could not record post-process gated audit event: %s", exc)
 
 
 # ------------------------------------------------------------------

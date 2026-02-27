@@ -429,6 +429,10 @@ Fill these as artifacts are created for the selected release id.
 
 - `2026-02-25`: Created launch execution tracker seeded from `GA_READINESS_EVIDENCE_PROCESS.md` after archiving completed implementation/remediation trackers.
 - `2026-02-25`: Created `docs/ga-evidence/` templates and seeded pilot release scaffold + manifest for `ap-v1-2026-02-25-pilot-rc1`; updated `L08` to `IN_PROGRESS` and `L14` to `DONE`.
+- `2026-02-27`: Added a deterministic real-browser Gmail sidebar harness at `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/inboxsdk-layer.browser-harness.test.cjs` with script `npm run test:browser-harness`; this strengthens browser-runtime UI wiring confidence while live authenticated Gmail E2E remains tracked under `L01`.
+- `2026-02-27`: Extended `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/inboxsdk-layer.e2e-smoke.test.cjs` with optional evidence JSON output (`GMAIL_E2E_EVIDENCE_JSON`) so manual Gmail smoke/auth runs produce auditable artifacts for pilot/GA evidence collection.
+- `2026-02-27`: Removed non-durable AP post-processing fallback in `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/agent_orchestrator.py` so post-processing is durable-queue-only (or explicitly gated/audited) and updated regression coverage in `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_agent_orchestrator_durable_retry.py`.
+- `2026-02-27`: Enforced strict AP-v1 runtime surface pruning in `/Users/mombalam/Desktop/Clearledgr.v1/main.py` (legacy route families are no longer mounted when strict profile is active), with verification in `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_runtime_surface_scope.py`.
 
 ## Archive Protocol
 

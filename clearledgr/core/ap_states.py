@@ -126,6 +126,86 @@ OVERRIDE_TYPE_PO_EXCEPTION = "po_exception"
 OVERRIDE_TYPE_MULTI = "multi"
 
 
+# Retry recoverability hints for `failed_post` handling.
+# Used by batch autonomy prechecks to avoid retrying hard failures.
+RECOVERABLE_POST_FAILURE_TOKENS = frozenset(
+    {
+        "timeout",
+        "timed out",
+        "temporar",
+        "transient",
+        "service unavailable",
+        "network",
+        "connection",
+        "rate limit",
+        "throttle",
+        "gateway",
+        "http_502",
+        "http_503",
+        "http_504",
+        "retryable",
+        "connector_timeout",
+    }
+)
+
+NON_RECOVERABLE_POST_FAILURE_TOKENS = frozenset(
+    {
+        "validation",
+        "invalid",
+        "schema",
+        "duplicate",
+        "already posted",
+        "already_exists",
+        "permission",
+        "forbidden",
+        "unauthorized",
+        "auth_failed",
+        "missing required",
+        "unmapped",
+        "policy_blocked",
+    }
+)
+
+
+def classify_post_failure_recoverability(
+    *,
+    last_error: Any = None,
+    exception_code: Any = None,
+) -> Dict[str, Any]:
+    """Classify whether a failed ERP post appears recoverable.
+
+    The classifier is intentionally conservative:
+    - explicit non-recoverable hints block retries
+    - known transient hints allow retries
+    - unknown failures default to recoverable, but with a generic reason
+    """
+
+    error_text = str(last_error or "").strip().lower()
+    exception_text = str(exception_code or "").strip().lower()
+    joined = " ".join(part for part in [error_text, exception_text] if part).strip()
+
+    if not joined:
+        return {"recoverable": True, "reason": "recoverable_unknown_failure"}
+
+    for token in NON_RECOVERABLE_POST_FAILURE_TOKENS:
+        if token in joined:
+            return {
+                "recoverable": False,
+                "reason": f"non_recoverable_{token.replace(' ', '_')}",
+                "matched_token": token,
+            }
+
+    for token in RECOVERABLE_POST_FAILURE_TOKENS:
+        if token in joined:
+            return {
+                "recoverable": True,
+                "reason": f"recoverable_{token.replace(' ', '_')}",
+                "matched_token": token,
+            }
+
+    return {"recoverable": True, "reason": "recoverable_unspecified"}
+
+
 @dataclass
 class OverrideContext:
     """Structured context for an override approval decision.

@@ -6,107 +6,101 @@
 
 **Short Description** (132 chars max):
 ```
-AI finance agent for Gmail. Automatically detect invoices, bank statements & reconcile transactions without leaving your inbox.
+Agentic AP for Gmail. Extract invoices, route approvals in Slack/Teams, and post to ERP with policy checks and audit trails.
 ```
 
 **Detailed Description**:
 ```
-Clearledgr embeds an autonomous finance agent directly in Gmail to eliminate manual data entry and accelerate your financial close.
+Clearledgr is an embedded finance execution agent for Accounts Payable.
+
+It runs AP workflows where finance teams already work: Gmail for operators, Slack/Teams for approvals, and ERP for system-of-record posting.
 
 WHAT IT DOES
-- Automatically detects finance emails (invoices, bank statements, payment confirmations)
-- Extracts transaction data using AI (amounts, dates, vendors, invoice numbers)
-- Matches transactions across sources with 95%+ accuracy
-- Categorizes expenses to GL accounts based on learned patterns
-- Routes exceptions to the right team member for review
+- Detects invoice and AP request emails in Gmail
+- Extracts key invoice fields from email + attachments
+- Applies deterministic policy checks and confidence gates
+- Routes approvals to Slack and Teams
+- Posts approved invoices to ERP with idempotency and full audit trails
+- Surfaces exceptions and next actions directly in Gmail
 
 HOW IT WORKS
-1. Install the extension
-2. Connect to your Clearledgr account
-3. Open Gmail - Clearledgr surfaces finance emails in a sidebar
-4. Review AI-extracted data and approve with one click
-5. Matched transactions flow to your ERP automatically
+1. Install the extension and connect your workspace
+2. Open Gmail and view the AP operator sidebar in-thread
+3. Review extracted data and policy/exception status
+4. Route approvals; approvers decide in Slack/Teams
+5. Clearledgr posts to ERP and records auditable outcomes
 
 KEY FEATURES
-- Finance Email Detection: AI identifies bank statements, invoices, and payment confirmations
-- Smart Extraction: Pulls amounts, dates, vendors, and references automatically  
-- Multi-Source Matching: Reconciles gateway, bank, and internal transactions
-- GL Categorization: Learns your coding patterns and suggests accounts
-- Exception Routing: Flags mismatches and routes to the right reviewer
-- Audit Trail: Every action logged for compliance
+- Gmail-first AP workflow (no separate daily dashboard required)
+- Policy-aware routing and execution
+- Human-in-the-loop controls for risky actions
+- Runtime intent orchestration with auditable state transitions
+- ERP write-back with idempotency and correlation metadata
 
 INTEGRATIONS
-- Google Sheets: Full reconciliation workflow
-- Slack: Approvals and notifications
-- SAP: Journal entry posting
+- Slack / Teams: approval decisions
+- ERP connectors: QuickBooks, Xero, NetSuite, SAP
+- Gmail API + extension surface for intake and operations
 
 SECURITY
-- Data encrypted in transit (TLS 1.3) and at rest (AES-256)
-- SOC 2 Type II compliant
-- GDPR compliant
-- No data sold to third parties
+- Data encrypted in transit and at rest
+- Authenticated API boundaries
+- Signed callback verification for chat approvals
+- Audit trail for transitions and external writes
 
 REQUIREMENTS
-- Clearledgr account (free trial available)
-- Google Workspace or personal Gmail
+- Clearledgr account
+- Gmail account with extension access
+- Slack and/or Teams integration for approvals
+- ERP credentials for write-back
 
 SUPPORT
 - Documentation: docs.clearledgr.com
 - Email: support@clearledgr.com
-- In-app chat with Vita AI assistant
 ```
 
 ## Category
 
-**Primary Category**: Productivity
-**Secondary Category**: Business Tools
+**Primary Category**: Business Tools
+**Secondary Category**: Productivity
 
 ## Language
 
 **Primary**: English
-**Supported**: English, French, German, Spanish (roadmap)
 
 ## Pricing
 
-**Price**: Free (requires Clearledgr subscription for full features)
+**Price**: Free install (Clearledgr subscription required for production usage)
 
 ## Screenshots Required
 
-1. **Main Sidebar View** (1280x800)
-   - Shows Gmail with Clearledgr sidebar open
-   - Finance emails detected and displayed
-   - Status indicators visible
+1. **AP Thread Workspace** (1280x800)
+   - Gmail thread with Clearledgr AP panel
+   - Status, exceptions, and next action visible
 
-2. **Email Detection** (1280x800)
-   - Invoice email with extraction overlay
-   - Highlighted amounts, dates, vendor
+2. **Approval Routing** (1280x800)
+   - Invoice routed for Slack/Teams approval
+   - Decision context and controls visible
 
-3. **Reconciliation Results** (1280x800)
-   - Matched transactions with scores
-   - Quick approve buttons
+3. **Exception Handling** (1280x800)
+   - Needs-info / failed-post states with operator guidance
 
-4. **Vita AI Chat** (1280x800)
-   - Chat interface in sidebar
-   - Example: "Show exceptions needing review"
+4. **Audit + Timeline** (1280x800)
+   - Agent timeline and audit breadcrumbs for one AP item
 
-5. **Settings Panel** (1280x800)
-   - Configuration options
-   - Connected integrations
+5. **Batch Agent Ops** (1280x800)
+   - Preview-first batch operations with deterministic selection reasons
 
 ## Promotional Images
 
 1. **Small Promo Tile** (440x280)
-   - Clearledgr logo
-   - "AI Finance Agent for Gmail"
+   - "Clearledgr AP Agent for Gmail"
 
 2. **Large Promo Tile** (920x680)
-   - Dashboard preview
-   - Key features highlighted
-   - "Reconcile in Gmail"
+   - Gmail + Slack/Teams + ERP execution path
 
 3. **Marquee** (1400x560)
-   - Hero image with Gmail integration
-   - "From Weeks to Hours"
+   - "Embedded Agentic AP Execution"
 
 ## Store Listing URLs
 
@@ -125,28 +119,22 @@ SUPPORT
 
 | Permission | Justification |
 |------------|---------------|
-| `storage` | Store user preferences and cached data locally |
-| `activeTab` | Access current Gmail tab to detect emails |
-| `scripting` | Inject sidebar UI into Gmail |
-| `tabs` | Detect when user navigates to Gmail |
-| `mail.google.com` | Read email content to detect finance documents |
-| `localhost` | Development/testing only (removed in prod build) |
-| `api.clearledgr.com` | Connect to Clearledgr backend services |
+| `storage` | Store user preferences and runtime settings |
+| `activeTab` | Access Gmail tab context for operator UI |
+| `scripting` | Inject AP workspace UI into Gmail |
+| `tabs` | Detect Gmail navigation state |
+| `mail.google.com` | Read finance-email context for AP execution |
+| `api.clearledgr.com` | Connect to runtime/orchestration APIs |
 
 ## Review Notes for Chrome Team
 
 ```
 This extension:
-1. Only activates on mail.google.com
-2. Only processes emails the user explicitly interacts with
-3. Does not access email content until user clicks on an email
-4. Does not modify or send emails on behalf of the user
-5. Requires explicit user login to Clearledgr account
-6. All data processing follows GDPR guidelines
-
-For testing:
-- Demo account: demo@clearledgr.com / DemoPassword123
-- Test with finance-related emails (invoices, bank statements)
+1. Activates on Gmail domains only
+2. Supports AP workflow execution with policy gates and HITL controls
+3. Uses authenticated backend APIs for runtime actions
+4. Does not bypass approval controls for high-risk actions
+5. Maintains auditable action/state history
 ```
 
 ## Publication Checklist
@@ -154,10 +142,9 @@ For testing:
 - [ ] Privacy policy published at https://clearledgr.com/privacy
 - [ ] Terms of service published at https://clearledgr.com/terms
 - [ ] Support page live at https://clearledgr.com/support
-- [ ] All 5 screenshots captured at 1280x800
-- [ ] Promo tiles designed (440x280, 920x680, 1400x560)
-- [ ] Demo account created for review team
+- [ ] Screenshots captured at 1280x800
+- [ ] Promo assets prepared
 - [ ] Production API endpoint configured
-- [ ] localhost removed from host_permissions
+- [ ] localhost removed from production host permissions
 - [ ] Version number updated
 - [ ] Build tested on clean Chrome profile

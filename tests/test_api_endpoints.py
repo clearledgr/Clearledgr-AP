@@ -5,6 +5,7 @@ Tests the FastAPI endpoints for the Clearledgr API.
 """
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -12,6 +13,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 # Import the FastAPI app
 from main import app
 from clearledgr.api import gmail_extension as gmail_extension_module
+from clearledgr.api import agent_intents as agent_intents_module
 from clearledgr.core.auth import TokenData
 
 client = TestClient(app)
@@ -280,6 +282,45 @@ class TestExtensionEndpoints:
             "organization_id": "default",
         })
         assert response.status_code == 401
+
+    def test_sensitive_extension_endpoints_require_auth(self):
+        app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+
+        assert client.post(
+            "/extension/verify-confidence",
+            json={"email_id": "x", "extraction": {}, "organization_id": "default"},
+        ).status_code == 401
+        assert client.post(
+            "/extension/match-bank",
+            json={"extraction": {}, "organization_id": "default"},
+        ).status_code == 401
+        assert client.post(
+            "/extension/match-erp",
+            json={"extraction": {}, "organization_id": "default"},
+        ).status_code == 401
+        assert client.post(
+            "/extension/suggestions/gl-code",
+            json={"vendor_name": "Acme", "organization_id": "default"},
+        ).status_code == 401
+        assert client.post(
+            "/extension/suggestions/vendor",
+            json={"organization_id": "default", "extracted_vendor": "Acme"},
+        ).status_code == 401
+        assert client.post(
+            "/extension/suggestions/amount-validation",
+            json={"vendor_name": "Acme", "amount": 10.5, "organization_id": "default"},
+        ).status_code == 401
+        assert client.get("/extension/suggestions/form-prefill/email-1?organization_id=default").status_code == 401
+        assert client.get("/extension/needs-info-draft/AP-1").status_code == 401
+        assert client.post(
+            "/extension/record-field-correction",
+            json={
+                "ap_item_id": "AP-1",
+                "field": "vendor",
+                "original_value": "Old",
+                "corrected_value": "New",
+            },
+        ).status_code == 401
     
     def test_invoice_pipeline(self):
         """Test invoice pipeline endpoint."""
@@ -344,9 +385,33 @@ class TestExtensionEndpoints:
             return list(self.audit_events) if str(ap_item_id) == str(self.ap_item.get("id") or "") else []
 
         def append_ap_audit_event(self, payload):
-            row = {"id": f"audit-{len(self.audit_rows) + 1}", **dict(payload or {})}
+            key = str((payload or {}).get("idempotency_key") or "").strip()
+            if key:
+                existing = self.get_ap_audit_event_by_key(key)
+                if existing:
+                    return existing
+            data = dict(payload or {})
+            if "payload_json" not in data:
+                data["payload_json"] = dict(data.get("metadata") or {})
+            row = {"id": f"audit-{len(self.audit_rows) + 1}", **data}
             self.audit_rows.append(row)
             return row
+
+        def get_ap_audit_event_by_key(self, idempotency_key):
+            key = str(idempotency_key or "").strip()
+            if not key:
+                return None
+            for row in self.audit_rows:
+                if str(row.get("idempotency_key") or "").strip() == key:
+                    return row
+            return None
+
+        def update_ap_item(self, ap_item_id, **kwargs):
+            if str(ap_item_id) != str(self.ap_item.get("id") or ""):
+                return False
+            for key, value in (kwargs or {}).items():
+                self.ap_item[key] = value
+            return True
 
         def get_slack_thread(self, gmail_id):
             if str(gmail_id) == str(self.ap_item.get("thread_id") or ""):
@@ -526,6 +591,275 @@ class TestExtensionEndpoints:
         assert activity.get("replyToId") == "msg-42"
         assert "attachments" in activity
 
+    def test_vendor_followup_endpoint_prepares_draft_and_updates_metadata(self):
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        fake_db = self._FakeExtensionDB(
+            ap_item={
+                "id": "ap-item-followup-1",
+                "organization_id": "default",
+                "thread_id": "gmail-thread-followup-1",
+                "state": "needs_info",
+                "vendor_name": "Northwind",
+                "invoice_number": "INV-FOLLOWUP-1",
+                "amount": 120.75,
+                "currency": "USD",
+                "sender": "billing@northwind.example",
+                "subject": "Invoice follow-up",
+                "user_id": "finance-user",
+                "metadata": {
+                    "correlation_id": "corr-followup-1",
+                    "needs_info_question": "Please share the PO number.",
+                },
+            }
+        )
+
+        class _FakeGmailClient:
+            def __init__(self, user_id):
+                self.user_id = user_id
+
+            async def ensure_authenticated(self):
+                return True
+
+            async def create_draft(self, **_kwargs):
+                return "draft-followup-123"
+
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                with patch("clearledgr.services.gmail_api.GmailAPIClient", _FakeGmailClient):
+                    response = client.post(
+                        "/extension/vendor-followup",
+                        json={
+                            "email_id": "gmail-thread-followup-1",
+                            "organization_id": "default",
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "prepared"
+        assert payload["draft_id"] == "draft-followup-123"
+        assert payload["followup_attempt_count"] == 1
+        assert payload["followup_next_action"] == "await_vendor_response"
+        assert payload["audit_event_id"]
+        metadata = fake_db.ap_item["metadata"]
+        assert metadata["needs_info_draft_id"] == "draft-followup-123"
+        assert metadata["followup_attempt_count"] == 1
+        assert metadata["followup_next_action"] == "await_vendor_response"
+        assert metadata.get("followup_last_sent_at")
+        assert fake_db.audit_rows[-1]["event_type"] == "vendor_followup_draft_prepared"
+        assert fake_audit.events[-1]["action"] == "vendor_followup_prepared"
+
+    def test_vendor_followup_endpoint_respects_sla_wait_window(self):
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        now_iso = datetime.now(timezone.utc).isoformat()
+        fake_db = self._FakeExtensionDB(
+            ap_item={
+                "id": "ap-item-followup-2",
+                "organization_id": "default",
+                "thread_id": "gmail-thread-followup-2",
+                "state": "needs_info",
+                "vendor_name": "Northwind",
+                "invoice_number": "INV-FOLLOWUP-2",
+                "amount": 88.00,
+                "currency": "USD",
+                "sender": "billing@northwind.example",
+                "subject": "Invoice follow-up",
+                "user_id": "finance-user",
+                "metadata": {
+                    "needs_info_question": "Please confirm invoice date.",
+                    "followup_attempt_count": 1,
+                    "followup_last_sent_at": now_iso,
+                    "needs_info_draft_id": "draft-existing-1",
+                },
+            }
+        )
+
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                response = client.post(
+                    "/extension/vendor-followup",
+                    json={
+                        "email_id": "gmail-thread-followup-2",
+                        "organization_id": "default",
+                    },
+                )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "waiting_sla"
+        assert payload["followup_attempt_count"] == 1
+        assert payload["followup_next_action"] == "await_vendor_response"
+        assert payload["needs_info_draft_id"] == "draft-existing-1"
+
+    def test_vendor_followup_endpoint_idempotency_replays_previous_response(self):
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        fake_db = self._FakeExtensionDB(
+            ap_item={
+                "id": "ap-item-followup-idem",
+                "organization_id": "default",
+                "thread_id": "gmail-thread-followup-idem",
+                "state": "needs_info",
+                "vendor_name": "Northwind",
+                "invoice_number": "INV-FOLLOWUP-IDEM",
+                "amount": 88.0,
+                "currency": "USD",
+                "sender": "billing@northwind.example",
+                "subject": "Invoice follow-up",
+                "user_id": "finance-user",
+                "metadata": {"correlation_id": "corr-followup-idem"},
+            }
+        )
+
+        class _FakeGmailClient:
+            def __init__(self, user_id):
+                self.user_id = user_id
+
+            async def ensure_authenticated(self):
+                return True
+
+            async def create_draft(self, **_kwargs):
+                return "draft-followup-idem"
+
+        body = {
+            "email_id": "gmail-thread-followup-idem",
+            "organization_id": "default",
+            "idempotency_key": "idem-followup-1",
+        }
+
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                with patch("clearledgr.services.gmail_api.GmailAPIClient", _FakeGmailClient):
+                    first = client.post("/extension/vendor-followup", json=body)
+                    second = client.post("/extension/vendor-followup", json=body)
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        first_payload = first.json()
+        second_payload = second.json()
+        assert first_payload["status"] == "prepared"
+        assert second_payload["status"] == "prepared"
+        assert second_payload["idempotency_replayed"] is True
+        assert len(fake_db.audit_rows) == 1
+
+    def test_route_low_risk_approval_endpoint_routes_and_replays_idempotent_request(self):
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        fake_db = self._FakeExtensionDB(
+            ap_item={
+                "id": "ap-item-route-1",
+                "organization_id": "default",
+                "thread_id": "gmail-thread-route-1",
+                "state": "validated",
+                "vendor_name": "Route Co",
+                "invoice_number": "INV-ROUTE-1",
+                "amount": 140.0,
+                "currency": "USD",
+                "metadata": {"correlation_id": "corr-route-1"},
+            }
+        )
+        fake_workflow = MagicMock()
+        fake_workflow.evaluate_batch_route_low_risk_for_approval.return_value = {
+            "eligible": True,
+            "reason_codes": [],
+            "state": "validated",
+        }
+        fake_workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(
+            gmail_id="gmail-thread-route-1"
+        )
+        fake_workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "111.22"})
+
+        body = {
+            "email_id": "gmail-thread-route-1",
+            "organization_id": "default",
+            "idempotency_key": "idem-route-1",
+        }
+
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=fake_workflow):
+                    first = client.post("/extension/route-low-risk-approval", json=body)
+                    second = client.post("/extension/route-low-risk-approval", json=body)
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        first_payload = first.json()
+        second_payload = second.json()
+        assert first_payload["status"] == "pending_approval"
+        assert second_payload["status"] == "pending_approval"
+        assert second_payload["idempotency_replayed"] is True
+        assert any(row.get("event_type") == "route_low_risk_for_approval" for row in fake_db.audit_rows)
+
+    def test_retry_recoverable_failure_endpoint_uses_resume_workflow_and_replays_idempotent_request(self):
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        fake_db = self._FakeExtensionDB(
+            ap_item={
+                "id": "ap-item-retry-1",
+                "organization_id": "default",
+                "thread_id": "gmail-thread-retry-1",
+                "state": "failed_post",
+                "vendor_name": "Retry Co",
+                "invoice_number": "INV-RETRY-1",
+                "amount": 141.0,
+                "currency": "USD",
+                "last_error": "connector timeout",
+                "metadata": {"correlation_id": "corr-retry-1"},
+            }
+        )
+        fake_workflow = MagicMock()
+        fake_workflow.evaluate_batch_retry_recoverable_failure.return_value = {
+            "eligible": True,
+            "reason_codes": [],
+            "recoverability": {"recoverable": True, "reason": "recoverable_timeout"},
+            "state": "failed_post",
+        }
+        fake_workflow.resume_workflow = AsyncMock(return_value={"status": "recovered", "erp_reference": "ERP-REC-1"})
+
+        body = {
+            "email_id": "gmail-thread-retry-1",
+            "organization_id": "default",
+            "idempotency_key": "idem-retry-1",
+        }
+
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=fake_workflow):
+                    first = client.post("/extension/retry-recoverable-failure", json=body)
+                    second = client.post("/extension/retry-recoverable-failure", json=body)
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        first_payload = first.json()
+        second_payload = second.json()
+        assert first_payload["status"] == "posted"
+        assert first_payload["erp_reference"] == "ERP-REC-1"
+        assert second_payload["status"] == "posted"
+        assert second_payload["idempotency_replayed"] is True
+        assert any(row.get("event_type") == "retry_recoverable_failure_completed" for row in fake_db.audit_rows)
+
 
 class TestSettingsEndpoints:
     """Test organization settings endpoints."""
@@ -543,6 +877,156 @@ class TestSettingsEndpoints:
             "executive_approval_limit": 25000,
         })
         assert response.status_code in [200, 404]  # 404 if org doesn't exist
+
+
+class TestAgentIntentEndpoints:
+    @staticmethod
+    def _fake_user():
+        return TokenData(
+            user_id="agent-user-1",
+            email="agent@example.com",
+            organization_id="default",
+            role="user",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+    def test_preview_intent_endpoint_calls_runtime(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        preview_response = {
+            "intent": "route_low_risk_for_approval",
+            "mode": "preview",
+            "status": "eligible",
+            "ap_item_id": "ap-item-1",
+            "email_id": "gmail-thread-1",
+            "policy_precheck": {"eligible": True, "reason_codes": []},
+        }
+        try:
+            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
+                with patch.object(
+                    agent_intents_module.FinanceAgentRuntime,
+                    "preview_intent",
+                    return_value=preview_response,
+                ) as preview_mock:
+                    response = client.post(
+                        "/api/agent/intents/preview",
+                        json={
+                            "intent": "route_low_risk_for_approval",
+                            "input": {"email_id": "gmail-thread-1"},
+                            "organization_id": "default",
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "eligible"
+        assert payload["intent"] == "route_low_risk_for_approval"
+        preview_mock.assert_called_once()
+
+    def test_execute_intent_endpoint_calls_runtime(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        execute_response = {
+            "intent": "route_low_risk_for_approval",
+            "status": "pending_approval",
+            "ap_item_id": "ap-item-1",
+            "email_id": "gmail-thread-1",
+            "policy_precheck": {"eligible": True, "reason_codes": []},
+            "audit_event_id": "audit-1",
+        }
+        try:
+            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
+                with patch.object(
+                    agent_intents_module.FinanceAgentRuntime,
+                    "execute_intent",
+                    AsyncMock(return_value=execute_response),
+                ) as exec_mock:
+                    response = client.post(
+                        "/api/agent/intents/execute",
+                        json={
+                            "intent": "route_low_risk_for_approval",
+                            "input": {"email_id": "gmail-thread-1"},
+                            "idempotency_key": "idem-agent-1",
+                            "organization_id": "default",
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "pending_approval"
+        assert payload["audit_event_id"] == "audit-1"
+        exec_mock.assert_awaited_once()
+
+    def test_execute_intent_endpoint_supports_prepare_vendor_followups(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        execute_response = {
+            "intent": "prepare_vendor_followups",
+            "status": "prepared",
+            "ap_item_id": "ap-item-2",
+            "email_id": "gmail-thread-2",
+            "draft_id": "draft-2",
+            "audit_event_id": "audit-2",
+        }
+        try:
+            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
+                with patch.object(
+                    agent_intents_module.FinanceAgentRuntime,
+                    "execute_intent",
+                    AsyncMock(return_value=execute_response),
+                ) as exec_mock:
+                    response = client.post(
+                        "/api/agent/intents/execute",
+                        json={
+                            "intent": "prepare_vendor_followups",
+                            "input": {"email_id": "gmail-thread-2", "force": False},
+                            "idempotency_key": "idem-agent-2",
+                            "organization_id": "default",
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "prepared"
+        assert payload["draft_id"] == "draft-2"
+        exec_mock.assert_awaited_once()
+
+    def test_preview_intent_endpoint_supports_read_ap_workflow_health(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+
+        class _FakeRuntimeDB:
+            def list_ap_items(self, organization_id, state=None, limit=200, prioritized=False):
+                _ = state, prioritized
+                if str(organization_id or "") != "default":
+                    return []
+                return [
+                    {"id": "ap-1", "organization_id": "default", "state": "needs_info"},
+                    {"id": "ap-2", "organization_id": "default", "state": "failed_post"},
+                    {"id": "ap-3", "organization_id": "default", "state": "validated"},
+                ][: max(1, int(limit or 200))]
+
+        try:
+            with patch.object(agent_intents_module, "get_db", return_value=_FakeRuntimeDB()):
+                response = client.post(
+                    "/api/agent/intents/preview",
+                    json={
+                        "intent": "read_ap_workflow_health",
+                        "input": {"limit": 100},
+                        "organization_id": "default",
+                    },
+                )
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["intent"] == "read_ap_workflow_health"
+        assert payload["status"] == "ready"
+        assert payload["summary"]["total_items"] == 3
+        assert payload["policy_precheck"]["read_only"] is True
 
 
 class TestLearningEndpoints:

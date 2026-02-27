@@ -488,8 +488,12 @@ function createMockQueueManagerClass(records, options = {}) {
         dispatchAgentMacro: 0,
         syncAgentSessions: 0,
         syncQueueWithBackend: 0,
+        requestApproval: 0,
+        prepareVendorFollowup: 0,
         nudgeApproval: 0,
         retryFailedPost: 0,
+        routeLowRiskForApproval: 0,
+        retryRecoverableFailure: 0,
       };
       records.queueManagerInstance = this;
     }
@@ -635,11 +639,52 @@ function createMockQueueManagerClass(records, options = {}) {
       return { status: 'nudged', email_id: item?.id || item?.thread_id || 'unknown' };
     }
 
+    async requestApproval(item, _options = {}) {
+      this.calls.requestApproval += 1;
+      return { status: 'pending_approval', email_id: item?.id || item?.thread_id || 'unknown' };
+    }
+
+    async prepareVendorFollowup(item, _options = {}) {
+      this.calls.prepareVendorFollowup += 1;
+      return {
+        status: 'prepared',
+        email_id: item?.id || item?.thread_id || 'unknown',
+        draft_id: `draft-${item?.id || 'unknown'}`,
+      };
+    }
+
     async retryFailedPost(item) {
       this.calls.retryFailedPost += 1;
       if (typeof options.retryFailedPost === 'function') {
         return await options.retryFailedPost(item, this);
       }
+      this.queue = (Array.isArray(this.queue) ? this.queue : []).map((entry) =>
+        entry?.id === item?.id
+          ? { ...entry, state: 'posted_to_erp', erp_reference: entry.erp_reference || `ERP-${entry.id || 'ref'}` }
+          : entry
+      );
+      return {
+        status: 'posted',
+        ap_item_id: item?.id || '',
+        erp_reference: item?.id ? `ERP-${item.id}` : null,
+      };
+    }
+
+    async routeLowRiskForApproval(item, _options = {}) {
+      this.calls.routeLowRiskForApproval += 1;
+      this.queue = (Array.isArray(this.queue) ? this.queue : []).map((entry) =>
+        entry?.id === item?.id
+          ? { ...entry, state: 'needs_approval', next_action: 'approve_or_reject' }
+          : entry
+      );
+      return {
+        status: 'pending_approval',
+        ap_item_id: item?.id || '',
+      };
+    }
+
+    async retryRecoverableFailure(item, _options = {}) {
+      this.calls.retryRecoverableFailure += 1;
       this.queue = (Array.isArray(this.queue) ? this.queue : []).map((entry) =>
         entry?.id === item?.id
           ? { ...entry, state: 'posted_to_erp', erp_reference: entry.erp_reference || `ERP-${entry.id || 'ref'}` }

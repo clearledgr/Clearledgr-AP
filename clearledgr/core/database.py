@@ -38,6 +38,7 @@ from clearledgr.core.stores.integration_store import IntegrationStore
 from clearledgr.core.stores.legacy_engine_store import LegacyEngineStore, LEGACY_ENGINE_TABLES
 from clearledgr.core.stores.metrics_store import MetricsStore
 from clearledgr.core.stores.policy_store import PolicyStore
+from clearledgr.core.stores.task_store import TaskStore
 from clearledgr.core.stores.vendor_store import VendorStore
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class ClearledgrDB(
     LegacyEngineStore,
     PolicyStore,
     MetricsStore,
+    TaskStore,
     VendorStore,
 ):
     def __init__(self, db_path: str = "clearledgr.db"):
@@ -468,6 +470,7 @@ class ClearledgrDB(
                     rejected_at TEXT,
                     rejection_reason TEXT,
                     supersedes_ap_item_id TEXT,
+                    supersedes_invoice_key TEXT,
                     superseded_by_ap_item_id TEXT,
                     resubmission_reason TEXT,
                     erp_reference TEXT,
@@ -766,6 +769,7 @@ class ClearledgrDB(
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_org_message ON ap_items(organization_id, message_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_org_state_updated ON ap_items(organization_id, state, updated_at)")
             self._ensure_column(cur, "ap_items", "supersedes_ap_item_id", "TEXT")
+            self._ensure_column(cur, "ap_items", "supersedes_invoice_key", "TEXT")
             self._ensure_column(cur, "ap_items", "superseded_by_ap_item_id", "TEXT")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_supersedes ON ap_items(supersedes_ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_superseded_by ON ap_items(superseded_by_ap_item_id)")
@@ -902,6 +906,13 @@ class ClearledgrDB(
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_approval_steps_chain "
                 "ON approval_steps(chain_id, step_index)"
+            )
+
+            # Agent task run checkpoint table (durable planning loop)
+            cur.execute(TaskStore.TASK_RUNS_TABLE_SQL)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_task_runs_org_status "
+                "ON task_runs(organization_id, status)"
             )
 
             # Legacy engine reconciliation + AP workflow service tables

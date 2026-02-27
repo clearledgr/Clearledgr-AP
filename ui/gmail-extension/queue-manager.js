@@ -1453,8 +1453,13 @@ class ClearledgrQueueManager {
     }
   }
 
-  async requestApproval(item) {
+  async requestApproval(item, {
+    forceHumanReview = false,
+    idempotencyKey = '',
+    reason = '',
+  } = {}) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const key = String(idempotencyKey || '').trim();
     const payload = {
       email_id: item.thread_id || item.message_id || item.id,
       invoice_key: item.invoice_key,
@@ -1468,7 +1473,14 @@ class ClearledgrQueueManager {
       confidence: item.confidence || 0,
       organization_id: this.runtimeConfig.organizationId,
       user_email: this.runtimeConfig.userEmail,
-      slack_channel: this.runtimeConfig.slackChannel
+      slack_channel: this.runtimeConfig.slackChannel,
+      idempotency_key: key || undefined,
+      agent_decision: forceHumanReview
+        ? {
+            decision: 'needs_review',
+            reasoning: { summary: reason || 'batch_route_low_risk_for_approval' },
+          }
+        : undefined,
     };
 
     const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/submit-for-approval`, {
@@ -1516,6 +1528,71 @@ class ClearledgrQueueManager {
     }
   }
 
+  async readErrorDetail(response) {
+    if (!response) return '';
+    try {
+      const payload = await response.json();
+      return String(payload?.detail || '').trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  async executeAgentIntent(intent, input, { idempotencyKey = '', defaultStatus = 'error' } = {}) {
+    if (!this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+
+    const normalizedIntent = String(intent || '').trim();
+    if (!normalizedIntent) return { status: 'invalid', reason: 'missing_intent' };
+
+    const key = String(idempotencyKey || '').trim();
+    const executePayload = {
+      intent: normalizedIntent,
+      input: input && typeof input === 'object' ? input : {},
+      idempotency_key: key || undefined,
+      organization_id: this.runtimeConfig.organizationId || 'default',
+    };
+
+    try {
+      const response = await fetch(`${this.runtimeConfig.backendUrl}/api/agent/intents/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(executePayload),
+      });
+      if (response.ok) {
+        const result = await response.json();
+        return result || { status: defaultStatus };
+      }
+      const detail = await this.readErrorDetail(response);
+      return { status: 'error', reason: detail || `http_${response.status}` };
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async prepareVendorFollowup(item, { reason = '', force = false, idempotencyKey = '' } = {}) {
+    if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    try {
+      const reference = item.id || item.thread_id || item.message_id;
+      const result = await this.executeAgentIntent(
+        'prepare_vendor_followups',
+        {
+          email_id: reference,
+          reason: reason || undefined,
+          force: Boolean(force),
+        },
+        {
+          idempotencyKey,
+          defaultStatus: 'prepared',
+        }
+      );
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result || { status: 'prepared' };
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
   async retryFailedPost(item) {
     if (!item?.id || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
     try {
@@ -1540,6 +1617,52 @@ class ClearledgrQueueManager {
       await this.syncQueueWithBackend({ updateStatus: false });
       this.emitQueueUpdated();
       return result || { status: 'ready_to_post' };
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async routeLowRiskForApproval(item, { idempotencyKey = '', reason = '' } = {}) {
+    if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    try {
+      const reference = item.id || item.thread_id || item.message_id;
+      const result = await this.executeAgentIntent(
+        'route_low_risk_for_approval',
+        {
+          email_id: reference,
+          reason: reason || undefined,
+        },
+        {
+          idempotencyKey,
+          defaultStatus: 'pending_approval',
+        }
+      );
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result || { status: 'pending_approval' };
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async retryRecoverableFailure(item, { idempotencyKey = '', reason = '' } = {}) {
+    if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    try {
+      const reference = item.id || item.thread_id || item.message_id;
+      const result = await this.executeAgentIntent(
+        'retry_recoverable_failures',
+        {
+          email_id: reference,
+          reason: reason || undefined,
+        },
+        {
+          idempotencyKey,
+          defaultStatus: 'error',
+        }
+      );
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result || { status: 'error', reason: 'unknown_response' };
     } catch (_) {
       return { status: 'error', reason: 'network_error' };
     }

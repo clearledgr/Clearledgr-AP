@@ -50,8 +50,8 @@ Connect the Gmail account/workspace that will be monitored for AP intake.
 
 Clearledgr AP v1 expects Gmail to be the primary intake surface for:
 - invoices
-- statements
 - payment requests
+- remittance and supporting AP context
 - AP exceptions and follow-ups
 
 ### Step 4: Connect Slack and Teams
@@ -150,8 +150,8 @@ Common causes:
 
 - Doctrine / launch gates: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
 - Backlog / sequencing: `/Users/mombalam/Desktop/Clearledgr.v1/TODO_BACKLOG.md`
-- Strategy / future gaps: `/Users/mombalam/Desktop/Clearledgr.v1/gaps_opportunities`
-- Point-in-time readiness audit: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GO_LIVE_ASSESSMENT.md`
+- Strategy / expansion direction: `/Users/mombalam/Desktop/Clearledgr.v1/VISION.md`
+- Point-in-time readiness audit: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_LAUNCH_READINESS_TRACKER.md`
 
 ### Historical MVP framing
 

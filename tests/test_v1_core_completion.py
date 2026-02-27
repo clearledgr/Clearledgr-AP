@@ -89,6 +89,17 @@ def test_extension_pipeline_normalizes_exception_taxonomy(client, db):
     assert row.get("priority_score") is not None
 
 
+def test_vendor_followup_endpoint_requires_auth(client):
+    response = client.post(
+        "/extension/vendor-followup",
+        json={
+            "email_id": "gmail-thread-unauth",
+            "organization_id": "default",
+        },
+    )
+    assert response.status_code == 401
+
+
 def test_worklist_derives_budget_exception_and_teams_interactive(monkeypatch, client, db):
     from datetime import datetime, timezone
 

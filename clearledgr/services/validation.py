@@ -1,5 +1,5 @@
 """
-Request validation models for Clearledgr Reconciliation API.
+Request validation models for legacy Clearledgr spreadsheet workflows.
 """
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
@@ -29,7 +29,7 @@ class PeriodDates(BaseModel):
 
 
 class SheetsRunRequest(PeriodDates):
-    """Request model for Google Sheets-based Reconciliation reconciliation."""
+    """Request model for Google Sheets-based legacy reconciliation runs."""
     sheet_id: str = Field(..., description="Google Sheets ID")
     gateway_tab: str = Field("GATEWAY", description="Gateway tab name")
     bank_tab: str = Field("BANK", description="Bank tab name")
