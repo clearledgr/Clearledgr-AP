@@ -14,8 +14,9 @@ Supports:
 - Escalation
 """
 
+import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set
 from dataclasses import dataclass, field
 from enum import Enum
@@ -220,14 +221,73 @@ class ApprovalChainService:
     
     def __init__(self, organization_id: str = "default"):
         self.organization_id = organization_id
-        self._chains: Dict[str, ApprovalChain] = {}
+        self._chains: Dict[str, ApprovalChain] = {}  # write-through L1 cache
         self._approvers: Dict[str, Approver] = {}
         self._rules: List[ApprovalRule] = []
         self._delegations: Dict[str, str] = {}  # from_user -> to_user
         self._thresholds = dict(self.DEFAULT_THRESHOLDS)
-        
+        self._db = None  # lazy-loaded on first use
+
         # Initialize default rules
         self._init_default_rules()
+
+    def _get_db(self):
+        """Lazily import and return the shared DB instance."""
+        if self._db is None:
+            from clearledgr.core.database import get_db
+            self._db = get_db()
+        return self._db
+
+    # ------------------------------------------------------------------
+    # DB deserialization helper
+    # ------------------------------------------------------------------
+
+    def _chain_from_db_row(self, row: Dict[str, Any]) -> ApprovalChain:
+        """Reconstruct an ApprovalChain dataclass from a DB row dict."""
+        steps = []
+        for s in row.get("steps", []):
+            try:
+                approvers = json.loads(s.get("approvers") or "[]")
+            except Exception:
+                approvers = []
+            step = ApprovalStep(
+                step_id=s["id"],
+                level=ApprovalLevel(s["level"]),
+                approvers=approvers,
+                approval_type=ApprovalType(s.get("approval_type", "any")),
+                status=ApprovalStatus(s.get("status", "pending")),
+                approved_by=s.get("approved_by"),
+                approved_at=datetime.fromisoformat(s["approved_at"]) if s.get("approved_at") else None,
+                rejection_reason=s.get("rejection_reason"),
+                comments=s.get("comments") or "",
+            )
+            steps.append(step)
+
+        def _parse_dt(v):
+            if not v:
+                return None
+            try:
+                return datetime.fromisoformat(v)
+            except Exception:
+                return None
+
+        chain = ApprovalChain(
+            chain_id=row["id"],
+            invoice_id=row["invoice_id"],
+            vendor_name=row.get("vendor_name") or "",
+            amount=row.get("amount") or 0.0,
+            gl_code=row.get("gl_code"),
+            department=row.get("department"),
+            steps=steps,
+            current_step=row.get("current_step", 0),
+            status=ApprovalStatus(row.get("status", "pending")),
+            created_at=_parse_dt(row.get("created_at")) or datetime.now(),
+            completed_at=_parse_dt(row.get("completed_at")),
+            requester_id=row.get("requester_id"),
+            requester_name=row.get("requester_name"),
+            organization_id=row.get("organization_id", self.organization_id),
+        )
+        return chain
     
     def _init_default_rules(self):
         """Set up default approval rules based on amount thresholds."""
@@ -355,8 +415,15 @@ class ApprovalChainService:
         )
         
         self._chains[chain_id] = chain
+
+        # Persist to DB (write-through)
+        try:
+            self._get_db().db_create_approval_chain(chain)
+        except Exception:
+            logger.exception("Failed to persist approval chain %s to DB", chain_id)
+
         logger.info(f"Created approval chain {chain_id} for invoice {invoice_id}: {len(steps)} steps")
-        
+
         return chain
     
     def _get_level_for_amount(self, amount: float) -> ApprovalLevel:
@@ -406,22 +473,43 @@ class ApprovalChainService:
             raise ValueError(f"User {user_id} is not authorized to approve this step")
         
         # Approve the step
+        now = datetime.now(timezone.utc)
         step.status = ApprovalStatus.APPROVED
         step.approved_by = user_id
-        step.approved_at = datetime.now()
+        step.approved_at = now
         step.comments = comments
-        
+
         logger.info(f"Step {step.step_id} approved by {user_id}")
-        
+
         # Move to next step
+        step_index = chain.current_step
         chain.current_step += 1
-        
+
         # Check if chain is complete
         if chain.current_step >= len(chain.steps):
             chain.status = ApprovalStatus.APPROVED
-            chain.completed_at = datetime.now()
+            chain.completed_at = now
             logger.info(f"Chain {chain_id} fully approved")
-        
+
+        # Persist to DB (write-through)
+        try:
+            db = self._get_db()
+            db.db_update_chain_step(
+                chain_id, step_index,
+                status="approved",
+                approved_by=user_id,
+                approved_at=now.isoformat(),
+                comments=comments,
+            )
+            db.db_update_chain_status(
+                chain_id,
+                status=chain.status.value,
+                current_step=chain.current_step,
+                completed_at=chain.completed_at.isoformat() if chain.completed_at else None,
+            )
+        except Exception:
+            logger.exception("Failed to persist approve_step for chain %s", chain_id)
+
         return chain
     
     def reject_step(
@@ -441,16 +529,37 @@ class ApprovalChainService:
         if not step:
             raise ValueError("No pending step to reject")
         
+        now = datetime.now(timezone.utc)
+        step_index = chain.current_step
         step.status = ApprovalStatus.REJECTED
         step.approved_by = user_id
-        step.approved_at = datetime.now()
+        step.approved_at = now
         step.rejection_reason = reason
-        
+
         chain.status = ApprovalStatus.REJECTED
-        chain.completed_at = datetime.now()
-        
+        chain.completed_at = now
+
         logger.info(f"Chain {chain_id} rejected by {user_id}: {reason}")
-        
+
+        # Persist to DB (write-through)
+        try:
+            db = self._get_db()
+            db.db_update_chain_step(
+                chain_id, step_index,
+                status="rejected",
+                approved_by=user_id,
+                approved_at=now.isoformat(),
+                rejection_reason=reason,
+            )
+            db.db_update_chain_status(
+                chain_id,
+                status="rejected",
+                current_step=chain.current_step,
+                completed_at=now.isoformat(),
+            )
+        except Exception:
+            logger.exception("Failed to persist reject_step for chain %s", chain_id)
+
         return chain
     
     def escalate_step(
@@ -470,34 +579,85 @@ class ApprovalChainService:
             raise ValueError("No pending step to escalate")
         
         # Mark current step as escalated
+        step_index = chain.current_step
         step.status = ApprovalStatus.ESCALATED
         step.comments = f"Escalated: {reason}"
-        
+
         # Move to next step
         chain.current_step += 1
-        
+        chain.status = ApprovalStatus.ESCALATED
+
         logger.info(f"Step {step.step_id} escalated: {reason}")
-        
+
+        # Persist to DB (write-through)
+        try:
+            db = self._get_db()
+            db.db_update_chain_step(
+                chain_id, step_index,
+                status="escalated",
+                comments=f"Escalated: {reason}",
+            )
+            db.db_update_chain_status(
+                chain_id,
+                status="escalated",
+                current_step=chain.current_step,
+            )
+        except Exception:
+            logger.exception("Failed to persist escalate_step for chain %s", chain_id)
+
         return chain
     
     def get_chain(self, chain_id: str) -> Optional[ApprovalChain]:
-        """Get a specific approval chain."""
-        return self._chains.get(chain_id)
-    
+        """Get a specific approval chain (cache → DB fallback)."""
+        if chain_id in self._chains:
+            return self._chains[chain_id]
+        try:
+            row = self._get_db().db_get_approval_chain(chain_id)
+            if row:
+                chain = self._chain_from_db_row(row)
+                self._chains[chain_id] = chain
+                return chain
+        except Exception:
+            logger.exception("DB fallback failed for chain %s", chain_id)
+        return None
+
     def get_chain_by_invoice(self, invoice_id: str) -> Optional[ApprovalChain]:
-        """Get approval chain for an invoice."""
+        """Get approval chain for an invoice (cache → DB fallback)."""
         for chain in self._chains.values():
             if chain.invoice_id == invoice_id:
                 return chain
+        try:
+            row = self._get_db().db_get_chain_by_invoice(self.organization_id, invoice_id)
+            if row:
+                chain = self._chain_from_db_row(row)
+                self._chains[chain.chain_id] = chain
+                return chain
+        except Exception:
+            logger.exception("DB fallback failed for invoice %s chain lookup", invoice_id)
         return None
-    
+
     def get_pending_approvals(self, user_id: str) -> List[ApprovalChain]:
-        """Get all chains pending approval by a user."""
+        """Get all chains pending approval by a user (cache + DB supplement)."""
+        seen_ids: set = set()
         pending = []
+
+        # From cache
         for chain in self._chains.values():
-            if chain.status == ApprovalStatus.PENDING:
-                if user_id in chain.get_pending_approvers():
+            if chain.status == ApprovalStatus.PENDING and user_id in chain.get_pending_approvers():
+                pending.append(chain)
+                seen_ids.add(chain.chain_id)
+
+        # Supplement from DB (catches chains created before this process started)
+        try:
+            db_rows = self._get_db().db_list_pending_chains_for_user(self.organization_id, user_id)
+            for row in db_rows:
+                if row["id"] not in seen_ids:
+                    chain = self._chain_from_db_row(row)
+                    self._chains[chain.chain_id] = chain
                     pending.append(chain)
+        except Exception:
+            logger.exception("DB supplement failed for pending approvals user %s", user_id)
+
         return pending
     
     def get_approval_summary(self) -> Dict[str, Any]:

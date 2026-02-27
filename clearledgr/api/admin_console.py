@@ -250,6 +250,56 @@ def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
     }
 
 
+def _metric_percent(metric: Any) -> float:
+    if isinstance(metric, dict):
+        raw = metric.get("value", metric.get("rate"))
+    else:
+        raw = metric
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    if 0 <= value <= 1:
+        return value * 100.0
+    return value
+
+
+def _metric_hours(metric: Any) -> float:
+    if isinstance(metric, dict):
+        raw = metric.get("avg_hours", metric.get("avg"))
+    else:
+        raw = metric
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _build_agentic_snapshot(kpis: Dict[str, Any]) -> Dict[str, Any]:
+    payload = kpis if isinstance(kpis, dict) else {}
+    agentic = payload.get("agentic_telemetry") if isinstance(payload.get("agentic_telemetry"), dict) else {}
+    top_blockers = []
+    rows = agentic.get("top_blocker_reasons", {}).get("top_reasons") if isinstance(agentic.get("top_blocker_reasons"), dict) else []
+    if isinstance(rows, list):
+        for entry in rows[:3]:
+            if not isinstance(entry, dict):
+                continue
+            reason = str(entry.get("reason") or "").replace("_", " ").strip()
+            count = int(entry.get("count") or 0)
+            if reason:
+                top_blockers.append(f"{reason} ({count})")
+    return {
+        "window_hours": int(agentic.get("window_hours") or 0),
+        "straight_through_rate_pct": round(_metric_percent(agentic.get("straight_through_rate")), 2),
+        "human_intervention_rate_pct": round(_metric_percent(agentic.get("human_intervention_rate")), 2),
+        "erp_browser_fallback_rate_pct": round(_metric_percent(agentic.get("erp_browser_fallback_rate")), 2),
+        "agent_suggestion_acceptance_pct": round(_metric_percent(agentic.get("agent_suggestion_acceptance")), 2),
+        "manual_override_required_pct": round(_metric_percent(agentic.get("agent_actions_requiring_manual_override")), 2),
+        "awaiting_approval_avg_hours": round(_metric_hours(agentic.get("awaiting_approval_time_hours")), 2),
+        "top_blockers": top_blockers,
+    }
+
+
 class SlackInstallStartRequest(BaseModel):
     organization_id: Optional[str] = None
     mode: str = Field(default="per_org", pattern="^(shared|per_org)$")
@@ -380,15 +430,19 @@ def _safe_dashboard_stats(org_id: str) -> Dict[str, Any]:
         pending = len(pipeline.get("needs_approval", []) + pipeline.get("pending_approval", []))  if pipeline else 0
         posted = sum(1 for inv in pipeline.get("posted_to_erp", []) + pipeline.get("closed", []) if isinstance(inv, dict) and str(inv.get("created_at", "")).startswith(today)) if pipeline else 0
         rejected = sum(1 for inv in pipeline.get("rejected", []) if isinstance(inv, dict) and str(inv.get("created_at", "")).startswith(today)) if pipeline else 0
+        kpis = db.get_ap_kpis(org_id, approval_sla_minutes=240) if hasattr(db, "get_ap_kpis") else {}
+        agentic_snapshot = _build_agentic_snapshot(kpis)
         return {
             "total_invoices": total,
             "pending_approval": pending,
             "posted_today": posted,
             "rejected_today": rejected,
-            "auto_approved_rate": 0,
-            "avg_processing_time_hours": 0,
+            "auto_approved_rate": round(_metric_percent((kpis or {}).get("touchless_rate")), 2),
+            "avg_processing_time_hours": round(_metric_hours((kpis or {}).get("cycle_time_hours")), 2),
             "total_amount_pending": sum(float(inv.get("amount") or 0) for inv in pipeline.get("needs_approval", []) + pipeline.get("pending_approval", []) if isinstance(inv, dict)) if pipeline else 0,
             "total_amount_posted_today": 0,
+            "agentic_telemetry": (kpis or {}).get("agentic_telemetry") or {},
+            "agentic_snapshot": agentic_snapshot,
         }
     except Exception:
         return {}
@@ -859,6 +913,122 @@ def put_admin_ga_readiness(
         "ga_readiness": evidence,
         "rollback_controls": rollback_controls,
         "summary": summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
+    }
+
+
+@router.post("/vendor-intelligence/bootstrap")
+def bootstrap_vendor_intelligence(
+    organization_id: Optional[str] = Query(default=None),
+    dry_run: bool = Query(default=False),
+    limit: int = Query(default=5000, ge=1, le=50000),
+    user: TokenData = Depends(get_current_user),
+):
+    """Populate vendor_profiles and vendor_invoice_history from existing ap_items.
+
+    Idempotent — safe to run multiple times. Use dry_run=true to preview counts
+    without writing any data.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.vendor_bootstrap import bootstrap_vendor_intelligence as _bootstrap
+    result = _bootstrap(get_db(), org_id, limit=limit, dry_run=dry_run)
+    return {"organization_id": org_id, **result}
+
+
+@router.get("/vendor-intelligence/profiles")
+def list_vendor_profiles(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """List vendor profiles for an org (intelligence accumulated by the reasoning layer)."""
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    sql = db._prepare_sql(
+        "SELECT * FROM vendor_profiles WHERE organization_id = ? ORDER BY invoice_count DESC LIMIT 200"
+    )
+    try:
+        with db.connect() as conn:
+            conn.row_factory = __import__("sqlite3").Row
+            cur = conn.cursor()
+            cur.execute(sql, (org_id,))
+            rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        rows = []
+    return {"organization_id": org_id, "profiles": rows, "count": len(rows)}
+
+
+class VendorProfilePatchRequest(BaseModel):
+    organization_id: Optional[str] = None
+    requires_po: Optional[bool] = None
+    always_approved: Optional[bool] = None
+    bank_details_changed_at: Optional[str] = None  # ISO date e.g. "2026-02-20T14:00:00Z"
+    typical_gl_code: Optional[str] = None
+    payment_terms: Optional[str] = None
+    contract_amount: Optional[float] = None
+
+
+@router.get("/vendor-intelligence/profiles/{vendor_name}")
+def get_vendor_profile(
+    vendor_name: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Get a single vendor profile including history summary."""
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    profile = db.get_vendor_profile(org_id, vendor_name) if hasattr(db, "get_vendor_profile") else None
+    if not profile:
+        raise HTTPException(status_code=404, detail="vendor_profile_not_found")
+    history = db.get_vendor_invoice_history(org_id, vendor_name, limit=10) if hasattr(db, "get_vendor_invoice_history") else []
+    return {
+        "organization_id": org_id,
+        "vendor_name": vendor_name,
+        "profile": profile,
+        "recent_history": history,
+    }
+
+
+@router.patch("/vendor-intelligence/profiles/{vendor_name}")
+def patch_vendor_profile(
+    vendor_name: str,
+    request: VendorProfilePatchRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    """Update operator-controlled vendor profile fields.
+
+    Lets operators manually set policy overrides (requires_po, always_approved),
+    flag bank detail changes, assign a GL code, or record payment terms — without
+    waiting for the reasoning layer to accumulate enough history.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    db = get_db()
+    if not hasattr(db, "upsert_vendor_profile"):
+        raise HTTPException(status_code=503, detail="vendor_intelligence_not_available")
+
+    updates: Dict[str, Any] = {}
+    if request.requires_po is not None:
+        updates["requires_po"] = 1 if request.requires_po else 0
+    if request.always_approved is not None:
+        updates["always_approved"] = 1 if request.always_approved else 0
+    if request.bank_details_changed_at is not None:
+        updates["bank_details_changed_at"] = request.bank_details_changed_at.strip() or None
+    if request.typical_gl_code is not None:
+        updates["typical_gl_code"] = request.typical_gl_code.strip() or None
+    if request.payment_terms is not None:
+        updates["payment_terms"] = request.payment_terms.strip() or None
+    if request.contract_amount is not None:
+        updates["contract_amount"] = request.contract_amount
+
+    if not updates:
+        raise HTTPException(status_code=422, detail="no_fields_to_update")
+
+    profile = db.upsert_vendor_profile(org_id, vendor_name, **updates)
+    return {
+        "success": True,
+        "organization_id": org_id,
+        "vendor_name": vendor_name,
+        "profile": profile,
     }
 
 

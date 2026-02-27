@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 from main import app
 from clearledgr.api import agent_sessions as agent_sessions_module
+from clearledgr.api import admin_console as admin_console_module
 from clearledgr.api import ops as ops_module
 from clearledgr.core import database as db_module
 from clearledgr.core.auth import TokenData
@@ -42,17 +43,20 @@ def client(db):
 
     app.dependency_overrides[agent_sessions_module.get_current_user] = _fake_user
     app.dependency_overrides[ops_module.get_current_user] = _fake_user
+    app.dependency_overrides[admin_console_module.get_current_user] = _fake_user
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
         app.dependency_overrides.pop(ops_module.get_current_user, None)
+        app.dependency_overrides.pop(admin_console_module.get_current_user, None)
 
 
 @pytest.fixture()
 def unauth_client(db):
     app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
     app.dependency_overrides.pop(ops_module.get_current_user, None)
+    app.dependency_overrides.pop(admin_console_module.get_current_user, None)
     return TestClient(app)
 
 
@@ -75,6 +79,108 @@ def _create_item(db):
             "user_id": "user-agent",
         }
     )
+
+
+def _seed_agentic_kpi_signal(db):
+    now = datetime.now(timezone.utc)
+
+    posted_touchless = db.create_ap_item(
+        {
+            "invoice_key": "vendor|touchless|seed|",
+            "thread_id": "thread-touchless-seed",
+            "message_id": "msg-touchless-seed",
+            "subject": "Touchless seed invoice",
+            "sender": "vendor-seed-1@example.com",
+            "vendor_name": "Touchless Seed Vendor",
+            "amount": 110.0,
+            "currency": "USD",
+            "invoice_number": "INV-SEED-TL-1",
+            "state": "posted_to_erp",
+            "confidence": 0.99,
+            "approval_required": False,
+            "erp_reference": "ERP-SEED-TL-1",
+            "erp_posted_at": (now - timedelta(hours=2)).isoformat(),
+            "organization_id": "default",
+            "user_id": "seed-user",
+        }
+    )
+
+    blocked_open_item = db.create_ap_item(
+        {
+            "invoice_key": "vendor|blocked|seed|",
+            "thread_id": "thread-blocked-seed",
+            "message_id": "msg-blocked-seed",
+            "subject": "Blocked seed invoice",
+            "sender": "vendor-seed-2@example.com",
+            "vendor_name": "Blocked Seed Vendor",
+            "amount": 510.0,
+            "currency": "USD",
+            "invoice_number": "INV-SEED-BLK-1",
+            "state": "failed_post",
+            "confidence": 0.82,
+            "approval_required": True,
+            "last_error": "ERP timeout while posting",
+            "organization_id": "default",
+            "user_id": "seed-user",
+            "metadata": {
+                "requires_field_review": True,
+                "confidence_blockers": [{"field": "amount"}],
+                "validation_gate": {"reason_codes": ["policy_po_missing"]},
+                "budget_status": "critical",
+                "exception_code": "erp_timeout",
+            },
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": blocked_open_item["id"],
+            "organization_id": "default",
+            "event_type": "erp_api_attempt",
+            "actor_type": "system",
+            "actor_id": "test",
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": blocked_open_item["id"],
+            "organization_id": "default",
+            "event_type": "erp_api_fallback_requested",
+            "actor_type": "system",
+            "actor_id": "test",
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": blocked_open_item["id"],
+            "organization_id": "default",
+            "event_type": "browser_command_confirmed",
+            "actor_type": "user",
+            "actor_id": "approver@example.com",
+        }
+    )
+
+    session = db.create_agent_session(
+        {
+            "organization_id": "default",
+            "ap_item_id": blocked_open_item["id"],
+            "created_by": "test_agent",
+            "metadata": {"workflow_id": "erp_posting_fallback"},
+        }
+    )
+    db.upsert_browser_action_event(
+        {
+            "organization_id": "default",
+            "ap_item_id": blocked_open_item["id"],
+            "session_id": session["id"],
+            "command_id": "cmd-ops-kpi-seed-1",
+            "tool_name": "click",
+            "status": "completed",
+            "requires_confirmation": True,
+            "request_payload": {"tool_risk": "high_risk"},
+            "result_payload": {"ok": True},
+        }
+    )
+    return posted_touchless, blocked_open_item
 
 
 def _move_item_to_failed_post(db, ap_item_id: str) -> None:
@@ -710,6 +816,82 @@ def test_erp_routing_strategy_endpoint(client, db):
     assert isinstance(payload["capability_matrix"], list)
 
 
+def test_ap_kpi_digest_includes_agentic_metrics_for_slack_and_teams(client, db):
+    item = _create_item(db)
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": item["id"],
+            "organization_id": "default",
+            "event_type": "erp_api_attempt",
+            "actor_type": "system",
+            "actor_id": "test",
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": item["id"],
+            "organization_id": "default",
+            "event_type": "erp_api_fallback_requested",
+            "actor_type": "system",
+            "actor_id": "test",
+        }
+    )
+    session = db.create_agent_session(
+        {
+            "organization_id": "default",
+            "ap_item_id": item["id"],
+            "created_by": "test_agent",
+            "metadata": {"workflow_id": "erp_posting_fallback"},
+        }
+    )
+    db.upsert_browser_action_event(
+        {
+            "organization_id": "default",
+            "ap_item_id": item["id"],
+            "session_id": session["id"],
+            "command_id": "cmd-kpi-digest-1",
+            "tool_name": "click",
+            "status": "completed",
+            "requires_confirmation": True,
+            "request_payload": {"tool_risk": "high_risk"},
+            "result_payload": {"ok": True},
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": item["id"],
+            "organization_id": "default",
+            "event_type": "browser_command_confirmed",
+            "actor_type": "user",
+            "actor_id": "approver@example.com",
+        }
+    )
+
+    response = client.get("/api/ops/ap-kpis/digest?organization_id=default&surface=all")
+    assert response.status_code == 200
+    payload = response.json()
+
+    slack = payload.get("slack") or {}
+    slack_text = str(slack.get("text") or "")
+    slack_blocks = slack.get("blocks") or []
+    assert "agent" in slack_text.lower() or "fallback" in slack_text.lower()
+    assert any("Agentic telemetry" in str((block.get("text") or {}).get("text") or "") for block in slack_blocks if isinstance(block, dict))
+
+    teams = payload.get("teams") or {}
+    content = ((teams.get("attachments") or [{}])[0] or {}).get("content") or {}
+    body = content.get("body") or []
+    body_text = " ".join(str(entry.get("text") or "") for entry in body if isinstance(entry, dict))
+    fact_titles = [
+        str(fact.get("title") or "")
+        for entry in body
+        if isinstance(entry, dict) and entry.get("type") == "FactSet"
+        for fact in (entry.get("facts") or [])
+        if isinstance(fact, dict)
+    ]
+    assert "Agentic telemetry" in body_text
+    assert any("Browser fallback" in title for title in fact_titles)
+
+
 def test_ap_kpis_exposes_agentic_telemetry_bundle(client, db):
     now = datetime.now(timezone.utc)
 
@@ -878,6 +1060,38 @@ def test_ap_kpis_exposes_agentic_telemetry_bundle(client, db):
         str(entry.get("reason", "")).startswith(("confidence:", "policy:", "budget:", "erp:"))
         for entry in top_reasons
     )
+
+
+def test_analytics_dashboard_surfaces_agentic_snapshot(client, db):
+    _seed_agentic_kpi_signal(db)
+    response = client.get("/analytics/dashboard/default")
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert "agentic_telemetry" in payload
+    telemetry = payload.get("agentic_telemetry") or {}
+    assert isinstance(telemetry, dict)
+    assert telemetry.get("window_hours") == 168
+    assert "agentic_snapshot" in payload
+    snapshot = payload.get("agentic_snapshot") or {}
+    assert snapshot.get("erp_browser_fallback_rate_pct", 0) > 0
+    assert "top_blockers" in snapshot
+
+
+def test_admin_bootstrap_dashboard_includes_agentic_snapshot(client, db):
+    _seed_agentic_kpi_signal(db)
+    response = client.get("/api/admin/bootstrap?organization_id=default")
+    assert response.status_code == 200
+    payload = response.json()
+
+    dashboard = payload.get("dashboard") or {}
+    assert "agentic_telemetry" in dashboard
+    telemetry = dashboard.get("agentic_telemetry") or {}
+    assert isinstance(telemetry, dict)
+    assert telemetry.get("window_hours") == 168
+    snapshot = dashboard.get("agentic_snapshot") or {}
+    assert snapshot.get("straight_through_rate_pct", 0) > 0
+    assert "top_blockers" in snapshot
 
 
 def test_autopilot_status_includes_agent_runtime_truth_claims(client, monkeypatch):

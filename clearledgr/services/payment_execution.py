@@ -411,7 +411,9 @@ class PaymentExecutionService:
         wire_request = {
             "payment_id": payment.payment_id,
             "beneficiary_name": payment.vendor_name,
+            "bank_name": payment.bank_name,
             "beneficiary_bank": payment.bank_name,
+            "swift_code": payment.swift_code,
             "swift_bic": payment.swift_code,
             "iban": payment.iban,
             "routing_number": payment.routing_number,
@@ -452,9 +454,11 @@ class PaymentExecutionService:
             "payment_id": payment.payment_id,
             "payee": payment.payee_name,
             "address": payee_address,
+            "payee_address": payee_address,
             "amount": payment.amount,
             "memo": f"Invoice {payment.invoice_id}",
             "status": "queued_for_printing",
+            "queued": True,
         }
     
     def mark_payment_sent(
@@ -546,13 +550,21 @@ class PaymentExecutionService:
             by_method[method]["count"] += 1
             by_method[method]["amount"] += p.amount
         
+        pending_count = len([p for p in payments if p.status == PaymentStatus.PENDING])
+        scheduled_count = len([p for p in payments if p.status == PaymentStatus.SCHEDULED])
+        processing_amount = sum(p.amount for p in payments if p.status == PaymentStatus.PROCESSING)
+
         return {
             "total_payments": len(payments),
             "total_amount": sum(p.amount for p in payments),
             "by_status": by_status,
             "by_method": by_method,
-            "pending_count": len([p for p in payments if p.status == PaymentStatus.PENDING]),
+            "pending_count": pending_count,
             "pending_amount": sum(p.amount for p in payments if p.status == PaymentStatus.PENDING),
+            # Alias keys expected by tests
+            "pending": pending_count,
+            "scheduled": scheduled_count,
+            "processing_amount": processing_amount,
         }
     
     def _get_vendor_bank_info(self, vendor_id: str) -> Optional[Dict[str, Any]]:

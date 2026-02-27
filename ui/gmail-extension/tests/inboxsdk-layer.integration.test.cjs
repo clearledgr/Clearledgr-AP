@@ -100,6 +100,61 @@ test('queue updates rerender status and Gmail SDK thread row labeling + thread l
   assert.equal(runtime.getState().currentThreadId, null);
 });
 
+test('decision workspace renders operator brief with clear next-step guidance', async () => {
+  const runtime = await createInboxSdkIntegrationRuntime({ queueManager: { debugUiEnabled: false } });
+  const queueManager = runtime.getQueueManager();
+  const sidebar = runtime.getState().globalSidebarEl;
+
+  const item = {
+    id: 'item-brief-1',
+    thread_id: 'thread-brief-1',
+    state: 'needs_info',
+    vendor_name: 'Acme Corp',
+    invoice_number: 'INV-BRIEF-1',
+    amount: 315.25,
+    currency: 'USD',
+    subject: 'Missing PO details',
+    sender: 'billing@acme.example',
+    confidence: 0.87,
+    next_action: 'request_info',
+    exception_code: 'po_missing_reference',
+    metadata: {
+      ap_decision_reasoning: 'Vendor invoice is missing PO reference and requires follow-up before posting.',
+      ap_decision_recommendation: 'needs_info',
+    },
+  };
+  const contexts = new Map([
+    ['item-brief-1', {
+      freshness: { is_stale: false, age_seconds: 20 },
+      source_quality: { distribution: 'gmail_thread:1', total_sources: 1 },
+      email: { source_count: 1, sources: [] },
+      web: { browser_event_count: 0, recent_browser_events: [], related_portals: [], payment_portals: [], procurement: [], dms_documents: [], bank_transactions: [], spreadsheets: [], connector_coverage: {} },
+      approvals: { count: 0, latest: null, slack: { thread_preview: [] }, teams: {} },
+      erp: { connector_available: true, state: 'needs_info', erp_reference: null },
+      po_match: { status: 'missing_po' },
+      budget: { status: 'healthy', requires_decision: false, checks: [] },
+    }],
+  ]);
+
+  queueManager.emitQueueUpdated([item], { state: 'idle' }, new Map(), [], new Map(), new Map(), contexts);
+  await runtime.flush();
+
+  const threadHandler = runtime.records.sdkHandlers.threadView;
+  const threadView = runtime.createThreadView('thread-brief-1');
+  threadHandler(threadView);
+  runtime.api.renderSidebar();
+  await runtime.flush();
+  await runtime.flush();
+
+  const threadContext = sidebar.querySelector('#cl-thread-context');
+  assert.ok(threadContext);
+  assert.match(threadContext.innerHTML, /What happened/i);
+  assert.match(threadContext.innerHTML, /Why this needs attention/i);
+  assert.match(threadContext.innerHTML, /Best next step/i);
+  assert.match(threadContext.innerHTML, /Draft a vendor info request/i);
+  assert.match(threadContext.innerHTML, /Expected outcome:/i);
+});
+
 test('AX6 debug KPI panel renders agentic telemetry metrics with ratio-to-percent formatting', async () => {
   const runtime = await createInboxSdkIntegrationRuntime({ queueManager: { debugUiEnabled: true } });
   const queueManager = runtime.getQueueManager();
@@ -157,6 +212,51 @@ test('AX6 debug KPI panel renders agentic telemetry metrics with ratio-to-percen
   assert.match(kpiSection.innerHTML, /Manual override req\./i);
   assert.match(kpiSection.innerHTML, /41\.7%/i);
   assert.match(kpiSection.innerHTML, /Top blockers: .*confidence:amount/i);
+});
+
+test('AX6 non-debug KPI panel renders compact agentic snapshot', async () => {
+  const runtime = await createInboxSdkIntegrationRuntime({ queueManager: { debugUiEnabled: false } });
+  const queueManager = runtime.getQueueManager();
+  const sidebar = runtime.getState().globalSidebarEl;
+
+  queueManager.emitQueueUpdated(
+    [],
+    { state: 'idle' },
+    new Map(),
+    [],
+    new Map(),
+    new Map(),
+    new Map(),
+    {
+      touchless_rate: { eligible_count: 10, touchless_count: 7, rate: 0.7 },
+      exception_rate: { exception_count: 3, rate: 0.3 },
+      on_time_approvals: { approved_count: 8, on_time_count: 7, rate: 0.875 },
+      cycle_time_hours: { count: 8, avg: 4.2 },
+      agentic_telemetry: {
+        window_hours: 168,
+        straight_through_rate: { eligible_count: 10, count: 7, rate: 0.7 },
+        erp_browser_fallback_rate: { attempt_count: 6, fallback_requested_count: 1, rate: 0.1667 },
+        agent_suggestion_acceptance: { prompted_count: 4, accepted_count: 3, rate: 0.75 },
+        top_blocker_reasons: {
+          open_population: 4,
+          by_category: { confidence: 1, policy: 1, budget: 1, erp: 1, other: 0 },
+          top_reasons: [{ reason: 'erp:connector_timeout', count: 1 }],
+        },
+      },
+    },
+  );
+  await runtime.flush();
+
+  const kpiSection = sidebar.querySelector('#cl-kpi-summary');
+  assert.ok(kpiSection);
+  assert.match(kpiSection.innerHTML, /Agentic snapshot/i);
+  assert.match(kpiSection.innerHTML, /Straight-through/i);
+  assert.match(kpiSection.innerHTML, /70\.0%/i);
+  assert.match(kpiSection.innerHTML, /Browser fallback/i);
+  assert.match(kpiSection.innerHTML, /16\.7%/i);
+  assert.match(kpiSection.innerHTML, /Agent accepted/i);
+  assert.match(kpiSection.innerHTML, /75\.0%/i);
+  assert.match(kpiSection.innerHTML, /Top blockers: .*erp:connector timeout/i);
 });
 
 test('AX4 batch agent ops section renders and preview action updates batch summary card', async () => {

@@ -54,7 +54,7 @@ class RecurringRule:
     
     # Actions
     action: RecurringAction = RecurringAction.AUTO_APPROVE
-    require_amount_match: bool = True
+    require_amount_match: bool = False
     notify_on_auto_approve: bool = True
     
     # GL assignment
@@ -111,12 +111,18 @@ class RecurringInvoice:
     matched_rule: bool = False
     amount_variance_pct: Optional[float] = None
     days_from_expected: Optional[int] = None
-    
+
     # Auto-processing result
     auto_approved: bool = False
     auto_approval_reason: Optional[str] = None
     flagged_reason: Optional[str] = None
-    
+    action: Optional["RecurringAction"] = None  # Action from matched rule
+
+    @property
+    def matched(self) -> bool:
+        """Alias for matched_rule used by tests and API consumers."""
+        return self.matched_rule
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "invoice_id": self.invoice_id,
@@ -359,6 +365,7 @@ class RecurringManagementService:
         if rule:
             invoice.rule_id = rule.rule_id
             invoice.matched_rule = True
+            invoice.action = rule.action
             
             # Calculate variance if expected amount set
             if rule.expected_amount:
@@ -493,10 +500,12 @@ class RecurringManagementService:
                 by_action[action] = 0
             by_action[action] += 1
         
+        monthly_spend_rounded = round(monthly_spend, 2)
         return {
             "total_rules": len(rules),
             "active_rules": len(active_rules),
-            "estimated_monthly_spend": round(monthly_spend, 2),
+            "estimated_monthly_spend": monthly_spend_rounded,
+            "monthly_spend": monthly_spend_rounded,
             "by_action": by_action,
             "upcoming_7_days": len(self.get_upcoming_invoices(7)),
             "upcoming_30_days": len(self.get_upcoming_invoices(30)),
@@ -569,10 +578,14 @@ class RecurringManagementService:
         if max_variance > 20:
             return None
         
+        freq_value = frequency.value
+        avg_amount_rounded = round(avg_amount, 2) if avg_amount else None
         return {
             "vendor": vendor,
-            "suggested_frequency": frequency.value,
-            "suggested_amount": round(avg_amount, 2) if avg_amount else None,
+            "suggested_frequency": freq_value,
+            "detected_frequency": freq_value,
+            "suggested_amount": avg_amount_rounded,
+            "detected_amount": avg_amount_rounded,
             "invoice_count": len(invoices),
             "avg_interval_days": round(avg_interval, 1),
             "amount_variance_pct": round(max_variance, 1),

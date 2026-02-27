@@ -70,9 +70,10 @@ async def _run_loop():
             # Every tick: drain ERP-post retry queue (Gap #5 crash recovery)
             await _drain_erp_post_retry_queue()
 
-            # Every 15 minutes: check overdue and stale tasks
+            # Every 15 minutes: check overdue and stale tasks + approval timeouts
             if tick % 1 == 0:  # runs every iteration (15 min sleep)
                 await _check_overdue_tasks()
+                await _check_approval_timeouts(DEFAULT_ORG_ID)
 
             # Every hour (4 ticks)
             if tick % 4 == 0:
@@ -110,21 +111,32 @@ async def _check_overdue_tasks():
             logger.info(
                 f"Background check: {len(overdue)} overdue, {len(stale)} stale tasks"
             )
-            lines = [":clock3: *AP Status Check*"]
-            if overdue:
-                lines.append(f"\n*{len(overdue)} overdue item(s):*")
-                for item in overdue[:5]:
-                    vendor = item.get("vendor_name", "Unknown")
-                    amount = item.get("amount", 0)
-                    due = item.get("due_date", "?")
-                    lines.append(f"  • {vendor} — ${amount:,.2f} (due {due})")
-            if stale:
-                lines.append(f"\n*{len(stale)} stale item(s) needing attention:*")
-                for item in stale[:5]:
-                    vendor = item.get("vendor_name", "Unknown")
-                    state = item.get("state", "?")
-                    lines.append(f"  • {vendor} — stuck in `{state}`")
-            await _slack_alert("\n".join(lines))
+            # Rich KPI dashboard (replaces the plain-text alert)
+            try:
+                from clearledgr.services.slack_notifications import send_overdue_summary
+                await send_overdue_summary(
+                    overdue_items=overdue,
+                    stale_items=stale,
+                    organization_id=DEFAULT_ORG_ID,
+                )
+            except Exception as _kpi_err:
+                # Fall back to plain-text alert if KPI dashboard fails
+                logger.debug("KPI dashboard failed, falling back to plain alert: %s", _kpi_err)
+                lines = [":clock3: *AP Status Check*"]
+                if overdue:
+                    lines.append(f"\n*{len(overdue)} overdue item(s):*")
+                    for item in overdue[:5]:
+                        vendor = item.get("vendor_name", "Unknown")
+                        amount = item.get("amount", 0)
+                        due = item.get("due_date", "?")
+                        lines.append(f"  • {vendor} — ${amount:,.2f} (due {due})")
+                if stale:
+                    lines.append(f"\n*{len(stale)} stale item(s) needing attention:*")
+                    for item in stale[:5]:
+                        vendor = item.get("vendor_name", "Unknown")
+                        state = item.get("state", "?")
+                        lines.append(f"  • {vendor} — stuck in `{state}`")
+                await _slack_alert("\n".join(lines))
     except Exception as e:
         logger.debug(f"Overdue task check failed: {e}")
 
@@ -157,12 +169,11 @@ async def _send_daily_digest():
         insights_service = get_proactive_insights(DEFAULT_ORG_ID)
         digest = insights_service.generate_daily_digest()
 
-        if digest:
-            logger.info(f"Daily digest: {len(digest)} insights generated")
-            lines = [":bar_chart: *Daily AP Digest*"]
-            for insight in digest[:8]:
-                title = insight.get("title", "") if isinstance(insight, dict) else str(insight)
-                lines.append(f"  • {title}")
+        if digest and digest.insights:
+            logger.info(f"Daily digest: {len(digest.insights)} insights generated — {digest.summary}")
+            lines = [f":bar_chart: *Daily AP Digest* — {digest.summary}"]
+            for insight in digest.insights[:8]:
+                lines.append(f"  • {insight.title}")
             await _slack_alert("\n".join(lines))
     except Exception as e:
         logger.debug(f"Daily digest generation failed: {e}")
@@ -273,6 +284,79 @@ async def _drain_erp_post_retry_queue():
                     )
     except Exception as exc:
         logger.debug("ERP post retry drain failed: %s", exc)
+
+
+async def _check_approval_timeouts(org_id: str):
+    """Send reminders / escalations for AP items stuck in needs_approval.
+
+    Milestone  Hours  Action
+    ---------  -----  ------
+    reminder    4h    DM each pending approver once
+    escalation 24h    DM + post to approval channel once
+
+    Deduplication is DB-backed via the ap_item's metadata column
+    (``approval_reminder_milestones`` dict). This survives process restarts,
+    deploys, and scale-out — unlike the old module-level ``_reminded_set``.
+    """
+    try:
+        import json as _json
+        from clearledgr.core.database import get_db
+        from clearledgr.services.slack_notifications import send_approval_reminder
+
+        db = get_db()
+        if not hasattr(db, "get_overdue_approvals"):
+            return
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # Check 4-hour milestone first, then 24-hour
+        for min_hours, milestone in [(4.0, "4h"), (24.0, "24h")]:
+            overdue = db.get_overdue_approvals(org_id, min_hours=min_hours)
+            for item in overdue:
+                ap_item_id = item.get("id")
+                if not ap_item_id:
+                    continue
+
+                # --- DB-persisted deduplication (survives restarts) ---
+                try:
+                    meta = _json.loads(item.get("metadata") or "{}")
+                except Exception:
+                    meta = {}
+                milestones_sent = meta.get("approval_reminder_milestones") or {}
+                if milestone in milestones_sent:
+                    continue  # already sent and recorded in DB
+
+                approver_ids = db.get_pending_approver_ids(ap_item_id)
+                await send_approval_reminder(
+                    ap_item=item,
+                    approver_ids=approver_ids,
+                    hours_pending=min_hours,
+                    organization_id=org_id,
+                )
+
+                # Build metadata patch — include escalation record for 24h
+                patch: dict = {
+                    "approval_reminder_milestones": {
+                        **milestones_sent,
+                        milestone: now_iso,
+                    }
+                }
+                if milestone == "24h":
+                    patch["escalated_at"] = now_iso
+                    patch["escalation_reason"] = "approval_timeout_24h"
+                    patch["escalation_vendor"] = item.get("vendor_name")
+                    patch["escalation_amount"] = item.get("amount")
+
+                if hasattr(db, "update_ap_item_metadata_merge"):
+                    db.update_ap_item_metadata_merge(ap_item_id, patch)
+
+                logger.info(
+                    "Approval timeout %s milestone triggered for ap_item_id=%s",
+                    milestone,
+                    ap_item_id,
+                )
+    except Exception as exc:
+        logger.debug("Approval timeout check failed: %s", exc)
 
 
 async def _check_period_end():

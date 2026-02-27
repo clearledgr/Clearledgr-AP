@@ -264,38 +264,68 @@ class GLCorrectionService:
         Get a suggested GL code based on vendor and context.
         Uses learning service if available.
         """
+        def _with_alias(d: Dict[str, Any]) -> Dict[str, Any]:
+            """Ensure suggested_gl alias is present alongside gl_code."""
+            if "gl_code" in d and "suggested_gl" not in d:
+                d["suggested_gl"] = d["gl_code"]
+            return d
+
+        # Check local corrections history first (most vendor-specific)
+        vendor_lower = vendor.lower()
+        vendor_corrections = [
+            c for c in self._corrections.values()
+            if vendor_lower in c.vendor.lower()
+        ]
+        if vendor_corrections:
+            # Count which corrected_gl is most common for this vendor
+            gl_counts: Dict[str, int] = {}
+            for c in vendor_corrections:
+                gl_counts[c.corrected_gl] = gl_counts.get(c.corrected_gl, 0) + 1
+            best_gl = max(gl_counts, key=lambda k: gl_counts[k])
+            total = len(vendor_corrections)
+            confidence = min(0.95, gl_counts[best_gl] / total * (0.5 + total * 0.1))
+            if confidence > 0.5:
+                return _with_alias({
+                    "gl_code": best_gl,
+                    "suggested_gl": best_gl,
+                    "gl_description": self._get_gl_description(best_gl),
+                    "confidence": round(confidence, 2),
+                    "source": "corrections_history",
+                })
+
         try:
             from clearledgr.services.learning import get_learning_service
             learning = get_learning_service(self.organization_id)
             suggestion = learning.suggest_gl_code(vendor=vendor, amount=amount)
             if suggestion and suggestion.get("confidence", 0) > 0.5:
-                return {
+                return _with_alias({
                     "gl_code": suggestion["gl_code"],
                     "gl_description": self._get_gl_description(suggestion["gl_code"]),
                     "confidence": suggestion["confidence"],
                     "source": "learning",
-                }
+                })
         except Exception:
             pass
-        
+
         # Fallback to vendor intelligence
         try:
             from clearledgr.services.vendor_intelligence import get_vendor_intelligence
             vi = get_vendor_intelligence()
             vendor_info = vi.get_suggestion(vendor)
             if vendor_info and vendor_info.get("suggested_gl"):
-                return {
+                return _with_alias({
                     "gl_code": vendor_info["suggested_gl"],
                     "gl_description": vendor_info.get("gl_description", ""),
                     "confidence": 0.7,
                     "source": "vendor_intelligence",
-                }
+                })
         except Exception:
             pass
-        
+
         # Default to general operating expenses
         return {
             "gl_code": "5000",
+            "suggested_gl": "5000",
             "gl_description": "Operating Expenses",
             "confidence": 0.3,
             "source": "default",
@@ -321,25 +351,30 @@ class GLCorrectionService:
     def get_correction_stats(self) -> Dict[str, Any]:
         """Get statistics about GL corrections."""
         corrections = list(self._corrections.values())
-        
+
         if not corrections:
             return {
                 "total_corrections": 0,
                 "unique_vendors": 0,
                 "top_corrected_gl": [],
                 "learned_count": 0,
+                "accuracy": 0.0,
+                "learned_rules": 0,
             }
-        
+
         # Count corrections by GL
         from_gl_counts: Dict[str, int] = {}
         to_gl_counts: Dict[str, int] = {}
         vendors = set()
-        
+
         for c in corrections:
             vendors.add(c.vendor)
             from_gl_counts[c.original_gl] = from_gl_counts.get(c.original_gl, 0) + 1
             to_gl_counts[c.corrected_gl] = to_gl_counts.get(c.corrected_gl, 0) + 1
-        
+
+        learned_count = len([c for c in corrections if c.learned])
+        accuracy = round(learned_count / len(corrections), 2) if corrections else 0.0
+
         return {
             "total_corrections": len(corrections),
             "unique_vendors": len(vendors),
@@ -349,7 +384,9 @@ class GLCorrectionService:
             "top_corrected_to": sorted(
                 to_gl_counts.items(), key=lambda x: x[1], reverse=True
             )[:5],
-            "learned_count": len([c for c in corrections if c.learned]),
+            "learned_count": learned_count,
+            "accuracy": accuracy,
+            "learned_rules": len(to_gl_counts),
         }
     
     def add_gl_account(
@@ -360,9 +397,10 @@ class GLCorrectionService:
         category: Optional[str] = None,
     ) -> GLAccount:
         """Add a custom GL account."""
-        # Check for duplicate
-        if any(a.code == code for a in self._gl_accounts):
-            raise ValueError(f"GL account {code} already exists")
+        # Check for duplicate — return existing account (idempotent)
+        existing = next((a for a in self._gl_accounts if a.code == code), None)
+        if existing:
+            return existing
         
         account = GLAccount(
             code=code,

@@ -356,6 +356,13 @@ try:
 except ImportError:
     pass
 
+# Include Outlook Webhooks API (Microsoft Graph change notifications)
+try:
+    from clearledgr.api.outlook_webhooks import router as outlook_webhooks_router
+    app.include_router(outlook_webhooks_router)
+except ImportError:
+    pass
+
 # ERP Connections API (OAuth flows)
 try:
     from clearledgr.api.erp_connections import router as erp_connections_router

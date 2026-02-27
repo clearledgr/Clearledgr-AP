@@ -304,6 +304,81 @@ class ProactiveInsightsService:
             summary=summary,
         )
     
+    def generate_daily_digest(self) -> InsightReport:
+        """Generate a focused daily digest scoped to the last 24 hours.
+
+        Returns the same InsightReport shape as generate_weekly_digest() so
+        callers are uniform.  Content is intentionally narrower: today's
+        invoice volume + any alert-severity items that need same-day attention.
+        """
+        insights = []
+
+        # Today's invoice count vs yesterday
+        today = self._get_recent_spending(days=1)
+        yesterday = self._get_spending_for_period(days_ago_start=2, days_ago_end=1)
+        today_total = sum(today.values())
+        yesterday_total = sum(yesterday.values())
+        today_count = self._get_invoice_count(days=1)
+
+        if today_total > 0:
+            insights.append(Insight(
+                insight_id="daily_volume",
+                category="spending",
+                severity="info",
+                title=f"${today_total:,.2f} in invoices processed today",
+                description=(
+                    f"Yesterday: ${yesterday_total:,.2f}"
+                    if yesterday_total > 0 else "No invoices yesterday for comparison."
+                ),
+                data={"today_total": today_total, "yesterday_total": yesterday_total},
+                actionable=False,
+            ))
+
+        # Upcoming due today / overdue
+        upcoming = self._get_upcoming_due()
+        overdue = [u for u in upcoming if u.get("days_until_due", 1) <= 0]
+        due_today = [u for u in upcoming if u.get("days_until_due", 99) == 0]
+        if overdue:
+            total = sum(u.get("amount", 0) for u in overdue)
+            insights.append(Insight(
+                insight_id="overdue_daily",
+                category="budget",
+                severity="alert",
+                title=f"{len(overdue)} overdue invoice(s) — ${total:,.2f}",
+                description="These invoices have passed their due date and require action.",
+                data={"count": len(overdue), "total": total},
+                recommendations=["Review and action overdue invoices immediately."],
+            ))
+        if due_today:
+            total = sum(u.get("amount", 0) for u in due_today)
+            insights.append(Insight(
+                insight_id="due_today",
+                category="budget",
+                severity="warning",
+                title=f"{len(due_today)} invoice(s) due today — ${total:,.2f}",
+                description="These invoices are due today.",
+                data={"count": len(due_today), "total": total},
+                actionable=True,
+            ))
+
+        alert_count = len([i for i in insights if i.severity == "alert"])
+        warning_count = len([i for i in insights if i.severity == "warning"])
+        if alert_count > 0:
+            summary = f"{alert_count} alert(s) require immediate attention"
+        elif warning_count > 0:
+            summary = f"{warning_count} item(s) to review today"
+        elif today_total > 0:
+            summary = f"${today_total:,.2f} processed today — no alerts"
+        else:
+            summary = "No invoice activity today"
+
+        return InsightReport(
+            organization_id=self.organization_id,
+            generated_at=datetime.now().isoformat(),
+            insights=insights,
+            summary=summary,
+        )
+
     def _get_vendor_history(self, vendor: str, days: int = 90) -> List[Dict[str, Any]]:
         """Get historical invoices for a vendor."""
         try:

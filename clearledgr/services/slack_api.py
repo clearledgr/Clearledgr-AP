@@ -303,6 +303,120 @@ class SlackAPIClient:
     # ==================== BLOCK KIT BUILDERS ====================
     
     @staticmethod
+    def _kpi_percent(metric: Any) -> float:
+        """Normalize KPI metric shapes into a display percentage."""
+        if isinstance(metric, dict):
+            raw = metric.get("value", metric.get("rate"))
+        else:
+            raw = metric
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+        if 0 <= value <= 1:
+            return value * 100.0
+        return value
+
+    @staticmethod
+    def _kpi_hours(metric: Any) -> float:
+        if isinstance(metric, dict):
+            raw = metric.get("avg_hours", metric.get("avg"))
+        else:
+            raw = metric
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def build_ap_kpi_digest_text(kpis: Dict[str, Any], organization_id: str) -> str:
+        """Build compact AP KPI digest text with AX6 agentic telemetry."""
+        payload = kpis or {}
+        agentic = payload.get("agentic_telemetry") if isinstance(payload, dict) else {}
+        agentic = agentic if isinstance(agentic, dict) else {}
+
+        touchless = SlackAPIClient._kpi_percent(payload.get("touchless_rate"))
+        exception_rate = SlackAPIClient._kpi_percent(payload.get("exception_rate"))
+        fallback_rate = SlackAPIClient._kpi_percent(agentic.get("erp_browser_fallback_rate"))
+        accepted_rate = SlackAPIClient._kpi_percent(agentic.get("agent_suggestion_acceptance"))
+        manual_override_rate = SlackAPIClient._kpi_percent(agentic.get("agent_actions_requiring_manual_override"))
+        awaiting_hours = SlackAPIClient._kpi_hours(agentic.get("awaiting_approval_time_hours"))
+        return (
+            f"AP KPI digest ({organization_id}) · "
+            f"touchless {touchless:.1f}% · exceptions {exception_rate:.1f}% · "
+            f"fallback {fallback_rate:.1f}% · agent accepted {accepted_rate:.1f}% · "
+            f"manual override {manual_override_rate:.1f}% · awaiting approval {awaiting_hours:.1f}h"
+        )
+
+    @staticmethod
+    def build_ap_kpi_digest_blocks(kpis: Dict[str, Any], organization_id: str) -> List[Dict[str, Any]]:
+        payload = kpis or {}
+        agentic = payload.get("agentic_telemetry") if isinstance(payload, dict) else {}
+        agentic = agentic if isinstance(agentic, dict) else {}
+
+        touchless = SlackAPIClient._kpi_percent(payload.get("touchless_rate"))
+        exception_rate = SlackAPIClient._kpi_percent(payload.get("exception_rate"))
+        cycle_time = SlackAPIClient._kpi_hours(payload.get("cycle_time_hours"))
+        on_time = SlackAPIClient._kpi_percent(payload.get("on_time_approvals"))
+        straight_through = SlackAPIClient._kpi_percent(agentic.get("straight_through_rate"))
+        human_intervention = SlackAPIClient._kpi_percent(agentic.get("human_intervention_rate"))
+        fallback_rate = SlackAPIClient._kpi_percent(agentic.get("erp_browser_fallback_rate"))
+        suggestion_acceptance = SlackAPIClient._kpi_percent(agentic.get("agent_suggestion_acceptance"))
+        manual_override = SlackAPIClient._kpi_percent(agentic.get("agent_actions_requiring_manual_override"))
+        awaiting_hours = SlackAPIClient._kpi_hours(agentic.get("awaiting_approval_time_hours"))
+        window_hours = int(agentic.get("window_hours") or 0)
+
+        blocker_reasons = []
+        top_blockers = agentic.get("top_blocker_reasons") if isinstance(agentic, dict) else {}
+        if isinstance(top_blockers, dict):
+            rows = top_blockers.get("top_reasons")
+            if isinstance(rows, list):
+                for entry in rows[:3]:
+                    if not isinstance(entry, dict):
+                        continue
+                    reason = str(entry.get("reason") or "").replace("_", " ").strip()
+                    count = int(entry.get("count") or 0)
+                    if reason:
+                        blocker_reasons.append(f"{reason} ({count})")
+        blockers_text = " · ".join(blocker_reasons) if blocker_reasons else "No blocker telemetry yet"
+
+        return [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"AP KPI Digest ({organization_id})"},
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Touchless:*\n{touchless:.1f}%"},
+                    {"type": "mrkdwn", "text": f"*Exceptions:*\n{exception_rate:.1f}%"},
+                    {"type": "mrkdwn", "text": f"*Cycle time:*\n{cycle_time:.1f}h"},
+                    {"type": "mrkdwn", "text": f"*On-time approvals:*\n{on_time:.1f}%"},
+                ],
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*Agentic telemetry*"
+                        + (f" ({window_hours}h window)" if window_hours > 0 else "")
+                        + "\n"
+                        f"Straight-through: {straight_through:.1f}% · Human intervention: {human_intervention:.1f}%\n"
+                        f"Browser fallback: {fallback_rate:.1f}% · Agent accepted: {suggestion_acceptance:.1f}%\n"
+                        f"Manual override required: {manual_override:.1f}% · Awaiting approval: {awaiting_hours:.1f}h"
+                    ),
+                },
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": f"Top blockers: {blockers_text}"},
+                ],
+            },
+        ]
+
+    @staticmethod
     def build_approval_blocks(
         title: str,
         details: Dict[str, str],

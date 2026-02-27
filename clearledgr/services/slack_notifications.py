@@ -722,9 +722,165 @@ async def send_task_comment_notification(*args, **kwargs):
     pass
 
 
-async def send_overdue_summary(*args, **kwargs):
-    """Placeholder for overdue summary notification."""
-    pass
+async def send_overdue_summary(
+    overdue_items: List[Dict[str, Any]],
+    stale_items: List[Dict[str, Any]],
+    organization_id: str,
+    preferred_channel: Optional[str] = None,
+) -> bool:
+    """Send a rich AP KPI dashboard to Slack with overdue highlights.
+
+    Pulls the full KPI bundle from the DB (touchless rate, SLA breach %,
+    missed discounts) then renders Slack blocks with:
+      - Header KPI bar
+      - Top-5 overdue items (vendor, amount, due date)
+      - Top-3 stale items (vendor, stuck state)
+      - Footer: pending count + missed discount value
+    """
+    try:
+        from clearledgr.core.database import get_db
+
+        db = get_db()
+        kpis: Dict[str, Any] = {}
+        try:
+            kpis = db.get_ap_kpis(organization_id) or {}
+        except Exception:
+            pass
+
+        # --- KPI summary line ---
+        touchless = kpis.get("touchless_rate", {})
+        touchless_pct = round((touchless.get("rate") or 0) * 100, 1)
+        friction = kpis.get("approval_friction", {})
+        sla_breach_pct = round((friction.get("sla_breach_rate") or 0) * 100, 1)
+        missed = kpis.get("missed_discounts", {})
+        missed_value = missed.get("missed_value") or 0
+        totals = kpis.get("totals", {})
+        pending_count = totals.get("items", 0) - totals.get("completed_items", 0)
+
+        kpi_line = (
+            f"Touchless: *{touchless_pct}%* | "
+            f"SLA breach: *{sla_breach_pct}%* | "
+            f"Pending: *{pending_count}*"
+        )
+        if missed_value:
+            kpi_line += f" | Missed discounts: *${missed_value:,.2f}*"
+
+        blocks: List[Dict[str, Any]] = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": ":bar_chart: AP Status Dashboard"},
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": kpi_line},
+            },
+        ]
+
+        # --- Overdue section ---
+        if overdue_items:
+            lines = [f"*{len(overdue_items)} overdue item(s):*"]
+            for item in overdue_items[:5]:
+                vendor = item.get("vendor_name") or "Unknown"
+                amount = item.get("amount") or 0
+                due = item.get("due_date") or "?"
+                lines.append(f"  :red_circle: *{vendor}* — ${amount:,.2f} (due {due})")
+            blocks.append(
+                {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}}
+            )
+
+        # --- Stale section ---
+        if stale_items:
+            lines = [f"*{len(stale_items)} stale item(s) needing attention:*"]
+            for item in stale_items[:3]:
+                vendor = item.get("vendor_name") or "Unknown"
+                state = item.get("state") or "?"
+                lines.append(f"  :warning: *{vendor}* — stuck in `{state}`")
+            blocks.append(
+                {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}}
+            )
+
+        if not overdue_items and not stale_items:
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": ":white_check_mark: No overdue or stale items."},
+                }
+            )
+
+        blocks.append({"type": "divider"})
+
+        channel = (
+            preferred_channel
+            or os.getenv("SLACK_APPROVAL_CHANNEL")
+            or os.getenv("SLACK_DEFAULT_CHANNEL")
+            or "#finance"
+        )
+        summary_text = f"AP Status: {len(overdue_items)} overdue, {len(stale_items)} stale"
+        return await _post_slack_blocks(
+            blocks=blocks,
+            text=summary_text,
+            preferred_channel=channel,
+            organization_id=organization_id,
+        )
+    except Exception as exc:
+        logger.debug("send_overdue_summary failed: %s", exc)
+        return False
+
+
+async def send_approval_reminder(
+    ap_item: Dict[str, Any],
+    approver_ids: List[str],
+    hours_pending: float,
+    organization_id: Optional[str] = None,
+) -> None:
+    """Send a reminder (or escalation) for an AP item stuck in needs_approval.
+
+    - < 24h: DM each pending approver via Slack DM
+    - >= 24h: post escalation to the approval channel in addition to DMs
+    """
+    from clearledgr.services.slack_api import SlackAPIClient
+
+    vendor = ap_item.get("vendor_name") or "Unknown vendor"
+    amount = ap_item.get("amount") or 0
+    invoice_num = ap_item.get("invoice_number") or "N/A"
+    org_id = organization_id or ap_item.get("organization_id") or os.getenv("DEFAULT_ORGANIZATION_ID", "default")
+
+    is_escalation = hours_pending >= 24
+    verb = "ESCALATION" if is_escalation else "Reminder"
+    icon = ":rotating_light:" if is_escalation else ":bell:"
+    h = int(hours_pending)
+    dm_text = (
+        f"{icon} *Approval {verb}* — {vendor} invoice #{invoice_num} "
+        f"(${amount:,.2f}) has been waiting for approval for *{h}h*. "
+        f"Please review and approve or reject."
+    )
+
+    try:
+        client = SlackAPIClient(organization_id=org_id)
+        for uid in approver_ids:
+            try:
+                await client.send_dm(uid, dm_text)
+            except Exception as dm_err:
+                logger.debug("Approval reminder DM to %s failed: %s", uid, dm_err)
+
+        if is_escalation:
+            channel = (
+                os.getenv("SLACK_APPROVAL_CHANNEL")
+                or os.getenv("SLACK_DEFAULT_CHANNEL")
+                or "#finance"
+            )
+            escalation_text = (
+                f":rotating_light: *Approval Escalation* — {vendor} invoice #{invoice_num} "
+                f"(${amount:,.2f}) has been pending approval for *{h}h* with no response."
+            )
+            await _post_slack_blocks(
+                blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": escalation_text}}],
+                text=escalation_text,
+                preferred_channel=channel,
+                organization_id=org_id,
+            )
+    except Exception as exc:
+        logger.debug("send_approval_reminder failed: %s", exc)
 
 
 class SlackNotificationService:

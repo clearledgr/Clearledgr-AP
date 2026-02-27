@@ -13,7 +13,8 @@ ad-hoc asks for payment without formal invoicing.
 
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from clearledgr.api.deps import soft_org_guard
 from pydantic import BaseModel
 import logging
 import json
@@ -32,7 +33,11 @@ from clearledgr.services.payment_execution import get_payment_execution, Payment
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/payment-requests", tags=["payment-requests"])
+router = APIRouter(
+    prefix="/payment-requests",
+    tags=["payment-requests"],
+    dependencies=[Depends(soft_org_guard)],
+)
 
 
 # ============================================================================
@@ -342,8 +347,10 @@ async def handle_slack_command(request: Request):
             "text": "Could not parse amount. Try: `/clearledgr pay $500 to John for consulting`"
             }
         
-        # Create payment request
-        service = get_payment_request_service("default")
+        # Create payment request — org resolved from team_id or env fallback
+        import os as _os
+        _org_id = payload.get("team_id") or _os.getenv("DEFAULT_ORGANIZATION_ID", "default")
+        service = get_payment_request_service(_org_id)
         payment_request = service.create_from_slack(
             channel_id=channel_id,
             user_id=user_id,
@@ -411,8 +418,10 @@ async def handle_slack_interactive(request: Request):
         
         logger.info(f"Slack interactive: {action_id} by {user_name}")
         
-        service = get_payment_request_service("default")
-        
+        import os as _os
+        _org_id = payload.get("team", {}).get("id") or _os.getenv("DEFAULT_ORGANIZATION_ID", "default")
+        service = get_payment_request_service(_org_id)
+
         if action_id.startswith("approve_payment_request_"):
             try:
                 payment_request = service.approve_request(request_id, approved_by=user_name)

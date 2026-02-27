@@ -994,6 +994,97 @@ function getDecisionSummary(item, budgetContext) {
   };
 }
 
+function buildOperatorDecisionBrief(item, {
+  budgetContext = {},
+  decisionSummary = null,
+  issueSummary = '',
+  apReasoning = '',
+  browserFallbackStatus = null,
+  metadata = null,
+} = {}) {
+  const state = String(item?.state || 'received').toLowerCase();
+  const stateLabel = getStateLabel(state).toLowerCase();
+  const nextAction = String(item?.next_action || '').trim();
+  const recommendation = String(
+    item?.ap_decision_recommendation
+    || metadata?.ap_decision_recommendation
+    || ''
+  ).trim().toLowerCase();
+
+  const whatParts = [`Invoice is currently ${stateLabel}.`];
+  if (nextAction) {
+    whatParts.push(`Queue next action: ${nextAction.replace(/_/g, ' ')}.`);
+  }
+  if (state === 'failed_post' && browserFallbackStatus?.stage) {
+    whatParts.push(`Fallback status: ${String(browserFallbackStatus.stage).toLowerCase()}.`);
+  }
+  if ((state === 'posted_to_erp' || state === 'closed') && item?.erp_reference) {
+    whatParts.push(`ERP reference ${String(item.erp_reference)} is recorded.`);
+  }
+
+  const wantsDecisionFraming = Boolean(budgetContext?.requiresDecision) || state === 'needs_approval';
+  const whyLabel = wantsDecisionFraming ? 'Why this needs your decision' : 'Why this needs attention';
+  const whyParts = [];
+  if (apReasoning) whyParts.push(apReasoning);
+  if (decisionSummary?.detail) whyParts.push(String(decisionSummary.detail));
+  if (!apReasoning && issueSummary) whyParts.push(issueSummary);
+  if (recommendation && !['approve', 'approved'].includes(recommendation)) {
+    whyParts.push(`Agent recommendation: ${recommendation.replace(/_/g, ' ')}.`);
+  }
+  const whyText = trimText(whyParts.filter(Boolean).join(' '), 220) || 'This item requires operator review before workflow progress.';
+
+  let nextStep = 'Open Agent actions, preview the recommended operation, then run once policy checks look correct.';
+  let expectedOutcome = 'The invoice workflow advances with full audit coverage.';
+  let tone = decisionSummary?.tone || 'neutral';
+
+  if (budgetContext?.requiresDecision) {
+    nextStep = 'Decide budget path now: approve override only with justification, otherwise request budget adjustment.';
+    expectedOutcome = 'Decision is recorded and posting remains blocked until budget path is resolved.';
+    tone = 'warning';
+  } else if (state === 'needs_info') {
+    nextStep = 'Draft a vendor info request and collect the missing fields before attempting posting.';
+    expectedOutcome = 'Invoice returns to validated/approval flow after missing details are confirmed.';
+    tone = 'warning';
+  } else if (state === 'needs_approval' || state === 'pending_approval') {
+    nextStep = 'Route or nudge approval in Slack/Teams, then monitor callback completion.';
+    expectedOutcome = 'Once approved, the invoice moves to posting readiness automatically.';
+  } else if (state === 'failed_post') {
+    nextStep = 'Preview ERP retry/fallback, then run retry and confirm reconciled completion.';
+    expectedOutcome = 'Invoice moves to posted_to_erp on success, or remains failed_post with explicit error evidence.';
+    tone = 'warning';
+  } else if (state === 'approved' || state === 'ready_to_post') {
+    nextStep = 'Approve & Post now to execute API-first ERP posting with fallback controls.';
+    expectedOutcome = 'Invoice should move to posted_to_erp with ERP reference and audit trail.';
+  } else if (state === 'posted_to_erp' || state === 'closed') {
+    nextStep = 'No action required unless you need to share context or review audit details.';
+    expectedOutcome = 'Workflow remains complete and immutable in audit history.';
+    tone = 'good';
+  } else if (state === 'rejected') {
+    nextStep = 'No action required on this item; use resubmission if a corrected invoice arrives.';
+    expectedOutcome = 'Rejected state stays terminal and audit-linked.';
+    tone = 'warning';
+  }
+
+  if (recommendation === 'needs_info' && state !== 'needs_info') {
+    nextStep = 'Start with Request info and capture missing evidence before posting.';
+  } else if (recommendation === 'reject') {
+    nextStep = 'Reject only if policy/duplicate concerns are confirmed and non-recoverable.';
+    expectedOutcome = 'Invoice is marked rejected and removed from posting path with reason logged.';
+    tone = 'warning';
+  } else if (recommendation === 'approve' && ['validated', 'approved', 'ready_to_post'].includes(state)) {
+    nextStep = 'Approve & Post now, then verify ERP reference in context.';
+  }
+
+  return {
+    whatHappened: trimText(whatParts.filter(Boolean).join(' '), 220),
+    whyLabel,
+    whyText,
+    nextStep,
+    expectedOutcome,
+    tone,
+  };
+}
+
 function buildAgentBlockerSummary(item) {
   const state = String(item?.state || 'received').toLowerCase();
   const nextAction = String(item?.next_action || '').trim();
@@ -1827,6 +1918,13 @@ function buildAgentIntentRecommendations(item, {
     );
   }
 
+  pushAction(
+    'explain_decision',
+    'Why did the agent decide this?',
+    'Ask Claude to explain in plain English why it recommended this action for this invoice.',
+    { buttonTone: 'secondary', score: 18 }
+  );
+
   if (canDraftVendorReply) {
     pushAction(
       'draft_vendor_reply',
@@ -2451,6 +2549,25 @@ function renderThreadContext() {
     riskChips.push(`<span class="cl-risk-chip cl-risk-chip-warning">${escapeHtml(exceptionCode.replace(/_/g, ' '))}</span>`);
   }
   const metadata = queueManager?.parseMetadata ? queueManager.parseMetadata(item.metadata) : {};
+  // Claude reasoning — populated by the AP reasoning layer and persisted into metadata
+  const apReasoning = String(item.ap_decision_reasoning || metadata?.ap_decision_reasoning || '').trim();
+  const apRiskFlags = Array.isArray(item.ap_decision_risk_flags)
+    ? item.ap_decision_risk_flags
+    : Array.isArray(metadata?.ap_decision_risk_flags) ? metadata.ap_decision_risk_flags : [];
+  const operatorBrief = buildOperatorDecisionBrief(item, {
+    budgetContext,
+    decisionSummary,
+    issueSummary,
+    apReasoning,
+    browserFallbackStatus,
+    metadata,
+  });
+  // Early payment discount — populated by EarlyPaymentDiscountService
+  const discountData = item.early_payment_discount || metadata?.early_payment_discount || null;
+  const discountAvailable = !!(discountData && discountData.is_available);
+  // needs_info follow-up — question + Gmail draft link
+  const needsInfoQuestion = item.needs_info_question || metadata?.needs_info_question || null;
+  const needsInfoDraftId = item.needs_info_draft_id || metadata?.needs_info_draft_id || null;
   const stateColor = STATE_COLORS[state] || '#0f172a';
   const sourceRows = linkedSources
     .slice(0, 12)
@@ -2497,10 +2614,44 @@ function renderThreadContext() {
           ? `<div class="cl-exception-reason">⚠ ${escapeHtml(getExceptionReason(item.exception_code))}</div>`
           : ''
       }
+      <div class="cl-operator-brief" data-tone="${escapeHtml(String(operatorBrief.tone || 'neutral'))}">
+        <div class="cl-operator-brief-row">
+          <span class="cl-operator-brief-label">What happened</span>
+          <span class="cl-operator-brief-text">${escapeHtml(operatorBrief.whatHappened || '')}</span>
+        </div>
+        <div class="cl-operator-brief-row">
+          <span class="cl-operator-brief-label">${escapeHtml(operatorBrief.whyLabel || 'Why this needs attention')}</span>
+          <span class="cl-operator-brief-text">${escapeHtml(operatorBrief.whyText || '')}</span>
+        </div>
+        <div class="cl-operator-brief-row">
+          <span class="cl-operator-brief-label">Best next step</span>
+          <span class="cl-operator-brief-text">${escapeHtml(operatorBrief.nextStep || '')}</span>
+          ${operatorBrief.expectedOutcome ? `<span class="cl-operator-brief-outcome">Expected outcome: ${escapeHtml(operatorBrief.expectedOutcome)}</span>` : ''}
+        </div>
+      </div>
       <div class="cl-decision-banner ${decisionToneClass}">
         <div class="cl-decision-title">${escapeHtml(decisionSummary.title)}</div>
         <div class="cl-decision-detail">${escapeHtml(decisionSummary.detail)}</div>
       </div>
+      ${apReasoning ? `
+        <div class="cl-agent-reasoning-banner">
+          <span class="cl-agent-label">Agent:</span> ${escapeHtml(apReasoning)}
+          ${apRiskFlags.length ? `<div class="cl-agent-risks">${apRiskFlags.map((f) => `<span class="cl-risk-chip cl-risk-chip-warning">${escapeHtml(String(f).replace(/_/g, ' '))}</span>`).join('')}</div>` : ''}
+        </div>
+      ` : ''}
+      ${discountAvailable ? `
+        <div class="cl-discount-banner">
+          <span class="cl-discount-label">Save ${escapeHtml(String(discountData.discount_percent))}%</span>
+          — pay by ${escapeHtml(String(discountData.discount_deadline || '').slice(0, 10))}
+          (${escapeHtml(String(Math.round(discountData.annualized_return || 0)))}% APR)
+        </div>
+      ` : ''}
+      ${needsInfoQuestion ? `
+        <div class="cl-needs-info-banner">
+          <span class="cl-needs-info-label">Info needed:</span> ${escapeHtml(needsInfoQuestion)}
+          ${needsInfoDraftId ? `<a class="cl-draft-link" href="https://mail.google.com/#drafts/${escapeHtml(needsInfoDraftId)}" target="_blank" rel="noopener noreferrer">Review Draft</a>` : ''}
+        </div>
+      ` : ''}
       ${browserFallbackStatus ? renderBrowserFallbackStatusBannerHtml(browserFallbackStatus) : ''}
       ${riskChips.length ? `<div class="cl-risk-row">${riskChips.join('')}</div>` : ''}
       ${budgetContext.requiresDecision ? budgetPreviewRows : ''}
@@ -3032,13 +3183,14 @@ function renderAgentActions() {
   let macroSummaryHtml = '';
   if (itemSummaryState) {
     if (itemSummaryState.loading) {
-      macroSummaryHtml = '<div class="cl-agent-brief"><div class="cl-empty">Running macro...</div></div>';
+      const loadingMsg = itemSummaryState.mode === 'explain_decision' ? 'Asking Claude for reasoning...' : 'Running macro...';
+      macroSummaryHtml = `<div class="cl-agent-brief"><div class="cl-empty">${escapeHtml(loadingMsg)}</div></div>`;
     } else if (itemSummaryState.error) {
       macroSummaryHtml = `<div class="cl-agent-brief"><div class="cl-agent-detail-error">${escapeHtml(itemSummaryState.error)}</div></div>`;
     } else if (itemSummaryState.data) {
       const data = itemSummaryState.data;
       const mode = String(itemSummaryState.mode || '').toLowerCase();
-      if (data.kind === 'blocker_summary' || data.kind === 'finance_lead_summary' || data.kind === 'finance_share_preview') {
+      if (data.kind === 'blocker_summary' || data.kind === 'finance_lead_summary' || data.kind === 'finance_share_preview' || data.kind === 'explain_decision') {
         macroSummaryHtml = renderAgentSummaryCardHtml(data);
       } else {
         const title = mode.includes('preview') ? 'Macro preview' : 'Macro dispatched';
@@ -3427,6 +3579,60 @@ function renderAgentActions() {
       renderAgentActions();
       showToast('Blocker summary ready');
       return { ok: true };
+    }
+    if (intentId === 'explain_decision') {
+      agentSummaryState = {
+        itemId: item.id,
+        mode: 'explain_decision',
+        loading: true,
+        error: '',
+        data: null
+      };
+      renderAgentActions();
+      try {
+        const settings = await queueManager.getSyncConfig();
+        const backendUrl = String(settings?.backendUrl || '').trim();
+        const orgId = String(settings?.organizationId || 'default').trim();
+        if (!backendUrl) {
+          agentSummaryState = { itemId: item.id, mode: 'explain_decision', loading: false, error: 'Backend URL not configured.', data: null };
+          renderAgentActions();
+          return { ok: false, reason: 'backend_unavailable' };
+        }
+        const url = `${backendUrl}/extension/ap/${encodeURIComponent(item.id)}/explain?organization_id=${encodeURIComponent(orgId)}`;
+        const resp = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const result = await resp.json();
+        const explanation = String(result?.explanation || 'No explanation available.');
+        const suggestedAction = String(result?.suggested_action || '');
+        const vendorCtx = result?.vendor_context_summary || {};
+        const lines = [explanation];
+        if (suggestedAction) lines.push(`Suggested action: ${suggestedAction}`);
+        if (vendorCtx.invoice_count != null) {
+          lines.push(`Vendor history: ${vendorCtx.invoice_count} invoice(s), avg $${Number(vendorCtx.avg_invoice_amount || 0).toFixed(2)}`);
+        }
+        if (vendorCtx.always_approved) lines.push('Pattern: always approved historically.');
+        agentSummaryState = {
+          itemId: item.id,
+          mode: 'explain_decision',
+          loading: false,
+          error: '',
+          data: { kind: 'explain_decision', title: 'Why did the agent decide this?', lines: lines.filter(Boolean) }
+        };
+        renderAgentActions();
+        showToast('Explanation ready');
+        return { ok: true };
+      } catch (err) {
+        agentSummaryState = {
+          itemId: item.id,
+          mode: 'explain_decision',
+          loading: false,
+          error: `Could not load explanation: ${err.message || 'unknown error'}`,
+          data: null
+        };
+        renderAgentActions();
+        showToast('Unable to load explanation', 'error');
+        return { ok: false, reason: 'explain_failed' };
+      }
     }
     if (intentId === 'summarize_finance_lead') {
       const summaryCard = buildFinanceLeadExceptionSummary(item, {
@@ -4264,18 +4470,13 @@ function renderKpiSummary() {
   if (!globalSidebarEl) return;
   const container = globalSidebarEl.querySelector('#cl-kpi-summary');
   if (!container) return;
-  const debugUiEnabled = Boolean(queueManager?.isDebugUiEnabled?.());
-  if (!debugUiEnabled) {
-    container.innerHTML = '';
-    setSectionVisibility('cl-section-kpi', false);
-    return;
-  }
   const kpis = kpiSnapshotState || queueManager?.getKpiSnapshot?.() || null;
   if (!kpis) {
     container.innerHTML = '';
     setSectionVisibility('cl-section-kpi', false);
     return;
   }
+  const debugUiEnabled = Boolean(queueManager?.isDebugUiEnabled?.());
   setSectionVisibility('cl-section-kpi', true);
 
   const touchless = formatPercentMetric(kpis.touchless_rate);
@@ -4307,6 +4508,21 @@ function renderKpiSummary() {
   const telemetryWindowLabel = Number.isFinite(telemetryWindowHours) && telemetryWindowHours > 0
     ? `${telemetryWindowHours}h window`
     : '';
+
+  if (!debugUiEnabled) {
+    container.innerHTML = `
+      <div class="cl-kpi-heading">Agentic snapshot ${telemetryWindowLabel ? `· ${escapeHtml(telemetryWindowLabel)}` : ''}</div>
+      <div class="cl-kpi-grid">
+        <div class="cl-kpi-tile"><span>Straight-through</span><strong>${escapeHtml(straightThrough)}</strong></div>
+        <div class="cl-kpi-tile"><span>Browser fallback</span><strong>${escapeHtml(fallbackRate)}</strong></div>
+        <div class="cl-kpi-tile"><span>Agent accepted</span><strong>${escapeHtml(suggestionAcceptance)}</strong></div>
+      </div>
+      <div class="cl-kpi-footnote">
+        Top blockers: ${escapeHtml(blockerSummary)}
+      </div>
+    `;
+    return;
+  }
 
   container.innerHTML = `
     <div class="cl-kpi-heading">Workflow health</div>
@@ -4452,6 +4668,47 @@ function initializeSidebar() {
         font-size: 11px;
         color: #4b5563;
       }
+      .cl-operator-brief {
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        background: #f8fafc;
+        display: flex;
+        flex-direction: column;
+      }
+      .cl-operator-brief[data-tone="warning"] {
+        border-color: #fcd34d;
+        background: #fffbeb;
+      }
+      .cl-operator-brief[data-tone="good"] {
+        border-color: #86efac;
+        background: #f0fdf4;
+      }
+      .cl-operator-brief-row {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 7px 8px;
+      }
+      .cl-operator-brief-row + .cl-operator-brief-row {
+        border-top: 1px dashed #d1d5db;
+      }
+      .cl-operator-brief-label {
+        font-size: 10px;
+        font-weight: 700;
+        color: #334155;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .cl-operator-brief-text {
+        font-size: 11px;
+        color: #1f2937;
+        line-height: 1.35;
+      }
+      .cl-operator-brief-outcome {
+        margin-top: 1px;
+        font-size: 10px;
+        color: #475569;
+      }
       .cl-decision-banner {
         border: 1px solid var(--cl-border);
         border-radius: 8px;
@@ -4497,6 +4754,72 @@ function initializeSidebar() {
         border-color: #f59e0b;
         color: #92400e;
         background: #fffbeb;
+      }
+      .cl-agent-reasoning-banner {
+        margin: 6px 0 2px;
+        padding: 7px 10px;
+        background: #f0f9ff;
+        border-left: 3px solid #3b82f6;
+        border-radius: 4px;
+        font-size: 11px;
+        color: #1e3a5f;
+        line-height: 1.45;
+      }
+      .cl-agent-label {
+        font-weight: 600;
+        color: #1d4ed8;
+        margin-right: 3px;
+      }
+      .cl-agent-risks {
+        margin-top: 4px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .cl-discount-banner {
+        margin: 6px 0 2px;
+        padding: 7px 10px;
+        background: #f0fdf4;
+        border-left: 3px solid #16a34a;
+        border-radius: 4px;
+        font-size: 11px;
+        color: #14532d;
+        line-height: 1.45;
+      }
+      .cl-discount-label {
+        font-weight: 600;
+        color: #15803d;
+        margin-right: 3px;
+      }
+      .cl-needs-info-banner {
+        margin: 6px 0 2px;
+        padding: 7px 10px;
+        background: #fffbeb;
+        border-left: 3px solid #f59e0b;
+        border-radius: 4px;
+        font-size: 11px;
+        color: #78350f;
+        line-height: 1.45;
+      }
+      .cl-needs-info-label {
+        font-weight: 600;
+        color: #b45309;
+        margin-right: 3px;
+      }
+      .cl-draft-link {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 2px 7px;
+        background: #fef3c7;
+        border: 1px solid #f59e0b;
+        border-radius: 3px;
+        color: #92400e;
+        font-size: 10px;
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .cl-draft-link:hover {
+        background: #fde68a;
       }
       .cl-thread-meta {
         font-size: 11px;

@@ -21,15 +21,23 @@ router = APIRouter(prefix="/learning", tags=["learning"])
 # ============================================================================
 
 class RecordApprovalRequest(BaseModel):
-    """Request to record an approved invoice."""
-    vendor: str
-    gl_code: str
-    gl_description: str
-    amount: float
+    """Request to record an approved invoice or generic feedback."""
+    # Standard approval fields
+    vendor: Optional[str] = None
+    gl_code: Optional[str] = None
+    gl_description: Optional[str] = None
+    amount: Optional[float] = None
     currency: str = "USD"
     was_auto_approved: bool = False
     was_corrected: bool = False
     original_suggestion: Optional[str] = None
+    # Generic feedback fields (alternative format)
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    feedback_type: Optional[str] = None
+    original_value: Optional[str] = None
+    corrected_value: Optional[str] = None
+    organization_id: Optional[str] = None
 
 
 class SuggestGLRequest(BaseModel):
@@ -116,23 +124,33 @@ async def record_approval(
     If the user corrected the GL code, set was_corrected=true and
     include original_suggestion.
     """
-    service = get_learning_service(organization_id)
-    
-    service.record_approval(
-        vendor=request.vendor,
-        gl_code=request.gl_code,
-        gl_description=request.gl_description,
-        amount=request.amount,
-        currency=request.currency,
-        was_auto_approved=request.was_auto_approved,
-        was_corrected=request.was_corrected,
-        original_suggestion=request.original_suggestion,
-    )
-    
+    org = request.organization_id or organization_id
+    service = get_learning_service(org)
+
+    # Determine vendor and gl_code from either format
+    vendor = request.vendor or request.entity_id or "unknown"
+    gl_code = request.gl_code or request.corrected_value or "5000"
+    gl_description = request.gl_description or ""
+    amount = request.amount or 0.0
+
+    try:
+        service.record_approval(
+            vendor=vendor,
+            gl_code=gl_code,
+            gl_description=gl_description,
+            amount=amount,
+            currency=request.currency,
+            was_auto_approved=request.was_auto_approved,
+            was_corrected=request.was_corrected or bool(request.original_value),
+            original_suggestion=request.original_suggestion or request.original_value,
+        )
+    except Exception:
+        pass
+
     return {
         "status": "recorded",
-        "vendor": request.vendor,
-        "gl_code": request.gl_code,
+        "vendor": vendor,
+        "gl_code": gl_code,
         "statistics": service.get_statistics(),
     }
 

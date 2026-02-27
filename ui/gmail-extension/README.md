@@ -85,6 +85,29 @@ To modify the extension:
 3. Click the refresh icon on the Clearledgr extension
 4. Reload Gmail to see changes
 
+## Testing
+
+Run deterministic local coverage:
+
+- `npm test`
+- `npm run test:integration`
+
+Run manual-gated real Chrome/Gmail smoke:
+
+- `npm run test:e2e-smoke`
+
+Run authenticated Gmail runtime assertions (requires logged-in Gmail profile):
+
+- `npm run test:e2e-auth`
+
+Optional environment variables for E2E:
+
+- `GMAIL_E2E_PROFILE_DIR`: persistent Chrome profile path
+- `GMAIL_E2E_URL`: Gmail URL to open (default inbox)
+- `GMAIL_E2E_EXPECT_SELECTOR`: selector to assert in authenticated mode (default `#cl-scan-status`)
+- `GMAIL_E2E_TIMEOUT_MS`: wait timeout (default `180000`)
+- `GMAIL_E2E_CAPTURE_PATH`: screenshot output path for evidence capture
+
 ## Support
 
 For issues or feature requests, contact the Clearledgr team.

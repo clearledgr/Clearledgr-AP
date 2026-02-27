@@ -273,6 +273,73 @@ Best regards"""
             del self._drafts[thread_id]
             return True
         return False
+
+    async def create_gmail_draft(
+        self,
+        gmail_client: Any,
+        ap_item_id: str,
+        thread_id: str,
+        to_email: str,
+        invoice_data: Dict[str, Any],
+        question: Optional[str] = None,
+    ) -> Optional[str]:
+        """Create a real Gmail draft for a needs_info follow-up.
+
+        Uses ``create_followup_draft()`` to build the email body, then
+        calls ``gmail_client.create_draft()`` to persist it in Gmail.
+        Returns the Gmail draft ID (or None on failure).
+
+        The draft is intentionally **not** auto-sent — the finance user
+        reviews it in Gmail and hits Send when ready.
+        """
+        try:
+            original_subject = invoice_data.get("subject") or "Invoice follow-up"
+            vendor = invoice_data.get("vendor_name") or invoice_data.get("vendor") or "Unknown vendor"
+            amount = invoice_data.get("amount") or 0
+            invoice_number = invoice_data.get("invoice_number") or "N/A"
+
+            if question:
+                # Use the Claude-generated question directly as the body
+                body = (
+                    f"Hi,\n\n"
+                    f"We are reviewing invoice #{invoice_number} from {vendor} "
+                    f"(${amount:,.2f}) and need the following information before we can process payment:\n\n"
+                    f"{question}\n\n"
+                    f"Please reply at your earliest convenience.\n\n"
+                    f"Best regards"
+                )
+                subject = f"Re: {original_subject} - Clarification Needed"
+            else:
+                # Fall back to template-based draft
+                missing_types = [MissingInfoType.PO_NUMBER]  # default
+                draft = self.create_followup_draft(
+                    original_thread_id=thread_id,
+                    original_subject=original_subject,
+                    sender_email=to_email,
+                    invoice_data=invoice_data,
+                    missing_info=missing_types,
+                )
+                if not draft:
+                    return None
+                body = draft.body
+                subject = draft.subject
+
+            draft_id = await gmail_client.create_draft(
+                thread_id=thread_id,
+                to=to_email,
+                subject=subject,
+                body=body,
+            )
+            logger.info(
+                "Gmail draft created for ap_item_id=%s thread=%s draft_id=%s",
+                ap_item_id,
+                thread_id,
+                draft_id,
+            )
+            return draft_id or None
+        except Exception as exc:
+            logger.debug("create_gmail_draft failed for ap_item_id=%s: %s", ap_item_id, exc)
+            return None
     
     def _vendor_requires_po(self, vendor: str) -> bool:
         """

@@ -14,7 +14,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 
 from clearledgr.core.database import get_db
@@ -225,39 +225,54 @@ async def update_settings(organization_id: str, request: UpdateSettingsRequest):
 @router.put("/{organization_id}/approval-thresholds")
 async def update_approval_thresholds(
     organization_id: str,
-    thresholds: List[ApprovalThreshold],
+    request: Request,
 ):
     """
     Update approval thresholds for amount-based routing.
+
+    Accepts either a list of ApprovalThreshold objects (full format)
+    or a simplified dict with auto_approve_limit / manager_approval_limit /
+    executive_approval_limit keys (shorthand format).
     """
+    body = await request.json()
+
     db = get_db()
     org = db.get_organization(organization_id)
-    
+
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
-    
-    # Validate thresholds (no gaps, no overlaps)
-    sorted_thresholds = sorted(thresholds, key=lambda t: t.min_amount)
-    for i, threshold in enumerate(sorted_thresholds):
-        if i > 0:
-            prev = sorted_thresholds[i - 1]
-            if prev.max_amount and prev.max_amount != threshold.min_amount:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Gap between thresholds: {prev.max_amount} to {threshold.min_amount}"
-                )
-    
+
     # Get current settings
     current = org.get("settings", {})
     if isinstance(current, str):
         current = json.loads(current) if current else {}
-    
-    # Update thresholds
-    current["approval_thresholds"] = [t.model_dump() for t in thresholds]
-    
-    db.update_organization(organization_id, settings=current)
-    
-    return {"success": True, "thresholds": len(thresholds)}
+
+    if isinstance(body, list):
+        # Full ApprovalThreshold list format
+        try:
+            thresholds = [ApprovalThreshold(**item) for item in body]
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        sorted_thresholds = sorted(thresholds, key=lambda t: t.min_amount)
+        for i, threshold in enumerate(sorted_thresholds):
+            if i > 0:
+                prev = sorted_thresholds[i - 1]
+                if prev.max_amount and prev.max_amount != threshold.min_amount:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Gap between thresholds: {prev.max_amount} to {threshold.min_amount}",
+                    )
+        current["approval_thresholds"] = [t.model_dump() for t in thresholds]
+        db.update_organization(organization_id, settings=current)
+        return {"success": True, "thresholds": len(thresholds)}
+    elif isinstance(body, dict):
+        # Simplified shorthand dict format — merge directly into settings
+        for key, value in body.items():
+            current[key] = value
+        db.update_organization(organization_id, settings=current)
+        return {"success": True, "updated": list(body.keys())}
+    else:
+        raise HTTPException(status_code=422, detail="Invalid body format")
 
 
 @router.get("/{organization_id}/gl-mappings")

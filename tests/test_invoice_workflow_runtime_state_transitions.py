@@ -385,6 +385,110 @@ def test_reject_invoice_updates_slack_thread_with_gmail_id(service, db, monkeypa
     assert str(approvals[0].get("status")) == "rejected"
 
 
+def test_reject_invoice_records_vendor_feedback_summary(service, db, monkeypatch):
+    _create_ap_item(
+        db,
+        gmail_id="gmail-reject-feedback",
+        state="needs_approval",
+        metadata={"ap_decision_recommendation": "approve"},
+    )
+
+    async def _noop_async(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(service, "_update_slack_rejected", _noop_async)
+    monkeypatch.setattr(db, "get_slack_thread", lambda _gmail_id: None)
+
+    result = asyncio.run(
+        service.reject_invoice(
+            gmail_id="gmail-reject-feedback",
+            reason="duplicate invoice",
+            rejected_by="approver@example.com",
+            source_channel="slack",
+            source_channel_id="C-APPROVALS",
+            source_message_ref="1710000000.555",
+        )
+    )
+    assert result["status"] == "rejected"
+
+    summary = db.get_vendor_decision_feedback_summary("default", "Vendor Test")
+    assert summary["total_feedback"] >= 1
+    assert summary["reject_count"] >= 1
+    assert summary["override_count"] >= 1  # human rejected when agent rec was approve
+    assert summary["reject_after_approve_count"] >= 1
+
+
+def test_request_budget_adjustment_records_vendor_feedback_summary(service, db, monkeypatch):
+    _create_ap_item(
+        db,
+        gmail_id="gmail-request-info-feedback",
+        state="needs_approval",
+        metadata={"ap_decision_recommendation": "approve"},
+    )
+    monkeypatch.setattr(db, "get_slack_thread", lambda _gmail_id: None)
+
+    async def _noop_async(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(service, "_update_slack_budget_adjustment_requested", _noop_async)
+
+    result = asyncio.run(
+        service.request_budget_adjustment(
+            gmail_id="gmail-request-info-feedback",
+            requested_by="approver@example.com",
+            reason="missing_po_number",
+            source_channel="slack",
+            source_channel_id="C-APPROVALS",
+            source_message_ref="1710000000.777",
+        )
+    )
+    assert result["status"] == "needs_info"
+    row = db.get_invoice_status("gmail-request-info-feedback")
+    assert row is not None
+    assert row["state"] == "needs_info"
+
+    summary = db.get_vendor_decision_feedback_summary("default", "Vendor Test")
+    assert summary["total_feedback"] >= 1
+    assert summary["request_info_count"] >= 1
+    assert summary["request_info_after_approve_count"] >= 1
+
+
+def test_approve_invoice_records_vendor_outcome_and_feedback(service, db, monkeypatch):
+    _create_ap_item(
+        db,
+        gmail_id="gmail-approve-feedback",
+        state="needs_approval",
+        metadata={"ap_decision_recommendation": "escalate"},
+    )
+    monkeypatch.setattr(service, "_load_budget_context_from_invoice_row", lambda _row: [])
+    monkeypatch.setattr(service, "_check_po_exception_block", lambda _row: {"blocked": False, "exceptions": []})
+
+    async def _fake_post(_invoice, **_kwargs):
+        return {"status": "success", "bill_id": "BILL-FEEDBACK-1", "vendor_id": "VEN-1"}
+
+    monkeypatch.setattr(service, "_post_to_erp", _fake_post)
+
+    result = asyncio.run(
+        service.approve_invoice(
+            gmail_id="gmail-approve-feedback",
+            approved_by="approver@example.com",
+            source_channel="slack",
+            source_channel_id="C-APPROVALS",
+            source_message_ref="1710000000.888",
+        )
+    )
+    assert result["status"] == "approved"
+
+    summary = db.get_vendor_decision_feedback_summary("default", "Vendor Test")
+    assert summary["total_feedback"] >= 1
+    assert summary["approve_count"] >= 1
+    assert summary["override_count"] >= 1  # human approved while recommendation was escalate
+
+    profile = db.get_vendor_profile("default", "Vendor Test")
+    assert profile is not None
+    assert profile["invoice_count"] >= 1
+
+
 def test_approve_invoice_failure_transitions_to_failed_post(service, db, monkeypatch):
     item = _create_ap_item(db, gmail_id="gmail-approve-fail", state="needs_approval")
 

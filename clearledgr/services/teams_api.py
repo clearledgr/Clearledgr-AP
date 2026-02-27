@@ -406,10 +406,48 @@ class TeamsAPIClient:
     @staticmethod
     def build_ap_kpi_digest_card(kpis: Dict[str, Any], organization_id: str) -> Dict[str, Any]:
         kpis = kpis or {}
-        touchless = _safe_float(kpis.get("touchless_rate_pct"))
-        exception_rate = _safe_float(kpis.get("exception_rate_pct"))
-        cycle_time = _safe_float(kpis.get("cycle_time_hours"))
-        on_time = _safe_float(kpis.get("on_time_approvals_pct"))
+        agentic = kpis.get("agentic_telemetry") if isinstance(kpis, dict) else {}
+        agentic = agentic if isinstance(agentic, dict) else {}
+
+        def _percent(metric: Any) -> float:
+            if isinstance(metric, dict):
+                raw = metric.get("value", metric.get("rate"))
+            else:
+                raw = metric
+            value = _safe_float(raw)
+            if 0 <= value <= 1:
+                return value * 100.0
+            return value
+
+        def _hours(metric: Any) -> float:
+            if isinstance(metric, dict):
+                return _safe_float(metric.get("avg_hours", metric.get("avg")))
+            return _safe_float(metric)
+
+        touchless = _percent(kpis.get("touchless_rate"))
+        exception_rate = _percent(kpis.get("exception_rate"))
+        cycle_time = _hours(kpis.get("cycle_time_hours"))
+        on_time = _percent(kpis.get("on_time_approvals"))
+        fallback_rate = _percent(agentic.get("erp_browser_fallback_rate"))
+        accepted_rate = _percent(agentic.get("agent_suggestion_acceptance"))
+        manual_override_rate = _percent(agentic.get("agent_actions_requiring_manual_override"))
+        awaiting_hours = _hours(agentic.get("awaiting_approval_time_hours"))
+        window_hours = int(agentic.get("window_hours") or 0)
+
+        blocker_lines: List[str] = []
+        blockers = agentic.get("top_blocker_reasons")
+        if isinstance(blockers, dict):
+            top = blockers.get("top_reasons")
+            if isinstance(top, list):
+                for entry in top[:3]:
+                    if not isinstance(entry, dict):
+                        continue
+                    reason = str(entry.get("reason") or "").replace("_", " ").strip()
+                    count = int(entry.get("count") or 0)
+                    if reason:
+                        blocker_lines.append(f"• {reason} ({count})")
+        blocker_text = "\n".join(blocker_lines) if blocker_lines else "No blocker telemetry yet."
+
         return {
             "type": "message",
             "attachments": [
@@ -430,6 +468,21 @@ class TeamsAPIClient:
                                     {"title": "On-time approvals", "value": f"{on_time:.1f}%"},
                                 ],
                             },
+                            {
+                                "type": "TextBlock",
+                                "weight": "Bolder",
+                                "text": "Agentic telemetry" + (f" ({window_hours}h window)" if window_hours > 0 else ""),
+                            },
+                            {
+                                "type": "FactSet",
+                                "facts": [
+                                    {"title": "Browser fallback", "value": f"{fallback_rate:.1f}%"},
+                                    {"title": "Agent accepted", "value": f"{accepted_rate:.1f}%"},
+                                    {"title": "Manual override req.", "value": f"{manual_override_rate:.1f}%"},
+                                    {"title": "Awaiting approval", "value": f"{awaiting_hours:.1f}h"},
+                                ],
+                            },
+                            {"type": "TextBlock", "wrap": True, "text": f"Top blockers:\n{blocker_text}"},
                         ],
                     },
                 }

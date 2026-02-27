@@ -1834,6 +1834,279 @@ async def get_workflow_status(workflow_id: str):
         raise HTTPException(status_code=404, detail="workflow_not_found")
 
 
+@router.get("/ap/{ap_item_id}/explain")
+def explain_ap_item(
+    ap_item_id: str,
+    organization_id: Optional[str] = Query(default=None),
+):
+    """Natural-language explanation of why an AP item is in its current state.
+
+    Claude reads the audit trail, vendor history, and current item state and
+    answers as the AP agent: "Here's what happened and why."
+
+    Works without ANTHROPIC_API_KEY — falls back to a structured plain-text
+    summary derived from audit events and the item's metadata.
+    """
+    db = get_db()
+    org_id = organization_id or "default"
+
+    item = db.get_ap_item(ap_item_id) if hasattr(db, "get_ap_item") else None
+    if not item:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+    if item.get("organization_id") and org_id and item["organization_id"] != org_id:
+        raise HTTPException(status_code=403, detail="org_mismatch")
+
+    vendor = str(item.get("vendor_name") or "Unknown vendor")
+    amount = item.get("amount")
+    state = str(item.get("state") or "unknown")
+    exception_code = item.get("exception_code")
+    confidence = item.get("confidence")
+    subject = item.get("subject") or ""
+
+    # Audit events (last 10, oldest → newest)
+    audit_events = []
+    try:
+        events = db.list_ap_audit_events(ap_item_id) if hasattr(db, "list_ap_audit_events") else []
+        audit_events = events[-10:] if events else []
+    except Exception:
+        pass
+
+    # Vendor profile + history
+    vendor_profile = db.get_vendor_profile(org_id, vendor) if hasattr(db, "get_vendor_profile") else None
+    vendor_history = db.get_vendor_invoice_history(org_id, vendor, limit=5) if hasattr(db, "get_vendor_invoice_history") else []
+
+    # Metadata (may contain ap_decision_reasoning from the reasoning layer)
+    import json as _json
+    meta: dict = {}
+    try:
+        raw_meta = item.get("metadata") or "{}"
+        meta = _json.loads(raw_meta) if isinstance(raw_meta, str) else (raw_meta or {})
+    except Exception:
+        pass
+
+    prior_reasoning = str(meta.get("ap_decision_reasoning") or "").strip()
+    needs_info_q = str(meta.get("needs_info_question") or "").strip()
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if api_key:
+        explanation = _explain_with_claude(
+            api_key=api_key,
+            vendor=vendor,
+            amount=amount,
+            state=state,
+            exception_code=exception_code,
+            confidence=confidence,
+            subject=subject,
+            audit_events=audit_events,
+            vendor_profile=vendor_profile,
+            vendor_history=vendor_history,
+            prior_reasoning=prior_reasoning,
+            needs_info_question=needs_info_q,
+        )
+    else:
+        explanation = _explain_fallback(
+            vendor=vendor, amount=amount, state=state,
+            exception_code=exception_code, confidence=confidence,
+            audit_events=audit_events, prior_reasoning=prior_reasoning,
+            needs_info_question=needs_info_q,
+        )
+
+    return {
+        "ap_item_id": ap_item_id,
+        "vendor": vendor,
+        "state": state,
+        "explanation": explanation["text"],
+        "suggested_action": explanation.get("suggested_action"),
+        "vendor_context_summary": explanation.get("vendor_context"),
+        "audit_events_used": len(audit_events),
+        "method": explanation.get("method", "llm"),
+    }
+
+
+def _explain_with_claude(
+    *,
+    api_key: str,
+    vendor: str,
+    amount: Any,
+    state: str,
+    exception_code: Optional[str],
+    confidence: Any,
+    subject: str,
+    audit_events: list,
+    vendor_profile: Optional[dict],
+    vendor_history: list,
+    prior_reasoning: str,
+    needs_info_question: str,
+) -> dict:
+    """Ask Claude to explain an AP item's current state in plain English."""
+    import requests as _requests
+
+    # Vendor context
+    vendor_lines = [f"Vendor: {vendor}"]
+    vendor_context = {"vendor": vendor}
+    if vendor_profile:
+        count = vendor_profile.get("invoice_count", 0)
+        avg = vendor_profile.get("avg_invoice_amount")
+        always_ok = bool(vendor_profile.get("always_approved"))
+        bank_chg = vendor_profile.get("bank_details_changed_at")
+        if count:
+            avg_str = f"${avg:.2f}" if avg else "unknown"
+            vendor_lines.append(f"  History: {count} invoice(s), avg {avg_str}")
+            vendor_context.update({"invoice_count": count, "avg_amount": avg})
+        if always_ok and count >= 3:
+            vendor_lines.append("  Pattern: always approved in history")
+            vendor_context["always_approved"] = True
+        if bank_chg:
+            vendor_lines.append(f"  ⚠ Bank details changed: {bank_chg[:10]}")
+            vendor_context["bank_details_changed_at"] = bank_chg
+    if vendor_history:
+        rows = []
+        for h in vendor_history[:4]:
+            d = (h.get("invoice_date") or h.get("created_at") or "")[:10]
+            a = h.get("amount")
+            s = h.get("final_state") or "?"
+            rows.append(f"  {d} | ${a:.2f} | {s}" if a else f"  {d} | {s}")
+        vendor_lines.append("  Recent invoices:\n" + "\n".join(rows))
+
+    # Audit trail
+    audit_lines = []
+    for ev in audit_events:
+        ts = str(ev.get("ts") or ev.get("created_at") or "")[:16]
+        etype = str(ev.get("event_type") or "event")
+        actor = str(ev.get("actor_type") or "system")
+        reason = str(ev.get("reason") or "")
+        line = f"  {ts} [{actor}] {etype}"
+        if reason:
+            line += f" — {reason}"
+        audit_lines.append(line)
+
+    amount_str = f"${amount:.2f}" if amount else "unknown"
+    conf_str = f"{float(confidence):.0%}" if confidence else "unknown"
+
+    prompt = f"""You are Clearledgr, an AP agent embedded in Gmail.
+
+An operator is asking: "Why is this invoice in its current state?"
+
+INVOICE:
+  Vendor: {vendor}
+  Amount: {amount_str}
+  State: {state}
+  Exception: {exception_code or "none"}
+  Extraction confidence: {conf_str}
+  Subject: {subject}
+
+{chr(10).join(vendor_lines)}
+
+AUDIT TRAIL (oldest → newest):
+{chr(10).join(audit_lines) if audit_lines else "  (no audit events recorded)"}
+
+{f"PRIOR AGENT REASONING:{chr(10)}{prior_reasoning}" if prior_reasoning else ""}
+{f"INFO NEEDED FROM VENDOR:{chr(10)}{needs_info_question}" if needs_info_question else ""}
+
+---
+Write a plain-English explanation (3-6 sentences) that answers:
+1. What is this invoice and where did it come from?
+2. Why is it in state '{state}'? (reference specific audit events or confidence scores)
+3. What happens next, and is there anything the operator should do?
+
+Speak as the AP agent. Be direct and specific. Do not use bullet points.
+End with one sentence starting "Suggested next step:" if action is needed.
+
+Return ONLY valid JSON:
+{{"text": "...", "suggested_action": "..or null if no action needed"}}"""
+
+    try:
+        resp = _requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+                "max_tokens": 512,
+                "temperature": 0.2,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+        content = raw.get("content", [])
+        text = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
+
+        import re as _re
+        import json as _json2
+        text = text.strip()
+        fence = _re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
+        if fence:
+            text = fence.group(1)
+        parsed = _json2.loads(text)
+        return {
+            "text": str(parsed.get("text") or ""),
+            "suggested_action": parsed.get("suggested_action"),
+            "vendor_context": vendor_context,
+            "method": "llm",
+        }
+    except Exception as exc:
+        logger.warning("[Explain] Claude call failed: %s — using fallback", exc)
+        return _explain_fallback(
+            vendor=vendor, amount=amount, state=state,
+            exception_code=exception_code, confidence=confidence,
+            audit_events=audit_events, prior_reasoning=prior_reasoning,
+            needs_info_question=needs_info_question,
+        )
+
+
+def _explain_fallback(
+    *,
+    vendor: str,
+    amount: Any,
+    state: str,
+    exception_code: Optional[str],
+    confidence: Any,
+    audit_events: list,
+    prior_reasoning: str,
+    needs_info_question: str,
+) -> dict:
+    """Plain-text fallback explanation built from structured fields (no LLM)."""
+    amount_str = f"${amount:.2f}" if amount else "an unknown amount"
+    conf_str = f"{float(confidence):.0%}" if confidence else "unknown"
+
+    parts = [f"Invoice from {vendor} for {amount_str} is currently in state '{state}'."]
+
+    if prior_reasoning:
+        parts.append(f"Agent reasoning: {prior_reasoning}")
+    elif exception_code:
+        parts.append(f"Blocked by: {exception_code}.")
+
+    if confidence:
+        parts.append(f"Extraction confidence: {conf_str}.")
+
+    if audit_events:
+        last = audit_events[-1]
+        etype = str(last.get("event_type") or "event")
+        parts.append(f"Last recorded event: {etype}.")
+
+    suggested_action = None
+    if state == "needs_info":
+        if needs_info_question:
+            parts.append(f"Waiting for information: {needs_info_question}")
+        suggested_action = "Use 'Draft vendor reply' to request the missing information."
+    elif state in ("failed_post", "posting"):
+        suggested_action = "Retry ERP posting or use browser fallback."
+    elif state in ("needs_approval", "pending_review"):
+        suggested_action = "Review and approve or reject this invoice."
+
+    return {
+        "text": " ".join(parts),
+        "suggested_action": suggested_action,
+        "vendor_context": {},
+        "method": "fallback",
+    }
+
+
 @router.get("/health")
 def extension_health():
     """Health check for extension API."""

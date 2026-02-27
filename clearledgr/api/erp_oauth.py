@@ -343,7 +343,7 @@ async def disconnect_erp(erp: str, organization_id: str = Query(...)):
 
 
 @router.get("/status")
-async def get_connection_status(organization_id: str = Query(...)) -> ConnectionStatus:
+async def get_connection_status(organization_id: str = Query(default="default")) -> ConnectionStatus:
     """
     Get ERP connection status for an organization.
     """

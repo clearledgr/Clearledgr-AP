@@ -177,6 +177,7 @@ def test_invoice_workflow_slack_blocks_include_request_info_for_standard_and_bud
         if isinstance(el, dict)
     )
     assert "Why this needs your decision" in standard_text
+    assert "Recommended now" in standard_text
     assert "What happens next" in standard_text
     assert "Requested by Clearledgr AP Agent" in standard_context_text
     assert "Source of truth" in standard_context_text
@@ -203,6 +204,117 @@ def test_invoice_workflow_slack_blocks_include_request_info_for_standard_and_bud
         if isinstance(block, dict) and isinstance(block.get("text"), dict)
     )
     assert "Budget check is critical" in budget_text or "Budget check requires" in budget_text
+    assert "Recommended now" in budget_text
+
+
+def test_approval_surface_copy_tunes_what_happens_next_for_confidence_validation_and_duplicate(db):
+    from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
+
+    svc = InvoiceWorkflowService(organization_id="default")
+    svc.db = db
+    invoice = InvoiceData(
+        gmail_id="thread-copy-1",
+        subject="Invoice review needed",
+        sender="billing@example.com",
+        vendor_name="Acme",
+        amount=420.0,
+        currency="USD",
+        invoice_number="INV-COPY-1",
+        due_date="2026-03-05",
+        confidence=0.81,
+        potential_duplicates=2,
+    )
+
+    copy_payload = svc._build_approval_surface_copy(
+        invoice=invoice,
+        extra_context={
+            "confidence_gate": {
+                "requires_field_review": True,
+                "blockers": [{"field": "amount"}],
+            },
+            "validation_gate": {
+                "reason_codes": ["policy_po_missing"],
+                "reasons": [{"code": "policy_po_missing", "message": "PO reference missing for this invoice."}],
+            },
+        },
+        budget_summary={"status": "healthy", "requires_decision": False},
+    )
+
+    next_lines = [str(line).lower() for line in (copy_payload.get("what_happens_next") or [])]
+    recommended = str(copy_payload.get("recommended_action_text") or "").lower()
+    assert next_lines
+    assert "confidence override" in next_lines[0]
+    assert "missing policy/evidence" in next_lines[1]
+    assert "duplicate risk is confirmed" in next_lines[2]
+    assert "request info first" in recommended
+
+
+def test_approval_surface_copy_tunes_budget_hard_block_next_steps(db):
+    from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
+
+    svc = InvoiceWorkflowService(organization_id="default")
+    svc.db = db
+    invoice = InvoiceData(
+        gmail_id="thread-copy-2",
+        subject="Budget blocked invoice",
+        sender="billing@example.com",
+        vendor_name="BudgetCo",
+        amount=2000.0,
+        currency="USD",
+        invoice_number="INV-COPY-2",
+        due_date="2026-03-12",
+        confidence=0.96,
+    )
+
+    copy_payload = svc._build_approval_surface_copy(
+        invoice=invoice,
+        extra_context={
+            "validation_gate": {
+                "reason_codes": ["policy_budget_limit"],
+                "reasons": [{"code": "policy_budget_limit", "message": "Budget threshold exceeded."}],
+            }
+        },
+        budget_summary={"status": "exceeded", "requires_decision": True, "hard_block": True},
+    )
+    next_lines = [str(line).lower() for line in (copy_payload.get("what_happens_next") or [])]
+    recommended = str(copy_payload.get("recommended_action_text") or "").lower()
+    assert next_lines
+    assert "hard-budget-block justification" in next_lines[0]
+    assert "budget or policy clarification" in next_lines[1]
+    assert "request budget adjustment" in recommended
+
+
+def test_approval_surface_copy_uses_po_and_vendor_queue_context_in_why_summary(db):
+    from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
+
+    svc = InvoiceWorkflowService(organization_id="default")
+    svc.db = db
+    invoice = InvoiceData(
+        gmail_id="thread-copy-3",
+        subject="PO exception invoice",
+        sender="billing@example.com",
+        vendor_name="QueueVendor",
+        amount=800.0,
+        currency="USD",
+        invoice_number="INV-COPY-3",
+        due_date="2026-03-15",
+        confidence=0.97,
+    )
+
+    copy_payload = svc._build_approval_surface_copy(
+        invoice=invoice,
+        extra_context={
+            "po_match_result": {
+                "exceptions": [{"type": "price_mismatch", "severity": "high"}],
+            },
+            "approval_context": {
+                "vendor_open_invoices": 4,
+            },
+        },
+        budget_summary={"status": "healthy", "requires_decision": False},
+    )
+    why = str(copy_payload.get("why_summary") or "").lower()
+    assert "po/receipt exception detected" in why
 
 
 def test_slack_interactive_rejects_invalid_signature_and_audits(monkeypatch, client, db):

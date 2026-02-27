@@ -675,6 +675,105 @@ def _evaluate_monitoring_thresholds(
     }
 
 
+@router.get("/ap-decision-health")
+async def get_ap_decision_health(
+    organization_id: str = Query("default"),
+    window_hours: int = Query(default=168, ge=1, le=8760),
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """AP reasoning layer health: fallback rate, recommendation breakdown, override rate.
+
+    A fallback_rate_pct > 0 means Claude was unavailable for some invoices and
+    rule-based routing was used instead. An override_rate_pct > 0 means humans
+    disagreed with Claude's recommendation.
+    """
+    _assert_org_access(user, organization_id)
+    db = get_db()
+    import json as _json
+    from datetime import timedelta
+
+    cutoff = (
+        __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+        - timedelta(hours=window_hours)
+    ).isoformat()
+
+    # Read ap_items created in window that have an ap_decision in metadata
+    total_items = 0
+    decisions: List[Dict[str, Any]] = []
+    try:
+        sql = db._prepare_sql(
+            "SELECT metadata, state FROM ap_items "
+            "WHERE organization_id = ? AND created_at >= ? LIMIT 10000"
+        )
+        with db.connect() as conn:
+            conn.row_factory = __import__("sqlite3").Row
+            cur = conn.cursor()
+            cur.execute(sql, (organization_id, cutoff))
+            for row in cur.fetchall():
+                total_items += 1
+                meta_raw = (dict(row) or {}).get("metadata") or {}
+                try:
+                    meta = meta_raw if isinstance(meta_raw, dict) else _json.loads(meta_raw)
+                except Exception:
+                    meta = {}
+                if meta.get("ap_decision_recommendation"):
+                    decisions.append({
+                        "recommendation": meta.get("ap_decision_recommendation"),
+                        "model": meta.get("ap_decision_model", "unknown"),
+                        "state": (dict(row) or {}).get("state"),
+                    })
+    except Exception:
+        pass
+
+    decision_count = len(decisions)
+    fallback_count = sum(1 for d in decisions if d.get("model") == "fallback")
+    rec_counts: Dict[str, int] = {}
+    for d in decisions:
+        r = str(d.get("recommendation") or "unknown")
+        rec_counts[r] = rec_counts.get(r, 0) + 1
+
+    fallback_rate_pct = round(fallback_count / decision_count * 100, 2) if decision_count else 0.0
+
+    # Override rate: Claude said approve but item ended up rejected (or vice versa)
+    overrides = 0
+    try:
+        sql2 = db._prepare_sql(
+            "SELECT COUNT(*) as cnt FROM audit_events "
+            "WHERE organization_id = ? AND event_type = 'ap_decision_override' AND ts >= ?"
+        )
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql2, (organization_id, cutoff))
+            row = cur.fetchone()
+            overrides = int((dict(row) if row else {}).get("cnt") or 0)
+    except Exception:
+        pass
+
+    override_rate_pct = round(overrides / decision_count * 100, 2) if decision_count else 0.0
+
+    # Alerts
+    alerts: List[Dict[str, str]] = []
+    if fallback_rate_pct == 100.0 and decision_count > 0:
+        alerts.append({"code": "claude_fully_offline", "message": "All AP decisions used rule-based fallback — check ANTHROPIC_API_KEY"})
+    elif fallback_rate_pct > 20.0:
+        alerts.append({"code": "high_fallback_rate", "message": f"Claude fallback rate is {fallback_rate_pct:.0f}% — check API key and connectivity"})
+    if override_rate_pct > 15.0:
+        alerts.append({"code": "high_override_rate", "message": f"Human override rate is {override_rate_pct:.0f}% — Claude decisions may need prompt tuning"})
+
+    return {
+        "organization_id": organization_id,
+        "window_hours": window_hours,
+        "total_ap_items": total_items,
+        "decisions_with_claude": decision_count,
+        "fallback_count": fallback_count,
+        "fallback_rate_pct": fallback_rate_pct,
+        "override_count": overrides,
+        "override_rate_pct": override_rate_pct,
+        "recommendation_breakdown": rec_counts,
+        "alerts": alerts,
+    }
+
+
 @router.get("/monitoring-thresholds")
 async def get_monitoring_thresholds(
     organization_id: str = Query("default"),

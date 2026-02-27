@@ -5,13 +5,15 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
+from clearledgr.core.auth import get_optional_user
 from clearledgr.core.database import ClearledgrDB, get_db
 from clearledgr.core.ap_states import APState
 from clearledgr.core.errors import safe_error
+from clearledgr.api.deps import verify_org_access
 from clearledgr.services.ap_context_connectors import build_multi_system_context
 
 
@@ -489,6 +491,32 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         except Exception:
             pass
 
+    # Claude AP reasoning — surface proactively so the sidebar card can display it.
+    payload["ap_decision_reasoning"] = (
+        metadata.get("ap_decision_reasoning") or payload.get("ap_decision_reasoning")
+    )
+    payload["ap_decision_recommendation"] = (
+        metadata.get("ap_decision_recommendation")
+        or (metadata.get("vendor_intelligence") or {}).get("ap_decision")
+        or payload.get("ap_decision_recommendation")
+    )
+    payload["ap_decision_risk_flags"] = (
+        metadata.get("ap_decision_risk_flags") or []
+    )
+
+    # Early payment discount — surface so sidebar can render green chip.
+    discount = metadata.get("early_payment_discount")
+    if discount and isinstance(discount, dict) and discount.get("is_available"):
+        payload["early_payment_discount"] = discount
+    else:
+        payload["early_payment_discount"] = None
+
+    # needs_info follow-up — surface question + Gmail draft link for sidebar banner.
+    needs_info_question = metadata.get("needs_info_question")
+    payload["needs_info_question"] = needs_info_question if needs_info_question else None
+    needs_info_draft_id = metadata.get("needs_info_draft_id")
+    payload["needs_info_draft_id"] = needs_info_draft_id if needs_info_draft_id else None
+
     # Correction learning: surface GL suggestion + previously-corrected fields.
     # suggest() is in-memory after rule load — fast per call.
     try:
@@ -766,8 +794,10 @@ def get_ap_aggregation_metrics(
     organization_id: str = Query(default="default"),
     limit: int = Query(default=10000, ge=100, le=50000),
     vendor_limit: int = Query(default=10, ge=1, le=50),
+    _user=Depends(get_optional_user),
 ) -> Dict[str, Any]:
     """AP aggregation metrics for embedded approvals and ops consumers."""
+    verify_org_access(organization_id, _user)
     db = get_db()
     metrics = db.get_ap_aggregation_metrics(
         organization_id=organization_id,
@@ -844,9 +874,11 @@ def get_ap_item_context(ap_item_id: str, refresh: bool = Query(False)) -> Dict[s
 def resubmit_rejected_item(
     ap_item_id: str,
     request: ResubmitRejectedItemRequest,
+    _user=Depends(get_optional_user),
 ) -> Dict[str, Any]:
     db = get_db()
     source = _require_item(db, ap_item_id)
+    verify_org_access(source.get("organization_id") or "default", _user)
     source_state = _normalized_state_value(source.get("state"))
     if source_state != APState.REJECTED.value:
         raise HTTPException(status_code=400, detail="resubmission_requires_rejected_state")
@@ -997,9 +1029,10 @@ def resubmit_rejected_item(
 
 
 @router.post("/{ap_item_id}/merge")
-def merge_ap_items(ap_item_id: str, request: MergeItemsRequest) -> Dict[str, Any]:
+def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(get_optional_user)) -> Dict[str, Any]:
     db = get_db()
     target = _require_item(db, ap_item_id)
+    verify_org_access(target.get("organization_id") or "default", _user)
     source = _require_item(db, request.source_ap_item_id)
 
     if target.get("id") == source.get("id"):
@@ -1120,9 +1153,10 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest) -> Dict[str, Any
 
 
 @router.post("/{ap_item_id}/split")
-def split_ap_item(ap_item_id: str, request: SplitItemRequest) -> Dict[str, Any]:
+def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(get_optional_user)) -> Dict[str, Any]:
     db = get_db()
     parent = _require_item(db, ap_item_id)
+    verify_org_access(parent.get("organization_id") or "default", _user)
     if not request.sources:
         raise HTTPException(status_code=400, detail="sources_required")
 
@@ -1207,7 +1241,11 @@ def split_ap_item(ap_item_id: str, request: SplitItemRequest) -> Dict[str, Any]:
 
 
 @router.post("/{ap_item_id}/retry-post")
-async def retry_erp_post(ap_item_id: str, organization_id: str = "default"):
+async def retry_erp_post(
+    ap_item_id: str,
+    organization_id: str = "default",
+    _user=Depends(get_optional_user),
+):
     """Retry posting an AP item to the ERP after a previous failure.
 
     Only items in ``failed_post`` state can be retried.  The item is
@@ -1217,6 +1255,7 @@ async def retry_erp_post(ap_item_id: str, organization_id: str = "default"):
     import logging
 
     logger = logging.getLogger(__name__)
+    verify_org_access(organization_id, _user)
     db = get_db()
     item = db.get_ap_item(ap_item_id)
     if not item:

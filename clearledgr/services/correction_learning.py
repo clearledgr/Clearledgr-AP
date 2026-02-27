@@ -91,6 +91,8 @@ class CorrectionLearningService:
             print(f"Suggested GL: {suggestion['value']} (learned from {suggestion['learned_from']} corrections)")
     """
     
+    _RULES_TTL_SECONDS: int = 300  # refresh in-memory cache every 5 minutes
+
     def __init__(self, organization_id: str = "default"):
         self.organization_id = organization_id
         self.db = get_db()
@@ -99,6 +101,7 @@ class CorrectionLearningService:
         self._corrections: List[Correction] = []
         self._learned_rules: Dict[str, LearningRule] = {}
         self._vendor_preferences: Dict[str, Dict[str, Any]] = defaultdict(dict)
+        self._rules_loaded_at: float = 0.0  # monotonic timestamp of last DB load
 
         self._init_tables()
         self._load_rules()
@@ -148,6 +151,7 @@ class CorrectionLearningService:
     def _load_rules(self):
         """Load learned rules from DB into memory cache."""
         import json as _json
+        import time as _time
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
@@ -155,6 +159,7 @@ class CorrectionLearningService:
                     "SELECT * FROM agent_learned_rules WHERE organization_id = ?",
                     (self.organization_id,),
                 )
+                fresh: Dict[str, LearningRule] = {}
                 for row in cur.fetchall():
                     r = dict(row)
                     rule = LearningRule(
@@ -168,7 +173,9 @@ class CorrectionLearningService:
                         last_applied=r.get("last_applied"),
                         success_rate=r.get("success_rate", 1.0),
                     )
-                    self._learned_rules[rule.rule_id] = rule
+                    fresh[rule.rule_id] = rule
+                self._learned_rules = fresh
+                self._rules_loaded_at = _time.monotonic()
             if self._learned_rules:
                 logger.info(
                     f"Loaded {len(self._learned_rules)} learned rules for {self.organization_id}"
@@ -449,9 +456,17 @@ class CorrectionLearningService:
     ) -> Optional[Dict[str, Any]]:
         """
         Get a suggestion based on learned rules.
-        
+
+        Refreshes the in-memory rule cache from DB if it is older than
+        _RULES_TTL_SECONDS (default 5 min), so corrections written by one
+        process are visible to others without a restart.
+
         Returns None if no learned rule applies.
         """
+        import time as _time
+        if _time.monotonic() - self._rules_loaded_at > self._RULES_TTL_SECONDS:
+            self._load_rules()
+
         if suggestion_type == "gl_code":
             return self._suggest_gl_code(context)
         

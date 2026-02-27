@@ -9,6 +9,7 @@ Primary path:
 
 Exception paths:
     validated -> needs_info
+    needs_approval -> needs_info
     needs_approval -> rejected
     ready_to_post -> failed_post
     failed_post -> ready_to_post  (retry)
@@ -44,7 +45,7 @@ VALID_TRANSITIONS: Dict[APState, FrozenSet[APState]] = {
     APState.RECEIVED: frozenset({APState.VALIDATED}),
     APState.VALIDATED: frozenset({APState.NEEDS_APPROVAL, APState.NEEDS_INFO}),
     APState.NEEDS_INFO: frozenset({APState.VALIDATED}),
-    APState.NEEDS_APPROVAL: frozenset({APState.APPROVED, APState.REJECTED}),
+    APState.NEEDS_APPROVAL: frozenset({APState.APPROVED, APState.REJECTED, APState.NEEDS_INFO}),
     APState.APPROVED: frozenset({APState.READY_TO_POST}),
     APState.REJECTED: frozenset(),  # terminal
     APState.READY_TO_POST: frozenset({APState.POSTED_TO_ERP, APState.FAILED_POST}),

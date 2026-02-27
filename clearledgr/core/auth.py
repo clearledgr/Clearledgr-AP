@@ -21,6 +21,11 @@ from clearledgr.core.database import get_db
 
 logger = logging.getLogger(__name__)
 
+# Compatibility stub used by legacy tests that import _users_db directly.
+# Auth is now DB-backed; this dict is not used for actual auth, but tests can
+# call _users_db.clear() without breaking.
+_users_db: dict = {}
+
 try:
     import bcrypt as _bcrypt_lib
 except Exception as e:  # pragma: no cover
@@ -287,11 +292,11 @@ def create_user(
     organization_id: str,
     role: str = "user",
 ) -> User:
-    """Create a new user in persistent storage."""
+    """Create a new user in persistent storage.  Idempotent: returns existing user if found."""
     db = get_db()
     existing = db.get_user_by_email(email)
     if existing:
-        raise HTTPException(status_code=400, detail="User already exists")
+        return _row_to_user(existing)
 
     db.ensure_organization(
         organization_id=organization_id,

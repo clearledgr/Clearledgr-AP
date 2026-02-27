@@ -10,7 +10,8 @@ Advanced/optional AP features:
 
 from datetime import datetime, date
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from clearledgr.api.deps import soft_org_guard
 from pydantic import BaseModel
 import logging
 
@@ -33,7 +34,11 @@ from clearledgr.core.errors import safe_error
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/ap-advanced", tags=["ap-advanced"])
+router = APIRouter(
+    prefix="/ap-advanced",
+    tags=["ap-advanced"],
+    dependencies=[Depends(soft_org_guard)],
+)
 
 
 # =============================================================================

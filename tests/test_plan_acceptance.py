@@ -108,6 +108,10 @@ class TestValidation:
         """PLAN.md 7.1.2c: needs_info can resubmit back to validated."""
         assert validate_transition("needs_info", "validated") is True
 
+    def test_needs_approval_can_route_to_needs_info(self):
+        """Request-info actions can route from needs_approval to needs_info."""
+        assert validate_transition("needs_approval", "needs_info") is True
+
 
 # ===========================================================================
 # 3. Illegal transitions rejected server-side

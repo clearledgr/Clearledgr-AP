@@ -657,6 +657,166 @@ class InvoiceWorkflowService:
         except Exception as exc:
             logger.debug("Could not update AP metadata for %s: %s", ap_item_id, exc)
 
+    @staticmethod
+    def _normalize_human_action(action: str) -> str:
+        token = str(action or "").strip().lower()
+        if token in {"approved", "approve"}:
+            return "approve"
+        if token in {"rejected", "reject"}:
+            return "reject"
+        if token in {"needs_info", "request_info", "request-info"}:
+            return "request_info"
+        return token
+
+    @classmethod
+    def _is_human_override(cls, claude_recommendation: Optional[str], human_action: str) -> bool:
+        rec = str(claude_recommendation or "").strip().lower()
+        action = cls._normalize_human_action(human_action)
+        if not rec or not action:
+            return False
+        if action == "approve":
+            return rec in {"escalate", "reject", "needs_info"}
+        if action in {"reject", "request_info"}:
+            return rec == "approve"
+        return False
+
+    def _get_ap_decision_recommendation(self, ap_item_id: Optional[str]) -> Optional[str]:
+        if not ap_item_id or not hasattr(self.db, "get_ap_item"):
+            return None
+        try:
+            row = self.db.get_ap_item(ap_item_id)
+            if not row:
+                return None
+            meta_raw = row.get("metadata") or {}
+            metadata = (
+                meta_raw
+                if isinstance(meta_raw, dict)
+                else json.loads(meta_raw)
+                if isinstance(meta_raw, str) and meta_raw.strip()
+                else {}
+            )
+            rec = str(metadata.get("ap_decision_recommendation") or "").strip().lower()
+            return rec or None
+        except Exception:
+            return None
+
+    def _record_vendor_decision_feedback(
+        self,
+        *,
+        ap_item_id: Optional[str],
+        vendor_name: Optional[str],
+        human_action: str,
+        actor_id: str,
+        source_channel: str,
+        correlation_id: Optional[str] = None,
+        reason: Optional[str] = None,
+        action_outcome: Optional[str] = None,
+        final_state: Optional[str] = None,
+        was_approved: Optional[bool] = None,
+        amount: Optional[float] = None,
+        invoice_date: Optional[str] = None,
+    ) -> None:
+        """Persist human decision feedback and terminal vendor outcomes.
+
+        This powers vendor-level recommendation adaptation in AP decision routing.
+        """
+        vendor = str(vendor_name or "").strip()
+        if not vendor:
+            return
+        human_decision = self._normalize_human_action(human_action)
+        if not human_decision:
+            return
+        agent_rec = self._get_ap_decision_recommendation(ap_item_id)
+        is_override = self._is_human_override(agent_rec, human_decision)
+
+        if hasattr(self.db, "record_vendor_decision_feedback"):
+            try:
+                self.db.record_vendor_decision_feedback(
+                    self.organization_id,
+                    vendor,
+                    ap_item_id=ap_item_id,
+                    human_decision=human_decision,
+                    agent_recommendation=agent_rec,
+                    decision_override=is_override,
+                    reason=reason,
+                    source_channel=source_channel,
+                    actor_id=actor_id,
+                    correlation_id=correlation_id,
+                    action_outcome=action_outcome,
+                )
+            except Exception as exc:
+                logger.debug("Could not persist vendor decision feedback: %s", exc)
+
+        if (
+            final_state
+            and was_approved is not None
+            and hasattr(self.db, "update_vendor_profile_from_outcome")
+            and ap_item_id
+        ):
+            try:
+                self.db.update_vendor_profile_from_outcome(
+                    self.organization_id,
+                    vendor,
+                    ap_item_id=ap_item_id,
+                    final_state=final_state,
+                    was_approved=bool(was_approved),
+                    approval_override=is_override,
+                    agent_recommendation=agent_rec,
+                    human_decision=human_decision,
+                    amount=amount,
+                    invoice_date=invoice_date,
+                )
+            except Exception as exc:
+                logger.debug("Could not update vendor profile from human outcome: %s", exc)
+
+    def _maybe_record_ap_decision_override(
+        self,
+        ap_item_id: Optional[str],
+        human_action: str,  # "approved" or "rejected"
+        actor_id: str,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """Emit ap_decision_override audit event when a human disagrees with Claude.
+
+        Disagreement: human approved something Claude said escalate/reject,
+        or human rejected something Claude said approve.
+        """
+        if not ap_item_id or not hasattr(self.db, "append_ap_audit_event"):
+            return
+        try:
+            row = self.db.get_ap_item(ap_item_id) if hasattr(self.db, "get_ap_item") else None
+            if not row:
+                return
+            meta_raw = row.get("metadata") or {}
+            meta = meta_raw if isinstance(meta_raw, dict) else json.loads(meta_raw) if isinstance(meta_raw, str) and meta_raw.strip() else {}
+            claude_rec = str(meta.get("ap_decision_recommendation") or "").strip().lower()
+            if not claude_rec:
+                return
+            is_override = self._is_human_override(claude_rec, human_action)
+            if not is_override:
+                return
+            self.db.append_ap_audit_event({
+                "ap_item_id": ap_item_id,
+                "event_type": "ap_decision_override",
+                "actor_type": "user",
+                "actor_id": actor_id,
+                "reason": f"human_{human_action}_override_claude_{claude_rec}",
+                "metadata": {
+                    "human_action": human_action,
+                    "claude_recommendation": claude_rec,
+                    "claude_model": meta.get("ap_decision_model", "unknown"),
+                },
+                "organization_id": self.organization_id,
+                "correlation_id": correlation_id,
+                "source": "human_decision",
+            })
+            logger.info(
+                "[APDecision] Override recorded: human=%s claude=%s ap_item=%s actor=%s",
+                human_action, claude_rec, ap_item_id, actor_id,
+            )
+        except Exception as exc:
+            logger.debug("Could not record ap_decision_override: %s", exc)
+
     def _load_budget_context_from_invoice_row(
         self,
         invoice_row: Dict[str, Any],
@@ -937,7 +1097,85 @@ class InvoiceWorkflowService:
                 )
         except Exception as exc:
             logger.debug("Could not append deterministic validation audit event: %s", exc)
-    
+
+    def _get_ap_decision(
+        self,
+        invoice: InvoiceData,
+        validation_gate: Dict[str, Any],
+    ):
+        """Assemble vendor context and call APDecisionService. Never raises.
+
+        Returns an APDecision object.  If the API key is absent or Claude fails,
+        the service's built-in fallback reproduces the existing rule-based routing
+        so the workflow is never blocked.
+        """
+        from clearledgr.services.ap_decision import APDecisionService
+
+        decision_feedback: Dict[str, Any] = {}
+        try:
+            vendor_profile = (
+                self.db.get_vendor_profile(self.organization_id, invoice.vendor_name)
+                if hasattr(self.db, "get_vendor_profile") else None
+            )
+            vendor_history = (
+                self.db.get_vendor_invoice_history(self.organization_id, invoice.vendor_name, limit=6)
+                if hasattr(self.db, "get_vendor_invoice_history") else []
+            )
+            decision_feedback = (
+                self.db.get_vendor_decision_feedback_summary(
+                    self.organization_id,
+                    invoice.vendor_name,
+                    window_days=180,
+                )
+                if hasattr(self.db, "get_vendor_decision_feedback_summary")
+                else {}
+            )
+
+            # Best-effort correction suggestions
+            suggestions: Dict[str, Any] = {}
+            try:
+                from clearledgr.services.correction_learning import CorrectionLearningService
+                svc = CorrectionLearningService(self.db, self.organization_id)
+                gl_sug = svc.suggest("gl_code", {"vendor": invoice.vendor_name})
+                if gl_sug:
+                    suggestions["gl_code"] = gl_sug
+            except Exception:
+                pass
+
+            org_config: Dict[str, Any] = {}
+            try:
+                cfg = self.db.get_org_config(self.organization_id) if hasattr(self.db, "get_org_config") else {}
+                if isinstance(cfg, dict):
+                    org_config = cfg
+            except Exception:
+                pass
+
+            decision_svc = APDecisionService()
+            decision = decision_svc.decide(
+                invoice,
+                vendor_profile=vendor_profile,
+                vendor_history=vendor_history,
+                decision_feedback=decision_feedback,
+                correction_suggestions=suggestions,
+                validation_gate=validation_gate,
+                org_config=org_config,
+            )
+            logger.info(
+                "[APDecision] %s → %s (confidence=%.2f fallback=%s): %s",
+                invoice.vendor_name, decision.recommendation,
+                decision.confidence, decision.fallback,
+                decision.reasoning[:120],
+            )
+            return decision
+        except Exception as exc:
+            logger.warning("[APDecision] Unexpected error, using conservative fallback: %s", exc)
+            from clearledgr.services.ap_decision import APDecisionService
+            return APDecisionService()._fallback_decision(
+                invoice,
+                validation_gate,
+                decision_feedback=decision_feedback,
+            )
+
     async def process_new_invoice(self, invoice: InvoiceData) -> Dict[str, Any]:
         """
         Process a newly detected invoice email.
@@ -1031,6 +1269,40 @@ class InvoiceWorkflowService:
             workflow_id="invoice_entry",
         )
 
+        # --- AP reasoning layer: Claude decides with vendor context ---
+        ap_decision = self._get_ap_decision(invoice, validation_gate)
+
+        # Populate InvoiceData reasoning fields (surfaced in Slack cards, Gmail sidebar)
+        invoice.reasoning_summary = ap_decision.reasoning
+        invoice.reasoning_risks = ap_decision.risk_flags
+        invoice.vendor_intelligence = {
+            **(invoice.vendor_intelligence or {}),
+            "vendor_context": ap_decision.vendor_context_used,
+            "ap_decision": ap_decision.recommendation,
+            "decision_feedback": {
+                "count": ap_decision.vendor_context_used.get("feedback_count", 0),
+                "override_rate": ap_decision.vendor_context_used.get("feedback_override_rate", 0.0),
+                "strictness_bias": ap_decision.vendor_context_used.get("feedback_strictness_bias", "neutral"),
+            },
+        }
+
+        # Persist Claude's reasoning into ap_item metadata so the Gmail sidebar
+        # card can show it proactively (without requiring the "Why?" button click).
+        # Use invoice_id directly — it was returned by save_invoice_status() above,
+        # so we know the row exists. _lookup_ap_item_id would silently return None here.
+        self._update_ap_item_metadata(
+            invoice_id,
+            {
+                "ap_decision_reasoning": ap_decision.reasoning[:1024],  # cap length
+                "ap_decision_recommendation": ap_decision.recommendation,
+                "ap_decision_risk_flags": ap_decision.risk_flags,
+                "ap_decision_model": ap_decision.model,
+                "vendor_intelligence": invoice.vendor_intelligence,
+            },
+        )
+
+        # Deterministic gate is a hard guardrail that overrides Claude.
+        # If it fires, route to human — but use Claude's reasoning as context.
         if not validation_gate.get("passed", True):
             self._record_validation_gate_failure(
                 invoice,
@@ -1046,13 +1318,74 @@ class InvoiceWorkflowService:
                 invoice,
                 extra_context={
                     "validation_gate": validation_gate,
+                    "ap_decision": ap_decision.recommendation,
+                    "ap_reasoning": ap_decision.reasoning,
                 },
             )
             if isinstance(result, dict):
                 result.setdefault("validation_gate", validation_gate)
                 result.setdefault("reason_codes", validation_gate.get("reason_codes") or [])
             return result
-        
+
+        # Claude says needs_info: transition to needs_info state with the exact question.
+        if ap_decision.recommendation == "needs_info" and ap_decision.info_needed:
+            logger.info(
+                "AP decision needs_info for %s: %s",
+                invoice.gmail_id, ap_decision.info_needed[:80],
+            )
+            self._transition_invoice_state(
+                invoice.gmail_id, "needs_info",
+                correlation_id=correlation_id,
+                decision_reason="ap_decision_needs_info",
+            )
+            ap_item_id = self._lookup_ap_item_id(invoice.gmail_id)
+            self._update_ap_item_metadata(
+                ap_item_id,
+                {
+                    "needs_info_question": ap_decision.info_needed,
+                    "ap_decision_reasoning": ap_decision.reasoning,
+                    "ap_decision_risk_flags": ap_decision.risk_flags,
+                },
+            )
+            # Create a Gmail draft so the finance user can review and send it —
+            # never auto-sends; follows "high-risk actions human-confirmed" rule.
+            try:
+                from clearledgr.services.auto_followup import AutoFollowUpService
+                from clearledgr.services.gmail_api import GmailAPIClient
+
+                gmail_user_id = invoice.user_id or "me"
+                gmail_client = GmailAPIClient(user_id=gmail_user_id)
+                authenticated = await gmail_client.ensure_authenticated()
+                if authenticated:
+                    followup_svc = AutoFollowUpService(organization_id=self.organization_id)
+                    invoice_data = {
+                        "subject": invoice.subject,
+                        "vendor_name": invoice.vendor_name,
+                        "amount": invoice.amount,
+                        "invoice_number": invoice.invoice_number,
+                    }
+                    draft_id = await followup_svc.create_gmail_draft(
+                        gmail_client=gmail_client,
+                        ap_item_id=ap_item_id,
+                        thread_id=invoice.gmail_id,
+                        to_email=invoice.sender,
+                        invoice_data=invoice_data,
+                        question=ap_decision.info_needed,
+                    )
+                    if draft_id:
+                        self._update_ap_item_metadata(ap_item_id, {"needs_info_draft_id": draft_id})
+            except Exception as _draft_exc:
+                logger.debug("needs_info draft creation skipped: %s", _draft_exc)
+
+            return {
+                "status": "needs_info",
+                "invoice_id": invoice.gmail_id,
+                "reason": ap_decision.reasoning,
+                "info_needed": ap_decision.info_needed,
+                "risk_flags": ap_decision.risk_flags,
+                "ap_decision": "needs_info",
+            }
+
         # LEARNING: Check if we have a learned GL code for this vendor
         suggested_gl = None
         try:
@@ -1091,13 +1424,39 @@ class InvoiceWorkflowService:
                     }
                 )
         
-        # Check if we should auto-approve based on confidence
-        if invoice.confidence >= self.auto_approve_threshold:
-            logger.info(f"Auto-approving invoice (confidence {invoice.confidence} >= {self.auto_approve_threshold})")
-            return await self._auto_approve_and_post(invoice)
-        
-        # Send to Slack for approval
-        return await self._send_for_approval(invoice)
+        # Route based on Claude's recommendation (gate already passed above).
+        if ap_decision.recommendation == "approve":
+            logger.info(
+                "AP decision approve for %s (confidence=%.2f fallback=%s)",
+                invoice.gmail_id, ap_decision.confidence, ap_decision.fallback,
+            )
+            return await self._auto_approve_and_post(
+                invoice, reason=f"ap_decision_approve"
+            )
+
+        if ap_decision.recommendation == "reject":
+            logger.info(
+                "AP decision reject for %s: %s",
+                invoice.gmail_id, ap_decision.reasoning[:80],
+            )
+            return await self._send_for_approval(
+                invoice,
+                extra_context={
+                    "ap_decision": "reject",
+                    "ap_reasoning": ap_decision.reasoning,
+                    "risk_flags": ap_decision.risk_flags,
+                },
+            )
+
+        # escalate or unrecognised recommendation → send for human approval
+        return await self._send_for_approval(
+            invoice,
+            extra_context={
+                "ap_decision": ap_decision.recommendation,
+                "ap_reasoning": ap_decision.reasoning,
+                "risk_flags": ap_decision.risk_flags,
+            },
+        )
     
     async def _auto_approve_and_post(
         self, 
@@ -1200,6 +1559,26 @@ class InvoiceWorkflowService:
                 logger.info(f"Recorded auto-approval for learning: {invoice.vendor_name}")
             except Exception as e:
                 logger.warning(f"Failed to record auto-approval for learning: {e}")
+
+            # VENDOR INTELLIGENCE: Update vendor profile from this outcome
+            try:
+                ap_item_id = self._lookup_ap_item_id(invoice.gmail_id)
+                agent_rec = (invoice.vendor_intelligence or {}).get("ap_decision")
+                if hasattr(self.db, "update_vendor_profile_from_outcome") and ap_item_id:
+                    self.db.update_vendor_profile_from_outcome(
+                        self.organization_id,
+                        invoice.vendor_name,
+                        ap_item_id=ap_item_id,
+                        final_state="posted_to_erp",
+                        was_approved=True,
+                        approval_override=False,
+                        agent_recommendation=str(agent_rec or "approve"),
+                        human_decision=None,
+                        amount=invoice.amount,
+                        invoice_date=invoice.due_date,
+                    )
+            except Exception as exc:
+                logger.debug("[VendorStore] Failed to update vendor profile after auto-post: %s", exc)
             
             # Notify in Slack (informational, not approval)
             try:
@@ -1440,7 +1819,10 @@ class InvoiceWorkflowService:
                 invoice_number=invoice.invoice_number,
                 budget=budget_summary,
                 decision_reason_summary=approval_copy.get("why_summary"),
-                next_step_lines=approval_copy.get("what_happens_next") or [],
+                next_step_lines=(
+                    ([f"Recommended now: {approval_copy.get('recommended_action_text')}"] if approval_copy.get("recommended_action_text") else [])
+                    + (approval_copy.get("what_happens_next") or [])
+                ),
                 requested_by_text=approval_copy.get("requested_by_text"),
                 source_of_truth_text=approval_copy.get("source_of_truth_text"),
                 source_url=approval_copy.get("gmail_url"),
@@ -1518,6 +1900,23 @@ class InvoiceWorkflowService:
             return ""
         return raw.replace("_", " ")
 
+    @staticmethod
+    def _dedupe_reason_lines(lines: List[str], limit: int = 3) -> List[str]:
+        deduped: List[str] = []
+        seen = set()
+        for line in lines:
+            text = str(line or "").strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(text)
+            if len(deduped) >= max(1, int(limit)):
+                break
+        return deduped
+
     def _build_approval_surface_copy(
         self,
         invoice: InvoiceData,
@@ -1529,15 +1928,15 @@ class InvoiceWorkflowService:
         budget_summary = budget_summary or {}
         gmail_url = f"https://mail.google.com/mail/u/0/#search/{invoice.gmail_id}"
 
-        why_candidates: List[str] = []
+        why_scored: List[tuple[int, str]] = []
         budget_status = str((budget_summary or {}).get("status") or "").strip().lower()
         if bool((budget_summary or {}).get("requires_decision")) or budget_status in {"critical", "exceeded"}:
             if budget_status in {"critical", "exceeded"}:
-                why_candidates.append(
-                    f"Budget check is {budget_status.replace('_', ' ')} and requires an approval decision."
+                why_scored.append(
+                    (120, f"Budget check is {budget_status.replace('_', ' ')} and requires an approval decision.")
                 )
             else:
-                why_candidates.append("Budget check requires an approval decision before posting.")
+                why_scored.append((105, "Budget check requires an approval decision before posting."))
 
         confidence_gate = extra_context.get("confidence_gate")
         confidence_gate = confidence_gate if isinstance(confidence_gate, dict) else {}
@@ -1548,12 +1947,12 @@ class InvoiceWorkflowService:
             blocker = confidence_blockers[0] if confidence_blockers else {}
             if isinstance(blocker, dict):
                 field = str(blocker.get("field") or blocker.get("code") or "critical field").replace("_", " ")
-                why_candidates.append(f"Extraction confidence is low for {field}; human review is required.")
+                why_scored.append((95, f"Extraction confidence is low for {field}; human review is required."))
             else:
-                why_candidates.append("Extraction confidence is low for a critical field; human review is required.")
+                why_scored.append((90, "Extraction confidence is low for a critical field; human review is required."))
         elif float(invoice.confidence or 0.0) < 0.95:
-            why_candidates.append(
-                f"Extraction confidence is {invoice.confidence * 100:.0f}%, so the agent is asking for a review before posting."
+            why_scored.append(
+                (70, f"Extraction confidence is {invoice.confidence * 100:.0f}%, so the agent is asking for a review before posting.")
             )
 
         validation_gate = extra_context.get("validation_gate")
@@ -1567,44 +1966,100 @@ class InvoiceWorkflowService:
             message = str(reason.get("message") or "").strip()
             code = self._humanize_reason_code(reason.get("code"))
             if message:
-                why_candidates.append(message)
+                why_scored.append((85, message))
             elif code:
-                why_candidates.append(f"Validation flagged: {code}.")
-        if not why_candidates:
+                why_scored.append((80, f"Validation flagged: {code}."))
+        if not why_scored:
             reason_codes = validation_gate.get("reason_codes")
             if isinstance(reason_codes, list):
                 for code in reason_codes[:2]:
                     text = self._humanize_reason_code(code)
                     if text:
-                        why_candidates.append(f"Validation flagged: {text}.")
+                        why_scored.append((72, f"Validation flagged: {text}."))
+
+        po_match = extra_context.get("po_match_result")
+        po_match = po_match if isinstance(po_match, dict) else {}
+        po_exceptions = po_match.get("exceptions") if isinstance(po_match.get("exceptions"), list) else []
+        if po_exceptions:
+            first_po_exception = po_exceptions[0]
+            if isinstance(first_po_exception, dict):
+                po_type = str(first_po_exception.get("type") or first_po_exception.get("code") or "").strip().lower()
+                if po_type:
+                    why_scored.append((88, f"PO/receipt exception detected: {po_type.replace('_', ' ')}."))
+
+        approval_context = extra_context.get("approval_context")
+        approval_context = approval_context if isinstance(approval_context, dict) else {}
+        open_vendor_items = int(approval_context.get("vendor_open_invoices") or 0)
+        if open_vendor_items > 1:
+            why_scored.append((60, f"Vendor has {open_vendor_items} open invoice(s), so this decision impacts current AP queue risk."))
 
         if int(invoice.potential_duplicates or 0) > 0:
-            why_candidates.append(
-                f"Potential duplicate risk detected ({int(invoice.potential_duplicates)} similar invoice(s))."
+            why_scored.append(
+                (92, f"Potential duplicate risk detected ({int(invoice.potential_duplicates)} similar invoice(s)).")
             )
 
-        if not why_candidates:
-            why_candidates.append("Approval is required before the AP workflow can post this invoice to ERP.")
+        if not why_scored:
+            why_scored.append((50, "Approval is required before the AP workflow can post this invoice to ERP."))
 
-        why_summary = " ".join(why_candidates[:2]).strip()
+        why_candidates = [line for _score, line in sorted(why_scored, key=lambda entry: entry[0], reverse=True)]
+        why_summary = " ".join(self._dedupe_reason_lines(why_candidates, limit=2)).strip()
 
         requires_budget_decision = bool((budget_summary or {}).get("requires_decision"))
+        hard_budget_block = bool((budget_summary or {}).get("hard_block")) or budget_status == "exceeded"
+        confidence_requires_review = bool(confidence_gate.get("requires_field_review")) or bool(confidence_blockers)
+        has_validation_blockers = bool(validation_reasons) or bool(validation_gate.get("reason_codes"))
+        has_duplicate_risk = int(invoice.potential_duplicates or 0) > 0
+        recommended_action_text = (
+            "Request budget adjustment unless this invoice is business-critical and override is justified."
+            if requires_budget_decision and hard_budget_block
+            else "Approve override with explicit justification, or request budget clarification."
+            if requires_budget_decision
+            else "Request info first to resolve policy/evidence blockers before posting."
+            if has_validation_blockers or confidence_requires_review
+            else "Reject only if duplicate risk is confirmed; otherwise request clarification."
+            if has_duplicate_risk
+            else "Approve / Post to ERP once checks look correct."
+        )
+
         if requires_budget_decision:
-            next_lines = [
-                "Approve override: records justification, then the AP workflow posts to ERP (API-first, browser fallback if needed).",
-                "Request info: sends the invoice back for clarification and keeps the audit trail intact.",
-                "Reject: marks the invoice rejected and records the decision in the AP audit trail.",
-            ]
+            approve_line = (
+                "Approve override: records hard-budget-block justification, then the AP workflow posts to ERP (API-first, browser fallback if needed)."
+                if hard_budget_block
+                else "Approve override: records justification, then the AP workflow posts to ERP (API-first, browser fallback if needed)."
+            )
+            request_info_line = (
+                "Request info: routes back for budget or policy clarification and preserves AP audit linkage."
+                if has_validation_blockers
+                else "Request info: sends the invoice back for clarification and keeps the audit trail intact."
+            )
+            reject_line = "Reject: marks the invoice rejected and records the decision in the AP audit trail."
+            if has_duplicate_risk:
+                reject_line = (
+                    "Reject: use when duplicate risk is confirmed; invoice is marked rejected and linked in the AP audit trail."
+                )
+            next_lines = [approve_line, request_info_line, reject_line]
         else:
-            next_lines = [
-                "Approve / Post to ERP: the AP workflow attempts ERP posting automatically (API-first, browser fallback if needed).",
-                "Request info: returns the invoice to needs-info so the agent can collect missing details.",
-                "Reject: records the rejection and stops further posting for this invoice.",
-            ]
+            approve_line = (
+                "Approve / Post to ERP: captures confidence override context for flagged fields, then attempts ERP posting (API-first, browser fallback if needed)."
+                if confidence_requires_review
+                else "Approve / Post to ERP: the AP workflow attempts ERP posting automatically (API-first, browser fallback if needed)."
+            )
+            request_info_line = (
+                "Request info: returns the invoice to needs-info and asks for missing policy/evidence details before posting."
+                if has_validation_blockers
+                else "Request info: returns the invoice to needs-info so the agent can collect missing details."
+            )
+            reject_line = "Reject: records the rejection and stops further posting for this invoice."
+            if has_duplicate_risk:
+                reject_line = (
+                    "Reject: use when duplicate risk is confirmed; rejection is recorded and posting is stopped for this invoice."
+                )
+            next_lines = [approve_line, request_info_line, reject_line]
 
         return {
             "why_summary": why_summary,
             "what_happens_next": next_lines,
+            "recommended_action_text": recommended_action_text,
             "requested_by_text": "Requested by Clearledgr AP Agent on behalf of the AP workflow.",
             "source_of_truth_text": "Source of truth: Gmail thread and Clearledgr AP context (Open in Gmail / View in Gmail).",
             "gmail_url": gmail_url,
@@ -1821,6 +2276,14 @@ class InvoiceWorkflowService:
                     "text": {"type": "mrkdwn", "text": f"*Why this needs your decision:*\n{why_summary}"},
                 }
             )
+        recommended_action_text = str(approval_copy.get("recommended_action_text") or "").strip()
+        if recommended_action_text:
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*Recommended now:*\n{recommended_action_text}"},
+                }
+            )
 
         what_happens_next = approval_copy.get("what_happens_next")
         if isinstance(what_happens_next, list) and what_happens_next:
@@ -1956,7 +2419,7 @@ class InvoiceWorkflowService:
         resolved_message_ref = source_message_ref or slack_ts
         ap_item_id = self._lookup_ap_item_id(
             gmail_id=gmail_id,
-            vendor_name=invoice_data.get("vendor"),
+            vendor_name=invoice_data.get("vendor") or invoice_data.get("vendor_name"),
             invoice_number=invoice_data.get("invoice_number"),
         )
         correlation_id = self._ensure_ap_item_correlation_id(
@@ -2175,7 +2638,7 @@ class InvoiceWorkflowService:
             gmail_id=gmail_id,
             subject=invoice_data.get("email_subject", ""),
             sender="",
-            vendor_name=invoice_data.get("vendor", "Unknown"),
+            vendor_name=invoice_data.get("vendor") or invoice_data.get("vendor_name") or "Unknown",
             amount=invoice_data.get("amount", 0),
             currency=invoice_data.get("currency", "USD"),
             invoice_number=invoice_data.get("invoice_number"),
@@ -2230,6 +2693,9 @@ class InvoiceWorkflowService:
                 except Exception as exc:
                     logger.debug("Could not append confidence override audit event: %s", exc)
 
+        self._maybe_record_ap_decision_override(
+            ap_item_id, "approved", approved_by, correlation_id=correlation_id
+        )
         self._record_approval_snapshot(
             ap_item_id=ap_item_id,
             gmail_id=gmail_id,
@@ -2346,6 +2812,20 @@ class InvoiceWorkflowService:
                 approved_at=approved_at,
                 decision_idempotency_key=decision_idempotency_key,
             )
+            self._record_vendor_decision_feedback(
+                ap_item_id=ap_item_id,
+                vendor_name=invoice.vendor_name,
+                human_action="approve",
+                actor_id=approved_by,
+                source_channel=resolved_source_channel,
+                correlation_id=correlation_id,
+                reason=override_justification,
+                action_outcome="posted_to_erp",
+                final_state="posted_to_erp",
+                was_approved=True,
+                amount=invoice.amount,
+                invoice_date=invoice.due_date,
+            )
         else:
             failure_reason = (
                 str(result.get("error_message") or "")
@@ -2387,6 +2867,16 @@ class InvoiceWorkflowService:
                     "decision_idempotency_key": decision_idempotency_key,
                 },
                 decision_idempotency_key=decision_idempotency_key,
+            )
+            self._record_vendor_decision_feedback(
+                ap_item_id=ap_item_id,
+                vendor_name=invoice.vendor_name,
+                human_action="approve",
+                actor_id=approved_by,
+                source_channel=resolved_source_channel,
+                correlation_id=correlation_id,
+                reason=failure_reason,
+                action_outcome="failed_post",
             )
             # Gap #5: Enqueue durable retry so the background loop can recover
             # items stuck in failed_post after a crash or transient ERP error.
@@ -2435,7 +2925,7 @@ class InvoiceWorkflowService:
         rejected_at = datetime.now(timezone.utc).isoformat()
         ap_item_id = self._lookup_ap_item_id(
             gmail_id=gmail_id,
-            vendor_name=invoice_data.get("vendor"),
+            vendor_name=invoice_data.get("vendor") or invoice_data.get("vendor_name"),
             invoice_number=invoice_data.get("invoice_number"),
         )
         correlation_id = self._ensure_ap_item_correlation_id(
@@ -2522,6 +3012,9 @@ class InvoiceWorkflowService:
             await self._update_slack_rejected(
                 resolved_channel_id, resolved_message_ref, invoice_data, rejected_by, reason
             )
+        self._maybe_record_ap_decision_override(
+            ap_item_id, "rejected", rejected_by, correlation_id=correlation_id
+        )
         self._record_approval_snapshot(
             ap_item_id=ap_item_id,
             gmail_id=gmail_id,
@@ -2542,6 +3035,20 @@ class InvoiceWorkflowService:
             rejected_at=rejected_at,
             rejection_reason=reason,
             decision_idempotency_key=decision_idempotency_key,
+        )
+        self._record_vendor_decision_feedback(
+            ap_item_id=ap_item_id,
+            vendor_name=invoice_data.get("vendor") or invoice_data.get("vendor_name"),
+            human_action="reject",
+            actor_id=rejected_by,
+            source_channel=resolved_source_channel,
+            correlation_id=correlation_id,
+            reason=reason,
+            action_outcome="rejected",
+            final_state="rejected",
+            was_approved=False,
+            amount=invoice_data.get("amount"),
+            invoice_date=invoice_data.get("due_date"),
         )
         
         logger.info(f"Invoice rejected: {gmail_id} by {rejected_by} - {reason}")
@@ -2766,7 +3273,7 @@ class InvoiceWorkflowService:
         requested_at = datetime.now(timezone.utc).isoformat()
         ap_item_id = self._lookup_ap_item_id(
             gmail_id=gmail_id,
-            vendor_name=invoice_data.get("vendor"),
+            vendor_name=invoice_data.get("vendor") or invoice_data.get("vendor_name"),
             invoice_number=invoice_data.get("invoice_number"),
         )
         correlation_id = self._ensure_ap_item_correlation_id(
@@ -2865,6 +3372,16 @@ class InvoiceWorkflowService:
             rejection_reason=reason_text,
             decision_idempotency_key=decision_idempotency_key,
         )
+        self._record_vendor_decision_feedback(
+            ap_item_id=ap_item_id,
+            vendor_name=invoice_data.get("vendor") or invoice_data.get("vendor_name"),
+            human_action="request_info",
+            actor_id=requested_by,
+            source_channel=resolved_source_channel,
+            correlation_id=correlation_id,
+            reason=reason_text,
+            action_outcome="needs_info",
+        )
 
         return {
             "status": "needs_info",
@@ -2956,13 +3473,24 @@ class InvoiceWorkflowService:
             discount = None
             
             if invoice.invoice_text:
-                discount = discount_service.detect_discount(
-                    invoice_id=invoice.gmail_id,
+                discount = discount_service.detect_discount_terms(
                     invoice_text=invoice.invoice_text,
                     vendor_name=invoice.vendor_name,
-                    amount=invoice.amount,
+                    invoice_amount=invoice.amount or 0.0,
+                    invoice_id=invoice.gmail_id,
                 )
             
+            # Persist discount to ap_item metadata so sidebar/worklist can surface it
+            if discount and discount.discount_percent > 0:
+                try:
+                    ap_item_id = self._lookup_ap_item_id(invoice.gmail_id)
+                    if ap_item_id:
+                        self._update_ap_item_metadata(
+                            ap_item_id, {"early_payment_discount": discount.to_dict()}
+                        )
+                except Exception:
+                    pass
+
             # Determine payment date
             if discount and discount.discount_percent > 0:
                 # Schedule for discount deadline to capture savings

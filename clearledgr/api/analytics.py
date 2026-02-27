@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from clearledgr.core.database import get_db
 
@@ -30,6 +30,7 @@ class DashboardStats(BaseModel):
     """Summary statistics for dashboard."""
     total_invoices: int = 0
     pending_approval: int = 0
+    pending_review: int = 0  # alias for pending_approval
     approved_today: int = 0
     posted_today: int = 0
     rejected_today: int = 0
@@ -37,6 +38,8 @@ class DashboardStats(BaseModel):
     avg_processing_time_hours: float = 0.0
     total_amount_pending: float = 0.0
     total_amount_posted_today: float = 0.0
+    agentic_telemetry: Dict[str, Any] = Field(default_factory=dict)
+    agentic_snapshot: Dict[str, Any] = Field(default_factory=dict)
 
 
 class VendorSpend(BaseModel):
@@ -63,6 +66,56 @@ class ProcessingMetrics(BaseModel):
 def _starts_with_day(value: Any, day_prefix: str) -> bool:
     """Safely check if a timestamp-like value begins with YYYY-MM-DD."""
     return isinstance(value, str) and value.startswith(day_prefix)
+
+
+def _metric_percent(metric: Any) -> float:
+    if isinstance(metric, dict):
+        raw = metric.get("value", metric.get("rate"))
+    else:
+        raw = metric
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    if 0 <= value <= 1:
+        return value * 100.0
+    return value
+
+
+def _metric_hours(metric: Any) -> float:
+    if isinstance(metric, dict):
+        raw = metric.get("avg_hours", metric.get("avg"))
+    else:
+        raw = metric
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _build_agentic_snapshot(kpis: Dict[str, Any]) -> Dict[str, Any]:
+    payload = kpis if isinstance(kpis, dict) else {}
+    agentic = payload.get("agentic_telemetry") if isinstance(payload.get("agentic_telemetry"), dict) else {}
+    top_blockers = []
+    top_rows = agentic.get("top_blocker_reasons", {}).get("top_reasons") if isinstance(agentic.get("top_blocker_reasons"), dict) else []
+    if isinstance(top_rows, list):
+        for entry in top_rows[:3]:
+            if not isinstance(entry, dict):
+                continue
+            reason = str(entry.get("reason") or "").replace("_", " ").strip()
+            count = int(entry.get("count") or 0)
+            if reason:
+                top_blockers.append(f"{reason} ({count})")
+    return {
+        "window_hours": int(agentic.get("window_hours") or 0),
+        "straight_through_rate_pct": round(_metric_percent(agentic.get("straight_through_rate")), 2),
+        "human_intervention_rate_pct": round(_metric_percent(agentic.get("human_intervention_rate")), 2),
+        "erp_browser_fallback_rate_pct": round(_metric_percent(agentic.get("erp_browser_fallback_rate")), 2),
+        "agent_suggestion_acceptance_pct": round(_metric_percent(agentic.get("agent_suggestion_acceptance")), 2),
+        "manual_override_required_pct": round(_metric_percent(agentic.get("agent_actions_requiring_manual_override")), 2),
+        "awaiting_approval_avg_hours": round(_metric_hours(agentic.get("awaiting_approval_time_hours")), 2),
+        "top_blockers": top_blockers,
+    }
 
 @router.get("/dashboard/{organization_id}", response_model=DashboardStats)
 async def get_dashboard(organization_id: str):
@@ -116,9 +169,18 @@ async def get_dashboard(organization_id: str):
     # Calculate avg processing time (simplified)
     avg_processing_time = _calculate_avg_processing_time(pipeline)
     
+    kpis: Dict[str, Any] = {}
+    if hasattr(db, "get_ap_kpis"):
+        try:
+            kpis = db.get_ap_kpis(organization_id, approval_sla_minutes=240) or {}
+        except Exception as exc:
+            logger.warning("Failed to load AP KPIs for dashboard %s: %s", organization_id, exc)
+            kpis = {}
+
     return DashboardStats(
         total_invoices=total_invoices,
         pending_approval=pending_approval,
+        pending_review=pending_approval,  # alias
         approved_today=approved_today,
         posted_today=posted_today,
         rejected_today=rejected_today,
@@ -126,6 +188,8 @@ async def get_dashboard(organization_id: str):
         avg_processing_time_hours=avg_processing_time,
         total_amount_pending=total_amount_pending,
         total_amount_posted_today=total_amount_posted_today,
+        agentic_telemetry=(kpis or {}).get("agentic_telemetry") or {},
+        agentic_snapshot=_build_agentic_snapshot(kpis or {}),
     )
 
 

@@ -144,10 +144,10 @@ Engineering can still choose to store demonstration screenshots/evidence in a de
 
 ## Suggested Immediate Next Steps After Handoff
 
-1. AX7 polish based on pilot feedback (channel copy tightening)
-2. AX6 productization surfaces (ops/admin KPI digest views consuming `agentic_telemetry`)
-3. Minimal real Gmail/Chrome smoke E2E (sidebar mounts + one AX2/AX3 action path)
-4. Launch readiness execution (staging drills, parity evidence, signoffs)
+1. Launch readiness execution (staging drills, parity evidence, signoffs)
+2. Authenticated Gmail pilot run using `npm run test:e2e-auth` with evidence capture
+3. GA evidence artifact population and release manifest updates
+4. Pilot feedback pass (microcopy and workflow ergonomics only, no contract changes)
 
 ## Handoff Status
 

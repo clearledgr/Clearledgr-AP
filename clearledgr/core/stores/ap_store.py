@@ -248,6 +248,46 @@ class APStore:
             conn.commit()
             return cur.rowcount > 0
 
+    def update_ap_item_metadata_merge(self, ap_item_id: str, patch: Dict[str, Any]) -> bool:
+        """Merge *patch* into an AP item's existing metadata JSON column.
+
+        Reads the current metadata, applies a shallow merge (patch keys
+        overwrite matching top-level keys; nested dicts are also merged one
+        level deep), then writes back atomically.  Never clobbers unrelated
+        metadata keys.
+
+        Returns True if the row was updated, False if the item was not found.
+        """
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+        sql_select = self._prepare_sql("SELECT metadata FROM ap_items WHERE id = ?")
+        sql_update = self._prepare_sql(
+            "UPDATE ap_items SET metadata = ?, updated_at = ? WHERE id = ?"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            # BEGIN EXCLUSIVE serialises concurrent read-modify-write on SQLite
+            if not self.use_postgres:
+                cur.execute("BEGIN EXCLUSIVE")
+            cur.execute(sql_select, (ap_item_id,))
+            row = cur.fetchone()
+            if not row:
+                conn.rollback() if not self.use_postgres else None
+                return False
+            try:
+                existing: Dict[str, Any] = json.loads(row[0] or "{}")
+            except Exception:
+                existing = {}
+            # Shallow merge: for dict values merge one level deep
+            for k, v in patch.items():
+                if isinstance(v, dict) and isinstance(existing.get(k), dict):
+                    existing[k] = {**existing[k], **v}
+                else:
+                    existing[k] = v
+            cur.execute(sql_update, (json.dumps(existing), now, ap_item_id))
+            conn.commit()
+            return cur.rowcount > 0
+
     def _record_rejected_transition_attempt(
         self,
         *,
@@ -771,6 +811,61 @@ class APStore:
             cur.execute(sql, params)
             rows = cur.fetchall()
         return [dict(row) for row in rows]
+
+    def get_overdue_approvals(self, organization_id: str, min_hours: float) -> List[Dict[str, Any]]:
+        """Return ap_items stuck in needs_approval longer than min_hours.
+
+        Uses ``updated_at`` as a proxy for when approval was requested (set on
+        every state transition, so the value at state=needs_approval represents
+        the moment the item entered that state).
+        """
+        self.initialize()
+        if self.use_postgres:
+            sql = self._prepare_sql(
+                "SELECT * FROM ap_items "
+                "WHERE organization_id = ? AND state = 'needs_approval' "
+                "AND updated_at < NOW() - INTERVAL '? hours' "
+                "ORDER BY updated_at ASC LIMIT 50"
+            )
+            params: tuple = (organization_id, min_hours)
+        else:
+            sql = self._prepare_sql(
+                "SELECT * FROM ap_items "
+                "WHERE organization_id = ? AND state = 'needs_approval' "
+                "AND datetime(updated_at) < datetime('now', ? || ' hours') "
+                "ORDER BY updated_at ASC LIMIT 50"
+            )
+            params = (organization_id, f"-{min_hours}")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
+    def get_pending_approver_ids(self, ap_item_id: str) -> List[str]:
+        """Return Slack user IDs of pending approvers for an AP item.
+
+        Reads ``approval_sent_to`` from the item's JSON metadata — populated by
+        ``send_invoice_approval_notification`` when it dispatches the Slack DM.
+        """
+        self.initialize()
+        sql = self._prepare_sql("SELECT metadata FROM ap_items WHERE id = ?")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (ap_item_id,))
+            row = cur.fetchone()
+        if not row:
+            return []
+        try:
+            meta = json.loads(row[0] or "{}")
+            sent_to = meta.get("approval_sent_to", [])
+            if isinstance(sent_to, list):
+                return [str(uid) for uid in sent_to if uid]
+            if isinstance(sent_to, str) and sent_to:
+                return [sent_to]
+        except Exception:
+            pass
+        return []
 
     def link_ap_item_source(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         self.initialize()

@@ -205,9 +205,16 @@ class GmailTokenStore:
         return self._row_to_token(row)
     
     def list_all(self) -> List[GmailToken]:
-        """List all stored Gmail tokens."""
+        """List all stored Gmail tokens, silently skipping tokens that cannot be decrypted."""
         rows = self.db.list_oauth_tokens("gmail")
-        return [self._row_to_token(row) for row in rows]
+        tokens = []
+        for row in rows:
+            try:
+                tokens.append(self._row_to_token(row))
+            except Exception:
+                # Token was encrypted with a different key (e.g. after key rotation or test reset)
+                pass
+        return tokens
     
     def _row_to_token(self, row: Dict) -> GmailToken:
         """Convert database row to GmailToken."""
@@ -506,6 +513,45 @@ class GmailAPIClient:
             response.raise_for_status()
             return response.json()
     
+    async def create_draft(
+        self,
+        thread_id: str,
+        to: str,
+        subject: str,
+        body: str,
+    ) -> str:
+        """Create a Gmail draft as a reply to an existing thread.
+
+        Uses the ``users.drafts.create`` endpoint which is covered by the
+        existing ``gmail.modify`` OAuth scope — no scope changes required.
+
+        Returns the draft ID (e.g. ``r123456789``) so the sidebar can link
+        directly to ``https://mail.google.com/#drafts/<draft_id>``.
+        """
+        import base64
+        import email.mime.text
+
+        mime = email.mime.text.MIMEText(body, "plain")
+        mime["To"] = to
+        mime["Subject"] = subject
+        raw = base64.urlsafe_b64encode(mime.as_bytes()).decode()
+
+        payload: Dict[str, Any] = {
+            "message": {
+                "raw": raw,
+                "threadId": thread_id,
+            }
+        }
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{GMAIL_API_BASE}/users/me/drafts",
+                headers={**self._headers(), "Content-Type": "application/json"},
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("id", "")
+
     async def list_labels(self) -> List[Dict[str, Any]]:
         """List all labels."""
         async with httpx.AsyncClient() as client:

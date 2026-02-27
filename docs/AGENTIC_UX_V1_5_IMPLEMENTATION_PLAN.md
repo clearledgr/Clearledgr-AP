@@ -296,6 +296,110 @@ AX6 is now started with a working operator-facing KPI layer in Gmail and a backe
 
 AX7 is now started with the core agentic presentation parity in place for Slack and Teams decision surfaces. Remaining work is copy polish, richer “what happens next” per edge case, and pilot feedback tuning (not structural channel parity).
 
+### Landed (AX6 productization pass)
+
+1. Productized agentic telemetry beyond debug-only backend data by updating KPI digest builders consumed by ops surfaces:
+   - Slack digest text/blocks now include AX6 metrics (fallback rate, suggestion acceptance, manual override rate, top blockers).
+   - Teams digest card now includes an explicit **Agentic telemetry** section and blocker summary.
+2. Gmail sidebar KPI section now shows a non-debug **Agentic snapshot** card (compact metrics + blockers) while preserving the richer debug panel when debug mode is enabled.
+3. Added regression coverage for AX6 productized surfaces:
+   - `/api/ops/ap-kpis/digest` payload assertions for Slack + Teams agentic metrics
+   - Gmail browserless integration assertion for non-debug compact KPI rendering
+
+AX6 now has both derivation and product surfacing paths in place. Remaining AX6 work is packaging these metrics into release dashboards and customer-facing reporting narratives, not core metric capture/rendering.
+
+### Landed (AX7 polish pass)
+
+1. Tightened Slack/Teams decision framing through shared workflow-derived copy:
+   - clearer **why this needs your decision** summary synthesis from validation/confidence/budget/duplicate context
+   - action-oriented **what happens next** lines
+2. Preserved channel parity with consistent metadata and source-of-truth language while reducing drift risk by deriving copy from a single workflow helper.
+3. Teams approval cards now include an explicit **Open Gmail context** action for parity with Slack’s Gmail link-back affordance.
+
+AX7 now includes both structural parity and first-pass copy polish. Remaining AX7 work is mostly micro-copy tuning from pilot feedback and richer edge-case phrasing.
+
+### Landed (Real Gmail/Chrome E2E smoke scaffold)
+
+1. Added a manual-gated real-browser smoke test scaffold for the Gmail extension:
+   - loads extension in Chrome (Playwright persistent context)
+   - opens Gmail inbox URL
+   - validates baseline runtime path
+2. The smoke test is intentionally gated behind `RUN_GMAIL_E2E=1` and separate from deterministic local CI expectations.
+3. Added explicit npm script:
+   - `test:e2e-smoke`
+
+This closes the “no real-browser path at all” gap with a practical starter harness while keeping deterministic CI stable. Full authenticated Gmail runtime assertions remain a pilot/staging follow-on.
+
+### Landed (AX6 surfacing completion pass)
+
+1. Expanded AX6 metrics into broader operator surfaces beyond ops digest/debug:
+   - `/analytics/dashboard/{organization_id}` now includes `agentic_telemetry` and an `agentic_snapshot` summary.
+   - `/api/admin/bootstrap` dashboard payload now includes the same `agentic_telemetry` + `agentic_snapshot` contract for admin/home surfaces.
+2. Added backend regression coverage for both surfaces to ensure telemetry stays visible outside debug-only or ops-only pathways.
+
+AX6 product surfacing is now complete for v1.5 implementation scope (derivation + digest + Gmail + analytics/admin contracts). Remaining work is launch packaging and external reporting narratives, not backend/UI contract gaps.
+
+### Landed (AX7 edge-case copy completion pass)
+
+1. Extended shared Slack/Teams approval copy to explicitly handle high-friction edge cases:
+   - confidence-review-required approvals now explain confidence-override capture on approve
+   - validation/policy blockers now produce request-info guidance specific to missing policy/evidence context
+   - duplicate-risk paths now provide explicit reject semantics for confirmed duplicates
+   - hard budget blocks now use stronger approve-override phrasing
+2. Added targeted tests validating edge-case phrasing branches in the shared approval-copy helper.
+
+AX7 copy coverage is now complete for planned v1.5 semantics (including richer “what happens next” paths for core edge conditions). Remaining tuning is pilot feedback wording refinement, not missing branch logic.
+
+### Landed (Real Gmail/Chrome authenticated runtime assertion pass)
+
+1. Upgraded the manual-gated E2E harness with authenticated runtime assertions (`GMAIL_E2E_ASSERT_AUTH=1`):
+   - fails fast on Gmail sign-in pages when authenticated mode is requested
+   - verifies extension service worker presence
+   - verifies Clearledgr sidebar selectors mount in real Gmail runtime
+2. Added optional screenshot capture output for pilot evidence collection.
+3. Added explicit npm entrypoint:
+   - `test:e2e-auth`
+
+Real Gmail runtime validation now has an authenticated assertion path while still remaining opt-in/manual for local/staging execution.
+
+### Landed (Experience + Agent quality pass)
+
+1. Gmail decision workspace now includes an explicit **Operator brief** in-thread:
+   - **What happened**
+   - **Why this needs attention/decision**
+   - **Best next step** + expected outcome
+2. The brief synthesizes AP state, queue next-action, fallback status, and persisted agent reasoning into action-oriented guidance instead of forcing operators to infer from raw state labels.
+3. Approval-surface reasoning quality improved in the shared workflow copy helper:
+   - priority-weighted reason synthesis (budget/confidence/validation/PO/duplicate/vendor-queue context)
+   - explicit `recommended_action_text` for deterministic operator guidance
+   - Slack now renders **Recommended now** in approval blocks
+   - Teams receives the same recommendation as the first **What happens next** line
+4. Added regression coverage:
+   - Gmail browserless integration test for operator brief rendering
+   - workflow/channel tests for recommended-action copy and PO-context reasoning
+
+This closes the current “experience + agent quality” delta for v1.5 implementation scope by improving decision legibility and recommendation quality without weakening deterministic controls.
+
+### Landed (Learning-loop quality pass)
+
+1. Added persistent vendor decision-feedback storage (`vendor_decision_feedback`) for per-tenant/per-vendor human outcomes:
+   - approve / reject / request-info decisions
+   - agent recommendation at decision time
+   - override marker and outcome context
+2. Wired workflow feedback capture into human decision paths:
+   - `approve_invoice()` now records feedback and updates vendor profile outcome on successful post
+   - `reject_invoice()` now records feedback and rejected terminal outcome linkage
+   - `request_budget_adjustment()` now records request-info feedback signals
+3. AP reasoning now consumes aggregated feedback summary in decision context:
+   - feedback counts, override rate, strict/permissive bias, and approve→reject/request-info patterns
+   - fallback path now becomes more conservative when strict human feedback is established
+4. Added regression coverage for:
+   - feedback summary aggregation/override pattern derivation
+   - fallback behavior under strict feedback bias
+   - end-to-end workflow feedback persistence from approve/reject/request-info actions
+
+This closes the current learning-loop gap for v1.5 by ensuring human decisions are persisted and fed back into future recommendations instead of being only one-off action outcomes.
+
 ## Non-Negotiable Guardrails
 
 1. Do not turn Gmail into a generic automation builder.
