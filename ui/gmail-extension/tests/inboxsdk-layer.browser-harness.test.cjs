@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const EXTENSION_ROOT = path.resolve(__dirname, '..');
 const SOURCE_PATH = path.join(EXTENSION_ROOT, 'src', 'inboxsdk-layer.js');
 const RUN_BROWSER_HARNESS = process.env.RUN_GMAIL_BROWSER_HARNESS === '1';
+const REQUIRE_BROWSER = process.env.GMAIL_BROWSER_HARNESS_REQUIRE_BROWSER === '1';
 const BROWSER_TIMEOUT_MS = Number(process.env.GMAIL_BROWSER_HARNESS_TIMEOUT_MS || 120000);
 const BROWSER_CHANNEL = String(process.env.GMAIL_BROWSER_HARNESS_CHANNEL || '').trim();
 const HEADFUL = process.env.GMAIL_BROWSER_HARNESS_HEADFUL === '1';
@@ -206,7 +207,13 @@ test('real-browser InboxSDK harness mounts and renders AP sidebar', { skip: !RUN
   let chromium;
   try {
     ({ chromium } = require('playwright'));
-  } catch (_) {
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    if (REQUIRE_BROWSER) {
+      assert.fail(
+        `Browser harness is required but playwright is unavailable: ${message}. Install with \`npm i -D playwright\`.`,
+      );
+    }
     t.skip('RUN_GMAIL_BROWSER_HARNESS=1 requires playwright (`npm i -D playwright`).');
     return;
   }
@@ -215,7 +222,11 @@ test('real-browser InboxSDK harness mounts and renders AP sidebar', { skip: !RUN
   try {
     browser = await launchHarnessBrowser(chromium);
   } catch (error) {
-    t.diagnostic(String(error && error.message ? error.message : error));
+    const message = String(error && error.message ? error.message : error);
+    if (REQUIRE_BROWSER) {
+      assert.fail(`Browser harness is required but browser launch failed: ${message}`);
+    }
+    t.diagnostic(message);
     t.skip('Browser harness prerequisites are not available in this environment.');
     return;
   }

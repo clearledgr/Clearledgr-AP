@@ -92,6 +92,7 @@ Run deterministic local coverage:
 - `npm test`
 - `npm run test:integration`
 - `npm run test:browser-harness` (real-browser DOM lifecycle harness; Playwright required)
+- `npm run test:browser-harness:ci` (same harness with required browser mode; fails if prerequisites are missing)
 
 Browser runtime prerequisites (one-time):
 
@@ -101,6 +102,7 @@ Browser runtime prerequisites (one-time):
 Run manual-gated real Chrome/Gmail smoke:
 
 - `npm run test:e2e-smoke`
+- `npm run test:e2e-runner:preflight` (checks runner profile + browser prerequisites for nightly workflow)
 
 Run authenticated Gmail runtime assertions (requires logged-in Gmail profile):
 
@@ -124,6 +126,13 @@ Browser harness troubleshooting:
   - `GMAIL_BROWSER_HARNESS_CHANNEL=chrome npm run test:browser-harness`
 - If needed, install browser binaries:
   - `npx playwright install chromium`
+
+CI and nightly runtime verification:
+
+- `/.github/workflows/gmail-extension-browser-harness.yml`: deterministic browser harness on PR/push for extension changes.
+- `/.github/workflows/gmail-runtime-smoke-nightly.yml`: nightly authenticated Gmail runtime smoke + evidence artifact upload.
+- Nightly job requires a controlled self-hosted runner with a pre-authenticated Gmail profile path provided via secret `GMAIL_E2E_PROFILE_DIR`.
+- Runner setup guide: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GMAIL_RUNTIME_RUNNER_SETUP.md`.
 
 ## Support
 

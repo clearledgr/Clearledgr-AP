@@ -1,0 +1,82 @@
+name: Gmail Runtime Smoke Nightly
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: "Optional release/evidence id override"
+        required: false
+        type: string
+
+concurrency:
+  group: gmail-runtime-smoke-nightly
+  cancel-in-progress: false
+
+jobs:
+  gmail-runtime-smoke:
+    runs-on: [self-hosted, clearledgr-gmail-e2e]
+    timeout-minutes: 45
+    env:
+      GMAIL_E2E_PROFILE_DIR: ${{ secrets.GMAIL_E2E_PROFILE_DIR }}
+      GMAIL_E2E_URL: ${{ vars.GMAIL_E2E_URL }}
+      GMAIL_E2E_TIMEOUT_MS: ${{ vars.GMAIL_E2E_TIMEOUT_MS }}
+      GMAIL_E2E_REQUIRE_ALL_SELECTORS: "1"
+    defaults:
+      run:
+        working-directory: ui/gmail-extension
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/gmail-extension/package-lock.json
+
+      - name: Validate controlled Gmail profile
+        run: |
+          if [ -z "${GMAIL_E2E_PROFILE_DIR:-}" ]; then
+            echo "Missing required secret GMAIL_E2E_PROFILE_DIR for authenticated Gmail runtime smoke."
+            exit 1
+          fi
+
+      - name: Resolve release id
+        id: meta
+        env:
+          INPUT_RELEASE_ID: ${{ github.event.inputs.release_id }}
+        run: |
+          if [ -n "${INPUT_RELEASE_ID:-}" ]; then
+            RELEASE_ID="${INPUT_RELEASE_ID}"
+          else
+            RELEASE_ID="nightly-$(date -u +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
+          fi
+          echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Install extension dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Runner preflight (profile + browser)
+        run: |
+          npm run test:e2e-runner:preflight -- --profile-dir "${GMAIL_E2E_PROFILE_DIR}"
+
+      - name: Run authenticated Gmail smoke with evidence
+        run: |
+          npm run test:e2e-auth:evidence -- \
+            --release-id "${{ steps.meta.outputs.release_id }}" \
+            --profile-dir "${GMAIL_E2E_PROFILE_DIR}"
+
+      - name: Upload Gmail runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gmail-runtime-evidence-${{ steps.meta.outputs.release_id }}
+          path: docs/ga-evidence/releases/${{ steps.meta.outputs.release_id }}
+          if-no-files-found: warn
+          retention-days: 30

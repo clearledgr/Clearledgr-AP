@@ -1,4 +1,4 @@
-# Clearledgr AP v1
+# Clearledgr — Finance AI Agent (AP Skill v1)
 
 Clearledgr is the finance execution agent platform.
 
@@ -118,6 +118,13 @@ npm run test:browser-harness
 
 If Playwright/Chromium is unavailable locally, the harness test reports a skip with setup guidance.
 
+CI-enforced deterministic harness (fails if browser prerequisites are missing):
+
+```bash
+cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension
+npm run test:browser-harness:ci
+```
+
 Authenticated Gmail runtime evidence capture (for staging/pilot readiness):
 
 ```bash
@@ -128,6 +135,11 @@ npm run test:e2e-auth:evidence -- --release-id ap-v1-2026-03-01-pilot-rc1
 This writes:
 - evidence JSON + screenshot under `docs/ga-evidence/releases/<release_id>/artifacts/`
 - normalized report at `docs/ga-evidence/releases/<release_id>/GMAIL_RUNTIME_E2E.md`
+
+GitHub workflows:
+- `/.github/workflows/gmail-extension-browser-harness.yml` runs deterministic browser harness on PR/push for extension changes.
+- `/.github/workflows/gmail-runtime-smoke-nightly.yml` runs nightly authenticated Gmail runtime smoke in a controlled self-hosted environment and uploads evidence artifacts.
+- Runner setup/playbook: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GMAIL_RUNTIME_RUNNER_SETUP.md`
 
 ## Security and Operational Expectations
 

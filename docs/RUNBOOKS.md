@@ -14,6 +14,7 @@ Operational procedures for common failure scenarios and maintenance tasks.
 6. [Per-Tenant Rollback Procedures](#6-per-tenant-rollback-procedures)
 7. [AP Item Resubmission](#7-ap-item-resubmission)
 8. [Database Maintenance](#8-database-maintenance)
+9. [Nightly Gmail Runtime Smoke](#9-nightly-gmail-runtime-smoke)
 
 ---
 
@@ -288,5 +289,37 @@ For Postgres (production): use `pg_dump` with `--no-owner --no-acl` and store in
 
 ---
 
-_Last updated: 2026-02-25_
+## 9. Nightly Gmail Runtime Smoke
+
+### Purpose
+
+Maintain continuous confidence in real Gmail extension runtime behavior and collect auditable evidence artifacts.
+
+### Workflow
+
+- `/.github/workflows/gmail-runtime-smoke-nightly.yml`
+
+### Key requirements
+
+1. Self-hosted runner labeled `clearledgr-gmail-e2e`
+2. Repository secret `GMAIL_E2E_PROFILE_DIR` pointing to authenticated Gmail profile path on the runner host
+3. Playwright Chromium install available during workflow execution
+
+### Manual dispatch
+
+1. Open GitHub Actions and run `Gmail Runtime Smoke Nightly` via `workflow_dispatch`
+2. Provide `release_id` if needed (optional)
+3. Verify artifacts are uploaded under the workflow run
+
+### Evidence outputs
+
+- `docs/ga-evidence/releases/<release_id>/artifacts/gmail-e2e-evidence.json`
+- `docs/ga-evidence/releases/<release_id>/artifacts/gmail-e2e-screenshot.png`
+- `docs/ga-evidence/releases/<release_id>/GMAIL_RUNTIME_E2E.md`
+
+### Setup and remediation guide
+
+- `/Users/mombalam/Desktop/Clearledgr.v1/docs/GMAIL_RUNTIME_RUNNER_SETUP.md`
+
+_Last updated: 2026-02-28_
 _Owner: Engineering / AP Platform team_

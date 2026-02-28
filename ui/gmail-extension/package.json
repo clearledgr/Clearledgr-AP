@@ -10,8 +10,10 @@
     "test": "node --test tests/*.test.cjs",
     "test:integration": "node --test tests/inboxsdk-layer.integration.test.cjs",
     "test:browser-harness": "RUN_GMAIL_BROWSER_HARNESS=1 node --test tests/inboxsdk-layer.browser-harness.test.cjs",
+    "test:browser-harness:ci": "RUN_GMAIL_BROWSER_HARNESS=1 GMAIL_BROWSER_HARNESS_REQUIRE_BROWSER=1 node --test tests/inboxsdk-layer.browser-harness.test.cjs",
     "test:e2e-smoke": "RUN_GMAIL_E2E=1 node --test tests/inboxsdk-layer.e2e-smoke.test.cjs",
     "test:e2e-auth": "RUN_GMAIL_E2E=1 GMAIL_E2E_ASSERT_AUTH=1 node --test tests/inboxsdk-layer.e2e-smoke.test.cjs",
+    "test:e2e-runner:preflight": "node scripts/gmail-e2e-runner-preflight.cjs",
     "test:e2e-auth:evidence": "node scripts/run-gmail-e2e-auth-with-evidence.cjs",
     "test:e2e-evidence:validate": "node scripts/gmail-e2e-evidence.cjs"
   },
