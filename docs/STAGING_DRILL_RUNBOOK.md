@@ -25,6 +25,22 @@ Before starting, confirm all of the following:
 | Backend URL configured in extension | `queue-manager.js` → `backendUrl` points to staging |
 | Admin user created | `POST /api/auth/register` with role `owner` |
 
+### 1b. Gmail runtime E2E preflight (evidence pipeline)
+
+Before manual drill execution, run the authenticated Gmail runtime evidence command:
+
+```bash
+cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension
+npm run test:e2e-auth:evidence -- --release-id ap-v1-2026-02-25-pilot-rc1
+```
+
+Expected artifacts:
+- `docs/ga-evidence/releases/<release_id>/artifacts/gmail-e2e-evidence.json`
+- `docs/ga-evidence/releases/<release_id>/artifacts/gmail-e2e-screenshot.png`
+- `docs/ga-evidence/releases/<release_id>/GMAIL_RUNTIME_E2E.md`
+
+If this command fails, do not mark L01 complete; capture failure cause and rerun after fixing browser/profile/auth prerequisites.
+
 ---
 
 ## 2. Setup Phase

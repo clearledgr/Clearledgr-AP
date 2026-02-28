@@ -112,24 +112,43 @@ def _ap_v1_strict_surfaces_enabled() -> bool:
     return bool(strict_requested and not legacy_override)
 
 
-LEGACY_SURFACE_PREFIXES = (
-    "/email",
-    "/audit",
-    "/payments",
-    "/bank-feeds",
-    "/learning",
-    "/payment-requests",
-    "/ap",
-    "/ap-advanced",
-    "/subscription",
-    "/llm",
-    "/ai",
+STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
+    "/openapi.json",
+    "/docs",
+    "/docs/oauth2-redirect",
+    "/redoc",
+    "/health",
+    "/metrics",
+    "/console",
+    "/admin",
+}
+
+STRICT_PROFILE_ALLOWED_PREFIXES = (
+    "/static",
+    "/api/v1",
+    "/api/erp",
+    "/api/agent",
+    "/api/ap",
+    "/api/ops",
+    "/api/admin",
+    "/extension",
+    "/slack",
+    "/teams",
+    "/gmail",
+    "/auth",
+    "/config",
+    "/onboarding",
+    "/oauth",
+    "/erp",
+    "/settings",
 )
 
 
-def _is_legacy_surface_path(path: str) -> bool:
+def _is_strict_profile_allowed_path(path: str) -> bool:
     normalized = path if path.startswith("/") else f"/{path}"
-    for prefix in LEGACY_SURFACE_PREFIXES:
+    if normalized in STRICT_PROFILE_ALLOWED_EXACT_PATHS:
+        return True
+    for prefix in STRICT_PROFILE_ALLOWED_PREFIXES:
         if normalized == prefix or normalized.startswith(f"{prefix}/"):
             return True
     return False
@@ -147,7 +166,7 @@ def _apply_runtime_surface_profile() -> None:
         selected_routes = []
         for route in full_routes:
             route_path = getattr(route, "path", None)
-            if isinstance(route_path, str) and _is_legacy_surface_path(route_path):
+            if isinstance(route_path, str) and not _is_strict_profile_allowed_path(route_path):
                 continue
             selected_routes.append(route)
     else:
@@ -159,6 +178,10 @@ def _apply_runtime_surface_profile() -> None:
         app.openapi_schema = None
         app.state._openapi_cache = {}
         app.state._runtime_surface_mode = mode
+
+
+def _legacy_surfaces_enabled() -> bool:
+    return not _ap_v1_strict_surfaces_enabled()
 
 
 app.include_router(v1_router)
@@ -225,15 +248,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
 
 class LegacySurfaceGuardMiddleware(BaseHTTPMiddleware):
-    """Block non-canonical legacy surfaces when strict AP-v1 mode is active."""
+    """Block non-canonical surfaces when strict AP-v1 mode is active."""
 
     async def dispatch(self, request: Request, call_next):
-        if _ap_v1_strict_surfaces_enabled() and _is_legacy_surface_path(request.url.path):
+        if _ap_v1_strict_surfaces_enabled() and not _is_strict_profile_allowed_path(request.url.path):
             return JSONResponse(
                 status_code=404,
                 content={
                     "detail": "endpoint_disabled_in_ap_v1_profile",
-                    "reason": "legacy_or_non_canonical_surface_disabled",
+                    "reason": "non_canonical_surface_disabled",
                     "path": request.url.path,
                 },
             )
@@ -391,33 +414,34 @@ async def startup_event():
     """Initialize startup route profile and lazy DB initialization."""
     _apply_runtime_surface_profile()
 
-# Include Slack app
-try:
-    from ui.slack.app import router as slack_router
-    app.include_router(slack_router)
-except ImportError:
-    pass
+if _legacy_surfaces_enabled():
+    # Include Slack app
+    try:
+        from ui.slack.app import router as slack_router
+        app.include_router(slack_router)
+    except ImportError:
+        pass
 
-# Include Teams app
-try:
-    from ui.teams.app import router as teams_router
-    app.include_router(teams_router)
-except ImportError:
-    pass
+    # Include Teams app
+    try:
+        from ui.teams.app import router as teams_router
+        app.include_router(teams_router)
+    except ImportError:
+        pass
 
-# Include LLM Proxy
-try:
-    from clearledgr.api.llm_proxy import router as llm_router
-    app.include_router(llm_router)
-except ImportError:
-    pass
+    # Include LLM Proxy
+    try:
+        from clearledgr.api.llm_proxy import router as llm_router
+        app.include_router(llm_router)
+    except ImportError:
+        pass
 
-# Include Enhanced AI API
-try:
-    from clearledgr.api.ai_enhanced import router as ai_router
-    app.include_router(ai_router)
-except ImportError:
-    pass
+    # Include Enhanced AI API
+    try:
+        from clearledgr.api.ai_enhanced import router as ai_router
+        app.include_router(ai_router)
+    except ImportError:
+        pass
 
 # (Autonomous agent, chat, engine, and webhooks routers removed — archived to branch)
 
@@ -456,82 +480,83 @@ try:
 except ImportError:
     pass
 
-# Include Outlook Webhooks API (Microsoft Graph change notifications)
-try:
-    from clearledgr.api.outlook_webhooks import router as outlook_webhooks_router
-    app.include_router(outlook_webhooks_router)
-except ImportError:
-    pass
+if _legacy_surfaces_enabled():
+    # Include Outlook Webhooks API (Microsoft Graph change notifications)
+    try:
+        from clearledgr.api.outlook_webhooks import router as outlook_webhooks_router
+        app.include_router(outlook_webhooks_router)
+    except ImportError:
+        pass
 
-# ERP Connections API (OAuth flows)
-try:
-    from clearledgr.api.erp_connections import router as erp_connections_router
-    app.include_router(erp_connections_router)
-except ImportError:
-    pass
+    # ERP Connections API (OAuth flows)
+    try:
+        from clearledgr.api.erp_connections import router as erp_connections_router
+        app.include_router(erp_connections_router)
+    except ImportError:
+        pass
 
-# Settings API
-try:
-    from clearledgr.api.settings import router as settings_router
-    app.include_router(settings_router)
-except ImportError:
-    pass
+    # Settings API
+    try:
+        from clearledgr.api.settings import router as settings_router
+        app.include_router(settings_router)
+    except ImportError:
+        pass
 
-# Analytics/Dashboard API
-try:
-    from clearledgr.api.analytics import router as analytics_router
-    app.include_router(analytics_router)
-except ImportError:
-    pass
+    # Analytics/Dashboard API
+    try:
+        from clearledgr.api.analytics import router as analytics_router
+        app.include_router(analytics_router)
+    except ImportError:
+        pass
 
-# Payments API
-try:
-    from clearledgr.api.payments import router as payments_router
-    app.include_router(payments_router)
-except ImportError:
-    pass
+    # Payments API
+    try:
+        from clearledgr.api.payments import router as payments_router
+        app.include_router(payments_router)
+    except ImportError:
+        pass
 
-# Bank feeds (Okra for Africa, TrueLayer/Nordigen for Europe)
-try:
-    from clearledgr.api.bank_feeds import router as bank_feeds_router
-    app.include_router(bank_feeds_router)
-except ImportError:
-    pass
+    # Bank feeds (Okra for Africa, TrueLayer/Nordigen for Europe)
+    try:
+        from clearledgr.api.bank_feeds import router as bank_feeds_router
+        app.include_router(bank_feeds_router)
+    except ImportError:
+        pass
 
-# Learning / Feedback loop (vendor→GL mappings)
-try:
-    from clearledgr.api.learning import router as learning_router
-    app.include_router(learning_router)
-except ImportError:
-    pass
+    # Learning / Feedback loop (vendor→GL mappings)
+    try:
+        from clearledgr.api.learning import router as learning_router
+        app.include_router(learning_router)
+    except ImportError:
+        pass
 
-# AP Workflow routes (payments, GL corrections, recurring)
-try:
-    from clearledgr.api.ap_workflow import router as ap_workflow_router
-    app.include_router(ap_workflow_router)
-except ImportError:
-    pass
+    # AP Workflow routes (payments, GL corrections, recurring)
+    try:
+        from clearledgr.api.ap_workflow import router as ap_workflow_router
+        app.include_router(ap_workflow_router)
+    except ImportError:
+        pass
 
-# AP Advanced routes (document retention, multi-currency, tax, accruals)
-try:
-    from clearledgr.api.ap_advanced import router as ap_advanced_router
-    app.include_router(ap_advanced_router)
-except ImportError:
-    pass
+    # AP Advanced routes (document retention, multi-currency, tax, accruals)
+    try:
+        from clearledgr.api.ap_advanced import router as ap_advanced_router
+        app.include_router(ap_advanced_router)
+    except ImportError:
+        pass
 
-# Payment Requests API (email/Slack/UI payment requests)
-try:
-    from clearledgr.api.payment_requests import router as payment_requests_router
-    app.include_router(payment_requests_router)
-except ImportError:
-    pass
+    # Payment Requests API (email/Slack/UI payment requests)
+    try:
+        from clearledgr.api.payment_requests import router as payment_requests_router
+        app.include_router(payment_requests_router)
+    except ImportError:
+        pass
 
-# Subscription & billing
-try:
-    from clearledgr.api.subscription import router as subscription_router
-    app.include_router(subscription_router)
-except ImportError:
-    pass
+    # Subscription & billing
+    try:
+        from clearledgr.api.subscription import router as subscription_router
+        app.include_router(subscription_router)
+    except ImportError:
+        pass
 
 # Browser-agent control plane APIs
 try:

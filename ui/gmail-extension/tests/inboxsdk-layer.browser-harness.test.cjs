@@ -202,17 +202,23 @@ function browserInitScript() {
   }
 }
 
-test('real-browser InboxSDK harness mounts and renders AP sidebar', { skip: !RUN_BROWSER_HARNESS, timeout: BROWSER_TIMEOUT_MS }, async () => {
+test('real-browser InboxSDK harness mounts and renders AP sidebar', { skip: !RUN_BROWSER_HARNESS, timeout: BROWSER_TIMEOUT_MS }, async (t) => {
   let chromium;
   try {
     ({ chromium } = require('playwright'));
   } catch (_) {
-    assert.fail(
-      'RUN_GMAIL_BROWSER_HARNESS=1 requires playwright. Install with `npm i -D playwright` and run again.',
-    );
+    t.skip('RUN_GMAIL_BROWSER_HARNESS=1 requires playwright (`npm i -D playwright`).');
+    return;
   }
 
-  const browser = await launchHarnessBrowser(chromium);
+  let browser;
+  try {
+    browser = await launchHarnessBrowser(chromium);
+  } catch (error) {
+    t.diagnostic(String(error && error.message ? error.message : error));
+    t.skip('Browser harness prerequisites are not available in this environment.');
+    return;
+  }
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.addInitScript(browserInitScript);

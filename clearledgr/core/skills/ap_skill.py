@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import inspect
 from typing import Any, Dict, List, Optional
 
 from clearledgr.core.skills.base import AgentTool, AgentTask, FinanceSkill
@@ -121,13 +122,18 @@ async def _handle_get_ap_decision(
         correction_suggestions = ctx.get("correction_suggestions") or []
 
         service = APDecisionService()
-        decision = await service.decide(
+        decision_or_awaitable = service.decide(
             invoice=invoice,
             vendor_profile=vendor_profile,
             vendor_history=vendor_history,
             decision_feedback=decision_feedback,
             correction_suggestions=correction_suggestions,
-            organization_id=organization_id,
+            org_config={"organization_id": organization_id},
+        )
+        decision = (
+            await decision_or_awaitable
+            if inspect.isawaitable(decision_or_awaitable)
+            else decision_or_awaitable
         )
         return {
             "ok": True,

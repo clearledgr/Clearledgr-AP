@@ -38,6 +38,37 @@ from clearledgr.api.ap_items import build_worklist_item
 
 router = APIRouter(prefix="/extension", tags=["gmail-extension"])
 
+_ADMIN_ROLES = {"admin", "owner"}
+
+
+def _is_admin_user(user: Any) -> bool:
+    return str(getattr(user, "role", "") or "").strip().lower() in _ADMIN_ROLES
+
+
+def _assert_user_org_access(user: Any, organization_id: str) -> None:
+    org_id = str(organization_id or "default")
+    user_org = str(getattr(user, "organization_id", "") or "")
+    if _is_admin_user(user):
+        return
+    if user_org != org_id:
+        raise HTTPException(status_code=403, detail="org_mismatch")
+
+
+def _resolve_org_id_for_user(user: Any, requested_org: Optional[str]) -> str:
+    requested = str(requested_org or "").strip()
+    if requested and requested != "default":
+        _assert_user_org_access(user, requested)
+        return requested
+    return str(getattr(user, "organization_id", None) or "default")
+
+
+def _authenticated_actor(user: Any, fallback: str = "extension") -> str:
+    return str(
+        getattr(user, "email", None)
+        or getattr(user, "user_id", None)
+        or fallback
+    ).strip() or fallback
+
 
 # ==================== REQUEST MODELS ====================
 
@@ -125,6 +156,7 @@ class MatchERPRequest(BaseModel):
 async def triage_email(
     request: EmailTriageRequest,
     audit: AuditTrailService = Depends(get_audit_service),
+    user=Depends(get_current_user),
 ):
     """
     Triage a single email - classify, extract, and apply intelligence.
@@ -143,7 +175,9 @@ async def triage_email(
     or waits for result if running inline.
     """
     payload = request.model_dump()
-    org_id = request.organization_id or "default"
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    payload["organization_id"] = org_id
+    actor_email = _authenticated_actor(user)
     
     # Build combined text for agent reasoning (used for both Temporal + inline)
     combined_text = "\n".join(
@@ -333,11 +367,11 @@ async def triage_email(
     
     # Legacy audit
     audit.record_event(
-        user_email=request.user_email or "extension",
+        user_email=actor_email,
         action="email_triaged",
         entity_type="email",
         entity_id=request.email_id,
-        organization_id=request.organization_id,
+        organization_id=org_id,
         metadata={
             "classification": classification.get("type"),
             "vendor": extraction.get("vendor"),
@@ -491,6 +525,7 @@ def _apply_agent_reasoning(
 async def process_email(
     request: EmailProcessRequest,
     audit: AuditTrailService = Depends(get_audit_service),
+    user=Depends(get_current_user),
 ):
     """
     Fully process an email - triage, match, and suggest/execute action.
@@ -506,6 +541,7 @@ async def process_email(
     Use this for the "Process" button in the extension.
     """
     payload = request.model_dump()
+    payload["organization_id"] = _resolve_org_id_for_user(user, request.organization_id)
     
     if temporal_enabled():
         runtime = TemporalRuntime()
@@ -526,6 +562,7 @@ async def process_email(
     triage_result = await triage_email(
         EmailTriageRequest(**{k: v for k, v in payload.items() if k in EmailTriageRequest.model_fields}),
         audit=audit,
+        user=user,
     )
     
     return {
@@ -539,6 +576,7 @@ async def process_email(
 async def bulk_scan_emails(
     request: BulkScanRequest,
     audit: AuditTrailService = Depends(get_audit_service),
+    user=Depends(get_current_user),
 ):
     """
     Scan multiple emails in bulk.
@@ -549,6 +587,7 @@ async def bulk_scan_emails(
     Use this for inbox scanning.
     """
     payload = request.model_dump()
+    payload["organization_id"] = _resolve_org_id_for_user(user, request.organization_id)
     
     if temporal_enabled():
         runtime = TemporalRuntime()
@@ -578,9 +617,9 @@ async def bulk_scan_emails(
                 EmailTriageRequest(
                     email_id=email_id,
                     organization_id=request.organization_id,
-                    user_email=request.user_email,
                 ),
                 audit=audit,
+                user=user,
             )
             results["processed"] += 1
             if triage.get("action") != "skipped":
@@ -623,13 +662,16 @@ def _build_extension_pipeline(db, organization_id: str, limit: int = 1000) -> Di
 
 
 @router.get("/pipeline")
-def get_invoice_pipeline(organization_id: Optional[str] = None):
+def get_invoice_pipeline(
+    organization_id: Optional[str] = None,
+    user=Depends(get_current_user),
+):
     """Return invoice pipeline grouped by status for Gmail extension.
 
     This legacy endpoint is kept for compatibility and now mirrors the
     normalized exception taxonomy used by `/extension/worklist`.
     """
-    org_id = organization_id or "default"
+    org_id = _resolve_org_id_for_user(user, organization_id)
     db = get_db()
     return _build_extension_pipeline(db, org_id)
 
@@ -647,13 +689,7 @@ def get_extension_worklist(
     """
     from fastapi import HTTPException
 
-    _ADMIN_ROLES = {"admin", "owner"}
-    if organization_id and organization_id != "default":
-        if user.role not in _ADMIN_ROLES and str(user.organization_id) != str(organization_id):
-            raise HTTPException(status_code=403, detail="org_mismatch")
-        org_id = organization_id
-    else:
-        org_id = str(user.organization_id or "default")
+    org_id = _resolve_org_id_for_user(user, organization_id)
 
     db = get_db()
     items = db.list_ap_items(org_id, limit=limit, prioritized=True)
@@ -669,6 +705,7 @@ def get_extension_worklist(
 async def approve_and_post(
     request: ApproveAndPostRequest,
     audit: AuditTrailService = Depends(get_audit_service),
+    user=Depends(get_current_user),
 ):
     """
     Approve and post an invoice to ERP — inline from Gmail extension.
@@ -679,13 +716,13 @@ async def approve_and_post(
     from clearledgr.core.ap_states import OverrideContext, OVERRIDE_TYPE_MULTI
     from clearledgr.services.agent_orchestrator import get_orchestrator
 
-    org_id = request.organization_id or "default"
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
     orchestrator = get_orchestrator(org_id)
 
     # Resolve the AP item's gmail_id (thread_id) from request
     gmail_id = request.email_id
 
-    actor = request.user_email or "gmail_extension"
+    actor = _authenticated_actor(user, fallback="gmail_extension")
     justification = (request.extraction.get("override_justification", "") if request.override else None)
     override_ctx = (
         OverrideContext(
@@ -729,7 +766,7 @@ async def verify_confidence(
     from clearledgr.core.database import get_db
 
     db = get_db()
-    org_id = request.organization_id or "default"
+    org_id = _resolve_org_id_for_user(_user, request.organization_id)
 
     # Look up the AP item to get its stored confidence
     ap_item = db.get_ap_item_by_thread(org_id, request.email_id)
@@ -829,11 +866,12 @@ async def match_bank_feed(
     
     Returns bank transaction match if found.
     """
+    org_id = _resolve_org_id_for_user(_user, request.organization_id)
     from clearledgr.workflows.gmail_activities import match_bank_feed_activity
     
     return await match_bank_feed_activity({
         "extraction": request.extraction,
-        "organization_id": request.organization_id,
+        "organization_id": org_id,
     })
 
 
@@ -847,11 +885,12 @@ async def match_erp(
     
     Returns PO match, vendor match, and GL code suggestion.
     """
+    org_id = _resolve_org_id_for_user(_user, request.organization_id)
     from clearledgr.workflows.gmail_activities import match_erp_activity
     
     return await match_erp_activity({
         "extraction": request.extraction,
-        "organization_id": request.organization_id,
+        "organization_id": org_id,
     })
 
 
@@ -859,6 +898,7 @@ async def match_erp(
 async def escalate_to_manager(
     request: EscalateRequest,
     audit: AuditTrailService = Depends(get_audit_service),
+    user=Depends(get_current_user),
 ):
     """
     DIFFERENTIATOR: Multi-System Routing - Escalate to manager via Slack.
@@ -893,16 +933,16 @@ async def escalate_to_manager(
             "mismatches": request.mismatches,
             "requires_review": True,
         },
-        "organization_id": request.organization_id,
+        "organization_id": _resolve_org_id_for_user(user, request.organization_id),
     })
     
     # Record escalation in audit trail
     audit.record_event(
-        user_email=request.user_email or "extension",
+        user_email=_authenticated_actor(user),
         action="invoice_escalated",
         entity_type="invoice",
         entity_id=request.email_id,
-        organization_id=request.organization_id,
+        organization_id=_resolve_org_id_for_user(user, request.organization_id),
         metadata={
             "vendor": request.vendor,
             "amount": request.amount,
@@ -1224,6 +1264,7 @@ def _build_finance_lead_summary_payload(
 async def submit_for_approval(
     request: SubmitForApprovalRequest,
     audit: AuditTrailService = Depends(get_audit_service),
+    user=Depends(get_current_user),
 ):
     """
     Submit an invoice for Slack approval with full intelligence.
@@ -1239,7 +1280,8 @@ async def submit_for_approval(
     """
     from clearledgr.services.invoice_workflow import InvoiceData, get_invoice_workflow
     
-    org_id = request.organization_id or "default"
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    actor_email = _authenticated_actor(user)
     db = get_db()
     replay = _load_idempotent_extension_response(db, request.idempotency_key)
     if replay:
@@ -1319,8 +1361,8 @@ async def submit_for_approval(
         po_number=request.po_number,
         confidence=request.confidence,
         field_confidences=request.field_confidences,
-        organization_id=request.organization_id,
-        user_id=request.user_email,
+        organization_id=org_id,
+        user_id=getattr(user, "user_id", None) or actor_email,
         invoice_text=request.email_body or f"{request.subject}\n{request.vendor}",  # For discount detection
         # Pass intelligence to workflow
         vendor_intelligence=vendor_intel,
@@ -1365,11 +1407,11 @@ async def submit_for_approval(
     
     # Legacy audit
     audit.record_event(
-        user_email=request.user_email or "extension",
+        user_email=actor_email,
         action="invoice_submitted",
         entity_type="invoice",
         entity_id=request.email_id,
-        organization_id=request.organization_id,
+        organization_id=org_id,
         metadata={
             "vendor": request.vendor,
             "amount": request.amount,
@@ -1397,7 +1439,7 @@ async def submit_for_approval(
         ap_item_id=ap_item_id,
         organization_id=org_id,
         event_type="approval_routed_from_extension",
-        actor_id=request.user_email or "extension",
+        actor_id=actor_email,
         reason="route_for_approval",
         metadata={
             "response": response_payload,
@@ -1416,12 +1458,13 @@ async def submit_for_approval(
 async def reject_invoice(
     request: RejectInvoiceRequest,
     audit: AuditTrailService = Depends(get_audit_service),
+    user=Depends(get_current_user),
 ):
     """Reject an invoice and keep pipeline state in sync."""
     from clearledgr.services.invoice_workflow import get_invoice_workflow
 
-    org_id = request.organization_id or "default"
-    rejected_by = request.user_email or "extension"
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    rejected_by = _authenticated_actor(user)
     workflow = get_invoice_workflow(org_id)
     result = await workflow.reject_invoice(
         gmail_id=request.email_id,
@@ -1447,13 +1490,14 @@ async def reject_invoice(
 async def budget_decision(
     request: BudgetDecisionRequest,
     audit: AuditTrailService = Depends(get_audit_service),
+    user=Depends(get_current_user),
 ):
     """Handle explicit budget decisions from Gmail sidebar surfaces."""
     from clearledgr.core.ap_states import OverrideContext, OVERRIDE_TYPE_BUDGET
     from clearledgr.services.invoice_workflow import get_invoice_workflow
 
-    org_id = request.organization_id or "default"
-    actor = request.user_email or "extension"
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    actor = _authenticated_actor(user)
     workflow = get_invoice_workflow(org_id)
     decision = str(request.decision or "").strip().lower()
 
@@ -1514,8 +1558,8 @@ async def approval_nudge(
     """Send a dedicated approver nudge for pending approvals (Slack/Teams best effort)."""
     from clearledgr.services.invoice_workflow import get_invoice_workflow
 
-    org_id = request.organization_id or getattr(user, "organization_id", None) or "default"
-    actor_email = request.user_email or getattr(user, "email", None) or "extension"
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    actor_email = _authenticated_actor(user)
     db = get_db()
     replay = _load_idempotent_extension_response(db, request.idempotency_key)
     if replay:
@@ -1654,8 +1698,8 @@ async def vendor_followup(
         IntentNotSupportedError,
     )
 
-    org_id = request.organization_id or getattr(user, "organization_id", None) or "default"
-    actor_email = request.user_email or getattr(user, "email", None) or "extension"
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    actor_email = _authenticated_actor(user)
     runtime = FinanceAgentRuntime(
         organization_id=org_id,
         actor_id=getattr(user, "user_id", None) or actor_email,
@@ -1720,8 +1764,8 @@ async def route_low_risk_approval(
         IntentNotSupportedError,
     )
 
-    org_id = request.organization_id or getattr(user, "organization_id", None) or "default"
-    actor_email = request.user_email or getattr(user, "email", None) or "extension"
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    actor_email = _authenticated_actor(user)
     db = get_db()
     runtime = FinanceAgentRuntime(
         organization_id=org_id,
@@ -1775,8 +1819,8 @@ async def retry_recoverable_failure(
         IntentNotSupportedError,
     )
 
-    org_id = request.organization_id or getattr(user, "organization_id", None) or "default"
-    actor_email = request.user_email or getattr(user, "email", None) or "extension"
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    actor_email = _authenticated_actor(user)
     runtime = FinanceAgentRuntime(
         organization_id=org_id,
         actor_id=getattr(user, "user_id", None) or actor_email,
@@ -1831,8 +1875,8 @@ async def finance_summary_share(
         send_finance_summary_reply,
     )
 
-    org_id = request.organization_id or getattr(user, "organization_id", None) or "default"
-    actor_email = request.user_email or getattr(user, "email", None) or "extension"
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    actor_email = _authenticated_actor(user)
     db = get_db()
     ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.email_id)
     if not ap_item:
@@ -2106,7 +2150,10 @@ async def finance_summary_share(
 
 
 @router.get("/invoice-status/{gmail_id}")
-async def get_invoice_status(gmail_id: str):
+async def get_invoice_status(
+    gmail_id: str,
+    user=Depends(get_current_user),
+):
     """
     Get the current status of an invoice.
     
@@ -2119,12 +2166,15 @@ async def get_invoice_status(gmail_id: str):
     
     if not status:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    
+    _assert_user_org_access(user, str(status.get("organization_id") or "default"))
     return status
 
 
 @router.get("/invoice-pipeline/{organization_id}")
-async def get_invoice_pipeline_status(organization_id: str):
+async def get_invoice_pipeline_status(
+    organization_id: str,
+    user=Depends(get_current_user),
+):
     """
     Get all invoices grouped by status (pipeline view).
     
@@ -2132,6 +2182,7 @@ async def get_invoice_pipeline_status(organization_id: str):
     """
     from clearledgr.core.database import get_db
     
+    _assert_user_org_access(user, organization_id)
     db = get_db()
     pipeline = _build_extension_pipeline(db, organization_id)
     
@@ -2143,7 +2194,10 @@ async def get_invoice_pipeline_status(organization_id: str):
 
 
 @router.get("/workflow/{workflow_id}")
-async def get_workflow_status(workflow_id: str):
+async def get_workflow_status(
+    workflow_id: str,
+    user=Depends(get_current_user),
+):
     """
     Get the status of a running workflow.
     
@@ -2151,15 +2205,18 @@ async def get_workflow_status(workflow_id: str):
     """
     runtime = TemporalRuntime()
     try:
-        return await runtime.get_status(workflow_id)
+        payload = await runtime.get_status(workflow_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="workflow_not_found")
+    _assert_user_org_access(user, str(payload.get("organization_id") or "default"))
+    return payload
 
 
 @router.get("/ap/{ap_item_id}/explain")
 def explain_ap_item(
     ap_item_id: str,
     organization_id: Optional[str] = Query(default=None),
+    user=Depends(get_current_user),
 ):
     """Natural-language explanation of why an AP item is in its current state.
 
@@ -2170,11 +2227,12 @@ def explain_ap_item(
     summary derived from audit events and the item's metadata.
     """
     db = get_db()
-    org_id = organization_id or "default"
+    org_id = _resolve_org_id_for_user(user, organization_id)
 
     item = db.get_ap_item(ap_item_id) if hasattr(db, "get_ap_item") else None
     if not item:
         raise HTTPException(status_code=404, detail="ap_item_not_found")
+    _assert_user_org_access(user, str(item.get("organization_id") or "default"))
     if item.get("organization_id") and org_id and item["organization_id"] != org_id:
         raise HTTPException(status_code=403, detail="org_mismatch")
 
@@ -2475,10 +2533,11 @@ async def suggest_gl_code(
     Returns primary suggestion + alternatives with confidence scores.
     Human reviews and confirms/changes.
     """
+    org_id = _resolve_org_id_for_user(_user, request.organization_id)
     from clearledgr.services.learning import get_learning_service
     from clearledgr.services.vendor_intelligence import get_vendor_intelligence
-    
-    learning = get_learning_service(request.organization_id)
+
+    learning = get_learning_service(org_id)
     vendor_intel = get_vendor_intelligence()
     
     # Get suggestion from learning service (based on historical patterns)
@@ -2545,11 +2604,12 @@ async def suggest_vendor(
     
     Returns matched vendor + confidence for human confirmation.
     """
+    org_id = _resolve_org_id_for_user(_user, request.organization_id)
     from clearledgr.services.fuzzy_matching import get_fuzzy_matcher
     from clearledgr.services.vendor_management import get_vendor_management_service
-    
+
     matcher = get_fuzzy_matcher()
-    vendor_service = get_vendor_management_service(request.organization_id)
+    vendor_service = get_vendor_management_service(org_id)
     
     # Try to match from extracted vendor name first
     candidates = []
@@ -2610,6 +2670,7 @@ async def validate_amount(
     
     Returns whether amount seems reasonable + expected range.
     """
+    _resolve_org_id_for_user(_user, organization_id)
     vendor_intel = get_vendor_intelligence()
     
     validation = vendor_intel.validate_amount(vendor_name, amount)
@@ -2640,8 +2701,9 @@ async def get_form_prefill(
     from clearledgr.services.learning import get_learning_service
     from clearledgr.services.vendor_intelligence import get_vendor_intelligence
     
+    org_id = _resolve_org_id_for_user(_user, organization_id)
     db = get_db()
-    learning = get_learning_service(organization_id)
+    learning = get_learning_service(org_id)
     vendor_intel = get_vendor_intelligence()
     
     # Get stored extraction data for this email
@@ -2653,6 +2715,9 @@ async def get_form_prefill(
             "has_data": False,
             "message": "No extraction data found for this email",
         }
+    invoice_org = str(invoice.get("organization_id") or org_id)
+    if invoice_org != org_id:
+        raise HTTPException(status_code=403, detail="org_mismatch")
     
     vendor_name = invoice.get("vendor") or invoice.get("vendor_name", "")
     amount = invoice.get("amount", 0)
@@ -2793,7 +2858,6 @@ async def record_field_correction(
     actor_id = (
         getattr(user, "email", None)
         or getattr(user, "user_id", None)
-        or request.actor_id
         or "operator"
     )
 

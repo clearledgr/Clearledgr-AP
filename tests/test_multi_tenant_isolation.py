@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from main import app
+from main import _apply_runtime_surface_profile, app
 from clearledgr.core import database as db_module
 from clearledgr.core.auth import TokenData, create_access_token, get_current_user
 
@@ -40,6 +40,9 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "isolation.db"))
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("AP_TEMPORAL_ENABLED", "false")
+    monkeypatch.setenv("AP_V1_STRICT_SURFACES", "false")
+    monkeypatch.setenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", "true")
+    _apply_runtime_surface_profile()
     db_module._DB_INSTANCE = None
     d = db_module.get_db()
     d.initialize()
@@ -100,7 +103,10 @@ def test_org_data_isolation_reads(db, client):
     db.create_ap_item(_item_payload(item_id="read-a-2", org_id="org-alpha"))
     db.create_ap_item(_item_payload(item_id="read-b-1", org_id="org-beta"))
 
-    resp = client.get("/extension/pipeline?organization_id=org-beta")
+    resp = client.get(
+        "/extension/pipeline?organization_id=org-beta",
+        headers=_auth_headers("org-beta"),
+    )
     assert resp.status_code == 200
     payload = resp.json()
     all_ids = {item["id"] for group in payload.values() for item in group}

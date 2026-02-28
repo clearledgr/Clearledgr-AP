@@ -153,8 +153,31 @@ def test_process_invoice_defaults_to_agentic_runtime(monkeypatch):
     legacy_mock.assert_not_awaited()
 
 
-def test_process_invoice_falls_back_to_legacy_when_agentic_runtime_fails(monkeypatch):
+def test_process_invoice_returns_failure_when_agentic_runtime_fails_and_legacy_fallback_disabled(monkeypatch):
     monkeypatch.delenv("AGENT_PLANNING_LOOP", raising=False)
+    monkeypatch.setenv("AGENT_LEGACY_FALLBACK_ON_ERROR", "false")
+    orch = AgentOrchestrator("default")
+    invoice = _minimal_invoice()
+
+    with patch(
+        "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
+        new=AsyncMock(side_effect=RuntimeError("anthropic_api_key_missing")),
+    ):
+        with patch.object(
+            orch,
+            "_process_invoice_legacy",
+            AsyncMock(return_value={"status": "legacy"}),
+        ) as legacy_mock:
+            result = asyncio.run(orch.process_invoice(invoice))
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "agent_runtime_failed"
+    legacy_mock.assert_not_awaited()
+
+
+def test_process_invoice_supports_explicit_legacy_fallback_when_agentic_runtime_fails(monkeypatch):
+    monkeypatch.delenv("AGENT_PLANNING_LOOP", raising=False)
+    monkeypatch.setenv("AGENT_LEGACY_FALLBACK_ON_ERROR", "true")
     orch = AgentOrchestrator("default")
     invoice = _minimal_invoice()
 

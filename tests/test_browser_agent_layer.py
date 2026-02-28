@@ -224,6 +224,49 @@ def test_agent_sessions_endpoint_requires_auth(unauth_client, db):
     assert response.status_code == 401
 
 
+def test_agent_session_endpoints_enforce_org_scope(client, db):
+    item = _create_item(db)
+    session_id = _create_session(client, item["id"])
+
+    def _other_org_user():
+        return TokenData(
+            user_id="other-org-user",
+            email="other@example.com",
+            organization_id="other-org",
+            role="user",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+    app.dependency_overrides[agent_sessions_module.get_current_user] = _other_org_user
+    try:
+        scoped_client = TestClient(app)
+        assert scoped_client.get(f"/api/agent/sessions/{session_id}").status_code == 403
+        assert scoped_client.post(
+            f"/api/agent/sessions/{session_id}/commands",
+            json={
+                "actor_id": "other-org-user",
+                "tool_name": "read_page",
+                "command_id": "cmd-org-scope-1",
+                "target": {"url": "https://mail.google.com/mail/u/0/#inbox"},
+            },
+        ).status_code == 403
+        assert scoped_client.post(
+            f"/api/agent/sessions/{session_id}/commands/preview",
+            json={
+                "actor_id": "other-org-user",
+                "tool_name": "read_page",
+                "command_id": "cmd-org-scope-preview-1",
+                "target": {"url": "https://mail.google.com/mail/u/0/#inbox"},
+            },
+        ).status_code == 403
+        assert scoped_client.post(
+            f"/api/agent/sessions/{session_id}/macros/ingest_invoice_match_po",
+            json={"actor_id": "other-org-user"},
+        ).status_code == 403
+    finally:
+        app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
+
+
 def test_browser_fallback_complete_endpoint_requires_auth(unauth_client, db):
     item = _create_item(db)
     _move_item_to_failed_post(db, item["id"])
@@ -1097,8 +1140,15 @@ def test_ap_kpis_exposes_agentic_telemetry_bundle(client, db):
 def test_analytics_dashboard_surfaces_agentic_snapshot(client, db):
     _seed_agentic_kpi_signal(db)
     response = client.get("/analytics/dashboard/default")
-    assert response.status_code == 200
-    payload = response.json()
+    if response.status_code == 404:
+        body = response.json()
+        assert body.get("detail") in {"endpoint_disabled_in_ap_v1_profile", "Not Found"}
+        bootstrap = client.get("/api/admin/bootstrap?organization_id=default")
+        assert bootstrap.status_code == 200
+        payload = (bootstrap.json().get("dashboard") or {})
+    else:
+        assert response.status_code == 200
+        payload = response.json()
 
     assert "agentic_telemetry" in payload
     telemetry = payload.get("agentic_telemetry") or {}

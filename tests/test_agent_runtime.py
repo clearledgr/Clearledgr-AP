@@ -9,6 +9,7 @@ Follows existing test patterns:
 import asyncio
 import json
 import uuid
+from types import SimpleNamespace
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, patch
 
@@ -100,6 +101,57 @@ def test_ap_skill_registration():
     assert {"enrich_with_context", "run_validation_gate", "get_ap_decision", "execute_routing"} == tool_names
 
 
+def test_ap_skill_get_ap_decision_handles_sync_decider_without_fallback():
+    ap = APSkill("default")
+    decision_tool = next(t for t in ap.get_tools() if t.name == "get_ap_decision")
+
+    class _FakeDB:
+        def get_vendor_profile(self, *_args, **_kwargs):
+            return {}
+
+        def get_vendor_invoice_history(self, *_args, **_kwargs):
+            return []
+
+        def get_vendor_decision_feedback(self, *_args, **_kwargs):
+            return {}
+
+    class _FakeDecisionService:
+        def decide(self, **_kwargs):
+            return SimpleNamespace(
+                recommendation="approve",
+                reasoning="Looks good.",
+                confidence=0.97,
+                risk_flags=[],
+                info_needed=None,
+            )
+
+    invoice_payload = {
+        "gmail_id": "thread-agent-1",
+        "subject": "Invoice INV-1001",
+        "sender": "billing@example.com",
+        "vendor_name": "Acme Corp",
+        "amount": 100.0,
+        "currency": "USD",
+        "invoice_number": "INV-1001",
+        "due_date": "2026-03-10",
+    }
+
+    with patch("clearledgr.core.database.get_db", return_value=_FakeDB()):
+        with patch("clearledgr.services.ap_decision.APDecisionService", return_value=_FakeDecisionService()):
+            result = asyncio.run(
+                decision_tool.handler(
+                    invoice_payload=invoice_payload,
+                    vendor_context={},
+                    organization_id="default",
+                )
+            )
+
+    assert result["ok"] is True
+    assert result["recommendation"] == "approve"
+    assert result["confidence"] == pytest.approx(0.97)
+    assert result.get("error") is None
+
+
 # ---------------------------------------------------------------------------
 # Test 2: planning loop — single tool then done
 # ---------------------------------------------------------------------------
@@ -165,6 +217,28 @@ def test_planning_loop_three_steps(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Test 4: planning loop rejects no-tool completion on first step
+# ---------------------------------------------------------------------------
+
+def test_planning_loop_rejects_no_tool_completion(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "test.db"))
+    db_module._DB_INSTANCE = None
+
+    runtime = AgentPlanningEngine()
+    skill = _EchoSkill()
+    runtime.register_skill(skill)
+
+    async def fake_claude(system, messages, tools):
+        return _text_response("done without tools")
+
+    with patch.object(runtime, "_call_claude_with_tools", side_effect=fake_claude):
+        result = asyncio.run(runtime.run_task(_make_task("echo_skill", key="no-tool-key")))
+
+    assert result.status == "failed"
+    assert result.error == "planning_returned_no_tool_use"
+
+
+# ---------------------------------------------------------------------------
 # Test 4: task run idempotency
 # ---------------------------------------------------------------------------
 
@@ -176,8 +250,13 @@ def test_task_run_idempotency(tmp_path, monkeypatch):
     skill = _EchoSkill()
     runtime.register_skill(skill)
 
+    call_responses = [
+        _tool_use_response("echo", {"message": "idempotent"}),
+        _text_response("done"),
+    ]
+
     async def fake_claude(system, messages, tools):
-        return _text_response("done")
+        return call_responses.pop(0)
 
     with patch.object(runtime, "_call_claude_with_tools", side_effect=fake_claude):
         r1 = asyncio.run(runtime.run_task(_make_task("echo_skill", key="idempotent-key")))

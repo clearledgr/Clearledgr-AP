@@ -142,6 +142,20 @@ def test_local_temporal_runtime_persists_ap_workflow_run_and_status(monkeypatch,
 
 
 def test_extension_workflow_status_endpoint_uses_local_runtime(db):
+    from datetime import datetime, timezone
+
+    from clearledgr.core.auth import TokenData, get_current_user
+
+    def _mock_user():
+        return TokenData(
+            user_id="workflow-user",
+            email="workflow@default.com",
+            organization_id="default",
+            role="user",
+            exp=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        )
+
+    app.dependency_overrides[get_current_user] = _mock_user
     runtime = TemporalRuntime(db=db)
     run = db.create_workflow_run(
         {
@@ -155,10 +169,13 @@ def test_extension_workflow_status_endpoint_uses_local_runtime(db):
         }
     )
 
-    client = TestClient(app)
-    response = client.get(f"/extension/workflow/{run['id']}")
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["workflow_id"] == run["id"]
-    assert payload["status"] == "running"
-    assert payload["runtime_backend"] == "local_db"
+    try:
+        client = TestClient(app)
+        response = client.get(f"/extension/workflow/{run['id']}")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["workflow_id"] == run["id"]
+        assert payload["status"] == "running"
+        assert payload["runtime_backend"] == "local_db"
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)

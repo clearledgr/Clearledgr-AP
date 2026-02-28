@@ -13,3 +13,11 @@ Structure:
 
 Current seeded release:
 - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/MANIFEST.md`
+
+Gmail runtime evidence flow:
+- run from `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension`:
+  - `npm run test:e2e-auth:evidence -- --release-id <release_id>`
+- outputs:
+  - `docs/ga-evidence/releases/<release_id>/artifacts/gmail-e2e-evidence.json`
+  - `docs/ga-evidence/releases/<release_id>/artifacts/gmail-e2e-screenshot.png`
+  - `docs/ga-evidence/releases/<release_id>/GMAIL_RUNTIME_E2E.md`

@@ -45,6 +45,7 @@ Clearledgr runs one core agent runtime and domain skills:
   - `POST /api/agent/intents/preview`
   - `POST /api/agent/intents/execute`
 - AP skill execution (current production domain)
+- Planner/runtime errors fail closed by default (`AGENT_LEGACY_FALLBACK_ON_ERROR=false`)
 - Shared controls:
   - policy prechecks
   - HITL gates
@@ -107,6 +108,26 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 PYTHONPATH=. pytest -q tests/test_finance_agent_runtime.py tests/test_api_endpoints.py::TestAgentIntentEndpoints tests/test_api_endpoints.py::TestExtensionEndpoints
 node --test ui/gmail-extension/tests/*.test.cjs
 ```
+
+Optional real-browser Gmail harness:
+
+```bash
+cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension
+npm run test:browser-harness
+```
+
+If Playwright/Chromium is unavailable locally, the harness test reports a skip with setup guidance.
+
+Authenticated Gmail runtime evidence capture (for staging/pilot readiness):
+
+```bash
+cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension
+npm run test:e2e-auth:evidence -- --release-id ap-v1-2026-03-01-pilot-rc1
+```
+
+This writes:
+- evidence JSON + screenshot under `docs/ga-evidence/releases/<release_id>/artifacts/`
+- normalized report at `docs/ga-evidence/releases/<release_id>/GMAIL_RUNTIME_E2E.md`
 
 ## Security and Operational Expectations
 

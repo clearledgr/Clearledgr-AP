@@ -60,6 +60,21 @@ def _create_ap_item(
 
 
 def test_extension_pipeline_normalizes_exception_taxonomy(client, db):
+    from datetime import datetime, timezone
+
+    from clearledgr.core.auth import TokenData, get_current_user
+    from main import app
+
+    def _mock_user():
+        return TokenData(
+            user_id="test-user",
+            email="test@default.com",
+            organization_id="default",
+            role="user",
+            exp=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        )
+
+    app.dependency_overrides[get_current_user] = _mock_user
     item = _create_ap_item(
         db,
         item_id="PIPE-EX-1",
@@ -78,15 +93,18 @@ def test_extension_pipeline_normalizes_exception_taxonomy(client, db):
         },
     )
 
-    response = client.get("/extension/pipeline?organization_id=default")
-    assert response.status_code == 200
-    payload = response.json()
-    rows = payload.get("pending_approval", [])
-    row = next((entry for entry in rows if entry.get("id") == item["id"]), None)
-    assert row is not None
-    assert row["exception_code"] == "po_missing_reference"
-    assert row["exception_severity"] == "medium"
-    assert row.get("priority_score") is not None
+    try:
+        response = client.get("/extension/pipeline?organization_id=default")
+        assert response.status_code == 200
+        payload = response.json()
+        rows = payload.get("pending_approval", [])
+        row = next((entry for entry in rows if entry.get("id") == item["id"]), None)
+        assert row is not None
+        assert row["exception_code"] == "po_missing_reference"
+        assert row["exception_severity"] == "medium"
+        assert row.get("priority_score") is not None
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 def test_vendor_followup_endpoint_requires_auth(client):

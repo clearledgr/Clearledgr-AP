@@ -146,7 +146,13 @@ class AgentOrchestrator:
         return {
             "autonomous_retry": self.autonomous_retry_runtime_status(),
             "post_process": self.post_process_runtime_status(),
+            "legacy_fallback_on_planner_error": self._legacy_fallback_on_planner_error(),
         }
+
+    def _legacy_fallback_on_planner_error(self) -> bool:
+        # Default off to keep AP v1 on a single runtime path unless explicitly
+        # overridden for local troubleshooting.
+        return self._env_flag("AGENT_LEGACY_FALLBACK_ON_ERROR", False)
 
     # ------------------------------------------------------------------
     # Lazy service loaders
@@ -243,17 +249,38 @@ class AgentOrchestrator:
                     actor_id=str(getattr(invoice, "user_id", None) or "system"),
                     actor_email=str(getattr(invoice, "sender", None) or "system@clearledgr.local"),
                 )
-                return await runtime.execute_ap_invoice_processing(
+                runtime_result = await runtime.execute_ap_invoice_processing(
                     invoice_payload=invoice.__dict__,
                     attachments=attachments or [],
                     idempotency_key=f"invoice:{invoice.gmail_id}",
                     correlation_id=getattr(invoice, "correlation_id", None),
                 )
+                runtime_status = str((runtime_result or {}).get("status") or "").strip().lower()
+                if runtime_status in {"failed", "max_steps_exceeded"} and self._legacy_fallback_on_planner_error():
+                    logger.warning(
+                        "[AgentOrchestrator] planner returned %s; AGENT_LEGACY_FALLBACK_ON_ERROR=true so using legacy path",
+                        runtime_status,
+                    )
+                    return await self._process_invoice_legacy(invoice, attachments)
+                return runtime_result
             except Exception as exc:
+                if self._legacy_fallback_on_planner_error():
+                    logger.warning(
+                        "[AgentOrchestrator] planning loop failed, falling back to legacy (explicitly enabled): %s",
+                        exc,
+                    )
+                    return await self._process_invoice_legacy(invoice, attachments)
                 logger.warning(
-                    "[AgentOrchestrator] planning loop failed, falling back to legacy: %s", exc
+                    "[AgentOrchestrator] planning loop failed; legacy fallback disabled: %s",
+                    exc,
                 )
-                # Fall through to legacy path on any error
+                return {
+                    "status": "failed",
+                    "reason": "agent_runtime_failed",
+                    "error": str(exc),
+                    "execution_path": "agentic_runtime",
+                    "gmail_id": invoice.gmail_id,
+                }
 
         return await self._process_invoice_legacy(invoice, attachments)
 

@@ -4,6 +4,7 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -60,6 +61,15 @@ def _parse_metadata(row: dict) -> dict:
     return {}
 
 
+def _mock_user(*, user_id: str = "test-user", organization_id: str = "default"):
+    return SimpleNamespace(
+        email=None,
+        user_id=user_id,
+        organization_id=organization_id,
+        role="user",
+    )
+
+
 def test_merge_ap_items_uses_metadata_linkage_without_illegal_state(monkeypatch, db):
     target = _create_ap_item(db, item_id="AP-TARGET-1", thread_id="thread-target")
     source = _create_ap_item(db, item_id="AP-SOURCE-1", thread_id="thread-source")
@@ -81,6 +91,7 @@ def test_merge_ap_items_uses_metadata_linkage_without_illegal_state(monkeypatch,
     response = ap_items_api.merge_ap_items(
         target["id"],
         MergeItemsRequest(source_ap_item_id=source["id"], actor_id="user-1", reason="duplicate_invoice"),
+        _user=_mock_user(user_id="user-1", organization_id="default"),
     )
 
     assert response["status"] == "merged"
@@ -174,6 +185,7 @@ def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(m
             thread_id="thread-rej-v2",
             amount=125.50,
         ),
+        _user=_mock_user(user_id="ap-user-1", organization_id="default"),
     )
 
     assert response["status"] == "resubmitted"
@@ -227,6 +239,7 @@ def test_resubmission_requires_rejected_state(monkeypatch, db):
         ap_items_api.resubmit_rejected_item(
             item["id"],
             ResubmitRejectedItemRequest(actor_id="ap-user-1", reason="should_fail"),
+            _user=_mock_user(user_id="ap-user-1", organization_id="default"),
         )
     assert exc.value.status_code == 400
     assert exc.value.detail == "resubmission_requires_rejected_state"

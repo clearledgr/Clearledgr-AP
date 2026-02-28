@@ -9,6 +9,13 @@ const ASSERT_AUTH = process.env.GMAIL_E2E_ASSERT_AUTH === '1';
 const E2E_TIMEOUT_MS = Number(process.env.GMAIL_E2E_TIMEOUT_MS || 180000);
 const EXPECT_SELECTOR = process.env.GMAIL_E2E_EXPECT_SELECTOR || '#cl-scan-status';
 const E2E_EVIDENCE_JSON = process.env.GMAIL_E2E_EVIDENCE_JSON || '';
+const REQUIRED_SELECTORS = String(
+  process.env.GMAIL_E2E_REQUIRED_SELECTORS || '#cl-scan-status,#cl-thread-context,#cl-agent-actions',
+)
+  .split(',')
+  .map((value) => String(value || '').trim())
+  .filter(Boolean);
+const REQUIRE_ALL_SELECTORS = process.env.GMAIL_E2E_REQUIRE_ALL_SELECTORS === '1';
 
 function _looksLikeLoginPage(url, title, bodyText) {
   const urlText = String(url || '').toLowerCase();
@@ -71,7 +78,11 @@ test('real Gmail/Chrome smoke scaffold is configured (manual-gated)', { skip: !R
     assert_auth: ASSERT_AUTH,
     expect_selector: EXPECT_SELECTOR,
     extension_worker_detected: false,
+    extension_worker_url: null,
     mounted_sections: 0,
+    required_selectors: REQUIRED_SELECTORS,
+    selector_presence: {},
+    missing_selectors: [],
     current_url: null,
     page_title: null,
     screenshot_path: process.env.GMAIL_E2E_CAPTURE_PATH || null,
@@ -99,14 +110,31 @@ test('real Gmail/Chrome smoke scaffold is configured (manual-gated)', { skip: !R
         'Extension service worker not detected. Confirm extension loaded via --load-extension.',
       );
       evidence.extension_worker_detected = true;
+      evidence.extension_worker_url = extensionWorker.url();
 
       await page.waitForSelector(EXPECT_SELECTOR, { timeout: E2E_TIMEOUT_MS });
-      const mountedSections = await page.evaluate(() => {
-        const ids = ['#cl-thread-context', '#cl-kpi-summary', '#cl-agent-actions'];
-        return ids.filter((selector) => Boolean(document.querySelector(selector))).length;
-      });
-      evidence.mounted_sections = mountedSections;
-      assert.ok(mountedSections >= 2, 'Expected Clearledgr sidebar sections not found in authenticated Gmail runtime.');
+      const selectorPresence = await page.evaluate((selectors) => {
+        const snapshot = {};
+        for (const selector of selectors || []) {
+          snapshot[selector] = Boolean(document.querySelector(selector));
+        }
+        return snapshot;
+      }, REQUIRED_SELECTORS);
+      evidence.selector_presence = selectorPresence;
+      evidence.missing_selectors = REQUIRED_SELECTORS.filter((selector) => !selectorPresence[selector]);
+      evidence.mounted_sections = REQUIRED_SELECTORS.length - evidence.missing_selectors.length;
+      if (REQUIRE_ALL_SELECTORS) {
+        assert.equal(
+          evidence.missing_selectors.length,
+          0,
+          `Required selectors missing in authenticated Gmail runtime: ${evidence.missing_selectors.join(', ')}`,
+        );
+      } else {
+        assert.ok(
+          evidence.mounted_sections >= 2,
+          'Expected Clearledgr sidebar sections not found in authenticated Gmail runtime.',
+        );
+      }
     }
 
     const screenshotPath = process.env.GMAIL_E2E_CAPTURE_PATH;

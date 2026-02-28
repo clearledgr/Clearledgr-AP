@@ -43,10 +43,10 @@ Statuses:
 
 | Priority | Total | OPEN | IN_PROGRESS | BLOCKED | DONE | WAIVED |
 |---|---:|---:|---:|---:|---:|---:|
-| P0 | 5 | 5 | 0 | 0 | 0 | 0 |
+| P0 | 5 | 4 | 1 | 0 | 0 | 0 |
 | P1 | 7 | 6 | 1 | 0 | 0 | 0 |
 | P2 | 4 | 3 | 0 | 0 | 1 | 0 |
-| **All** | **16** | **14** | **1** | **0** | **1** | **0** |
+| **All** | **16** | **13** | **2** | **0** | **1** | **0** |
 
 ## Release Context
 
@@ -98,7 +98,7 @@ Schema per item:
 - Category: `pilot-e2e`
 - Priority: `P0`
 - Plan refs: `PLAN.md` `4.1`, `4.6`, `5.1`, `5.2`, `5.3`, `7.4`
-- Status: `OPEN`
+- Status: `IN_PROGRESS`
 - Goal: Run a staging E2E pilot drill covering Gmail intake -> Slack/Teams approval -> ERP posting -> audit verification.
 - Owner: `TBD`
 - Evidence required:
@@ -111,8 +111,10 @@ Schema per item:
   - ERP result visible to operator and persisted
   - audit chain is queryable by AP item
 - Artifact links:
-  - manifest section: `TBD`
+  - runtime evidence report: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/<release_id>/GMAIL_RUNTIME_E2E.md`
+  - evidence json: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/<release_id>/artifacts/gmail-e2e-evidence.json`
 - Notes / blockers:
+  - use `npm run test:e2e-auth:evidence -- --release-id <release_id>` from `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension`
   - prioritize one tenant and one ERP first, then expand
 
 ### L02
@@ -433,6 +435,7 @@ Fill these as artifacts are created for the selected release id.
 - `2026-02-27`: Extended `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/inboxsdk-layer.e2e-smoke.test.cjs` with optional evidence JSON output (`GMAIL_E2E_EVIDENCE_JSON`) so manual Gmail smoke/auth runs produce auditable artifacts for pilot/GA evidence collection.
 - `2026-02-27`: Removed non-durable AP post-processing fallback in `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/agent_orchestrator.py` so post-processing is durable-queue-only (or explicitly gated/audited) and updated regression coverage in `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_agent_orchestrator_durable_retry.py`.
 - `2026-02-27`: Enforced strict AP-v1 runtime surface pruning in `/Users/mombalam/Desktop/Clearledgr.v1/main.py` (legacy route families are no longer mounted when strict profile is active), with verification in `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_runtime_surface_scope.py`.
+- `2026-02-28`: Added authenticated Gmail runtime evidence wrapper + validation pipeline (`npm run test:e2e-auth:evidence`) with normalized report output at `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/<release_id>/GMAIL_RUNTIME_E2E.md`; moved `L01` to `IN_PROGRESS` pending live staging run artifact capture.
 
 ## Archive Protocol
 

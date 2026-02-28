@@ -32,6 +32,14 @@ def _assert_org_access(user: TokenData, org_id: str) -> None:
         raise HTTPException(status_code=403, detail="org_mismatch")
 
 
+def _load_session_for_user(db, user: TokenData, session_id: str) -> Dict[str, Any]:
+    session = db.get_agent_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    _assert_org_access(user, str(session.get("organization_id") or "default"))
+    return session
+
+
 def _runner_trust_mode() -> str:
     mode = str(os.getenv("AP_BROWSER_RUNNER_TRUST_MODE", "api_or_admin")).strip().lower()
     if mode in {"authenticated", "api_only", "api_or_admin"}:
@@ -196,7 +204,12 @@ async def create_agent_session(
 
 
 @router.get("/sessions/{session_id}")
-async def get_agent_session(session_id: str):
+async def get_agent_session(
+    session_id: str,
+    user: TokenData = Depends(get_current_user),
+):
+    db = get_db()
+    _load_session_for_user(db, user, session_id)
     service = get_browser_agent_service()
     try:
         payload = service.get_session(session_id)
@@ -211,6 +224,8 @@ async def enqueue_agent_command(
     request: EnqueueCommandRequest,
     user: TokenData = Depends(get_current_user),
 ):
+    db = get_db()
+    _load_session_for_user(db, user, session_id)
     service = get_browser_agent_service()
     try:
         event = service.enqueue_command(
@@ -245,6 +260,8 @@ async def preview_agent_command(
     request: PreviewCommandRequest,
     user: TokenData = Depends(get_current_user),
 ):
+    db = get_db()
+    _load_session_for_user(db, user, session_id)
     service = get_browser_agent_service()
     try:
         payload = service.preview_command(
@@ -279,6 +296,8 @@ async def dispatch_agent_macro(
     request: DispatchMacroRequest,
     user: TokenData = Depends(get_current_user),
 ):
+    db = get_db()
+    _load_session_for_user(db, user, session_id)
     service = get_browser_agent_service()
     try:
         payload = service.dispatch_macro(
@@ -310,10 +329,7 @@ async def submit_agent_result(
     user: TokenData = Depends(get_current_user),
 ):
     db = get_db()
-    session = db.get_agent_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
-    _assert_org_access(user, str(session.get("organization_id") or "default"))
+    session = _load_session_for_user(db, user, session_id)
     _assert_runner_callback_authorized(
         db=db,
         session=session,
@@ -346,10 +362,7 @@ async def complete_browser_fallback_session(
     user: TokenData = Depends(get_current_user),
 ):
     db = get_db()
-    session = db.get_agent_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
-    _assert_org_access(user, str(session.get("organization_id") or "default"))
+    session = _load_session_for_user(db, user, session_id)
     _assert_runner_callback_authorized(
         db=db,
         session=session,

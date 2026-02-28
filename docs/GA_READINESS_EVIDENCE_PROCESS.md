@@ -121,6 +121,26 @@ Each signoff record must include:
 - explicit scope (pilot/GA + tenant/channel/ERP scope)
 - blockers / accepted risks
 
+### 5. Gmail Runtime E2E Evidence (embedded operator proof)
+
+Required for pilot/GA claims involving Gmail as the primary operator surface:
+- authenticated Gmail runtime execution proof (not browserless harness only)
+- extension runtime loaded in Chrome profile
+- Clearledgr sidebar selectors mounted in live Gmail page
+- evidence JSON and screenshot artifact, plus summarized report
+
+Reference execution command:
+
+```bash
+cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension
+npm run test:e2e-auth:evidence -- --release-id <release_id>
+```
+
+Expected outputs:
+- `docs/ga-evidence/releases/<release_id>/artifacts/gmail-e2e-evidence.json`
+- `docs/ga-evidence/releases/<release_id>/artifacts/gmail-e2e-screenshot.png`
+- `docs/ga-evidence/releases/<release_id>/GMAIL_RUNTIME_E2E.md`
+
 ## Accepted Risk Rules (Pilot Only)
 
 Accepted risks are allowed only for pilot and must include:

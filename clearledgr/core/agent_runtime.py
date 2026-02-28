@@ -99,14 +99,15 @@ class AgentPlanningEngine:
 
         On each iteration:
         1. Call Claude with the full message history and tool catalogue
-        2. If Claude returns no tool_use → task is complete
-        3. If Claude returns a tool_use:
+        2. If Claude returns no tool_use on the first step → fail (fake-completion guard)
+        3. If Claude returns no tool_use after prior tool execution → complete
+        4. If Claude returns a tool_use:
            a. Checkpoint BEFORE executing (crash safety)
            b. Execute the tool handler (never raises)
            c. Checkpoint the result
            d. Feed result back into messages
-        4. If tool returns is_hitl_pause=True → pause for human input
-        5. After MAX_PLANNING_STEPS → surface max_steps_exceeded
+        5. If tool returns is_hitl_pause=True → pause for human input
+        6. After MAX_PLANNING_STEPS → surface max_steps_exceeded
         """
         from clearledgr.core.database import get_db
         db = get_db()
@@ -139,10 +140,21 @@ class AgentPlanningEngine:
             tool_calls = [b for b in content if b.get("type") == "tool_use"]
 
             if not tool_calls:
-                # Claude produced a text response → task complete
+                # Prevent fake completion: at least one tool execution is required
+                # before a task can be marked completed.
                 text = " ".join(
                     b.get("text", "") for b in content if b.get("type") == "text"
                 )
+                if step <= 0:
+                    error = "planning_returned_no_tool_use"
+                    db.fail_task_run(task_run_id, error)
+                    return SkillResult(
+                        status="failed",
+                        task_run_id=task_run_id,
+                        outcome={"response": text, "steps": step},
+                        step_count=step,
+                        error=error,
+                    )
                 outcome = {"response": text, "steps": step}
                 db.complete_task_run(task_run_id, outcome, status="completed")
                 return SkillResult(

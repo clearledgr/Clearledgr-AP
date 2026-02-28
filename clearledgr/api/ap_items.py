@@ -65,6 +65,14 @@ class ResubmitRejectedItemRequest(BaseModel):
     metadata: Dict[str, Any] = {}
 
 
+def _authenticated_actor(user: Any, fallback: str = "system") -> str:
+    return str(
+        getattr(user, "email", None)
+        or getattr(user, "user_id", None)
+        or fallback
+    ).strip() or fallback
+
+
 def _parse_json(raw: Any) -> Dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -965,6 +973,7 @@ def resubmit_rejected_item(
     _user=Depends(get_current_user),
 ) -> Dict[str, Any]:
     db = get_db()
+    actor_id = _authenticated_actor(_user)
     source = _require_item(db, ap_item_id)
     verify_org_access(source.get("organization_id") or "default", _user)
     source_state = _normalized_state_value(source.get("state"))
@@ -1008,9 +1017,11 @@ def resubmit_rejected_item(
     new_meta["resubmission"] = {
         "source_ap_item_id": source["id"],
         "reason": request.reason,
-        "actor_id": request.actor_id,
+        "actor_id": actor_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    if request.actor_id and str(request.actor_id).strip() and str(request.actor_id).strip() != actor_id:
+        new_meta["requested_actor_id"] = str(request.actor_id).strip()
     if request.metadata:
         new_meta.update(request.metadata)
 
@@ -1051,13 +1062,13 @@ def resubmit_rejected_item(
         source["id"],
         superseded_by_ap_item_id=created["id"],
         _actor_type="user",
-        _actor_id=request.actor_id,
+        _actor_id=actor_id,
     )
     source_after = db.get_ap_item(source["id"]) or source
     source_after_meta = _parse_json(source_after.get("metadata"))
     source_after_meta["superseded_by_ap_item_id"] = created["id"]
     source_after_meta["resubmission_reason"] = request.reason
-    db.update_ap_item(source["id"], metadata=source_after_meta, _actor_type="user", _actor_id=request.actor_id)
+    db.update_ap_item(source["id"], metadata=source_after_meta, _actor_type="user", _actor_id=actor_id)
 
     copied_sources = 0
     if request.copy_sources:
@@ -1065,7 +1076,7 @@ def resubmit_rejected_item(
             db,
             source_ap_item_id=source["id"],
             target_ap_item_id=created["id"],
-            actor_id=request.actor_id,
+            actor_id=actor_id,
         )
 
     audit_key = f"ap_item_resubmission:{source['id']}:{created['id']}"
@@ -1074,7 +1085,7 @@ def resubmit_rejected_item(
             "ap_item_id": source["id"],
             "event_type": "ap_item_resubmitted",
             "actor_type": "user",
-            "actor_id": request.actor_id,
+            "actor_id": actor_id,
             "payload_json": {
                 "source_ap_item_id": source["id"],
                 "new_ap_item_id": created["id"],
@@ -1092,7 +1103,7 @@ def resubmit_rejected_item(
             "ap_item_id": created["id"],
             "event_type": "ap_item_resubmission_created",
             "actor_type": "user",
-            "actor_id": request.actor_id,
+            "actor_id": actor_id,
             "payload_json": {
                 "source_ap_item_id": source["id"],
                 "new_ap_item_id": created["id"],
@@ -1125,6 +1136,7 @@ def resubmit_rejected_item(
 @router.post("/{ap_item_id}/merge")
 def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(get_current_user)) -> Dict[str, Any]:
     db = get_db()
+    actor_id = _authenticated_actor(_user)
     target = _require_item(db, ap_item_id)
     verify_org_access(target.get("organization_id") or "default", _user)
     source = _require_item(db, request.source_ap_item_id)
@@ -1180,7 +1192,7 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(ge
         {
             "source_ap_item_id": source["id"],
             "reason": request.reason,
-            "actor_id": request.actor_id,
+            "actor_id": actor_id,
             "merged_at": merged_at,
         }
     )
@@ -1194,7 +1206,7 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(ge
     source_meta["merged_into"] = target["id"]
     source_meta["merge_reason"] = request.reason
     source_meta["merged_at"] = merged_at
-    source_meta["merged_by"] = request.actor_id
+    source_meta["merged_by"] = actor_id
     source_meta["merge_status"] = "merged_source"
     source_meta["source_count"] = 0
     source_meta["suppressed_from_worklist"] = True
@@ -1207,7 +1219,7 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(ge
             "ap_item_id": target["id"],
             "event_type": "ap_item_merged",
             "actor_type": "user",
-            "actor_id": request.actor_id,
+            "actor_id": actor_id,
             "payload_json": {
                 "target_ap_item_id": target["id"],
                 "source_ap_item_id": source["id"],
@@ -1225,7 +1237,7 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(ge
             "ap_item_id": source["id"],
             "event_type": "ap_item_merged_into",
             "actor_type": "user",
-            "actor_id": request.actor_id,
+            "actor_id": actor_id,
             "payload_json": {
                 "source_ap_item_id": source["id"],
                 "target_ap_item_id": target["id"],
@@ -1249,6 +1261,7 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(ge
 @router.post("/{ap_item_id}/split")
 def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(get_current_user)) -> Dict[str, Any]:
     db = get_db()
+    actor_id = _authenticated_actor(_user)
     parent = _require_item(db, ap_item_id)
     verify_org_access(parent.get("organization_id") or "default", _user)
     if not request.sources:
@@ -1285,7 +1298,7 @@ def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(get_
                 **parent_meta,
                 "split_from_ap_item_id": parent["id"],
                 "split_reason": request.reason,
-                "split_actor_id": request.actor_id,
+                "split_actor_id": actor_id,
                 "split_source": {"source_type": source.source_type, "source_ref": source.source_ref},
                 "split_at": now,
             },
@@ -1308,7 +1321,7 @@ def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(get_
                 "ap_item_id": child["id"],
                 "event_type": "ap_item_split_created",
                 "actor_type": "user",
-                "actor_id": request.actor_id,
+                "actor_id": actor_id,
                 "payload_json": {
                     "parent_ap_item_id": parent["id"],
                     "source_type": source.source_type,

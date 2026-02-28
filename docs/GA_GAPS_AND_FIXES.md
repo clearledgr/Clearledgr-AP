@@ -35,6 +35,15 @@
 
 *All 18 gaps resolved. No open items remain.*
 
+### Post-Review Hardening (2026-02-28)
+
+| # | Gap | Severity | Status | Evidence |
+|---|-----|----------|--------|----------|
+| 19 | Strict AP-v1 runtime still exposed non-canonical route families | High | ✅ Fixed | `main.py` strict allowlist profile + `tests/test_runtime_surface_scope.py` |
+| 20 | Real-browser Gmail harness failed hard on missing local browser prerequisites | Medium | ✅ Fixed | `ui/gmail-extension/tests/inboxsdk-layer.browser-harness.test.cjs` (env-aware skip + diagnostics), `README.md` run instructions |
+| 21 | Durable orchestration concern required re-validation after runtime/auth changes | High | ✅ Verified | `tests/test_agent_orchestrator_durable_retry.py`, `tests/test_browser_agent_layer.py::test_autopilot_status_*` |
+| 22 | Authenticated Gmail runtime proof lacked repeatable evidence pipeline for release artifacts | High | ✅ Fixed | `ui/gmail-extension/scripts/run-gmail-e2e-auth-with-evidence.cjs`, `ui/gmail-extension/scripts/gmail-e2e-evidence.cjs`, runbook/process docs |
+
 ---
 
 ## Completed Fixes (Detail)

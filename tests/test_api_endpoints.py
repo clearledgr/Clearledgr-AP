@@ -312,6 +312,11 @@ class TestExtensionEndpoints:
         ).status_code == 401
         assert client.get("/extension/suggestions/form-prefill/email-1?organization_id=default").status_code == 401
         assert client.get("/extension/needs-info-draft/AP-1").status_code == 401
+        assert client.get("/extension/pipeline?organization_id=default").status_code == 401
+        assert client.get("/extension/invoice-pipeline/default").status_code == 401
+        assert client.get("/extension/invoice-status/email-1").status_code == 401
+        assert client.get("/extension/workflow/wf-1").status_code == 401
+        assert client.get("/extension/ap/AP-1/explain").status_code == 401
         assert client.post(
             "/extension/record-field-correction",
             json={
@@ -321,11 +326,66 @@ class TestExtensionEndpoints:
                 "corrected_value": "New",
             },
         ).status_code == 401
+
+    def test_sensitive_extension_endpoints_enforce_org_scope(self):
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        try:
+            verify = client.post(
+                "/extension/verify-confidence",
+                json={
+                    "email_id": "x",
+                    "extraction": {},
+                    "organization_id": "other-org",
+                },
+            )
+            match_bank = client.post(
+                "/extension/match-bank",
+                json={"extraction": {}, "organization_id": "other-org"},
+            )
+            match_erp = client.post(
+                "/extension/match-erp",
+                json={"extraction": {}, "organization_id": "other-org"},
+            )
+            suggest_gl = client.post(
+                "/extension/suggestions/gl-code",
+                json={
+                    "vendor_name": "Acme",
+                    "organization_id": "other-org",
+                },
+            )
+            suggest_vendor = client.post(
+                "/extension/suggestions/vendor",
+                json={
+                    "sender_email": "billing@acme.test",
+                    "organization_id": "other-org",
+                },
+            )
+            validate_amount = client.post(
+                "/extension/suggestions/amount-validation",
+                json={
+                    "vendor_name": "Acme",
+                    "amount": 100,
+                    "organization_id": "other-org",
+                },
+            )
+            form_prefill = client.get(
+                "/extension/suggestions/form-prefill/email-1?organization_id=other-org"
+            )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+
+        assert verify.status_code == 403
+        assert match_bank.status_code == 403
+        assert match_erp.status_code == 403
+        assert suggest_gl.status_code == 403
+        assert suggest_vendor.status_code == 403
+        assert validate_amount.status_code == 403
+        assert form_prefill.status_code == 403
     
     def test_invoice_pipeline(self):
-        """Test invoice pipeline endpoint."""
+        """Invoice pipeline requires auth."""
         response = client.get("/extension/invoice-pipeline/default")
-        assert response.status_code == 200
+        assert response.status_code == 401
 
     class _FakeAuditService:
         def __init__(self):
