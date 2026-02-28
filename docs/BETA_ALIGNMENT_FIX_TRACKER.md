@@ -224,6 +224,9 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
 - Command:
   - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && GMAIL_E2E_PREFLIGHT_SKIP_BROWSER_LAUNCH=1 node scripts/gmail-e2e-runner-preflight.cjs --profile-dir <tmp_profile>`
   - Result: `status=ok` with validated profile-dir contract in this environment.
+- Command:
+  - `gh workflow run gmail-runtime-smoke-nightly.yml --repo clearledgr/Clearledgr-AP --ref main -f release_id=activation-20260228-run122837` then `gh run watch 22520751038 --repo clearledgr/Clearledgr-AP --exit-status`
+  - Result: `success` (`https://github.com/clearledgr/Clearledgr-AP/actions/runs/22520751038`) with uploaded artifact bundle including `GMAIL_RUNTIME_E2E.md`, `gmail-e2e-evidence.json`, `gmail-e2e-screenshot.png`.
 
 ## Change log
 - 2026-02-28:
@@ -236,6 +239,7 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
   - Completed B09 AP-v1 surface contract hardening with production legacy-override guard and strict-surface diagnostics in ops status.
   - Completed B10 with deterministic browser-harness CI workflow and nightly controlled Gmail runtime smoke workflow with evidence upload.
   - Added Gmail runtime runner setup guide + runner preflight script for nightly workflow operational readiness checks.
+  - Activation completed: self-hosted runner `clearledgr-gmail-e2e-mac` is online, required secret/vars configured, and manual nightly smoke dispatch succeeded with passing evidence.
 
 ## Archive protocol
 - Keep this file as the live tracker for current-cycle items.
