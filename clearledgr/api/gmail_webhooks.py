@@ -6,16 +6,21 @@ This enables 24/7 autonomous email processing without requiring the browser to b
 """
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
+import secrets
+import time
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel
 
 from clearledgr.core.errors import safe_error
+from clearledgr.core.auth import TokenData, get_current_user
 
 from clearledgr.services.gmail_api import (
     GmailAPIClient,
@@ -31,6 +36,135 @@ from clearledgr.services.ai_enhanced import EnhancedAIService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/gmail", tags=["gmail"])
+
+_ORG_ADMIN_ROLES = {"admin", "owner", "api"}
+
+
+def _is_prod_like_env() -> bool:
+    return str(os.getenv("ENV", "dev")).strip().lower() in {"prod", "production", "stage", "staging"}
+
+
+def _allow_unverified_push_in_prod() -> bool:
+    raw = str(os.getenv("GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD", "false")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _oauth_state_secret() -> str:
+    secret = str(os.getenv("CLEARLEDGR_SECRET_KEY", "")).strip()
+    if secret:
+        return secret
+    raise HTTPException(status_code=503, detail="oauth_state_signing_unavailable")
+
+
+def _sign_oauth_state(payload: Dict[str, Any]) -> str:
+    body = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).decode("utf-8")
+    signature = hmac.new(
+        _oauth_state_secret().encode("utf-8"),
+        body.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{body}.{signature}"
+
+
+def _unsign_oauth_state(state: str) -> Dict[str, Any]:
+    if not state or "." not in state:
+        raise HTTPException(status_code=400, detail="invalid_oauth_state")
+    body, signature = state.split(".", 1)
+    expected = hmac.new(
+        _oauth_state_secret().encode("utf-8"),
+        body.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=400, detail="invalid_oauth_state_signature")
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(body.encode("utf-8")).decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid_oauth_state_payload") from exc
+    if not isinstance(decoded, dict):
+        raise HTTPException(status_code=400, detail="invalid_oauth_state_payload")
+    issued_at = int(decoded.get("iat") or 0)
+    max_age = int(os.getenv("GMAIL_OAUTH_STATE_MAX_AGE_SECONDS", "900") or "900")
+    if issued_at and (time.time() - float(issued_at)) > max(60, max_age):
+        raise HTTPException(status_code=400, detail="expired_oauth_state")
+    return decoded
+
+
+def _resolve_user_org_id(user_id: str) -> str:
+    """Resolve org for a Gmail token user_id; fallback to default when unknown."""
+    try:
+        user = get_db().get_user(user_id)
+    except Exception:
+        user = None
+    if user and user.get("organization_id"):
+        return str(user["organization_id"])
+    logger.warning("Unable to resolve organization for gmail user_id=%s; using default", user_id)
+    return "default"
+
+
+def _assert_user_owns_gmail_identity(
+    *,
+    user: TokenData,
+    target_user_id: str,
+) -> None:
+    target = str(target_user_id or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="missing_user_id")
+    if str(user.role or "").strip().lower() in _ORG_ADMIN_ROLES:
+        return
+    if str(user.user_id or "").strip() != target:
+        raise HTTPException(status_code=403, detail="forbidden_user_scope")
+
+
+def _validate_push_payload(body: Dict[str, Any]) -> Dict[str, str]:
+    message = body.get("message")
+    if not isinstance(message, dict):
+        raise HTTPException(status_code=400, detail="invalid_pubsub_payload")
+
+    message_data = message.get("data")
+    if not isinstance(message_data, str) or not message_data.strip():
+        raise HTTPException(status_code=400, detail="missing_pubsub_message_data")
+
+    try:
+        decoded = base64.urlsafe_b64decode(message_data).decode("utf-8")
+        notification = json.loads(decoded)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid_pubsub_message_data") from exc
+
+    email_address = str(notification.get("emailAddress") or "").strip()
+    history_id = str(notification.get("historyId") or "").strip()
+    if not email_address or not history_id:
+        raise HTTPException(status_code=400, detail="invalid_gmail_notification_payload")
+
+    return {
+        "email_address": email_address,
+        "history_id": history_id,
+    }
+
+
+def _enforce_push_verifier(request: Request) -> None:
+    """Verifier for public /gmail/push endpoint.
+
+    If GMAIL_PUSH_SHARED_SECRET is configured, callers must present it in
+    X-Gmail-Push-Token or X-Webhook-Token.
+    """
+    secret = str(os.getenv("GMAIL_PUSH_SHARED_SECRET", "")).strip()
+    if not secret:
+        if _is_prod_like_env():
+            if not _allow_unverified_push_in_prod():
+                raise HTTPException(status_code=503, detail="gmail_push_verifier_not_configured")
+            logger.warning("GMAIL_PUSH_SHARED_SECRET is unset in prod-like env; unverified push explicitly allowed")
+        return
+
+    provided = (
+        request.headers.get("X-Gmail-Push-Token")
+        or request.headers.get("X-Webhook-Token")
+        or ""
+    ).strip()
+    if provided != secret:
+        raise HTTPException(status_code=401, detail="gmail_push_verification_failed")
 
 
 def _should_setup_watch() -> bool:
@@ -82,35 +216,19 @@ async def gmail_push_notification(
     This endpoint is called by Google whenever a new email arrives in a watched inbox.
     Processing happens in the background to respond quickly to Google.
     """
-    try:
-        body = await request.json()
-        logger.info(f"Received Gmail push notification")
-        
-        # Decode the Pub/Sub message
-        message_data = body.get("message", {}).get("data", "")
-        if message_data:
-            decoded = base64.urlsafe_b64decode(message_data).decode("utf-8")
-            notification = json.loads(decoded)
-            
-            email_address = notification.get("emailAddress")
-            history_id = notification.get("historyId")
-            
-            logger.info(f"Gmail notification for {email_address}, historyId: {history_id}")
-            
-            # Process in background
-            background_tasks.add_task(
-                process_gmail_notification,
-                email_address,
-                history_id,
-            )
-        
-        # Always return 200 to acknowledge receipt
-        return {"status": "ok"}
-    
-    except Exception as e:
-        logger.error(f"Error processing Gmail push: {e}")
-        # Still return 200 to prevent retries
-        return {"status": "error", "message": str(e)}
+    body = await request.json()
+    _enforce_push_verifier(request)
+    payload = _validate_push_payload(body)
+    email_address = payload["email_address"]
+    history_id = payload["history_id"]
+
+    logger.info("Received Gmail push notification for %s history=%s", email_address, history_id)
+    background_tasks.add_task(
+        process_gmail_notification,
+        email_address,
+        history_id,
+    )
+    return {"status": "ok"}
 
 
 async def process_gmail_notification(email_address: str, history_id: str):
@@ -131,6 +249,8 @@ async def process_gmail_notification(email_address: str, history_id: str):
             logger.warning(f"No token found for {email_address}")
             return
         
+        organization_id = _resolve_user_org_id(token.user_id)
+
         # Initialize Gmail client
         client = GmailAPIClient(token.user_id)
         if not await client.ensure_authenticated():
@@ -183,6 +303,7 @@ async def process_gmail_notification(email_address: str, history_id: str):
                     client=client,
                     message_id=message_id,
                     user_id=token.user_id,
+                    organization_id=organization_id,
                     engine=engine,
                     ai_service=ai_service,
                 )
@@ -209,6 +330,7 @@ async def process_single_email(
     client: GmailAPIClient,
     message_id: str,
     user_id: str,
+    organization_id: str,
     engine,
     ai_service: EnhancedAIService,
 ):
@@ -268,6 +390,7 @@ async def process_single_email(
             client=client,
             message=message,
             user_id=user_id,
+            organization_id=organization_id,
             confidence=classification.get("confidence", 0.0),
         )
     
@@ -277,6 +400,7 @@ async def process_single_email(
             client=client,
             message=message,
             user_id=user_id,
+            organization_id=organization_id,
             confidence=classification.get("confidence", 0.0),
         )
     
@@ -333,6 +457,7 @@ async def process_invoice_email(
     client: GmailAPIClient,
     message,
     user_id: str,
+    organization_id: str,
     confidence: float,
 ):
     """
@@ -431,7 +556,7 @@ async def process_invoice_email(
         due_date=_safe_date(extraction.get("due_date")),
         confidence=extraction.get("confidence", confidence),
         user_id=user_id,
-        organization_id="default",  # TODO: Get from user
+        organization_id=organization_id,
         invoice_text=invoice_text,  # For discount detection
     )
     
@@ -465,6 +590,7 @@ async def process_payment_request_email(
     client: GmailAPIClient,
     message,
     user_id: str,
+    organization_id: str,
     confidence: float,
 ):
     """
@@ -495,7 +621,7 @@ async def process_payment_request_email(
             sender_email = email_match.group(1)
     
     # Create payment request
-    service = get_payment_request_service("default")
+    service = get_payment_request_service(organization_id)
     
     try:
         request = service.create_from_email(
@@ -595,8 +721,14 @@ async def gmail_authorize(user_id: str, redirect_url: Optional[str] = None):
     
     Returns URL to redirect user to for authorization.
     """
-    state = json.dumps({"user_id": user_id, "redirect_url": redirect_url or ""})
-    state_encoded = base64.urlsafe_b64encode(state.encode()).decode()
+    state_encoded = _sign_oauth_state(
+        {
+            "user_id": user_id,
+            "redirect_url": redirect_url or "",
+            "iat": int(time.time()),
+            "nonce": secrets.token_urlsafe(12),
+        }
+    )
     
     try:
         auth_url = generate_auth_url(state=state_encoded)
@@ -612,19 +744,13 @@ async def gmail_callback(code: str, state: Optional[str] = None):
     Handle OAuth callback from Google.
     """
     try:
-        # Decode state
-        user_id = None
-        redirect_url = None
-        oauth_redirect_uri = None
-        
-        if state:
-            try:
-                state_decoded = json.loads(base64.urlsafe_b64decode(state).decode())
-                user_id = state_decoded.get("user_id")
-                redirect_url = state_decoded.get("redirect_url")
-                oauth_redirect_uri = state_decoded.get("oauth_redirect_uri")
-            except Exception:
-                pass
+        # Decode and verify OAuth state.
+        if not state:
+            raise HTTPException(status_code=400, detail="missing_oauth_state")
+        state_decoded = _unsign_oauth_state(state)
+        user_id = state_decoded.get("user_id")
+        redirect_url = state_decoded.get("redirect_url")
+        oauth_redirect_uri = state_decoded.get("oauth_redirect_uri")
         
         # Exchange code for tokens
         token = await exchange_code_for_tokens(code, redirect_uri=oauth_redirect_uri)
@@ -690,6 +816,8 @@ async def gmail_callback(code: str, state: Optional[str] = None):
             "watch_expiration": watch_result.get("expiration"),
         }
     
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=503, detail=safe_error(e, "gmail callback config"))
     except Exception as e:
@@ -697,10 +825,14 @@ async def gmail_callback(code: str, state: Optional[str] = None):
 
 
 @router.post("/disconnect")
-async def gmail_disconnect(user_id: str):
+async def gmail_disconnect(
+    user_id: str,
+    user: TokenData = Depends(get_current_user),
+):
     """
     Disconnect Gmail integration for a user.
     """
+    _assert_user_owns_gmail_identity(user=user, target_user_id=user_id)
     try:
         # Stop watch
         watch_service = GmailWatchService(user_id)
@@ -716,10 +848,14 @@ async def gmail_disconnect(user_id: str):
 
 
 @router.get("/status/{user_id}")
-async def gmail_status(user_id: str):
+async def gmail_status(
+    user_id: str,
+    user: TokenData = Depends(get_current_user),
+):
     """
     Check Gmail integration status for a user.
     """
+    _assert_user_owns_gmail_identity(user=user, target_user_id=user_id)
     token = token_store.get(user_id)
     state = get_db().get_gmail_autopilot_state(user_id) or {}
     

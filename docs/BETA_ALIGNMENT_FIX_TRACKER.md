@@ -22,6 +22,10 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
 | B08 | P1 | runtime-contract-clarity | DONE | fragile |
 | B09 | P1 | ap-v1-surface-scope | DONE | partial |
 | B10 | P2 | e2e-confidence | DONE | partial |
+| B11 | P0 | agent-intents-tenant-scope | DONE | broken |
+| B12 | P0 | ap-retry-post-canonical-path | DONE | placeholder |
+| B13 | P0 | gmail-oauth-state-and-push-hardening | DONE | fragile |
+| B14 | P1 | deployment-config-parity | DONE | partial |
 
 ## Open and completed items
 
@@ -202,6 +206,70 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
   - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && GMAIL_E2E_PREFLIGHT_SKIP_BROWSER_LAUNCH=1 node scripts/gmail-e2e-runner-preflight.cjs --profile-dir <profile_dir>` (runner preflight contract verified)
   - Workflow YAML + script references verified in repo.
 
+### B11
+- Priority: `P0`
+- Category: `agent-intents-tenant-scope`
+- Status: `DONE`
+- Type: `broken`
+- Plan refs: `PLAN.md` auth boundary + tenant isolation controls
+- Problem: `/api/agent/intents/*` accepted caller-provided `organization_id` without org-access enforcement.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/agent_intents.py` (`_resolve_org_id_for_user`, `preview_intent`, `execute_intent`)
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_api_endpoints.py` (`test_preview_intent_endpoint_blocks_cross_org_request`, `test_execute_intent_endpoint_blocks_cross_org_request`, `test_execute_intent_endpoint_allows_admin_cross_org_request`)
+- Acceptance criteria:
+  - Non-admin authenticated caller receives `403 org_mismatch` for cross-org preview/execute request.
+  - Admin caller can target another org.
+- Validation/tests:
+  - Included in combined command listed in Evidence section.
+
+### B12
+- Priority: `P0`
+- Category: `ap-retry-post-canonical-path`
+- Status: `DONE`
+- Type: `placeholder`
+- Plan refs: `PLAN.md` AP state machine legal retry path and durable retry semantics
+- Problem: `/api/ap/items/{id}/retry-post` used connector placeholder/import fallback instead of canonical workflow recovery path.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ap_items.py` (`retry_erp_post`)
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_api_endpoints.py` (`TestAPRetryPostEndpoint`)
+- Acceptance criteria:
+  - Retry endpoint delegates to `InvoiceWorkflowService.resume_workflow()` and returns canonical recovered/still-failing/not-resumable outcomes.
+  - Placeholder `ImportError` path is removed.
+- Validation/tests:
+  - Included in combined command listed in Evidence section.
+
+### B13
+- Priority: `P0`
+- Category: `gmail-oauth-state-and-push-hardening`
+- Status: `DONE`
+- Type: `fragile`
+- Plan refs: `PLAN.md` callback verifier + auth boundary + secure callback contracts
+- Problem: OAuth state was unsigned/tamperable and production `/gmail/push` could run without callback verifier.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/gmail_webhooks.py` (`_sign_oauth_state`, `_unsign_oauth_state`, `_enforce_push_verifier`, `gmail_authorize`, `gmail_callback`)
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_api_endpoints.py` (`test_gmail_push_prod_requires_verifier_secret_by_default`, `test_gmail_push_prod_can_allow_unverified_with_explicit_flag`, `test_gmail_authorize_uses_signed_state`, `test_gmail_callback_requires_oauth_state`, `test_gmail_callback_rejects_tampered_oauth_state`)
+- Acceptance criteria:
+  - OAuth callback rejects missing/tampered state (`400`) and uses signed+ttl-bounded state.
+  - Production-like env requires push verifier secret by default (unless explicitly overridden with allow flag).
+- Validation/tests:
+  - Included in combined command listed in Evidence section.
+
+### B14
+- Priority: `P1`
+- Category: `deployment-config-parity`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: `PLAN.md` deployment/runtime truth-in-claims and security config readiness
+- Problem: config templates omitted required runtime vars for Teams verifier, Gmail push verifier, OAuth state TTL, and production strict-surface guardrails.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/env.example`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/render.yaml`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/docker-compose.yml`
+- Acceptance criteria:
+  - Required variables are documented and present in deploy templates with secure defaults.
+- Validation/tests:
+  - Configuration parity verified by direct file inspection and regression tests in Evidence section.
+
 ## Evidence (this cycle)
 - Command:
   - `PYTHONPATH=. pytest tests/test_api_endpoints.py::TestGmailWebhooks tests/test_api_endpoints.py::TestExtensionEndpoints::test_extension_match_endpoints_return_results_for_authorized_user -q`
@@ -215,6 +283,15 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
 - Command:
   - `PYTHONPATH=. pytest tests/test_api_endpoints.py::TestGmailWebhooks tests/test_api_endpoints.py::TestExtensionEndpoints::test_extension_match_endpoints_return_results_for_authorized_user tests/test_agent_orchestrator_durable_retry.py::test_process_invoice_forces_agentic_mode_in_production_when_opt_out_requested tests/test_agent_orchestrator_durable_retry.py::test_process_invoice_ignores_legacy_fallback_flag_in_production tests/test_agent_orchestrator_durable_retry.py::test_runtime_status_exposes_execution_contract tests/test_browser_agent_layer.py::test_autopilot_status_includes_agent_runtime_truth_claims tests/test_browser_agent_layer.py::test_autopilot_status_keeps_durable_retry_enabled_in_production tests/test_runtime_surface_scope.py -q`
   - Result: `18 passed`
+- Command:
+  - `PYTHONPATH=. pytest tests/test_api_endpoints.py::TestGmailWebhooks tests/test_api_endpoints.py::TestAgentIntentEndpoints tests/test_api_endpoints.py::TestAPRetryPostEndpoint -q`
+  - Result: `22 passed`
+- Command:
+  - `PYTHONPATH=. pytest tests/test_agent_orchestrator_durable_retry.py::test_process_invoice_forces_agentic_mode_in_production_when_opt_out_requested tests/test_agent_orchestrator_durable_retry.py::test_process_invoice_ignores_legacy_fallback_flag_in_production tests/test_agent_orchestrator_durable_retry.py::test_runtime_status_exposes_execution_contract tests/test_browser_agent_layer.py::test_autopilot_status_includes_agent_runtime_truth_claims tests/test_browser_agent_layer.py::test_autopilot_status_keeps_durable_retry_enabled_in_production tests/test_runtime_surface_scope.py -q`
+  - Result: `9 passed`
+- Command:
+  - `PYTHONPATH=. pytest tests/test_api_endpoints.py::TestGmailWebhooks tests/test_api_endpoints.py::TestExtensionEndpoints::test_extension_match_endpoints_return_results_for_authorized_user tests/test_api_endpoints.py::TestAgentIntentEndpoints tests/test_api_endpoints.py::TestAPRetryPostEndpoint tests/test_agent_orchestrator_durable_retry.py::test_process_invoice_forces_agentic_mode_in_production_when_opt_out_requested tests/test_agent_orchestrator_durable_retry.py::test_process_invoice_ignores_legacy_fallback_flag_in_production tests/test_agent_orchestrator_durable_retry.py::test_runtime_status_exposes_execution_contract tests/test_browser_agent_layer.py::test_autopilot_status_includes_agent_runtime_truth_claims tests/test_browser_agent_layer.py::test_autopilot_status_keeps_durable_retry_enabled_in_production tests/test_runtime_surface_scope.py -q`
+  - Result: `32 passed`
 - Command:
   - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && node --test tests/inboxsdk-layer.browser-harness.test.cjs tests/inboxsdk-layer.e2e-smoke.test.cjs`
   - Result: `2 passed, 2 skipped`
@@ -240,6 +317,10 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
   - Completed B10 with deterministic browser-harness CI workflow and nightly controlled Gmail runtime smoke workflow with evidence upload.
   - Added Gmail runtime runner setup guide + runner preflight script for nightly workflow operational readiness checks.
   - Activation completed: self-hosted runner `clearledgr-gmail-e2e-mac` is online, required secret/vars configured, and manual nightly smoke dispatch succeeded with passing evidence.
+  - Closed B11 by enforcing org scoping on `/api/agent/intents/*` with explicit non-admin cross-org denial tests.
+  - Closed B12 by replacing `/api/ap/items/{id}/retry-post` placeholder ERP import path with canonical `resume_workflow()` recovery path and response mapping.
+  - Closed B13 by adding signed+ttl-bounded Gmail OAuth state validation and production push-verifier enforcement defaults.
+  - Closed B14 by aligning `env.example`, `render.yaml`, and `docker-compose.yml` with required Teams/Gmail/runtime security flags.
 
 ## Archive protocol
 - Keep this file as the live tracker for current-cycle items.

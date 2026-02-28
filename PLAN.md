@@ -1,4 +1,4 @@
-# Clearledgr AP v1 GA Doctrine and Launch Spec (Canonical)
+# Clearledgr Finance Agent — AP v1 GA Doctrine and Launch Spec (Canonical)
 
 ## Document Metadata
 - **Status:** Canonical doctrine + contracts + launch-gates spec for Clearledgr AP v1
@@ -10,10 +10,10 @@
 ## Summary
 This document is the single source of truth for Clearledgr AP v1 doctrine, product positioning, engineering contracts, and GA launch gates.
 
-Clearledgr AP v1 is an **embedded finance execution layer**. It is not a generic automation builder and not a standalone AP platform dashboard. AP v1 starts inside Gmail, routes approvals through Slack and Teams, posts to ERP systems as the system of record, and provides policy-governed orchestration plus an auditable execution trail.
+Clearledgr is a **Finance AI Agent**. AP is its first production skill. The agent is embedded in the tools finance teams already use and executes AP workflows end-to-end with policy controls and an auditable trail. It is not a generic automation builder and not a standalone AP platform dashboard. AP v1 starts inside Gmail, routes approvals through Slack and Teams, posts to ERP systems as the system of record, and provides policy-governed orchestration plus an auditable execution trail.
 
 ### Locked product decisions
-1. **Clearledgr is an embedded finance execution layer** (external positioning).
+1. **Clearledgr is a Finance AI Agent** (external positioning). AP is the first production skill; new finance skills are added over time.
 2. **AP v1 starts in Gmail** (inbox-native intake and triage).
 3. **Approvals happen in Slack and Teams at v1 GA** (co-equal channel parity requirement at GA).
 4. **ERP remains the system of record**; Clearledgr orchestrates and executes.
@@ -21,8 +21,8 @@ Clearledgr AP v1 is an **embedded finance execution layer**. It is not a generic
 6. **"Streak-like" is internal UX doctrine only**, not external positioning.
 7. **WhatsApp and Telegram are not product surfaces** and are out of product scope by default.
 8. **"v1 launch" means GA launch**, not pilot launch.
-9. **ERP commitment at v1 GA is operational parity all enabled** for **QuickBooks + Xero + NetSuite + SAP**.
-10. **Execution is agentic and audit-safe**; mutating/high-risk actions are human-confirmed by default unless policy explicitly allows autopilot.
+9. **ERP commitment at v1 GA is phased**: **NetSuite is production-grade at v1 Pilot → v1 GA**. Additional ERPs (e.g., QuickBooks, Xero, SAP) are post‑GA expansions behind the same adapter contract and must not block GA.
+10. **Execution is automated and audit-safe**; mutating/high‑risk actions are human‑confirmed by default unless policy explicitly allows autopilot.
 11. **Clearledgr runs one finance agent runtime with AP as the first production skill**; future workflows expand as skills on the same runtime rather than separate product runtimes.
 
 ---
@@ -30,7 +30,7 @@ Clearledgr AP v1 is an **embedded finance execution layer**. It is not a generic
 ## 1. Product Doctrine
 
 ### 1.1 What Clearledgr is
-Clearledgr is an **embedded finance execution layer** that sits inside the tools finance teams already use and executes finance workflows end-to-end with policy controls and auditability.
+Clearledgr is a **Finance AI Agent** embedded in the tools finance teams already use. It executes finance workflows end‑to‑end with policy controls and auditability.
 
 For AP v1, Clearledgr:
 1. Detects invoice and AP requests from email (Gmail primary).
@@ -41,11 +41,12 @@ For AP v1, Clearledgr:
 
 ### 1.2 What Clearledgr is not
 Clearledgr is not:
-1. A generic automation builder or no-code workflow tool.
+1. A generic automation builder or no‑code workflow tool.
 2. A consumer/personal AI assistant.
 3. A "Streak for finance" product category.
 4. A standalone AP dashboard required for daily operator work.
 5. A consumer messaging workflow product (WhatsApp/Telegram excluded).
+6. A services-led outsourced accounting firm.
 
 ### 1.3 Why AP is the wedge
 AP is the right first workflow because:
@@ -101,7 +102,7 @@ Pilot may use staged connector/channel enablement. Pilot readiness does not impl
 v1 GA is the first generally available AP release and requires:
 1. Gmail AP workspace as the primary operator surface.
 2. Slack and Teams approval parity (co-equal channels).
-3. Operationally enabled ERP parity for QuickBooks, Xero, NetSuite, and SAP.
+3. ERP posting is production-grade for the GA-supported ERP set (NetSuite first), with additional ERPs enabled only once their adapter passes readiness gates.
 4. Reliability and trust gates in Section 7.
 5. Launch acceptance criteria in Section 8.
 
@@ -351,84 +352,48 @@ Behavioral requirements:
 
 ---
 
-## 6. ERP Parity Contract (QuickBooks + Xero + NetSuite + SAP)
+## 6. ERP Support Contract (Phased: NetSuite-first)
 
-### 6.1 Supported ERP list for AP v1 GA (locked)
-AP v1 GA operational parity commitment applies to:
-1. QuickBooks
-2. Xero
-3. NetSuite
-4. SAP
+### 6.1 Supported ERP list for AP v1
+- **v1 Pilot → v1 GA:** **NetSuite** (production-grade, API-first with optional gated browser fallback)
+- **Post‑GA expansions:** QuickBooks, Xero, SAP (and others) as separate, versioned adapters
 
-### 6.2 Definition of "operational parity all enabled"
-For AP v1 GA, "multi-ERP parity" does **not** mean "connectors exist."
-
-It means:
-1. All four ERPs are enabled for production use at GA.
-2. All required AP workflow capabilities are implemented and validated for each ERP.
-3. Connector differences do not break the common AP workflow semantics or operator UX contract.
-
-### 6.3 Required capabilities for GA parity (all four ERPs)
-Each ERP connector must support, at minimum:
+### 6.2 Definition of “supported” (per ERP)
+“Supported” does **not** mean “connector exists.” It means:
 1. Connectivity/auth readiness check
-2. Vendor lookup (create behavior may be policy-dependent; see optional capabilities)
-3. Account/GL lookup as required for AP posting workflows
+2. Vendor lookup (and optional create if policy permits)
+3. Account/GL lookup as required
 4. AP bill/invoice create flow
-5. Post/submit behavior (or equivalent finalization step)
+5. Submit/finalize behavior (or equivalent)
 6. Stable ERP reference return on success
 7. Status lookup/verification
-8. Idempotent post behavior
-9. Structured error normalization (connector-specific errors mapped to canonical error codes)
+8. Idempotent posting + retry safety
+9. Structured error normalization (mapped to canonical error codes)
+10. Audit coverage verification for posting and retries
 
-### 6.4 Optional capabilities (must not block parity unless promoted)
-Optional capabilities may vary by ERP but must be documented:
-1. Attachment upload
-2. Draft-only mode
-3. Vendor creation
-
-If any optional capability becomes launch-critical for a tenant segment, it must be promoted explicitly in this document before being treated as a parity requirement.
-
-### 6.5 ERP posting response contract (canonical)
-ERP post response contract must include:
+### 6.3 Canonical ERP post response contract
+ERP post response must include:
 1. `erp_type`
 2. `status`
 3. `erp_reference` (required on success)
 4. `idempotency_key`
 5. `error_code` (normalized, on failure)
-6. `error_message` (redacted and operator-safe where surfaced)
+6. `error_message` (operator-safe)
 7. `raw_response_redacted` (stored where allowed)
 
-### 6.6 Connector readiness checklist (per ERP, required before GA)
-Each ERP must pass a readiness checklist that includes:
-1. Authentication/connectivity validation
-2. Sandbox/staging end-to-end AP posting test pass
-3. Idempotent retry verification
-4. Error mapping verification
-5. Audit coverage verification
-6. Operator-facing exception behavior verification
-7. Runbook completeness
-8. Signed-off validation evidence
-
-### 6.7 Fallback policy (API-first, gated browser fallback)
+### 6.4 Browser fallback policy (API-first, gated fallback)
 Default policy:
-1. API-first for all ERP writes.
-2. Browser fallback is only allowed if:
-   - connector path is unavailable/incomplete for a supported ERP capability,
+1. API-first for ERP writes.
+2. Browser fallback only if:
+   - API path is unavailable/incomplete for a required capability,
    - policy explicitly permits it,
    - a preview is generated,
    - human confirmation is captured,
    - the action is fully audited.
 
-If browser fallback is not supported for a connector/workflow, the system must fail safely and surface a manual handoff path without implying successful posting.
-
-### 6.8 GA parity evidence requirements
-GA cannot be declared until QuickBooks, Xero, NetSuite, and SAP each have:
-1. A passing parity test matrix
-2. Signed-off connector readiness checklist
-3. Production runbook entries
-4. Monitored error/latency baselines established
-
----
+### 6.5 Adapter expansion rule (how we add ERPs safely)
+- Add ERPs **one at a time** behind the adapter interface.
+- Each ERP must pass a readiness checklist (sandbox E2E, idempotency, error mapping, audit coverage, runbook) **before** being marketed as supported.
 
 ## 7. Reliability and Trust Requirements (GA Launch Gates)
 
@@ -518,7 +483,7 @@ Pilot success alone is not sufficient unless GA parity and reliability gates are
 ### 8.4 GA launch acceptance criteria (minimum)
 AP v1 GA launch requires all of the following:
 1. Gmail + Slack + Teams channel contracts operational and validated
-2. QuickBooks + Xero + NetSuite + SAP parity requirements passed
+2. GA-supported ERP connector(s) readiness gates passed (NetSuite minimum)
 3. State machine enforcement proven in tests and staging validation
 4. Audit completeness validated for transitions and external actions
 5. Idempotent posting and duplicate action handling validated
@@ -575,12 +540,12 @@ Before GA:
    - result feedback / stale action handling
 3. Duplicate callback/action handling must be verified in both channels
 
-### 9.4 ERP parity validation (QuickBooks + Xero + NetSuite + SAP)
+### 9.4 ERP readiness validation (phased adapters)
 Before GA:
-1. All four ERPs must complete readiness checklists
-2. All required parity capabilities must be enabled
-3. Connector-specific limitations must be documented and not break workflow semantics
-4. Parity evidence must be archived for signoff
+1. GA-supported ERP adapter(s) must complete readiness checklists (NetSuite minimum)
+2. Required capabilities for AP posting must be enabled and validated
+3. Connector-specific limitations must be documented and must not break workflow semantics
+4. Readiness evidence must be archived for signoff
 
 ### 9.5 GA launch
 GA launch occurs only when:
@@ -724,8 +689,8 @@ These defaults apply unless superseded by a later explicit revision to this `PLA
 3. Admin Console is setup/ops only, not daily AP workflow UI.
 
 ### ERP defaults
-1. AP v1 GA parity commitment includes QuickBooks, Xero, NetSuite, and SAP.
-2. All four must be operationally enabled at GA.
+1. AP v1 GA is **NetSuite-first**.
+2. Additional ERPs are enabled post‑GA once their adapter passes readiness gates.
 3. API-first posting is the default execution path.
 4. Browser fallback, if supported, is gated by preview + confirmation + audit + policy.
 

@@ -1353,15 +1353,7 @@ async def retry_erp_post(
     organization_id: str = "default",
     _user=Depends(get_current_user),
 ):
-    """Retry posting an AP item to the ERP after a previous failure.
-
-    Only items in ``failed_post`` state can be retried.  The item is
-    transitioned back to ``ready_to_post`` and then the ERP adapter is
-    invoked.  The full state machine and audit trail apply.
-    """
-    import logging
-
-    logger = logging.getLogger(__name__)
+    """Retry posting an AP item to ERP through the canonical workflow resume path."""
     verify_org_access(organization_id, _user)
     db = get_db()
     item = db.get_ap_item(ap_item_id)
@@ -1378,53 +1370,37 @@ async def retry_erp_post(
             detail=f"Can only retry from failed_post state (current: {current_state})",
         )
 
-    # Transition back to ready_to_post (state machine validates this)
+    from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+
+    workflow = InvoiceWorkflowService(organization_id=organization_id)
     try:
-        db.update_ap_item(
-            ap_item_id,
-            state=APState.READY_TO_POST,
-            last_error=None,
-            _actor_type="user",
-            _actor_id="api",
-        )
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=safe_error(e, "retry transition"))
+        resume_result = await workflow.resume_workflow(ap_item_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=safe_error(exc, "ERP posting")) from exc
 
-    # Attempt ERP posting
-    try:
-        from clearledgr.integrations.erp_router import post_to_erp
-
-        erp_result = post_to_erp(item, idempotency_key=ap_item_id)
-
-        db.update_ap_item(
-            ap_item_id,
-            state=APState.POSTED_TO_ERP,
-            erp_reference=erp_result.get("reference_id"),
-            erp_posted_at=datetime.now(timezone.utc).isoformat(),
-            _actor_type="system",
-            _actor_id="erp_retry",
-        )
+    status = str((resume_result or {}).get("status") or "").strip().lower()
+    if status == "recovered":
         return {
             "status": "posted",
             "ap_item_id": ap_item_id,
-            "erp_reference": erp_result.get("reference_id"),
+            "erp_reference": (resume_result or {}).get("erp_reference"),
+            "resume_result": resume_result,
         }
-    except ImportError:
-        # ERP adapter not yet wired — leave item in ready_to_post
-        logger.warning("ERP adapter not available for retry of %s", ap_item_id)
-        return {
-            "status": "ready_to_post",
-            "ap_item_id": ap_item_id,
-            "message": "Item transitioned to ready_to_post; ERP adapter not configured",
-        }
-    except Exception as e:
-        # Transition back to failed_post
-        logger.error("ERP retry failed for %s: %s", ap_item_id, e)
-        db.update_ap_item(
-            ap_item_id,
-            state=APState.FAILED_POST,
-            last_error=str(e),
-            _actor_type="system",
-            _actor_id="erp_retry",
+    if status == "still_failing":
+        reason = str((resume_result or {}).get("reason") or "erp_post_failed")
+        raise HTTPException(
+            status_code=502,
+            detail=f"ERP posting failed: {reason}",
         )
-        raise HTTPException(status_code=502, detail=safe_error(e, "ERP posting"))
+    if status == "not_resumable":
+        reason = str((resume_result or {}).get("reason") or "state_does_not_support_resume")
+        raise HTTPException(status_code=400, detail=reason)
+    if status == "error":
+        reason = str((resume_result or {}).get("reason") or "retry_failed")
+        raise HTTPException(status_code=400, detail=reason)
+
+    return {
+        "status": status or "unknown",
+        "ap_item_id": ap_item_id,
+        "resume_result": resume_result,
+    }

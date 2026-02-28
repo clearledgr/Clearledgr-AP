@@ -19,6 +19,8 @@ services:
         value: "true"
       - key: CLEARLEDGR_ENABLE_LEGACY_SURFACES
         value: "false"
+      - key: AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION
+        value: "false"
       - key: QUICKBOOKS_CLIENT_ID
         sync: false
       - key: QUICKBOOKS_CLIENT_SECRET
@@ -43,6 +45,14 @@ services:
         sync: false
       - key: TEAMS_APP_ID
         sync: false
+      - key: TEAMS_APP_PASSWORD
+        sync: false
+      - key: GMAIL_PUSH_SHARED_SECRET
+        sync: false
+      - key: GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD
+        value: "false"
+      - key: GMAIL_OAUTH_STATE_MAX_AGE_SECONDS
+        value: "900"
       - key: AP_TEMPORAL_ENABLED
         value: "false"
       - key: AP_TEMPORAL_REQUIRED

@@ -5,6 +5,7 @@ Tests the FastAPI endpoints for the Clearledgr API.
 """
 
 from datetime import datetime, timedelta, timezone
+import asyncio
 from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +15,8 @@ from unittest.mock import patch, MagicMock, AsyncMock
 from main import app
 from clearledgr.api import gmail_extension as gmail_extension_module
 from clearledgr.api import agent_intents as agent_intents_module
+from clearledgr.api import gmail_webhooks as gmail_webhooks_module
+from clearledgr.api import ap_items as ap_items_module
 from clearledgr.core.auth import TokenData
 
 client = TestClient(app)
@@ -184,8 +187,77 @@ class TestAPWorkflowEndpoints:
         assert response.status_code == 200
 
 
+class TestAPRetryPostEndpoint:
+    @staticmethod
+    def _fake_user():
+        return TokenData(
+            user_id="ap-user-1",
+            email="ap-user@example.com",
+            organization_id="default",
+            role="user",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+    def test_retry_post_uses_resume_workflow_success(self):
+        fake_db = MagicMock()
+        fake_db.get_ap_item.return_value = {
+            "id": "ap-1",
+            "organization_id": "default",
+            "state": "failed_post",
+        }
+
+        app.dependency_overrides[ap_items_module.get_current_user] = self._fake_user
+        try:
+            with patch.object(ap_items_module, "get_db", return_value=fake_db):
+                with patch(
+                    "clearledgr.services.invoice_workflow.InvoiceWorkflowService.resume_workflow",
+                    AsyncMock(return_value={"status": "recovered", "erp_reference": "ERP-RET-1"}),
+                ) as resume_mock:
+                    response = client.post("/api/ap/items/ap-1/retry-post?organization_id=default")
+        finally:
+            app.dependency_overrides.pop(ap_items_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "posted"
+        assert payload["erp_reference"] == "ERP-RET-1"
+        resume_mock.assert_awaited_once_with("ap-1")
+
+    def test_retry_post_returns_502_when_resume_still_failing(self):
+        fake_db = MagicMock()
+        fake_db.get_ap_item.return_value = {
+            "id": "ap-2",
+            "organization_id": "default",
+            "state": "failed_post",
+        }
+
+        app.dependency_overrides[ap_items_module.get_current_user] = self._fake_user
+        try:
+            with patch.object(ap_items_module, "get_db", return_value=fake_db):
+                with patch(
+                    "clearledgr.services.invoice_workflow.InvoiceWorkflowService.resume_workflow",
+                    AsyncMock(return_value={"status": "still_failing", "reason": "connector_timeout"}),
+                ):
+                    response = client.post("/api/ap/items/ap-2/retry-post?organization_id=default")
+        finally:
+            app.dependency_overrides.pop(ap_items_module.get_current_user, None)
+
+        assert response.status_code == 502
+        assert "connector_timeout" in str(response.json().get("detail") or "")
+
+
 class TestGmailWebhooks:
     """Test Gmail Pub/Sub webhook endpoints."""
+
+    @staticmethod
+    def _fake_user(user_id: str = "gmail-user-1", role: str = "user"):
+        return TokenData(
+            user_id=user_id,
+            email=f"{user_id}@example.com",
+            organization_id="default",
+            role=role,
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
     
     def test_gmail_push_accepts_message(self):
         """Test that push endpoint accepts Pub/Sub messages."""
@@ -208,13 +280,170 @@ class TestGmailWebhooks:
         
         # Should always return 200 to acknowledge
         assert response.status_code == 200
+        assert response.json().get("status") == "ok"
+
+    def test_gmail_push_rejects_invalid_payload(self):
+        response = client.post("/gmail/push", json={})
+        assert response.status_code == 400
+        assert response.json().get("detail") == "invalid_pubsub_payload"
+
+    def test_gmail_push_requires_shared_secret_when_configured(self, monkeypatch):
+        monkeypatch.setenv("GMAIL_PUSH_SHARED_SECRET", "secret-123")
+        response = client.post("/gmail/push", json={})
+        assert response.status_code == 401
+        assert response.json().get("detail") == "gmail_push_verification_failed"
+
+    def test_gmail_push_prod_requires_verifier_secret_by_default(self, monkeypatch):
+        monkeypatch.setenv("ENV", "production")
+        monkeypatch.delenv("GMAIL_PUSH_SHARED_SECRET", raising=False)
+        monkeypatch.delenv("GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD", raising=False)
+        response = client.post("/gmail/push", json={})
+        assert response.status_code == 503
+        assert response.json().get("detail") == "gmail_push_verifier_not_configured"
+
+    def test_gmail_push_prod_can_allow_unverified_with_explicit_flag(self, monkeypatch):
+        import base64
+        import json
+
+        monkeypatch.setenv("ENV", "production")
+        monkeypatch.delenv("GMAIL_PUSH_SHARED_SECRET", raising=False)
+        monkeypatch.setenv("GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD", "true")
+
+        notification = {"emailAddress": "test@example.com", "historyId": "12345"}
+        encoded = base64.urlsafe_b64encode(json.dumps(notification).encode()).decode()
+        response = client.post(
+            "/gmail/push",
+            json={"message": {"data": encoded}, "subscription": "projects/test/subscriptions/test-sub"},
+        )
+        assert response.status_code == 200
+        assert response.json().get("status") == "ok"
     
-    def test_gmail_status_not_connected(self):
-        """Test Gmail status for non-connected user."""
+    def test_gmail_status_requires_auth(self):
         response = client.get("/gmail/status/nonexistent-user")
+        assert response.status_code == 401
+
+    def test_gmail_status_not_connected_with_auth(self):
+        """Test Gmail status for non-connected user with authenticated identity."""
+        app.dependency_overrides[gmail_webhooks_module.get_current_user] = lambda: self._fake_user("nonexistent-user")
+        try:
+            response = client.get("/gmail/status/nonexistent-user")
+        finally:
+            app.dependency_overrides.pop(gmail_webhooks_module.get_current_user, None)
         assert response.status_code == 200
         data = response.json()
         assert data["connected"] is False
+
+    def test_gmail_disconnect_requires_auth(self):
+        response = client.post("/gmail/disconnect?user_id=gmail-user-1")
+        assert response.status_code == 401
+
+    def test_gmail_disconnect_blocks_cross_user_access(self):
+        app.dependency_overrides[gmail_webhooks_module.get_current_user] = lambda: self._fake_user("gmail-user-1")
+        try:
+            response = client.post("/gmail/disconnect?user_id=another-user")
+        finally:
+            app.dependency_overrides.pop(gmail_webhooks_module.get_current_user, None)
+        assert response.status_code == 403
+
+    def test_gmail_authorize_uses_signed_state(self, monkeypatch):
+        monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
+        captured = {}
+
+        def _fake_auth_url(*, state):
+            captured["state"] = state
+            return f"https://accounts.google.com/o/oauth2/auth?state={state}"
+
+        with patch.object(gmail_webhooks_module, "generate_auth_url", side_effect=_fake_auth_url):
+            response = client.get(
+                "/gmail/authorize",
+                params={"user_id": "gmail-user-1", "redirect_url": "https://app.test/callback"},
+            )
+
+        assert response.status_code == 200
+        signed_state = captured.get("state")
+        assert isinstance(signed_state, str)
+        assert "." in signed_state
+        decoded = gmail_webhooks_module._unsign_oauth_state(signed_state)
+        assert decoded.get("user_id") == "gmail-user-1"
+        assert decoded.get("redirect_url") == "https://app.test/callback"
+
+    def test_gmail_callback_requires_oauth_state(self):
+        response = client.get("/gmail/callback?code=test-code")
+        assert response.status_code == 400
+        assert response.json().get("detail") == "missing_oauth_state"
+
+    def test_gmail_callback_rejects_tampered_oauth_state(self, monkeypatch):
+        monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
+        response = client.get(
+            "/gmail/callback",
+            params={"code": "test-code", "state": "tampered-state-without-signature"},
+        )
+        assert response.status_code == 400
+        assert response.json().get("detail") == "invalid_oauth_state"
+
+    def test_process_single_email_propagates_org_to_invoice_handler(self):
+        class _FakeClient:
+            async def get_message(self, _message_id):
+                return SimpleNamespace(
+                    id="msg-1",
+                    thread_id="thread-1",
+                    subject="Invoice INV-1",
+                    sender="billing@acme.test",
+                    recipient="ap@company.test",
+                    date=datetime.now(timezone.utc),
+                    snippet="Invoice attached",
+                    body_text="Please pay invoice INV-1 for $125.00",
+                    body_html="",
+                    labels=[],
+                    attachments=[],
+                )
+
+            async def list_labels(self):
+                return [{"id": "label-1", "name": "Clearledgr/Processed"}]
+
+            async def create_label(self, _name):
+                return {"id": "label-1", "name": "Clearledgr/Processed"}
+
+            async def add_label(self, _message_id, _label_ids):
+                return None
+
+        fake_engine = SimpleNamespace(
+            db=SimpleNamespace(get_finance_email_by_gmail_id=lambda _gmail_id: None),
+            detect_finance_email=lambda **_kwargs: {"id": "finance-email-1"},
+        )
+        seen = {}
+
+        async def _fake_process_invoice_email(*, organization_id: str, **_kwargs):
+            seen["organization_id"] = organization_id
+            return {"status": "ok"}
+
+        with patch.object(
+            gmail_webhooks_module,
+            "classify_email_with_llm",
+            AsyncMock(return_value={"type": "invoice", "confidence": 0.95}),
+        ):
+            with patch.object(
+                gmail_webhooks_module,
+                "process_invoice_email",
+                AsyncMock(side_effect=_fake_process_invoice_email),
+            ):
+                with patch.object(
+                    gmail_webhooks_module,
+                    "process_payment_request_email",
+                    AsyncMock(return_value={"status": "skipped"}),
+                ):
+                    asyncio.run(
+                        gmail_webhooks_module.process_single_email(
+                            client=_FakeClient(),
+                            message_id="msg-1",
+                            user_id="gmail-user-1",
+                            organization_id="tenant-42",
+                            engine=fake_engine,
+                            ai_service=MagicMock(),
+                        )
+                    )
+
+        assert seen.get("organization_id") == "tenant-42"
 
 
 class TestERPEndpoints:
@@ -381,6 +610,43 @@ class TestExtensionEndpoints:
         assert suggest_vendor.status_code == 403
         assert validate_amount.status_code == 403
         assert form_prefill.status_code == 403
+
+    def test_extension_match_endpoints_return_results_for_authorized_user(self):
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        try:
+            match_bank = client.post(
+                "/extension/match-bank",
+                json={
+                    "organization_id": "default",
+                    "extraction": {
+                        "vendor": "Acme Corp",
+                        "amount": 1250.0,
+                        "currency": "USD",
+                        "invoice_number": "INV-1001",
+                    },
+                },
+            )
+            match_erp = client.post(
+                "/extension/match-erp",
+                json={
+                    "organization_id": "default",
+                    "extraction": {
+                        "vendor": "Acme Corp",
+                        "amount": 1250.0,
+                        "currency": "USD",
+                        "invoice_number": "INV-1001",
+                    },
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+
+        assert match_bank.status_code == 200
+        assert "status" in match_bank.json()
+        assert "candidate_count" in match_bank.json()
+        assert match_erp.status_code == 200
+        assert "vendor_match" in match_erp.json()
+        assert "duplicate_invoice" in match_erp.json()
     
     def test_invoice_pipeline(self):
         """Invoice pipeline requires auth."""
@@ -950,6 +1216,16 @@ class TestAgentIntentEndpoints:
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
 
+    @staticmethod
+    def _fake_admin():
+        return TokenData(
+            user_id="agent-admin-1",
+            email="agent-admin@example.com",
+            organization_id="default",
+            role="admin",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
     def test_preview_intent_endpoint_calls_runtime(self):
         app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
         preview_response = {
@@ -984,6 +1260,23 @@ class TestAgentIntentEndpoints:
         assert payload["intent"] == "route_low_risk_for_approval"
         preview_mock.assert_called_once()
 
+    def test_preview_intent_endpoint_blocks_cross_org_request(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        try:
+            response = client.post(
+                "/api/agent/intents/preview",
+                json={
+                    "intent": "read_ap_workflow_health",
+                    "input": {"limit": 10},
+                    "organization_id": "other-org",
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
+        assert response.status_code == 403
+        assert response.json().get("detail") == "org_mismatch"
+
     def test_execute_intent_endpoint_calls_runtime(self):
         app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
         execute_response = {
@@ -1017,6 +1310,54 @@ class TestAgentIntentEndpoints:
         payload = response.json()
         assert payload["status"] == "pending_approval"
         assert payload["audit_event_id"] == "audit-1"
+        exec_mock.assert_awaited_once()
+
+    def test_execute_intent_endpoint_blocks_cross_org_request(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        try:
+            response = client.post(
+                "/api/agent/intents/execute",
+                json={
+                    "intent": "route_low_risk_for_approval",
+                    "input": {"email_id": "gmail-thread-1"},
+                    "idempotency_key": "idem-agent-org-block",
+                    "organization_id": "other-org",
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
+        assert response.status_code == 403
+        assert response.json().get("detail") == "org_mismatch"
+
+    def test_execute_intent_endpoint_allows_admin_cross_org_request(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_admin
+        execute_response = {
+            "intent": "route_low_risk_for_approval",
+            "status": "pending_approval",
+            "ap_item_id": "ap-item-admin",
+            "email_id": "gmail-thread-admin",
+        }
+        try:
+            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
+                with patch.object(
+                    agent_intents_module.FinanceAgentRuntime,
+                    "execute_intent",
+                    AsyncMock(return_value=execute_response),
+                ) as exec_mock:
+                    response = client.post(
+                        "/api/agent/intents/execute",
+                        json={
+                            "intent": "route_low_risk_for_approval",
+                            "input": {"email_id": "gmail-thread-admin"},
+                            "organization_id": "other-org",
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
+        assert response.status_code == 200
+        assert response.json().get("status") == "pending_approval"
         exec_mock.assert_awaited_once()
 
     def test_execute_intent_endpoint_supports_prepare_vendor_followups(self):

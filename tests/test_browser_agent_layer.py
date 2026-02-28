@@ -1178,6 +1178,9 @@ def test_admin_bootstrap_dashboard_includes_agentic_snapshot(client, db):
 
 def test_autopilot_status_includes_agent_runtime_truth_claims(client, monkeypatch):
     monkeypatch.setenv("ENV", "dev")
+    monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
+    monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
+    monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
     monkeypatch.setenv("AP_AGENT_AUTONOMOUS_RETRY_ENABLED", "true")
     monkeypatch.setenv("AP_AGENT_NON_DURABLE_RETRY_ALLOWED", "true")
     monkeypatch.setenv("AP_AGENT_RETRY_BACKOFF_SECONDS", "0,5,10")
@@ -1195,21 +1198,50 @@ def test_autopilot_status_includes_agent_runtime_truth_claims(client, monkeypatc
     assert retry["allow_non_durable"] is True
     assert retry["backoff_seconds"] == [0, 5, 10]
     assert retry["poll_interval_seconds"] == 2
+    execution_contract = payload["agent_runtime"]["execution_contract"]
+    assert execution_contract["mode"] == "agentic_runtime"
+    assert execution_contract["planning_loop_enabled"] is True
+    assert execution_contract["legacy_fallback_on_error"] is False
+    surface = payload.get("runtime_surface") or {}
+    assert surface.get("profile") == "full"
+    assert surface.get("strict_effective") is False
 
 
 def test_autopilot_status_keeps_durable_retry_enabled_in_production(client, monkeypatch):
     monkeypatch.setenv("ENV", "production")
+    monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
     monkeypatch.setenv("AP_AGENT_AUTONOMOUS_RETRY_ENABLED", "true")
     monkeypatch.setenv("AP_AGENT_NON_DURABLE_RETRY_ALLOWED", "false")
+    monkeypatch.setenv("AGENT_PLANNING_LOOP", "false")
+    monkeypatch.setenv("AGENT_LEGACY_FALLBACK_ON_ERROR", "true")
+    monkeypatch.setenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", "true")
+    monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
     response = client.get("/api/ops/autopilot-status")
     assert response.status_code == 200
-    retry = response.json()["autopilot"]["agent_runtime"]["autonomous_retry"]
+    autopilot = response.json()["autopilot"]
+    runtime_status = autopilot["agent_runtime"]
+    retry = runtime_status["autonomous_retry"]
 
     assert retry["enabled"] is True
     assert retry["durable"] is True
     assert retry["allow_non_durable"] is False
     assert retry["reason"] is None
+    assert runtime_status["legacy_fallback_on_planner_error"] is False
+    contract = runtime_status["execution_contract"]
+    assert contract["production_env"] is True
+    assert contract["planning_loop_requested"] is False
+    assert contract["planning_loop_enabled"] is True
+    assert contract["legacy_fallback_requested"] is True
+    assert contract["legacy_fallback_on_error"] is False
+    assert "planning_loop_forced_on_in_production" in contract["warnings"]
+    assert "legacy_fallback_forced_off_in_production" in contract["warnings"]
+    surface = autopilot.get("runtime_surface") or {}
+    assert surface.get("production_like") is True
+    assert surface.get("legacy_override_requested") is True
+    assert surface.get("legacy_override_effective") is False
+    assert surface.get("strict_effective") is True
+    assert "legacy_override_ignored_without_explicit_production_allow" in (surface.get("warnings") or [])
 
 
 def test_browser_fallback_full_e2e_api_fail_to_posted_to_erp(client, db):

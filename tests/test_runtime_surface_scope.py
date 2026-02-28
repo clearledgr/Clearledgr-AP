@@ -18,6 +18,7 @@ def test_strict_profile_blocks_legacy_surfaces(monkeypatch):
     monkeypatch.setenv("ENV", "production")
     monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
+    monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
     with TestClient(app) as client:
         blocked = client.get("/email/tasks")
@@ -42,10 +43,29 @@ def test_strict_profile_blocks_legacy_surfaces(monkeypatch):
         assert canonical.status_code == 200
 
 
-def test_legacy_surface_override_reenables_access(monkeypatch):
+def test_production_legacy_override_ignored_without_explicit_allow(monkeypatch):
     monkeypatch.setenv("ENV", "production")
     monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
     monkeypatch.setenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", "true")
+    monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
+
+    with TestClient(app) as client:
+        response = client.get("/email/tasks")
+        assert response.status_code == 404
+        body = response.json()
+        assert body["detail"] == "endpoint_disabled_in_ap_v1_profile"
+        assert "/email/tasks" not in _mounted_paths()
+
+        mounted = _mounted_paths()
+        assert "/analytics/dashboard/{organization_id}" not in mounted
+        assert "/outlook/status/{user_id}" not in mounted
+
+
+def test_legacy_surface_override_reenables_access_with_explicit_production_allow(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
+    monkeypatch.setenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", "true")
+    monkeypatch.setenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", "true")
 
     with TestClient(app) as client:
         response = client.get("/email/tasks")
@@ -61,6 +81,7 @@ def test_strict_profile_filters_legacy_paths_from_openapi(monkeypatch):
     monkeypatch.setenv("ENV", "production")
     monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
+    monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
     with TestClient(app) as client:
         response = client.get("/openapi.json")

@@ -104,12 +104,39 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _ap_v1_strict_surfaces_enabled() -> bool:
+def _runtime_surface_contract() -> Dict[str, Any]:
     env_name = str(os.getenv("ENV", "dev")).strip().lower()
-    default_strict = env_name in {"production", "prod", "staging", "stage"}
+    prod_like = env_name in {"production", "prod", "staging", "stage"}
+    default_strict = prod_like
     strict_requested = _env_flag("AP_V1_STRICT_SURFACES", default=default_strict)
-    legacy_override = _env_flag("CLEARLEDGR_ENABLE_LEGACY_SURFACES", default=False)
-    return bool(strict_requested and not legacy_override)
+    legacy_override_requested = _env_flag("CLEARLEDGR_ENABLE_LEGACY_SURFACES", default=False)
+    allow_legacy_in_production = _env_flag("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", default=False)
+
+    legacy_override_effective = bool(
+        legacy_override_requested and (not prod_like or allow_legacy_in_production)
+    )
+    strict_effective = bool(strict_requested and not legacy_override_effective)
+    warnings: List[str] = []
+    if prod_like and legacy_override_requested and not allow_legacy_in_production:
+        warnings.append("legacy_override_ignored_without_explicit_production_allow")
+    if prod_like and not strict_effective:
+        warnings.append("production_running_with_legacy_surfaces_enabled")
+
+    return {
+        "environment": env_name,
+        "production_like": prod_like,
+        "strict_requested": strict_requested,
+        "strict_effective": strict_effective,
+        "legacy_override_requested": legacy_override_requested,
+        "legacy_override_effective": legacy_override_effective,
+        "allow_legacy_in_production": allow_legacy_in_production,
+        "warnings": warnings,
+        "profile": "strict" if strict_effective else "full",
+    }
+
+
+def _ap_v1_strict_surfaces_enabled() -> bool:
+    return bool(_runtime_surface_contract()["strict_effective"])
 
 
 STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
@@ -161,7 +188,8 @@ def _apply_runtime_surface_profile() -> None:
         full_routes = tuple(app.router.routes)
         app.state._full_route_table = full_routes
 
-    strict_mode = _ap_v1_strict_surfaces_enabled()
+    contract = _runtime_surface_contract()
+    strict_mode = bool(contract.get("strict_effective"))
     if strict_mode:
         selected_routes = []
         for route in full_routes:
@@ -173,7 +201,8 @@ def _apply_runtime_surface_profile() -> None:
         selected_routes = list(full_routes)
 
     app.router.routes = list(selected_routes)
-    mode = "strict" if strict_mode else "full"
+    mode = str(contract.get("profile") or ("strict" if strict_mode else "full"))
+    app.state._runtime_surface_contract = contract
     if getattr(app.state, "_runtime_surface_mode", None) != mode:
         app.openapi_schema = None
         app.state._openapi_cache = {}
@@ -182,6 +211,29 @@ def _apply_runtime_surface_profile() -> None:
 
 def _legacy_surfaces_enabled() -> bool:
     return not _ap_v1_strict_surfaces_enabled()
+
+
+def _register_legacy_route(method: str, *args, **kwargs):
+    """Register legacy-only routes only when legacy surfaces are enabled."""
+
+    def decorator(func):
+        if _legacy_surfaces_enabled():
+            getattr(app, method)(*args, **kwargs)(func)
+        return func
+
+    return decorator
+
+
+def legacy_get(*args, **kwargs):
+    return _register_legacy_route("get", *args, **kwargs)
+
+
+def legacy_post(*args, **kwargs):
+    return _register_legacy_route("post", *args, **kwargs)
+
+
+def legacy_patch(*args, **kwargs):
+    return _register_legacy_route("patch", *args, **kwargs)
 
 
 app.include_router(v1_router)
@@ -718,6 +770,7 @@ async def health():
     return {
         **health_status,
         "version": "v1.0.0",
+        "runtime_surface_contract": _runtime_surface_contract(),
     }
 
 
@@ -879,7 +932,7 @@ class EmailProcessRequest(BaseModel):
     config: Optional[Dict] = None
 
 
-@app.post(
+@legacy_post(
     "/email/parse",
     tags=["Email Integration"],
     summary="Parse Email",
@@ -915,7 +968,7 @@ async def parse_email_endpoint(
         )
 
 
-@app.post(
+@legacy_post(
     "/email/match-invoice",
     tags=["Email Integration"],
     summary="Match Invoice to Transactions",
@@ -947,7 +1000,7 @@ async def match_invoice_endpoint(
         )
 
 
-@app.post(
+@legacy_post(
     "/email/match-payment",
     tags=["Email Integration"],
     summary="Match Payment to Invoices",
@@ -977,7 +1030,7 @@ async def match_payment_endpoint(
         )
 
 
-@app.post(
+@legacy_post(
     "/email/vendor-exceptions",
     tags=["Email Integration"],
     summary="Get Vendor Exceptions",
@@ -1008,7 +1061,7 @@ async def vendor_exceptions_endpoint(
         )
 
 
-@app.post(
+@legacy_post(
     "/email/process",
     tags=["Email Integration"],
     summary="Process Email End-to-End",
@@ -1130,7 +1183,7 @@ async def process_email_endpoint(
 
 # Task Management Endpoints
 
-@app.post(
+@legacy_post(
     "/email/tasks",
     tags=["Email Tasks"],
     summary="Create Task from Email",
@@ -1193,7 +1246,7 @@ async def create_task_endpoint(
         )
 
 
-@app.patch(
+@legacy_patch(
     "/email/tasks/status",
     tags=["Email Tasks"],
     summary="Update Task Status",
@@ -1228,7 +1281,7 @@ async def update_task_status_endpoint(
         )
 
 
-@app.patch(
+@legacy_patch(
     "/email/tasks/assign",
     tags=["Email Tasks"],
     summary="Assign Task",
@@ -1270,7 +1323,7 @@ async def assign_task_endpoint(
         )
 
 
-@app.post(
+@legacy_post(
     "/email/tasks/comments",
     tags=["Email Tasks"],
     summary="Add Task Comment",
@@ -1305,7 +1358,7 @@ async def add_comment_endpoint(
         )
 
 
-@app.get(
+@legacy_get(
     "/email/tasks/{task_id}",
     tags=["Email Tasks"],
     summary="Get Task",
@@ -1331,7 +1384,7 @@ async def get_task_endpoint(
         )
 
 
-@app.get(
+@legacy_get(
     "/email/tasks",
     tags=["Email Tasks"],
     summary="List Tasks",
@@ -1365,7 +1418,7 @@ async def list_tasks_endpoint(
         )
 
 
-@app.get(
+@legacy_get(
     "/email/tasks/by-email/{email_id}",
     tags=["Email Tasks"],
     summary="Get Tasks for Email",
@@ -1387,7 +1440,7 @@ async def get_tasks_for_email_endpoint(
         )
 
 
-@app.get(
+@legacy_get(
     "/email/tasks/overdue",
     tags=["Email Tasks"],
     summary="Get Overdue Tasks",
@@ -1409,7 +1462,7 @@ async def get_overdue_tasks_endpoint(
         )
 
 
-@app.post(
+@legacy_post(
     "/email/tasks/notify-overdue",
     tags=["Email Tasks"],
     summary="Send Overdue Tasks Notification",
@@ -1437,7 +1490,7 @@ async def notify_overdue_tasks_endpoint(
         )
 
 
-@app.post(
+@legacy_post(
     "/email/tasks/run-scheduler",
     tags=["Email Tasks"],
     summary="Run Task Scheduler",
@@ -1470,7 +1523,7 @@ async def run_task_scheduler_endpoint(
 
 # Audit Trail Endpoints
 
-@app.post(
+@legacy_post(
     "/audit/record",
     tags=["Audit Trail"],
     summary="Record Audit Event",
@@ -1504,7 +1557,7 @@ async def record_audit_endpoint(
         )
 
 
-@app.get(
+@legacy_get(
     "/audit/trail",
     tags=["Audit Trail"],
     summary="Get Audit Trail",
@@ -1542,7 +1595,7 @@ async def get_audit_trail_endpoint(
         )
 
 
-@app.get(
+@legacy_get(
     "/audit/entity/{entity_type}/{entity_id}",
     tags=["Audit Trail"],
     summary="Get Entity History",
@@ -1565,7 +1618,7 @@ async def get_entity_history_endpoint(
         )
 
 
-@app.get(
+@legacy_get(
     "/audit/user/{user_email}",
     tags=["Audit Trail"],
     summary="Get User Activity",

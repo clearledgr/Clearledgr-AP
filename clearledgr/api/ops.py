@@ -102,6 +102,26 @@ def _workflow_stuck_minutes() -> int:
         return 120
 
 
+def _resolve_runtime_surface_contract(request: Request) -> Dict[str, Any] | None:
+    # Prefer current env-derived contract so diagnostics reflect effective
+    # runtime flags even when tests or local tooling mutate env between calls.
+    try:
+        from main import _runtime_surface_contract  # local import avoids import-time cycle
+
+        contract = _runtime_surface_contract()
+        if isinstance(contract, dict):
+            state = getattr(request.app, "state", None)
+            if state is not None:
+                setattr(state, "_runtime_surface_contract", contract)
+            return contract
+    except Exception:
+        pass
+    cached = getattr(getattr(request.app, "state", None), "_runtime_surface_contract", None)
+    if isinstance(cached, dict):
+        return cached
+    return None
+
+
 @router.get("/tenant-health")
 async def get_tenant_health(
     organization_id: str = Query("default"),
@@ -280,6 +300,9 @@ async def get_autopilot_status(
         "temporal_available": temporal_available,
         "temporal_blocked": temporal_blocked,
     }
+    runtime_surface_contract = _resolve_runtime_surface_contract(request)
+    if isinstance(runtime_surface_contract, dict):
+        payload["runtime_surface"] = runtime_surface_contract
     # Surface agent orchestrator runtime truth-in-claims so the Gmail sidebar and
     # ops tools do not imply durable autonomy/retries when only in-memory retry
     # behavior is available.

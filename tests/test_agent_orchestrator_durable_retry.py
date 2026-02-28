@@ -217,6 +217,83 @@ def test_process_invoice_supports_explicit_agentic_opt_out(monkeypatch):
     legacy_mock.assert_awaited_once()
 
 
+def test_process_invoice_forces_agentic_mode_in_production_when_opt_out_requested(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("AGENT_PLANNING_LOOP", "false")
+    monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret")
+    orch = AgentOrchestrator("default")
+    invoice = _minimal_invoice()
+
+    with patch(
+        "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
+        new=AsyncMock(return_value={"status": "completed", "task_run_id": "task-prod-1"}),
+    ) as runtime_mock:
+        with patch.object(
+            orch,
+            "_process_invoice_legacy",
+            AsyncMock(return_value={"status": "legacy"}),
+        ) as legacy_mock:
+            result = asyncio.run(orch.process_invoice(invoice))
+
+    assert result["status"] == "completed"
+    assert result.get("execution_path") == "agentic_runtime"
+    contract = result.get("runtime_contract") or {}
+    assert contract.get("production_env") is True
+    assert contract.get("planning_loop_requested") is False
+    assert contract.get("planning_loop_enabled") is True
+    assert "planning_loop_forced_on_in_production" in (contract.get("warnings") or [])
+    runtime_mock.assert_awaited_once()
+    legacy_mock.assert_not_awaited()
+
+
+def test_process_invoice_ignores_legacy_fallback_flag_in_production(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.delenv("AGENT_PLANNING_LOOP", raising=False)
+    monkeypatch.setenv("AGENT_LEGACY_FALLBACK_ON_ERROR", "true")
+    monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret")
+    orch = AgentOrchestrator("default")
+    invoice = _minimal_invoice()
+
+    with patch(
+        "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
+        new=AsyncMock(side_effect=RuntimeError("planner_failed")),
+    ):
+        with patch.object(
+            orch,
+            "_process_invoice_legacy",
+            AsyncMock(return_value={"status": "legacy"}),
+        ) as legacy_mock:
+            result = asyncio.run(orch.process_invoice(invoice))
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "agent_runtime_failed"
+    contract = result.get("runtime_contract") or {}
+    assert contract.get("production_env") is True
+    assert contract.get("legacy_fallback_requested") is True
+    assert contract.get("legacy_fallback_on_error") is False
+    assert "legacy_fallback_forced_off_in_production" in (contract.get("warnings") or [])
+    legacy_mock.assert_not_awaited()
+
+
+def test_runtime_status_exposes_execution_contract(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("AGENT_PLANNING_LOOP", "false")
+    monkeypatch.setenv("AGENT_LEGACY_FALLBACK_ON_ERROR", "true")
+    monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret")
+    orch = AgentOrchestrator("default")
+
+    status = orch.runtime_status()
+    contract = status.get("execution_contract") or {}
+
+    assert contract.get("production_env") is True
+    assert contract.get("planning_loop_requested") is False
+    assert contract.get("planning_loop_enabled") is True
+    assert contract.get("legacy_fallback_requested") is True
+    assert contract.get("legacy_fallback_on_error") is False
+    assert "planning_loop_forced_on_in_production" in (contract.get("warnings") or [])
+    assert "legacy_fallback_forced_off_in_production" in (contract.get("warnings") or [])
+
+
 def test_durable_retry_runtime_status_reports_db_queue(monkeypatch):
     monkeypatch.setenv("AP_AGENT_AUTONOMOUS_RETRY_ENABLED", "true")
     monkeypatch.setenv("AP_AGENT_RETRY_BACKOFF_SECONDS", "1,2,3")

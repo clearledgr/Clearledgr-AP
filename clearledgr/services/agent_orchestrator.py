@@ -50,6 +50,7 @@ class AgentOrchestrator:
         self._insights = None
         self._retry_worker_task: Optional[asyncio.Task] = None
         self._retry_worker_stopping = False
+        self._runtime_contract_warning_logged = False
 
     # ------------------------------------------------------------------
     # Runtime mode / durability truth-in-claims
@@ -142,17 +143,75 @@ class AgentOrchestrator:
             "reason": reason,
         }
 
+    def _planning_loop_requested(self) -> bool:
+        # Agentic planner is the canonical default path.
+        return self._env_flag("AGENT_PLANNING_LOOP", True)
+
+    def _planning_loop_enabled(self) -> bool:
+        requested = self._planning_loop_requested()
+        if self._is_production_env() and not requested:
+            # Enforce plan doctrine in production: one runtime, agentic-first.
+            return True
+        return requested
+
+    def _legacy_fallback_requested(self) -> bool:
+        return self._env_flag("AGENT_LEGACY_FALLBACK_ON_ERROR", False)
+
+    def _runtime_execution_contract(self) -> Dict[str, Any]:
+        requested_planning = self._planning_loop_requested()
+        effective_planning = self._planning_loop_enabled()
+        requested_fallback = self._legacy_fallback_requested()
+        effective_fallback = self._legacy_fallback_on_planner_error()
+        prod_mode = self._is_production_env()
+
+        forced_agentic = bool(prod_mode and not requested_planning and effective_planning)
+        forced_fallback_off = bool(prod_mode and requested_fallback and not effective_fallback)
+        warnings: List[str] = []
+        if forced_agentic:
+            warnings.append("planning_loop_forced_on_in_production")
+        if forced_fallback_off:
+            warnings.append("legacy_fallback_forced_off_in_production")
+
+        return {
+            "mode": "agentic_runtime" if effective_planning else "legacy_opt_out",
+            "production_env": prod_mode,
+            "production_contract_enforced": prod_mode,
+            "planning_loop_requested": requested_planning,
+            "planning_loop_enabled": effective_planning,
+            "legacy_fallback_requested": requested_fallback,
+            "legacy_fallback_on_error": effective_fallback,
+            "warnings": warnings,
+        }
+
+    def _log_runtime_contract_warnings_once(self, contract: Dict[str, Any]) -> None:
+        if self._runtime_contract_warning_logged:
+            return
+        warnings = contract.get("warnings") or []
+        if not warnings:
+            return
+        logger.warning(
+            "[AgentOrchestrator] runtime contract enforcement for org=%s: %s",
+            self.organization_id,
+            ",".join(str(w) for w in warnings),
+        )
+        self._runtime_contract_warning_logged = True
+
     def runtime_status(self) -> Dict[str, Any]:
+        execution_contract = self._runtime_execution_contract()
         return {
             "autonomous_retry": self.autonomous_retry_runtime_status(),
             "post_process": self.post_process_runtime_status(),
-            "legacy_fallback_on_planner_error": self._legacy_fallback_on_planner_error(),
+            "legacy_fallback_on_planner_error": execution_contract["legacy_fallback_on_error"],
+            "execution_contract": execution_contract,
         }
 
     def _legacy_fallback_on_planner_error(self) -> bool:
-        # Default off to keep AP v1 on a single runtime path unless explicitly
-        # overridden for local troubleshooting.
-        return self._env_flag("AGENT_LEGACY_FALLBACK_ON_ERROR", False)
+        # Default off to keep AP v1 on a single runtime path. In production the
+        # fallback is hard-disabled even if requested.
+        requested = self._legacy_fallback_requested()
+        if self._is_production_env() and requested:
+            return False
+        return requested
 
     # ------------------------------------------------------------------
     # Lazy service loaders
@@ -236,11 +295,13 @@ class AgentOrchestrator:
         6. Delegate to InvoiceWorkflowService
         7. Post-process (follow-up, insights, clarifying questions)
         """
+        execution_contract = self._runtime_execution_contract()
+        self._log_runtime_contract_warnings_once(execution_contract)
+
         # ---------------------------------------------------------------
-        # AGENT_PLANNING_LOOP dispatch
+        # AGENT_PLANNING_LOOP dispatch (effective contract)
         # ---------------------------------------------------------------
-        _flag = os.getenv("AGENT_PLANNING_LOOP", "true").strip().lower()
-        if _flag in ("1", "true", "yes"):
+        if execution_contract["planning_loop_enabled"]:
             try:
                 from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
@@ -256,20 +317,31 @@ class AgentOrchestrator:
                     correlation_id=getattr(invoice, "correlation_id", None),
                 )
                 runtime_status = str((runtime_result or {}).get("status") or "").strip().lower()
-                if runtime_status in {"failed", "max_steps_exceeded"} and self._legacy_fallback_on_planner_error():
+                if runtime_status in {"failed", "max_steps_exceeded"} and execution_contract["legacy_fallback_on_error"]:
                     logger.warning(
                         "[AgentOrchestrator] planner returned %s; AGENT_LEGACY_FALLBACK_ON_ERROR=true so using legacy path",
                         runtime_status,
                     )
-                    return await self._process_invoice_legacy(invoice, attachments)
+                    legacy_result = await self._process_invoice_legacy(invoice, attachments)
+                    if isinstance(legacy_result, dict):
+                        legacy_result.setdefault("execution_path", "legacy_pipeline")
+                        legacy_result.setdefault("runtime_contract", execution_contract)
+                    return legacy_result
+                if isinstance(runtime_result, dict):
+                    runtime_result.setdefault("execution_path", "agentic_runtime")
+                    runtime_result.setdefault("runtime_contract", execution_contract)
                 return runtime_result
             except Exception as exc:
-                if self._legacy_fallback_on_planner_error():
+                if execution_contract["legacy_fallback_on_error"]:
                     logger.warning(
                         "[AgentOrchestrator] planning loop failed, falling back to legacy (explicitly enabled): %s",
                         exc,
                     )
-                    return await self._process_invoice_legacy(invoice, attachments)
+                    legacy_result = await self._process_invoice_legacy(invoice, attachments)
+                    if isinstance(legacy_result, dict):
+                        legacy_result.setdefault("execution_path", "legacy_pipeline")
+                        legacy_result.setdefault("runtime_contract", execution_contract)
+                    return legacy_result
                 logger.warning(
                     "[AgentOrchestrator] planning loop failed; legacy fallback disabled: %s",
                     exc,
@@ -280,9 +352,14 @@ class AgentOrchestrator:
                     "error": str(exc),
                     "execution_path": "agentic_runtime",
                     "gmail_id": invoice.gmail_id,
+                    "runtime_contract": execution_contract,
                 }
 
-        return await self._process_invoice_legacy(invoice, attachments)
+        legacy_result = await self._process_invoice_legacy(invoice, attachments)
+        if isinstance(legacy_result, dict):
+            legacy_result.setdefault("execution_path", "legacy_pipeline")
+            legacy_result.setdefault("runtime_contract", execution_contract)
+        return legacy_result
 
     async def _process_invoice_legacy(
         self,
