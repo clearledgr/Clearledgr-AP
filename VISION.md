@@ -59,6 +59,8 @@ Clearledgr runs one core agent runtime with reusable skill contracts:
 2. Slack/Teams are approval and escalation decision surfaces.
 3. Admin Console is for ops/monitoring/batch/debug and setup controls.
 4. Ops/telemetry/batch/raw debug content does not live in Gmail work UI.
+5. Onboarding/account management is Admin-first (team roles, integrations, reconnects), with Gmail linking out when setup is required.
+6. Gmail extension release integrity is CI-enforced: shipped `dist` must match source doctrine and cannot include legacy popup/options/demo surfaces.
 
 ## Positioning
 

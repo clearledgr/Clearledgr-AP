@@ -15,6 +15,7 @@ import secrets
 import time
 from datetime import datetime
 from typing import Any, Dict, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel
@@ -27,7 +28,6 @@ from clearledgr.services.gmail_api import (
     GmailWatchService,
     token_store,
     exchange_code_for_tokens,
-    generate_auth_url,
 )
 from clearledgr.core.database import get_db
 from clearledgr.core.models import FinanceEmail
@@ -53,18 +53,6 @@ def _oauth_state_secret() -> str:
     if secret:
         return secret
     raise HTTPException(status_code=503, detail="oauth_state_signing_unavailable")
-
-
-def _sign_oauth_state(payload: Dict[str, Any]) -> str:
-    body = base64.urlsafe_b64encode(
-        json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    ).decode("utf-8")
-    signature = hmac.new(
-        _oauth_state_secret().encode("utf-8"),
-        body.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    return f"{body}.{signature}"
 
 
 def _unsign_oauth_state(state: str) -> Dict[str, Any]:
@@ -101,6 +89,14 @@ def _resolve_user_org_id(user_id: str) -> str:
         return str(user["organization_id"])
     logger.warning("Unable to resolve organization for gmail user_id=%s; using default", user_id)
     return "default"
+
+
+def _append_success_query(redirect_url: str, *, success: bool) -> str:
+    parsed = urlsplit(str(redirect_url or "").strip())
+    existing_query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    existing_query["success"] = "true" if success else "false"
+    rebuilt_query = urlencode(existing_query)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, rebuilt_query, parsed.fragment))
 
 
 def _assert_user_owns_gmail_identity(
@@ -644,34 +640,6 @@ async def process_payment_request_email(
         return {"status": "error", "error": str(e)}
 
 
-# ============================================================================
-# OAUTH ENDPOINTS - For user authorization
-# ============================================================================
-
-@router.get("/authorize")
-async def gmail_authorize(user_id: str, redirect_url: Optional[str] = None):
-    """
-    Initiate Gmail OAuth flow.
-    
-    Returns URL to redirect user to for authorization.
-    """
-    state_encoded = _sign_oauth_state(
-        {
-            "user_id": user_id,
-            "redirect_url": redirect_url or "",
-            "iat": int(time.time()),
-            "nonce": secrets.token_urlsafe(12),
-        }
-    )
-    
-    try:
-        auth_url = generate_auth_url(state=state_encoded)
-    except ValueError as exc:
-        raise HTTPException(status_code=503, detail=safe_error(exc, "gmail auth url")) from exc
-    
-    return {"auth_url": auth_url}
-
-
 @router.get("/callback")
 async def gmail_callback(code: str, state: Optional[str] = None):
     """
@@ -739,7 +707,7 @@ async def gmail_callback(code: str, state: Optional[str] = None):
         # Return success or redirect
         if redirect_url:
             from fastapi.responses import RedirectResponse
-            return RedirectResponse(url=f"{redirect_url}?success=true")
+            return RedirectResponse(url=_append_success_query(redirect_url, success=True))
         
         return {
             "status": "success",

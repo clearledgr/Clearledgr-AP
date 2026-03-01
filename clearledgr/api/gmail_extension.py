@@ -33,7 +33,7 @@ from clearledgr.services.proactive_insights import get_proactive_insights
 from clearledgr.services.cross_invoice_analysis import get_cross_invoice_analyzer
 from clearledgr.services.agent_reasoning import get_agent as get_reasoning_agent
 from clearledgr.core.ap_confidence import evaluate_critical_field_confidence, extract_field_confidences
-from clearledgr.core.auth import get_current_user, create_access_token
+from clearledgr.core.auth import get_current_user, create_access_token, get_user_by_email
 from clearledgr.core.database import get_db
 from clearledgr.api.ap_items import build_worklist_item
 from clearledgr.services.gmail_api import GmailToken, token_store, GMAIL_PROFILE_URL, GOOGLE_USERINFO_URL
@@ -718,8 +718,13 @@ def get_extension_worklist(
 async def register_gmail_token(request: RegisterGmailTokenRequest):
     """Register Gmail OAuth access token obtained by the browser extension.
 
-    This endpoint is intentionally callable without API auth because it is
-    the bootstrap path used immediately after extension OAuth.
+    This endpoint is intentionally callable without API auth because it is the
+    bootstrap path used immediately after extension OAuth.
+
+    Security contract:
+    - Caller-provided organization_id is advisory only.
+    - Backend org/role are resolved from the provisioned user identity.
+    - Cross-org bootstrap attempts are denied.
     """
     access_token = str(request.access_token or "").strip()
     if not access_token:
@@ -759,9 +764,18 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
             profile_email,
         )
 
+    user = get_user_by_email(profile_email.lower())
+    if user is None:
+        raise HTTPException(status_code=403, detail="extension_user_not_provisioned")
+
+    resolved_org_id = str(getattr(user, "organization_id", None) or "default").strip() or "default"
+    requested_org = str(request.organization_id or "").strip()
+    if requested_org and requested_org != resolved_org_id:
+        raise HTTPException(status_code=403, detail="org_mismatch")
+
     expires_in = int(request.expires_in or 3600)
     expires_in = max(60, min(expires_in, 86400))
-    user_id = profile_email
+    user_id = str(getattr(user, "id", "") or "").strip() or profile_email
     token_store.store(
         GmailToken(
             user_id=user_id,
@@ -779,13 +793,12 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
         last_error=None,
     )
 
-    organization_id = str(request.organization_id or "default").strip() or "default"
     backend_token_ttl_seconds = max(300, min(expires_in, 3600))
     backend_access_token = create_access_token(
         user_id=user_id,
-        email=profile_email,
-        organization_id=organization_id,
-        role="user",
+        email=str(getattr(user, "email", profile_email) or profile_email),
+        organization_id=resolved_org_id,
+        role=str(getattr(user, "role", None) or "user"),
         expires_delta=timedelta(seconds=backend_token_ttl_seconds),
     )
 
@@ -795,7 +808,7 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
         "user_id": user_id,
         "expires_in": expires_in,
         "source": "extension_access_token",
-        "organization_id": organization_id,
+        "organization_id": resolved_org_id,
         "backend_access_token": backend_access_token,
         "backend_token_type": "bearer",
         "backend_expires_in": backend_token_ttl_seconds,

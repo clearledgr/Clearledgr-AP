@@ -90,6 +90,10 @@ Google auth and identity routes are used for:
 2. Admin console Google login (where configured)
 3. Gmail integration setup
 
+Note:
+- Legacy `GET /gmail/authorize` has been removed.
+- Canonical setup path is `POST /api/admin/integrations/gmail/connect/start`.
+
 Use runtime OpenAPI (`/docs`) for the exact enabled route set in your build.
 
 ---
@@ -113,12 +117,13 @@ Purpose:
 
 Examples:
 - `GET /api/admin/integrations`
+- `POST /api/admin/integrations/gmail/connect/start`
 - Slack install/start/callback endpoints
 - Slack channel configuration/test endpoints
 
 Purpose:
 1. integration status
-2. installation/configuration actions
+2. installation/configuration actions (Admin-initiated OAuth start for Gmail/Slack/ERP)
 3. test actions (for example approval card tests)
 
 ### AP Policy and Org Settings

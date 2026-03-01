@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from clearledgr.api import ap_policies as ap_policies_module
 from clearledgr.api.ap_policies import router as ap_policies_router
+from clearledgr.core.auth import TokenData
 from clearledgr.core.database import ClearledgrDB
 from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
 from clearledgr.services import policy_compliance as policy_compliance_module
@@ -16,6 +19,16 @@ def _make_db(tmp_path: Path) -> ClearledgrDB:
     db = ClearledgrDB(str(tmp_path / "ap-policy-framework.db"))
     db.initialize()
     return db
+
+
+def _fake_user(role: str = "admin", organization_id: str = "default") -> TokenData:
+    return TokenData(
+        user_id="ap-policy-user",
+        email="policy-admin@example.com",
+        organization_id=organization_id,
+        role=role,
+        exp=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
 
 
 class _FakeWorkflowDB:
@@ -47,6 +60,7 @@ def test_ap_policy_api_is_versioned_and_auditable(tmp_path: Path, monkeypatch):
 
     app = FastAPI()
     app.include_router(ap_policies_router)
+    app.dependency_overrides[ap_policies_module.get_current_user] = lambda: _fake_user()
     client = TestClient(app)
 
     put_payload = {
@@ -127,6 +141,7 @@ def test_ap_policy_api_rejects_invalid_vendor_rule(tmp_path: Path, monkeypatch):
 
     app = FastAPI()
     app.include_router(ap_policies_router)
+    app.dependency_overrides[ap_policies_module.get_current_user] = lambda: _fake_user()
     client = TestClient(app)
 
     invalid_payload = {

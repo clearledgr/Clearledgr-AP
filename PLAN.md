@@ -125,6 +125,11 @@ Admin Console responsibilities:
 4. Subscription/usage visibility.
 5. Health checks and required-action surfacing.
 
+Onboarding spine decision (locked):
+1. Use an admin-first onboarding/account-management backbone for all tenant setup and reconnect flows.
+2. OAuth integration setup is initiated from authenticated Admin Console APIs.
+3. Gmail work UI must not become an onboarding/configuration surface.
+
 ---
 
 ## 3. UX Doctrine and Operator Experience
@@ -189,6 +194,9 @@ AP v1 Gmail UX is a single operator workspace and must not regress to mixed diag
    - `Technical details`
 5. Ops/monitoring/batch/debug must be provided via Admin Console `/console?page=ops` with admin/operator access gating.
 6. Reason capture for reject/override/budget/escalation actions must use inline reason sheet UX, not native browser dialogs (`prompt/confirm`).
+7. Extension shipping bundle must enforce `src -> dist` parity in CI; stale `dist` or forbidden legacy Gmail strings are release blockers.
+8. Legacy extension popup/options/demo surfaces are not part of AP v1 runtime UX; if retained, they must live under docs archival paths and not ship.
+9. Work audit copy must be backend-owned (`operator_title`, `operator_message`, `operator_severity`, optional `operator_action_hint`) for canonical material events.
 
 ---
 

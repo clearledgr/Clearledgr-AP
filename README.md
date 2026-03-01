@@ -55,6 +55,21 @@ Gmail now runs a single decision-first operator panel:
 
 Reason capture is inline and non-blocking (reason sheet); native browser `prompt/confirm` dialogs are not used in AP action flows.
 
+UI hardening guardrails:
+
+1. Extension ships from `dist/inboxsdk-layer.js` only, with CI parity checks that fail on stale or off-doctrine bundle content.
+2. Legacy extension popup/options/demo surfaces are removed from shipped root and archived under `/Users/mombalam/Desktop/Clearledgr.v1/docs/legacy/gmail-extension-ui/`.
+3. Work audit copy is backend-owned from `/api/ap/items/{ap_item_id}/audit` (`operator_*` fields); Gmail fallback copy stays generic-safe and does not display raw reason codes.
+
+## Onboarding and Account Backbone (Admin-First)
+
+Clearledgr onboarding and account management follows an admin-first model:
+
+1. Admin Console owns onboarding (`/console?page=integrations`) for Gmail, Slack/Teams, and ERP setup.
+2. Team roles/invites are managed in Admin Console APIs (`/api/admin/team/*` + `/auth/invites/*`).
+3. Gmail sidebar stays execution-focused; when auth/setup is required it links operators to Admin Console integration setup.
+4. OAuth entry points for setup are launched from authenticated Admin Console endpoints (for example, `/api/admin/integrations/gmail/connect/start`).
+
 ## Runtime Shape (Agent + Skills)
 
 Clearledgr runs one core agent runtime and domain skills:
@@ -71,7 +86,7 @@ Clearledgr runs one core agent runtime and domain skills:
   - `workflow_health_v1` (read-only AP workflow diagnostics skill)
   - `vendor_compliance_v1` (read-only vendor compliance posture skill)
 - AP skill execution (current production domain)
-- Planner/runtime errors fail closed by default (`AGENT_LEGACY_FALLBACK_ON_ERROR=false`)
+- Planner/runtime errors fail closed; AP execution does not branch into legacy runtime fallback.
 - Shared controls:
   - policy prechecks
   - HITL gates

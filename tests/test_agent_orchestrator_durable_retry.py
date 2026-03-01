@@ -175,7 +175,7 @@ def test_process_invoice_returns_failure_when_agentic_runtime_fails_and_legacy_f
     legacy_mock.assert_not_awaited()
 
 
-def test_process_invoice_supports_explicit_legacy_fallback_when_agentic_runtime_fails(monkeypatch):
+def test_process_invoice_ignores_explicit_legacy_fallback_when_agentic_runtime_fails(monkeypatch):
     monkeypatch.delenv("AGENT_PLANNING_LOOP", raising=False)
     monkeypatch.setenv("AGENT_LEGACY_FALLBACK_ON_ERROR", "true")
     orch = AgentOrchestrator("default")
@@ -192,11 +192,16 @@ def test_process_invoice_supports_explicit_legacy_fallback_when_agentic_runtime_
         ) as legacy_mock:
             result = asyncio.run(orch.process_invoice(invoice))
 
-    assert result["status"] == "legacy"
-    legacy_mock.assert_awaited_once()
+    assert result["status"] == "failed"
+    assert result["reason"] == "agent_runtime_failed"
+    contract = result.get("runtime_contract") or {}
+    assert contract.get("legacy_fallback_requested") is True
+    assert contract.get("legacy_fallback_on_error") is False
+    assert "legacy_fallback_opt_in_ignored" in (contract.get("warnings") or [])
+    legacy_mock.assert_not_awaited()
 
 
-def test_process_invoice_supports_explicit_agentic_opt_out(monkeypatch):
+def test_process_invoice_ignores_explicit_agentic_opt_out(monkeypatch):
     monkeypatch.setenv("AGENT_PLANNING_LOOP", "false")
     orch = AgentOrchestrator("default")
     invoice = _minimal_invoice()
@@ -212,9 +217,29 @@ def test_process_invoice_supports_explicit_agentic_opt_out(monkeypatch):
         ) as legacy_mock:
             result = asyncio.run(orch.process_invoice(invoice))
 
-    assert result["status"] == "legacy"
-    runtime_mock.assert_not_awaited()
-    legacy_mock.assert_awaited_once()
+    assert result["status"] == "completed"
+    contract = result.get("runtime_contract") or {}
+    assert contract.get("planning_loop_requested") is False
+    assert contract.get("planning_loop_enabled") is True
+    assert "planning_loop_opt_out_ignored" in (contract.get("warnings") or [])
+    runtime_mock.assert_awaited_once()
+    legacy_mock.assert_not_awaited()
+
+
+def test_process_invoice_fails_closed_when_runtime_returns_non_dict(monkeypatch):
+    monkeypatch.delenv("AGENT_PLANNING_LOOP", raising=False)
+    orch = AgentOrchestrator("default")
+    invoice = _minimal_invoice()
+
+    with patch(
+        "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
+        new=AsyncMock(return_value=["unexpected-shape"]),
+    ):
+        result = asyncio.run(orch.process_invoice(invoice))
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "agent_runtime_invalid_response"
+    assert result["execution_path"] == "agentic_runtime"
 
 
 def test_process_invoice_forces_agentic_mode_in_production_when_opt_out_requested(monkeypatch):

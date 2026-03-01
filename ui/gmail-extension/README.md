@@ -1,14 +1,14 @@
-# Clearledgr Gmail Chrome Extension (Embedded Worker)
+# Clearledgr Gmail Chrome Extension (Work Surface)
 
-An embedded Gmail worker that automates AP workflows (invoice intake -> review -> approvals -> ERP posting) without leaving your inbox.
+Decision-first Gmail execution surface for AP Skill v1. Setup, account management, Ops, batch controls, and debug tooling live in the Admin Console.
 
 ## Features
 
-- **Streak-style UI (InboxSDK)** - AppMenu + routes inside Gmail (no custom DOM sidebar)
-- **Email sidebar** - Contextual AP panel when you open an invoice email
-- **Autonomous inbox scanning** - Finds AP candidates and queues them
-- **Approvals** - Review/approve/reject from the Clearledgr routes
-- **Non-finance detection** - Aggressively filters noise/marketing
+- **Work-only Gmail sidebar** - one current invoice, clear blockers, one primary action
+- **Inline reason sheet** - reject/override reason capture without native prompt dialogs
+- **Embedded action execution** - request approval, nudge, preview/retry ERP posting
+- **Evidence and audit** - compact checklist + plain-language audit timeline
+- **Admin Console link-outs** - integrations and Ops open outside Gmail
 
 ## Installation
 
@@ -48,27 +48,22 @@ An embedded Gmail worker that automates AP workflows (invoice intake -> review -
 
 ```
 gmail-extension/
-├── manifest.json      # Extension configuration
-├── background.js      # Service worker for settings/storage
-├── content-script.js  # Data bridge (NO UI): queue/events <-> InboxSDK layer
-├── queue-manager.js   # AP queue + autonomous scanning orchestration
-├── src/inboxsdk-layer.js    # InboxSDK implementation (routes + email sidebar)
-├── dist/inboxsdk-layer.js   # Built bundle (generated)
-├── icons/             # Extension icons
-│   ├── icon16.png
-│   ├── icon48.png
-│   └── icon128.png
-└── README.md          # This file
+├── manifest.json            # Extension configuration
+├── background.js            # Service worker (OAuth + runtime command bridge)
+├── content-script.js        # Data bridge (no operator UI)
+├── queue-manager.js         # AP queue/runtime orchestration
+├── src/inboxsdk-layer.js    # Gmail Work UI source
+├── dist/inboxsdk-layer.js   # Shipped Gmail Work bundle
+├── scripts/verify-bundle-parity.cjs
+├── tests/*.test.cjs
+└── icons/
 ```
 
 ## Configuration
 
-Settings are stored in Chrome sync storage and include:
-- Auto-process emails toggle
-- Confidence threshold for matches
-- Ignored sender domains
-- GL account mappings
-- ERP connection settings
+- Runtime endpoint and org config are resolved from extension storage + backend bootstrap.
+- Integrations and account management are controlled from `/console` (Admin Console).
+- Legacy popup/options/demo assets were moved to `/Users/mombalam/Desktop/Clearledgr.v1/docs/legacy/gmail-extension-ui/` and are not part of the shipped extension UX.
 
 ## Data Handling
 
@@ -107,6 +102,10 @@ Run manual-gated real Chrome/Gmail smoke:
 Run authenticated Gmail runtime assertions (requires logged-in Gmail profile):
 
 - `npm run test:e2e-auth`
+
+Generate deterministic UI hardening screenshot evidence (Work + Admin Ops surfaces):
+
+- `npm run evidence:ui-hardening -- --release-id ap-v1-2026-02-25-pilot-rc1 --backend-url http://127.0.0.1:8000`
 
 Optional environment variables for E2E:
 

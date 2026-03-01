@@ -18,6 +18,7 @@ const state = {
   bootstrap: null,
   inviteToken: null,
   netsuiteFormVisible: false,
+  sapFormVisible: false,
 };
 
 const qs = (selector) => document.querySelector(selector);
@@ -169,20 +170,33 @@ function setupPage() {
   const gmail = integrationByName("gmail");
   const slack = integrationByName("slack");
   const erp = integrationByName("erp");
+  const policyConfig = state.bootstrap?.policyPayload?.policy?.config_json || {};
   const slackChannel = slack.approval_channel || "";
 
   const gmailOk = !!gmail.connected;
   const slackOk = !!slack.connected;
   const erpOk = !!erp.connected;
   const channelOk = slackOk && !!slackChannel;
-  const allReady = gmailOk && slackOk && erpOk && channelOk;
+  const policyOk = policyConfig && Object.keys(policyConfig).length > 0;
+  const allReady = gmailOk && slackOk && erpOk && channelOk && policyOk;
 
   const erpType = erp.erp_type || "";
   const erpLabel = erpType ? erpType.charAt(0).toUpperCase() + erpType.slice(1) : "";
 
   return `
     <div class="panel">
-      <h3>Connect your tools</h3>
+      <h3>Setup steps</h3>
+      <div class="readiness-list">
+        <div class="readiness-item">${checkMark(gmailOk && slackOk && erpOk)} 1) Integrations</div>
+        <div class="readiness-item">${checkMark(channelOk)} 2) Approval channel</div>
+        <div class="readiness-item">${checkMark(policyOk)} 3) AP policies</div>
+        <div class="readiness-item">${checkMark(allReady)} 4) Launch</div>
+      </div>
+      <p class="muted">Follow this order: Integrations → Channel → Policies → Launch.</p>
+    </div>
+
+    <div class="panel">
+      <h3>Step 1: Connect integrations</h3>
       <p class="muted">One-click setup for each service. Gmail is connected automatically via the Chrome extension.</p>
       <div class="connector-grid">
 
@@ -212,7 +226,7 @@ function setupPage() {
     </div>
 
     <div class="panel">
-      <h3>Choose your ERP</h3>
+      <h3>Step 1b: Choose your ERP</h3>
       <p class="muted">Connect the accounting system where bills get posted.</p>
       <div class="connector-grid connector-grid-3">
 
@@ -249,6 +263,17 @@ function setupPage() {
             : '<button class="connector-btn" id="netsuite-setup-btn">Setup</button>'}
         </div>
 
+        <div class="connector-card ${erpOk && erpType === "sap" ? "done" : ""}">
+          <div class="connector-header">
+            <strong>SAP</strong>
+            ${erpOk && erpType === "sap" ? statusBadge(true) : ""}
+          </div>
+          <p class="muted">SAP via service-account credentials.</p>
+          ${erpOk && erpType === "sap"
+            ? `<p class="connector-detail">Base URL: ${erp.base_url || "connected"}</p>`
+            : '<button class="connector-btn" id="sap-setup-btn">Setup</button>'}
+        </div>
+
       </div>
 
       <div id="netsuite-form-panel" class="netsuite-form-panel ${state.netsuiteFormVisible ? "" : "hidden"}">
@@ -271,10 +296,27 @@ function setupPage() {
           <button id="ns-cancel-btn" class="alt">Cancel</button>
         </div>
       </div>
+
+      <div id="sap-form-panel" class="netsuite-form-panel ${state.sapFormVisible ? "" : "hidden"}">
+        <h4>SAP Credentials</h4>
+        <p class="muted">Use a least-privilege integration user and the OData financials base URL.</p>
+        <div class="form-grid">
+          <label>Base URL</label>
+          <input id="sap-base-url" type="text" placeholder="https://tenant.sapbydesign.com/sap/byd/odata/v1/financials" />
+          <label>Username</label>
+          <input id="sap-username" type="text" />
+          <label>Password</label>
+          <input id="sap-password" type="password" />
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="sap-connect-btn" class="connector-btn">Test & Connect</button>
+          <button id="sap-cancel-btn" class="alt">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <div class="panel ${slackOk ? "" : "panel-disabled"}">
-      <h3>Approval channel</h3>
+      <h3>Step 2: Approval channel</h3>
       <p class="muted">Where should Clearledgr send invoice approval requests in Slack?</p>
       <div class="row">
         <input id="slack-channel-input" placeholder="#finance-approvals" value="${slackChannel}" ${slackOk ? "" : "disabled"} />
@@ -283,15 +325,27 @@ function setupPage() {
       </div>
     </div>
 
+    <div class="panel">
+      <h3>Step 3: AP policy readiness</h3>
+      <p class="muted">Review policy thresholds before launch to ensure approval and posting guardrails are correct.</p>
+      <div class="readiness-list">
+        <div class="readiness-item">${checkMark(policyOk)} Policy config loaded</div>
+      </div>
+      <div class="row">
+        <button id="open-policies-page-btn" class="alt">Open AP Policies</button>
+      </div>
+    </div>
+
     ${_autopilotPanel(gmail)}
 
     <div class="panel">
-      <h3>Launch readiness</h3>
+      <h3>Step 4: Launch readiness</h3>
       <div class="readiness-list">
         <div class="readiness-item">${checkMark(gmailOk)} Gmail</div>
         <div class="readiness-item">${checkMark(slackOk)} Slack</div>
         <div class="readiness-item">${checkMark(erpOk)} ERP (${erpLabel || "none"})</div>
         <div class="readiness-item">${checkMark(channelOk)} Approval channel</div>
+        <div class="readiness-item">${checkMark(policyOk)} AP policies</div>
       </div>
       <button id="launch-btn" class="launch-btn" ${allReady ? "" : "disabled"}>
         ${allReady ? "Launch Clearledgr" : "Complete setup above to launch"}
@@ -1103,9 +1157,24 @@ async function bindPageEvents() {
   // Gmail connect
   const connectGmailBtn = qs("#connect-gmail-btn");
   if (connectGmailBtn) {
-    connectGmailBtn.onclick = () => {
-      const userId = state.bootstrap?.current_user?.id || "default";
-      window.location.href = `/gmail/authorize?user_id=${encodeURIComponent(userId)}&redirect_url=${encodeURIComponent("/console")}`;
+    connectGmailBtn.onclick = async () => {
+      connectGmailBtn.disabled = true;
+      connectGmailBtn.textContent = "Connecting...";
+      try {
+        const payload = await api("/api/admin/integrations/gmail/connect/start", {
+          method: "POST",
+          body: JSON.stringify({
+            organization_id: state.orgId,
+            redirect_path: `/console?org=${encodeURIComponent(state.orgId)}&page=integrations`,
+          }),
+        });
+        if (!payload?.auth_url) throw new Error("gmail_auth_url_missing");
+        window.location.href = payload.auth_url;
+      } catch (err) {
+        toast(`Failed to start Gmail connection: ${err.message}`, "error");
+        connectGmailBtn.disabled = false;
+        connectGmailBtn.textContent = "Connect Gmail";
+      }
     };
   }
 
@@ -1196,6 +1265,59 @@ async function bindPageEvents() {
     };
   }
 
+  // SAP setup toggle
+  const sapSetupBtn = qs("#sap-setup-btn");
+  if (sapSetupBtn) {
+    sapSetupBtn.onclick = () => {
+      state.sapFormVisible = true;
+      const panel = qs("#sap-form-panel");
+      if (panel) panel.classList.remove("hidden");
+    };
+  }
+
+  // SAP cancel
+  const sapCancelBtn = qs("#sap-cancel-btn");
+  if (sapCancelBtn) {
+    sapCancelBtn.onclick = () => {
+      state.sapFormVisible = false;
+      const panel = qs("#sap-form-panel");
+      if (panel) panel.classList.add("hidden");
+    };
+  }
+
+  // SAP connect
+  const sapConnectBtn = qs("#sap-connect-btn");
+  if (sapConnectBtn) {
+    sapConnectBtn.onclick = async () => {
+      const payload = {
+        organization_id: state.orgId,
+        base_url: qs("#sap-base-url").value.trim(),
+        username: qs("#sap-username").value.trim(),
+        password: qs("#sap-password").value.trim(),
+      };
+      if (!payload.base_url || !payload.username || !payload.password) {
+        toast("Please fill in all SAP fields.", "error");
+        return;
+      }
+      sapConnectBtn.textContent = "Testing connection...";
+      sapConnectBtn.disabled = true;
+      try {
+        await api("/api/admin/integrations/erp/connect/sap", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        toast("SAP connected!", "success");
+        state.sapFormVisible = false;
+        await refreshAll();
+      } catch (err) {
+        toast(`SAP connection failed: ${err.message}`, "error");
+      } finally {
+        sapConnectBtn.textContent = "Test & Connect";
+        sapConnectBtn.disabled = false;
+      }
+    };
+  }
+
   // Save Slack channel
   const saveSlackChannel = qs("#save-slack-channel-btn");
   if (saveSlackChannel && !saveSlackChannel.disabled) {
@@ -1220,6 +1342,15 @@ async function bindPageEvents() {
         body: JSON.stringify({ organization_id: state.orgId, channel_id: channel }),
       });
       toast("Test message sent to Slack.");
+    };
+  }
+
+  const openPoliciesBtn = qs("#open-policies-page-btn");
+  if (openPoliciesBtn) {
+    openPoliciesBtn.onclick = () => {
+      state.activePage = "policies";
+      renderNav();
+      renderPage();
     };
   }
 
@@ -1393,9 +1524,26 @@ async function boot() {
   if (requestedPage && pageExists(requestedPage)) {
     state.activePage = requestedPage;
   }
+  const authCode = url.get("auth_code");
   const token = url.get("token");
   const refreshToken = url.get("refresh_token");
-  if (token) {
+  if (authCode) {
+    try {
+      const exchange = await api("/auth/google/exchange", {
+        method: "POST",
+        body: JSON.stringify({ auth_code: authCode }),
+        headers: {},
+      });
+      setToken(exchange.access_token, exchange.refresh_token);
+      cleanUrlParams(["auth_code"]);
+    } catch (error) {
+      cleanUrlParams(["auth_code"]);
+      console.error(error);
+      clearTokens();
+      showAuth("Google sign-in session expired. Please sign in again.");
+      return;
+    }
+  } else if (token) {
     setToken(token, refreshToken);
     cleanUrlParams(["token", "refresh_token"]);
   } else {

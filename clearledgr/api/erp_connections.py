@@ -22,16 +22,28 @@ from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode, parse_qs, urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
+from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
 from clearledgr.integrations.erp_router import ERPConnection, set_erp_connection, get_erp_connection
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/erp", tags=["erp-connections"])
+_ADMIN_ROLES = {"admin", "owner"}
+
+
+def _resolve_org_id(user: TokenData, requested_org: str) -> str:
+    org_id = str(requested_org or user.organization_id or "default").strip() or "default"
+    role = str(getattr(user, "role", "") or "").strip().lower()
+    if role in _ADMIN_ROLES:
+        return org_id
+    if org_id != str(user.organization_id or "").strip():
+        raise HTTPException(status_code=403, detail="org_mismatch")
+    return org_id
 
 
 # ==================== CONFIGURATION ====================
@@ -90,19 +102,23 @@ class DisconnectRequest(BaseModel):
 # ==================== CONNECTION STATUS ====================
 
 @router.get("/status/{organization_id}")
-async def get_connection_status(organization_id: str):
+async def get_connection_status(
+    organization_id: str,
+    user: TokenData = Depends(get_current_user),
+):
     """
     Get ERP connection status for an organization.
     
     Returns connected ERPs and their status.
     """
+    org_id = _resolve_org_id(user, organization_id)
     db = get_db()
-    connections = db.get_erp_connections(organization_id)
+    connections = db.get_erp_connections(org_id)
     
     result = {
-        "organization_id": organization_id,
+        "organization_id": org_id,
         "connections": {},
-        "available_erps": ["quickbooks", "xero", "netsuite"],
+        "available_erps": ["quickbooks", "xero", "netsuite", "sap"],
     }
     
     for conn in connections:
@@ -120,7 +136,10 @@ async def get_connection_status(organization_id: str):
 # ==================== QUICKBOOKS OAUTH ====================
 
 @router.post("/quickbooks/connect")
-async def quickbooks_connect(request: ConnectRequest):
+async def quickbooks_connect(
+    request: ConnectRequest,
+    user: TokenData = Depends(get_current_user),
+):
     """
     Start QuickBooks OAuth flow.
     
@@ -129,10 +148,11 @@ async def quickbooks_connect(request: ConnectRequest):
     if not QUICKBOOKS_CLIENT_ID:
         raise HTTPException(status_code=500, detail="QuickBooks not configured")
     
+    org_id = _resolve_org_id(user, request.organization_id)
     # Generate state token
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = {
-        "organization_id": request.organization_id,
+        "organization_id": org_id,
         "return_url": request.return_url or f"{FRONTEND_URL}/settings/erp",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -217,11 +237,15 @@ async def quickbooks_callback(
 
 
 @router.post("/quickbooks/disconnect")
-async def quickbooks_disconnect(request: DisconnectRequest):
+async def quickbooks_disconnect(
+    request: DisconnectRequest,
+    user: TokenData = Depends(get_current_user),
+):
     """Disconnect QuickBooks from organization."""
     from clearledgr.integrations.erp_router import delete_erp_connection
     
-    success = delete_erp_connection(request.organization_id, "quickbooks")
+    org_id = _resolve_org_id(user, request.organization_id)
+    success = delete_erp_connection(org_id, "quickbooks")
     
     return {"success": success, "erp": "quickbooks"}
 
@@ -229,7 +253,10 @@ async def quickbooks_disconnect(request: DisconnectRequest):
 # ==================== XERO OAUTH ====================
 
 @router.post("/xero/connect")
-async def xero_connect(request: ConnectRequest):
+async def xero_connect(
+    request: ConnectRequest,
+    user: TokenData = Depends(get_current_user),
+):
     """
     Start Xero OAuth flow.
     
@@ -238,9 +265,10 @@ async def xero_connect(request: ConnectRequest):
     if not XERO_CLIENT_ID:
         raise HTTPException(status_code=500, detail="Xero not configured")
     
+    org_id = _resolve_org_id(user, request.organization_id)
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = {
-        "organization_id": request.organization_id,
+        "organization_id": org_id,
         "return_url": request.return_url or f"{FRONTEND_URL}/settings/erp",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -336,11 +364,15 @@ async def xero_callback(
 
 
 @router.post("/xero/disconnect")
-async def xero_disconnect(request: DisconnectRequest):
+async def xero_disconnect(
+    request: DisconnectRequest,
+    user: TokenData = Depends(get_current_user),
+):
     """Disconnect Xero from organization."""
     from clearledgr.integrations.erp_router import delete_erp_connection
     
-    success = delete_erp_connection(request.organization_id, "xero")
+    org_id = _resolve_org_id(user, request.organization_id)
+    success = delete_erp_connection(org_id, "xero")
     
     return {"success": success, "erp": "xero"}
 
@@ -348,13 +380,17 @@ async def xero_disconnect(request: DisconnectRequest):
 # ==================== NETSUITE TBA ====================
 
 @router.post("/netsuite/connect")
-async def netsuite_connect(credentials: NetSuiteCredentials):
+async def netsuite_connect(
+    credentials: NetSuiteCredentials,
+    user: TokenData = Depends(get_current_user),
+):
     """
     Connect NetSuite using Token-Based Authentication.
     
     NetSuite uses TBA (OAuth 1.0 style) not OAuth 2.0.
     Credentials are generated in NetSuite UI and provided here.
     """
+    org_id = _resolve_org_id(user, credentials.organization_id)
     # Validate credentials by making a test API call
     connection = ERPConnection(
         type="netsuite",
@@ -374,14 +410,15 @@ async def netsuite_connect(credentials: NetSuiteCredentials):
             raise Exception("Failed to fetch accounts")
         
         # Store connection
-        set_erp_connection(credentials.organization_id, connection)
+        set_erp_connection(org_id, connection)
         
-        logger.info(f"NetSuite connected for org {credentials.organization_id}")
+        logger.info(f"NetSuite connected for org {org_id}")
         
         return {
             "success": True,
             "erp": "netsuite",
             "account_id": credentials.account_id,
+            "organization_id": org_id,
             "accounts_found": len(accounts) if accounts else 0,
         }
         
@@ -391,11 +428,15 @@ async def netsuite_connect(credentials: NetSuiteCredentials):
 
 
 @router.post("/netsuite/disconnect")
-async def netsuite_disconnect(request: DisconnectRequest):
+async def netsuite_disconnect(
+    request: DisconnectRequest,
+    user: TokenData = Depends(get_current_user),
+):
     """Disconnect NetSuite from organization."""
     from clearledgr.integrations.erp_router import delete_erp_connection
     
-    success = delete_erp_connection(request.organization_id, "netsuite")
+    org_id = _resolve_org_id(user, request.organization_id)
+    success = delete_erp_connection(org_id, "netsuite")
     
     return {"success": success, "erp": "netsuite"}
 
@@ -403,13 +444,18 @@ async def netsuite_disconnect(request: DisconnectRequest):
 # ==================== TOKEN REFRESH ====================
 
 @router.post("/refresh/{organization_id}/{erp_type}")
-async def refresh_tokens(organization_id: str, erp_type: str):
+async def refresh_tokens(
+    organization_id: str,
+    erp_type: str,
+    user: TokenData = Depends(get_current_user),
+):
     """
     Manually refresh tokens for an ERP connection.
     
     Normally tokens are refreshed automatically, but this allows manual refresh.
     """
-    connection = get_erp_connection(organization_id)
+    org_id = _resolve_org_id(user, organization_id)
+    connection = get_erp_connection(org_id)
     
     if not connection or connection.type != erp_type:
         raise HTTPException(status_code=404, detail="Connection not found")
@@ -425,7 +471,7 @@ async def refresh_tokens(organization_id: str, erp_type: str):
     
     if new_token:
         # Update stored connection
-        set_erp_connection(organization_id, connection)
+        set_erp_connection(org_id, connection)
         return {"success": True, "erp": erp_type}
     
     return {"success": False, "error": "Token refresh failed"}
@@ -434,13 +480,17 @@ async def refresh_tokens(organization_id: str, erp_type: str):
 # ==================== CHART OF ACCOUNTS ====================
 
 @router.get("/accounts/{organization_id}")
-async def get_chart_of_accounts(organization_id: str):
+async def get_chart_of_accounts(
+    organization_id: str,
+    user: TokenData = Depends(get_current_user),
+):
     """
     Get chart of accounts from connected ERP.
     
     Used for GL account mapping.
     """
-    connection = get_erp_connection(organization_id)
+    org_id = _resolve_org_id(user, organization_id)
+    connection = get_erp_connection(org_id)
     
     if not connection:
         raise HTTPException(status_code=404, detail="No ERP connected")
@@ -456,7 +506,7 @@ async def get_chart_of_accounts(organization_id: str):
         accounts = await get_netsuite_accounts(connection)
     
     return {
-        "organization_id": organization_id,
+        "organization_id": org_id,
         "erp": connection.type,
         "accounts": accounts,
     }

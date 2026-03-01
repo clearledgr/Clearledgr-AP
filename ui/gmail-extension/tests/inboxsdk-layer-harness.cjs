@@ -31,7 +31,6 @@ function loadInboxSdkLayerTestFns() {
     'normalizeAuditEventType',
     'isAuditReasonCode',
     'parseAuditReasonCodes',
-    'getAuditReasonLabel',
     'formatAuditReasonText',
     'describeAgentEvent',
     'getAgentEventTimestamp',

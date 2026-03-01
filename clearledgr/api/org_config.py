@@ -31,7 +31,27 @@ from clearledgr.core.org_config import (
 from clearledgr.core.auth import get_current_user, TokenData
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/config", tags=["Organization Configuration"])
+router = APIRouter(
+    prefix="/config",
+    tags=["Organization Configuration"],
+    dependencies=[Depends(get_current_user)],
+)
+_ORG_ADMIN_ROLES = {"owner", "admin"}
+
+
+def _require_admin(user: TokenData) -> None:
+    if str(getattr(user, "role", "") or "").strip().lower() not in _ORG_ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="admin_required")
+
+
+def _resolve_org_id_for_user(user: TokenData, organization_id: str) -> str:
+    org_id = str(organization_id or user.organization_id or "default").strip() or "default"
+    role = str(getattr(user, "role", "") or "").strip().lower()
+    if role in _ORG_ADMIN_ROLES:
+        return org_id
+    if org_id != str(getattr(user, "organization_id", "") or "").strip():
+        raise HTTPException(status_code=403, detail="org_mismatch")
+    return org_id
 
 
 # ==================== REQUEST MODELS ====================
@@ -93,7 +113,10 @@ class CreateOrgRequest(BaseModel):
 # ==================== ENDPOINTS ====================
 
 @router.post("/organizations")
-async def create_organization(request: CreateOrgRequest):
+async def create_organization(
+    request: CreateOrgRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
     """
     Create a new organization with default or preset configuration.
     
@@ -102,8 +125,11 @@ async def create_organization(request: CreateOrgRequest):
     - european_saas: EUR currency, Stripe, auto-posting enabled
     - uk_business: GBP currency, Stripe
     """
+    _require_admin(current_user)
+    org_id = _resolve_org_id_for_user(current_user, request.organization_id)
+
     # Check if already exists
-    existing = get_org_config(request.organization_id)
+    existing = get_org_config(org_id)
     if existing:
         raise HTTPException(status_code=400, detail="Organization already exists")
     
@@ -116,11 +142,11 @@ async def create_organization(request: CreateOrgRequest):
                 detail=f"Unknown preset. Available: {list(presets.keys())}",
             )
         config = presets[request.preset]
-        config.organization_id = request.organization_id
+        config.organization_id = org_id
         config.organization_name = request.organization_name
     else:
         config = create_default_config(
-            organization_id=request.organization_id,
+            organization_id=org_id,
             organization_name=request.organization_name,
             currency=request.currency,
         )
@@ -129,15 +155,19 @@ async def create_organization(request: CreateOrgRequest):
     
     return {
         "status": "success",
-        "message": f"Organization {request.organization_id} created",
+        "message": f"Organization {org_id} created",
         "config": config.to_dict(),
     }
 
 
 @router.get("/organizations/{organization_id}")
-async def get_organization_config(organization_id: str):
+async def get_organization_config(
+    organization_id: str,
+    current_user: TokenData = Depends(get_current_user),
+):
     """Get complete configuration for an organization."""
-    config = get_org_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_org_config(org_id)
     
     if not config:
         raise HTTPException(status_code=404, detail="Organization not found")
@@ -151,24 +181,28 @@ async def delete_organization(
     current_user: TokenData = Depends(get_current_user),
 ):
     """Delete an organization (requires owner role)."""
-    if current_user.role not in ["owner", "admin"]:
-        raise HTTPException(status_code=403, detail="Only owners can delete organizations")
-    
-    config = get_org_config(organization_id)
+    _require_admin(current_user)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+
+    config = get_org_config(org_id)
     if not config:
         raise HTTPException(status_code=404, detail="Organization not found")
-    
-    delete_org_config(organization_id)
-    
-    return {"status": "success", "message": f"Organization {organization_id} deleted"}
+
+    delete_org_config(org_id)
+
+    return {"status": "success", "message": f"Organization {org_id} deleted"}
 
 
 # ==================== GL MAPPINGS ====================
 
 @router.get("/organizations/{organization_id}/gl-mappings")
-async def get_gl_mappings(organization_id: str):
+async def get_gl_mappings(
+    organization_id: str,
+    current_user: TokenData = Depends(get_current_user),
+):
     """Get all GL account mappings for an organization."""
-    config = get_or_create_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_or_create_config(org_id)
     
     return {
         "mappings": {
@@ -187,9 +221,11 @@ async def update_gl_mapping(
     organization_id: str,
     account_type: str,
     request: GLMappingRequest,
+    current_user: TokenData = Depends(get_current_user),
 ):
     """Update a GL account mapping."""
-    config = get_or_create_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_or_create_config(org_id)
     
     config.gl_mappings[account_type] = GLAccountMapping(
         account_type=request.account_type,
@@ -210,9 +246,14 @@ async def update_gl_mapping(
 
 
 @router.delete("/organizations/{organization_id}/gl-mappings/{account_type}")
-async def delete_gl_mapping(organization_id: str, account_type: str):
+async def delete_gl_mapping(
+    organization_id: str,
+    account_type: str,
+    current_user: TokenData = Depends(get_current_user),
+):
     """Delete a GL account mapping."""
-    config = get_org_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_org_config(org_id)
     if not config:
         raise HTTPException(status_code=404, detail="Organization not found")
     
@@ -226,9 +267,13 @@ async def delete_gl_mapping(organization_id: str, account_type: str):
 # ==================== THRESHOLDS ====================
 
 @router.get("/organizations/{organization_id}/thresholds")
-async def get_thresholds(organization_id: str):
+async def get_thresholds(
+    organization_id: str,
+    current_user: TokenData = Depends(get_current_user),
+):
     """Get confidence thresholds for an organization."""
-    config = get_or_create_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_or_create_config(org_id)
     
     return {
         "thresholds": {
@@ -243,9 +288,14 @@ async def get_thresholds(organization_id: str):
 
 
 @router.patch("/organizations/{organization_id}/thresholds")
-async def update_thresholds(organization_id: str, request: ThresholdsRequest):
+async def update_thresholds(
+    organization_id: str,
+    request: ThresholdsRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
     """Update confidence thresholds."""
-    config = get_or_create_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_or_create_config(org_id)
     
     # Update only provided fields
     if request.auto_match is not None:
@@ -263,15 +313,29 @@ async def update_thresholds(organization_id: str, request: ThresholdsRequest):
     
     save_org_config(config)
     
-    return {"status": "success", "thresholds": get_thresholds(organization_id)}
+    return {
+        "status": "success",
+        "thresholds": {
+            "auto_match": config.thresholds.auto_match,
+            "review_required": config.thresholds.review_required,
+            "reject": config.thresholds.reject,
+            "auto_approve_je": config.thresholds.auto_approve_je,
+            "critical_amount": config.thresholds.critical_amount,
+            "high_amount": config.thresholds.high_amount,
+        },
+    }
 
 
 # ==================== LOCALE ====================
 
 @router.get("/organizations/{organization_id}/locale")
-async def get_locale(organization_id: str):
+async def get_locale(
+    organization_id: str,
+    current_user: TokenData = Depends(get_current_user),
+):
     """Get locale settings for an organization."""
-    config = get_or_create_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_or_create_config(org_id)
     
     return {
         "locale": {
@@ -285,9 +349,14 @@ async def get_locale(organization_id: str):
 
 
 @router.patch("/organizations/{organization_id}/locale")
-async def update_locale(organization_id: str, request: LocaleRequest):
+async def update_locale(
+    organization_id: str,
+    request: LocaleRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
     """Update locale settings."""
-    config = get_or_create_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_or_create_config(org_id)
     
     if request.default_currency is not None:
         config.locale.default_currency = request.default_currency
@@ -302,15 +371,28 @@ async def update_locale(organization_id: str, request: LocaleRequest):
     
     save_org_config(config)
     
-    return {"status": "success", "locale": (await get_locale(organization_id))["locale"]}
+    return {
+        "status": "success",
+        "locale": {
+            "default_currency": config.locale.default_currency,
+            "secondary_currencies": config.locale.secondary_currencies,
+            "date_format": config.locale.date_format,
+            "number_format": config.locale.number_format,
+            "timezone": config.locale.timezone,
+        },
+    }
 
 
 # ==================== FEATURES ====================
 
 @router.get("/organizations/{organization_id}/features")
-async def get_features(organization_id: str):
+async def get_features(
+    organization_id: str,
+    current_user: TokenData = Depends(get_current_user),
+):
     """Get feature flags for an organization."""
-    config = get_or_create_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_or_create_config(org_id)
     
     return {
         "features": {
@@ -326,9 +408,14 @@ async def get_features(organization_id: str):
 
 
 @router.patch("/organizations/{organization_id}/features")
-async def update_features(organization_id: str, request: FeaturesRequest):
+async def update_features(
+    organization_id: str,
+    request: FeaturesRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
     """Update feature flags."""
-    config = get_or_create_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_or_create_config(org_id)
     
     if request.auto_reconciliation is not None:
         config.features.auto_reconciliation = request.auto_reconciliation
@@ -347,15 +434,30 @@ async def update_features(organization_id: str, request: FeaturesRequest):
     
     save_org_config(config)
     
-    return {"status": "success", "features": (await get_features(organization_id))["features"]}
+    return {
+        "status": "success",
+        "features": {
+            "auto_reconciliation": config.features.auto_reconciliation,
+            "auto_categorization": config.features.auto_categorization,
+            "slack_notifications": config.features.slack_notifications,
+            "email_detection": config.features.email_detection,
+            "three_way_matching": config.features.three_way_matching,
+            "erp_auto_posting": config.features.erp_auto_posting,
+            "ai_explanations": config.features.ai_explanations,
+        },
+    }
 
 
 # ==================== PAYMENT GATEWAYS ====================
 
 @router.get("/organizations/{organization_id}/gateways")
-async def get_payment_gateways(organization_id: str):
+async def get_payment_gateways(
+    organization_id: str,
+    current_user: TokenData = Depends(get_current_user),
+):
     """Get payment gateway configurations."""
-    config = get_or_create_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_or_create_config(org_id)
     
     # Don't expose API keys
     return {
@@ -377,12 +479,14 @@ async def configure_payment_gateway(
     organization_id: str,
     gateway_type: str,
     request: PaymentGatewayRequest,
+    current_user: TokenData = Depends(get_current_user),
 ):
     """Configure a payment gateway."""
     if gateway_type not in ["stripe", "paystack", "flutterwave"]:
         raise HTTPException(status_code=400, detail="Invalid gateway type")
     
-    config = get_or_create_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_or_create_config(org_id)
     
     config.payment_gateways[gateway_type] = PaymentGatewayConfig(
         gateway_type=request.gateway_type,
@@ -405,9 +509,14 @@ async def configure_payment_gateway(
 
 
 @router.delete("/organizations/{organization_id}/gateways/{gateway_type}")
-async def remove_payment_gateway(organization_id: str, gateway_type: str):
+async def remove_payment_gateway(
+    organization_id: str,
+    gateway_type: str,
+    current_user: TokenData = Depends(get_current_user),
+):
     """Remove a payment gateway configuration."""
-    config = get_org_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_org_config(org_id)
     if not config:
         raise HTTPException(status_code=404, detail="Organization not found")
     
@@ -461,19 +570,23 @@ class DataResidencyRequest(BaseModel):
 
 
 @router.get("/organizations/{organization_id}/data-residency")
-async def get_data_residency(organization_id: str):
+async def get_data_residency(
+    organization_id: str,
+    current_user: TokenData = Depends(get_current_user),
+):
     """
     Get data residency and GDPR settings for an organization.
     
     Returns current data storage location, GDPR compliance status,
     and related privacy settings.
     """
-    config = get_org_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_org_config(org_id)
     if not config:
         raise HTTPException(status_code=404, detail="Organization not found")
     
     return {
-        "organization_id": organization_id,
+        "organization_id": org_id,
         "data_residency": config.data_residency.to_dict(),
         "storage_location": config.data_residency.get_storage_location(),
         "is_eu_resident": config.data_residency.is_eu_data_resident(),
@@ -481,7 +594,11 @@ async def get_data_residency(organization_id: str):
 
 
 @router.patch("/organizations/{organization_id}/data-residency")
-async def update_data_residency(organization_id: str, request: DataResidencyRequest):
+async def update_data_residency(
+    organization_id: str,
+    request: DataResidencyRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
     """
     Update data residency and GDPR settings.
     
@@ -495,7 +612,8 @@ async def update_data_residency(organization_id: str, request: DataResidencyRequ
     - africa: Africa (South Africa, Nigeria, Kenya)
     - asia-pacific: Asia Pacific (Singapore, Australia, Japan)
     """
-    config = get_org_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_org_config(org_id)
     if not config:
         raise HTTPException(status_code=404, detail="Organization not found")
     
@@ -557,14 +675,18 @@ async def list_data_regions():
 
 
 @router.post("/organizations/{organization_id}/gdpr/data-export-request")
-async def request_data_export(organization_id: str):
+async def request_data_export(
+    organization_id: str,
+    current_user: TokenData = Depends(get_current_user),
+):
     """
     Request a data export (GDPR Article 20 - Right to Data Portability).
     
     Initiates an export of all personal data for the organization.
     Export will be available for download within 24 hours.
     """
-    config = get_org_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_org_config(org_id)
     if not config:
         raise HTTPException(status_code=404, detail="Organization not found")
     
@@ -589,7 +711,8 @@ async def request_data_export(organization_id: str):
 @router.post("/organizations/{organization_id}/gdpr/deletion-request")
 async def request_data_deletion(
     organization_id: str,
-    confirm: bool = Query(False, description="Confirm deletion request")
+    confirm: bool = Query(False, description="Confirm deletion request"),
+    current_user: TokenData = Depends(get_current_user),
 ):
     """
     Request data deletion (GDPR Article 17 - Right to Erasure).
@@ -599,7 +722,8 @@ async def request_data_deletion(
     
     Set confirm=true to confirm the deletion request.
     """
-    config = get_org_config(organization_id)
+    org_id = _resolve_org_id_for_user(current_user, organization_id)
+    config = get_org_config(org_id)
     if not config:
         raise HTTPException(status_code=404, detail="Organization not found")
     

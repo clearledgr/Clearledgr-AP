@@ -12,11 +12,16 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock, AsyncMock
 
 # Import the FastAPI app
+import main as main_module
 from main import app
 from clearledgr.api import gmail_extension as gmail_extension_module
 from clearledgr.api import agent_intents as agent_intents_module
 from clearledgr.api import gmail_webhooks as gmail_webhooks_module
+from clearledgr.api import admin_console as admin_console_module
 from clearledgr.api import ap_items as ap_items_module
+from clearledgr.api import auth as auth_module
+from clearledgr.api import erp_connections as erp_connections_module
+from clearledgr.api import org_config as org_config_module
 from clearledgr.core.auth import TokenData
 
 client = TestClient(app)
@@ -75,6 +80,89 @@ class TestAuthEndpoints:
         assert "access_token" in data
         assert "user_id" in data
         assert "organization_id" in data
+
+    def test_google_callback_uses_one_time_auth_code_exchange(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-google-client")
+        monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "test-google-secret")
+        monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
+        monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", "test-token-key")
+
+        state = auth_module._sign_google_state(
+            {
+                "organization_id": "default",
+                "redirect_path": "/console",
+                "iat": int(datetime.now(timezone.utc).timestamp()),
+                "nonce": "nonce-1",
+            }
+        )
+
+        class _Resp:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+                self.content = b"{}"
+
+            def json(self):
+                return self._payload
+
+        class _FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, data=None, headers=None):
+                if "oauth2.googleapis.com/token" in url:
+                    return _Resp(200, {"access_token": "google-access-token"})
+                return _Resp(404, {})
+
+            async def get(self, url, headers=None):
+                if "www.googleapis.com/oauth2/v2/userinfo" in url:
+                    return _Resp(200, {"email": "user@company.com", "id": "google-uid-1"})
+                return _Resp(404, {})
+
+        monkeypatch.setattr(auth_module.httpx, "AsyncClient", _FakeAsyncClient)
+
+        fake_user = SimpleNamespace(
+            id="user-123",
+            email="user@company.com",
+            organization_id="default",
+            role="user",
+        )
+        monkeypatch.setattr("clearledgr.core.auth.get_user_by_email", lambda _email: None)
+        monkeypatch.setattr("clearledgr.core.auth.create_user_from_google", lambda **_kwargs: fake_user)
+        monkeypatch.setattr(auth_module, "_google_auth_code_store", {})
+
+        response = client.get(
+            "/auth/google/callback",
+            params={"code": "google-code-1", "state": state},
+            follow_redirects=False,
+        )
+        assert response.status_code in {302, 307}
+        location = response.headers.get("location") or ""
+        assert "auth_code=" in location
+        assert "token=" not in location
+        assert "refresh_token=" not in location
+
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = parse_qs(urlparse(location).query)
+        auth_code = str(parsed.get("auth_code", [""])[0])
+        assert auth_code
+
+        exchange = client.post("/auth/google/exchange", json={"auth_code": auth_code})
+        assert exchange.status_code == 200
+        payload = exchange.json()
+        assert payload.get("access_token")
+        assert payload.get("refresh_token")
+
+        reused = client.post("/auth/google/exchange", json={"auth_code": auth_code})
+        assert reused.status_code == 400
+        assert reused.json().get("detail") == "invalid_auth_code"
 
 
 class TestAPRetryPostEndpoint:
@@ -235,27 +323,12 @@ class TestGmailWebhooks:
             app.dependency_overrides.pop(gmail_webhooks_module.get_current_user, None)
         assert response.status_code == 403
 
-    def test_gmail_authorize_uses_signed_state(self, monkeypatch):
-        monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
-        captured = {}
-
-        def _fake_auth_url(*, state):
-            captured["state"] = state
-            return f"https://accounts.google.com/o/oauth2/auth?state={state}"
-
-        with patch.object(gmail_webhooks_module, "generate_auth_url", side_effect=_fake_auth_url):
-            response = client.get(
-                "/gmail/authorize",
-                params={"user_id": "gmail-user-1", "redirect_url": "https://app.test/callback"},
-            )
-
-        assert response.status_code == 200
-        signed_state = captured.get("state")
-        assert isinstance(signed_state, str)
-        assert "." in signed_state
-        decoded = gmail_webhooks_module._unsign_oauth_state(signed_state)
-        assert decoded.get("user_id") == "gmail-user-1"
-        assert decoded.get("redirect_url") == "https://app.test/callback"
+    def test_gmail_authorize_route_removed(self):
+        response = client.get(
+            "/gmail/authorize",
+            params={"user_id": "gmail-user-1", "redirect_url": "https://app.test/callback"},
+        )
+        assert response.status_code == 404
 
     def test_gmail_callback_requires_oauth_state(self):
         response = client.get("/gmail/callback?code=test-code")
@@ -270,6 +343,43 @@ class TestGmailWebhooks:
         )
         assert response.status_code == 400
         assert response.json().get("detail") == "invalid_oauth_state"
+
+    def test_gmail_callback_redirect_appends_success_with_existing_query(self, monkeypatch):
+        monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
+        state = admin_console_module._sign_state(
+            {
+                "organization_id": "default",
+                "user_id": "gmail-user-1",
+                "redirect_url": "/console?org=default&page=integrations",
+                "iat": int(datetime.now(timezone.utc).timestamp()),
+                "nonce": "test-nonce",
+            }
+        )
+        fake_token = SimpleNamespace(
+            user_id="gmail-user-1",
+            access_token="access-token",
+            refresh_token="refresh-token",
+            expires_at=int(datetime.now(timezone.utc).timestamp()) + 3600,
+            email="ops@example.com",
+        )
+        fake_db = MagicMock()
+
+        with patch.object(gmail_webhooks_module, "exchange_code_for_tokens", AsyncMock(return_value=fake_token)):
+            with patch.object(gmail_webhooks_module, "token_store", MagicMock(store=MagicMock())):
+                with patch.object(gmail_webhooks_module, "_should_setup_watch", return_value=False):
+                    with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
+                        response = client.get(
+                            "/gmail/callback",
+                            params={"code": "test-code", "state": state},
+                            follow_redirects=False,
+                        )
+
+        assert response.status_code in {302, 307}
+        location = str(response.headers.get("location") or "")
+        assert "/console" in location
+        assert "org=default" in location
+        assert "page=integrations" in location
+        assert "success=true" in location
 
     def test_process_single_email_propagates_org_to_invoice_handler(self):
         class _FakeClient:
@@ -338,18 +448,96 @@ class TestGmailWebhooks:
         assert seen.get("organization_id") == "tenant-42"
 
 
+class TestAdminConsoleIntegrations:
+    @staticmethod
+    def _fake_user(role: str):
+        return TokenData(
+            user_id="admin-user-1",
+            email="admin@example.com",
+            organization_id="default",
+            role=role,
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+    def test_start_gmail_connect_requires_admin(self):
+        app.dependency_overrides[admin_console_module.get_current_user] = lambda: self._fake_user("viewer")
+        try:
+            response = client.post(
+                "/api/admin/integrations/gmail/connect/start",
+                json={"organization_id": "default", "redirect_path": "/console?page=integrations"},
+            )
+        finally:
+            app.dependency_overrides.pop(admin_console_module.get_current_user, None)
+        assert response.status_code == 403
+
+    def test_start_gmail_connect_returns_google_auth_url(self, monkeypatch):
+        monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
+        captured = {}
+
+        def _fake_auth_url(*, state):
+            captured["state"] = state
+            return f"https://accounts.google.com/o/oauth2/v2/auth?state={state}"
+
+        app.dependency_overrides[admin_console_module.get_current_user] = lambda: self._fake_user("admin")
+        try:
+            with patch.object(admin_console_module, "generate_auth_url", side_effect=_fake_auth_url):
+                response = client.post(
+                    "/api/admin/integrations/gmail/connect/start",
+                    json={"organization_id": "default", "redirect_path": "/console?org=default&page=integrations"},
+                )
+        finally:
+            app.dependency_overrides.pop(admin_console_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["organization_id"] == "default"
+        assert payload["redirect_path"] == "/console?org=default&page=integrations"
+        assert payload["auth_url"].startswith("https://accounts.google.com/o/oauth2/v2/auth")
+        signed_state = captured.get("state")
+        assert isinstance(signed_state, str) and "." in signed_state
+        decoded = gmail_webhooks_module._unsign_oauth_state(signed_state)
+        assert decoded.get("user_id") == "admin-user-1"
+        assert decoded.get("organization_id") == "default"
+        assert decoded.get("redirect_url") == "/console?org=default&page=integrations"
+
+
 class TestERPEndpoints:
     """Test ERP integration endpoints."""
     
     def test_erp_status(self):
         """Test ERP connection status."""
-        response = client.get("/erp/status/default")
+        app.dependency_overrides[erp_connections_module.get_current_user] = lambda: TokenData(
+            user_id="erp-user-1",
+            email="erp-user@example.com",
+            organization_id="default",
+            role="owner",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        try:
+            response = client.get("/erp/status/default")
+        finally:
+            app.dependency_overrides.pop(erp_connections_module.get_current_user, None)
         assert response.status_code == 200
+
+    def test_erp_status_blocks_cross_org_for_non_admin(self):
+        app.dependency_overrides[erp_connections_module.get_current_user] = lambda: TokenData(
+            user_id="erp-user-2",
+            email="erp-user-2@example.com",
+            organization_id="default",
+            role="user",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        try:
+            response = client.get("/erp/status/other-org")
+        finally:
+            app.dependency_overrides.pop(erp_connections_module.get_current_user, None)
+        assert response.status_code == 403
+        assert response.json().get("detail") == "org_mismatch"
     
-    def test_oauth_status(self):
-        """Test OAuth connection status."""
+    def test_oauth_status_route_not_mounted(self):
+        """Legacy /oauth route family is not mounted in strict AP-v1 runtime."""
         response = client.get("/oauth/status")
-        assert response.status_code == 200
+        assert response.status_code == 404
 
 
 class TestExtensionEndpoints:
@@ -441,6 +629,16 @@ class TestExtensionEndpoints:
         monkeypatch.setattr(gmail_extension_module.httpx, "AsyncClient", _FakeAsyncClient)
         monkeypatch.setattr(gmail_extension_module.token_store, "store", _store)
         monkeypatch.setattr(gmail_extension_module, "get_db", lambda: _FakeDB())
+        monkeypatch.setattr(
+            gmail_extension_module,
+            "get_user_by_email",
+            lambda _email: SimpleNamespace(
+                id="user-123",
+                email="mo@clearledgr.com",
+                organization_id="default",
+                role="user",
+            ),
+        )
 
         response = client.post(
             "/extension/gmail/register-token",
@@ -485,6 +683,16 @@ class TestExtensionEndpoints:
                 return _Resp(404, {})
 
         monkeypatch.setattr(gmail_extension_module.httpx, "AsyncClient", _FakeAsyncClient)
+        monkeypatch.setattr(
+            gmail_extension_module,
+            "get_user_by_email",
+            lambda _email: SimpleNamespace(
+                id="user-123",
+                email="mo@clearledgr.com",
+                organization_id="default",
+                role="user",
+            ),
+        )
 
         response = client.post(
             "/extension/gmail/register-token",
@@ -496,6 +704,92 @@ class TestExtensionEndpoints:
         )
         assert response.status_code == 400
         assert "invalid_google_access_token" in str(response.json().get("detail", ""))
+
+    def test_extension_register_gmail_token_rejects_org_mismatch(self, monkeypatch):
+        class _Resp:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        class _FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, url, headers=None):
+                if "gmail.googleapis.com/gmail/v1/users/me/profile" in url:
+                    return _Resp(200, {"emailAddress": "mo@clearledgr.com"})
+                return _Resp(404, {})
+
+        monkeypatch.setattr(gmail_extension_module.httpx, "AsyncClient", _FakeAsyncClient)
+        monkeypatch.setattr(
+            gmail_extension_module,
+            "get_user_by_email",
+            lambda _email: SimpleNamespace(
+                id="user-123",
+                email="mo@clearledgr.com",
+                organization_id="default",
+                role="user",
+            ),
+        )
+
+        response = client.post(
+            "/extension/gmail/register-token",
+            json={
+                "access_token": "test-access-token",
+                "expires_in": 3600,
+                "email": "mo@clearledgr.com",
+                "organization_id": "other-org",
+            },
+        )
+        assert response.status_code == 403
+        assert response.json().get("detail") == "org_mismatch"
+
+    def test_extension_register_gmail_token_requires_provisioned_user(self, monkeypatch):
+        class _Resp:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        class _FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, url, headers=None):
+                if "gmail.googleapis.com/gmail/v1/users/me/profile" in url:
+                    return _Resp(200, {"emailAddress": "new-user@clearledgr.com"})
+                return _Resp(404, {})
+
+        monkeypatch.setattr(gmail_extension_module.httpx, "AsyncClient", _FakeAsyncClient)
+        monkeypatch.setattr(gmail_extension_module, "get_user_by_email", lambda _email: None)
+
+        response = client.post(
+            "/extension/gmail/register-token",
+            json={
+                "access_token": "test-access-token",
+                "expires_in": 3600,
+                "email": "new-user@clearledgr.com",
+            },
+        )
+        assert response.status_code == 403
+        assert response.json().get("detail") == "extension_user_not_provisioned"
 
     def test_sensitive_extension_endpoints_require_auth(self):
         app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
@@ -632,6 +926,36 @@ class TestExtensionEndpoints:
         assert match_erp.status_code == 200
         assert "vendor_match" in match_erp.json()
         assert "duplicate_invoice" in match_erp.json()
+
+    def test_extension_cors_preflight_returns_single_origin_header(self):
+        response = client.options(
+            "/extension/worklist?organization_id=default",
+            headers={
+                "Origin": "https://mail.google.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert response.status_code in {200, 204}
+        allow_origin = str(response.headers.get("access-control-allow-origin") or "")
+        assert allow_origin == "https://mail.google.com"
+        assert "," not in allow_origin
+        assert "*" not in allow_origin
+
+    def test_cors_policy_drops_wildcard_when_explicit_origins_present(self):
+        origins, regex = main_module._resolve_cors_policy(
+            "*, https://mail.google.com, https://mail.google.com",
+            r"^chrome-extension://ignored$",
+        )
+        assert origins == ["https://mail.google.com"]
+        assert regex is None
+
+    def test_cors_policy_wildcard_only_falls_back_to_safe_defaults(self):
+        origins, regex = main_module._resolve_cors_policy(
+            "*",
+            "",
+        )
+        assert origins == main_module._default_cors_origins
+        assert regex == r"^chrome-extension://[a-z]{32}$"
     
     def test_invoice_pipeline(self):
         """Invoice pipeline requires auth."""
@@ -1170,6 +1494,43 @@ class TestExtensionEndpoints:
         assert second_payload["status"] == "posted"
         assert second_payload["idempotency_replayed"] is True
         assert any(row.get("event_type") == "retry_recoverable_failure_completed" for row in fake_db.audit_rows)
+
+
+class TestOrgConfigEndpoints:
+    """Test org config auth and org-scope boundaries."""
+
+    @staticmethod
+    def _fake_user(role: str = "user", org_id: str = "default"):
+        return TokenData(
+            user_id="config-user-1",
+            email="config-user@example.com",
+            organization_id=org_id,
+            role=role,
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+    def test_org_config_requires_auth(self):
+        app.dependency_overrides.pop(org_config_module.get_current_user, None)
+        response = client.get("/config/organizations/default")
+        assert response.status_code == 401
+
+    def test_org_config_blocks_cross_org_for_non_admin(self):
+        app.dependency_overrides[org_config_module.get_current_user] = lambda: self._fake_user(role="user", org_id="default")
+        try:
+            response = client.get("/config/organizations/other-org/thresholds")
+        finally:
+            app.dependency_overrides.pop(org_config_module.get_current_user, None)
+        assert response.status_code == 403
+        assert response.json().get("detail") == "org_mismatch"
+
+    def test_org_config_allows_same_org_for_non_admin(self):
+        app.dependency_overrides[org_config_module.get_current_user] = lambda: self._fake_user(role="user", org_id="default")
+        try:
+            response = client.get("/config/organizations/default/thresholds")
+        finally:
+            app.dependency_overrides.pop(org_config_module.get_current_user, None)
+        assert response.status_code == 200
+        assert "thresholds" in response.json()
 
 
 class TestSettingsEndpoints:

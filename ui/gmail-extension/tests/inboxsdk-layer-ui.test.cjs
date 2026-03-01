@@ -462,7 +462,7 @@ test('reason capture path contains no native prompt/confirm calls', () => {
   assert.doesNotMatch(source, /\bconfirm\s*\(/);
 });
 
-test('work audit presentation maps validation failures and reason codes to operator language', () => {
+test('work audit presentation maps validation failures to safe operator fallback copy', () => {
   const view = fns.getWorkAuditPresentation(
     {
       event_type: 'deterministic_validation_failed',
@@ -472,8 +472,8 @@ test('work audit presentation maps validation failures and reason codes to opera
     { state: 'needs_approval' }
   );
   assert.equal(view.title, 'Validation checks failed');
-  assert.match(view.detail, /Approval required because invoice amount exceeds policy threshold/i);
-  assert.match(view.detail, /goods receipt is missing/i);
+  assert.match(view.detail, /require review before continuing/i);
+  assert.doesNotMatch(view.detail, /policy_requirement_amt_500/i);
 });
 
 test('work audit presentation maps blocked retry/transition events to plain safety copy', () => {
@@ -494,7 +494,14 @@ test('work audit presentation maps blocked retry/transition events to plain safe
     { state: 'needs_approval' }
   );
   assert.equal(blockedRetry.title, 'Action blocked for safety');
-  assert.match(blockedRetry.detail, /blocked to protect workflow state/i);
+  assert.match(blockedRetry.detail, /requested action is not allowed from the current invoice status/i);
   assert.equal(blockedIllegal.title, 'Action blocked for safety');
   assert.match(blockedIllegal.detail, /not allowed from the current invoice status/i);
+});
+
+test('work audit list contract does not enforce nested max-height/overflow viewport', () => {
+  const source = fs.readFileSync(SOURCE_PATH, 'utf8');
+  assert.match(source, /\.cl-audit-list\s*\{[^}]*display:\s*flex;/);
+  assert.doesNotMatch(source, /\.cl-audit-list\s*\{[^}]*max-height\s*:/);
+  assert.doesNotMatch(source, /\.cl-audit-list\s*\{[^}]*overflow(?:-y)?\s*:/);
 });

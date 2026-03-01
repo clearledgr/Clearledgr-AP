@@ -141,7 +141,6 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
     "/health",
     "/metrics",
     "/console",
-    "/admin",
 }
 
 STRICT_PROFILE_ALLOWED_PREFIXES = (
@@ -159,10 +158,7 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/gmail",
     "/auth",
     "/config",
-    "/onboarding",
-    "/oauth",
     "/erp",
-    "/settings",
 )
 
 
@@ -392,6 +388,39 @@ def _parse_cors_origins(raw: str) -> List[str]:
     return [item for item in values if item]
 
 
+def _resolve_cors_policy(configured_origins_raw: str, configured_regex_raw: str) -> tuple[List[str], Optional[str]]:
+    configured_origins = _parse_cors_origins(configured_origins_raw)
+    configured_regex = str(configured_regex_raw or "").strip()
+
+    normalized_origins: List[str] = []
+    seen = set()
+    wildcard_requested = False
+    for origin in configured_origins:
+        token = str(origin or "").strip()
+        if not token:
+            continue
+        if token == "*":
+            wildcard_requested = True
+            continue
+        if token in seen:
+            continue
+        seen.add(token)
+        normalized_origins.append(token)
+
+    if normalized_origins:
+        # Explicit origin list takes precedence; regex disabled to avoid
+        # emitting ambiguous multi-value origin headers.
+        return normalized_origins, None
+
+    if wildcard_requested:
+        # Credentials are enabled, so wildcard-origin mode is unsafe/invalid.
+        # Fall back to safe canonical defaults instead of `*`.
+        logger.warning("CORS_ALLOW_ORIGINS wildcard ignored; falling back to canonical origin allowlist")
+
+    default_regex = configured_regex or r"^chrome-extension://[a-z]{32}$"
+    return _default_cors_origins, default_regex
+
+
 _default_cors_origins = [
     "https://mail.google.com",
     "https://gmail.google.com",
@@ -401,9 +430,10 @@ _default_cors_origins = [
     "http://127.0.0.1:8010",
 ]
 
-_configured_cors_origins = _parse_cors_origins(os.getenv("CORS_ALLOW_ORIGINS", ""))
-_cors_allow_origins = _configured_cors_origins or _default_cors_origins
-_cors_allow_origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX", r"^chrome-extension://[a-z]{32}$")
+_cors_allow_origins, _cors_allow_origin_regex = _resolve_cors_policy(
+    os.getenv("CORS_ALLOW_ORIGINS", ""),
+    os.getenv("CORS_ALLOW_ORIGIN_REGEX", ""),
+)
 
 # HTTPS enforcement in production
 if os.getenv("ENV", "dev").lower() in ("production", "prod"):
@@ -430,24 +460,10 @@ async def startup_event():
 
 # (Autonomous agent, chat, engine, and webhooks routers removed — archived to branch)
 
-# Include Onboarding API
-try:
-    from clearledgr.api.onboarding import router as onboarding_router
-    app.include_router(onboarding_router)
-except ImportError:
-    pass
-
 # Include Auth API
 try:
     from clearledgr.api.auth import router as auth_router
     app.include_router(auth_router)
-except ImportError:
-    pass
-
-# Include ERP OAuth API
-try:
-    from clearledgr.api.erp_oauth import router as erp_oauth_router
-    app.include_router(erp_oauth_router)
 except ImportError:
     pass
 
@@ -469,13 +485,6 @@ except ImportError:
 try:
     from clearledgr.api.erp_connections import router as erp_connections_router
     app.include_router(erp_connections_router)
-except ImportError:
-    pass
-
-# Settings API
-try:
-    from clearledgr.api.settings import router as settings_router
-    app.include_router(settings_router)
 except ImportError:
     pass
 
@@ -592,18 +601,6 @@ async def shutdown_agent_background():
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
-@app.get("/admin", tags=["Admin"], include_in_schema=False)
-async def admin_page():
-    """Internal admin page for QA and testing. Dev-only."""
-    if os.getenv("ENV", "dev").lower() not in ("dev", "development", "test"):
-        raise HTTPException(status_code=404)
-    admin_file = os.path.join(os.path.dirname(__file__), "static", "admin.html")
-    if os.path.exists(admin_file):
-        return FileResponse(admin_file)
-    else:
-        raise HTTPException(status_code=404, detail="Admin page not found")
-
 
 @app.get("/console", tags=["Admin"], include_in_schema=False)
 async def console_page():

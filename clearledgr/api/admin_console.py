@@ -28,6 +28,7 @@ from clearledgr.core.launch_controls import (
 from clearledgr.services.erp_readiness import evaluate_erp_connector_readiness
 from clearledgr.services.learning_calibration import get_learning_calibration_service
 from clearledgr.services.policy_compliance import AP_POLICY_NAME, get_policy_compliance
+from clearledgr.services.gmail_api import generate_auth_url
 from clearledgr.services.slack_api import SlackAPIClient, resolve_slack_runtime
 from clearledgr.services.subscription import PlanTier, get_subscription_service
 
@@ -350,7 +351,19 @@ class TeamInviteCreateRequest(BaseModel):
 
 class ERPConnectStartRequest(BaseModel):
     organization_id: Optional[str] = None
-    erp_type: str = Field(..., pattern="^(quickbooks|xero|netsuite)$")
+    erp_type: str = Field(..., pattern="^(quickbooks|xero|netsuite|sap)$")
+
+
+class SAPConnectSubmitRequest(BaseModel):
+    organization_id: Optional[str] = None
+    base_url: str = Field(..., min_length=8, max_length=512)
+    username: str = Field(..., min_length=1, max_length=128)
+    password: str = Field(..., min_length=1, max_length=256)
+
+
+class GmailConnectStartRequest(BaseModel):
+    organization_id: Optional[str] = None
+    redirect_path: str = Field(default="/console?page=integrations", max_length=512)
 
 
 class SubscriptionPlanPatchRequest(BaseModel):
@@ -476,6 +489,38 @@ def get_admin_integrations(
             _erp_status_for_org(org_id),
             {"name": "outlook", "connected": False, "status": "coming_soon", "mode": "oauth"},
         ],
+    }
+
+
+@router.post("/integrations/gmail/connect/start")
+def start_gmail_connect(
+    request: GmailConnectStartRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    redirect_path = str(request.redirect_path or "/console?page=integrations").strip()
+    if not redirect_path.startswith("/"):
+        raise HTTPException(status_code=400, detail="invalid_redirect_path")
+
+    state = _sign_state(
+        {
+            "organization_id": org_id,
+            "user_id": user.user_id,
+            "redirect_url": redirect_path,
+            "iat": int(_utcnow().timestamp()),
+            "nonce": secrets.token_urlsafe(8),
+        }
+    )
+    try:
+        auth_url = generate_auth_url(state=state)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "auth_url": auth_url,
+        "state": state,
+        "organization_id": org_id,
+        "redirect_path": redirect_path,
     }
 
 
@@ -700,6 +745,25 @@ def erp_connect_start(
             "help_text": "In NetSuite: Setup > Company > Enable Features > SuiteCloud > Token-Based Authentication. Then create an Integration record and generate a Token.",
         }
 
+    if erp_type == "sap":
+        return {
+            "erp_type": "sap",
+            "method": "form",
+            "fields": [
+                {
+                    "name": "base_url",
+                    "label": "Base URL",
+                    "type": "text",
+                    "placeholder": "https://<tenant>.sapbydesign.com/sap/byd/odata/v1/financials",
+                    "required": True,
+                },
+                {"name": "username", "label": "Username", "type": "text", "required": True},
+                {"name": "password", "label": "Password", "type": "password", "required": True},
+            ],
+            "submit_url": "/api/admin/integrations/erp/connect/sap",
+            "help_text": "Use a least-privilege integration account with API access to the SAP OData base URL.",
+        }
+
     # OAuth-based ERPs (QuickBooks, Xero)
     from clearledgr.api.erp_connections import (
         _oauth_states,
@@ -738,6 +802,56 @@ def erp_connect_start(
             "state": state,
         }
         return {"erp_type": "xero", "method": "oauth", "auth_url": f"{XERO_AUTH_URL}?{_urlencode(params)}"}
+
+
+@router.post("/integrations/erp/connect/sap")
+async def connect_sap(
+    request: SAPConnectSubmitRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    base_url = str(request.base_url or "").strip().rstrip("/")
+    if not base_url.startswith("https://"):
+        raise HTTPException(status_code=422, detail="invalid_sap_base_url")
+
+    credentials = base64.b64encode(f"{request.username}:{request.password}".encode("utf-8")).decode("utf-8")
+    metadata_url = f"{base_url}/$metadata"
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                metadata_url,
+                headers={
+                    "Authorization": f"Basic {credentials}",
+                    "Accept": "application/xml,application/json,*/*",
+                },
+            )
+        if response.status_code >= 400:
+            raise HTTPException(status_code=400, detail=f"sap_connection_test_failed:{response.status_code}")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"sap_connection_test_failed:{exc}") from exc
+
+    from clearledgr.integrations.erp_router import ERPConnection, set_erp_connection
+
+    set_erp_connection(
+        org_id,
+        ERPConnection(
+            type="sap",
+            access_token=credentials,
+            refresh_token="",
+            base_url=base_url,
+        ),
+    )
+
+    return {
+        "success": True,
+        "organization_id": org_id,
+        "erp_type": "sap",
+        "base_url": base_url,
+    }
 
 
 @router.get("/onboarding/status")

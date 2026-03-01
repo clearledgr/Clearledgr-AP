@@ -57,6 +57,13 @@ def get_erp_connection(organization_id: str) -> Optional[ERPConnection]:
     # Return the first active connection
     conn = connections[0]
     creds = conn.get('credentials', {}) or {}
+    if isinstance(creds, str):
+        try:
+            import json
+            decoded = json.loads(creds)
+            creds = decoded if isinstance(decoded, dict) else {}
+        except Exception:
+            creds = {}
     
     return ERPConnection(
         type=conn['erp_type'],

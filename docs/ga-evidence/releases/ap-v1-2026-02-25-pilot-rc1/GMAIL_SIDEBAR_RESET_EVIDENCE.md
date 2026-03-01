@@ -31,3 +31,5 @@ Release: `ap-v1-2026-02-25-pilot-rc1`
 ## Notes
 - Backend API contracts were unchanged for this UX reset.
 - This evidence file is paired with tracker entries `B15-B19` in `/Users/mombalam/Desktop/Clearledgr.v1/docs/BETA_ALIGNMENT_FIX_TRACKER.md`.
+- Follow-on closure evidence for `B47-B54` lives in:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/UI_UX_HARDENING_CLOSURE_EVIDENCE.md`

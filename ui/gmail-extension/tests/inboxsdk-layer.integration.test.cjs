@@ -60,6 +60,7 @@ test('bootstrap mounts only the Work sidebar panel (no in-Gmail Ops panel)', asy
   assert.equal(workSidebar.querySelector('#cl-batch-agent-ops'), null);
   assert.equal(workSidebar.querySelector('#cl-agent-actions'), null);
   assert.equal(workSidebar.querySelector('#cl-audit-trail'), null);
+  assert.doesNotMatch(workSidebar.innerHTML || '', /Agentic snapshot|Batch operations|View raw agent events/i);
 });
 
 test('needs_approval state renders strict primary action (never Approve & Post)', async () => {
@@ -175,32 +176,32 @@ test('work audit feed renders operator language and hides raw reason codes', asy
             id: 'audit-3',
             event_type: 'browser_session_created',
             reason: 'browser_session_created',
-            operator_title: 'Backup ERP route ready',
-            operator_message: 'If direct posting fails, Clearledgr can use the backup ERP route.',
+            operator_title: 'ERP fallback prepared',
+            operator_message: 'Prepared secure ERP browser fallback session.',
             ts: '2026-02-28T21:36:35Z',
           },
           {
             id: 'audit-4',
             event_type: 'approval_nudge_failed',
             reason: 'approval_nudge',
-            operator_title: 'Reminder not sent',
-            operator_message: 'Could not send the approver reminder. Try "Nudge approver" again.',
+            operator_title: 'Approval reminder failed',
+            operator_message: 'Could not send reminder to approver. Try "Nudge approver" again.',
             ts: '2026-03-01T03:51:00Z',
           },
           {
             id: 'audit-5',
             event_type: 'state_transition_rejected',
             decision_reason: 'autonomous_retry_attempt',
-            operator_title: 'Retry paused',
-            operator_message: 'Auto-retry is paused until required steps are complete.',
+            operator_title: 'Action blocked for safety',
+            operator_message: 'Automatic retry was blocked to protect workflow state.',
             ts: '2026-03-01T03:55:00Z',
           },
           {
             id: 'audit-6',
             event_type: 'state_transition_rejected',
             decision_reason: 'illegal_transition',
-            operator_title: 'Step blocked',
-            operator_message: 'This action can run only after the invoice reaches the required status.',
+            operator_title: 'Action blocked for safety',
+            operator_message: 'Requested action is not allowed from the current invoice status.',
             ts: '2026-03-01T04:26:00Z',
           },
         ];
@@ -234,10 +235,9 @@ test('work audit feed renders operator language and hides raw reason codes', asy
   assert.match(html, /Policy requires approval for invoices above \$500/i);
   assert.match(html, /PO\/GR check failed because goods receipt is missing/i);
   assert.match(html, /Approval request sent/i);
-  assert.match(html, /Backup ERP route ready/i);
-  assert.match(html, /Reminder not sent/i);
-  assert.match(html, /Retry paused/i);
-  assert.match(html, /Step blocked/i);
+  assert.match(html, /ERP fallback prepared/i);
+  assert.match(html, /Approval reminder failed/i);
+  assert.match(html, /Action blocked for safety/i);
 
   assert.doesNotMatch(html, /policy_requirement_amt_500/i);
   assert.doesNotMatch(html, /po_match_no_gr/i);
@@ -344,4 +344,127 @@ test('admin/operator role gets Open Ops Console link with /console?page=ops deep
   await renderThread(runtimeNoOps, item.thread_id);
   const noOpsContext = sidebarNoOps.querySelector('#cl-thread-context');
   assert.equal(noOpsContext?.querySelector('#cl-open-ops-console'), null);
+});
+
+test('reason sheet supports keyboard tab trap, escape cancel, enter submit, and focus restore', async () => {
+  const runtime = await createInboxSdkIntegrationRuntime({ queueManager: { debugUiEnabled: false } });
+  const sidebar = getWorkSidebar(runtime);
+
+  const item = {
+    id: 'reject-keyboard-1',
+    thread_id: 'thread-reject-keyboard-1',
+    state: 'needs_approval',
+    vendor_name: 'Keyboard Vendor',
+    invoice_number: 'INV-KEY-1',
+    amount: 420,
+    currency: 'USD',
+    subject: 'Invoice INV-KEY-1',
+    sender: 'billing@keyboard.example',
+    confidence: 0.96,
+    metadata: {},
+  };
+  emitSingleQueueItem(runtime, item);
+  await renderThread(runtime, item.thread_id);
+
+  const threadContext = sidebar.querySelector('#cl-thread-context');
+  const rejectBtn = threadContext?.querySelector('#cl-secondary-reject');
+  assert.ok(rejectBtn);
+
+  const setFocusTracking = (node) => {
+    if (!node) return;
+    node.focus = () => {
+      runtime.document.activeElement = node;
+      return true;
+    };
+  };
+
+  setFocusTracking(rejectBtn);
+  rejectBtn.focus();
+  await rejectBtn.click();
+  await runtime.flush();
+
+  const dialog = sidebar.querySelector('#cl-action-dialog');
+  const input = dialog?.querySelector('.cl-action-dialog-input');
+  const cancelBtn = dialog?.querySelector('.cl-action-dialog-cancel');
+  const confirmBtn = dialog?.querySelector('.cl-action-dialog-confirm');
+  const chipButtons = Array.from(dialog?.querySelectorAll('.cl-action-chip') || []);
+  assert.ok(dialog);
+  assert.ok(input);
+  assert.ok(cancelBtn);
+  assert.ok(confirmBtn);
+  assert.equal(dialog.style.display, 'flex');
+
+  [input, cancelBtn, confirmBtn, ...chipButtons, rejectBtn].forEach(setFocusTracking);
+
+  runtime.document.activeElement = confirmBtn;
+  const tabEvent = {
+    type: 'keydown',
+    key: 'Tab',
+    shiftKey: false,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  };
+  await dialog.dispatchEvent(tabEvent);
+  assert.equal(tabEvent.defaultPrevented, true);
+  assert.equal(runtime.document.activeElement, input);
+
+  runtime.document.activeElement = input;
+  const shiftTabEvent = {
+    type: 'keydown',
+    key: 'Tab',
+    shiftKey: true,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  };
+  await dialog.dispatchEvent(shiftTabEvent);
+  assert.equal(shiftTabEvent.defaultPrevented, true);
+  assert.equal(runtime.document.activeElement, confirmBtn);
+
+  input.value = '';
+  const enterEmptyEvent = {
+    type: 'keydown',
+    key: 'Enter',
+    shiftKey: false,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  };
+  await input.dispatchEvent(enterEmptyEvent);
+  await runtime.flush();
+  assert.equal(dialog.style.display, 'flex');
+
+  const escapeEvent = {
+    type: 'keydown',
+    key: 'Escape',
+    shiftKey: false,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  };
+  await input.dispatchEvent(escapeEvent);
+  await runtime.flush();
+  assert.equal(dialog.style.display, 'none');
+  await runtime.flush();
+  assert.equal(runtime.document.activeElement, rejectBtn);
+
+  rejectBtn.focus();
+  await rejectBtn.click();
+  await runtime.flush();
+  const reopenedDialog = sidebar.querySelector('#cl-action-dialog');
+  const reopenedInput = reopenedDialog?.querySelector('.cl-action-dialog-input');
+  assert.ok(reopenedDialog);
+  assert.ok(reopenedInput);
+  reopenedInput.focus = () => {
+    runtime.document.activeElement = reopenedInput;
+    return true;
+  };
+  reopenedInput.value = 'Duplicate invoice';
+  const enterSubmitEvent = {
+    type: 'keydown',
+    key: 'Enter',
+    shiftKey: false,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  };
+  await reopenedInput.dispatchEvent(enterSubmitEvent);
+  await runtime.flush();
+  assert.equal(reopenedDialog.style.display, 'none');
 });

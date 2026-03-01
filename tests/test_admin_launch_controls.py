@@ -157,6 +157,60 @@ def test_admin_ops_connector_readiness_endpoint(client, db):
     assert any(row["erp_type"] == "quickbooks" for row in report["connectors"])
 
 
+def test_admin_erp_connect_start_supports_sap_form(client, db):
+    response = client.post(
+        "/api/admin/integrations/erp/connect/start",
+        json={"organization_id": "default", "erp_type": "sap"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["erp_type"] == "sap"
+    assert payload["method"] == "form"
+    assert payload["submit_url"] == "/api/admin/integrations/erp/connect/sap"
+    field_names = {field["name"] for field in payload.get("fields", [])}
+    assert {"base_url", "username", "password"}.issubset(field_names)
+
+
+def test_admin_connect_sap_persists_connection(client, db, monkeypatch):
+    class _Resp:
+        def __init__(self, status_code: int):
+            self.status_code = status_code
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None):
+            return _Resp(200)
+
+    monkeypatch.setattr(admin_console_module.httpx, "AsyncClient", _FakeAsyncClient)
+
+    connect = client.post(
+        "/api/admin/integrations/erp/connect/sap",
+        json={
+            "organization_id": "default",
+            "base_url": "https://sap.example.com/sap/byd/odata/v1/financials",
+            "username": "integration-user",
+            "password": "integration-secret",
+        },
+    )
+    assert connect.status_code == 200
+    assert connect.json()["erp_type"] == "sap"
+
+    integrations = client.get("/api/admin/integrations?organization_id=default")
+    assert integrations.status_code == 200
+    payload = integrations.json()
+    erp = next(item for item in payload["integrations"] if item["name"] == "erp")
+    assert erp["connected"] is True
+    assert any((row.get("erp_type") == "sap") for row in erp.get("connections", []))
+
+
 def test_admin_ops_learning_calibration_recompute_and_get(client, db):
     for idx in range(6):
         db.record_vendor_decision_feedback(

@@ -140,6 +140,22 @@ const OAUTH_CONFIG = {
 
 let cachedToken = null;
 let tokenExpiry = null;
+let authFlowPromise = null;
+let lastInteractiveAuthLaunchAt = 0;
+const INTERACTIVE_AUTH_COOLDOWN_MS = 60000;
+
+function classifyAuthErrorCode(raw) {
+  const message = String(raw || '').trim();
+  const normalized = message.toLowerCase();
+  if (!normalized) return 'authorization_failed';
+  if (normalized.includes('redirect_uri_mismatch')) return 'redirect_uri_mismatch';
+  if (normalized.includes('invalid_client')) return 'invalid_client';
+  if (normalized.includes('access_denied')) return 'access_denied';
+  if (normalized.includes('no oauth response url')) return 'oauth_no_response_url';
+  if (normalized.includes('no access token')) return 'oauth_no_access_token';
+  if (normalized.includes('network') || normalized.includes('fetch')) return 'network_error';
+  return normalized.replace(/\s+/g, '_');
+}
 
 async function getAuthToken(interactive = true) {
   if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) return cachedToken;
@@ -179,7 +195,7 @@ function launchWebAuthFlow() {
     authUrl.searchParams.set('redirect_uri', redirectUrl);
     authUrl.searchParams.set('response_type', 'token');
     authUrl.searchParams.set('scope', OAUTH_CONFIG.scopes.join(' '));
-    authUrl.searchParams.set('prompt', 'consent');
+    authUrl.searchParams.set('include_granted_scopes', 'true');
 
     chrome.identity.launchWebAuthFlow({ url: authUrl.toString(), interactive: true }, (responseUrl) => {
       if (chrome.runtime.lastError) {
@@ -226,7 +242,6 @@ function getProfileUserInfo() {
 
 async function registerGmailTokenWithBackend(accessToken) {
   const backendUrl = await getBackendUrl();
-  const organizationId = await getOrganizationId();
   const profile = await getProfileUserInfo();
   const response = await fetchWithRetry(`${backendUrl}/extension/gmail/register-token`, {
     method: 'POST',
@@ -235,7 +250,6 @@ async function registerGmailTokenWithBackend(accessToken) {
       access_token: accessToken,
       expires_in: getTokenTtlSeconds(),
       email: profile?.email || null,
-      organization_id: organizationId || 'default',
     })
   }, 1);
 
@@ -254,21 +268,43 @@ async function registerGmailTokenWithBackend(accessToken) {
 }
 
 async function ensureGmailAuthWithBackend(interactive = true) {
-  let attemptedFreshToken = false;
-  while (true) {
-    const token = await getAuthToken(interactive);
-    try {
-      return await registerGmailTokenWithBackend(token);
-    } catch (error) {
-      const message = String(error?.message || '');
-      if (!attemptedFreshToken && message.includes('invalid_google_access_token')) {
-        attemptedFreshToken = true;
-        await clearCachedAuthToken();
-        continue;
-      }
-      throw error;
+  const wantsInteractive = Boolean(interactive);
+  const now = Date.now();
+  if (wantsInteractive) {
+    const retryAfterMs = (lastInteractiveAuthLaunchAt + INTERACTIVE_AUTH_COOLDOWN_MS) - now;
+    if (retryAfterMs > 0) {
+      return {
+        success: false,
+        error: 'interactive_auth_cooldown',
+        retry_after_seconds: Math.ceil(retryAfterMs / 1000),
+      };
     }
+    lastInteractiveAuthLaunchAt = now;
   }
+  if (authFlowPromise) return authFlowPromise;
+
+  const run = async () => {
+    let attemptedFreshToken = false;
+    while (true) {
+      const token = await getAuthToken(wantsInteractive);
+      try {
+        return await registerGmailTokenWithBackend(token);
+      } catch (error) {
+        const message = String(error?.message || '');
+        if (!attemptedFreshToken && message.includes('invalid_google_access_token')) {
+          attemptedFreshToken = true;
+          await clearCachedAuthToken();
+          continue;
+        }
+        throw error;
+      }
+    }
+  };
+
+  authFlowPromise = run().finally(() => {
+    authFlowPromise = null;
+  });
+  return authFlowPromise;
 }
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -799,16 +835,27 @@ async function executeBrowserToolCommand(command = {}) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'ensureGmailAuth') {
     ensureGmailAuthWithBackend(!!request.interactive)
-      .then((payload) => sendResponse({
-        success: true,
-        email: payload?.email || null,
-        userId: payload?.user_id || null,
-        organizationId: payload?.organization_id || 'default',
-        backendAccessToken: payload?.backend_access_token || null,
-        backendTokenType: payload?.backend_token_type || 'bearer',
-        backendExpiresIn: Number(payload?.backend_expires_in || 0) || 0,
-      }))
-      .catch((error) => sendResponse({ success: false, error: error.message }));
+      .then((payload) => {
+        if (payload?.success === false) {
+          sendResponse({
+            success: false,
+            error: String(payload?.error || 'authorization_failed'),
+            retryAfterSeconds: Number(payload?.retry_after_seconds || 0) || 0,
+          });
+          return;
+        }
+        sendResponse({
+          success: true,
+          email: payload?.email || null,
+          userId: payload?.user_id || null,
+          organizationId: payload?.organization_id || 'default',
+          backendAccessToken: payload?.backend_access_token || null,
+          backendTokenType: payload?.backend_token_type || 'bearer',
+          backendExpiresIn: Number(payload?.backend_expires_in || 0) || 0,
+          retryAfterSeconds: Number(payload?.retry_after_seconds || 0) || 0,
+        });
+      })
+      .catch((error) => sendResponse({ success: false, error: classifyAuthErrorCode(error?.message) }));
     return true;
   }
 

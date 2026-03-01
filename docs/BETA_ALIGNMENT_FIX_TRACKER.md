@@ -45,6 +45,27 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
 | B31 | P1 | connector-readiness-hardening | DONE | partial |
 | B32 | P1 | learning-calibration-pipeline | DONE | missing |
 | B33 | P1 | additional-skill-launch | DONE | missing |
+| B34 | P1 | onboarding-account-spine | DONE | partial |
+| B35 | P0 | oauth-token-transport-hardening | DONE | broken |
+| B36 | P0 | extension-bootstrap-auth-binding | DONE | broken |
+| B37 | P0 | router-auth-tenant-boundary-sweep | DONE | partial |
+| B38 | P1 | cors-single-source-policy | DONE | partial |
+| B39 | P1 | sap-onboarding-parity | DONE | partial |
+| B40 | P1 | erp-adapter-status-reconcile-completion | DONE | placeholder |
+| B41 | P1 | runtime-path-convergence | DONE | partial |
+| B42 | P1 | gmail-surface-code-decomposition | DONE | partial |
+| B43 | P2 | teams-verifier-resilience | DONE | partial |
+| B44 | P2 | residual-off-plan-artifact-cleanup | DONE | partial |
+| B45 | P0 | extension-dist-parity-hardening | DONE | missing |
+| B46 | P0 | gmail-legacy-renderer-removal | DONE | missing |
+| B47 | P1 | gmail-audit-readability-hardening | DONE | partial |
+| B48 | P0 | backend-owned-audit-copy-enforcement | DONE | partial |
+| B49 | P1 | gmail-auth-loop-hardening | DONE | partial |
+| B50 | P1 | extension-legacy-surface-removal | DONE | missing |
+| B51 | P1 | reason-sheet-a11y-hardening | DONE | partial |
+| B52 | P2 | admin-console-setup-ia-hardening | DONE | partial |
+| B53 | P0 | ui-ci-regression-closure | DONE | partial |
+| B54 | P1 | docs-tracker-evidence-closure | DONE | missing |
 
 ## Open and completed items
 
@@ -746,7 +767,427 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
 - Validation/tests:
   - `PYTHONPATH=. pytest -q tests/test_finance_agent_runtime.py tests/test_api_endpoints.py::TestAgentIntentEndpoints`
 
+### B35
+- Priority: `P0`
+- Category: `oauth-token-transport-hardening`
+- Status: `DONE`
+- Type: `broken`
+- Plan refs: `PLAN.md` security boundary + credential handling; `README.md` Security and Reliability guardrails; `VISION.md` trust-by-design principle
+- Problem: OAuth callback redirected with bearer credentials in URL query.
+- Evidence:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/auth.py` now issues one-time `auth_code` in `/auth/google/callback` and exchanges via `POST /auth/google/exchange`.
+  - `/Users/mombalam/Desktop/Clearledgr.v1/static/console/app.js` now performs auth-code exchange before storing backend tokens.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/auth.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/static/console/app.js`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/background.js`
+- Acceptance criteria:
+  - OAuth callback no longer places access or refresh tokens in URL query/fragment.
+  - Token handoff uses secure session cookie or one-time code exchange.
+  - Existing extension login flow remains functional with no repeated consent loops.
+- Validation/tests:
+  - `PYTHONPATH=. pytest -q tests/test_api_endpoints.py::TestAuthEndpoints`
+  - `PYTHONPATH=. pytest -q tests/test_api_endpoints.py::TestExtensionEndpoints::test_extension_register_gmail_token_success`
+  - Verified callback redirect query contains `auth_code` and excludes direct `token`/`refresh_token` in `tests/test_api_endpoints.py::TestAuthEndpoints::test_google_callback_uses_one_time_auth_code_exchange`.
+
+### B36
+- Priority: `P0`
+- Category: `extension-bootstrap-auth-binding`
+- Status: `DONE`
+- Type: `broken`
+- Plan refs: `PLAN.md` org scoping + auth boundary (`section 7`), `README.md` tenant isolation
+- Problem: extension bootstrap path could mint backend token from caller-supplied org without authenticated org-membership proof.
+- Evidence:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/gmail_extension.py` (`/extension/gmail/register-token`) now resolves provisioned user by verified Google profile email and mints backend token using provisioned org only.
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/background.js` removed client-side `organization_id` submission during register-token bootstrap.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/gmail_extension.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/auth.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/background.js`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_api_endpoints.py`
+- Acceptance criteria:
+  - Bootstrap endpoint requires authenticated identity.
+  - Requested org is validated against caller org membership.
+  - Cross-org bootstrap attempts return `403` and emit audit event.
+- Validation/tests:
+  - `PYTHONPATH=. pytest -q tests/test_api_endpoints.py::TestExtensionEndpoints`
+  - Explicit coverage includes `test_extension_register_gmail_token_rejects_org_mismatch` and `test_extension_register_gmail_token_requires_provisioned_user`.
+
+### B37
+- Priority: `P0`
+- Category: `router-auth-tenant-boundary-sweep`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: `PLAN.md` one secure runtime boundary + tenant isolation; `README.md` strict auth expectations
+- Problem: mounted route families had inconsistent auth/org-scope enforcement.
+- Evidence:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/main.py` no longer mounts legacy `/onboarding`, `/oauth`, `/settings` route families.
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/org_config.py` now enforces router-level auth plus org resolution checks for organization-scoped paths.
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/erp_connections.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ap_policies.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/erp.py`
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/main.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/org_config.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/erp_connections.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/ap_policies.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/erp.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_api_endpoints.py`
+- Acceptance criteria:
+  - Every mounted mutable/read-sensitive router has explicit auth dependency and org-scope enforcement.
+  - Unauthenticated access to protected families consistently returns `401`.
+  - Cross-tenant probes consistently return `403`.
+- Validation/tests:
+  - `PYTHONPATH=. pytest -q tests/test_api_endpoints.py::TestERPEndpoints tests/test_api_endpoints.py::TestOrgConfigEndpoints tests/test_ap_policy_framework.py`
+  - Added route-family boundary coverage for `/erp/status/*` and `/config/organizations/*`.
+
+### B38
+- Priority: `P1`
+- Category: `cors-single-source-policy`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: `PLAN.md` embedded-surface reliability; `README.md` operator reliability commitments
+- Problem: CORS policy currently mixes explicit origins and regex matching, which previously manifested as duplicate/invalid `Access-Control-Allow-Origin` behavior.
+- Evidence:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/main.py` now resolves CORS policy through `_resolve_cors_policy(...)` with explicit wildcard guards:
+    - mixed wildcard + explicit origins => wildcard dropped, regex disabled
+    - wildcard-only config => fallback to canonical explicit origin allowlist + extension regex (no `*` origin mode under credentialed requests)
+  - `/Users/mombalam/Desktop/Clearledgr.v1/main.py` strict profile exact-path allowlist no longer includes deprecated `/admin` route.
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_api_endpoints.py` adds regression tests for wildcard-mixed and wildcard-only env policy resolution.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/main.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_api_endpoints.py`
+- Acceptance criteria:
+  - Backend emits exactly one valid `Access-Control-Allow-Origin` for Gmail extension requests. ✅
+  - Wildcard misconfiguration (`*`) cannot produce multi-value/ambiguous origin response under credentialed requests. ✅
+- Validation/tests:
+  - `PYTHONPATH=. pytest -q tests/test_api_endpoints.py::TestExtensionEndpoints::test_extension_cors_preflight_returns_single_origin_header`
+  - `PYTHONPATH=. pytest -q tests/test_api_endpoints.py::TestExtensionEndpoints::test_cors_policy_drops_wildcard_when_explicit_origins_present tests/test_api_endpoints.py::TestExtensionEndpoints::test_cors_policy_wildcard_only_falls_back_to_safe_defaults`
+  - Preflight assertion verifies a single header value (`https://mail.google.com`) with no `*` and no multi-value commas.
+
+### B39
+- Priority: `P1`
+- Category: `sap-onboarding-parity`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: `PLAN.md` ERP scope parity (NetSuite, SAP, QuickBooks, Xero); `README.md` connector parity doctrine
+- Problem: SAP exists in canonical scope but admin integration connect-start allowlist omits SAP.
+- Evidence:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/admin_console.py` now supports SAP in connect-start and `POST /api/admin/integrations/erp/connect/sap`.
+  - `/Users/mombalam/Desktop/Clearledgr.v1/static/console/app.js` now renders SAP setup/connect flow in Admin Console.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/admin_console.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/static/console/app.js`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_admin_launch_controls.py`
+- Acceptance criteria:
+  - SAP appears in admin onboarding/connect flows with same control path as other ERP connectors.
+  - Connect-start endpoint accepts SAP and returns canonical response contract.
+- Validation/tests:
+  - `PYTHONPATH=. pytest -q tests/test_admin_launch_controls.py`
+
+### B40
+- Priority: `P1`
+- Category: `erp-adapter-status-reconcile-completion`
+- Status: `DONE`
+- Type: `placeholder`
+- Plan refs: `PLAN.md` adapter contract completeness; `VISION.md` execution reliability
+- Problem: canonical ERP adapter seam still leaves `get_status`/`reconcile` as non-implemented placeholders for the active provider path.
+- Evidence:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/erp/contracts.py` now returns concrete status/reconcile outcomes (`unconfigured`, `not_found`, `pending`, `failed`, `posted`, `reconciled`, `needs_retry`) driven by connection/AP item state.
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/integrations/erp_router.py` now safely decodes stored credential payloads when persisted as JSON strings.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/erp/contracts.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/erp_api_first.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/integrations/erp_router.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_erp_adapter_contracts.py`
+- Acceptance criteria:
+  - Adapter status/reconcile paths are implemented for enabled connectors.
+  - Retry/reconciliation no longer relies on placeholder return shape for supported providers.
+- Validation/tests:
+  - `PYTHONPATH=. pytest -q tests/test_erp_adapter_contracts.py tests/test_erp_api_first.py`
+
+### B41
+- Priority: `P1`
+- Category: `runtime-path-convergence`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: `PLAN.md` one-runtime doctrine; `README.md` canonical runtime contract
+- Problem: legacy orchestration branches and mixed pathing remained, increasing drift and behavior split risk.
+- Evidence:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/agent_orchestrator.py` now enforces canonical agentic runtime dispatch in `process_invoice` and hard-disables legacy fallback/opt-out in `_planning_loop_enabled` and `_legacy_fallback_on_planner_error`.
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_agent_orchestrator_durable_retry.py` now asserts opt-out and fallback flags are ignored (including non-production) and runtime fails closed.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/agent_orchestrator.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/finance_agent_runtime.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_agent_orchestrator_durable_retry.py`
+- Acceptance criteria:
+  - Canonical runtime entry path is singular for AP execution.
+  - Legacy fallback branches removed or hard-disabled outside explicitly test-only scopes.
+- Validation/tests:
+  - `PYTHONPATH=. pytest -q tests/test_agent_orchestrator_durable_retry.py tests/test_finance_agent_runtime.py` (`32 passed`)
+
+### B42
+- Priority: `P1`
+- Category: `gmail-surface-code-decomposition`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: `PLAN.md` Gmail work-only surface + Ops relocation
+- Problem: Gmail extension file still contained residual ops/batch/telemetry logic despite work-only product contract.
+- Evidence:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js` now hard-disables in-Gmail ops renderers (`renderAgentActions`, `renderBatchAgentOps`, `renderAuditTrail`, `renderKpiSummary`) and keeps Work surface + admin deep-link path only.
+  - Work rendering and audit refresh remain explicit via restored `renderSidebar`, `renderSidebarFor`, `renderAllSidebars`, and `refreshAuditTrail` functions in the same file.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/inboxsdk-layer.integration.test.cjs`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/inboxsdk-layer-ui.test.cjs`
+- Acceptance criteria:
+  - Work surface code path excludes batch/ops/debug renderers.
+  - Admin Ops deep-link remains the only operations escape hatch.
+- Validation/tests:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run test:integration` (`7 passed`)
+  - `rg -n 'Batch operations|Agentic snapshot|raw agent events|runOpsBatchAction' /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js` returns no matches.
+
+### B43
+- Priority: `P2`
+- Category: `teams-verifier-resilience`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: `PLAN.md` secure callback durability and operational reliability
+- Problem: Teams verification depended on live JWKS/network and strict time windows without explicit resilience fallback and explicit outage-vs-token error classification.
+- Evidence:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/teams_verify.py` adds bounded stale JWKS fallback (`_JWKS_STALE_FALLBACK_SECONDS`) when metadata refresh fails after TTL, and maps verifier failures to explicit classes:
+    - transient verifier outage → `503 teams_verifier_unavailable`
+    - unverifiable token against JWKS → `401 teams_token_unverifiable`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_teams_verify.py` adds regression coverage for stale fallback, out-of-grace refresh failure, and unverifiable-token mapping.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/teams_verify.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_teams_verify.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_channel_approval_contract.py`
+- Acceptance criteria:
+  - Cached key path supports short external identity outages safely. ✅
+  - Error classification distinguishes unverifiable-token vs transient-verifier-outage. ✅
+- Validation/tests:
+  - `PYTHONPATH=. pytest -q tests/test_teams_verify.py` (`11 passed`)
+  - `PYTHONPATH=. pytest -q tests/test_channel_approval_contract.py` (`13 passed`)
+
+### B44
+- Priority: `P2`
+- Category: `residual-off-plan-artifact-cleanup`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: `PLAN.md` AP-v1 scope discipline; `README.md` canonical doctrine
+- Problem: residual non-canonical artifacts remain and increase handoff drift.
+- Evidence:
+  - Removed legacy off-plan runtime artifact `/Users/mombalam/Desktop/Clearledgr.v1/static/admin.html`.
+  - Removed legacy `/admin` page route from `/Users/mombalam/Desktop/Clearledgr.v1/main.py` so only `/console` remains as the canonical admin UI surface.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/main.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/static/`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/docs/`
+- Acceptance criteria:
+  - Non-canonical residual artifacts are removed or explicitly tagged as archival-only with owner/expiry. ✅
+  - Runtime/app docs reference only canonical surfaces. ✅
+- Validation/tests:
+  - `rg --files /Users/mombalam/Desktop/Clearledgr.v1/static | rg 'admin\\.html|demo|marketplace'` returns no matches.
+  - `rg -n '@app.get\\(\"/admin\"|static/admin\\.html|admin_page\\(' /Users/mombalam/Desktop/Clearledgr.v1/main.py /Users/mombalam/Desktop/Clearledgr.v1/static -S` returns no matches.
+  - `PYTHONPATH=. pytest -q tests/test_admin_launch_controls.py` (`6 passed`)
+  - `PYTHONPATH=. pytest -q tests/test_api_endpoints.py::TestAuthEndpoints` (`4 passed`)
+
+### B45
+- Priority: `P0`
+- Category: `extension-dist-parity-hardening`
+- Status: `DONE`
+- Type: `missing`
+- Plan refs: UI/UX Hardening Closure Plan Phase 1 + Phase 9
+- Problem: stale `dist` and legacy strings could ship despite source updates.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/scripts/verify-bundle-parity.cjs`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/package.json`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/bundle-contract.test.cjs`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/.github/workflows/gmail-extension-browser-harness.yml`
+- Acceptance criteria:
+  - Build and CI enforce bundle parity contract and forbidden Gmail legacy strings. ✅
+  - Strict CI parity check fails when committed dist is stale. ✅
+- Validation/tests:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run build`
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run test:integration`
+
+### B46
+- Priority: `P0`
+- Category: `gmail-legacy-renderer-removal`
+- Status: `DONE`
+- Type: `missing`
+- Plan refs: UI/UX Hardening Closure Plan Phase 2
+- Problem: legacy mixed-mode renderer branch existed after Work render path.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js` (`renderThreadContext`, `renderWorkModeThreadContext`)
+- Acceptance criteria:
+  - Single active Gmail Work renderer path; no in-Gmail Ops renderer path. ✅
+- Validation/tests:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run test:integration`
+
+### B47
+- Priority: `P1`
+- Category: `gmail-audit-readability-hardening`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: UI/UX Hardening Closure Plan Phase 3
+- Problem: Work audit section used cramped/nested viewport behavior and dense text.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js` (audit markup + CSS)
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/inboxsdk-layer-ui.test.cjs`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/scripts/capture-ui-hardening-evidence.cjs`
+- Delivered:
+  - Removed nested inner-scroll from Work audit list.
+  - Added readable card spacing and expandable detail summary rendering.
+- Evidence:
+  - `artifacts/sidebar-work-audit-expanded.png` captured from rendered Work sidebar contract.
+- Validation/tests:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && node --test tests/inboxsdk-layer.integration.test.cjs`
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && node --test tests/inboxsdk-layer-ui.test.cjs`
+
+### B48
+- Priority: `P0`
+- Category: `backend-owned-audit-copy-enforcement`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: UI/UX Hardening Closure Plan Phase 4
+- Problem: Gmail could render technical reason-code fragments when operator copy was missing.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/ap_operator_audit.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_ap_operator_audit.py`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/inboxsdk-layer.integration.test.cjs`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/inboxsdk-layer-ui.test.cjs`
+- Acceptance criteria:
+  - Canonical material events emit `operator_title`, `operator_message`, `operator_severity`, `operator_action_hint`. ✅
+  - Gmail fallback copy is safe/plain and does not expose raw reason codes. ✅
+- Validation/tests:
+  - `PYTHONPATH=. pytest tests/test_ap_operator_audit.py -q`
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && node --test tests/inboxsdk-layer-ui.test.cjs`
+
+### B49
+- Priority: `P1`
+- Category: `gmail-auth-loop-hardening`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: UI/UX Hardening Closure Plan Phase 5
+- Problem: repeated interactive auth requests could cascade and surface technical error loops.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/queue-manager.js`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/background.js`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/queue-manager.auth.test.cjs`
+- Acceptance criteria:
+  - Interactive OAuth attempts are cooldown-gated.
+  - Auth failure messages map to operator-safe copy.
+  - Automatic retries remain non-interactive. ✅
+- Validation/tests:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run test:integration`
+
+### B50
+- Priority: `P1`
+- Category: `extension-legacy-surface-removal`
+- Status: `DONE`
+- Type: `missing`
+- Plan refs: UI/UX Hardening Closure Plan Phase 6
+- Problem: popup/options/demo legacy extension surfaces remained in shipping root.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/build.sh`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/README.md`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/docs/legacy/gmail-extension-ui/*`
+- Delivered:
+  - Moved `popup/options/demo` files to `/docs/legacy/gmail-extension-ui/`.
+  - Removed legacy root file copy from extension build packaging.
+  - Added bundle contract checks ensuring legacy files are absent in shipped root.
+- Validation/tests:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run test:integration`
+
+### B51
+- Priority: `P1`
+- Category: `reason-sheet-a11y-hardening`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: UI/UX Hardening Closure Plan Phase 7
+- Delivered:
+  - Added keyboard handling (`Tab` trap, `Escape` cancel, `Enter` submit).
+  - Added focus restoration on close.
+  - Added focus-visible styles and reduced-motion CSS handling.
+- Evidence:
+  - Added keyboard-only regression test coverage (`Tab` trap, `Escape` cancel, `Enter` submit, focus restore).
+  - `artifacts/sidebar-reason-sheet.png` captured from rendered Work reason-sheet state.
+- Validation/tests:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run test:integration`
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && node --test tests/inboxsdk-layer-ui.test.cjs`
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && node --test tests/inboxsdk-layer.integration.test.cjs`
+
+### B52
+- Priority: `P2`
+- Category: `admin-console-setup-ia-hardening`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: UI/UX Hardening Closure Plan Phase 8
+- Delivered:
+  - Setup page now segmented into explicit steps (`Integrations → Channel → Policies → Launch`) with persistent summary.
+  - Added direct navigation affordance from setup flow to policy page.
+- Evidence:
+  - `artifacts/admin-console-setup.png` and `artifacts/admin-console-ops.png` captured from Admin Console pages with deterministic API mocks.
+- Code touchpoints:
+  - `/Users/mombalam/Desktop/Clearledgr.v1/static/console/app.js`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/scripts/capture-ui-hardening-evidence.cjs`
+
+### B53
+- Priority: `P0`
+- Category: `ui-ci-regression-closure`
+- Status: `DONE`
+- Type: `partial`
+- Plan refs: UI/UX Hardening Closure Plan Phase 9
+- Delivered:
+  - Added missing UI harness dependency (`acorn`).
+  - Added queue-manager auth cooldown tests.
+  - Verified extension integration + UI harness + backend audit tests.
+- Validation/tests:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run test:integration`
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && node --test tests/inboxsdk-layer-ui.test.cjs`
+  - `PYTHONPATH=. pytest tests/test_ap_operator_audit.py -q`
+  - `PYTHONPATH=. pytest tests/test_api_endpoints.py -q -k "audit or approval_nudge or retry_post"`
+
+### B54
+- Priority: `P1`
+- Category: `docs-tracker-evidence-closure`
+- Status: `DONE`
+- Type: `missing`
+- Plan refs: UI/UX Hardening Closure Plan Phase 10
+- Problem: screenshot-based before/after evidence for Work/Audit/Auth/Ops needed closure links in release artifacts.
+- Delivered:
+  - Added UI hardening capture script and generated closure artifacts for Work/Audit/Auth/ReasonSheet/Admin Setup/Ops.
+  - Linked artifacts in release evidence docs and tracker.
+
 ## Evidence (this cycle)
+- Command:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && node --test tests/inboxsdk-layer.integration.test.cjs tests/inboxsdk-layer-ui.test.cjs`
+  - Result: `21 passed`
+- Command:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && node scripts/capture-ui-hardening-evidence.cjs --release-id ap-v1-2026-02-25-pilot-rc1 --backend-url http://127.0.0.1:8000`
+  - Result: generated `sidebar-work-audit-expanded.png`, `sidebar-auth-required.png`, `sidebar-reason-sheet.png`, `admin-console-setup.png`, `admin-console-ops.png`
+- Command:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm install --package-lock-only`
+  - Result: `package-lock synchronized after dependency additions`
+- Command:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run build`
+  - Result: `webpack build succeeded; bundle parity verifier passed`
+- Command:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run test:integration`
+  - Result: `12 passed`
+- Command:
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && node --test tests/inboxsdk-layer-ui.test.cjs`
+  - Result: `12 passed`
+- Command:
+  - `PYTHONPATH=. pytest tests/test_ap_operator_audit.py -q`
+  - Result: `7 passed`
+- Command:
+  - `PYTHONPATH=. pytest tests/test_api_endpoints.py -q -k "audit or approval_nudge or retry_post"`
+  - Result: `4 passed`
 - Command:
   - `PYTHONPATH=. pytest -q tests/test_erp_readiness.py tests/test_learning_calibration.py tests/test_finance_agent_runtime.py tests/test_admin_launch_controls.py tests/test_api_endpoints.py::TestAgentIntentEndpoints`
   - Result: `36 passed`
@@ -834,10 +1275,25 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
 - Command:
   - `git rm --cached email_tasks.sqlite3 task_scheduler.sqlite3 && git rm .uvicorn.pid audit_trail.sqlite3 clearledgr/state/learning.db server-8010.log server.log server8010.log server_8010.log "project layout" yc_agent_session.md && git rm -r ui/gmail-extension/node_modules ui/gmail-extension/build && git ls-files | rg '(\\.sqlite3$|\\.sqlite$|\\.db$|\\.pid$|server.*\\.log$|clearledgr/state/learning\\.db|ui/gmail-extension/(node_modules|build)/)'`
   - Result: `runtime db/pid/log/build/dependency artifacts removed from index; no tracked matches`
+- Command:
+  - `PYTHONPATH=. pytest -q tests/test_api_endpoints.py::TestAuthEndpoints tests/test_api_endpoints.py::TestERPEndpoints tests/test_api_endpoints.py::TestExtensionEndpoints tests/test_api_endpoints.py::TestOrgConfigEndpoints tests/test_ap_policy_framework.py tests/test_admin_launch_controls.py`
+  - Result: `39 passed`
+- Command:
+  - `PYTHONPATH=. pytest -q tests/test_erp_adapter_contracts.py tests/test_erp_api_first.py`
+  - Result: `12 passed`
+- Command:
+  - `PYTHONPATH=. pytest -q tests/test_api_endpoints.py::TestExtensionEndpoints::test_extension_cors_preflight_returns_single_origin_header`
+  - Result: `1 passed`
 - Artifacts:
   - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/GMAIL_SIDEBAR_RESET_EVIDENCE.md`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/UI_UX_HARDENING_CLOSURE_EVIDENCE.md`
   - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/sidebar-reset-before.png`
   - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/sidebar-reset-after-work.png`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/sidebar-work-audit-expanded.png`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/sidebar-auth-required.png`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/sidebar-reason-sheet.png`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/admin-console-setup.png`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/admin-console-ops.png`
 
 ## Change log
 - 2026-02-28:
@@ -882,6 +1338,18 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
   - Closed B31 by adding connector readiness evaluator service + runtime gate integration (`enabled_connector_readiness`) + admin ops endpoint (`/api/admin/ops/connector-readiness`).
   - Closed B32 by implementing persisted learning calibration snapshots with ops endpoints (`/api/admin/ops/learning-calibration`, `/api/admin/ops/learning-calibration/recompute`).
   - Closed B33 by shipping `vendor_compliance_v1` as an additional finance skill package on the same runtime (`read_vendor_compliance_health`).
+  - Closed B34 by moving Gmail integration connect start into authenticated Admin Console onboarding (`/api/admin/integrations/gmail/connect/start`), rewiring Console connect button to that endpoint, hardening Gmail callback redirect query appending, reducing repeated extension OAuth consent prompts by reusing granted scopes, and removing direct `/gmail/authorize`.
+  - Closed B35 by removing OAuth bearer-token URL transport, adding one-time auth-code exchange for callback handoff, and shifting console bootstrap to exchange-only token retrieval.
+  - Closed B36 by enforcing provisioned-user + org-bound bootstrap semantics in `/extension/gmail/register-token` and removing caller-org influence from extension bootstrap payloads.
+  - Closed B37 by completing router auth/tenant boundary sweep on mounted sensitive families (`/config`, `/erp`, `/api/ap/policies`, `/erp/*`) and retiring remaining legacy mounted route families.
+  - Advanced B38 by enforcing single-source CORS origin behavior and adding preflight regression coverage for extension core endpoints (manual Gmail devtools verification still pending before close).
+  - Closed B39 by adding SAP parity in Admin onboarding/connect flows (API + Console UI).
+  - Closed B40 by implementing non-placeholder ERP adapter `get_status`/`reconcile` semantics and validating reconciliation behavior against real AP item state.
+  - Opened remaining remediation wave `B41`–`B44` (runtime convergence, Gmail decomposition, Teams verifier resilience, residual artifact cleanup).
+  - Closed B47 by enforcing audit list no-nested-scroll CSS contract, retaining readable audit cards, and capturing expanded audit screenshot evidence.
+  - Closed B51 by adding keyboard-flow reason-sheet regression coverage (`Tab` trap, `Escape`, `Enter`, focus restore) and reason-sheet screenshot evidence.
+  - Closed B52 by capturing Admin Console Setup/Ops IA evidence and tying it to segmented setup flow.
+  - Closed B54 by adding deterministic UI hardening evidence capture script + release evidence doc and linking artifacts in tracker + manifest.
 
 ## Archive protocol
 - Keep this file as the live tracker for current-cycle items.

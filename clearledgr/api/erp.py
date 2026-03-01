@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends
 
 from clearledgr.api.deps import get_sap_adapter
+from clearledgr.core.auth import get_current_user
 from clearledgr.models.erp import (
     ERPDocumentResult,
     ParkedAPInvoiceRequest,
@@ -17,7 +18,7 @@ from clearledgr.models.erp import (
 )
 from clearledgr.services.erp.sap import SAPAdapter
 
-router = APIRouter(prefix="/erp/sap", tags=["ERP"])
+router = APIRouter(prefix="/erp/sap", tags=["ERP"], dependencies=[Depends(get_current_user)])
 
 
 @router.get("/endpoints", response_model=SAPAPIEndpoints)

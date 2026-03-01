@@ -2,7 +2,8 @@
 
 Validates inbound HTTP requests from Microsoft Teams by checking the
 JWT in the Authorization header against Microsoft's published JWKS.
-Keys are cached for 24 hours to avoid repeated metadata fetches.
+Keys are cached for 24 hours, with a short bounded stale-cache fallback
+window to absorb transient Microsoft identity outages.
 """
 
 import logging
@@ -27,13 +28,18 @@ _EXPECTED_ISSUER = "https://api.botframework.com"
 
 # Cache TTL for JWKS keys (24 hours)
 _JWKS_CACHE_TTL_SECONDS = 86_400
+# Additional grace window where stale JWKS may be used only if refresh fails.
+# This protects callback reliability during short upstream outages without
+# allowing indefinitely stale identity metadata.
+_JWKS_STALE_FALLBACK_SECONDS = 7_200
 
 # Maximum age of an inbound Teams request token (matches Slack's 5-minute window).
 # The `iat` claim in the Bot Framework JWT must be within this window of the
 # current server time to prevent replay attacks.
 _MAX_TOKEN_AGE_SECONDS = 300
 
-# Module-level JWKS cache: {"jwks_client": PyJWKClient, "fetched_at": float, "jwks_uri": str}
+# Module-level JWKS cache:
+# {"jwks_client": PyJWKClient, "fetched_at": float, "jwks_uri": str}
 _jwks_cache: Dict[str, Any] = {}
 
 
@@ -47,14 +53,29 @@ def _get_jwks_client() -> PyJWKClient:
     now = time.time()
     cached_at = _jwks_cache.get("fetched_at", 0.0)
 
-    if _jwks_cache.get("jwks_client") and (now - cached_at) < _JWKS_CACHE_TTL_SECONDS:
-        return _jwks_cache["jwks_client"]
+    cached_client = _jwks_cache.get("jwks_client")
+    cache_age = now - cached_at if cached_client else float("inf")
+    if cached_client and cache_age < _JWKS_CACHE_TTL_SECONDS:
+        return cached_client
 
     # Synchronous fetch — acceptable at startup / once per 24h
-    with httpx.Client() as client:
-        resp = client.get(_OPENID_METADATA_URL, timeout=10)
-        resp.raise_for_status()
-        config = resp.json()
+    try:
+        with httpx.Client() as client:
+            resp = client.get(_OPENID_METADATA_URL, timeout=10)
+            resp.raise_for_status()
+            config = resp.json()
+    except httpx.HTTPError as exc:
+        # If we already have a recently stale keyset, continue using it briefly.
+        if cached_client and cache_age < (_JWKS_CACHE_TTL_SECONDS + _JWKS_STALE_FALLBACK_SECONDS):
+            logger.warning(
+                "Microsoft JWKS refresh failed (%s); using stale JWKS cache (age=%ss)",
+                exc,
+                int(cache_age),
+            )
+            _jwks_cache["last_refresh_error_at"] = now
+            _jwks_cache["last_refresh_error"] = str(exc)
+            return cached_client
+        raise
 
     jwks_uri = config.get("jwks_uri")
     if not jwks_uri:
@@ -138,12 +159,18 @@ def verify_teams_token(auth_header: str) -> Dict[str, Any]:
     except jwt.InvalidAudienceError:
         logger.warning("Teams token audience mismatch")
         raise HTTPException(status_code=401, detail="Invalid token audience")
+    except jwt.exceptions.PyJWKClientConnectionError as exc:
+        logger.error("Teams verifier unavailable (JWKS connection failure): %s", exc)
+        raise HTTPException(status_code=503, detail="teams_verifier_unavailable")
+    except httpx.HTTPError as exc:
+        logger.error("Teams verifier unavailable (metadata fetch failed): %s", exc)
+        raise HTTPException(status_code=503, detail="teams_verifier_unavailable")
+    except jwt.exceptions.PyJWKClientError as exc:
+        logger.warning("Teams token unverifiable against JWKS: %s", exc)
+        raise HTTPException(status_code=401, detail="teams_token_unverifiable")
     except jwt.InvalidTokenError as exc:
         logger.warning("Teams JWT validation failed: %s", exc)
         raise HTTPException(status_code=401, detail="Invalid Teams token")
-    except httpx.HTTPError as exc:
-        logger.error("Failed to fetch Microsoft JWKS: %s", exc)
-        raise HTTPException(status_code=502, detail="Cannot reach Microsoft identity provider")
     except Exception as exc:
         from clearledgr.core.errors import safe_error
 

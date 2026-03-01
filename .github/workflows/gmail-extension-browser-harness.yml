@@ -35,8 +35,17 @@ jobs:
       - name: Install extension dependencies
         run: npm ci
 
+      - name: Build extension bundle and verify parity contract
+        run: npm run build
+
+      - name: Verify committed dist parity (strict)
+        run: npm run verify:bundle:strict
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
+
+      - name: Run integration contract tests
+        run: npm run test:integration
 
       - name: Run deterministic browser harness
         run: npm run test:browser-harness:ci

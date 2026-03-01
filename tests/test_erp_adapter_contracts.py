@@ -1,9 +1,30 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
+import sys
+from pathlib import Path
 
 from clearledgr.integrations.erp_router import Bill
+from clearledgr.integrations.erp_router import ERPConnection, set_erp_connection
 from clearledgr.services.erp.contracts import get_erp_bill_adapter
+from clearledgr.core import database as db_module
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
+
+@pytest.fixture()
+def db(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "erp_adapter_contracts.db"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    db_module._DB_INSTANCE = None
+    db = db_module.get_db()
+    db.initialize()
+    return db
 
 
 def _bill() -> Bill:
@@ -57,7 +78,7 @@ def test_router_backed_adapter_post_delegates_to_handler():
     assert calls["kwargs"]["idempotency_key"] == "idem-erp-adapter-1"
 
 
-def test_router_backed_adapter_status_and_reconcile_have_canonical_shape():
+def test_router_backed_adapter_status_and_reconcile_unconfigured_shape():
     async def _fake_post(_organization_id: str, _bill: Bill, **_kwargs):
         return {"status": "success"}
 
@@ -65,9 +86,58 @@ def test_router_backed_adapter_status_and_reconcile_have_canonical_shape():
     status = asyncio.run(adapter.get_status("default", "ERP-123"))
     reconcile = asyncio.run(adapter.reconcile("default", "ap-1"))
 
-    assert status["status"] == "not_implemented"
+    assert status["status"] == "unconfigured"
     assert status["erp_type"] == "sap"
+    assert status["connected"] is False
     assert status["external_ref"] == "ERP-123"
-    assert reconcile["status"] == "not_implemented"
+    assert reconcile["status"] == "unconfigured"
     assert reconcile["erp_type"] == "sap"
     assert reconcile["entity_id"] == "ap-1"
+    assert reconcile["reconciled"] is False
+
+
+def test_router_backed_adapter_status_and_reconcile_for_posted_item(db):
+    async def _fake_post(_organization_id: str, _bill: Bill, **_kwargs):
+        return {"status": "success"}
+
+    set_erp_connection(
+        "default",
+        ERPConnection(
+            type="netsuite",
+            account_id="12345",
+            consumer_key="ck",
+            consumer_secret="cs",
+            token_id="tk",
+            token_secret="ts",
+        ),
+    )
+
+    created = db.create_ap_item(
+        {
+            "invoice_key": "adapter|status|100",
+            "thread_id": "thread-adapter-status",
+            "message_id": "msg-adapter-status",
+            "subject": "Invoice",
+            "sender": "billing@example.com",
+            "vendor_name": "Acme Supplies",
+            "amount": 842.19,
+            "currency": "USD",
+            "invoice_number": "INV-1001",
+            "state": "posted_to_erp",
+            "organization_id": "default",
+            "erp_reference": "ERP-123",
+            "erp_posted_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+    adapter = get_erp_bill_adapter(erp_type="netsuite", post_handler=_fake_post)
+    status = asyncio.run(adapter.get_status("default", "ERP-123"))
+    reconcile = asyncio.run(adapter.reconcile("default", created["id"]))
+
+    assert status["status"] == "posted"
+    assert status["connected"] is True
+    assert status["ap_item_id"] == created["id"]
+    assert status["erp_reference"] == "ERP-123"
+    assert reconcile["status"] == "reconciled"
+    assert reconcile["reconciled"] is True
+    assert reconcile["erp_reference"] == "ERP-123"

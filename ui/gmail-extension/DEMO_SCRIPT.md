@@ -163,7 +163,7 @@ If something doesn't work as expected:
 ## Files
 
 - `sidebar-demo.html` - The demo sidebar UI
-- `demo-mode.js` - Demo data and mock responses
+- Deprecated demo assets were moved to `/Users/mombalam/Desktop/Clearledgr.v1/docs/legacy/gmail-extension-ui/` and are not shipped in the extension package.
 - `icons/` - Clearledgr logo assets
 
 Good luck!

@@ -29,14 +29,14 @@ _REASON_LABELS = {
     "po_match_no_gr": "PO/GR check failed because goods receipt is missing.",
     "confidence_field_review_required": "Key invoice fields need human review before posting.",
     "route_for_approval": "Approval request was sent to the approver channel.",
-    "autonomous_retry_attempt": "Clearledgr paused auto-retry until required steps are complete.",
+    "autonomous_retry_attempt": "Automatic retry was blocked to protect workflow state.",
     "autonomous_retry_failed": "Auto-retry failed and needs manual follow-up.",
     "autonomous_retry_succeeded": "Auto-retry completed successfully.",
     "approval_nudge": "Approval reminder was sent.",
     "approval_nudge_auto_4h": "Agent sent an automatic approval reminder after 4 hours pending.",
     "approval_nudge_auto_24h": "Agent escalated approval reminder after 24 hours pending.",
-    "illegal_transition": "This step can run only after the invoice reaches the required status.",
-    "browser_session_created": "Backup ERP posting route is ready if needed.",
+    "illegal_transition": "Requested action is not allowed from the current invoice status.",
+    "browser_session_created": "Prepared secure ERP browser fallback session.",
 }
 
 
@@ -146,10 +146,10 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         operator.update(
             {
                 "code": "approval_reminder_failed",
-                "title": "Reminder not sent",
-                "message": 'Could not send the approval reminder. Retry "Send reminder".',
+                "title": "Approval reminder failed",
+                "message": 'Could not send reminder to approver. Try "Nudge approver" again.',
                 "severity": "warning",
-                "next_action": 'Retry "Send reminder".',
+                "next_action": 'Retry "Nudge approver".',
             }
         )
         return operator
@@ -166,12 +166,17 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         )
         return operator
 
-    if event_type == "browser_session_created":
+    if event_type in {
+        "browser_session_created",
+        "erp_api_fallback_preview_created",
+        "erp_api_fallback_confirmation_captured",
+        "erp_api_fallback_requested",
+    }:
         operator.update(
             {
                 "code": "erp_backup_ready",
-                "title": "Backup ERP route ready",
-                "message": reason or "If direct posting fails, Clearledgr can use the backup ERP route.",
+                "title": "ERP fallback prepared",
+                "message": reason or "Prepared secure ERP browser fallback session.",
                 "severity": "info",
                 "next_action": "Continue approval/posting flow.",
             }
@@ -183,8 +188,8 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
             operator.update(
                 {
                     "code": "retry_paused",
-                    "title": "Retry paused",
-                    "message": "Auto-retry is paused until required steps are complete.",
+                    "title": "Action blocked for safety",
+                    "message": "Automatic retry was blocked to protect workflow state.",
                     "severity": "warning",
                     "next_action": "Complete required approval/policy steps, then retry.",
                 }
@@ -194,8 +199,8 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
             operator.update(
                 {
                     "code": "step_blocked",
-                    "title": "Step blocked",
-                    "message": "This action can run only after the invoice reaches the required status.",
+                    "title": "Action blocked for safety",
+                    "message": "Requested action is not allowed from the current invoice status.",
                     "severity": "warning",
                     "next_action": "Run the allowed next step for the current status.",
                 }
@@ -204,8 +209,8 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         operator.update(
             {
                 "code": "step_blocked",
-                "title": "Step blocked",
-                "message": reason or "This action cannot run from the current invoice status.",
+                "title": "Action blocked for safety",
+                "message": reason or "Requested action is not allowed from the current invoice status.",
                 "severity": "warning",
                 "next_action": "Use the recommended next action for the current status.",
             }
@@ -279,6 +284,7 @@ def normalize_operator_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
     row["operator_message"] = operator.get("message")
     row["operator_severity"] = operator.get("severity")
     row["operator_next_action"] = operator.get("next_action")
+    row["operator_action_hint"] = operator.get("next_action")
     return row
 
 

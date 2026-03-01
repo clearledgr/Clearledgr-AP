@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, Optional, Protocol
 
-from clearledgr.integrations.erp_router import Bill
+from clearledgr.core.database import get_db
+from clearledgr.integrations.erp_router import Bill, get_erp_connection
 
 
 class ERPBillAdapter(Protocol):
@@ -85,12 +86,57 @@ class RouterBackedERPBillAdapter:
         organization_id: str,
         external_ref: str,
     ) -> Dict[str, Any]:
-        _ = organization_id
+        org_id = str(organization_id or "default").strip() or "default"
+        reference = str(external_ref or "").strip()
+        connection = get_erp_connection(org_id)
+        if not connection:
+            return {
+                "status": "unconfigured",
+                "erp_type": self.erp_type,
+                "organization_id": org_id,
+                "external_ref": reference,
+                "connected": False,
+                "reason": "no_erp_connection",
+            }
+
+        db = get_db()
+        candidate = None
+        if reference:
+            for row in db.list_ap_items(org_id, limit=5000):
+                if str(row.get("erp_reference") or "").strip() == reference:
+                    candidate = row
+                    break
+                if str(row.get("invoice_number") or "").strip() == reference:
+                    candidate = row
+                    break
+        if not candidate:
+            return {
+                "status": "not_found",
+                "erp_type": connection.type or self.erp_type,
+                "organization_id": org_id,
+                "external_ref": reference,
+                "connected": True,
+                "reason": "external_reference_not_found",
+            }
+
+        state = str(candidate.get("state") or "").strip().lower()
+        if state in {"posted_to_erp", "closed"}:
+            status = "posted"
+        elif state == "failed_post":
+            status = "failed"
+        else:
+            status = "pending"
+
         return {
-            "status": "not_implemented",
-            "erp_type": self.erp_type,
-            "external_ref": str(external_ref or ""),
-            "reason": "status_lookup_not_available_in_router",
+            "status": status,
+            "erp_type": connection.type or self.erp_type,
+            "organization_id": org_id,
+            "external_ref": reference,
+            "connected": True,
+            "ap_item_id": candidate.get("id"),
+            "ap_state": state or "unknown",
+            "erp_reference": candidate.get("erp_reference"),
+            "invoice_number": candidate.get("invoice_number"),
         }
 
     async def reconcile(
@@ -98,12 +144,55 @@ class RouterBackedERPBillAdapter:
         organization_id: str,
         entity_id: str,
     ) -> Dict[str, Any]:
-        _ = organization_id
+        org_id = str(organization_id or "default").strip() or "default"
+        ap_item_id = str(entity_id or "").strip()
+        connection = get_erp_connection(org_id)
+        if not connection:
+            return {
+                "status": "unconfigured",
+                "erp_type": self.erp_type,
+                "organization_id": org_id,
+                "entity_id": ap_item_id,
+                "reconciled": False,
+                "reason": "no_erp_connection",
+            }
+
+        db = get_db()
+        item = db.get_ap_item(ap_item_id) if ap_item_id else None
+        if not item or str(item.get("organization_id") or "").strip() != org_id:
+            return {
+                "status": "not_found",
+                "erp_type": connection.type or self.erp_type,
+                "organization_id": org_id,
+                "entity_id": ap_item_id,
+                "reconciled": False,
+                "reason": "ap_item_not_found",
+            }
+
+        state = str(item.get("state") or "").strip().lower()
+        erp_reference = str(item.get("erp_reference") or "").strip() or None
+        if state in {"posted_to_erp", "closed"} and erp_reference:
+            status = "reconciled"
+            reconciled = True
+            reason = "erp_reference_present"
+        elif state == "failed_post":
+            status = "needs_retry"
+            reconciled = False
+            reason = "failed_post_requires_retry"
+        else:
+            status = "pending"
+            reconciled = False
+            reason = "invoice_not_posted"
+
         return {
-            "status": "not_implemented",
-            "erp_type": self.erp_type,
-            "entity_id": str(entity_id or ""),
-            "reason": "reconcile_not_available_in_router",
+            "status": status,
+            "erp_type": connection.type or self.erp_type,
+            "organization_id": org_id,
+            "entity_id": ap_item_id,
+            "ap_state": state or "unknown",
+            "erp_reference": erp_reference,
+            "reconciled": reconciled,
+            "reason": reason,
         }
 
 
@@ -120,4 +209,3 @@ def get_erp_bill_adapter(
 
     token = str(erp_type or "unconfigured").strip().lower() or "unconfigured"
     return RouterBackedERPBillAdapter(erp_type=token, post_handler=post_handler)
-

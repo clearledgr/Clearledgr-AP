@@ -3,7 +3,7 @@
   "name": "Clearledgr",
   "version": "1.2026.001",
   "version_name": "1.2026.001 Phoenix",
-  "description": "Autonomous AP automation — invoices processed 24/7, right inside Gmail",
+  "description": "Finance AI Agent for AP execution, right inside Gmail",
   "permissions": [
     "activeTab",
     "scripting",

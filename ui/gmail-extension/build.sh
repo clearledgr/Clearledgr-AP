@@ -39,10 +39,6 @@ cp -r "$SCRIPT_DIR/vendor" "$BUILD_DIR/" 2>/dev/null || true
 [ -d "$SCRIPT_DIR/engines" ] && cp -r "$SCRIPT_DIR/engines" "$BUILD_DIR/"
 cp "$SCRIPT_DIR/manifest.json" "$BUILD_DIR/"
 cp "$SCRIPT_DIR/background.js" "$BUILD_DIR/"
-cp "$SCRIPT_DIR/popup.html" "$BUILD_DIR/" 2>/dev/null || true
-cp "$SCRIPT_DIR/popup.js" "$BUILD_DIR/" 2>/dev/null || true
-cp "$SCRIPT_DIR/options.html" "$BUILD_DIR/" 2>/dev/null || true
-cp "$SCRIPT_DIR/options.js" "$BUILD_DIR/" 2>/dev/null || true
 
 # Content scripts (required by manifest)
 cp "$SCRIPT_DIR/queue-manager.js" "$BUILD_DIR/"

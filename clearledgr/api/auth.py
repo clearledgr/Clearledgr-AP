@@ -10,9 +10,9 @@ import hmac
 import json
 import os
 import secrets
-from datetime import datetime, timezone
-from typing import Optional
-from urllib.parse import urlencode
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -77,6 +77,10 @@ class InviteAcceptRequest(BaseModel):
     name: Optional[str] = None
 
 
+class GoogleAuthCodeExchangeRequest(BaseModel):
+    auth_code: str = Field(..., min_length=12, max_length=512)
+
+
 def _oauth_secret() -> str:
     from clearledgr.core.secrets import require_secret
     return require_secret("CLEARLEDGR_SECRET_KEY")
@@ -106,6 +110,66 @@ def _unsign_google_state(state: str) -> dict:
     if int(decoded.get("iat") or 0) and datetime.now(timezone.utc).timestamp() - int(decoded["iat"]) > 900:
         raise HTTPException(status_code=400, detail="expired_state")
     return decoded
+
+
+_google_auth_code_store: Dict[str, Dict[str, Any]] = {}
+
+
+def _google_auth_code_ttl_seconds() -> int:
+    raw = str(os.getenv("GOOGLE_AUTH_CODE_TTL_SECONDS", "180")).strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = 180
+    return max(30, min(value, 600))
+
+
+def _sanitize_redirect_path(redirect_path: Optional[str]) -> str:
+    path = str(redirect_path or "/").strip()
+    if not path.startswith("/"):
+        raise HTTPException(status_code=400, detail="invalid_redirect_path")
+    return path
+
+
+def _append_query_params(url: str, params: Dict[str, Any]) -> str:
+    split = urlsplit(url)
+    existing = dict(parse_qsl(split.query, keep_blank_values=True))
+    for key, value in params.items():
+        if value is None:
+            continue
+        existing[str(key)] = str(value)
+    query = urlencode(existing)
+    return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
+
+
+def _issue_google_auth_code(*, access_token: str, refresh_token: str, organization_id: str) -> str:
+    now = datetime.now(timezone.utc)
+    expired_codes = []
+    for code, payload in _google_auth_code_store.items():
+        expires_at = payload.get("expires_at")
+        if isinstance(expires_at, datetime) and expires_at < now:
+            expired_codes.append(code)
+    for code in expired_codes:
+        _google_auth_code_store.pop(code, None)
+
+    auth_code = secrets.token_urlsafe(32)
+    _google_auth_code_store[auth_code] = {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "organization_id": str(organization_id or "default"),
+        "expires_at": now + timedelta(seconds=_google_auth_code_ttl_seconds()),
+    }
+    return auth_code
+
+
+def _consume_google_auth_code(code: str) -> Dict[str, Any]:
+    payload = _google_auth_code_store.pop(str(code or "").strip(), None)
+    if not payload:
+        raise HTTPException(status_code=400, detail="invalid_auth_code")
+    expires_at = payload.get("expires_at")
+    if isinstance(expires_at, datetime) and datetime.now(timezone.utc) > expires_at:
+        raise HTTPException(status_code=400, detail="expired_auth_code")
+    return payload
 
 
 @router.post("/register", response_model=User)
@@ -588,10 +652,11 @@ async def start_google_web_auth(
     if not client_id:
         raise HTTPException(status_code=503, detail="GOOGLE_CLIENT_ID not configured")
 
+    safe_redirect_path = _sanitize_redirect_path(redirect_path)
     state = _sign_google_state(
         {
             "organization_id": organization_id or "default",
-            "redirect_path": redirect_path or "/",
+            "redirect_path": safe_redirect_path,
             "invite_token": invite_token,
             "nonce": secrets.token_urlsafe(8),
             "iat": int(datetime.now(timezone.utc).timestamp()),
@@ -603,8 +668,8 @@ async def start_google_web_auth(
         "response_type": "code",
         "scope": "openid email profile",
         "state": state,
-        "access_type": "offline",
-        "prompt": "consent",
+        "include_granted_scopes": "true",
+        "prompt": "select_account",
     }
     auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
     return {"auth_url": auth_url}
@@ -698,8 +763,34 @@ async def google_web_auth_callback(
         role=user.role,
     )
     refresh = create_refresh_token(user.id)
-    redirect_path = str(state_payload.get("redirect_path") or "/")
-    return RedirectResponse(url=f"{redirect_path}?token={jwt_token}&refresh_token={refresh}&org={user.organization_id}")
+    auth_code = _issue_google_auth_code(
+        access_token=jwt_token,
+        refresh_token=refresh,
+        organization_id=user.organization_id,
+    )
+    redirect_path = _sanitize_redirect_path(state_payload.get("redirect_path"))
+    redirect_url = _append_query_params(
+        redirect_path,
+        {
+            "auth_code": auth_code,
+            "org": user.organization_id,
+        },
+    )
+    return RedirectResponse(url=redirect_url)
+
+
+@router.post("/google/exchange", response_model=TokenResponse)
+async def exchange_google_auth_code(request: GoogleAuthCodeExchangeRequest):
+    payload = _consume_google_auth_code(request.auth_code)
+    access_token = str(payload.get("access_token") or "").strip()
+    refresh_token = str(payload.get("refresh_token") or "").strip()
+    if not access_token or not refresh_token:
+        raise HTTPException(status_code=400, detail="invalid_auth_code_payload")
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
 
 
 @router.post("/invites/accept")

@@ -64,7 +64,8 @@ def test_verify_teams_token_maps_jwks_fetch_error(monkeypatch):
     monkeypatch.setattr(teams_verify_module, "_get_jwks_client", _raise_http_error)
     with pytest.raises(HTTPException) as exc:
         teams_verify_module.verify_teams_token("Bearer fake-token")
-    assert exc.value.status_code == 502
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "teams_verifier_unavailable"
 
 
 def test_verify_teams_token_maps_invalid_issuer(monkeypatch):
@@ -107,6 +108,20 @@ def test_verify_teams_token_maps_invalid_token(monkeypatch):
         teams_verify_module.verify_teams_token("Bearer fake-token")
     assert exc.value.status_code == 401
     assert "invalid teams token" in str(exc.value.detail).lower()
+
+
+def test_verify_teams_token_maps_unverifiable_token(monkeypatch):
+    monkeypatch.setenv("TEAMS_APP_ID", "teams-app-id")
+
+    class _UnverifiableJWKSClient:
+        def get_signing_key_from_jwt(self, _token: str):
+            raise jwt.exceptions.PyJWKClientError("no matching key")
+
+    monkeypatch.setattr(teams_verify_module, "_get_jwks_client", lambda: _UnverifiableJWKSClient())
+    with pytest.raises(HTTPException) as exc:
+        teams_verify_module.verify_teams_token("Bearer fake-token")
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "teams_token_unverifiable"
 
 
 def test_verify_teams_token_success_returns_claims(monkeypatch):
@@ -160,3 +175,64 @@ def test_get_jwks_client_fetches_metadata_and_caches(monkeypatch):
     assert first.uri == "https://login.botframework.com/keys"
     assert calls["get"] == 1
     assert calls["pyjwk"] == 1
+
+
+def test_get_jwks_client_uses_stale_cache_when_refresh_fails_within_grace(monkeypatch):
+    cached = object()
+    now = 200_000.0
+    stale_age = teams_verify_module._JWKS_CACHE_TTL_SECONDS + 60
+    teams_verify_module._jwks_cache.update(
+        {
+            "jwks_client": cached,
+            "jwks_uri": "https://login.botframework.com/keys",
+            "fetched_at": now - stale_age,
+        }
+    )
+
+    class _HttpxClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, _url, timeout=10):
+            request = httpx.Request("GET", teams_verify_module._OPENID_METADATA_URL)
+            raise httpx.ConnectError("transient outage", request=request)
+
+    monkeypatch.setattr(teams_verify_module.time, "time", lambda: now)
+    monkeypatch.setattr(teams_verify_module.httpx, "Client", _HttpxClient)
+
+    resolved = teams_verify_module._get_jwks_client()
+    assert resolved is cached
+    assert teams_verify_module._jwks_cache.get("last_refresh_error")
+
+
+def test_get_jwks_client_refresh_error_raises_when_cache_beyond_grace(monkeypatch):
+    cached = object()
+    now = 300_000.0
+    stale_age = teams_verify_module._JWKS_CACHE_TTL_SECONDS + teams_verify_module._JWKS_STALE_FALLBACK_SECONDS + 120
+    teams_verify_module._jwks_cache.update(
+        {
+            "jwks_client": cached,
+            "jwks_uri": "https://login.botframework.com/keys",
+            "fetched_at": now - stale_age,
+        }
+    )
+
+    class _HttpxClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, _url, timeout=10):
+            request = httpx.Request("GET", teams_verify_module._OPENID_METADATA_URL)
+            raise httpx.ConnectError("prolonged outage", request=request)
+
+    monkeypatch.setattr(teams_verify_module.time, "time", lambda: now)
+    monkeypatch.setattr(teams_verify_module.httpx, "Client", _HttpxClient)
+
+    with pytest.raises(httpx.ConnectError):
+        teams_verify_module._get_jwks_client()

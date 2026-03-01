@@ -29,6 +29,8 @@ class ClearledgrQueueManager {
     this.backendAuthOrgId = null;
     this.backendAuthRequired = false;
     this.lastBackendAuthFailureAt = 0;
+    this.interactiveAuthCooldownMs = 60000;
+    this.lastInteractiveAuthAttemptAt = 0;
     this.debugManualScan = false;
     this.autopilotStatus = null;
     this.auditCache = new Map();
@@ -513,12 +515,17 @@ class ClearledgrQueueManager {
       return this.ensureGmailAuth(interactive, attempt + 1);
     }
     if (!result || result.success === false) {
+      const retryAfterSeconds = Number(result?.retryAfterSeconds || result?.retry_after_seconds || 0) || 0;
       this.setScanStatus({
         state: 'auth_required',
         mode: 'gmail_oauth',
         error: result?.error || 'auth_required'
       });
-      return { success: false, error: result?.error || 'auth_required' };
+      return {
+        success: false,
+        error: result?.error || 'auth_required',
+        retry_after_seconds: retryAfterSeconds,
+      };
     }
     this.setScanStatus({
       state: 'idle',
@@ -553,7 +560,8 @@ class ClearledgrQueueManager {
       slackChannel: data.slackChannel || nested.slackChannel || null,
       financeLeadEmail: data.financeLeadEmail || nested.financeLeadEmail || null,
       backendApiKey: data.backendApiKey || nested.backendApiKey || nested.apiKey || null,
-      debugManualScan: nested.debugManualScan ?? globalDebugDefault
+      debugManualScan: nested.debugManualScan ?? globalDebugDefault,
+      authEntryMode: nested.authEntryMode || null
     };
 
     const validator =
@@ -568,7 +576,10 @@ class ClearledgrQueueManager {
         valid: Boolean(validation.valid),
         errors: Array.isArray(validation.errors) ? validation.errors : [],
         warnings: Array.isArray(validation.warnings) ? validation.warnings : [],
-        debugManualScan: Boolean(raw.debugManualScan)
+        debugManualScan: Boolean(raw.debugManualScan),
+        authEntryMode: String(raw.authEntryMode || 'admin_console').trim().toLowerCase() === 'inline'
+          ? 'inline'
+          : 'admin_console'
       };
     }
 
@@ -582,9 +593,17 @@ class ClearledgrQueueManager {
     const configuredApiKey = String(
       extensionConfig.BACKEND_API_KEY || extensionConfig.API_KEY || ''
     ).trim();
+    const configuredAuthEntryMode = String(
+      extensionConfig.AUTH_ENTRY_MODE || extensionConfig.SIDEBAR_AUTH_ENTRY_MODE || ''
+    ).trim().toLowerCase();
     const backendUrl = String(raw.backendUrl || configuredBackendUrl || 'http://127.0.0.1:8000')
       .trim()
       .replace(/\/+$/, '');
+    const authEntryMode = String(raw.authEntryMode || configuredAuthEntryMode || 'admin_console')
+      .trim()
+      .toLowerCase() === 'inline'
+      ? 'inline'
+      : 'admin_console';
     return {
       backendUrl,
       organizationId: String(raw.organizationId || 'default').trim(),
@@ -592,6 +611,7 @@ class ClearledgrQueueManager {
       slackChannel: String(raw.slackChannel || '#finance-approvals').trim(),
       financeLeadEmail: raw.financeLeadEmail || null,
       backendApiKey: String(raw.backendApiKey || configuredApiKey || '').trim() || null,
+      authEntryMode,
       confidenceThreshold: 0.85,
       amountAnomalyThreshold: 0.35,
       erpWritebackEnabled: false,
@@ -1066,15 +1086,71 @@ class ClearledgrQueueManager {
     return this.ensureBackendAuth({ force: true, interactive: true });
   }
 
+  getInteractiveAuthRetryAfterSeconds(now = Date.now()) {
+    const nextAllowedAt = this.lastInteractiveAuthAttemptAt + this.interactiveAuthCooldownMs;
+    const retryAfterMs = Math.max(0, nextAllowedAt - now);
+    return Math.ceil(retryAfterMs / 1000);
+  }
+
+  isInteractiveAuthCoolingDown(now = Date.now()) {
+    if (!this.lastInteractiveAuthAttemptAt) return false;
+    return (now - this.lastInteractiveAuthAttemptAt) < this.interactiveAuthCooldownMs;
+  }
+
+  describeAuthResult(result = {}) {
+    if (result?.success) {
+      return { toast: 'Gmail authorized. Autopilot is resuming.', severity: 'success' };
+    }
+    const code = String(result?.error || 'authorization_failed').trim().toLowerCase();
+    if (code === 'interactive_auth_cooldown') {
+      const retryAfter = Number(result?.retry_after_seconds || this.getInteractiveAuthRetryAfterSeconds());
+      return {
+        toast: `Authorization already started. Try again in ${Math.max(1, retryAfter)}s.`,
+        severity: 'warning',
+      };
+    }
+    if (code === 'auth_unavailable' || code === 'auth_in_progress') {
+      return { toast: 'Authorization is already in progress.', severity: 'warning' };
+    }
+    if (code.includes('redirect_uri_mismatch')) {
+      return { toast: 'OAuth redirect URI mismatch. Fix OAuth settings in Admin Console Integrations.', severity: 'error' };
+    }
+    if (code.includes('invalid_client')) {
+      return { toast: 'OAuth client configuration is invalid. Verify Gmail integration settings.', severity: 'error' };
+    }
+    if (code === 'backend_auth_token_missing') {
+      return { toast: 'Gmail token was received, but backend sign-in failed. Open Integrations to reconnect.', severity: 'error' };
+    }
+    if (code.includes('network') || code.includes('fetch') || code.includes('backend_unreachable')) {
+      return { toast: 'Authorization failed because backend is unreachable. Check backend and retry.', severity: 'error' };
+    }
+    if (code === 'auth_required' || code === 'authorization_failed') {
+      return { toast: 'Authorization failed. Try again or reconnect from Admin Console Integrations.', severity: 'error' };
+    }
+    return { toast: `Authorization failed: ${code}`, severity: 'error' };
+  }
+
   async ensureBackendAuth({ force = false, interactive = false } = {}) {
-    if (!this.runtimeConfig?.valid || this.authInFlight) return { success: false, error: 'auth_unavailable' };
+    if (!this.runtimeConfig?.valid) return { success: false, error: 'auth_unavailable' };
+    if (this.authInFlight) return { success: false, error: 'auth_in_progress' };
+    const now = Date.now();
+    if (interactive && this.isInteractiveAuthCoolingDown(now)) {
+      return {
+        success: false,
+        error: 'interactive_auth_cooldown',
+        retry_after_seconds: this.getInteractiveAuthRetryAfterSeconds(now),
+      };
+    }
     if (!force && this.authPrompted) return { success: false, error: 'auth_already_prompted' };
     if (!force) this.authPrompted = true;
+    if (interactive) this.lastInteractiveAuthAttemptAt = now;
     this.authInFlight = true;
     let authCompleted = false;
 
     try {
-      const result = await this.ensureGmailAuth(Boolean(interactive || force));
+      // Only explicit user actions should open interactive OAuth windows.
+      // Automatic retries (e.g. 401 recovery) must stay non-interactive.
+      const result = await this.ensureGmailAuth(Boolean(interactive));
       if (!result?.success) return result || { success: false, error: 'auth_required' };
 
       const backendAccessToken = String(result?.backendAccessToken || '').trim();
@@ -1112,9 +1188,7 @@ class ClearledgrQueueManager {
       if (!authCompleted) {
         this.lastBackendAuthFailureAt = Date.now();
         this.backendAuthRequired = true;
-        if (!force) {
-          this.authPrompted = false;
-        }
+        this.authPrompted = false;
       }
       this.authInFlight = false;
     }
