@@ -1,7 +1,0 @@
-{
-  "scriptId": "YOUR_SCRIPT_ID_HERE",
-  "rootDir": "./",
-  "fileExtension": "gs",
-  "filePushOrder": ["Code.gs"]
-}
-

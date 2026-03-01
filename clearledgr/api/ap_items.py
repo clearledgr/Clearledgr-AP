@@ -16,6 +16,7 @@ from clearledgr.core.ap_states import APState
 from clearledgr.core.errors import safe_error
 from clearledgr.api.deps import verify_org_access
 from clearledgr.services.ap_context_connectors import build_multi_system_context
+from clearledgr.services.ap_operator_audit import normalize_operator_audit_events
 
 
 router = APIRouter(prefix="/api/ap/items", tags=["ap-items"])
@@ -570,13 +571,6 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         metadata.get("ap_decision_risk_flags") or []
     )
 
-    # Early payment discount — surface so sidebar can render green chip.
-    discount = metadata.get("early_payment_discount")
-    if discount and isinstance(discount, dict) and discount.get("is_available"):
-        payload["early_payment_discount"] = discount
-    else:
-        payload["early_payment_discount"] = None
-
     # needs_info follow-up — surface question + Gmail draft link for sidebar banner.
     needs_info_question = metadata.get("needs_info_question")
     payload["needs_info_question"] = needs_info_question if needs_info_question else None
@@ -896,7 +890,7 @@ def get_ap_item_audit(
     events = db.list_ap_audit_events(ap_item_id)
     if browser_only:
         events = [event for event in events if str(event.get("event_type") or "").startswith("browser_")]
-    return {"events": events}
+    return {"events": normalize_operator_audit_events(events)}
 
 
 @router.get("/{ap_item_id}/sources")

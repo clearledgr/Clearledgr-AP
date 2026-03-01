@@ -4,7 +4,6 @@ This module enriches AP item context with non-email systems:
 - bank feeds / bank matches
 - credit-card statement transactions
 - procurement (purchase orders + goods receipts)
-- payroll accrual context
 - spreadsheet references
 - document management system (DMS) references
 
@@ -19,7 +18,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from clearledgr.services.accruals import AccrualType, get_accruals_service
 from clearledgr.services.purchase_orders import get_purchase_order_service
 
 
@@ -410,51 +408,17 @@ def _collect_payroll_context(
     item: Dict[str, Any],
     metadata: Dict[str, Any],
 ) -> ConnectorResult:
-    errors: List[str] = []
-    discovered: List[Dict[str, Any]] = []
+    # Payroll accrual context is outside AP-v1 canonical scope.
+    # Keep a stable payload shape so existing context consumers don't break.
+    _ = item
+    _ = metadata
     payload: Dict[str, Any] = {
         "entries": [],
         "count": 0,
         "total_amount": 0.0,
         "connector_available": False,
     }
-
-    organization_id = _normalize_text(item.get("organization_id") or "default")
-    vendor_name = _normalize_text(item.get("vendor_name") or metadata.get("vendor_name") or "")
-    invoice_id = _normalize_text(item.get("id"))
-
-    try:
-        service = get_accruals_service(organization_id)
-        entries = service.list_accruals(
-            accrual_type=AccrualType.PAYROLL,
-            vendor_name=vendor_name or None,
-            limit=20,
-        )
-        normalized = [entry.to_dict() for entry in entries]
-        payload["entries"] = normalized
-        payload["count"] = len(normalized)
-        payload["total_amount"] = round(sum(_safe_float(entry.get("amount")) for entry in normalized), 2)
-        payload["connector_available"] = True
-
-        for entry in normalized[:10]:
-            accrual_id = _normalize_text(entry.get("accrual_id"))
-            if not accrual_id:
-                continue
-            discovered.append(
-                _source_payload(
-                    ap_item_id=invoice_id,
-                    source_type="payroll",
-                    source_ref=accrual_id,
-                    subject=_normalize_text(entry.get("description") or "Payroll accrual"),
-                    sender="payroll_system",
-                    metadata={"accrual": entry},
-                )
-            )
-    except Exception as exc:
-        errors.append(str(exc))
-
-    has_data = bool(payload.get("count"))
-    return ConnectorResult(payload=payload, discovered_sources=discovered, has_data=has_data, errors=errors)
+    return ConnectorResult(payload=payload, discovered_sources=[], has_data=False, errors=[])
 
 
 def _collect_spreadsheet_context(

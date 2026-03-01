@@ -118,6 +118,35 @@ class _FakeDB:
         self.audit_rows.append(row)
         return row
 
+    def list_ap_audit_events(self, ap_item_id):
+        token = str(ap_item_id or "")
+        return [
+            row
+            for row in self.audit_rows
+            if str(row.get("ap_item_id") or "") == token
+        ]
+
+    def get_ap_kpis(self, organization_id, approval_sla_minutes=240):
+        _ = approval_sla_minutes
+        return {
+            "organization_id": organization_id,
+            "agentic_telemetry": {
+                "agent_suggestion_acceptance": {
+                    "prompted_count": 10,
+                    "accepted_count": 8,
+                    "rate": 0.8,
+                }
+            },
+        }
+
+    def get_operational_metrics(self, organization_id, approval_sla_minutes=240, workflow_stuck_minutes=120):
+        _ = approval_sla_minutes, workflow_stuck_minutes
+        return {
+            "organization_id": organization_id,
+            "queue_lag": {"avg_minutes": 5.0},
+            "post_failure_rate": {"rate_24h": 0.02},
+        }
+
     def list_ap_items(self, organization_id, state=None, limit=200, prioritized=False):
         _ = prioritized
         org = str(organization_id or "")
@@ -143,7 +172,58 @@ def test_runtime_registers_ap_and_read_only_health_skills():
     assert "prepare_vendor_followups" in runtime.supported_intents
     assert "route_low_risk_for_approval" in runtime.supported_intents
     assert "retry_recoverable_failures" in runtime.supported_intents
+    assert "read_vendor_compliance_health" in runtime.supported_intents
     assert "read_ap_workflow_health" in runtime.supported_intents
+
+
+def test_runtime_list_skills_returns_manifest_contracts():
+    db = _FakeDB()
+    runtime = _runtime(db)
+
+    rows = runtime.list_skills()
+
+    assert rows
+    ap_skill = next(row for row in rows if row["skill_id"] == "ap_v1")
+    assert ap_skill["manifest"]["is_valid"] is True
+    assert "state_machine" in ap_skill["manifest"]
+    assert ap_skill["readiness"]["status"] == "manifest_valid"
+
+
+def test_skill_readiness_reports_gate_statuses_for_ap_skill():
+    db = _FakeDB()
+    db.audit_rows.extend(
+        [
+            {
+                "id": "audit-transition-pass",
+                "ap_item_id": "ap-route-1",
+                "event_type": "state_transition",
+                "idempotency_key": "idem-transition-pass",
+            },
+            {
+                "id": "audit-transition-rejected",
+                "ap_item_id": "ap-route-1",
+                "event_type": "state_transition_rejected",
+                "decision_reason": "illegal_transition",
+                "idempotency_key": "idem-transition-rejected",
+            },
+        ]
+    )
+    runtime = _runtime(db)
+
+    readiness = runtime.skill_readiness("ap_v1")
+
+    assert readiness["skill_id"] == "ap_v1"
+    assert readiness["status"] == "blocked"
+    gate_map = {gate["gate"]: gate for gate in readiness["gates"]}
+    assert gate_map["operator_acceptance"]["status"] == "pass"
+    assert gate_map["legal_transition_correctness"]["status"] in {"fail", "pass"}
+    assert gate_map["enabled_connector_readiness"]["status"] in {
+        "pass",
+        "fail",
+        "not_verifiable",
+        "not_configured",
+    }
+    assert "metrics" in readiness
 
 
 def test_preview_route_low_risk_for_approval_returns_precheck():
@@ -363,6 +443,19 @@ def test_preview_read_ap_workflow_health_returns_snapshot():
     assert result["summary"]["state_counts"]["validated"] >= 1
 
 
+def test_preview_read_vendor_compliance_health_returns_snapshot():
+    db = _FakeDB()
+    runtime = _runtime(db)
+
+    result = runtime.preview_intent("read_vendor_compliance_health", {"limit": 50})
+
+    assert result["intent"] == "read_vendor_compliance_health"
+    assert result["status"] == "ready"
+    assert result["policy_precheck"]["read_only"] is True
+    assert "summary" in result
+    assert "high_override_vendors_count" in result["summary"]
+
+
 def test_execute_read_ap_workflow_health_returns_read_only_snapshot():
     db = _FakeDB()
     runtime = _runtime(db)
@@ -373,3 +466,79 @@ def test_execute_read_ap_workflow_health_returns_read_only_snapshot():
     assert result["status"] == "snapshot_ready"
     assert result["read_only"] is True
     assert result["summary"]["total_items"] >= 3
+
+
+def test_execute_read_vendor_compliance_health_returns_read_only_snapshot():
+    db = _FakeDB()
+    runtime = _runtime(db)
+
+    result = asyncio.run(runtime.execute_intent("read_vendor_compliance_health", {"limit": 50}))
+
+    assert result["intent"] == "read_vendor_compliance_health"
+    assert result["status"] == "snapshot_ready"
+    assert result["read_only"] is True
+    assert "summary" in result
+
+
+def test_runtime_preview_and_execute_include_canonical_contract_fields():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.evaluate_batch_route_low_risk_for_approval.return_value = {
+        "eligible": True,
+        "reason_codes": [],
+    }
+    workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="gmail-thread-route-1")
+    workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "171.10"})
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        preview = runtime.preview_intent(
+            "route_low_risk_for_approval",
+            {"email_id": "gmail-thread-route-1"},
+        )
+        executed = asyncio.run(
+            runtime.execute_intent(
+                "route_low_risk_for_approval",
+                {"email_id": "gmail-thread-route-1"},
+                idempotency_key="idem-runtime-contract-1",
+            )
+        )
+
+    for payload in (preview, executed):
+        assert "recommended_next_action" in payload
+        assert "legal_actions" in payload
+        assert "blockers" in payload
+        assert "confidence" in payload
+        assert "evidence_refs" in payload
+
+    assert executed["action_execution"]["action"] == "route_low_risk_for_approval"
+    assert executed["action_execution"]["idempotency_key"] == "idem-runtime-contract-1"
+
+
+def test_runtime_audit_rows_include_canonical_audit_event_schema():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.evaluate_batch_route_low_risk_for_approval.return_value = {
+        "eligible": True,
+        "reason_codes": [],
+    }
+    workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="gmail-thread-route-1")
+    workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval"})
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        _ = asyncio.run(
+            runtime.execute_intent(
+                "route_low_risk_for_approval",
+                {"email_id": "gmail-thread-route-1"},
+                idempotency_key="idem-runtime-audit-schema-1",
+            )
+        )
+
+    assert db.audit_rows
+    metadata = db.audit_rows[0].get("metadata") or {}
+    canonical = metadata.get("canonical_audit_event") or {}
+    assert canonical.get("org_id") == "default"
+    assert canonical.get("entity_id") == "ap-route-1"
+    assert canonical.get("action")
+    assert canonical.get("timestamp")

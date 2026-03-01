@@ -127,3 +127,67 @@ def test_admin_ga_readiness_put_get_summary(client, db):
     assert len(get_payload["ga_readiness"]["parity_evidence"]) == 2
     assert get_payload["summary"]["ready_for_ga"] is True
 
+
+def test_admin_ops_connector_readiness_endpoint(client, db):
+    db.save_erp_connection(
+        organization_id="default",
+        erp_type="quickbooks",
+        access_token="token",
+        refresh_token="refresh",
+        realm_id="realm-1",
+    )
+    _ = client.put(
+        "/api/admin/ga-readiness",
+        json={
+            "organization_id": "default",
+            "evidence": {
+                "connector_checklists": {
+                    "quickbooks": {"completed": True, "signed_off": True}
+                }
+            },
+        },
+    )
+
+    response = client.get("/api/admin/ops/connector-readiness?organization_id=default")
+    assert response.status_code == 200
+    payload = response.json()
+    report = payload["connector_readiness"]
+    assert report["summary"]["configured_connectors_total"] == 1
+    assert report["summary"]["enabled_connectors_total"] == 1
+    assert any(row["erp_type"] == "quickbooks" for row in report["connectors"])
+
+
+def test_admin_ops_learning_calibration_recompute_and_get(client, db):
+    for idx in range(6):
+        db.record_vendor_decision_feedback(
+            "default",
+            "Acme Supplies",
+            ap_item_id=f"ap-{idx}",
+            human_decision="approve" if idx < 4 else "reject",
+            agent_recommendation="approve",
+            decision_override=(idx >= 4),
+            reason="policy_requirement_amt_500",
+            source_channel="slack",
+            actor_id="owner-1",
+            action_outcome="completed",
+        )
+
+    recompute = client.post(
+        "/api/admin/ops/learning-calibration/recompute",
+        json={
+            "organization_id": "default",
+            "window_days": 180,
+            "min_feedback": 5,
+            "limit": 5000,
+        },
+    )
+    assert recompute.status_code == 200
+    recompute_payload = recompute.json()
+    assert recompute_payload["success"] is True
+    assert recompute_payload["snapshot"]["calibration_version"]
+    assert recompute_payload["snapshot"]["summary"]["total_feedback"] == 6
+
+    latest = client.get("/api/admin/ops/learning-calibration?organization_id=default")
+    assert latest.status_code == 200
+    latest_payload = latest.json()
+    assert latest_payload["snapshot"]["calibration_version"] == recompute_payload["snapshot"]["calibration_version"]

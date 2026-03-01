@@ -832,7 +832,7 @@ async def send_approval_reminder(
     approver_ids: List[str],
     hours_pending: float,
     organization_id: Optional[str] = None,
-) -> None:
+) -> bool:
     """Send a reminder (or escalation) for an AP item stuck in needs_approval.
 
     - < 24h: DM each pending approver via Slack DM
@@ -855,11 +855,13 @@ async def send_approval_reminder(
         f"Please review and approve or reject."
     )
 
+    reminder_sent = False
     try:
         client = SlackAPIClient(organization_id=org_id)
         for uid in approver_ids:
             try:
                 await client.send_dm(uid, dm_text)
+                reminder_sent = True
             except Exception as dm_err:
                 logger.debug("Approval reminder DM to %s failed: %s", uid, dm_err)
 
@@ -873,14 +875,17 @@ async def send_approval_reminder(
                 f":rotating_light: *Approval Escalation* — {vendor} invoice #{invoice_num} "
                 f"(${amount:,.2f}) has been pending approval for *{h}h* with no response."
             )
-            await _post_slack_blocks(
+            escalation_sent = await _post_slack_blocks(
                 blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": escalation_text}}],
                 text=escalation_text,
                 preferred_channel=channel,
                 organization_id=org_id,
             )
+            reminder_sent = reminder_sent or bool(escalation_sent)
     except Exception as exc:
         logger.debug("send_approval_reminder failed: %s", exc)
+        return False
+    return reminder_sent
 
 
 class SlackNotificationService:

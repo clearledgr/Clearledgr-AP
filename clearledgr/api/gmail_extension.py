@@ -11,8 +11,10 @@ KEY DIFFERENTIATORS:
 """
 import json
 import os
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from pydantic import BaseModel
 
@@ -31,9 +33,12 @@ from clearledgr.services.proactive_insights import get_proactive_insights
 from clearledgr.services.cross_invoice_analysis import get_cross_invoice_analyzer
 from clearledgr.services.agent_reasoning import get_agent as get_reasoning_agent
 from clearledgr.core.ap_confidence import evaluate_critical_field_confidence, extract_field_confidences
-from clearledgr.core.auth import get_current_user
+from clearledgr.core.auth import get_current_user, create_access_token
 from clearledgr.core.database import get_db
 from clearledgr.api.ap_items import build_worklist_item
+from clearledgr.services.gmail_api import GmailToken, token_store, GMAIL_PROFILE_URL, GOOGLE_USERINFO_URL
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/extension", tags=["gmail-extension"])
@@ -147,6 +152,14 @@ class MatchBankRequest(BaseModel):
 class MatchERPRequest(BaseModel):
     """Request to match against ERP."""
     extraction: Dict[str, Any]
+    organization_id: Optional[str] = None
+
+
+class RegisterGmailTokenRequest(BaseModel):
+    """Register OAuth token acquired by the Gmail extension."""
+    access_token: str
+    expires_in: Optional[int] = 3600
+    email: Optional[str] = None
     organization_id: Optional[str] = None
 
 
@@ -698,6 +711,94 @@ def get_extension_worklist(
         "organization_id": org_id,
         "items": normalized,
         "total": len(normalized),
+    }
+
+
+@router.post("/gmail/register-token")
+async def register_gmail_token(request: RegisterGmailTokenRequest):
+    """Register Gmail OAuth access token obtained by the browser extension.
+
+    This endpoint is intentionally callable without API auth because it is
+    the bootstrap path used immediately after extension OAuth.
+    """
+    access_token = str(request.access_token or "").strip()
+    if not access_token:
+        raise HTTPException(status_code=400, detail="missing_google_access_token")
+
+    profile_email: Optional[str] = None
+    validation_error: Optional[str] = None
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        headers = {"Authorization": f"Bearer {access_token}"}
+        profile_response = await client.get(GMAIL_PROFILE_URL, headers=headers)
+        if profile_response.status_code < 400:
+            profile = profile_response.json()
+            profile_email = str(profile.get("emailAddress") or "").strip() or None
+        else:
+            userinfo_response = await client.get(GOOGLE_USERINFO_URL, headers=headers)
+            if userinfo_response.status_code < 400:
+                payload = userinfo_response.json()
+                profile_email = str(payload.get("email") or "").strip() or None
+            else:
+                validation_error = (
+                    f"profile_status={profile_response.status_code},"
+                    f"userinfo_status={userinfo_response.status_code}"
+                )
+
+    if not profile_email:
+        detail = "invalid_google_access_token"
+        if validation_error:
+            detail = f"{detail}:{validation_error}"
+        raise HTTPException(status_code=400, detail=detail)
+
+    hinted_email = str(request.email or "").strip().lower()
+    if hinted_email and hinted_email != profile_email.lower():
+        logger.warning(
+            "Gmail extension email mismatch: hinted=%s profile=%s",
+            hinted_email,
+            profile_email,
+        )
+
+    expires_in = int(request.expires_in or 3600)
+    expires_in = max(60, min(expires_in, 86400))
+    user_id = profile_email
+    token_store.store(
+        GmailToken(
+            user_id=user_id,
+            access_token=access_token,
+            refresh_token="",
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+            email=profile_email,
+        )
+    )
+
+    db = get_db()
+    db.save_gmail_autopilot_state(
+        user_id=user_id,
+        email=profile_email,
+        last_error=None,
+    )
+
+    organization_id = str(request.organization_id or "default").strip() or "default"
+    backend_token_ttl_seconds = max(300, min(expires_in, 3600))
+    backend_access_token = create_access_token(
+        user_id=user_id,
+        email=profile_email,
+        organization_id=organization_id,
+        role="user",
+        expires_delta=timedelta(seconds=backend_token_ttl_seconds),
+    )
+
+    return {
+        "success": True,
+        "email": profile_email,
+        "user_id": user_id,
+        "expires_in": expires_in,
+        "source": "extension_access_token",
+        "organization_id": organization_id,
+        "backend_access_token": backend_access_token,
+        "backend_token_type": "bearer",
+        "backend_expires_in": backend_token_ttl_seconds,
     }
 
 

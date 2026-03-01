@@ -77,116 +77,6 @@ class TestAuthEndpoints:
         assert "organization_id" in data
 
 
-class TestAnalyticsEndpoints:
-    """Test analytics dashboard endpoints."""
-    
-    def test_dashboard_metrics(self):
-        """Test fetching dashboard metrics."""
-        response = client.get("/analytics/dashboard/default")
-        assert response.status_code == 200
-        data = response.json()
-        
-        # Should have expected fields
-        assert "pending_review" in data or "needs_review" in data
-    
-    def test_spend_by_vendor(self):
-        """Test spend by vendor report."""
-        response = client.get("/analytics/spend-by-vendor/default")
-        assert response.status_code == 200
-    
-    def test_processing_metrics(self):
-        """Test processing metrics endpoint."""
-        response = client.get("/analytics/processing-metrics/default")
-        assert response.status_code == 200
-
-
-class TestAPWorkflowEndpoints:
-    """Test AP workflow endpoints."""
-    
-    def test_get_pending_payments(self):
-        """Test getting pending payments."""
-        response = client.get("/ap/payments/pending", params={"organization_id": "default"})
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
-    
-    def test_get_payment_summary(self):
-        """Test payment summary."""
-        response = client.get("/ap/payments/summary", params={"organization_id": "default"})
-        assert response.status_code == 200
-        data = response.json()
-        assert "pending" in data or "scheduled" in data
-    
-    def test_create_payment(self):
-        """Test creating a payment."""
-        response = client.post("/ap/payments/create", json={
-            "invoice_id": "TEST-INV-001",
-            "vendor_id": "TEST-V001",
-            "vendor_name": "Test Vendor",
-            "amount": 100.00,
-            "method": "ach",
-            "organization_id": "default",
-        })
-        assert response.status_code == 200
-        data = response.json()
-        assert "payment_id" in data
-    
-    def test_get_gl_accounts(self):
-        """Test getting GL accounts."""
-        response = client.get("/ap/gl/accounts", params={"organization_id": "default"})
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
-    
-    def test_gl_suggestion(self):
-        """Test GL code suggestion."""
-        response = client.get("/ap/gl/suggest", params={
-            "vendor": "AWS",
-            "organization_id": "default",
-        })
-        assert response.status_code == 200
-    
-    def test_create_gl_correction(self):
-        """Test recording a GL correction."""
-        response = client.post("/ap/gl/correct", json={
-            "invoice_id": "TEST-GL-001",
-            "vendor": "Test Vendor",
-            "original_gl": "5000",
-            "corrected_gl": "5200",
-            "reason": "Software subscription",
-            "organization_id": "default",
-        })
-        assert response.status_code == 200
-        data = response.json()
-        assert data["corrected_gl"] == "5200"
-    
-    def test_get_recurring_rules(self):
-        """Test getting recurring rules."""
-        response = client.get("/ap/recurring/rules", params={"organization_id": "default"})
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
-    
-    def test_create_recurring_rule(self):
-        """Test creating a recurring rule."""
-        response = client.post("/ap/recurring/rules", json={
-            "vendor": "Test SaaS",
-            "expected_frequency": "monthly",
-            "expected_amount": 99.00,
-            "amount_tolerance_pct": 5.0,
-            "action": "auto_approve",
-            "organization_id": "default",
-        })
-        assert response.status_code == 200
-        data = response.json()
-        assert data["vendor"] == "Test SaaS"
-    
-    def test_get_upcoming_invoices(self):
-        """Test getting upcoming expected invoices."""
-        response = client.get("/ap/recurring/upcoming", params={
-            "days": 30,
-            "organization_id": "default",
-        })
-        assert response.status_code == 200
-
-
 class TestAPRetryPostEndpoint:
     @staticmethod
     def _fake_user():
@@ -407,10 +297,13 @@ class TestGmailWebhooks:
             async def add_label(self, _message_id, _label_ids):
                 return None
 
-        fake_engine = SimpleNamespace(
-            db=SimpleNamespace(get_finance_email_by_gmail_id=lambda _gmail_id: None),
-            detect_finance_email=lambda **_kwargs: {"id": "finance-email-1"},
-        )
+        class _FakeDB:
+            def get_finance_email_by_gmail_id(self, _gmail_id):
+                return None
+
+            def save_finance_email(self, _email):
+                return _email
+
         seen = {}
 
         async def _fake_process_invoice_email(*, organization_id: str, **_kwargs):
@@ -432,16 +325,15 @@ class TestGmailWebhooks:
                     "process_payment_request_email",
                     AsyncMock(return_value={"status": "skipped"}),
                 ):
-                    asyncio.run(
-                        gmail_webhooks_module.process_single_email(
-                            client=_FakeClient(),
-                            message_id="msg-1",
-                            user_id="gmail-user-1",
-                            organization_id="tenant-42",
-                            engine=fake_engine,
-                            ai_service=MagicMock(),
+                    with patch.object(gmail_webhooks_module, "get_db", return_value=_FakeDB()):
+                        asyncio.run(
+                            gmail_webhooks_module.process_single_email(
+                                client=_FakeClient(),
+                                message_id="msg-1",
+                                user_id="gmail-user-1",
+                                organization_id="tenant-42",
+                            )
                         )
-                    )
 
         assert seen.get("organization_id") == "tenant-42"
 
@@ -511,6 +403,99 @@ class TestExtensionEndpoints:
             "organization_id": "default",
         })
         assert response.status_code == 401
+
+    def test_extension_register_gmail_token_success(self, monkeypatch):
+        stored = {}
+        state_calls = []
+
+        class _Resp:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        class _FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, url, headers=None):
+                if "gmail.googleapis.com/gmail/v1/users/me/profile" in url:
+                    return _Resp(200, {"emailAddress": "mo@clearledgr.com"})
+                return _Resp(404, {})
+
+        def _store(token):
+            stored["token"] = token
+
+        class _FakeDB:
+            def save_gmail_autopilot_state(self, **kwargs):
+                state_calls.append(kwargs)
+
+        monkeypatch.setattr(gmail_extension_module.httpx, "AsyncClient", _FakeAsyncClient)
+        monkeypatch.setattr(gmail_extension_module.token_store, "store", _store)
+        monkeypatch.setattr(gmail_extension_module, "get_db", lambda: _FakeDB())
+
+        response = client.post(
+            "/extension/gmail/register-token",
+            json={
+                "access_token": "test-access-token",
+                "expires_in": 3600,
+                "email": "mo@clearledgr.com",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["email"] == "mo@clearledgr.com"
+        assert stored["token"].email == "mo@clearledgr.com"
+        assert stored["token"].access_token == "test-access-token"
+        assert state_calls and state_calls[0]["email"] == "mo@clearledgr.com"
+
+    def test_extension_register_gmail_token_rejects_invalid_token(self, monkeypatch):
+        class _Resp:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        class _FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, url, headers=None):
+                if "gmail.googleapis.com/gmail/v1/users/me/profile" in url:
+                    return _Resp(401, {"error": "invalid_token"})
+                if "www.googleapis.com/oauth2/v2/userinfo" in url:
+                    return _Resp(401, {"error": "invalid_token"})
+                return _Resp(404, {})
+
+        monkeypatch.setattr(gmail_extension_module.httpx, "AsyncClient", _FakeAsyncClient)
+
+        response = client.post(
+            "/extension/gmail/register-token",
+            json={
+                "access_token": "bad-token",
+                "expires_in": 3600,
+                "email": "mo@clearledgr.com",
+            },
+        )
+        assert response.status_code == 400
+        assert "invalid_google_access_token" in str(response.json().get("detail", ""))
 
     def test_sensitive_extension_endpoints_require_auth(self):
         app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
@@ -1429,26 +1414,223 @@ class TestAgentIntentEndpoints:
         assert payload["summary"]["total_items"] == 3
         assert payload["policy_precheck"]["read_only"] is True
 
+    def test_preview_intent_endpoint_supports_read_vendor_compliance_health(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
 
-class TestLearningEndpoints:
-    """Test learning/feedback loop endpoints."""
-    
-    def test_get_statistics(self):
-        """Test getting learning statistics."""
-        response = client.get("/learning/statistics/default")
+        class _FakeRuntimeDB:
+            use_postgres = False
+
+            def _prepare_sql(self, sql):
+                return sql
+
+            def connect(self):
+                import sqlite3
+                from contextlib import contextmanager
+
+                @contextmanager
+                def _conn():
+                    conn = sqlite3.connect(":memory:")
+                    conn.row_factory = sqlite3.Row
+                    cur = conn.cursor()
+                    cur.execute(
+                        """
+                        CREATE TABLE vendor_profiles (
+                            vendor_name TEXT,
+                            organization_id TEXT,
+                            requires_po INTEGER,
+                            contract_amount REAL,
+                            payment_terms TEXT,
+                            bank_details_changed_at TEXT,
+                            approval_override_rate REAL,
+                            anomaly_flags TEXT,
+                            invoice_count INTEGER
+                        )
+                        """
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO vendor_profiles
+                        (vendor_name, organization_id, requires_po, contract_amount, payment_terms,
+                         bank_details_changed_at, approval_override_rate, anomaly_flags, invoice_count)
+                        VALUES
+                        ('Acme Supplies', 'default', 1, NULL, 'Net 30', NULL, 0.35, '["po_missing"]', 12)
+                        """
+                    )
+                    conn.commit()
+                    try:
+                        yield conn
+                    finally:
+                        conn.close()
+
+                return _conn()
+
+        try:
+            with patch.object(agent_intents_module, "get_db", return_value=_FakeRuntimeDB()):
+                response = client.post(
+                    "/api/agent/intents/preview",
+                    json={
+                        "intent": "read_vendor_compliance_health",
+                        "input": {"limit": 100},
+                        "organization_id": "default",
+                    },
+                )
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
         assert response.status_code == 200
-    
-    def test_record_feedback(self):
-        """Test recording user feedback."""
-        response = client.post("/learning/record", json={
-            "entity_type": "invoice",
-            "entity_id": "test-inv-001",
-            "feedback_type": "gl_correction",
-            "original_value": "5000",
-            "corrected_value": "5200",
+        payload = response.json()
+        assert payload["intent"] == "read_vendor_compliance_health"
+        assert payload["status"] == "ready"
+        assert payload["summary"]["total_vendors"] == 1
+        assert payload["summary"]["high_override_vendors_count"] == 1
+
+    def test_list_skills_endpoint_returns_runtime_skill_registry(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        try:
+            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
+                response = client.get("/api/agent/intents/skills")
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["organization_id"] == "default"
+        assert isinstance(payload.get("skills"), list)
+        assert "route_low_risk_for_approval" in payload.get("supported_intents", [])
+        ap_skill = next((row for row in payload["skills"] if row.get("skill_id") == "ap_v1"), None)
+        assert ap_skill is not None
+        assert isinstance(ap_skill.get("manifest"), dict)
+        assert "readiness" in ap_skill
+
+    def test_skill_readiness_endpoint_returns_runtime_gate_report(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        readiness_payload = {
             "organization_id": "default",
-        })
+            "skill_id": "ap_v1",
+            "status": "blocked",
+            "gates": [
+                {
+                    "gate": "legal_transition_correctness",
+                    "status": "pass",
+                    "target": 0.99,
+                    "actual": 1.0,
+                }
+            ],
+            "blocked_reasons": [],
+        }
+        try:
+            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
+                with patch.object(
+                    agent_intents_module.FinanceAgentRuntime,
+                    "skill_readiness",
+                    return_value=readiness_payload,
+                ) as readiness_mock:
+                    response = client.get(
+                        "/api/agent/intents/skills/ap_v1/readiness?window_hours=168&organization_id=default"
+                    )
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
         assert response.status_code == 200
+        payload = response.json()
+        assert payload["skill_id"] == "ap_v1"
+        assert isinstance(payload.get("gates"), list)
+        readiness_mock.assert_called_once()
+
+    def test_preview_request_endpoint_uses_canonical_skill_request_contract(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        preview_response = {
+            "status": "eligible",
+            "intent": "route_low_risk_for_approval",
+            "skill_id": "ap_v1",
+            "recommended_next_action": "execute_intent",
+            "legal_actions": ["execute_intent"],
+            "blockers": [],
+            "confidence": 0.95,
+            "evidence_refs": ["gmail-thread-1"],
+        }
+        try:
+            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
+                with patch.object(
+                    agent_intents_module.FinanceAgentRuntime,
+                    "preview_skill_request",
+                    return_value=preview_response,
+                ) as preview_mock:
+                    response = client.post(
+                        "/api/agent/intents/preview-request",
+                        json={
+                            "organization_id": "default",
+                            "request": {
+                                "org_id": "default",
+                                "skill_id": "ap_v1",
+                                "task_type": "route_low_risk_for_approval",
+                                "entity_id": "gmail-thread-1",
+                                "correlation_id": "corr-1",
+                                "payload": {"email_id": "gmail-thread-1"},
+                            },
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["skill_id"] == "ap_v1"
+        assert payload["recommended_next_action"] == "execute_intent"
+        preview_mock.assert_called_once()
+
+    def test_execute_request_endpoint_uses_canonical_action_execution_contract(self):
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        execute_response = {
+            "status": "pending_approval",
+            "intent": "route_low_risk_for_approval",
+            "skill_id": "ap_v1",
+            "recommended_next_action": "route_low_risk_for_approval",
+            "legal_actions": ["route_low_risk_for_approval"],
+            "blockers": [],
+            "confidence": 0.95,
+            "evidence_refs": ["gmail-thread-1"],
+            "action_execution": {
+                "entity_id": "gmail-thread-1",
+                "action": "route_low_risk_for_approval",
+                "preview": False,
+                "idempotency_key": "idem-contract-1",
+            },
+        }
+        try:
+            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
+                with patch.object(
+                    agent_intents_module.FinanceAgentRuntime,
+                    "execute_skill_request",
+                    AsyncMock(return_value=execute_response),
+                ) as execute_mock:
+                    response = client.post(
+                        "/api/agent/intents/execute-request",
+                        json={
+                            "organization_id": "default",
+                            "request": {
+                                "org_id": "default",
+                                "skill_id": "ap_v1",
+                                "task_type": "route_low_risk_for_approval",
+                                "entity_id": "gmail-thread-1",
+                                "payload": {"email_id": "gmail-thread-1"},
+                            },
+                            "action": {
+                                "entity_id": "gmail-thread-1",
+                                "action": "route_low_risk_for_approval",
+                                "preview": False,
+                                "idempotency_key": "idem-contract-1",
+                            },
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "pending_approval"
+        assert payload["action_execution"]["idempotency_key"] == "idem-contract-1"
+        execute_mock.assert_awaited_once()
 
 
 class TestOnboardingEndpoints:

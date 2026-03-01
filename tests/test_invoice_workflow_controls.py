@@ -25,37 +25,17 @@ class _FakeDB:
         return None
 
 
-class _RecurringDetector:
-    def __init__(self, is_recurring: bool = False, auto_approve: bool = False):
-        self._is_recurring = is_recurring
-        self._auto_approve = auto_approve
-
-    def analyze_invoice(self, **_kwargs):
-        return {
-            "is_recurring": self._is_recurring,
-            "auto_approve": self._auto_approve,
-            "alerts": [],
-            "pattern": {"invoice_count": 3},
-        }
-
-
 def _setup_service(monkeypatch):
     service = InvoiceWorkflowService(organization_id="default", auto_approve_threshold=0.95)
     service.db = _FakeDB()
 
-    monkeypatch.setattr(
-        "clearledgr.services.recurring_detection.get_recurring_detector",
-        lambda _org: _RecurringDetector(is_recurring=False, auto_approve=False),
-    )
-
     calls = {"auto": 0, "send": 0, "send_context": None}
 
-    async def fake_auto(_invoice, reason="high_confidence", recurring_info=None):
+    async def fake_auto(_invoice, reason="high_confidence"):
         calls["auto"] += 1
         return {
             "status": "auto_approved",
             "reason": reason,
-            "recurring_info": recurring_info,
         }
 
     async def fake_send(_invoice, extra_context=None):

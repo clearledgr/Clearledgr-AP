@@ -303,6 +303,14 @@ curl -X PUT -H "Authorization: Bearer $TOKEN" \
 
 Verify response: `"summary": {"ready_for_ga": true}`.
 
+Validate launch evidence tracker completeness:
+
+```bash
+python3 /Users/mombalam/Desktop/Clearledgr.v1/scripts/validate_launch_evidence.py --mode pilot --json
+```
+
+Expected for pilot readiness: `"passed": true` (or explicit accepted-risk entries with owner/expiry captured in manifest + tracker).
+
 ---
 
 ## 10. Exit Criteria Checklist

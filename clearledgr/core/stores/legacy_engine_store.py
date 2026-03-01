@@ -133,16 +133,6 @@ CREATE TABLE IF NOT EXISTS draft_entries (
 )
 """
 
-_PAYMENTS_SQL = """
-CREATE TABLE IF NOT EXISTS payments (
-    id TEXT PRIMARY KEY,
-    organization_id TEXT NOT NULL,
-    payment_data TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT,
-    updated_at TEXT
-)
-"""
-
 _VENDOR_BANK_INFO_SQL = """
 CREATE TABLE IF NOT EXISTS vendor_bank_info (
     id TEXT PRIMARY KEY,
@@ -206,7 +196,6 @@ LEGACY_ENGINE_TABLES = [
     _EXCEPTIONS_SQL,
     _MATCHES_SQL,
     _DRAFT_ENTRIES_SQL,
-    _PAYMENTS_SQL,
     _VENDOR_BANK_INFO_SQL,
     _GL_CORRECTIONS_SQL,
     _GL_ACCOUNTS_SQL,
@@ -832,22 +821,7 @@ class LegacyEngineStore:
 
         return pipeline
 
-    # ── Payment / bank / GL / recurring (no-op store backs) ─────────────
-
-    def save_payment(self, organization_id: str, payment_dict: Dict[str, Any]) -> None:
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc).isoformat()
-        pid = payment_dict.get("payment_id") or payment_dict.get("id", "")
-        with self.connect() as conn:
-            cur = conn.cursor()
-            sql = self._prepare_sql("""
-                INSERT INTO payments (id, organization_id, payment_data, created_at, updated_at)
-                VALUES (?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET payment_data=excluded.payment_data, updated_at=excluded.updated_at
-            """)
-            cur.execute(sql, (pid, organization_id, json.dumps(payment_dict), now, now))
-            conn.commit()
+    # ── Bank / GL / recurring (no-op store backs) ───────────────────────
 
     def save_vendor_bank_info(
         self, organization_id: str, vendor_id: str, bank_info: Dict[str, Any]
@@ -1068,111 +1042,6 @@ class LegacyEngineStore:
             "organization_id": organization_id,
             "total_rules": len(rules),
             "rules": rules,
-        }
-
-    # =========================================================================
-    # AP PAYMENTS (used by ap_workflow.py payments endpoints)
-    # =========================================================================
-
-    def save_ap_payment(
-        self,
-        invoice_id: str,
-        vendor_id: str,
-        vendor_name: str,
-        amount: float,
-        currency: str = "USD",
-        method: str = "ach",
-        organization_id: str = "default",
-    ) -> Dict[str, Any]:
-        import uuid as _uuid
-        from datetime import datetime, timezone
-        payment_id = f"PAY-{_uuid.uuid4().hex[:10].upper()}"
-        now = datetime.now(timezone.utc).isoformat()
-        payment = {
-            "id": payment_id,
-            "payment_id": payment_id,  # alias for test compatibility
-            "invoice_id": invoice_id,
-            "vendor_id": vendor_id,
-            "vendor_name": vendor_name,
-            "amount": amount,
-            "currency": currency,
-            "method": method,
-            "status": "pending",
-            "organization_id": organization_id,
-            "created_at": now,
-            "updated_at": now,
-        }
-        sql = self._prepare_sql("""
-            INSERT INTO payments (id, organization_id, payment_data, created_at, updated_at)
-            VALUES (?,?,?,?,?)
-        """)
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, (payment_id, organization_id, json.dumps(payment), now, now))
-            conn.commit()
-        return payment
-
-    def get_ap_payments(self, organization_id: str) -> List[Dict[str, Any]]:
-        sql = self._prepare_sql(
-            "SELECT payment_data FROM payments WHERE organization_id=? ORDER BY created_at DESC"
-        )
-        results = []
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, (organization_id,))
-            for row in cur.fetchall():
-                try:
-                    results.append(json.loads(row[0]))
-                except Exception:
-                    pass
-        return results
-
-    def get_ap_payment(self, payment_id: str) -> Optional[Dict[str, Any]]:
-        sql = self._prepare_sql(
-            "SELECT payment_data FROM payments WHERE id=?"
-        )
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, (payment_id,))
-            row = cur.fetchone()
-            if row:
-                try:
-                    return json.loads(row[0])
-                except Exception:
-                    pass
-        return None
-
-    def update_ap_payment(self, payment_id: str, **kwargs) -> bool:
-        existing = self.get_ap_payment(payment_id)
-        if not existing:
-            return False
-        from datetime import datetime, timezone
-        existing.update(kwargs)
-        existing["updated_at"] = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
-            "UPDATE payments SET payment_data=?, updated_at=? WHERE id=?"
-        )
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, (json.dumps(existing), existing["updated_at"], payment_id))
-            conn.commit()
-        return True
-
-    def get_ap_payments_summary(self, organization_id: str) -> Dict[str, Any]:
-        payments = self.get_ap_payments(organization_id)
-        pending = sum(1 for p in payments if p.get("status") == "pending")
-        scheduled = sum(1 for p in payments if p.get("status") == "scheduled")
-        processing = sum(1 for p in payments if p.get("status") == "processing")
-        completed = sum(1 for p in payments if p.get("status") in ("completed", "sent"))
-        total_amount = sum(p.get("amount", 0) for p in payments)
-        return {
-            "organization_id": organization_id,
-            "pending": pending,
-            "scheduled": scheduled,
-            "processing": processing,
-            "completed": completed,
-            "total_amount": total_amount,
-            "total_count": len(payments),
         }
 
     # =========================================================================

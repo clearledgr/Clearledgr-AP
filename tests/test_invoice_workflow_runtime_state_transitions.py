@@ -37,20 +37,6 @@ class _BudgetStub:
         return None
 
 
-class _RecurringDetector:
-    def __init__(self, *, is_recurring: bool = False, auto_approve: bool = False):
-        self.is_recurring = is_recurring
-        self.auto_approve = auto_approve
-
-    def analyze_invoice(self, **_kwargs):
-        return {
-            "is_recurring": self.is_recurring,
-            "auto_approve": self.auto_approve,
-            "alerts": [],
-            "pattern": {"invoice_count": 1},
-        }
-
-
 class _PolicyServiceStub:
     class _Result:
         def to_dict(self):
@@ -139,11 +125,6 @@ def _transition_pairs(db, ap_item_id: str) -> List[Tuple[str, str]]:
 
 def test_process_new_invoice_advances_to_validated_before_routing(service, db, monkeypatch):
     monkeypatch.setattr(
-        "clearledgr.services.recurring_detection.get_recurring_detector",
-        lambda _org: _RecurringDetector(is_recurring=False, auto_approve=False),
-    )
-
-    monkeypatch.setattr(
         service,
         "_evaluate_deterministic_validation",
         lambda _invoice: {
@@ -186,10 +167,6 @@ def test_process_new_invoice_advances_to_validated_before_routing(service, db, m
 
 
 def test_workflow_state_transition_audits_share_single_correlation_id_across_intake_and_approval(service, db, monkeypatch):
-    monkeypatch.setattr(
-        "clearledgr.services.recurring_detection.get_recurring_detector",
-        lambda _org: _RecurringDetector(is_recurring=False, auto_approve=False),
-    )
     monkeypatch.setattr(
         service,
         "_evaluate_deterministic_validation",
@@ -254,10 +231,6 @@ def test_workflow_state_transition_audits_share_single_correlation_id_across_int
 
 
 def test_process_new_invoice_routes_to_review_on_low_confidence_critical_field(service, db, monkeypatch):
-    monkeypatch.setattr(
-        "clearledgr.services.recurring_detection.get_recurring_detector",
-        lambda _org: _RecurringDetector(is_recurring=False, auto_approve=False),
-    )
     monkeypatch.setattr(
         "clearledgr.services.invoice_workflow.get_policy_compliance",
         lambda _org: _PolicyServiceStub(),

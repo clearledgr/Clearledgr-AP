@@ -103,8 +103,8 @@ def _workflow_stuck_minutes() -> int:
 
 
 def _resolve_runtime_surface_contract(request: Request) -> Dict[str, Any] | None:
-    # Prefer current env-derived contract so diagnostics reflect effective
-    # runtime flags even when tests or local tooling mutate env between calls.
+    # Prefer the app's strict AP-v1 surface contract so diagnostics reflect
+    # the effective runtime constraints reported by `main.py`.
     try:
         from main import _runtime_surface_contract  # local import avoids import-time cycle
 

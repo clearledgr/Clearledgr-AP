@@ -25,6 +25,8 @@ If any document conflicts with `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, 
 5. ERP is the system of record.
 6. Human-in-the-loop is intentional for risky actions.
 7. Policy, audit, idempotency, and durability are mandatory.
+8. Current AP connector scope is NetSuite, QuickBooks, Xero, and SAP, each enabled by readiness gates.
+9. Current durable orchestration backend is `local_db` (DB-backed); Temporal remains optional and must be truthfully reported.
 
 Clearledgr is not a generic automation builder and not a dashboard-first AP tool.
 
@@ -37,6 +39,22 @@ Clearledgr is not a generic automation builder and not a dashboard-first AP tool
 5. On approval and eligibility, Clearledgr posts to ERP.
 6. End-to-end audit events are recorded and surfaced.
 
+## Gmail Operator Surface (Work-Only)
+
+Gmail now runs a single decision-first operator panel:
+
+1. `Clearledgr AP` (Work panel)
+   - Focused invoice identity strip (vendor, amount, due date, invoice number, PO status).
+   - One status badge + concise blocker chips.
+   - One state-driven primary CTA with small secondary actions.
+   - Evidence checklist + collapsed context/audit details.
+   - Audit copy is backend-owned via `/api/ap/items/{ap_item_id}/audit` `operator_*` fields (UI renders backend operator wording, not local reason-code phrase maps).
+2. Ops controls are intentionally removed from Gmail.
+   - KPI telemetry, batch operations, raw agent events, and debug tools live in Admin Console `/console?page=ops`.
+   - Gmail shows `Open Ops Console` only for admin/operator roles.
+
+Reason capture is inline and non-blocking (reason sheet); native browser `prompt/confirm` dialogs are not used in AP action flows.
+
 ## Runtime Shape (Agent + Skills)
 
 Clearledgr runs one core agent runtime and domain skills:
@@ -44,6 +62,14 @@ Clearledgr runs one core agent runtime and domain skills:
 - Runtime intent APIs:
   - `POST /api/agent/intents/preview`
   - `POST /api/agent/intents/execute`
+  - `POST /api/agent/intents/preview-request` (canonical `SkillRequest`)
+  - `POST /api/agent/intents/execute-request` (canonical `SkillRequest` + `ActionExecution`)
+  - `GET /api/agent/intents/skills` (runtime skill registry + capability manifests)
+  - `GET /api/agent/intents/skills/{skill_id}/readiness` (promotion-gate readiness report)
+- Current runtime skill packages:
+  - `ap_v1` (production AP execution intents)
+  - `workflow_health_v1` (read-only AP workflow diagnostics skill)
+  - `vendor_compliance_v1` (read-only vendor compliance posture skill)
 - AP skill execution (current production domain)
 - Planner/runtime errors fail closed by default (`AGENT_LEGACY_FALLBACK_ON_ERROR=false`)
 - Shared controls:
@@ -52,6 +78,24 @@ Clearledgr runs one core agent runtime and domain skills:
   - auditable state transitions
   - idempotent mutating actions
   - retry/durability semantics
+  - runtime truth-in-claims (`runtime_backend`, `temporal_available`, gating state)
+
+Canonical runtime contracts are implemented in:
+
+- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/finance_contracts.py`
+  - `SkillRequest`
+  - `SkillResponse`
+  - `ActionExecution`
+  - `AuditEvent`
+  - `SkillCapabilityManifest` (state machine, action catalog, policy pack, evidence schema, adapter bindings, KPI contract)
+
+ERP API-first adapter contract is provider-agnostic and shared across NetSuite/QuickBooks/Xero/SAP via:
+
+- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/erp/contracts.py`
+  - `ERPBillAdapter.validate(payload)`
+  - `ERPBillAdapter.post(organization_id, bill, ...)`
+  - `ERPBillAdapter.get_status(organization_id, external_ref)`
+  - `ERPBillAdapter.reconcile(organization_id, entity_id)`
 
 ## Repository Map
 
@@ -75,6 +119,10 @@ Clearledgr runs one core agent runtime and domain skills:
 - Runbooks: `/Users/mombalam/Desktop/Clearledgr.v1/docs/RUNBOOKS.md`
 - Staging drill runbook: `/Users/mombalam/Desktop/Clearledgr.v1/docs/STAGING_DRILL_RUNBOOK.md`
 - GA evidence process: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_READINESS_EVIDENCE_PROCESS.md`
+- Admin Ops APIs:
+  - `GET /api/admin/ops/connector-readiness` (per-connector readiness + blockers for NetSuite/QuickBooks/Xero/SAP)
+  - `GET /api/admin/ops/learning-calibration` (latest tenant calibration snapshot)
+  - `POST /api/admin/ops/learning-calibration/recompute` (recompute + persist calibration snapshot)
 
 ## Local Development
 
@@ -105,7 +153,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ### 5. Run core regression slices
 
 ```bash
-PYTHONPATH=. pytest -q tests/test_finance_agent_runtime.py tests/test_api_endpoints.py::TestAgentIntentEndpoints tests/test_api_endpoints.py::TestExtensionEndpoints
+PYTHONPATH=. pytest -q tests/test_finance_contracts.py tests/test_finance_agent_runtime.py tests/test_erp_adapter_contracts.py tests/test_api_endpoints.py::TestAgentIntentEndpoints tests/test_api_endpoints.py::TestExtensionEndpoints
 node --test ui/gmail-extension/tests/*.test.cjs
 ```
 
@@ -136,6 +184,12 @@ This writes:
 - evidence JSON + screenshot under `docs/ga-evidence/releases/<release_id>/artifacts/`
 - normalized report at `docs/ga-evidence/releases/<release_id>/GMAIL_RUNTIME_E2E.md`
 
+Launch evidence gate check (pilot mode):
+
+```bash
+python3 /Users/mombalam/Desktop/Clearledgr.v1/scripts/validate_launch_evidence.py --mode pilot --json
+```
+
 GitHub workflows:
 - `/.github/workflows/gmail-extension-browser-harness.yml` runs deterministic browser harness on PR/push for extension changes.
 - `/.github/workflows/gmail-runtime-smoke-nightly.yml` runs nightly authenticated Gmail runtime smoke in a controlled self-hosted environment and uploads evidence artifacts.
@@ -152,7 +206,8 @@ AP v1 must enforce:
 5. Idempotent approval and posting behavior.
 6. Complete, queryable audit trail.
 7. Truthful runtime/durability reporting.
-8. Production/staging strict AP-v1 surface mode (`AP_V1_STRICT_SURFACES=true`) unless legacy compatibility is explicitly required.
+8. Strict AP-v1 runtime surface mode in all environments (legacy/full surface toggles are not supported).
+9. No docs/operator messaging should claim Temporal-backed orchestration when runtime reports `temporal_available=false`.
 
 ## Legacy Notes
 

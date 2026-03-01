@@ -1,0 +1,66 @@
+{
+  "errors": [
+    "L01:status_not_done:IN_PROGRESS",
+    "L02:status_not_done:IN_PROGRESS",
+    "L03:status_not_done:IN_PROGRESS",
+    "L04:status_not_done:IN_PROGRESS",
+    "L11:status_not_done:IN_PROGRESS"
+  ],
+  "items": [
+    {
+      "id": "L01",
+      "ok": false,
+      "reason": [
+        "status_not_done:IN_PROGRESS"
+      ]
+    },
+    {
+      "id": "L02",
+      "ok": false,
+      "reason": [
+        "status_not_done:IN_PROGRESS"
+      ]
+    },
+    {
+      "id": "L03",
+      "ok": false,
+      "reason": [
+        "status_not_done:IN_PROGRESS"
+      ]
+    },
+    {
+      "id": "L04",
+      "ok": false,
+      "reason": [
+        "status_not_done:IN_PROGRESS"
+      ]
+    },
+    {
+      "id": "L11",
+      "ok": false,
+      "reason": [
+        "status_not_done:IN_PROGRESS"
+      ]
+    }
+  ],
+  "manifest_path": "/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/MANIFEST.md",
+  "manifest_tbd_count": 0,
+  "mode": "pilot",
+  "passed": false,
+  "release_id": "ap-v1-2026-02-25-pilot-rc1",
+  "required_items": [
+    "L01",
+    "L02",
+    "L03",
+    "L04",
+    "L11"
+  ],
+  "warnings": [],
+  "working_statuses": {
+    "erp_parity": "in_progress",
+    "failure_mode": "in_progress",
+    "rollback": "in_progress",
+    "runbooks": "in_progress",
+    "signoffs": "in_progress"
+  }
+}

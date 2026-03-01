@@ -29,9 +29,8 @@ from clearledgr.services.gmail_api import (
     exchange_code_for_tokens,
     generate_auth_url,
 )
-from clearledgr.core.engine import get_engine
 from clearledgr.core.database import get_db
-from clearledgr.services.ai_enhanced import EnhancedAIService
+from clearledgr.core.models import FinanceEmail
 
 logger = logging.getLogger(__name__)
 
@@ -235,12 +234,10 @@ async def process_gmail_notification(email_address: str, history_id: str):
     """
     Process a Gmail notification in the background.
     
-    This is where the autonomous magic happens:
+    AP-v1 background intake flow:
     1. Fetch new emails since last history ID
-    2. Classify each email (finance vs marketing)
-    3. Parse attachments (bank statements)
-    4. Run reconciliation
-    5. Store results for user to review
+    2. Classify each email (invoice/payment_request vs noise)
+    3. Route AP-relevant email into canonical AP workflows
     """
     try:
         # Find the user's token by email
@@ -292,10 +289,6 @@ async def process_gmail_notification(email_address: str, history_id: str):
         
         logger.info(f"Processing {len(message_ids)} new messages for {email_address}")
         
-        # Get engine and AI service
-        engine = get_engine()
-        ai_service = EnhancedAIService()
-        
         # Process each message
         for message_id in message_ids:
             try:
@@ -304,8 +297,6 @@ async def process_gmail_notification(email_address: str, history_id: str):
                     message_id=message_id,
                     user_id=token.user_id,
                     organization_id=organization_id,
-                    engine=engine,
-                    ai_service=ai_service,
                 )
             except Exception as e:
                 logger.error(f"Error processing message {message_id}: {e}")
@@ -331,8 +322,6 @@ async def process_single_email(
     message_id: str,
     user_id: str,
     organization_id: str,
-    engine,
-    ai_service: EnhancedAIService,
 ):
     """
     Process a single email autonomously.
@@ -340,8 +329,10 @@ async def process_single_email(
     # Fetch the full message
     message = await client.get_message(message_id)
     
+    db = get_db()
+
     # Skip if already processed (check labels)
-    if engine.db.get_finance_email_by_gmail_id(message.id):
+    if db.get_finance_email_by_gmail_id(message.id):
         return
     if "CLEARLEDGR_PROCESSED" in message.labels:
         return
@@ -353,7 +344,6 @@ async def process_single_email(
         snippet=message.snippet,
         body=message.body_text[:2000],  # Limit for LLM
         attachments=message.attachments or [],
-        ai_service=ai_service,
     )
     
     logger.info(
@@ -374,15 +364,18 @@ async def process_single_email(
         return
 
     # Store as detected finance email
-    finance_email = engine.detect_finance_email(
-        email_id=message.id,
-        subject=message.subject,
-        sender=message.sender,
-        category=category,
+    received_at = message.date.isoformat() if hasattr(message.date, "isoformat") else str(message.date)
+    db.save_finance_email(FinanceEmail(
+        gmail_id=message.id,
+        subject=message.subject or "",
+        sender=message.sender or "",
+        received_at=received_at,
+        email_type=category,
         confidence=classification.get("confidence", 0.0),
-        received_at=message.date,
+        status="detected",
+        organization_id=organization_id,
         user_id=user_id,
-    )
+    ))
     
     # Process invoices through the invoice workflow
     if category == "invoice":
@@ -427,7 +420,6 @@ async def classify_email_with_llm(
     snippet: str,
     body: str,
     attachments: Optional[list] = None,
-    ai_service: EnhancedAIService = None,
 ) -> Dict[str, Any]:
     """
     Classify an email for AP workflow.
@@ -650,64 +642,6 @@ async def process_payment_request_email(
     except Exception as e:
         logger.error(f"Payment request creation failed: {e}")
         return {"status": "error", "error": str(e)}
-
-
-async def process_bank_statement_attachment(
-    client: GmailAPIClient,
-    message,
-    user_id: str,
-    engine,
-):
-    """
-    Process bank statement attachments.
-    """
-    from clearledgr.services.bank_statement_parser import BankStatementParser
-    
-    parser = BankStatementParser()
-    
-    for attachment in message.attachments:
-        try:
-            # Download attachment
-            content = await client.get_attachment(message.id, attachment["id"])
-            
-            # Parse based on type
-            filename = attachment["filename"].lower()
-            
-            if filename.endswith(".csv"):
-                transactions = parser.parse_csv(content.decode("utf-8"))
-            elif filename.endswith(".pdf"):
-                # For PDF, we'd need OCR - for now, skip
-                logger.info(f"PDF parsing not yet implemented: {filename}")
-                continue
-            else:
-                logger.info(f"Unsupported attachment type: {filename}")
-                continue
-            
-            logger.info(f"Parsed {len(transactions)} transactions from {filename}")
-            
-            # Add transactions to engine
-            for txn in transactions:
-                engine.add_transaction(
-                    source="bank",
-                    reference=txn.reference or f"BANK-{txn.date}-{abs(hash(txn.description))%10000}",
-                    amount=txn.amount,
-                    currency=txn.currency or "EUR",
-                    date=txn.date,
-                    description=txn.description,
-                    metadata={
-                        "email_id": message.id,
-                        "filename": attachment["filename"],
-                        "user_id": user_id,
-                    },
-                )
-            
-            # Run reconciliation
-            if transactions:
-                result = engine.run_reconciliation(user_id=user_id)
-                logger.info(f"Reconciliation result: {result['matches_found']} matches, {result['exceptions_created']} exceptions")
-        
-        except Exception as e:
-            logger.error(f"Error processing attachment {attachment['filename']}: {e}")
 
 
 # ============================================================================

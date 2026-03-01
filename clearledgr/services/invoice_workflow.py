@@ -1488,9 +1488,8 @@ class InvoiceWorkflowService:
         
         Flow:
         1. Save invoice to database with 'received' status
-        2. Check if recurring (subscription) - different handling
-        3. If confidence >= threshold, auto-approve and post
-        4. Otherwise, send to Slack for approval
+        2. If confidence >= threshold, auto-approve and post
+        3. Otherwise, send to Slack for approval
         
         Returns:
             Dict with status, invoice_id, and action taken
@@ -1513,17 +1512,6 @@ class InvoiceWorkflowService:
                     "existing": True,
                 }
 
-        # Check for recurring pattern first
-        from clearledgr.services.recurring_detection import get_recurring_detector
-        
-        recurring_detector = get_recurring_detector(self.organization_id)
-        recurring_analysis = recurring_detector.analyze_invoice(
-            vendor=invoice.vendor_name,
-            amount=invoice.amount,
-            currency=invoice.currency,
-            sender_email=invoice.sender,
-        )
-        
         # Save invoice to database (canonical AP state: received)
         invoice_id = self.db.save_invoice_status(
             gmail_id=invoice.gmail_id,
@@ -1703,26 +1691,6 @@ class InvoiceWorkflowService:
         except Exception as e:
             logger.warning(f"Failed to get GL suggestion from learning: {e}")
         
-        # Handle recurring subscriptions specially
-        if recurring_analysis.get("is_recurring"):
-            if recurring_analysis.get("auto_approve"):
-                logger.info(f"Auto-approving recurring invoice from {invoice.vendor_name}")
-                return await self._auto_approve_and_post(
-                    invoice, 
-                    reason="recurring_match",
-                    recurring_info=recurring_analysis.get("pattern")
-                )
-            elif recurring_analysis.get("alerts"):
-                # Has alerts - send for review with context
-                return await self._send_for_approval(
-                    invoice, 
-                    extra_context={
-                        "recurring": True,
-                        "alerts": recurring_analysis.get("alerts"),
-                        "pattern": recurring_analysis.get("pattern"),
-                    }
-                )
-        
         # Route based on Claude's recommendation (gate already passed above).
         if ap_decision.recommendation == "approve":
             logger.info(
@@ -1761,7 +1729,6 @@ class InvoiceWorkflowService:
         self, 
         invoice: InvoiceData, 
         reason: str = "high_confidence",
-        recurring_info: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """Auto-approve invoice and post to ERP."""
         existing = self.db.get_invoice_status(invoice.gmail_id)
@@ -1881,7 +1848,7 @@ class InvoiceWorkflowService:
             
             # Notify in Slack (informational, not approval)
             try:
-                await self._send_posted_notification(invoice, result, reason, recurring_info)
+                await self._send_posted_notification(invoice, result, reason)
             except Exception as e:
                 logger.warning(f"Failed to send Slack notification: {e}")
         else:
@@ -1903,7 +1870,6 @@ class InvoiceWorkflowService:
             "status": "auto_approved" if result.get("status") == "success" else "error",
             "invoice_id": invoice.gmail_id,
             "reason": reason,
-            "recurring": recurring_info,
             "erp_result": result,
         }
     
@@ -2425,12 +2391,9 @@ class InvoiceWorkflowService:
             po_text = f"#{invoice.po_number}"
 
         # ========== HEADER ==========
-        is_recurring = extra_context.get("recurring") if extra_context else False
         priority_level = invoice.priority.get("priority", "") if invoice.priority else ""
         priority_text = invoice.priority.get("priority_label", "") if invoice.priority else ""
-        if is_recurring:
-            header_text = "Recurring Invoice"
-        elif priority_level == "CRITICAL":
+        if priority_level == "CRITICAL":
             header_text = "CRITICAL: Invoice Approval"
         elif priority_level == "HIGH":
             header_text = "HIGH: Invoice Approval"
@@ -3777,116 +3740,21 @@ class InvoiceWorkflowService:
         if result.get("status") == "success":
             result["vendor_id"] = vendor_id
             logger.info(f"Posted bill to ERP: {result.get('bill_id')}")
-            
-            # Auto-schedule payment based on due date
-            await self._schedule_payment(invoice, vendor_id, result.get('bill_id'))
         
         return result
-    
-    async def _schedule_payment(
-        self,
-        invoice: InvoiceData,
-        vendor_id: str,
-        erp_bill_id: str,
-    ) -> None:
-        """Auto-schedule payment after successful ERP posting."""
-        try:
-            from clearledgr.core.database import get_db
-            from clearledgr.services.early_payment_discounts import get_discount_service
-            
-            db = get_db()
-            
-            # Check for early payment discount opportunity
-            discount_service = get_discount_service(self.organization_id)
-            discount = None
-            
-            if invoice.invoice_text:
-                discount = discount_service.detect_discount_terms(
-                    invoice_text=invoice.invoice_text,
-                    vendor_name=invoice.vendor_name,
-                    invoice_amount=invoice.amount or 0.0,
-                    invoice_id=invoice.gmail_id,
-                )
-            
-            # Persist discount to ap_item metadata so sidebar/worklist can surface it
-            if discount and discount.discount_percent > 0:
-                try:
-                    ap_item_id = self._lookup_ap_item_id(invoice.gmail_id)
-                    if ap_item_id:
-                        self._update_ap_item_metadata(
-                            ap_item_id, {"early_payment_discount": discount.to_dict()}
-                        )
-                except Exception:
-                    pass
-
-            # Determine payment date
-            if discount and discount.discount_percent > 0:
-                # Schedule for discount deadline to capture savings
-                payment_date = discount.discount_deadline.isoformat() if discount.discount_deadline else None
-                payment_note = f"Early payment discount: {discount.discount_percent}% if paid by {payment_date}"
-                logger.info(f"Scheduling payment for discount capture: {invoice.vendor_name} - save {discount.discount_percent}%")
-            else:
-                # Schedule for due date
-                payment_date = invoice.due_date
-                payment_note = "Standard payment terms"
-            
-            # Create payment record
-            payment = db.save_ap_payment(
-                invoice_id=invoice.gmail_id,
-                vendor_id=vendor_id,
-                vendor_name=invoice.vendor_name,
-                amount=invoice.amount,
-                currency=invoice.currency,
-                method="ach",  # Default to ACH
-                status="scheduled",
-                organization_id=self.organization_id,
-            )
-            
-            # Update payment with scheduled date
-            if payment_date:
-                db.update_ap_payment(
-                    payment['payment_id'],
-                    scheduled_date=payment_date,
-                )
-            
-            logger.info(f"Payment scheduled: {payment['payment_id']} for {invoice.vendor_name} - ${invoice.amount}")
-            
-            # Log to audit trail
-            self.audit.log(
-                invoice_id=invoice.gmail_id,
-                event_type="PAYMENT_SCHEDULED",
-                actor="clearledgr-auto",
-                details={
-                    "payment_id": payment['payment_id'],
-                    "vendor": invoice.vendor_name,
-                    "amount": invoice.amount,
-                    "scheduled_date": payment_date,
-                    "erp_bill_id": erp_bill_id,
-                    "discount_captured": discount.discount_percent if discount else 0,
-                },
-            )
-            
-        except Exception as e:
-            logger.warning(f"Failed to schedule payment for {invoice.gmail_id}: {e}")
-            # Don't fail the posting - payment can be scheduled manually
     
     async def _send_posted_notification(
         self,
         invoice: InvoiceData,
         erp_result: Dict[str, Any],
         reason: str = "high_confidence",
-        recurring_info: Optional[Dict] = None,
     ) -> None:
         """Send notification that invoice was auto-posted with reasoning."""
-        # Different message based on reason
-        if reason == "recurring_match":
-            reason_text = f"Recurring subscription (matched {recurring_info.get('invoice_count', 0)} previous invoices)"
+        _ = reason
+        if invoice.reasoning_summary:
+            reason_text = f"{invoice.reasoning_summary}"
         else:
-            # Use agent reasoning if available
-            if invoice.reasoning_summary:
-                reason_text = f"{invoice.reasoning_summary}"
-            else:
-                reason_text = f"Auto-approved (confidence: {invoice.confidence*100:.0f}%)"
+            reason_text = f"Auto-approved (confidence: {invoice.confidence*100:.0f}%)"
         
         blocks = [
             {

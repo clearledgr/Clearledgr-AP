@@ -12,18 +12,9 @@ def __getattr__(name):
     elif name == "MultiModalLLMService":
         from clearledgr.services.llm_multimodal import MultiModalLLMService
         return MultiModalLLMService
-    elif name == "match_bank_to_gl":
-        from clearledgr.services.matching import match_bank_to_gl
-        return match_bank_to_gl
-    elif name == "IntelligentMatchingService":
-        from clearledgr.services.intelligent_matching import IntelligentMatchingService
-        return IntelligentMatchingService
     elif name == "PatternStore":
         from clearledgr.services.pattern_store import PatternStore
         return PatternStore
-    elif name == "JournalEntryService":
-        from clearledgr.services.journal_entries import JournalEntryService
-        return JournalEntryService
     raise AttributeError(f"module 'clearledgr.services' has no attribute '{name}'")
 
 __all__ = [
@@ -31,8 +22,5 @@ __all__ = [
     "ExceptionRoutingService",
     "LearningService",
     "MultiModalLLMService",
-    "match_bank_to_gl",
-    "IntelligentMatchingService",
     "PatternStore",
-    "JournalEntryService",
 ]

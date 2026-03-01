@@ -25,6 +25,8 @@ from clearledgr.core.launch_controls import (
     set_rollback_controls,
     summarize_ga_readiness,
 )
+from clearledgr.services.erp_readiness import evaluate_erp_connector_readiness
+from clearledgr.services.learning_calibration import get_learning_calibration_service
 from clearledgr.services.policy_compliance import AP_POLICY_NAME, get_policy_compliance
 from clearledgr.services.slack_api import SlackAPIClient, resolve_slack_runtime
 from clearledgr.services.subscription import PlanTier, get_subscription_service
@@ -74,6 +76,11 @@ def _unsign_state(state: str) -> Dict[str, Any]:
 def _require_admin(user: TokenData) -> None:
     if user.role not in {"admin", "owner"}:
         raise HTTPException(status_code=403, detail="admin_role_required")
+
+
+def _require_ops_access(user: TokenData) -> None:
+    if str(user.role or "").strip().lower() not in {"owner", "admin", "operator"}:
+        raise HTTPException(status_code=403, detail="ops_role_required")
 
 
 def _resolve_org_id(user: TokenData, organization_id: Optional[str]) -> str:
@@ -361,6 +368,13 @@ class GAReadinessRequest(BaseModel):
     organization_id: Optional[str] = None
     updated_by: Optional[str] = None
     evidence: Dict[str, Any] = {}
+
+
+class LearningCalibrationRecomputeRequest(BaseModel):
+    organization_id: Optional[str] = None
+    window_days: int = Field(default=180, ge=1, le=365)
+    min_feedback: int = Field(default=20, ge=1, le=1000)
+    limit: int = Field(default=5000, ge=10, le=100000)
 
 
 @router.get("/bootstrap")
@@ -913,6 +927,56 @@ def put_admin_ga_readiness(
         "ga_readiness": evidence,
         "rollback_controls": rollback_controls,
         "summary": summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
+    }
+
+
+@router.get("/ops/connector-readiness")
+def get_ops_connector_readiness(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    _require_ops_access(user)
+    org_id = _resolve_org_id(user, organization_id)
+    report = evaluate_erp_connector_readiness(org_id, db=get_db(), require_full_ga_scope=False)
+    return {
+        "organization_id": org_id,
+        "generated_at": _now_iso(),
+        "connector_readiness": report,
+    }
+
+
+@router.get("/ops/learning-calibration")
+def get_ops_learning_calibration(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    _require_ops_access(user)
+    org_id = _resolve_org_id(user, organization_id)
+    service = get_learning_calibration_service(org_id, db=get_db())
+    snapshot = service.get_latest_snapshot()
+    return {
+        "organization_id": org_id,
+        "snapshot": snapshot,
+    }
+
+
+@router.post("/ops/learning-calibration/recompute")
+def recompute_ops_learning_calibration(
+    request: LearningCalibrationRecomputeRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_ops_access(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    service = get_learning_calibration_service(org_id, db=get_db())
+    snapshot = service.recompute_snapshot(
+        window_days=request.window_days,
+        min_feedback=request.min_feedback,
+        limit=request.limit,
+    )
+    return {
+        "success": True,
+        "organization_id": org_id,
+        "snapshot": snapshot,
     }
 
 

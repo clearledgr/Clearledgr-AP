@@ -40,16 +40,6 @@ class _FakeWorkflowDB:
         return None
 
 
-class _RecurringDetector:
-    def analyze_invoice(self, **_kwargs):
-        return {
-            "is_recurring": False,
-            "auto_approve": False,
-            "alerts": [],
-            "pattern": {},
-        }
-
-
 def test_ap_policy_api_is_versioned_and_auditable(tmp_path: Path, monkeypatch):
     db = _make_db(tmp_path)
     monkeypatch.setattr("clearledgr.api.ap_policies.get_db", lambda: db)
@@ -181,19 +171,15 @@ def test_runtime_policy_changes_drive_workflow_routing(tmp_path: Path, monkeypat
         "clearledgr.services.invoice_workflow.get_policy_compliance",
         lambda _org: policy_compliance_module.PolicyComplianceService("default"),
     )
-    monkeypatch.setattr(
-        "clearledgr.services.recurring_detection.get_recurring_detector",
-        lambda _org: _RecurringDetector(),
-    )
 
     service = InvoiceWorkflowService(organization_id="default", auto_approve_threshold=0.95)
     service.db = _FakeWorkflowDB()
 
     calls = {"auto": 0, "send": 0}
 
-    async def fake_auto(_invoice, reason="high_confidence", recurring_info=None):
+    async def fake_auto(_invoice, reason="high_confidence"):
         calls["auto"] += 1
-        return {"status": "auto_approved", "reason": reason, "recurring": recurring_info}
+        return {"status": "auto_approved", "reason": reason}
 
     async def fake_send(_invoice, extra_context=None):
         calls["send"] += 1

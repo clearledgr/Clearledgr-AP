@@ -1,0 +1,25 @@
+{
+  "status": "passed",
+  "started_at": "2026-02-28T16:16:43.458Z",
+  "target_url": "https://mail.google.com/mail/u/0/#inbox",
+  "assert_auth": true,
+  "expect_selector": "#cl-scan-status",
+  "extension_worker_detected": true,
+  "extension_worker_url": "chrome-extension://cmaeolohkkbbgkbcgaleopfecnbljnol/background.js",
+  "mounted_sections": 3,
+  "required_selectors": [
+    "#cl-scan-status",
+    "#cl-thread-context",
+    "#cl-agent-actions"
+  ],
+  "selector_presence": {
+    "#cl-scan-status": true,
+    "#cl-thread-context": true,
+    "#cl-agent-actions": true
+  },
+  "missing_selectors": [],
+  "current_url": "https://mail.google.com/mail/u/0/#inbox",
+  "page_title": "Clearledgr Mail",
+  "screenshot_path": "/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/gmail-e2e-screenshot.png",
+  "finished_at": "2026-02-28T16:16:56.265Z"
+}

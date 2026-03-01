@@ -13,9 +13,7 @@ Current product priority is AP v1 with Gmail as the primary operator surface, Sl
 
 ## Legacy / Non-canonical Surfaces
 
-| Surface | Type | Directory | Status |
-|---|---|---|---|
-| Google Sheets | Workspace Add-on | `ui/sheets/` | Legacy/experimental (not AP v1 canonical) |
+Legacy demo/operator surfaces have been removed from the AP-v1 repository scope.
 
 ## Gmail Extension (`ui/gmail-extension/`)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from clearledgr.core.finance_contracts import SkillCapabilityManifest
 from clearledgr.services.finance_skills.base import FinanceSkill
 
 
@@ -12,6 +13,44 @@ class WorkflowHealthSkill(FinanceSkill):
     """Read-only finance skill that summarizes AP workflow health."""
 
     _INTENTS = frozenset({"read_ap_workflow_health"})
+    _MANIFEST = SkillCapabilityManifest(
+        skill_id="workflow_health_v1",
+        version="1.0",
+        state_machine={
+            "type": "read_only",
+            "notes": "No AP state transitions are performed by this skill.",
+        },
+        action_catalog=[
+            {
+                "intent": "read_ap_workflow_health",
+                "class": "read_only",
+                "description": "Read-only workflow health snapshot for AP queue diagnostics.",
+            }
+        ],
+        policy_pack={
+            "deterministic_prechecks": ["limit_bounds_guard"],
+            "hitl_gates": [],
+        },
+        evidence_schema={
+            "material_refs": ["summary.total_items", "summary.state_counts"],
+            "optional_refs": ["summary.sample_item_ids"],
+        },
+        adapter_bindings={
+            "email": ["gmail", "outlook"],
+            "approval": ["slack", "teams", "email"],
+            "erp": ["netsuite", "sap", "quickbooks", "xero"],
+        },
+        kpi_contract={
+            "metrics": [
+                "summary.total_items",
+                "summary.state_counts",
+                "summary.top_states",
+            ],
+            "promotion_gates": {
+                "read_only_contract_compliance": 1.0,
+            },
+        },
+    )
 
     @property
     def skill_id(self) -> str:
@@ -20,6 +59,10 @@ class WorkflowHealthSkill(FinanceSkill):
     @property
     def intents(self) -> frozenset[str]:
         return self._INTENTS
+
+    @property
+    def manifest(self) -> SkillCapabilityManifest:
+        return self._MANIFEST
 
     def policy_precheck(
         self,

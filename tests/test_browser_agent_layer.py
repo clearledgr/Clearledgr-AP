@@ -691,6 +691,10 @@ def test_browser_evidence_is_queryable_via_audit_endpoint(client, db):
     events = response.json()["events"]
     browser_events = [event for event in events if event.get("event_type") == "browser_command_result"]
     assert browser_events
+    operator = browser_events[-1].get("operator") or {}
+    assert browser_events[-1].get("operator_title")
+    assert isinstance(operator, dict)
+    assert operator.get("title") == browser_events[-1].get("operator_title")
     payload = browser_events[-1].get("payload_json") or {}
     assert payload.get("result", {}).get("screenshot_hash") == "abc123"
 
@@ -1137,29 +1141,6 @@ def test_ap_kpis_exposes_agentic_telemetry_bundle(client, db):
     )
 
 
-def test_analytics_dashboard_surfaces_agentic_snapshot(client, db):
-    _seed_agentic_kpi_signal(db)
-    response = client.get("/analytics/dashboard/default")
-    if response.status_code == 404:
-        body = response.json()
-        assert body.get("detail") in {"endpoint_disabled_in_ap_v1_profile", "Not Found"}
-        bootstrap = client.get("/api/admin/bootstrap?organization_id=default")
-        assert bootstrap.status_code == 200
-        payload = (bootstrap.json().get("dashboard") or {})
-    else:
-        assert response.status_code == 200
-        payload = response.json()
-
-    assert "agentic_telemetry" in payload
-    telemetry = payload.get("agentic_telemetry") or {}
-    assert isinstance(telemetry, dict)
-    assert telemetry.get("window_hours") == 168
-    assert "agentic_snapshot" in payload
-    snapshot = payload.get("agentic_snapshot") or {}
-    assert snapshot.get("erp_browser_fallback_rate_pct", 0) > 0
-    assert "top_blockers" in snapshot
-
-
 def test_admin_bootstrap_dashboard_includes_agentic_snapshot(client, db):
     _seed_agentic_kpi_signal(db)
     response = client.get("/api/admin/bootstrap?organization_id=default")
@@ -1203,8 +1184,8 @@ def test_autopilot_status_includes_agent_runtime_truth_claims(client, monkeypatc
     assert execution_contract["planning_loop_enabled"] is True
     assert execution_contract["legacy_fallback_on_error"] is False
     surface = payload.get("runtime_surface") or {}
-    assert surface.get("profile") == "full"
-    assert surface.get("strict_effective") is False
+    assert surface.get("profile") == "strict"
+    assert surface.get("strict_effective") is True
 
 
 def test_autopilot_status_keeps_durable_retry_enabled_in_production(client, monkeypatch):
@@ -1241,7 +1222,7 @@ def test_autopilot_status_keeps_durable_retry_enabled_in_production(client, monk
     assert surface.get("legacy_override_requested") is True
     assert surface.get("legacy_override_effective") is False
     assert surface.get("strict_effective") is True
-    assert "legacy_override_ignored_without_explicit_production_allow" in (surface.get("warnings") or [])
+    assert "legacy_override_ignored_strict_ap_v1" in (surface.get("warnings") or [])
 
 
 def test_browser_fallback_full_e2e_api_fail_to_posted_to_erp(client, db):

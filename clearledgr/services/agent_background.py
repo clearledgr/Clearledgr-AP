@@ -244,12 +244,35 @@ async def _check_approval_timeouts(org_id: str):
                     continue  # already sent and recorded in DB
 
                 approver_ids = db.get_pending_approver_ids(ap_item_id)
-                await send_approval_reminder(
+                reminder_sent = await send_approval_reminder(
                     ap_item=item,
                     approver_ids=approver_ids,
                     hours_pending=min_hours,
                     organization_id=org_id,
                 )
+
+                if hasattr(db, "append_ap_audit_event"):
+                    try:
+                        db.append_ap_audit_event(
+                            {
+                                "ap_item_id": ap_item_id,
+                                "event_type": "approval_nudge_sent" if reminder_sent else "approval_nudge_failed",
+                                "actor_type": "system",
+                                "actor_id": "agent_background",
+                                "reason": f"approval_nudge_auto_{milestone}",
+                                "metadata": {
+                                    "auto": True,
+                                    "milestone": milestone,
+                                    "hours_pending": min_hours,
+                                    "approver_count": len(approver_ids or []),
+                                },
+                                "organization_id": org_id,
+                                "source": "agent_background",
+                                "idempotency_key": f"approval_nudge_auto:{ap_item_id}:{milestone}",
+                            }
+                        )
+                    except Exception as audit_exc:
+                        logger.debug("Could not append auto-approval-nudge audit event: %s", audit_exc)
 
                 # Build metadata patch — include escalation record for 24h
                 patch: dict = {

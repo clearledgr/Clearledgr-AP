@@ -1,6 +1,7 @@
 const PAGES = [
   { id: "setup", title: "Setup", subtitle: "Connect your tools and start processing invoices." },
   { id: "activity", title: "Activity", subtitle: "See what Clearledgr processed and what needs attention." },
+  { id: "ops", title: "Ops", subtitle: "Monitoring, batch actions, and operational recovery controls." },
   { id: "integrations", title: "Integrations", subtitle: "Connect and verify Gmail, Slack, and ERP." },
   { id: "organization", title: "Organization", subtitle: "Manage organization profile and runtime settings." },
   { id: "policies", title: "AP Policies", subtitle: "Configure policy behavior for AP decisioning." },
@@ -108,7 +109,11 @@ function cleanUrlParams(keys) {
 function renderNav() {
   const nav = qs("#nav");
   nav.innerHTML = "";
-  PAGES.forEach((page) => {
+  const visiblePages = PAGES.filter((page) => !(page.id === "ops" && !hasOpsAccess()));
+  if (!visiblePages.some((page) => page.id === state.activePage)) {
+    state.activePage = visiblePages[0]?.id || "setup";
+  }
+  visiblePages.forEach((page) => {
     const button = document.createElement("button");
     button.className = `nav-btn ${state.activePage === page.id ? "active" : ""}`;
     button.textContent = page.title;
@@ -133,6 +138,29 @@ function integrationByName(name) {
 
 function checkMark(ok) {
   return ok ? '<span class="check-ok">Connected</span>' : '<span class="check-no">Not connected</span>';
+}
+
+function hasOpsAccess() {
+  const role = String(state.bootstrap?.current_user?.role || "").trim().toLowerCase();
+  return ["admin", "owner", "operator"].includes(role);
+}
+
+function formatRate(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "0.0%";
+  return `${numeric.toFixed(1)}%`;
+}
+
+function pageExists(pageId) {
+  return PAGES.some((page) => page.id === pageId);
+}
+
+function resolveInvoiceReference(item) {
+  return String(item?.thread_id || item?.message_id || item?.id || "").trim();
+}
+
+function currentUserEmail() {
+  return String(state.bootstrap?.current_user?.email || "").trim() || "admin_console";
 }
 
 // ==================== SETUP / WIZARD PAGE ====================
@@ -332,8 +360,9 @@ function startFirstInvoicePoll() {
   if (_lastKnownTotal > 0) return; // Already has invoices
   _firstInvoicePollTimer = setInterval(async () => {
     try {
-      const fresh = await api(`/analytics/dashboard/${encodeURIComponent(state.orgId)}`);
-      const newTotal = fresh.total_invoices || 0;
+      const fresh = await api(`/api/admin/bootstrap?organization_id=${encodeURIComponent(state.orgId)}`);
+      const dashboard = fresh?.dashboard || {};
+      const newTotal = dashboard.total_invoices || 0;
       if (newTotal > 0 && _lastKnownTotal === 0) {
         clearInterval(_firstInvoicePollTimer);
         _firstInvoicePollTimer = null;
@@ -413,15 +442,15 @@ function activityPage() {
               const vendor = ev.vendor_name || (ev.payload_json ? (typeof ev.payload_json === "string" ? JSON.parse(ev.payload_json) : ev.payload_json).vendor_name : "") || "";
               const amount = ev.amount || (ev.payload_json ? (typeof ev.payload_json === "string" ? JSON.parse(ev.payload_json) : ev.payload_json).amount : null);
               const amountStr = amount ? "$" + Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "";
-              return \`<div class="activity-row">
-                <div class="activity-time"><span class="activity-date">\${date}</span> \${time}</div>
-                <div class="activity-dot \${badge.cls}"></div>
+              return `<div class="activity-row">
+                <div class="activity-time"><span class="activity-date">${date}</span> ${time}</div>
+                <div class="activity-dot ${badge.cls}"></div>
                 <div class="activity-body">
-                  <span class="activity-vendor">\${vendor}</span>
-                  \${amountStr ? \`<span class="activity-amount">\${amountStr}</span>\` : ""}
-                  <span class="activity-badge \${badge.cls}">\${badge.label}</span>
+                  <span class="activity-vendor">${vendor}</span>
+                  ${amountStr ? `<span class="activity-amount">${amountStr}</span>` : ""}
+                  <span class="activity-badge ${badge.cls}">${badge.label}</span>
                 </div>
-              </div>\`;
+              </div>`;
             }).join("")}
           </div>`
       }
@@ -442,6 +471,189 @@ function _eventBadge(eventType) {
   if (t.includes("validated")) return { label: "Validated", cls: "ev-validated" };
   if (t.includes("failed") || t.includes("error")) return { label: "Error", cls: "ev-error" };
   return { label: eventType, cls: "" };
+}
+
+function _stateOf(item) {
+  return String(item?.state || "").trim().toLowerCase();
+}
+
+function _buildOpsCandidates(worklist) {
+  const items = Array.isArray(worklist) ? worklist : [];
+  const retryFailed = items.filter((item) => _stateOf(item) === "failed_post");
+  const nudgeApprovals = items.filter((item) => ["needs_approval", "pending_approval"].includes(_stateOf(item)));
+  const routeLowRisk = items.filter((item) => {
+    const state = _stateOf(item);
+    const confidence = Number(item?.confidence || 0);
+    const hasException = Boolean(item?.exception_code || item?.requires_field_review);
+    return state === "validated" && confidence >= 0.95 && !hasException;
+  });
+  const retryRecoverable = retryFailed.filter((item) => {
+    const lastError = String(item?.last_error || "").toLowerCase();
+    return !lastError.includes("non_recoverable");
+  });
+  return {
+    retryFailed,
+    nudgeApprovals,
+    routeLowRisk,
+    retryRecoverable,
+  };
+}
+
+function opsPage() {
+  if (!hasOpsAccess()) {
+    return `
+      <div class="panel">
+        <h3>Access required</h3>
+        <p class="muted">Ops Console is limited to admin/operator roles.</p>
+      </div>
+    `;
+  }
+
+  const ops = state.bootstrap?.ops || {};
+  const health = ops.health || {};
+  const kpis = ops.kpis || {};
+  const retryQueue = Array.isArray(ops.retryQueue) ? ops.retryQueue : [];
+  const worklist = Array.isArray(ops.worklist) ? ops.worklist : [];
+  const connectorReadiness = ops.connectorReadiness || {};
+  const connectorRows = Array.isArray(connectorReadiness?.connectors) ? connectorReadiness.connectors : [];
+  const connectorSummary = connectorReadiness?.summary || {};
+  const learningSnapshot = ops.learningCalibration || {};
+  const recentAudit = Array.isArray(state.bootstrap?.recentActivity) ? state.bootstrap.recentActivity : [];
+  const candidates = _buildOpsCandidates(worklist);
+  const queueLagMinutes = Number(health?.queue_lag?.avg_minutes || 0);
+  const workflowStuck = Number(health?.workflow_stuck_count?.count || 0);
+  const approvalLatencyMinutes = Number(health?.approval_latency?.avg_minutes || 0);
+  const postingFailureRate = Number(health?.post_failure_rate?.rate_24h || 0) * 100;
+  const topBlockers = Array.isArray(kpis?.agentic_telemetry?.top_blocker_reasons?.top_reasons)
+    ? kpis.agentic_telemetry.top_blocker_reasons.top_reasons.slice(0, 3)
+    : [];
+
+  return `
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <strong>${queueLagMinutes.toFixed(1)}m</strong>
+        <span>Queue lag (avg)</span>
+      </div>
+      <div class="kpi-card">
+        <strong>${approvalLatencyMinutes.toFixed(1)}m</strong>
+        <span>Approval latency (avg)</span>
+      </div>
+      <div class="kpi-card">
+        <strong>${formatRate(postingFailureRate)}</strong>
+        <span>Posting failure (24h)</span>
+      </div>
+      <div class="kpi-card ${workflowStuck > 0 ? "kpi-warning" : "kpi-success"}">
+        <strong>${workflowStuck}</strong>
+        <span>Stuck workflows</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Top blockers</h3>
+      ${
+        topBlockers.length
+          ? `<ul>${topBlockers.map((entry) => `<li>${String(entry?.reason || "").replace(/_/g, " ")} (${Number(entry?.count || 0)})</li>`).join("")}</ul>`
+          : '<p class="muted">No blocker telemetry available.</p>'
+      }
+    </div>
+
+    <div class="panel">
+      <h3>Batch operations</h3>
+      <div class="row">
+        <button data-ops-action="retry_failed_posts">Retry failed posts (${candidates.retryFailed.length})</button>
+        <button data-ops-action="nudge_approvals" class="alt">Nudge approvals (${candidates.nudgeApprovals.length})</button>
+        <button data-ops-action="route_low_risk" class="alt">Route low-risk (${candidates.routeLowRisk.length})</button>
+        <button data-ops-action="retry_recoverable" class="alt">Recoverable retries (${candidates.retryRecoverable.length})</button>
+      </div>
+      <p class="muted">Batch actions are executed from Admin Ops only. Gmail remains decision-focused.</p>
+    </div>
+
+    <div class="panel">
+      <h3>ERP connector readiness</h3>
+      <p class="muted">
+        Status: <strong>${connectorSummary.status || "not_verifiable"}</strong> ·
+        Enabled ready: ${connectorSummary.enabled_connectors_ready || 0}/${connectorSummary.enabled_connectors_total || 0}
+      </p>
+      <table class="table">
+        <thead><tr><th>Connector</th><th>Readiness</th><th>Checklist</th><th>Connected</th><th>Rollback</th></tr></thead>
+        <tbody>
+          ${
+            connectorRows.length
+              ? connectorRows.map((row) => `
+                <tr>
+                  <td>${row.erp_type}</td>
+                  <td>${row.readiness_status}</td>
+                  <td>${row.checklist_status}</td>
+                  <td>${row.connection_present ? "yes" : "no"}</td>
+                  <td>${row.rollback_blocked ? "blocked" : "ok"}</td>
+                </tr>
+              `).join("")
+              : "<tr><td colspan='5'>No connector readiness data yet.</td></tr>"
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h3>Learning calibration</h3>
+      <p class="muted">
+        Status: <strong>${learningSnapshot.status || "not_calibrated"}</strong> ·
+        Feedback: ${Number(learningSnapshot?.summary?.total_feedback || 0)}
+      </p>
+      <div class="row">
+        <button id="recompute-learning-calibration-btn" class="alt">Recompute calibration</button>
+      </div>
+      ${
+        Array.isArray(learningSnapshot?.recommendations) && learningSnapshot.recommendations.length
+          ? `<ul>${learningSnapshot.recommendations.slice(0, 3).map((item) => `<li>${item}</li>`).join("")}</ul>`
+          : '<p class="muted">No calibration recommendations yet.</p>'
+      }
+      <details style="margin-top:10px">
+        <summary>Top vendor calibration gaps</summary>
+        <pre>${JSON.stringify((learningSnapshot?.top_vendor_calibration_gaps || []).slice(0, 10), null, 2)}</pre>
+      </details>
+    </div>
+
+    <div class="panel">
+      <h3>Retry queue controls</h3>
+      <table class="table">
+        <thead><tr><th>Job</th><th>Status</th><th>Retry count</th><th>Next retry</th><th>Action</th></tr></thead>
+        <tbody>
+          ${
+            retryQueue.length
+              ? retryQueue.slice(0, 20).map((job) => `
+                <tr>
+                  <td>${job.id}</td>
+                  <td>${job.status}</td>
+                  <td>${job.retry_count || 0}/${job.max_retries || 0}</td>
+                  <td>${job.next_retry_at || "-"}</td>
+                  <td>
+                    <button class="alt" data-retry-job="${job.id}">Retry</button>
+                    <button class="alt" data-skip-job="${job.id}">Skip</button>
+                  </td>
+                </tr>
+              `).join("")
+              : "<tr><td colspan='5'>No retry jobs found.</td></tr>"
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h3>Debug tools</h3>
+      <div class="row">
+        <button id="ops-refresh-btn" class="alt">Refresh Ops data</button>
+      </div>
+      <details style="margin-top:10px">
+        <summary>View raw agent/audit events</summary>
+        <pre>${JSON.stringify(recentAudit.slice(0, 40), null, 2)}</pre>
+      </details>
+      <details style="margin-top:10px">
+        <summary>Evidence viewer (worklist snapshot)</summary>
+        <pre>${JSON.stringify(worklist.slice(0, 20), null, 2)}</pre>
+      </details>
+    </div>
+  `;
 }
 
 // ==================== OTHER PAGES ====================
@@ -604,6 +816,7 @@ function renderPage() {
   let html = "";
   if (page.id === "setup") html = setupPage();
   if (page.id === "activity") html = activityPage();
+  if (page.id === "ops") html = opsPage();
   if (page.id === "integrations") html = integrationsPage();
   if (page.id === "organization") html = organizationPage();
   if (page.id === "policies") html = policiesPage();
@@ -632,25 +845,251 @@ async function refreshAll() {
   await loadBootstrap();
 
   // Load activity data in parallel
-  const [policyResult, invitesResult, dashResult, auditResult] = await Promise.allSettled([
+  const [policyResult, invitesResult, auditResult] = await Promise.allSettled([
     api(`/api/admin/policies/ap?organization_id=${encodeURIComponent(state.orgId)}`),
     api(`/api/admin/team/invites?organization_id=${encodeURIComponent(state.orgId)}`),
-    api(`/analytics/dashboard/${encodeURIComponent(state.orgId)}`),
     api(`/api/ap/audit/recent?organization_id=${encodeURIComponent(state.orgId)}&limit=30`),
   ]);
 
   state.bootstrap.policyPayload = policyResult.status === "fulfilled" ? policyResult.value : {};
   state.bootstrap.teamInvites = invitesResult.status === "fulfilled" ? (invitesResult.value.invites || []) : [];
-  state.bootstrap.dashboard = dashResult.status === "fulfilled" ? dashResult.value : {};
   state.bootstrap.recentActivity = auditResult.status === "fulfilled" ? (auditResult.value.events || auditResult.value || []) : [];
+
+  const opsState = {
+    health: {},
+    kpis: {},
+    retryQueue: [],
+    worklist: [],
+    connectorReadiness: {},
+    learningCalibration: {},
+    errors: {},
+  };
+  if (hasOpsAccess()) {
+    const org = encodeURIComponent(state.orgId);
+    const [healthResult, kpisResult, retryQueueResult, worklistResult, connectorReadinessResult, learningCalibrationResult] = await Promise.allSettled([
+      api(`/api/ops/tenant-health?organization_id=${org}`),
+      api(`/api/ops/ap-kpis?organization_id=${org}`),
+      api(`/api/ops/retry-queue?organization_id=${org}&status=all&limit=200`),
+      api(`/extension/worklist?organization_id=${org}`),
+      api(`/api/admin/ops/connector-readiness?organization_id=${org}`),
+      api(`/api/admin/ops/learning-calibration?organization_id=${org}`),
+    ]);
+    if (healthResult.status === "fulfilled") {
+      opsState.health = healthResult.value?.health || {};
+    } else {
+      opsState.errors.health = String(healthResult.reason || "");
+    }
+    if (kpisResult.status === "fulfilled") {
+      opsState.kpis = kpisResult.value?.kpis || {};
+    } else {
+      opsState.errors.kpis = String(kpisResult.reason || "");
+    }
+    if (retryQueueResult.status === "fulfilled") {
+      opsState.retryQueue = Array.isArray(retryQueueResult.value?.jobs) ? retryQueueResult.value.jobs : [];
+    } else {
+      opsState.errors.retryQueue = String(retryQueueResult.reason || "");
+    }
+    if (worklistResult.status === "fulfilled") {
+      opsState.worklist = Array.isArray(worklistResult.value?.items) ? worklistResult.value.items : [];
+    } else {
+      opsState.errors.worklist = String(worklistResult.reason || "");
+    }
+    if (connectorReadinessResult.status === "fulfilled") {
+      opsState.connectorReadiness = connectorReadinessResult.value?.connector_readiness || {};
+    } else {
+      opsState.errors.connectorReadiness = String(connectorReadinessResult.reason || "");
+    }
+    if (learningCalibrationResult.status === "fulfilled") {
+      opsState.learningCalibration = learningCalibrationResult.value?.snapshot || {};
+    } else {
+      opsState.errors.learningCalibration = String(learningCalibrationResult.reason || "");
+    }
+  }
+  state.bootstrap.ops = opsState;
 
   renderNav();
   renderPage();
 }
 
+async function runOpsBatchAction(action) {
+  const op = String(action || "").trim();
+  const ops = state.bootstrap?.ops || {};
+  const worklist = Array.isArray(ops.worklist) ? ops.worklist : [];
+  const candidates = _buildOpsCandidates(worklist);
+  let selected = [];
+  if (op === "retry_failed_posts") selected = candidates.retryFailed;
+  if (op === "nudge_approvals") selected = candidates.nudgeApprovals;
+  if (op === "route_low_risk") selected = candidates.routeLowRisk;
+  if (op === "retry_recoverable") selected = candidates.retryRecoverable;
+  if (!selected.length) {
+    toast("No matching invoices for this batch action.", "error");
+    return;
+  }
+
+  const org = encodeURIComponent(state.orgId);
+  const limit = 25;
+  const bounded = selected.slice(0, limit);
+  let success = 0;
+  let failed = 0;
+  const failureReasons = [];
+  for (const item of bounded) {
+    try {
+      if (op === "retry_failed_posts") {
+        const apItemId = encodeURIComponent(String(item?.id || "").trim());
+        if (!apItemId) {
+          failed += 1;
+          failureReasons.push("missing_item_id");
+          continue;
+        }
+        await api(`/api/ap/items/${apItemId}/retry-post?organization_id=${org}`, {
+          method: "POST",
+        });
+      } else if (op === "nudge_approvals") {
+        const emailId = resolveInvoiceReference(item);
+        if (!emailId) {
+          failed += 1;
+          failureReasons.push("missing_email_reference");
+          continue;
+        }
+        await api("/extension/approval-nudge", {
+          method: "POST",
+          body: JSON.stringify({
+            email_id: emailId,
+            organization_id: state.orgId,
+            user_email: currentUserEmail(),
+            message: "Admin Ops nudge for pending approval",
+          }),
+        });
+      } else if (op === "route_low_risk") {
+        const emailId = resolveInvoiceReference(item);
+        if (!emailId) {
+          failed += 1;
+          failureReasons.push("missing_email_reference");
+          continue;
+        }
+        await api("/extension/route-low-risk-approval", {
+          method: "POST",
+          body: JSON.stringify({
+            email_id: emailId,
+            organization_id: state.orgId,
+            user_email: currentUserEmail(),
+            reason: "admin_ops_batch_route_low_risk",
+          }),
+        });
+      } else if (op === "retry_recoverable") {
+        const emailId = resolveInvoiceReference(item);
+        if (!emailId) {
+          failed += 1;
+          failureReasons.push("missing_email_reference");
+          continue;
+        }
+        await api("/extension/retry-recoverable-failure", {
+          method: "POST",
+          body: JSON.stringify({
+            email_id: emailId,
+            organization_id: state.orgId,
+            user_email: currentUserEmail(),
+            reason: "admin_ops_batch_retry_recoverable",
+          }),
+        });
+      }
+      success += 1;
+    } catch (error) {
+      failed += 1;
+      failureReasons.push(String(error?.message || "request_failed"));
+    }
+  }
+  const clippedReason = failureReasons.find(Boolean) || "";
+  const suffix = failed > 0 ? ` (${failed} failed${clippedReason ? `: ${clippedReason}` : ""})` : "";
+  toast(`Batch action complete: ${success} succeeded${suffix}`, failed > 0 ? "error" : "success");
+}
+
 // ==================== EVENT BINDING ====================
 
 async function bindPageEvents() {
+  const opsRefreshBtn = qs("#ops-refresh-btn");
+  if (opsRefreshBtn) {
+    opsRefreshBtn.onclick = async () => {
+      opsRefreshBtn.disabled = true;
+      opsRefreshBtn.textContent = "Refreshing...";
+      await refreshAll();
+    };
+  }
+
+  document.querySelectorAll("[data-ops-action]").forEach((button) => {
+    button.onclick = async () => {
+      if (!hasOpsAccess()) {
+        toast("Ops access required.", "error");
+        return;
+      }
+      const op = button.getAttribute("data-ops-action");
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = "Running...";
+      await runOpsBatchAction(op);
+      await refreshAll();
+      button.disabled = false;
+      button.textContent = original;
+    };
+  });
+
+  const recomputeLearningBtn = qs("#recompute-learning-calibration-btn");
+  if (recomputeLearningBtn) {
+    recomputeLearningBtn.onclick = async () => {
+      if (!hasOpsAccess()) {
+        toast("Ops access required.", "error");
+        return;
+      }
+      recomputeLearningBtn.disabled = true;
+      recomputeLearningBtn.textContent = "Recomputing...";
+      try {
+        await api("/api/admin/ops/learning-calibration/recompute", {
+          method: "POST",
+          body: JSON.stringify({
+            organization_id: state.orgId,
+            window_days: 180,
+            min_feedback: 20,
+            limit: 5000,
+          }),
+        });
+        toast("Learning calibration recomputed.", "success");
+      } catch (error) {
+        toast(`Calibration recompute failed: ${error.message}`, "error");
+      }
+      await refreshAll();
+    };
+  }
+
+  document.querySelectorAll("[data-retry-job]").forEach((button) => {
+    button.onclick = async () => {
+      if (!hasOpsAccess()) {
+        toast("Ops access required.", "error");
+        return;
+      }
+      const jobId = String(button.getAttribute("data-retry-job") || "").trim();
+      if (!jobId) return;
+      button.disabled = true;
+      await api(`/api/ops/retry-queue/${encodeURIComponent(jobId)}/retry`, { method: "POST" });
+      toast(`Retry requested for job ${jobId}.`, "success");
+      await refreshAll();
+    };
+  });
+
+  document.querySelectorAll("[data-skip-job]").forEach((button) => {
+    button.onclick = async () => {
+      if (!hasOpsAccess()) {
+        toast("Ops access required.", "error");
+        return;
+      }
+      const jobId = String(button.getAttribute("data-skip-job") || "").trim();
+      if (!jobId) return;
+      button.disabled = true;
+      await api(`/api/ops/retry-queue/${encodeURIComponent(jobId)}/skip`, { method: "POST" });
+      toast(`Retry job ${jobId} marked as skipped.`, "success");
+      await refreshAll();
+    };
+  });
+
   // Refresh activity
   const refreshActivityBtn = qs("#refresh-activity-btn");
   if (refreshActivityBtn) {
@@ -950,6 +1389,10 @@ async function submitInviteAccept(event) {
 async function boot() {
   const url = params();
   state.inviteToken = url.get("invite_token");
+  const requestedPage = String(url.get("page") || "").trim().toLowerCase();
+  if (requestedPage && pageExists(requestedPage)) {
+    state.activePage = requestedPage;
+  }
   const token = url.get("token");
   const refreshToken = url.get("refresh_token");
   if (token) {

@@ -39,29 +39,34 @@ Statuses:
 - validation result recorded
 - owner + date updated
 
+Validation command (pilot gate):
+```bash
+python3 /Users/mombalam/Desktop/Clearledgr.v1/scripts/validate_launch_evidence.py --mode pilot --json
+```
+
 ## Status Summary Table
 
 | Priority | Total | OPEN | IN_PROGRESS | BLOCKED | DONE | WAIVED |
 |---|---:|---:|---:|---:|---:|---:|
-| P0 | 5 | 4 | 1 | 0 | 0 | 0 |
-| P1 | 7 | 6 | 1 | 0 | 0 | 0 |
+| P0 | 5 | 1 | 4 | 0 | 0 | 0 |
+| P1 | 7 | 3 | 4 | 0 | 0 | 0 |
 | P2 | 4 | 3 | 0 | 0 | 1 | 0 |
-| **All** | **16** | **13** | **2** | **0** | **1** | **0** |
+| **All** | **16** | **7** | **8** | **0** | **1** | **0** |
 
 ## Release Context
 
 - Target release id: `ap-v1-2026-02-25-pilot-rc1` (format: `ap-v1-<yyyy-mm-dd>-<pilot|ga>-<tag>`)
 - Current target mode: `pilot` (switch to `ga` when signoff scope expands)
 - Enabled surfaces in scope:
-  - Gmail: `TBD`
-  - Slack: `TBD`
-  - Teams: `TBD`
-  - Browser fallback: `TBD`
+  - Gmail: `enabled`, runtime evidence passed (`2026-02-28T16:16Z`)
+  - Slack: `enabled_in_code`, staging callback validation pending
+  - Teams: `enabled_in_code`, staging callback validation pending
+  - Browser fallback: `enabled_in_code`, staging validation pending
 - Enabled ERP connectors in scope:
-  - QuickBooks: `TBD`
-  - Xero: `TBD`
-  - NetSuite: `TBD`
-  - SAP: `TBD`
+  - QuickBooks: `adapter_ready_in_code`, sandbox parity evidence pending
+  - Xero: `adapter_ready_in_code`, sandbox parity evidence pending
+  - NetSuite: `adapter_ready_in_code`, sandbox parity evidence pending
+  - SAP: `adapter_ready_in_code`, sandbox parity evidence pending
 
 ## Milestone Checklist
 
@@ -100,7 +105,7 @@ Schema per item:
 - Plan refs: `PLAN.md` `4.1`, `4.6`, `5.1`, `5.2`, `5.3`, `7.4`
 - Status: `IN_PROGRESS`
 - Goal: Run a staging E2E pilot drill covering Gmail intake -> Slack/Teams approval -> ERP posting -> audit verification.
-- Owner: `TBD`
+- Owner: `platform-eng`
 - Evidence required:
   - redacted screenshots or recordings for Gmail + Slack/Teams flows
   - ERP sandbox transaction reference
@@ -113,18 +118,22 @@ Schema per item:
 - Artifact links:
   - runtime evidence report: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/<release_id>/GMAIL_RUNTIME_E2E.md`
   - evidence json: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/<release_id>/artifacts/gmail-e2e-evidence.json`
+  - automated pilot e2e baseline: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/<release_id>/PILOT_E2E_EVIDENCE.md`
 - Notes / blockers:
   - use `npm run test:e2e-auth:evidence -- --release-id <release_id>` from `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension`
   - prioritize one tenant and one ERP first, then expand
+  - Latest authenticated runtime run (`2026-02-28T16:16Z`) passed and produced artifacts (`gmail-e2e-evidence.json`, `gmail-e2e-screenshot.png`, `GMAIL_RUNTIME_E2E.md`).
+  - automated backend AP end-to-end flow suite passes (`PYTHONPATH=. pytest -q tests/test_e2e_ap_flow.py` -> `6 passed`).
+  - Remaining work for `DONE`: complete full pilot drill coverage (Slack/Teams approval, ERP sandbox reference, audit correlation trace).
 
 ### L02
 - ID: `L02`
 - Category: `rollback-controls`
 - Priority: `P0`
 - Plan refs: `PLAN.md` `8.4`, `8.5`, `9.4`
-- Status: `OPEN`
+- Status: `IN_PROGRESS`
 - Goal: Validate rollback controls in staging/prod-like (ERP posting disablement, channel action disablement, fallback controls).
-- Owner: `TBD`
+- Owner: `platform-eng`
 - Evidence required:
   - admin control screenshots
   - request/response traces (redacted)
@@ -134,18 +143,20 @@ Schema per item:
   - blocked actions are audited
   - rollback activation and recovery runbook steps succeed
 - Artifact links:
-  - manifest section: `TBD`
+  - rollback verification: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ROLLBACK_CONTROLS_VERIFICATION.md`
 - Notes / blockers:
   - use same tenant as L01 to reduce setup overhead
+  - automated rollback/control baseline is complete (`15 passed` across rollback + admin launch controls tests); staging/prod-like drill remains
+  - latest focused bundle rerun: `7 passed` (`tests/test_e2e_rollback_controls.py`, `tests/test_admin_launch_controls.py`)
 
 ### L03
 - ID: `L03`
 - Category: `failure-mode`
 - Priority: `P0`
 - Plan refs: `PLAN.md` `7.7`
-- Status: `OPEN`
+- Status: `IN_PROGRESS`
 - Goal: Execute pilot failure-mode matrix for callback duplication/delay, posting failure after approval, and browser fallback failure.
-- Owner: `TBD`
+- Owner: `qa-eng`
 - Evidence required:
   - scenario matrix with expected vs observed
   - logs/audit traces per scenario
@@ -155,18 +166,20 @@ Schema per item:
   - posting failure lands in `failed_post` and recovery path is clear
   - fallback failure remains auditable and operator-visible
 - Artifact links:
-  - matrix: `TBD`
+  - matrix: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/FAILURE_MODE_MATRIX.md`
 - Notes / blockers:
   - start with the 3 highest-value scenarios and expand in L09
+  - automated subset coverage exists for duplicate callbacks, posting failure after approval, and browser fallback failure; live callback-delay/auth-expiry drills remain
+  - latest focused bundle rerun: `3 passed` on failure-mode subset tests
 
 ### L04
 - ID: `L04`
 - Category: `durability-proof`
 - Priority: `P0`
 - Plan refs: `PLAN.md` `7.6`, `7.7`
-- Status: `OPEN`
+- Status: `IN_PROGRESS`
 - Goal: Prove durable retry behavior survives restart in staging/prod-like conditions.
-- Owner: `TBD`
+- Owner: `platform-eng`
 - Evidence required:
   - pre-restart queued retry job evidence
   - restart timestamp/log
@@ -176,9 +189,11 @@ Schema per item:
   - retry processing resumes without manual DB edits
   - AP state/audit trail remains consistent
 - Artifact links:
-  - scenario evidence: `TBD`
+  - scenario evidence: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/FAILURE_MODE_MATRIX.md`
 - Notes / blockers:
   - align with L03 posting-failure scenario for reuse
+  - durable retry restart simulations pass in automated suite; staging restart evidence still required for `DONE`
+  - latest focused bundle rerun: `4 passed` (durable retry/post-process restart + dead-letter cases)
 
 ### L05
 - ID: `L05`
@@ -202,9 +217,9 @@ Schema per item:
 - Category: `erp-parity`
 - Priority: `P1`
 - Plan refs: `PLAN.md` `6.6`, `9.3`
-- Status: `OPEN`
+- Status: `IN_PROGRESS`
 - Goal: Build ERP parity matrix for all enabled ERP connectors in the release scope.
-- Owner: `TBD`
+- Owner: `platform-eng`
 - Evidence required:
   - parity matrix per enabled ERP
   - normalized response contract proof (`erp_type`, `erp_reference`, `error_code`, `error_message`)
@@ -213,7 +228,7 @@ Schema per item:
   - each enabled ERP has pass/fail status with evidence links
   - connector-specific behavior does not leak into operator-facing contracts
 - Artifact links:
-  - parity matrix: `TBD`
+  - parity matrix: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ERP_PARITY_MATRIX.md`
 - Notes / blockers:
   - can scope to enabled connectors for pilot, full enabled set for GA
 
@@ -222,9 +237,9 @@ Schema per item:
 - Category: `runbooks`
 - Priority: `P1`
 - Plan refs: `PLAN.md` `6.8`, `7.6`
-- Status: `OPEN`
+- Status: `IN_PROGRESS`
 - Goal: Validate runbooks (ERP disablement, Slack/Teams action disablement, browser runner outage, callback verification failures, correlation-ID audit investigation).
-- Owner: `TBD`
+- Owner: `platform-eng`
 - Evidence required:
   - runbook validation records (owner/date/env/result)
   - screenshots/logs proving each procedure works
@@ -232,7 +247,7 @@ Schema per item:
   - required runbooks validated within target window
   - operators can execute trace lookup using correlation ID
 - Artifact links:
-  - runbook validation index: `TBD`
+  - runbook validation index: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/RUNBOOK_VALIDATIONS.md`
 - Notes / blockers:
   - coordinate with Ops/Support schedule
 
@@ -297,9 +312,9 @@ Schema per item:
 - Category: `security-validation`
 - Priority: `P1`
 - Plan refs: `PLAN.md` `7.3`, `7.4`, `7.7`
-- Status: `OPEN`
+- Status: `IN_PROGRESS`
 - Goal: Validate callback verification and auth-boundary behavior in staging with real secrets/config (Slack signing secret, Teams token verification, API/JWT auth).
-- Owner: `TBD`
+- Owner: `security-eng`
 - Evidence required:
   - staging config verification checklist
   - positive/negative callback verification evidence
@@ -309,9 +324,10 @@ Schema per item:
   - invalid signatures/tokens are rejected and audited
   - protected app surfaces reject unauthenticated requests
 - Artifact links:
-  - security validation record: `TBD`
+  - security validation record: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/SECURITY_VALIDATION.md`
 - Notes / blockers:
-  - requires staging secret provisioning
+  - automated baseline complete (`12 passed` auth-boundary + Teams verifier subset); staging secret-backed callback validation still required
+  - auth-boundary test coverage currently includes `/api/agent/*`, `/api/ops/*`, `/api/ap/items/*`, and sensitive `/extension/*` endpoints
 
 ### L12
 - ID: `L12`
@@ -436,6 +452,13 @@ Fill these as artifacts are created for the selected release id.
 - `2026-02-27`: Removed non-durable AP post-processing fallback in `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/agent_orchestrator.py` so post-processing is durable-queue-only (or explicitly gated/audited) and updated regression coverage in `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_agent_orchestrator_durable_retry.py`.
 - `2026-02-27`: Enforced strict AP-v1 runtime surface pruning in `/Users/mombalam/Desktop/Clearledgr.v1/main.py` (legacy route families are no longer mounted when strict profile is active), with verification in `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_runtime_surface_scope.py`.
 - `2026-02-28`: Added authenticated Gmail runtime evidence wrapper + validation pipeline (`npm run test:e2e-auth:evidence`) with normalized report output at `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/<release_id>/GMAIL_RUNTIME_E2E.md`; moved `L01` to `IN_PROGRESS` pending live staging run artifact capture.
+- `2026-02-28`: Added launch-evidence gate validator script `/Users/mombalam/Desktop/Clearledgr.v1/scripts/validate_launch_evidence.py` and documented the pilot validation command in tracker usage rules.
+- `2026-02-28`: Assigned execution owners for pilot-critical evidence items (`L01`, `L02`, `L03`, `L04`, `L11`) to remove `TBD` ownership gaps.
+- `2026-02-28`: Populated pilot release evidence working docs (`MANIFEST`, parity/failure/runbook/rollback/signoff files) with automated baseline evidence and moved `L02`, `L03`, `L04`, `L06`, `L07`, `L11` to `IN_PROGRESS`.
+- `2026-02-28`: Executed authenticated Gmail runtime evidence command for `L01`; artifacts were produced but run failed due unauthenticated Gmail profile. `L01` moved to `BLOCKED`. Launch evidence validator now reports only `status_not_done` errors for `L01`, `L02`, `L03`, `L04`, `L11` (no missing artifact/link warnings).
+- `2026-02-28`: Re-ran `L01` authenticated Gmail runtime evidence with unlocked profile; run passed (`2/2 tests`) and artifacts updated. `L01` returned to `IN_PROGRESS` pending non-Gmail pilot drill evidence (Slack/Teams + ERP + audit chain).
+- `2026-02-28`: Ran focused automated evidence bundles for `L02`, `L03`, `L04`, and `L11` (rollback/admin controls `7 passed`, durability restart/dead-letter `4 passed`, failure-mode subset `3 passed`, auth-boundary + Teams verifier subset `12 passed`) and refreshed release evidence files.
+- `2026-02-28`: Added `L01` automated AP end-to-end baseline artifact (`/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/PILOT_E2E_EVIDENCE.md`) with `tests/test_e2e_ap_flow.py` result (`6 passed`).
 
 ## Archive Protocol
 

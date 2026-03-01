@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
-from main import app
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
+from main import _runtime_surface_contract, app
 
 
 def _mounted_paths() -> set[str]:
@@ -15,7 +22,7 @@ def _mounted_paths() -> set[str]:
 
 
 def test_strict_profile_blocks_legacy_surfaces(monkeypatch):
-    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("ENV", "development")
     monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
@@ -27,12 +34,6 @@ def test_strict_profile_blocks_legacy_surfaces(monkeypatch):
         assert body["detail"] == "endpoint_disabled_in_ap_v1_profile"
         assert "/email/tasks" not in _mounted_paths()
 
-        analytics_blocked = client.get("/analytics/dashboard/default")
-        assert analytics_blocked.status_code == 404
-        analytics_body = analytics_blocked.json()
-        assert analytics_body["detail"] == "endpoint_disabled_in_ap_v1_profile"
-        assert analytics_body["reason"] == "non_canonical_surface_disabled"
-
         outlook_blocked = client.get("/outlook/status/user-1")
         assert outlook_blocked.status_code == 404
         outlook_body = outlook_blocked.json()
@@ -43,11 +44,23 @@ def test_strict_profile_blocks_legacy_surfaces(monkeypatch):
         assert canonical.status_code == 200
 
 
-def test_production_legacy_override_ignored_without_explicit_allow(monkeypatch):
+def test_strict_profile_contract_ignores_legacy_runtime_flags(monkeypatch):
     monkeypatch.setenv("ENV", "production")
-    monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
+    monkeypatch.setenv("AP_V1_STRICT_SURFACES", "false")
     monkeypatch.setenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", "true")
-    monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
+    monkeypatch.setenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", "true")
+
+    contract = _runtime_surface_contract()
+    assert contract["production_like"] is True
+    assert contract["strict_requested"] is True
+    assert contract["strict_forced_on_in_production"] is False
+    assert contract["strict_effective"] is True
+    assert contract["legacy_override_requested"] is True
+    assert contract["legacy_override_effective"] is False
+    warnings = set(contract.get("warnings") or [])
+    assert "legacy_override_ignored_strict_ap_v1" in warnings
+    assert "strict_disable_request_ignored_strict_ap_v1" in warnings
+    assert "allow_legacy_in_production_ignored_strict_ap_v1" in warnings
 
     with TestClient(app) as client:
         response = client.get("/email/tasks")
@@ -57,24 +70,19 @@ def test_production_legacy_override_ignored_without_explicit_allow(monkeypatch):
         assert "/email/tasks" not in _mounted_paths()
 
         mounted = _mounted_paths()
-        assert "/analytics/dashboard/{organization_id}" not in mounted
         assert "/outlook/status/{user_id}" not in mounted
 
 
-def test_legacy_surface_override_reenables_access_with_explicit_production_allow(monkeypatch):
+def test_legacy_surface_override_does_not_restore_deleted_legacy_routes(monkeypatch):
     monkeypatch.setenv("ENV", "production")
-    monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
+    monkeypatch.setenv("AP_V1_STRICT_SURFACES", "false")
     monkeypatch.setenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", "true")
     monkeypatch.setenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", "true")
 
     with TestClient(app) as client:
         response = client.get("/email/tasks")
-        assert response.status_code != 404
-        assert "/email/tasks" in _mounted_paths()
-
-        mounted = _mounted_paths()
-        assert "/analytics/dashboard/{organization_id}" in mounted
-        assert "/outlook/status/{user_id}" in mounted
+        assert response.status_code == 404
+        assert "/email/tasks" not in _mounted_paths()
 
 
 def test_strict_profile_filters_legacy_paths_from_openapi(monkeypatch):
@@ -89,6 +97,5 @@ def test_strict_profile_filters_legacy_paths_from_openapi(monkeypatch):
         paths = response.json()["paths"]
         assert "/email/tasks" not in paths
         assert "/audit/trail" not in paths
-        assert "/analytics/dashboard/{organization_id}" not in paths
         assert "/outlook/status/{user_id}" not in paths
         assert "/api/agent/intents/preview" in paths

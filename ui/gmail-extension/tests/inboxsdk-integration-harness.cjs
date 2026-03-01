@@ -173,7 +173,14 @@ class FakeEventTarget {
       evt.preventDefault = function preventDefault() { evt.defaultPrevented = true; };
     }
     for (const handler of list) {
-      await handler(evt);
+      try {
+        const result = handler(evt);
+        if (result && typeof result.then === 'function') {
+          result.catch(() => {});
+        }
+      } catch (_) {
+        // Keep harness dispatch resilient; caller assertions inspect rendered side effects.
+      }
     }
     return !evt.defaultPrevented;
   }
@@ -199,6 +206,8 @@ class FakeElement extends FakeEventTarget {
     this._queryCache = new Map();
     this.removed = false;
     this.src = '';
+    this._selectionStart = 0;
+    this._selectionEnd = 0;
   }
 
   _resetParseCache() {
@@ -350,6 +359,19 @@ class FakeElement extends FakeEventTarget {
     if (this.disabled) return false;
     return this.dispatchEvent({ type: 'click' });
   }
+
+  focus() {
+    return true;
+  }
+
+  blur() {
+    return true;
+  }
+
+  setSelectionRange(start, end) {
+    this._selectionStart = Number(start) || 0;
+    this._selectionEnd = Number(end) || this._selectionStart;
+  }
 }
 
 class FakeDocument extends FakeEventTarget {
@@ -397,6 +419,7 @@ function createWindowLike(document) {
     location: { hash: '' },
     navigator: { userAgent: 'node-test' },
     prompt: () => '',
+    confirm: () => true,
     open: () => null,
     setTimeout: trackedSetTimeout,
     clearTimeout,
@@ -416,7 +439,14 @@ function createWindowLike(document) {
       const key = String(evt.type || '');
       const list = [...(listeners.get(key) || [])];
       for (const handler of list) {
-        await handler(evt);
+        try {
+          const result = handler(evt);
+          if (result && typeof result.then === 'function') {
+            result.catch(() => {});
+          }
+        } catch (_) {
+          // ignore in harness dispatch
+        }
       }
       return true;
     },
@@ -442,12 +472,15 @@ globalThis.__clearledgrInboxsdkLayerTestApi = {
     sdk,
     queueManager,
     globalSidebarEl,
+    workSidebarEl,
+    opsSidebarEl,
     currentThreadId,
     selectedItemId,
     queueState: Array.isArray(queueState) ? [...queueState] : [],
     scanStatus: scanStatus ? { ...scanStatus } : {},
   }),
   renderSidebar,
+  renderAllSidebars,
   renderThreadContext,
   registerThreadHandler,
   registerThreadRowLabels,
@@ -489,6 +522,8 @@ function createMockQueueManagerClass(records, options = {}) {
         syncAgentSessions: 0,
         syncQueueWithBackend: 0,
         requestApproval: 0,
+        approveAndPost: 0,
+        submitBudgetDecision: 0,
         prepareVendorFollowup: 0,
         nudgeApproval: 0,
         retryFailedPost: 0,
@@ -605,6 +640,9 @@ function createMockQueueManagerClass(records, options = {}) {
 
     async verifyConfidence() {
       this.calls.verifyConfidence += 1;
+      if (typeof options.verifyConfidence === 'function') {
+        return await options.verifyConfidence(...arguments, this);
+      }
       return { confidence_pct: 96, can_post: true, mismatches: [] };
     }
 
@@ -642,6 +680,33 @@ function createMockQueueManagerClass(records, options = {}) {
     async requestApproval(item, _options = {}) {
       this.calls.requestApproval += 1;
       return { status: 'pending_approval', email_id: item?.id || item?.thread_id || 'unknown' };
+    }
+
+    async approveAndPost(item, requestOptions = {}) {
+      this.calls.approveAndPost += 1;
+      records.approveAndPostCalls = records.approveAndPostCalls || [];
+      records.approveAndPostCalls.push({ item, options: requestOptions });
+      if (typeof options.approveAndPost === 'function') {
+        return await options.approveAndPost(item, requestOptions, this);
+      }
+      return {
+        status: 'posted',
+        ap_item_id: item?.id || '',
+        erp_reference: item?.id ? `ERP-${item.id}` : null,
+      };
+    }
+
+    async submitBudgetDecision(item, decision, reason) {
+      this.calls.submitBudgetDecision += 1;
+      records.submitBudgetDecisionCalls = records.submitBudgetDecisionCalls || [];
+      records.submitBudgetDecisionCalls.push({ item, decision, reason });
+      if (typeof options.submitBudgetDecision === 'function') {
+        return await options.submitBudgetDecision(item, decision, reason, this);
+      }
+      if (decision === 'approve_override') return { status: 'approved' };
+      if (decision === 'request_budget_adjustment') return { status: 'needs_info' };
+      if (decision === 'reject') return { status: 'rejected' };
+      return { status: 'ok' };
     }
 
     async prepareVendorFollowup(item, _options = {}) {

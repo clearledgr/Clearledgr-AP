@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 
-const { loadInboxSdkLayerTestFns } = require('./inboxsdk-layer-harness.cjs');
+const { loadInboxSdkLayerTestFns, SOURCE_PATH } = require('./inboxsdk-layer-harness.cjs');
 
 const fns = loadInboxSdkLayerTestFns();
 
@@ -438,4 +439,62 @@ test('A2 batch intents expose deterministic selected/excluded reason sets', () =
   assert.match(previewCard.title, /retry recoverable failures/i);
   assert.ok(previewCard.lines.some((line) => /Selected reason:/i.test(line)));
   assert.ok(previewCard.lines.some((line) => /Excluded reason:/i.test(line)));
+});
+
+test('reason sheet defaults enforce required reasons for reject/override and optional notes for routing', () => {
+  const rejectDefaults = fns.getReasonSheetDefaults('reject');
+  assert.equal(rejectDefaults.required, true);
+  assert.ok(Array.isArray(rejectDefaults.chips));
+  assert.ok(rejectDefaults.chips.length >= 3);
+
+  const overrideDefaults = fns.getReasonSheetDefaults('approve_override');
+  assert.equal(overrideDefaults.required, true);
+  assert.ok(overrideDefaults.chips.some((chip) => /Policy exception approved/i.test(String(chip))));
+
+  const routeDefaults = fns.getReasonSheetDefaults('approval_route');
+  assert.equal(routeDefaults.required, false);
+  assert.ok(routeDefaults.chips.some((chip) => /SLA/i.test(String(chip))));
+});
+
+test('reason capture path contains no native prompt/confirm calls', () => {
+  const source = fs.readFileSync(SOURCE_PATH, 'utf8');
+  assert.doesNotMatch(source, /\bprompt\s*\(/);
+  assert.doesNotMatch(source, /\bconfirm\s*\(/);
+});
+
+test('work audit presentation maps validation failures and reason codes to operator language', () => {
+  const view = fns.getWorkAuditPresentation(
+    {
+      event_type: 'deterministic_validation_failed',
+      decision_reason: 'policy_requirement_amt_500,po_match_no_gr,confidence_field_review_required',
+      created_at: '2026-03-01T01:00:00Z',
+    },
+    { state: 'needs_approval' }
+  );
+  assert.equal(view.title, 'Validation checks failed');
+  assert.match(view.detail, /Approval required because invoice amount exceeds policy threshold/i);
+  assert.match(view.detail, /goods receipt is missing/i);
+});
+
+test('work audit presentation maps blocked retry/transition events to plain safety copy', () => {
+  const blockedRetry = fns.getWorkAuditPresentation(
+    {
+      event_type: 'state_transition_rejected',
+      decision_reason: 'autonomous_retry_attempt',
+      created_at: '2026-03-01T01:05:00Z',
+    },
+    { state: 'needs_approval' }
+  );
+  const blockedIllegal = fns.getWorkAuditPresentation(
+    {
+      event_type: 'state_transition_rejected',
+      decision_reason: 'illegal_transition',
+      created_at: '2026-03-01T01:06:00Z',
+    },
+    { state: 'needs_approval' }
+  );
+  assert.equal(blockedRetry.title, 'Action blocked for safety');
+  assert.match(blockedRetry.detail, /blocked to protect workflow state/i);
+  assert.equal(blockedIllegal.title, 'Action blocked for safety');
+  assert.match(blockedIllegal.detail, /not allowed from the current invoice status/i);
 });

@@ -226,6 +226,7 @@ function getProfileUserInfo() {
 
 async function registerGmailTokenWithBackend(accessToken) {
   const backendUrl = await getBackendUrl();
+  const organizationId = await getOrganizationId();
   const profile = await getProfileUserInfo();
   const response = await fetchWithRetry(`${backendUrl}/extension/gmail/register-token`, {
     method: 'POST',
@@ -233,7 +234,8 @@ async function registerGmailTokenWithBackend(accessToken) {
     body: JSON.stringify({
       access_token: accessToken,
       expires_in: getTokenTtlSeconds(),
-      email: profile?.email || null
+      email: profile?.email || null,
+      organization_id: organizationId || 'default',
     })
   }, 1);
 
@@ -800,7 +802,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .then((payload) => sendResponse({
         success: true,
         email: payload?.email || null,
-        userId: payload?.user_id || null
+        userId: payload?.user_id || null,
+        organizationId: payload?.organization_id || 'default',
+        backendAccessToken: payload?.backend_access_token || null,
+        backendTokenType: payload?.backend_token_type || 'bearer',
+        backendExpiresIn: Number(payload?.backend_expires_in || 0) || 0,
       }))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;

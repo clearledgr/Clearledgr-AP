@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
+from clearledgr.core.finance_contracts import SkillCapabilityManifest
 from clearledgr.services.finance_skills.base import FinanceSkill
 from clearledgr.services.invoice_workflow import get_invoice_workflow
 
@@ -19,6 +20,103 @@ class APFinanceSkill(FinanceSkill):
             "retry_recoverable_failures",
         }
     )
+    _MANIFEST = SkillCapabilityManifest(
+        skill_id="ap_v1",
+        version="1.0",
+        state_machine={
+            "primary_path": [
+                "received",
+                "validated",
+                "needs_approval",
+                "approved",
+                "ready_to_post",
+                "posted_to_erp",
+                "closed",
+            ],
+            "exception_paths": [
+                ["validated", "needs_info"],
+                ["needs_approval", "rejected"],
+                ["ready_to_post", "failed_post"],
+                ["failed_post", "ready_to_post"],
+                ["needs_info", "validated"],
+            ],
+            "resubmission": {
+                "terminal_rejected": True,
+                "linkage_fields": [
+                    "supersedes_ap_item_id",
+                    "supersedes_invoice_key",
+                    "resubmission_reason",
+                ],
+            },
+        },
+        action_catalog=[
+            {
+                "intent": "route_low_risk_for_approval",
+                "class": "mutating",
+                "description": "Route eligible AP items to approval surfaces.",
+            },
+            {
+                "intent": "prepare_vendor_followups",
+                "class": "mutating",
+                "description": "Prepare vendor info-request follow-up draft with SLA safeguards.",
+            },
+            {
+                "intent": "retry_recoverable_failures",
+                "class": "mutating",
+                "description": "Retry recoverable AP posting failures via canonical resume path.",
+            },
+        ],
+        policy_pack={
+            "deterministic_prechecks": [
+                "state_guard",
+                "recoverability_guard",
+                "followup_sla_guard",
+                "followup_attempt_limit_guard",
+                "approval_eligibility_guard",
+            ],
+            "hitl_gates": [
+                "approval_required",
+                "followup_reason_capture",
+                "retry_recoverability_confirmation",
+            ],
+        },
+        evidence_schema={
+            "material_refs": [
+                "ap_item_id",
+                "email_id",
+                "audit_event_id",
+                "idempotency_key",
+                "correlation_id",
+            ],
+            "optional_refs": [
+                "draft_id",
+                "erp_reference",
+                "slack_ts",
+                "teams_message_id",
+            ],
+        },
+        adapter_bindings={
+            "email": ["gmail", "outlook"],
+            "approval": ["slack", "teams", "email"],
+            "erp": ["netsuite", "sap", "quickbooks", "xero"],
+        },
+        kpi_contract={
+            "metrics": [
+                "agentic_telemetry.straight_through_rate.rate",
+                "agentic_telemetry.human_intervention_rate.rate",
+                "on_time_approvals.rate",
+                "post_failure_rate.rate_24h",
+                "agentic_telemetry.top_blocker_reasons",
+            ],
+            "promotion_gates": {
+                "legal_transition_correctness_min": 0.99,
+                "audit_coverage_min": 0.99,
+                "idempotency_integrity_min": 0.99,
+                "operator_acceptance_min": 0.8,
+                "enabled_connector_readiness_min": 1.0,
+            },
+        },
+    )
 
     @property
     def skill_id(self) -> str:
@@ -27,6 +125,10 @@ class APFinanceSkill(FinanceSkill):
     @property
     def intents(self) -> frozenset[str]:
         return self._INTENTS
+
+    @property
+    def manifest(self) -> SkillCapabilityManifest:
+        return self._MANIFEST
 
     def policy_precheck(
         self,

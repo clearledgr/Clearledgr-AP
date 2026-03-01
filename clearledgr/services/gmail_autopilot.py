@@ -14,8 +14,6 @@ from typing import Any, Dict, Optional
 
 from clearledgr.core.database import get_db
 from clearledgr.services.gmail_api import GmailAPIClient, GmailWatchService, token_store, PUBSUB_TOPIC
-from clearledgr.core.engine import get_engine
-from clearledgr.services.ai_enhanced import EnhancedAIService
 
 logger = logging.getLogger(__name__)
 
@@ -181,11 +179,9 @@ class GmailAutopilot:
                 )
                 return
 
-            engine = get_engine()
-            ai_service = EnhancedAIService()
-
             from clearledgr.api.gmail_webhooks import process_single_email
 
+            organization_id = self._resolve_org_id(token.user_id)
             for entry in messages:
                 message_id = entry.get("id")
                 if not message_id:
@@ -195,8 +191,7 @@ class GmailAutopilot:
                         client=client,
                         message_id=message_id,
                         user_id=token.user_id,
-                        engine=engine,
-                        ai_service=ai_service,
+                        organization_id=organization_id,
                     )
                 except Exception as exc:
                     logger.warning("Autopilot email processing failed: %s", exc)
@@ -214,6 +209,15 @@ class GmailAutopilot:
                 email=token.email,
                 last_error=f"poll_failed: {exc}",
             )
+
+    def _resolve_org_id(self, user_id: str) -> str:
+        try:
+            user = self._db.get_user(user_id)
+        except Exception:
+            user = None
+        if user and user.get("organization_id"):
+            return str(user["organization_id"])
+        return "default"
 
 
 def _parse_watch_expiration(value: Optional[str]) -> Optional[str]:

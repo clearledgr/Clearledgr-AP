@@ -40,8 +40,8 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "isolation.db"))
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("AP_TEMPORAL_ENABLED", "false")
-    monkeypatch.setenv("AP_V1_STRICT_SURFACES", "false")
-    monkeypatch.setenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", "true")
+    monkeypatch.setenv("AP_V1_STRICT_SURFACES", "true")
+    monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
     _apply_runtime_surface_profile()
     db_module._DB_INSTANCE = None
     d = db_module.get_db()
@@ -270,7 +270,7 @@ def test_approval_reminder_no_duplicate(db, monkeypatch):
 def test_soft_org_guard_blocks_jwt_mismatch(db, client):
     """JWT for org-A with query ?organization_id=org-B → 403."""
     resp = client.get(
-        "/ap-advanced/retention/expiring?organization_id=org-B",
+        "/api/ops/ap-kpis?organization_id=org-B",
         headers=_auth_headers("org-A"),
     )
     assert resp.status_code == 403
@@ -285,6 +285,6 @@ def test_soft_org_guard_blocks_jwt_mismatch(db, client):
 
 def test_soft_org_guard_passes_unauthenticated(db, client):
     """No auth header + any organization_id → NOT 403 (integration callers pass through)."""
-    resp = client.get("/ap-advanced/retention/expiring?organization_id=org-B")
+    resp = client.get("/api/ops/ap-kpis?organization_id=org-B")
     # Must not be 403 (could be 200, 422, etc — anything except org_mismatch 403)
     assert resp.status_code != 403

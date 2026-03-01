@@ -24,6 +24,11 @@ class ClearledgrQueueManager {
     };
     this.authPrompted = false;
     this.authInFlight = false;
+    this.backendAuthToken = null;
+    this.backendAuthTokenExpiry = 0;
+    this.backendAuthOrgId = null;
+    this.backendAuthRequired = false;
+    this.lastBackendAuthFailureAt = 0;
     this.debugManualScan = false;
     this.autopilotStatus = null;
     this.auditCache = new Map();
@@ -437,6 +442,7 @@ class ClearledgrQueueManager {
   async init() {
     await this.loadProcessedIds();
     this.runtimeConfig = await this.getSyncConfig();
+    await this.loadBackendAuthFromStorage();
     this.debugManualScan = Boolean(this.runtimeConfig?.debugManualScan);
 
     if (!this.runtimeConfig.valid) {
@@ -448,9 +454,9 @@ class ClearledgrQueueManager {
       return;
     }
 
+    await this.ensureBackendAuthIfNeeded();
     const synced = await this.syncQueueWithBackend({ updateStatus: false });
     const autopilot = await this.fetchAutopilotStatus();
-    await this.fetchApKpis({ force: true });
     this.applyRuntimeStatus({ synced, autopilot });
     if (this.scanStatus.state === 'auth_required') {
       void this.ensureBackendAuthIfNeeded();
@@ -524,7 +530,15 @@ class ClearledgrQueueManager {
 
   async getSyncConfig() {
     const data = await new Promise((resolve) => {
-      chrome.storage.sync.get(['settings', 'backendUrl', 'organizationId', 'userEmail', 'slackChannel', 'financeLeadEmail'], resolve);
+      chrome.storage.sync.get([
+        'settings',
+        'backendUrl',
+        'organizationId',
+        'userEmail',
+        'slackChannel',
+        'financeLeadEmail',
+        'backendApiKey'
+      ], resolve);
     });
     const nested = data.settings || {};
     const globalDebugDefault =
@@ -538,6 +552,7 @@ class ClearledgrQueueManager {
       userEmail: data.userEmail || nested.userEmail || null,
       slackChannel: data.slackChannel || nested.slackChannel || null,
       financeLeadEmail: data.financeLeadEmail || nested.financeLeadEmail || null,
+      backendApiKey: data.backendApiKey || nested.backendApiKey || nested.apiKey || null,
       debugManualScan: nested.debugManualScan ?? globalDebugDefault
     };
 
@@ -549,6 +564,7 @@ class ClearledgrQueueManager {
       const validation = validator(raw);
       return {
         ...validation.settings,
+        backendApiKey: String(raw.backendApiKey || '').trim() || null,
         valid: Boolean(validation.valid),
         errors: Array.isArray(validation.errors) ? validation.errors : [],
         warnings: Array.isArray(validation.warnings) ? validation.warnings : [],
@@ -563,6 +579,9 @@ class ClearledgrQueueManager {
     const configuredBackendUrl = String(
       extensionConfig.API_URL || extensionConfig.BACKEND_URL || ''
     ).trim();
+    const configuredApiKey = String(
+      extensionConfig.BACKEND_API_KEY || extensionConfig.API_KEY || ''
+    ).trim();
     const backendUrl = String(raw.backendUrl || configuredBackendUrl || 'http://127.0.0.1:8000')
       .trim()
       .replace(/\/+$/, '');
@@ -572,6 +591,7 @@ class ClearledgrQueueManager {
       userEmail: raw.userEmail || null,
       slackChannel: String(raw.slackChannel || '#finance-approvals').trim(),
       financeLeadEmail: raw.financeLeadEmail || null,
+      backendApiKey: String(raw.backendApiKey || configuredApiKey || '').trim() || null,
       confidenceThreshold: 0.85,
       amountAnomalyThreshold: 0.35,
       erpWritebackEnabled: false,
@@ -580,6 +600,108 @@ class ClearledgrQueueManager {
       errors: backendUrl ? [] : ['Backend URL is required.'],
       warnings: []
     };
+  }
+
+  async loadBackendAuthFromStorage() {
+    const stored = await chrome.storage.local.get([
+      'clearledgr_backend_access_token',
+      'clearledgr_backend_token_expiry',
+      'clearledgr_backend_org_id'
+    ]);
+    this.backendAuthToken = String(stored.clearledgr_backend_access_token || '').trim() || null;
+    this.backendAuthTokenExpiry = Number(stored.clearledgr_backend_token_expiry || 0) || 0;
+    this.backendAuthOrgId = String(stored.clearledgr_backend_org_id || '').trim() || null;
+    if (!this.isBackendAuthTokenValid()) {
+      this.clearBackendAuthToken();
+    }
+  }
+
+  async persistBackendAuthToken() {
+    if (!this.backendAuthToken) {
+      await chrome.storage.local.remove([
+        'clearledgr_backend_access_token',
+        'clearledgr_backend_token_expiry',
+        'clearledgr_backend_org_id'
+      ]);
+      return;
+    }
+    await chrome.storage.local.set({
+      clearledgr_backend_access_token: this.backendAuthToken,
+      clearledgr_backend_token_expiry: this.backendAuthTokenExpiry || 0,
+      clearledgr_backend_org_id: this.backendAuthOrgId || (this.runtimeConfig?.organizationId || 'default'),
+    });
+  }
+
+  clearBackendAuthToken() {
+    this.backendAuthToken = null;
+    this.backendAuthTokenExpiry = 0;
+    this.backendAuthOrgId = null;
+    void chrome.storage.local.remove([
+      'clearledgr_backend_access_token',
+      'clearledgr_backend_token_expiry',
+      'clearledgr_backend_org_id'
+    ]);
+  }
+
+  isBackendAuthTokenValid() {
+    if (!this.backendAuthToken) return false;
+    if (!this.backendAuthTokenExpiry) return true;
+    return Date.now() < Math.max(0, this.backendAuthTokenExpiry - 15_000);
+  }
+
+  hasBackendCredential() {
+    return this.isBackendAuthTokenValid() || Boolean(this.runtimeConfig?.backendApiKey);
+  }
+
+  getBackendAuthHeaders(existingHeaders = {}) {
+    const headers = {};
+    if (existingHeaders && typeof existingHeaders === 'object') {
+      Object.entries(existingHeaders).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) headers[key] = value;
+      });
+    }
+    if (!headers['Authorization'] && this.isBackendAuthTokenValid()) {
+      headers['Authorization'] = `Bearer ${this.backendAuthToken}`;
+    }
+    if (!headers['X-API-Key'] && this.runtimeConfig?.backendApiKey) {
+      headers['X-API-Key'] = this.runtimeConfig.backendApiKey;
+    }
+    return headers;
+  }
+
+  async backendFetch(url, init = {}, options = {}) {
+    const retryOnAuth = options?.retryOnAuth !== false;
+    const suppressRefresh = options?.suppressRefresh === true;
+    if (!suppressRefresh && !this.hasBackendCredential() && !this.authInFlight) {
+      await this.ensureBackendAuth({ force: false, interactive: false });
+    }
+    const rawHeaders = (init && typeof init === 'object' && init.headers) ? init.headers : {};
+    const headers = this.getBackendAuthHeaders(rawHeaders);
+    const requestInit = {
+      ...(init || {}),
+      headers
+    };
+    const response = await fetch(url, requestInit);
+    if (response.status !== 401) {
+      this.backendAuthRequired = false;
+      return response;
+    }
+
+    this.backendAuthRequired = true;
+    this.clearBackendAuthToken();
+
+    if (!retryOnAuth || suppressRefresh || this.authInFlight) {
+      return response;
+    }
+
+    const authResult = await this.ensureBackendAuth({ force: true, interactive: false });
+    if (!authResult?.success || !this.hasBackendCredential()) return response;
+
+    const retryHeaders = this.getBackendAuthHeaders(rawHeaders);
+    return fetch(url, {
+      ...(init || {}),
+      headers: retryHeaders
+    });
   }
 
   setScanStatus(update) {
@@ -613,7 +735,6 @@ class ClearledgrQueueManager {
     this.backendSyncTimer = setInterval(async () => {
       const synced = await this.syncQueueWithBackend({ updateStatus: false });
       const autopilot = await this.fetchAutopilotStatus();
-      await this.fetchApKpis({ force: true });
       this.applyRuntimeStatus({ synced, autopilot });
       await this.syncAgentSessions();
     }, 30000);
@@ -626,7 +747,6 @@ class ClearledgrQueueManager {
       this.setScanStatus({ state: 'scanning', mode: 'backend_api', error: null });
       const backendSynced = await this.syncQueueWithBackend({ updateStatus: false });
       const autopilot = await this.fetchAutopilotStatus();
-      await this.fetchApKpis({ force: true });
       this.applyRuntimeStatus({
         synced: backendSynced,
         autopilot,
@@ -695,7 +815,7 @@ class ClearledgrQueueManager {
 
     const request = (async () => {
       try {
-        const response = await fetch(
+        const response = await this.backendFetch(
           `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/sources`,
           { method: 'GET' }
         );
@@ -729,7 +849,7 @@ class ClearledgrQueueManager {
       try {
         const url = new URL(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/context`);
         if (refresh) url.searchParams.set('refresh', 'true');
-        const response = await fetch(url.toString(), { method: 'GET' });
+        const response = await this.backendFetch(url.toString(), { method: 'GET' });
         if (!response.ok) return null;
         const payload = await response.json();
         this.contextByItem.set(apItemId, payload || null);
@@ -763,7 +883,7 @@ class ClearledgrQueueManager {
     const request = (async () => {
       try {
         const org = encodeURIComponent(this.runtimeConfig.organizationId || 'default');
-        const response = await fetch(`${this.runtimeConfig.backendUrl}/api/ops/ap-kpis?organization_id=${org}`, {
+        const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ops/ap-kpis?organization_id=${org}`, {
           method: 'GET'
         });
         if (!response.ok) return this.kpiSnapshot;
@@ -788,7 +908,7 @@ class ClearledgrQueueManager {
     try {
       const org = encodeURIComponent(this.runtimeConfig.organizationId || 'default');
       const worklistUrl = `${this.runtimeConfig.backendUrl}/extension/worklist?organization_id=${org}`;
-      const worklistResponse = await fetch(worklistUrl, { method: 'GET' });
+      const worklistResponse = await this.backendFetch(worklistUrl, { method: 'GET' });
 
       let items = [];
       if (worklistResponse.ok) {
@@ -796,7 +916,7 @@ class ClearledgrQueueManager {
         items = Array.isArray(payload?.items) ? payload.items.map((item) => this.normalizeWorklistItem(item)) : [];
       } else {
         const pipelineUrl = `${this.runtimeConfig.backendUrl}/extension/pipeline?organization_id=${org}`;
-        const pipelineResponse = await fetch(pipelineUrl, { method: 'GET' });
+        const pipelineResponse = await this.backendFetch(pipelineUrl, { method: 'GET' });
         if (!pipelineResponse.ok) throw new Error(`pipeline_${pipelineResponse.status}`);
         const pipeline = await pipelineResponse.json();
         Object.values(pipeline || {}).forEach((group) => {
@@ -826,7 +946,7 @@ class ClearledgrQueueManager {
   async fetchAutopilotStatus() {
     if (!this.runtimeConfig?.backendUrl) return null;
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/api/ops/autopilot-status`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ops/autopilot-status`, {
         method: 'GET'
       });
       if (!response.ok) return null;
@@ -856,6 +976,17 @@ class ClearledgrQueueManager {
       if (!Number.isNaN(ts)) {
         mergedExtra.lastScanAt = ts;
       }
+    }
+
+    if (this.backendAuthRequired) {
+      this.setScanStatus({
+        state: 'auth_required',
+        mode: 'backend_auth',
+        error: 'auth_required',
+        ...mergedExtra
+      });
+      void this.ensureBackendAuthIfNeeded();
+      return;
     }
 
     if (!synced) {
@@ -928,34 +1059,63 @@ class ClearledgrQueueManager {
   }
 
   async ensureBackendAuthIfNeeded() {
-    return this.ensureBackendAuth({ force: false });
+    return this.ensureBackendAuth({ force: false, interactive: false });
   }
 
   async authorizeGmailNow() {
-    return this.ensureBackendAuth({ force: true });
+    return this.ensureBackendAuth({ force: true, interactive: true });
   }
 
-  async ensureBackendAuth({ force = false } = {}) {
+  async ensureBackendAuth({ force = false, interactive = false } = {}) {
     if (!this.runtimeConfig?.valid || this.authInFlight) return { success: false, error: 'auth_unavailable' };
     if (!force && this.authPrompted) return { success: false, error: 'auth_already_prompted' };
     if (!force) this.authPrompted = true;
     this.authInFlight = true;
+    let authCompleted = false;
 
     try {
-      const result = await this.ensureGmailAuth(true);
+      const result = await this.ensureGmailAuth(Boolean(interactive || force));
       if (!result?.success) return result || { success: false, error: 'auth_required' };
+
+      const backendAccessToken = String(result?.backendAccessToken || '').trim();
+      if (backendAccessToken) {
+        const expiresInSeconds = Number(result?.backendExpiresIn || 0) || 3600;
+        this.backendAuthToken = backendAccessToken;
+        this.backendAuthTokenExpiry = Date.now() + Math.max(60, expiresInSeconds) * 1000;
+        this.backendAuthOrgId = String(result?.organizationId || this.runtimeConfig?.organizationId || 'default').trim();
+        await this.persistBackendAuthToken();
+      }
+
+      if (!this.hasBackendCredential()) {
+        this.backendAuthRequired = true;
+        this.lastBackendAuthFailureAt = Date.now();
+        return { success: false, error: 'backend_auth_token_missing' };
+      }
+
+      this.backendAuthRequired = false;
 
       this.authPrompted = false;
       const synced = await this.syncQueueWithBackend({ updateStatus: false });
       const autopilot = await this.fetchAutopilotStatus();
-      await this.fetchApKpis({ force: true });
       this.applyRuntimeStatus({
         synced,
         autopilot,
         extra: { lastScanAt: Date.now() }
       });
-      return { success: true };
+      authCompleted = true;
+      return {
+        success: true,
+        backendAccessToken: this.backendAuthToken || null,
+        organizationId: this.backendAuthOrgId || (this.runtimeConfig?.organizationId || 'default')
+      };
     } finally {
+      if (!authCompleted) {
+        this.lastBackendAuthFailureAt = Date.now();
+        this.backendAuthRequired = true;
+        if (!force) {
+          this.authPrompted = false;
+        }
+      }
       this.authInFlight = false;
     }
   }
@@ -963,7 +1123,6 @@ class ClearledgrQueueManager {
   async refreshQueue() {
     const synced = await this.syncQueueWithBackend({ updateStatus: false });
     const autopilot = await this.fetchAutopilotStatus();
-    await this.fetchApKpis({ force: true });
     this.applyRuntimeStatus({
       synced,
       autopilot,
@@ -985,7 +1144,7 @@ class ClearledgrQueueManager {
     const request = (async () => {
       try {
         const url = `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/audit`;
-        const response = await fetch(url, { method: 'GET' });
+        const response = await this.backendFetch(url, { method: 'GET' });
         if (!response.ok) return [];
         const payload = await response.json();
         const events = Array.isArray(payload?.events) ? payload.events : [];
@@ -1021,7 +1180,7 @@ class ClearledgrQueueManager {
 
     const scope = this.buildAgentScope(item);
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1047,7 +1206,7 @@ class ClearledgrQueueManager {
   async fetchAgentSession(sessionId) {
     if (!sessionId || !this.runtimeConfig?.backendUrl) return null;
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}`, {
         method: 'GET'
       });
       if (!response.ok) return null;
@@ -1060,7 +1219,7 @@ class ClearledgrQueueManager {
   async submitAgentResult(sessionId, commandId, status, resultPayload) {
     if (!sessionId || !commandId || !this.runtimeConfig?.backendUrl) return null;
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/results`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/results`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1085,7 +1244,7 @@ class ClearledgrQueueManager {
       workflowId: payload.workflow_id || scopeContext.workflowId
     });
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/commands`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/commands`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1116,7 +1275,7 @@ class ClearledgrQueueManager {
       workflowId: command.workflow_id || scopeContext.workflowId
     });
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/commands`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/commands`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1146,7 +1305,7 @@ class ClearledgrQueueManager {
       workflowId: payload.workflow_id || scopeContext.workflowId
     });
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/commands/preview`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/commands/preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1181,7 +1340,7 @@ class ClearledgrQueueManager {
       workflowId
     });
     try {
-      const response = await fetch(
+      const response = await this.backendFetch(
         `${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/macros/${encodeURIComponent(macroName)}`,
         {
           method: 'POST',
@@ -1359,7 +1518,7 @@ class ClearledgrQueueManager {
       invoice_number: item.invoice_number || '',
     };
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/verify-confidence`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/verify-confidence`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1388,7 +1547,7 @@ class ClearledgrQueueManager {
       extraction.override_justification = overrideJustification;
     }
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/approve-and-post`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/approve-and-post`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1419,7 +1578,7 @@ class ClearledgrQueueManager {
   async getGlSuggestions(item) {
     if (!item || !this.runtimeConfig?.backendUrl) return null;
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/suggestions/gl-code`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/suggestions/gl-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1437,7 +1596,7 @@ class ClearledgrQueueManager {
   async getVendorSuggestions(item) {
     if (!item || !this.runtimeConfig?.backendUrl) return null;
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/suggestions/vendor`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/suggestions/vendor`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1483,7 +1642,7 @@ class ClearledgrQueueManager {
         : undefined,
     };
 
-    const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/submit-for-approval`, {
+    const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/submit-for-approval`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -1501,7 +1660,7 @@ class ClearledgrQueueManager {
   async nudgeApproval(item, { message = '' } = {}) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/approval-nudge`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/approval-nudge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1553,7 +1712,7 @@ class ClearledgrQueueManager {
     };
 
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/api/agent/intents/execute`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/intents/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(executePayload),
@@ -1601,7 +1760,7 @@ class ClearledgrQueueManager {
         `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/retry-post`
       );
       url.searchParams.set('organization_id', orgId);
-      const response = await fetch(url.toString(), {
+      const response = await this.backendFetch(url.toString(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -1676,7 +1835,7 @@ class ClearledgrQueueManager {
   } = {}) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/finance-summary-share`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/finance-summary-share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1718,7 +1877,7 @@ class ClearledgrQueueManager {
     };
 
     try {
-      const response = await fetch(`${this.runtimeConfig.backendUrl}/extension/budget-decision`, {
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/budget-decision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -1768,7 +1927,7 @@ class ClearledgrQueueManager {
   async mergeItems(targetItemId, sourceItemId, actorId = 'gmail_user', reason = 'manual_merge') {
     if (!targetItemId || !sourceItemId || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
     try {
-      const response = await fetch(
+      const response = await this.backendFetch(
         `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(targetItemId)}/merge`,
         {
           method: 'POST',
@@ -1792,7 +1951,7 @@ class ClearledgrQueueManager {
   async splitItem(apItemId, sources, actorId = 'gmail_user', reason = 'manual_split') {
     if (!apItemId || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
     try {
-      const response = await fetch(
+      const response = await this.backendFetch(
         `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/split`,
         {
           method: 'POST',

@@ -18,6 +18,7 @@ from clearledgr.core.launch_controls import (
     get_erp_posting_block_reason,
 )
 from clearledgr.integrations.erp_router import Bill, get_erp_connection, post_bill
+from clearledgr.services.erp.contracts import get_erp_bill_adapter
 from clearledgr.services.browser_agent import BrowserAgentService, get_browser_agent_service
 from clearledgr.services.erp_connector_strategy import get_erp_connector_strategy
 
@@ -695,6 +696,10 @@ async def post_bill_api_first(
         connection_present=connection_present,
     )
     connector_capability = strategy.resolve(str(route_plan.get("erp_type") or detected_erp_type))
+    adapter = get_erp_bill_adapter(
+        erp_type=str(route_plan.get("erp_type") or detected_erp_type),
+        post_handler=post_bill,
+    )
 
     resolved_ap_item_id = _resolve_ap_item_id(
         resolved_db,
@@ -781,12 +786,30 @@ async def post_bill_api_first(
     )
 
     if connector_capability.supports_api_post_bill and connection_present:
-        api_result = await post_bill(
-            organization_id,
-            bill,
-            ap_item_id=resolved_ap_item_id,
-            idempotency_key=idempotency_key or attempt_key,
+        validation = adapter.validate(
+            {
+                "invoice_number": invoice_number or bill.invoice_number,
+                "vendor_name": vendor_name or bill.vendor_name,
+                "amount": amount if amount is not None else bill.amount,
+                "currency": currency or bill.currency,
+                "ap_item_id": resolved_ap_item_id,
+            }
         )
+        if not validation.get("ok"):
+            api_result = {
+                "status": "error",
+                "erp": route_plan.get("erp_type"),
+                "reason": str(validation.get("reason") or "validation_failed"),
+                "validation": validation,
+                "idempotency_key": idempotency_key or attempt_key,
+            }
+        else:
+            api_result = await adapter.post(
+                organization_id,
+                bill,
+                ap_item_id=resolved_ap_item_id,
+                idempotency_key=idempotency_key or attempt_key,
+            )
     else:
         api_result = {
             "status": "skipped",

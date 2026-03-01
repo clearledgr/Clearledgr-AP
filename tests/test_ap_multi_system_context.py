@@ -9,7 +9,6 @@ if str(ROOT) not in sys.path:
 
 from clearledgr.api.ap_items import _build_context_payload
 from clearledgr.core.database import ClearledgrDB
-from clearledgr.services.accruals import get_accruals_service
 from clearledgr.services.purchase_orders import get_purchase_order_service
 
 
@@ -47,12 +46,6 @@ def _reset_procurement() -> None:
     service._matches.clear()
     service._po_by_number.clear()
     service._po_by_vendor.clear()
-
-
-def _reset_payroll() -> None:
-    service = get_accruals_service("default")
-    service._accruals.clear()
-    service._schedules.clear()
 
 
 def test_context_links_bank_and_spreadsheet_sources(tmp_path: Path):
@@ -162,15 +155,7 @@ def test_context_links_procurement_source_with_po_match(tmp_path: Path):
 
 
 def test_context_links_payroll_source(tmp_path: Path):
-    _reset_payroll()
     db = _make_db(tmp_path)
-
-    payroll = get_accruals_service("default")
-    payroll.create_payroll_accrual(
-        payroll_period="2026-02",
-        amount=4200.0,
-        vendor_name="Google",
-    )
 
     item = _create_item(
         db,
@@ -183,10 +168,10 @@ def test_context_links_payroll_source(tmp_path: Path):
     sources = db.list_ap_item_sources(item["id"])
     source_types = {str(row.get("source_type")) for row in sources}
 
-    assert context["payroll"]["count"] >= 1
-    assert context["approvals"]["payroll"]["count"] >= 1
-    assert "payroll" in source_types
-    assert context["web"]["connector_coverage"]["payroll"] is True
+    assert context["payroll"]["count"] == 0
+    assert context["approvals"]["payroll"]["count"] == 0
+    assert "payroll" not in source_types
+    assert context["web"]["connector_coverage"]["payroll"] is False
 
 
 def test_context_budget_widget_exposes_decision_flags(tmp_path: Path):

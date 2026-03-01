@@ -8,6 +8,8 @@ import { ClearledgrQueueManager } from '../queue-manager.js';
 const APP_ID = 'sdk_Clearledgr2026_dc12c60472';
 const INIT_KEY = '__clearledgr_ap_v1_inboxsdk_initialized';
 const LOGO_PATH = 'icons/icon48.png';
+const SIDEBAR_MODE_WORK = 'work';
+const STORAGE_ACTIVE_AP_ITEM_ID = 'clearledgr_active_ap_item_id';
 
 const STATE_LABELS = {
   received: 'Received',
@@ -38,6 +40,8 @@ const STATE_COLORS = {
 let sdk = null;
 let queueManager = null;
 let globalSidebarEl = null;
+let workSidebarEl = null;
+let opsSidebarEl = null;
 let currentThreadId = null;
 let selectedItemId = null;
 let queueState = [];
@@ -78,6 +82,7 @@ let batchOpsPolicyState = {
   amountThreshold: '',
   selectionPreset: 'queue_order'
 };
+let sidebarMode = SIDEBAR_MODE_WORK;
 let toastTimer = null;
 let rowDecorated = new Set();
 // Holds { to, subject, body } when a draft-reply is initiated; consumed by the compose handler.
@@ -87,6 +92,70 @@ let auditState = {
   loading: false,
   events: []
 };
+
+/**
+ * @typedef {Object} ReasonSheetState
+ * @property {string} actionType
+ * @property {boolean} required
+ * @property {string[]} chips
+ * @property {string} defaultValue
+ */
+
+/**
+ * @typedef {Object} WorkPanelViewModel
+ * @property {string} statusLabel
+ * @property {string} subtitle
+ * @property {string | null} activeItemId
+ * @property {string} decisionSummary
+ * @property {string[]} quickActions
+ */
+
+/**
+ * @typedef {Object} OpsPanelViewModel
+ * @property {string} statusLabel
+ * @property {number} queueSize
+ * @property {number} pendingApprovals
+ * @property {boolean} hasAuditEvents
+ */
+
+function activateSidebarContext(sidebarEl, mode = SIDEBAR_MODE_WORK) {
+  globalSidebarEl = sidebarEl || null;
+  sidebarMode = SIDEBAR_MODE_WORK;
+}
+
+function bindSidebarContext(sidebarEl, mode = SIDEBAR_MODE_WORK) {
+  if (!sidebarEl || sidebarEl.__clContextBound) return;
+  const activate = () => activateSidebarContext(sidebarEl, mode);
+  ['click', 'input', 'change', 'focusin', 'keydown'].forEach((eventName) => {
+    sidebarEl.addEventListener(eventName, activate, true);
+  });
+  sidebarEl.__clContextBound = true;
+}
+
+function readLocalStorage(key) {
+  try {
+    if (typeof window !== 'undefined' && window?.localStorage) {
+      return String(window.localStorage.getItem(key) || '').trim();
+    }
+  } catch (_) {
+    return '';
+  }
+  return '';
+}
+
+function writeLocalStorage(key, value) {
+  try {
+    if (typeof window !== 'undefined' && window?.localStorage) {
+      if (value === null || value === undefined || String(value).trim() === '') {
+        window.localStorage.removeItem(key);
+      } else {
+        window.localStorage.setItem(key, String(value).trim());
+      }
+    }
+  } catch (_) {
+    // best-effort local persistence only
+  }
+}
 
 function getAssetUrl(path) {
   try {
@@ -232,6 +301,196 @@ function prettifyEventType(value) {
   return String(value)
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function normalizeAuditEventType(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]+/g, '_');
+}
+
+function isAuditReasonCode(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return false;
+  return /^[a-z0-9_-]+$/.test(text);
+}
+
+function parseAuditReasonCodes(value) {
+  const text = String(value || '').trim();
+  if (!text) return [];
+  const parts = text.split(',').map((part) => part.trim().toLowerCase()).filter(Boolean);
+  if (!parts.length || !parts.every((part) => isAuditReasonCode(part))) return [];
+  return parts;
+}
+
+function getAuditReasonLabel(code) {
+  const labels = {
+    policy_requirement_amt_500: 'Approval required because invoice amount exceeds policy threshold.',
+    po_match_no_gr: 'PO/GR check failed because goods receipt is missing.',
+    confidence_field_review_required: 'Some extracted fields need human review before posting.',
+    route_for_approval: 'Approval request was sent to the approver channel.',
+    autonomous_retry_attempt: 'Automatic retry was paused until required steps are complete.',
+    autonomous_retry_failed: 'Automatic retry failed and requires manual follow-up.',
+    autonomous_retry_succeeded: 'Automatic retry completed successfully.',
+    approval_nudge: 'Approval reminder was sent.',
+    approval_nudge_auto_4h: 'Agent sent an automatic reminder after 4 hours pending.',
+    approval_nudge_auto_24h: 'Agent escalated a reminder after 24 hours pending.',
+    illegal_transition: 'Requested action is not allowed for the current invoice status.',
+    browser_session_created: 'Backup ERP posting route is ready if needed.',
+  };
+  return labels[code] || prettifyEventType(code);
+}
+
+function formatAuditReasonText(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const codes = parseAuditReasonCodes(raw);
+  if (!codes.length) return raw;
+  return codes.map((code) => getAuditReasonLabel(code)).join(' ');
+}
+
+function getWorkAuditFallbackPresentation(event, item) {
+  const eventType = normalizeAuditEventType(event?.event_type || event?.eventType || '');
+  const payload = getAuditEventPayload(event);
+  const reasonRaw = String(
+    event?.decision_reason
+    || event?.reason
+    || payload?.reason
+    || payload?.error_message_redacted
+    || payload?.error_message
+    || ''
+  ).trim();
+  const reasonText = formatAuditReasonText(reasonRaw);
+  if (eventType === 'deterministic_validation_failed') {
+    return {
+      title: 'Validation checks failed',
+      detail: reasonText || 'Invoice failed one or more validation checks.',
+    };
+  }
+  if (eventType === 'browser_session_created') {
+    return {
+      title: 'Backup ERP route ready',
+      detail: reasonText || 'If direct ERP posting fails, backup browser posting is ready.',
+    };
+  }
+  if (eventType === 'approval_routed_from_extension' || eventType === 'route_for_approval') {
+    return {
+      title: 'Approval request sent',
+      detail: reasonText || 'Sent to approver in Slack or Teams.',
+    };
+  }
+  if (eventType === 'approval_nudge_failed') {
+    return {
+      title: 'Reminder not sent',
+      detail: 'Could not send approval reminder. Retry "Send reminder".',
+    };
+  }
+  if (eventType === 'approval_nudge' || eventType === 'approval_nudge_sent') {
+    return {
+      title: 'Reminder sent',
+      detail: reasonText || 'Approval reminder was sent to approvers.',
+    };
+  }
+  if (eventType === 'state_transition_rejected') {
+    const reasonCodes = parseAuditReasonCodes(reasonRaw);
+    if (reasonCodes.includes('autonomous_retry_attempt')) {
+      return {
+        title: 'Action blocked for safety',
+        detail: 'Automatic retry was blocked to protect workflow state.',
+      };
+    }
+    if (reasonCodes.includes('illegal_transition')) {
+      return {
+        title: 'Action blocked for safety',
+        detail: 'Requested action is not allowed from the current invoice status.',
+      };
+    }
+    return {
+      title: 'Action blocked for safety',
+      detail: reasonText || 'This action cannot run from the current invoice status.',
+    };
+  }
+  if (eventType === 'state_transition') {
+    const fromState = String(event?.from_state || payload?.from_state || payload?.fromState || '').trim();
+    const toState = String(event?.to_state || payload?.to_state || payload?.toState || '').trim();
+    const statusTarget = toState ? getStateLabel(toState) : 'new status';
+    return {
+      title: `Status updated: ${statusTarget}`,
+      detail: fromState && toState
+        ? `Moved from ${getStateLabel(fromState)} to ${getStateLabel(toState)}.`
+        : (reasonText || getIssueSummary(item)),
+    };
+  }
+  if (eventType === 'erp_api_failed' || eventType === 'erp_browser_fallback_failed') {
+    return {
+      title: 'ERP posting failed',
+      detail: reasonText || 'Posting did not complete.',
+    };
+  }
+  if (eventType === 'erp_api_success' || eventType === 'erp_browser_fallback_completed') {
+    return {
+      title: 'Posted to ERP',
+      detail: reasonText || 'Invoice posting completed successfully.',
+    };
+  }
+  return null;
+}
+
+function resolveOperatorAuditPresentation(event) {
+  const operator = event && typeof event.operator === 'object' ? event.operator : {};
+  const title = String(event?.operator_title || operator?.title || '').trim();
+  const detail = String(event?.operator_message || operator?.message || '').trim();
+  if (!title && !detail) return null;
+  return {
+    title: title || prettifyEventType(event?.event_type || event?.eventType || 'event'),
+    detail: formatAuditReasonText(detail),
+  };
+}
+
+function getWorkAuditPresentation(event, item) {
+  const operatorPresentation = resolveOperatorAuditPresentation(event);
+  const fallback = getWorkAuditFallbackPresentation(event, item);
+  if (operatorPresentation) {
+    const eventTypeRaw = normalizeAuditEventType(event?.event_type || event?.eventType || '');
+    const operatorTitle = String(operatorPresentation.title || '').trim().toLowerCase();
+    const rawTitle = prettifyEventType(eventTypeRaw).trim().toLowerCase();
+    const operatorLooksRaw = Boolean(operatorTitle && rawTitle && operatorTitle === rawTitle);
+    if (fallback && operatorLooksRaw) return fallback;
+    if (fallback && !operatorPresentation.detail) {
+      return { title: operatorPresentation.title, detail: fallback.detail };
+    }
+    return operatorPresentation;
+  }
+  if (fallback) return fallback;
+
+  const payload = getAuditEventPayload(event);
+  const eventType = normalizeAuditEventType(event?.event_type || event?.eventType || '');
+  const fromState = String(event?.from_state || payload?.from_state || payload?.fromState || '').trim();
+  const toState = String(event?.to_state || payload?.to_state || payload?.toState || '').trim();
+  const reason = formatAuditReasonText(String(
+    event?.decision_reason
+    || event?.reason
+    || payload?.reason
+    || payload?.error_message_redacted
+    || payload?.error_message
+    || ''
+  ).trim());
+
+  if (eventType === 'state_transition') {
+    const statusTarget = toState ? getStateLabel(toState) : 'new status';
+    return {
+      title: `Status updated: ${statusTarget}`,
+      detail: fromState && toState
+        ? `Moved from ${getStateLabel(fromState)} to ${getStateLabel(toState)}.`
+        : (reason || getIssueSummary(item)),
+    };
+  }
+
+  return {
+    title: prettifyEventType(eventType || 'event'),
+    detail: reason,
+  };
 }
 
 function describeAgentEvent(event) {
@@ -837,16 +1096,178 @@ function getAgentToolLabel(toolName) {
 }
 
 function showToast(message, tone = 'info') {
-  if (!globalSidebarEl) return;
-  const toast = globalSidebarEl.querySelector('#cl-toast');
-  if (!toast) return;
-  toast.textContent = message;
-  toast.dataset.tone = tone;
-  toast.style.display = 'block';
+  const hosts = [workSidebarEl, globalSidebarEl].filter(Boolean);
+  if (!hosts.length) return;
+  const rendered = new Set();
+  hosts.forEach((host) => {
+    if (!host || rendered.has(host)) return;
+    rendered.add(host);
+    const toast = host.querySelector('#cl-toast');
+    if (!toast) return;
+    toast.textContent = message;
+    toast.dataset.tone = tone;
+    toast.style.display = 'block';
+  });
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
-    toast.style.display = 'none';
+    rendered.forEach((host) => {
+      const toast = host.querySelector('#cl-toast');
+      if (toast) toast.style.display = 'none';
+    });
   }, 3000);
+}
+
+function getReasonSheetDefaults(actionType = 'generic') {
+  const normalized = String(actionType || '').trim().toLowerCase();
+  if (normalized === 'reject' || normalized === 'budget_reject') {
+    return {
+      chips: ['Duplicate invoice', 'Incorrect amount', 'Missing required docs', 'Out of policy'],
+      required: true,
+    };
+  }
+  if (normalized === 'approve_override' || normalized === 'budget_override') {
+    return {
+      chips: ['Reviewed with approver', 'Urgent vendor payment', 'Policy exception approved', 'Business critical'],
+      required: true,
+    };
+  }
+  if (normalized === 'budget_adjustment') {
+    return {
+      chips: ['Threshold update needed', 'Seasonal spend spike', 'Project budget exception', 'One-off adjustment'],
+      required: false,
+    };
+  }
+  if (normalized === 'approval_route' || normalized === 'approval_nudge') {
+    return {
+      chips: ['Approver unavailable', 'SLA at risk', 'Waiting on budget owner', 'Escalation requested'],
+      required: false,
+    };
+  }
+  return {
+    chips: ['Reviewed', 'Needs follow-up', 'Policy requirement', 'Other'],
+    required: true,
+  };
+}
+
+function getReasonSheetHost() {
+  return workSidebarEl || globalSidebarEl;
+}
+
+function requestActionInput({
+  title = 'Add context',
+  label = 'Reason',
+  placeholder = '',
+  defaultValue = '',
+  confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
+  required = true,
+  actionType = 'generic',
+  chips = null,
+} = {}) {
+  const sidebarHost = getReasonSheetHost();
+  if (!sidebarHost) return Promise.resolve(null);
+  const host = sidebarHost.querySelector('#cl-action-dialog');
+  if (!host) return Promise.resolve(null);
+
+  const titleEl = host.querySelector('.cl-action-dialog-title');
+  const labelEl = host.querySelector('.cl-action-dialog-label');
+  const inputEl = host.querySelector('.cl-action-dialog-input');
+  const chipsEl = host.querySelector('.cl-action-dialog-chips');
+  const hintEl = host.querySelector('.cl-action-dialog-hint');
+  const cancelEl = host.querySelector('.cl-action-dialog-cancel');
+  const confirmEl = host.querySelector('.cl-action-dialog-confirm');
+
+  if (!titleEl || !labelEl || !inputEl || !cancelEl || !confirmEl) {
+    return Promise.resolve(null);
+  }
+
+  const defaults = getReasonSheetDefaults(actionType);
+  const chipList = Array.isArray(chips) && chips.length ? chips : defaults.chips;
+  const isRequired = required !== undefined ? Boolean(required) : Boolean(defaults.required);
+
+  titleEl.textContent = title;
+  labelEl.textContent = label;
+  inputEl.value = String(defaultValue || '');
+  inputEl.placeholder = String(placeholder || '');
+  cancelEl.textContent = cancelLabel;
+  confirmEl.textContent = confirmLabel;
+  if (hintEl) {
+    hintEl.textContent = isRequired
+      ? 'A reason is required for this action.'
+      : 'Optional note. Choose a quick reason or write your own.';
+  }
+  if (chipsEl) {
+    chipsEl.innerHTML = (chipList || [])
+      .map((chip) => `<button type="button" class="cl-action-chip" data-reason-chip="${escapeHtml(chip)}">${escapeHtml(chip)}</button>`)
+      .join('');
+  }
+  host.style.display = 'flex';
+  host.setAttribute('aria-hidden', 'false');
+
+  return new Promise((resolve) => {
+    let done = false;
+    const chipButtons = chipsEl ? Array.from(chipsEl.querySelectorAll('.cl-action-chip')) : [];
+    const cleanup = () => {
+      cancelEl.removeEventListener('click', onCancel);
+      confirmEl.removeEventListener('click', onConfirm);
+      inputEl.removeEventListener('keydown', onKeyDown);
+      host.removeEventListener('click', onBackdropClick);
+      chipButtons.forEach((button) => button.removeEventListener('click', onChip));
+      host.style.display = 'none';
+      host.setAttribute('aria-hidden', 'true');
+      inputEl.value = '';
+      if (chipsEl) chipsEl.innerHTML = '';
+    };
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve(value);
+    };
+    const onCancel = () => finish(null);
+    const onConfirm = () => {
+      const value = String(inputEl.value || '').trim();
+      if (isRequired && !value) {
+        showToast(`${label} is required`, 'error');
+        inputEl.focus();
+        return;
+      }
+      finish(value);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCancel();
+      } else if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        onConfirm();
+      }
+    };
+    const onBackdropClick = (event) => {
+      if (event.target === host) onCancel();
+    };
+    const onChip = (event) => {
+      const chipValue = String(event?.currentTarget?.getAttribute('data-reason-chip') || '').trim();
+      if (!chipValue) return;
+      const existing = String(inputEl.value || '').trim();
+      inputEl.value = existing ? `${existing}; ${chipValue}` : chipValue;
+      inputEl.focus();
+      inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    };
+    cancelEl.addEventListener('click', onCancel);
+    confirmEl.addEventListener('click', onConfirm);
+    inputEl.addEventListener('keydown', onKeyDown);
+    host.addEventListener('click', onBackdropClick);
+    chipButtons.forEach((button) => button.addEventListener('click', onChip));
+    setTimeout(() => inputEl.focus(), 0);
+  });
+}
+
+function openReasonSheet(actionType = 'generic', options = {}) {
+  return requestActionInput({
+    actionType,
+    ...options,
+  });
 }
 
 function findItemByThreadId(threadId) {
@@ -884,10 +1305,11 @@ function selectItemByOffset(offset) {
   const nextItem = queueState[nextIndex];
   if (!nextItem) return;
   selectedItemId = nextItem.id || nextItem.invoice_key || null;
+  writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, selectedItemId);
   activeContextTab = 'email';
   auditState = { itemId: null, loading: false, events: [] };
   contextUiState = { itemId: null, loading: false, error: '' };
-  renderSidebar();
+  renderAllSidebars();
 }
 
 function getIssueSummary(item) {
@@ -2206,7 +2628,7 @@ function buildAgentIntentRecommendations(item, {
   if (canNudgeApprovers) {
     pushAction(
       'nudge_approvers',
-      'Nudge approver(s)',
+      'Send reminder(s)',
       'Re-send approval context to prompt a decision in Slack/Teams.',
       { buttonTone: 'secondary', score: 26 }
     );
@@ -2757,10 +3179,473 @@ function setSectionVisibility(sectionId, visible) {
   section.style.display = visible ? '' : 'none';
 }
 
+function decodeJwtPayload(token) {
+  const raw = String(token || '').trim();
+  if (!raw || !raw.includes('.')) return null;
+  const parts = raw.split('.');
+  if (parts.length < 2) return null;
+  try {
+    const payload = parts[1]
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+      .padEnd(Math.ceil(parts[1].length / 4) * 4, '=');
+    const decoded = typeof atob === 'function'
+      ? atob(payload)
+      : Buffer.from(payload, 'base64').toString('utf8');
+    return JSON.parse(decoded);
+  } catch (_) {
+    return null;
+  }
+}
+
+function getSidebarUserRole() {
+  const token = String(queueManager?.backendAuthToken || '').trim();
+  const payload = decodeJwtPayload(token);
+  return String(payload?.role || '').trim().toLowerCase();
+}
+
+function canViewOpsConsoleLink() {
+  return ['admin', 'owner', 'operator'].includes(getSidebarUserRole());
+}
+
+function buildBlockedReasons(item, contextPayload, confidencePercent) {
+  const reasons = [];
+  const exceptionCode = String(item?.exception_code || '').trim();
+  const exceptionReason = exceptionCode ? getExceptionReason(exceptionCode) : '';
+  if (exceptionCode || exceptionReason) {
+    reasons.push({
+      label: `Policy: ${(exceptionCode || 'policy_rule').replace(/_/g, ' ')}`,
+      detail: exceptionReason || 'Policy validation blocked autonomous progression.',
+    });
+  }
+
+  const poStatus = String(contextPayload?.po_match?.status || '').trim().toLowerCase();
+  if (
+    poStatus.includes('missing')
+    || poStatus.includes('no_gr')
+    || (!item?.po_number && ['validated', 'needs_approval', 'pending_approval', 'ready_to_post'].includes(String(item?.state || '').toLowerCase()))
+  ) {
+    reasons.push({
+      label: 'PO/GR missing',
+      detail: 'PO/GR requirements are not satisfied for this invoice.',
+    });
+  }
+
+  if (Boolean(item?.requires_field_review) || (Number.isFinite(confidencePercent) && confidencePercent < 95)) {
+    reasons.push({
+      label: 'Confidence below threshold',
+      detail: `Current confidence is ${Number.isFinite(confidencePercent) ? `${confidencePercent}%` : 'unknown'} (threshold 95%).`,
+    });
+  }
+
+  const budgetStatus = String(contextPayload?.budget?.status || item?.budget_status || '').trim().toLowerCase();
+  if (['critical', 'exceeded', 'blocked'].includes(budgetStatus)) {
+    reasons.push({
+      label: `Budget: ${budgetStatus.replace(/_/g, ' ')}`,
+      detail: 'Budget policy requires explicit decision before posting.',
+    });
+  }
+
+  const state = String(item?.state || '').trim().toLowerCase();
+  if (['needs_approval', 'pending_approval'].includes(state)) {
+    reasons.push({
+      label: 'Approval pending',
+      detail: 'Waiting for human approval on Slack/Teams before posting.',
+    });
+  }
+
+  const seen = new Set();
+  return reasons.filter((reason) => {
+    const key = `${reason.label}|${reason.detail}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 5);
+}
+
+function buildEvidenceChecklist(item, contextPayload, linkedSources) {
+  const sources = Array.isArray(linkedSources) ? linkedSources : [];
+  const emailLinked = Boolean(
+    getSourceThreadId(item)
+    || getSourceMessageId(item)
+    || sources.some((entry) => String(entry?.source_type || '').includes('gmail'))
+  );
+  const attachmentLinked = Boolean(
+    item?.has_attachment
+    || sources.some((entry) => String(entry?.source_type || '').includes('attachment'))
+    || Number(contextPayload?.email?.source_count || 0) > 0
+  );
+  const erpLinked = Boolean(item?.erp_reference || contextPayload?.erp?.erp_reference);
+  const approvalLinked = Boolean(
+    ['approved', 'ready_to_post', 'posted_to_erp', 'closed'].includes(String(item?.state || '').toLowerCase())
+    || Number(contextPayload?.approvals?.count || 0) > 0
+  );
+  return [
+    { label: 'Email', ok: emailLinked },
+    { label: 'Attachment', ok: attachmentLinked },
+    { label: 'ERP link', ok: erpLinked },
+    { label: 'Approval', ok: approvalLinked },
+  ];
+}
+
+function getWorkPrimaryAction(item, contextPayload) {
+  const state = String(item?.state || 'received').toLowerCase();
+  const approvalsCount = Number(contextPayload?.approvals?.count || 0);
+  if (['received', 'validated'].includes(state)) {
+    return { id: 'request_approval', label: 'Request approval' };
+  }
+  if (state === 'needs_info') {
+    return { id: 'prepare_info_request', label: 'Prepare info request' };
+  }
+  if (['needs_approval', 'pending_approval'].includes(state)) {
+    return approvalsCount > 0
+      ? { id: 'nudge_approver', label: 'Send reminder' }
+      : { id: 'send_approval_request', label: 'Send approval request' };
+  }
+  if (state === 'ready_to_post') {
+    return { id: 'preview_erp_post', label: 'Preview ERP post' };
+  }
+  if (state === 'failed_post') {
+    return { id: 'retry_erp_post', label: 'Retry ERP post' };
+  }
+  if (['posted_to_erp', 'closed'].includes(state)) {
+    return { id: 'view_erp_record', label: 'View ERP record' };
+  }
+  return null;
+}
+
+function renderWorkModeThreadContext(context, item) {
+  const items = Array.isArray(queueState) ? queueState : [];
+  const itemIndex = getPrimaryItemIndex();
+  const humanIndex = itemIndex >= 0 ? itemIndex + 1 : 1;
+  const state = String(item?.state || 'received').toLowerCase();
+  const stateLabel = getStateLabel(state);
+  const stateColor = STATE_COLORS[state] || '#0f172a';
+  const vendor = item.vendor_name || item.vendor || item.sender || 'Unknown vendor';
+  const invoiceNumber = item.invoice_number || 'N/A';
+  const dueDate = item.due_date || 'N/A';
+  const amount = formatAmount(item.amount, item.currency || 'USD');
+  const poNumber = item.po_number || null;
+  const linkedSources = getLinkedSources(item);
+  const contextPayload = item?.id ? contextState.get(item.id) || null : null;
+  const auditEvents = auditState.itemId === item.id && Array.isArray(auditState.events) ? auditState.events : [];
+  const confidenceNumber = Number(item.confidence);
+  const confidencePercent = Number.isFinite(confidenceNumber)
+    ? Math.round(Math.max(0, Math.min(1, confidenceNumber)) * 100)
+    : null;
+  const blockedReasons = buildBlockedReasons(item, contextPayload, confidencePercent);
+  const evidenceChecklist = buildEvidenceChecklist(item, contextPayload, linkedSources);
+  const primaryAction = getWorkPrimaryAction(item, contextPayload);
+  const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
+  const contextDetailRows = [
+    item?.subject ? `<div class="cl-detail-row"><span>Subject</span><span>${escapeHtml(trimText(item.subject, 120))}</span></div>` : '',
+    item?.sender ? `<div class="cl-detail-row"><span>Sender</span><span>${escapeHtml(trimText(item.sender, 96))}</span></div>` : '',
+    item?.exception_code ? `<div class="cl-detail-row"><span>Exception</span><span>${escapeHtml(String(item.exception_code).replace(/_/g, ' '))}</span></div>` : '',
+    Number.isFinite(confidencePercent) ? `<div class="cl-detail-row"><span>Confidence</span><span>${escapeHtml(`${confidencePercent}%`)}</span></div>` : '',
+  ].filter(Boolean).join('');
+  const auditRows = auditEvents.slice(0, 12).map((event) => {
+    const presentation = getWorkAuditPresentation(event, item);
+    const eventTime = formatDateTime(event.ts || event.created_at || event.createdAt);
+    return `
+      <div class="cl-audit-row">
+        <div class="cl-audit-main">
+          <span class="cl-audit-type">${escapeHtml(presentation.title)}</span>
+          ${eventTime ? `<span class="cl-audit-time">${escapeHtml(eventTime)}</span>` : ''}
+        </div>
+        ${presentation.detail ? `<div class="cl-audit-detail">${escapeHtml(presentation.detail)}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  const secondaryActions = [];
+  secondaryActions.push(`<button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-open-source-email"${canOpenSource ? '' : ' disabled'}>Open email</button>`);
+  if (['received', 'validated', 'needs_approval', 'pending_approval', 'needs_info'].includes(state)) {
+    secondaryActions.push('<button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-secondary-reject">Reject</button>');
+  }
+  if (['needs_approval', 'pending_approval'].includes(state)) {
+    if (primaryAction?.id !== 'send_approval_request') {
+      secondaryActions.push('<button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-secondary-send-approval">Send approval request</button>');
+    }
+    if (primaryAction?.id !== 'nudge_approver') {
+      secondaryActions.push('<button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-secondary-nudge">Send reminder</button>');
+    }
+  }
+  if (state === 'ready_to_post') {
+    secondaryActions.push('<button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-secondary-post-now">Post to ERP</button>');
+  }
+  if (canViewOpsConsoleLink()) {
+    secondaryActions.push('<button class="cl-btn cl-btn-secondary cl-btn-small" id="cl-open-ops-console">Open Ops Console</button>');
+  }
+
+  context.innerHTML = `
+    <div class="cl-thread-card cl-work-surface">
+      <div class="cl-navigator">
+        <div class="cl-thread-main">Invoice ${escapeHtml(String(humanIndex))} of ${escapeHtml(String(items.length || 1))}</div>
+        <div class="cl-nav-buttons">
+          <button class="cl-btn cl-btn-secondary cl-nav-btn" id="cl-prev-item" ${itemIndex <= 0 ? 'disabled' : ''}>Prev</button>
+          <button class="cl-btn cl-btn-secondary cl-nav-btn" id="cl-next-item" ${itemIndex >= items.length - 1 ? 'disabled' : ''}>Next</button>
+        </div>
+      </div>
+      <div class="cl-thread-header">
+        <div class="cl-thread-title">${escapeHtml(vendor)}</div>
+        <span class="cl-pill" style="color:${stateColor}; border-color:${stateColor};">${escapeHtml(stateLabel)}</span>
+      </div>
+      <div class="cl-thread-main">${escapeHtml(amount)} · Invoice ${escapeHtml(invoiceNumber)} · Due ${escapeHtml(dueDate)}${poNumber ? ` · PO ${escapeHtml(poNumber)}` : ' · No PO'}</div>
+      ${
+        blockedReasons.length
+          ? `
+            <div class="cl-blocked-reasons">
+              ${blockedReasons.map((reason) => `
+                <details class="cl-details cl-blocker-item">
+                  <summary><span class="cl-risk-chip cl-risk-chip-warning">${escapeHtml(reason.label)}</span></summary>
+                  <div class="cl-agent-detail">${escapeHtml(reason.detail)}</div>
+                </details>
+              `).join('')}
+            </div>
+          `
+          : '<div class="cl-agent-detail">No blocking policy checks on this invoice.</div>'
+      }
+      ${
+        ['needs_approval', 'pending_approval'].includes(state)
+          ? '<div class="cl-agent-detail">Agent auto-reminders run at 4h and 24h when approval channels are configured. Use "Send reminder" for immediate follow-up.</div>'
+          : ''
+      }
+      ${
+        primaryAction
+          ? `<button class="cl-btn cl-btn-primary cl-primary-cta" id="cl-primary-action" data-action="${escapeHtml(primaryAction.id)}">${escapeHtml(primaryAction.label)}</button>`
+          : '<div class="cl-agent-detail">No primary action required. This item is terminal.</div>'
+      }
+      <div class="cl-thread-actions">${secondaryActions.join('')}</div>
+      <details class="cl-details">
+        <summary>Evidence checklist</summary>
+        <div class="cl-detail-grid">
+          ${evidenceChecklist.map((entry) => `
+            <div class="cl-detail-row">
+              <span>${entry.ok ? '✅' : '❌'} ${escapeHtml(entry.label)}</span>
+              <span>${entry.ok ? 'Linked' : 'Missing'}</span>
+            </div>
+          `).join('')}
+        </div>
+      </details>
+      <details class="cl-details">
+        <summary>Context</summary>
+        <div class="cl-detail-grid">
+          ${contextDetailRows || '<div class="cl-agent-detail">No extra context available.</div>'}
+        </div>
+      </details>
+      <details class="cl-details">
+        <summary>View audit</summary>
+        <div class="cl-audit-list">${auditRows || '<div class="cl-empty">No audit events yet.</div>'}</div>
+      </details>
+    </div>
+  `;
+
+  const prevBtn = context.querySelector('#cl-prev-item');
+  const nextBtn = context.querySelector('#cl-next-item');
+  const openSourceBtn = context.querySelector('#cl-open-source-email');
+  const primaryBtn = context.querySelector('#cl-primary-action');
+  const rejectBtn = context.querySelector('#cl-secondary-reject');
+  const sendApprovalBtn = context.querySelector('#cl-secondary-send-approval');
+  const nudgeBtn = context.querySelector('#cl-secondary-nudge');
+  const postNowBtn = context.querySelector('#cl-secondary-post-now');
+  const openOpsBtn = context.querySelector('#cl-open-ops-console');
+
+  if (prevBtn) {
+    prevBtn.addEventListener('click', () => selectItemByOffset(-1));
+  }
+  if (nextBtn) {
+    nextBtn.addEventListener('click', () => selectItemByOffset(1));
+  }
+
+  if (openSourceBtn) {
+    openSourceBtn.addEventListener('click', () => {
+      if (openSourceBtn.disabled || !canOpenSource) {
+        showToast('Source email reference unavailable', 'error');
+        return;
+      }
+      if (!openSourceEmail(item)) {
+        showToast('Unable to open source email', 'error');
+      }
+    });
+  }
+
+  const runPrimaryAction = async (actionId) => {
+    const action = String(actionId || '').trim();
+    if (!action) return;
+
+    if (action === 'request_approval' || action === 'send_approval_request') {
+      const result = await queueManager.requestApproval(item);
+      if (result?.status === 'needs_approval' || result?.status === 'pending_approval') {
+        showToast('Approval request sent');
+      } else {
+        showToast('Unable to route approval', 'error');
+      }
+      return;
+    }
+
+    if (action === 'nudge_approver') {
+      const result = await queueManager.nudgeApproval(item);
+      if (result?.status === 'nudged') {
+        showToast('Approval reminder sent');
+      } else {
+        showToast('Unable to send reminder', 'error');
+      }
+      return;
+    }
+
+    if (action === 'prepare_info_request') {
+      const result = await openNeedsInfoDraftCompose(item);
+      if (result?.ok) {
+        showToast('Vendor info request draft prepared');
+      } else {
+        const fallback = await queueManager.prepareVendorFollowup(item, { force: true });
+        if (fallback?.status === 'prepared') {
+          showToast('Vendor follow-up draft prepared');
+        } else {
+          showToast('Unable to prepare info request', 'error');
+        }
+      }
+      return;
+    }
+
+    if (action === 'preview_erp_post') {
+      const sessionPayload = getPrimaryAgentSession();
+      const sessionId = String(sessionPayload?.session?.id || '').trim();
+      if (!sessionId) {
+        showToast('Agent session unavailable. Open Ops Console for retry tooling.', 'error');
+        return;
+      }
+      const preview = await queueManager.dispatchAgentMacro(sessionId, 'post_invoice_to_erp', {
+        actorId: 'gmail_user',
+        params: {
+          workflow_id: item.workflow_id || undefined,
+          invoice_number: item.invoice_number || undefined,
+          vendor_name: item.vendor_name || item.vendor || undefined,
+          amount: item.amount,
+          currency: item.currency || undefined,
+        },
+        dryRun: true,
+      });
+      if (preview) {
+        showToast('ERP post preview is ready');
+      } else {
+        showToast('Unable to preview ERP posting', 'error');
+      }
+      return;
+    }
+
+    if (action === 'retry_erp_post') {
+      const result = await queueManager.retryFailedPost(item);
+      if (result?.status === 'ready_to_post' || result?.status === 'posted' || result?.status === 'completed') {
+        showToast('ERP retry submitted');
+      } else {
+        showToast(result?.reason || 'Retry failed', 'error');
+      }
+      return;
+    }
+
+    if (action === 'view_erp_record') {
+      const erpUrl = String(contextPayload?.erp?.record_url || item?.erp_record_url || '').trim();
+      if (erpUrl) {
+        window.open(erpUrl, '_blank', 'noopener,noreferrer');
+      } else {
+        showToast('ERP reference available, but no direct record URL is linked.', 'error');
+      }
+      return;
+    }
+  };
+
+  if (primaryBtn) {
+    primaryBtn.addEventListener('click', async () => {
+      primaryBtn.disabled = true;
+      await runPrimaryAction(primaryBtn.getAttribute('data-action') || '');
+      primaryBtn.disabled = false;
+      await queueManager.refreshQueue();
+      await refreshAuditTrail(true);
+    });
+  }
+
+  if (sendApprovalBtn) {
+    sendApprovalBtn.addEventListener('click', async () => {
+      await runPrimaryAction('send_approval_request');
+      await queueManager.refreshQueue();
+      await refreshAuditTrail(true);
+    });
+  }
+  if (nudgeBtn) {
+    nudgeBtn.addEventListener('click', async () => {
+      await runPrimaryAction('nudge_approver');
+      await refreshAuditTrail(true);
+    });
+  }
+  if (postNowBtn) {
+    postNowBtn.addEventListener('click', async () => {
+      postNowBtn.disabled = true;
+      const result = await queueManager.approveAndPost(item, { override: false });
+      postNowBtn.disabled = false;
+      if (result?.status === 'posted' || result?.status === 'approved' || result?.status === 'posted_to_erp') {
+        showToast('Invoice posted to ERP');
+      } else {
+        showToast(result?.reason || 'ERP posting failed', 'error');
+      }
+      await queueManager.refreshQueue();
+      await refreshAuditTrail(true);
+    });
+  }
+  if (rejectBtn) {
+    rejectBtn.addEventListener('click', async () => {
+      const reason = await openReasonSheet('reject', {
+        title: 'Reject invoice',
+        label: 'Rejection reason',
+        placeholder: 'Reason for rejection',
+        confirmLabel: 'Reject',
+        required: true,
+      });
+      if (!reason) return;
+      window.dispatchEvent(new CustomEvent('clearledgr:reject-invoice', {
+        detail: { emailId: item.id || item.thread_id, reason },
+      }));
+    });
+  }
+  if (openOpsBtn) {
+    openOpsBtn.addEventListener('click', () => {
+      const backendBase = String(queueManager?.runtimeConfig?.backendUrl || '').replace(/\/+$/, '');
+      const org = encodeURIComponent(String(queueManager?.runtimeConfig?.organizationId || 'default'));
+      const opsUrl = backendBase ? `${backendBase}/console?org=${org}&page=ops` : `/console?org=${org}&page=ops`;
+      window.open(opsUrl, '_blank', 'noopener,noreferrer');
+    });
+  }
+
+  return true;
+}
+
+function isOpsSidebarMode() {
+  return false;
+}
+
+function renderSidebarModeSwitch() {
+  // Deprecated in split-panel UX. Kept as a no-op for compatibility.
+}
+
+function applySidebarModeVisibility() {
+  if (!globalSidebarEl) return;
+  globalSidebarEl.setAttribute('data-mode', SIDEBAR_MODE_WORK);
+  setSectionVisibility('cl-section-kpi', false);
+  setSectionVisibility('cl-section-batch', false);
+  setSectionVisibility('cl-section-audit', false);
+  setSectionVisibility('cl-section-agent', false);
+  setSectionVisibility('cl-section-current', true);
+}
+
 function renderThreadContext() {
   if (!globalSidebarEl) return;
   const context = globalSidebarEl.querySelector('#cl-thread-context');
   if (!context) return;
+  if (isOpsSidebarMode()) {
+    context.innerHTML = '';
+    setSectionVisibility('cl-section-current', false);
+    return;
+  }
 
   const item = getPrimaryItem();
   if (!item) {
@@ -2772,6 +3657,10 @@ function renderThreadContext() {
 
   if (item?.id && !(contextUiState.loading && contextUiState.itemId === item.id)) {
     void ensureItemContext(item, { refresh: false });
+  }
+
+  if (renderWorkModeThreadContext(context, item)) {
+    return;
   }
 
   const items = Array.isArray(queueState) ? queueState : [];
@@ -2791,6 +3680,7 @@ function renderThreadContext() {
   const sourceSubject = trimText(item.subject || 'Subject unavailable', 96);
   const sourceSender = trimText(item.sender || 'Sender unavailable', 84);
   const issueSummary = getIssueSummary(item);
+  const opsMode = isOpsSidebarMode();
   const linkedSources = getLinkedSources(item);
   const agentInsight = getPrimaryAgentInsight();
   const hasConflict = Boolean(item.has_context_conflict);
@@ -2809,7 +3699,6 @@ function renderThreadContext() {
   const correctionHints = Array.isArray(item.correction_hints) ? item.correction_hints : [];
   const riskSignals = item.risk_signals || {};
   const latePaymentRisk = String(riskSignals?.late_payment_risk?.level || '').trim();
-  const discountSignal = Boolean(riskSignals?.discount_opportunity?.available);
   const confidenceNumber = Number(item.confidence);
   const hasConfidence = Number.isFinite(confidenceNumber) && confidenceNumber > 0;
   const confidencePercent = hasConfidence ? Math.round(Math.max(0, Math.min(1, confidenceNumber)) * 100) : null;
@@ -2817,6 +3706,21 @@ function renderThreadContext() {
   const loadingContext = item?.id && contextUiState.loading && contextUiState.itemId === item.id;
   const contextError = item?.id && contextUiState.itemId === item.id ? contextUiState.error : '';
   const auditEvents = auditState.itemId === item.id && Array.isArray(auditState.events) ? auditState.events : [];
+  const compactActivityRows = auditEvents
+    .slice(0, 3)
+    .map((event) => {
+      const eventType = prettifyEventType(event.event_type || event.eventType);
+      const eventTime = formatTimestamp(event.ts || event.created_at || event.createdAt);
+      return `
+        <div class="cl-audit-row">
+          <div class="cl-audit-main">
+            <span class="cl-audit-type">${escapeHtml(eventType)}</span>
+            ${eventTime ? `<span class="cl-audit-time">${escapeHtml(eventTime)}</span>` : ''}
+          </div>
+        </div>
+      `;
+    })
+    .join('');
   const browserFallbackStatus = buildBrowserFallbackStatusSummary(item, contextPayload, auditEvents);
   const budgetContext = normalizeBudgetContext(contextPayload, item);
   const budgetStatusLabel = budgetContext.status ? String(budgetContext.status).replace(/_/g, ' ') : '';
@@ -2845,12 +3749,10 @@ function renderThreadContext() {
   if (latePaymentRisk) {
     riskChips.push(`<span class="cl-risk-chip cl-risk-chip-warning">Late risk: ${escapeHtml(latePaymentRisk)}</span>`);
   }
-  if (discountSignal) {
-    riskChips.push('<span class="cl-risk-chip">Discount available</span>');
-  }
   if (exceptionCode) {
     riskChips.push(`<span class="cl-risk-chip cl-risk-chip-warning">${escapeHtml(exceptionCode.replace(/_/g, ' '))}</span>`);
   }
+  const visibleRiskChips = opsMode ? riskChips : riskChips.slice(0, 3);
   const metadata = queueManager?.parseMetadata ? queueManager.parseMetadata(item.metadata) : {};
   // Claude reasoning — populated by the AP reasoning layer and persisted into metadata
   const apReasoning = String(item.ap_decision_reasoning || metadata?.ap_decision_reasoning || '').trim();
@@ -2865,9 +3767,6 @@ function renderThreadContext() {
     browserFallbackStatus,
     metadata,
   });
-  // Early payment discount — populated by EarlyPaymentDiscountService
-  const discountData = item.early_payment_discount || metadata?.early_payment_discount || null;
-  const discountAvailable = !!(discountData && discountData.is_available);
   // needs_info follow-up — question + Gmail draft link
   const needsInfoQuestion = item.needs_info_question || metadata?.needs_info_question || null;
   const needsInfoDraftId = item.needs_info_draft_id || metadata?.needs_info_draft_id || null;
@@ -2962,13 +3861,6 @@ function renderThreadContext() {
           ${apRiskFlags.length ? `<div class="cl-agent-risks">${apRiskFlags.map((f) => `<span class="cl-risk-chip cl-risk-chip-warning">${escapeHtml(String(f).replace(/_/g, ' '))}</span>`).join('')}</div>` : ''}
         </div>
       ` : ''}
-      ${discountAvailable ? `
-        <div class="cl-discount-banner">
-          <span class="cl-discount-label">Save ${escapeHtml(String(discountData.discount_percent))}%</span>
-          — pay by ${escapeHtml(String(discountData.discount_deadline || '').slice(0, 10))}
-          (${escapeHtml(String(Math.round(discountData.annualized_return || 0)))}% APR)
-        </div>
-      ` : ''}
       ${needsInfoQuestion ? `
         <div class="cl-needs-info-banner">
           <span class="cl-needs-info-label">Info needed:</span> ${escapeHtml(needsInfoQuestion)}
@@ -2977,7 +3869,7 @@ function renderThreadContext() {
         </div>
       ` : ''}
       ${browserFallbackStatus ? renderBrowserFallbackStatusBannerHtml(browserFallbackStatus) : ''}
-      ${riskChips.length ? `<div class="cl-risk-row">${riskChips.join('')}</div>` : ''}
+      ${visibleRiskChips.length ? `<div class="cl-risk-row">${visibleRiskChips.join('')}</div>` : ''}
       ${budgetContext.requiresDecision ? budgetPreviewRows : ''}
       ${
         budgetContext.requiresDecision
@@ -3101,43 +3993,76 @@ function renderThreadContext() {
           ${sourceRows || '<div class="cl-empty">No linked sources.</div>'}
         </div>
       </details>
-      <div class="cl-context-tabs">
-        <button class="cl-context-tab ${activeContextTab === 'email' ? 'active' : ''}" data-tab="email">Email</button>
-        <button class="cl-context-tab ${activeContextTab === 'web' ? 'active' : ''}" data-tab="web">Web</button>
-        <button class="cl-context-tab ${activeContextTab === 'approvals' ? 'active' : ''}" data-tab="approvals">Approvals</button>
-        <button class="cl-context-tab ${activeContextTab === 'erp' ? 'active' : ''}" data-tab="erp">ERP</button>
-        <button class="cl-btn cl-btn-secondary cl-context-refresh" id="cl-refresh-context">Refresh</button>
-      </div>
-      <div class="cl-context-body">
-        ${renderContextTabBody(item, contextPayload, loadingContext, contextError, agentInsight)}
-      </div>
+      ${
+        opsMode
+          ? `
+            <div class="cl-context-tabs">
+              <button class="cl-context-tab ${activeContextTab === 'email' ? 'active' : ''}" data-tab="email">Email</button>
+              <button class="cl-context-tab ${activeContextTab === 'web' ? 'active' : ''}" data-tab="web">Web</button>
+              <button class="cl-context-tab ${activeContextTab === 'approvals' ? 'active' : ''}" data-tab="approvals">Approvals</button>
+              <button class="cl-context-tab ${activeContextTab === 'erp' ? 'active' : ''}" data-tab="erp">ERP</button>
+              <button class="cl-btn cl-btn-secondary cl-context-refresh" id="cl-refresh-context">Refresh</button>
+            </div>
+            <div class="cl-context-body">
+              ${renderContextTabBody(item, contextPayload, loadingContext, contextError, agentInsight)}
+            </div>
+          `
+          : `
+            <details class="cl-details">
+              <summary>Context evidence</summary>
+              <div class="cl-context-tabs">
+                <button class="cl-context-tab ${activeContextTab === 'email' ? 'active' : ''}" data-tab="email">Email</button>
+                <button class="cl-context-tab ${activeContextTab === 'web' ? 'active' : ''}" data-tab="web">Web</button>
+                <button class="cl-context-tab ${activeContextTab === 'approvals' ? 'active' : ''}" data-tab="approvals">Approvals</button>
+                <button class="cl-context-tab ${activeContextTab === 'erp' ? 'active' : ''}" data-tab="erp">ERP</button>
+                <button class="cl-btn cl-btn-secondary cl-context-refresh" id="cl-refresh-context">Refresh</button>
+              </div>
+              <div class="cl-context-body">
+                ${renderContextTabBody(item, contextPayload, loadingContext, contextError, agentInsight)}
+              </div>
+            </details>
+          `
+      }
       <details class="cl-details">
         <summary>Technical details</summary>
         <div class="cl-detail-grid">
           <div class="cl-detail-row"><span>Issue summary</span><span>${escapeHtml(issueSummary)}</span></div>
           <div class="cl-detail-row"><span>Source sender</span><span>${escapeHtml(sourceSender || 'N/A')}</span></div>
           <div class="cl-detail-row"><span>Source subject</span><span>${escapeHtml(sourceSubject || 'N/A')}</span></div>
-          <div class="cl-detail-row"><span>Merge reason</span><span>${escapeHtml(mergeReason || 'N/A')}</span></div>
           <div class="cl-detail-row"><span>Confidence</span><span>${escapeHtml(hasConfidence ? `${confidencePercent}%` : 'N/A')}</span></div>
-          ${glSuggestion
-            ? `<div class="cl-detail-row">
-                 <span>Suggested GL</span>
-                 <span class="cl-conf-med">${escapeHtml(glSuggestion.value)}<span class="cl-field-conf-label"> (${glSuggestion.learned_from || 0}× learned)</span></span>
-               </div>`
-            : ''}
-          ${correctionHints.length > 0
-            ? `<div class="cl-detail-row">
-                 <span>Prior corrections</span>
-                 <span class="cl-conf-med">${escapeHtml(correctionHints.map(h => h.field).join(', '))}</span>
-               </div>`
-            : ''}
-          <div class="cl-detail-row"><span>Exception</span><span>${escapeHtml(exceptionSeverity || 'N/A')} ${escapeHtml(exceptionCode || '')}</span></div>
-          <div class="cl-detail-row"><span>Thread</span><span>${escapeHtml(getSourceThreadId(item) || 'N/A')}</span></div>
-          <div class="cl-detail-row"><span>Message</span><span>${escapeHtml(getSourceMessageId(item) || 'N/A')}</span></div>
-          <div class="cl-detail-row"><span>Workflow</span><span>${escapeHtml(metadata.workflow_id || item.workflow_id || 'N/A')}</span></div>
-          <div class="cl-detail-row"><span>Run</span><span>${escapeHtml(metadata.run_id || item.run_id || 'N/A')}</span></div>
+          ${
+            opsMode
+              ? `
+                <div class="cl-detail-row"><span>Merge reason</span><span>${escapeHtml(mergeReason || 'N/A')}</span></div>
+                ${glSuggestion
+                  ? `<div class="cl-detail-row">
+                       <span>Suggested GL</span>
+                       <span class="cl-conf-med">${escapeHtml(glSuggestion.value)}<span class="cl-field-conf-label"> (${glSuggestion.learned_from || 0}× learned)</span></span>
+                     </div>`
+                  : ''}
+                ${correctionHints.length > 0
+                  ? `<div class="cl-detail-row">
+                       <span>Prior corrections</span>
+                       <span class="cl-conf-med">${escapeHtml(correctionHints.map(h => h.field).join(', '))}</span>
+                     </div>`
+                  : ''}
+                <div class="cl-detail-row"><span>Exception</span><span>${escapeHtml(exceptionSeverity || 'N/A')} ${escapeHtml(exceptionCode || '')}</span></div>
+                <div class="cl-detail-row"><span>Thread</span><span>${escapeHtml(getSourceThreadId(item) || 'N/A')}</span></div>
+                <div class="cl-detail-row"><span>Message</span><span>${escapeHtml(getSourceMessageId(item) || 'N/A')}</span></div>
+                <div class="cl-detail-row"><span>Workflow</span><span>${escapeHtml(metadata.workflow_id || item.workflow_id || 'N/A')}</span></div>
+                <div class="cl-detail-row"><span>Run</span><span>${escapeHtml(metadata.run_id || item.run_id || 'N/A')}</span></div>
+              `
+              : ''
+          }
         </div>
       </details>
+      <div class="cl-activity-strip">
+        <div class="cl-agent-brief-title">Recent activity</div>
+        <div class="cl-audit-list">
+          ${compactActivityRows || '<div class="cl-empty">No recent activity yet.</div>'}
+        </div>
+        <div class="cl-agent-detail">Open full timeline and audit in <strong>Clearledgr Ops</strong>.</div>
+      </div>
     </div>
   `;
 
@@ -3252,14 +4177,18 @@ function renderThreadContext() {
       const needsOverride = !hasConfidence || confidencePercent < 95;
       let justification = '';
       if (needsOverride) {
-        justification = window.prompt(
-          `Confidence is ${hasConfidence ? confidencePercent + '%' : 'unknown'} (below 95% threshold). Provide justification to override:`,
-          'Reviewed and confirmed accurate'
-        );
-        if (!justification || !justification.trim()) {
-          showToast('Justification required for override', 'error');
+        const response = await openReasonSheet('approve_override', {
+          title: 'Approve with override',
+          label: 'Override justification',
+          placeholder: 'Explain why this invoice is safe to post',
+          defaultValue: 'Reviewed and confirmed accurate',
+          confirmLabel: 'Approve override',
+          required: true
+        });
+        if (!response) {
           return;
         }
+        justification = response;
       }
       approveBtn.disabled = true;
       approveBtn.textContent = 'Posting...';
@@ -3283,20 +4212,36 @@ function renderThreadContext() {
 
   if (rejectInlineBtn) {
     rejectInlineBtn.addEventListener('click', async () => {
-      const reason = window.prompt('Rejection reason:', '');
-      if (!reason || !reason.trim()) {
-        showToast('Reason required', 'error');
+      const reason = await openReasonSheet('reject', {
+        title: 'Reject invoice',
+        label: 'Rejection reason',
+        placeholder: 'Reason for rejection',
+        confirmLabel: 'Reject',
+        required: true
+      });
+      if (!reason) {
         return;
       }
       window.dispatchEvent(new CustomEvent('clearledgr:reject-invoice', {
-        detail: { emailId: item.id || item.thread_id, reason: reason.trim() }
+        detail: { emailId: item.id || item.thread_id, reason }
       }));
     });
   }
 
   if (escalateBtn) {
     escalateBtn.addEventListener('click', async () => {
-      const result = await queueManager.requestApproval(item);
+      const reason = await openReasonSheet('approval_route', {
+        title: 'Route approval',
+        label: 'Routing note',
+        placeholder: 'Optional note for approver routing',
+        confirmLabel: 'Route',
+        required: false
+      });
+      if (reason === null) return;
+      const result = await queueManager.requestApproval(item, {
+        reason: String(reason || '').trim(),
+        forceHumanReview: Boolean(String(reason || '').trim())
+      });
       if (result?.status === 'needs_approval') {
         showToast('Escalated to Slack');
       } else {
@@ -3307,13 +4252,19 @@ function renderThreadContext() {
 
   if (budgetApproveBtn) {
     budgetApproveBtn.addEventListener('click', async () => {
-      const justification = window.prompt('Approval justification (required for budget override):', 'Business-critical invoice');
-      if (!justification || !justification.trim()) {
-        showToast('Justification is required', 'error');
+      const justification = await openReasonSheet('budget_override', {
+        title: 'Budget override',
+        label: 'Approval justification',
+        placeholder: 'Explain why the budget override is justified',
+        defaultValue: 'Business-critical invoice',
+        confirmLabel: 'Approve override',
+        required: true
+      });
+      if (!justification) {
         return;
       }
       budgetApproveBtn.disabled = true;
-      const result = await queueManager.submitBudgetDecision(item, 'approve_override', justification.trim());
+      const result = await queueManager.submitBudgetDecision(item, 'approve_override', justification);
       budgetApproveBtn.disabled = false;
       if (result?.status === 'approved') {
         showToast('Budget override approved and posted');
@@ -3325,9 +4276,17 @@ function renderThreadContext() {
 
   if (budgetAdjustBtn) {
     budgetAdjustBtn.addEventListener('click', async () => {
-      const reason = window.prompt('Reason for requesting budget adjustment:', 'Budget threshold needs revision');
+      const reason = await openReasonSheet('budget_adjustment', {
+        title: 'Request budget adjustment',
+        label: 'Adjustment reason',
+        placeholder: 'Why should budget threshold be adjusted?',
+        defaultValue: 'Budget threshold needs revision',
+        confirmLabel: 'Request adjustment',
+        required: false
+      });
+      if (reason === null) return;
       budgetAdjustBtn.disabled = true;
-      const result = await queueManager.submitBudgetDecision(item, 'request_budget_adjustment', (reason || '').trim());
+      const result = await queueManager.submitBudgetDecision(item, 'request_budget_adjustment', reason || '');
       budgetAdjustBtn.disabled = false;
       if (result?.status === 'needs_info') {
         showToast('Budget adjustment requested');
@@ -3339,9 +4298,17 @@ function renderThreadContext() {
 
   if (budgetRejectBtn) {
     budgetRejectBtn.addEventListener('click', async () => {
-      const reason = window.prompt('Reason for rejection:', 'Invoice exceeds approved budget');
+      const reason = await openReasonSheet('budget_reject', {
+        title: 'Reject for budget policy',
+        label: 'Rejection reason',
+        placeholder: 'Reason for rejection',
+        defaultValue: 'Invoice exceeds approved budget',
+        confirmLabel: 'Reject',
+        required: true
+      });
+      if (!reason) return;
       budgetRejectBtn.disabled = true;
-      const result = await queueManager.submitBudgetDecision(item, 'reject', (reason || '').trim());
+      const result = await queueManager.submitBudgetDecision(item, 'reject', reason);
       budgetRejectBtn.disabled = false;
       if (result?.status === 'rejected') {
         showToast('Invoice rejected');
@@ -3430,6 +4397,7 @@ function renderAgentActions() {
   const queued = Array.isArray(sessionPayload.queued_commands) ? sessionPayload.queued_commands : [];
   const allEvents = Array.isArray(sessionPayload.events) ? sessionPayload.events : [];
   const debugUiEnabled = Boolean(queueManager?.isDebugUiEnabled?.());
+  const opsMode = isOpsSidebarMode();
   const scope = getAgentScope(item, sessionPayload);
   const summary = summarizeAgentEvents(allEvents, 8);
   const historyEvents = summary.events;
@@ -3574,6 +4542,38 @@ function renderAgentActions() {
   const recoveredFailuresNote = summary.recoveredFailures > 0
     ? `<div class="cl-agent-detail">Recovered ${escapeHtml(String(summary.recoveredFailures))} transient failure${summary.recoveredFailures === 1 ? '' : 's'} after successful retries.</div>`
     : '';
+  const compactHistoryRows = historyEvents
+    .slice(0, 3)
+    .map((event) => {
+      const statusText = String(event.status || 'queued').replace(/_/g, ' ');
+      const tool = getAgentToolLabel(event.tool_name || '');
+      return `
+        <div class="cl-agent-row">
+          <div class="cl-agent-row-main">
+            <span class="cl-agent-tool">${escapeHtml(tool)}</span>
+            <span class="cl-agent-status">${escapeHtml(statusText)}</span>
+          </div>
+        </div>
+      `;
+    })
+    .join('');
+  const compactAuditRows = auditEvents
+    .slice(0, 3)
+    .map((event) => {
+      const eventType = prettifyEventType(event.event_type || event.eventType);
+      const detail = event.decision_reason || event.reason || event.payload_json?.reason || '';
+      const time = formatTimestamp(event.ts || event.created_at || event.createdAt);
+      return `
+        <div class="cl-agent-row">
+          <div class="cl-agent-row-main">
+            <span class="cl-agent-tool">${escapeHtml(eventType)}</span>
+            ${time ? `<span class="cl-agent-status">${escapeHtml(time)}</span>` : ''}
+          </div>
+          ${detail ? `<div class="cl-agent-detail">${escapeHtml(detail)}</div>` : ''}
+        </div>
+      `;
+    })
+    .join('');
   const itemState = String(item?.state || 'received').toLowerCase();
   const itemContextPayload = contextState.get(item.id) || null;
   const itemMetadata = queueManager?.parseMetadata ? queueManager.parseMetadata(item.metadata) : {};
@@ -3622,7 +4622,32 @@ function renderAgentActions() {
     'share_finance_summary'
   ]);
   const proactiveActions = intentRecommendations.actions.filter((action) => proactiveIntentIds.has(String(action.intent || '')));
-  const intentRowsHtml = chunkList(intentRecommendations.actions, 2)
+  const quickActions = intentRecommendations.actions.slice(0, 3);
+  const additionalActions = opsMode ? intentRecommendations.actions : intentRecommendations.actions.slice(3);
+  const quickActionRowsHtml = !opsMode && quickActions.length
+    ? `
+      <div class="cl-agent-recommendation">
+        <div class="cl-agent-recommendation-title">Recommended next move: ${escapeHtml(recommendedIntent?.label || quickActions[0]?.label || 'Review actions')}</div>
+        <div class="cl-agent-detail">${escapeHtml(recommendedIntent?.why || 'Run one of the quick actions to move this invoice forward.')}</div>
+      </div>
+      ${chunkList(quickActions, 2)
+        .map((row) => `
+          <div class="cl-agent-actions-bar">
+            ${row.map((action) => `
+              <button
+                class="cl-btn ${action.buttonTone === 'primary' ? 'cl-btn-primary' : 'cl-btn-secondary'} cl-agent-intent ${recommendedIntent && recommendedIntent.intent === action.intent ? 'cl-agent-intent-recommended' : ''}"
+                data-intent="${escapeHtml(action.intent)}"
+              >
+                ${escapeHtml(action.label)}
+                ${recommendedIntent && recommendedIntent.intent === action.intent ? '<span class="cl-agent-intent-badge">Recommended</span>' : ''}
+              </button>
+            `).join('')}
+          </div>
+        `)
+        .join('')}
+    `
+    : '';
+  const intentRowsHtml = chunkList(additionalActions, 2)
     .map((row) => `
       <div class="cl-agent-actions-bar">
         ${row.map((action) => `
@@ -3638,7 +4663,7 @@ function renderAgentActions() {
     `)
     .join('');
   const proactiveRecommended = proactiveActions[0] || recommendedIntent;
-  const proactiveActionsHtml = isBlockedInvoice && proactiveActions.length > 0
+  const proactiveActionsHtml = opsMode && isBlockedInvoice && proactiveActions.length > 0
     ? `
       <div class="cl-agent-proactive">
         <div class="cl-agent-proactive-title">Agent suggested next step</div>
@@ -3684,10 +4709,10 @@ function renderAgentActions() {
     `
     : '';
   const boundedAgentActionsHtml = `
-    <details class="cl-details" open>
-      <summary>Agent actions (preview-first)</summary>
+    <details class="cl-details" ${opsMode ? 'open' : ''}>
+      <summary>${opsMode ? 'Agent controls (preview-first)' : 'More actions'}</summary>
       <div class="cl-agent-detail">Bounded actions use policy checks and may require human confirmation before execution.</div>
-      ${recommendedIntent
+      ${opsMode && recommendedIntent
         ? `
           <div class="cl-agent-recommendation">
             <div class="cl-agent-recommendation-title">Recommended next move: ${escapeHtml(recommendedIntent.label)}</div>
@@ -3696,25 +4721,31 @@ function renderAgentActions() {
         `
         : ''
       }
-      <div class="cl-agent-command-bar" role="group" aria-label="Agent command bar">
-        <input
-          type="text"
-          class="cl-agent-command-input"
-          id="cl-agent-command-input"
-          placeholder="Try: preview finance summary, retry ERP posting, draft vendor info request"
-        />
-        <button class="cl-btn cl-btn-secondary cl-agent-command-submit" id="cl-agent-command-submit">Run</button>
-      </div>
-      <div class="cl-agent-command-hint">
-        Structured commands only. Clearledgr maps your text to approved agent actions (no free-form tool execution).
-      </div>
+      ${
+        opsMode
+          ? `
+            <div class="cl-agent-command-bar" role="group" aria-label="Agent command bar">
+              <input
+                type="text"
+                class="cl-agent-command-input"
+                id="cl-agent-command-input"
+                placeholder="Try: preview finance summary, retry ERP posting, draft vendor info request"
+              />
+              <button class="cl-btn cl-btn-secondary cl-agent-command-submit" id="cl-agent-command-submit">Run</button>
+            </div>
+            <div class="cl-agent-command-hint">
+              Structured commands only. Clearledgr maps your text to approved agent actions (no free-form tool execution).
+            </div>
+          `
+          : ''
+      }
       ${financeShareTargetOptionsHtml}
       ${proactiveActionsHtml}
-      ${intentRowsHtml || '<div class="cl-empty">No bounded agent actions are available for this invoice yet.</div>'}
+      ${intentRowsHtml || '<div class="cl-empty">No additional bounded actions are available for this invoice yet.</div>'}
     </details>
   `;
 
-  const debugAgentToolsHtml = debugUiEnabled
+  const debugAgentToolsHtml = debugUiEnabled && opsMode
     ? `
     <details class="cl-details">
       <summary>Debug agent tools</summary>
@@ -3748,20 +4779,42 @@ function renderAgentActions() {
       }
       ${previewHtml}
     </div>
+    ${quickActionRowsHtml}
     ${boundedAgentActionsHtml}
     ${debugAgentToolsHtml}
     ${macroSummaryHtml}
-    <div class="cl-agent-timeline">
-      <div class="cl-agent-brief-title">Recent agent timeline</div>
-      ${recoveredFailuresNote}
-      ${timelineGroupsHtml}
-    </div>
-    <details class="cl-details">
-      <summary>View raw agent events</summary>
-      <div class="cl-agent-list">
-        ${historyRows || '<div class="cl-empty">No recent actions.</div>'}
-      </div>
-    </details>
+    ${
+      opsMode
+        ? `
+          <div class="cl-agent-timeline">
+            <div class="cl-agent-brief-title">Recent agent timeline</div>
+            ${recoveredFailuresNote}
+            ${timelineGroupsHtml}
+          </div>
+          <details class="cl-details">
+            <summary>View raw agent events</summary>
+            <div class="cl-agent-list">
+              ${historyRows || '<div class="cl-empty">No recent actions.</div>'}
+            </div>
+          </details>
+        `
+        : `
+          <details class="cl-details">
+            <summary>Recent activity</summary>
+            <div class="cl-agent-list">
+              ${compactHistoryRows || '<div class="cl-empty">No recent actions.</div>'}
+            </div>
+            ${
+              compactAuditRows
+                ? `
+                  <div class="cl-agent-brief-title">Recent audit</div>
+                  <div class="cl-agent-list">${compactAuditRows}</div>
+                `
+                : ''
+            }
+          </details>
+        `
+    }
   `;
 
   const runMacroFromAgentUi = async (macro, dryRun, uiButton = null) => {
@@ -3869,7 +4922,7 @@ function renderAgentActions() {
           error: '',
           data: {
             kind: 'blocker_summary',
-            title: 'Approver nudge sent',
+            title: 'Approval reminder sent',
             lines: [
               `Slack: ${String(result?.slack?.status || 'unknown')}${result?.slack?.message_ts ? ` (${result.slack.message_ts})` : ''}`,
               `Teams: ${String(result?.teams?.status || 'unknown')}`,
@@ -3881,10 +4934,10 @@ function renderAgentActions() {
         };
         renderAgentActions();
         renderThreadContext();
-        showToast('Approver nudge sent');
+        showToast('Approval reminder sent');
         return { ok: true };
       }
-      showToast('Unable to nudge approvers', 'error');
+      showToast('Unable to send reminders', 'error');
       return { ok: false, reason: 'approver_nudge_failed' };
     }
     if (intentId === 'summarize_blockers') {
@@ -3990,8 +5043,14 @@ function renderAgentActions() {
           recipientEmail = '';
         }
         if (!recipientEmail) {
-          const promptValue = window.prompt('Finance lead email (used for the preview):', '');
-          recipientEmail = String(promptValue || '').trim();
+          const response = await requestActionInput({
+            title: 'Finance lead email',
+            label: 'Recipient email',
+            placeholder: 'finance-lead@company.com',
+            confirmLabel: 'Use email',
+            required: true
+          });
+          recipientEmail = String(response || '').trim();
           if (!recipientEmail) {
             showToast('Finance lead email is required to preview the email draft', 'error');
             return { ok: false, reason: 'missing_recipient' };
@@ -4032,8 +5091,14 @@ function renderAgentActions() {
           recipientEmail = '';
         }
         if (!recipientEmail) {
-          const promptValue = window.prompt('Finance lead email (used for the pre-filled draft):', '');
-          recipientEmail = String(promptValue || '').trim();
+          const response = await requestActionInput({
+            title: 'Finance lead email',
+            label: 'Recipient email',
+            placeholder: 'finance-lead@company.com',
+            confirmLabel: 'Use email',
+            required: true
+          });
+          recipientEmail = String(response || '').trim();
           if (!recipientEmail) {
             showToast('Finance lead email is required to prepare the draft', 'error');
             return { ok: false, reason: 'missing_recipient' };
@@ -4183,6 +5248,13 @@ function renderBatchAgentOps() {
   if (!globalSidebarEl) return;
   const container = globalSidebarEl.querySelector('#cl-batch-agent-ops');
   if (!container) return;
+  const sidebarHost = globalSidebarEl;
+  const sidebarModeForHost = sidebarMode;
+  if (!isOpsSidebarMode()) {
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-batch', false);
+    return;
+  }
 
   const policy = normalizeBatchOpsPolicyConfig(batchOpsPolicyState);
   const snapshot = buildBatchAgentOpsSnapshot(queueState, agentSessionsState, {
@@ -4596,7 +5668,7 @@ function renderBatchAgentOps() {
               ok: true,
               status: 'nudged',
               label,
-              detail: 'Approver nudge sent',
+              detail: 'Approval reminder sent',
               retryable: false
             });
           } else {
@@ -4927,6 +5999,7 @@ function renderBatchAgentOps() {
 
   container.querySelectorAll('.cl-batch-op-action').forEach((button) => {
     button.addEventListener('click', async () => {
+      activateSidebarContext(sidebarHost, sidebarModeForHost);
       const opId = button.getAttribute('data-batch-op') || '';
       const dryRun = button.getAttribute('data-dry-run') === '1';
       await runBatchOperation(opId, dryRun, button);
@@ -4982,6 +6055,7 @@ function renderBatchAgentOps() {
 
   container.querySelectorAll('.cl-batch-summary-action').forEach((button) => {
     button.addEventListener('click', async () => {
+      activateSidebarContext(sidebarHost, sidebarModeForHost);
       const actionId = String(button.getAttribute('data-action-id') || '').trim();
       const opId = String(button.getAttribute('data-batch-op') || '').trim();
       if (actionId !== 'rerun_failed_subset' || !opId) return;
@@ -5005,6 +6079,11 @@ function renderAuditTrail() {
   if (!globalSidebarEl) return;
   const container = globalSidebarEl.querySelector('#cl-audit-trail');
   if (!container) return;
+  if (!isOpsSidebarMode()) {
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-audit', false);
+    return;
+  }
 
   const item = getPrimaryItem();
   if (!item) {
@@ -5047,12 +6126,27 @@ function renderAuditTrail() {
 }
 
 async function refreshAuditTrail(force = false) {
-  if (!globalSidebarEl || !queueManager) return;
+  if (!queueManager) return;
+  const previousHost = globalSidebarEl;
+  const rerenderPanels = () => {
+    const targets = [workSidebarEl];
+    targets.forEach((el) => {
+      if (!el) return;
+      activateSidebarContext(el, SIDEBAR_MODE_WORK);
+      renderThreadContext();
+      renderAuditTrail();
+    });
+    if (previousHost) {
+      activateSidebarContext(previousHost, SIDEBAR_MODE_WORK);
+    } else if (workSidebarEl) {
+      activateSidebarContext(workSidebarEl, SIDEBAR_MODE_WORK);
+    }
+  };
+
   const item = getPrimaryItem();
   if (!item || !item.id) {
     auditState = { itemId: null, loading: false, events: [] };
-    renderAuditTrail();
-    renderAgentActions();
+    rerenderPanels();
     return;
   }
 
@@ -5063,14 +6157,12 @@ async function refreshAuditTrail(force = false) {
     auditState.events.length === 0;
 
   if (!shouldLoad) {
-    renderAuditTrail();
-    renderAgentActions();
+    rerenderPanels();
     return;
   }
 
   auditState = { itemId: item.id, loading: true, events: [] };
-  renderAuditTrail();
-  renderAgentActions();
+  rerenderPanels();
 
   const events = await queueManager.fetchAuditTrail(item.id, { force });
   const activeItem = getPrimaryItem();
@@ -5078,18 +6170,34 @@ async function refreshAuditTrail(force = false) {
     return;
   }
   auditState = { itemId: item.id, loading: false, events: Array.isArray(events) ? events : [] };
-  renderThreadContext();
-  renderAuditTrail();
-  renderAgentActions();
+  rerenderPanels();
 }
 
 function renderSidebar() {
   if (!globalSidebarEl) return;
   renderThreadContext();
-  renderKpiSummary();
-  renderAgentActions();
-  renderBatchAgentOps();
   renderScanStatus();
+  applySidebarModeVisibility();
+}
+
+function renderSidebarFor(sidebarEl) {
+  if (!sidebarEl) return;
+  activateSidebarContext(sidebarEl, SIDEBAR_MODE_WORK);
+  const activeItem = getPrimaryItem();
+  if (activeItem?.id) {
+    writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, activeItem.id);
+  }
+  renderSidebar();
+}
+
+function renderAllSidebars() {
+  const previousHost = globalSidebarEl;
+  renderSidebarFor(workSidebarEl);
+  if (previousHost === workSidebarEl && workSidebarEl) {
+    activateSidebarContext(workSidebarEl, SIDEBAR_MODE_WORK);
+  } else if (workSidebarEl) {
+    activateSidebarContext(workSidebarEl, SIDEBAR_MODE_WORK);
+  }
   void refreshAuditTrail();
 }
 
@@ -5097,6 +6205,11 @@ function renderKpiSummary() {
   if (!globalSidebarEl) return;
   const container = globalSidebarEl.querySelector('#cl-kpi-summary');
   if (!container) return;
+  if (!isOpsSidebarMode()) {
+    container.innerHTML = '';
+    setSectionVisibility('cl-section-kpi', false);
+    return;
+  }
   const kpis = kpiSnapshotState || queueManager?.getKpiSnapshot?.() || null;
   if (!kpis) {
     container.innerHTML = '';
@@ -5179,7 +6292,7 @@ function renderKpiSummary() {
 }
 
 function initializeSidebar() {
-  if (globalSidebarEl) return;
+  if (workSidebarEl) return;
   const container = document.createElement('div');
   container.className = 'cl-sidebar';
   container.innerHTML = `
@@ -5201,6 +6314,7 @@ function initializeSidebar() {
         gap: 10px;
         height: 100%;
         background: var(--cl-bg);
+        position: relative;
       }
       .cl-header {
         display: flex;
@@ -5237,6 +6351,81 @@ function initializeSidebar() {
         color: #991b1b;
         border-color: #fecaca;
         background: #fef2f2;
+      }
+      .cl-action-dialog {
+        position: absolute;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 24;
+        background: rgba(15, 23, 42, 0.5);
+        padding: 12px;
+      }
+      .cl-action-dialog-card {
+        width: 100%;
+        max-width: 320px;
+        border-radius: 10px;
+        border: 1px solid var(--cl-border);
+        background: #ffffff;
+        box-shadow: 0 12px 28px rgba(15, 23, 42, 0.2);
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .cl-action-dialog-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--cl-text);
+      }
+      .cl-action-dialog-label {
+        font-size: 11px;
+        color: var(--cl-muted);
+      }
+      .cl-action-dialog-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .cl-action-chip {
+        border: 1px solid var(--cl-border);
+        background: #f8fafc;
+        color: #334155;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 4px 8px;
+        cursor: pointer;
+      }
+      .cl-action-chip:hover {
+        border-color: var(--cl-accent);
+        color: var(--cl-accent);
+      }
+      .cl-action-dialog-input {
+        width: 100%;
+        min-height: 34px;
+        border-radius: 8px;
+        border: 1px solid var(--cl-border);
+        padding: 8px 10px;
+        font-size: 12px;
+        color: var(--cl-text);
+        background: #ffffff;
+      }
+      .cl-action-dialog-input:focus {
+        border-color: var(--cl-accent);
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.16);
+      }
+      .cl-action-dialog-hint {
+        font-size: 10px;
+        color: var(--cl-muted);
+        line-height: 1.3;
+      }
+      .cl-action-dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
       }
       .cl-section {
         background: var(--cl-surface);
@@ -5591,6 +6780,23 @@ function initializeSidebar() {
         margin-top: 4px;
         flex-wrap: wrap;
       }
+      .cl-primary-cta {
+        margin-top: 6px;
+        width: 100%;
+      }
+      .cl-blocked-reasons {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .cl-blocker-item {
+        border-top: 0;
+        margin-top: 0;
+        padding-top: 0;
+      }
+      .cl-work-surface .cl-details {
+        margin-top: 2px;
+      }
       .cl-source-list {
         display: flex;
         flex-direction: column;
@@ -5929,7 +7135,13 @@ function initializeSidebar() {
         gap: 6px;
         max-height: 160px;
         overflow-y: auto;
+        overflow-x: hidden;
         padding-right: 2px;
+      }
+      .cl-work-surface .cl-audit-list {
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
       }
       .cl-audit-row {
         border: 1px solid var(--cl-border);
@@ -5942,9 +7154,10 @@ function initializeSidebar() {
       }
       .cl-audit-main {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 8px;
+        flex-wrap: wrap;
       }
       .cl-audit-type {
         font-size: 11px;
@@ -5958,6 +7171,9 @@ function initializeSidebar() {
       .cl-audit-detail {
         font-size: 11px;
         color: #4b5563;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
       }
       .cl-scan-status {
         font-size: 11px;
@@ -6421,6 +7637,14 @@ function initializeSidebar() {
       .cl-details summary::-webkit-details-marker {
         display: none;
       }
+      .cl-activity-strip {
+        border-top: 1px dashed var(--cl-border);
+        margin-top: 4px;
+        padding-top: 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
       .cl-detail-grid {
         display: flex;
         flex-direction: column;
@@ -6481,9 +7705,22 @@ function initializeSidebar() {
         ${getAssetUrl(LOGO_PATH) ? `<img class="cl-logo" src="${getAssetUrl(LOGO_PATH)}" alt="Clearledgr" />` : ''}
         Clearledgr AP
       </div>
-      <div class="cl-subtitle">Embedded accounts payable execution</div>
+      <div class="cl-subtitle" id="cl-subtitle">Embedded accounts payable execution</div>
     </div>
     <div id="cl-toast" class="cl-toast"></div>
+    <div id="cl-action-dialog" class="cl-action-dialog" aria-hidden="true">
+      <div class="cl-action-dialog-card" role="dialog" aria-modal="true">
+        <div class="cl-action-dialog-title">Action required</div>
+        <label class="cl-action-dialog-label" for="cl-action-dialog-input">Reason</label>
+        <div class="cl-action-dialog-chips"></div>
+        <input id="cl-action-dialog-input" class="cl-action-dialog-input" type="text" />
+        <div class="cl-action-dialog-hint">A reason is required for this action.</div>
+        <div class="cl-action-dialog-actions">
+          <button class="cl-btn cl-btn-secondary cl-action-dialog-cancel">Cancel</button>
+          <button class="cl-btn cl-action-dialog-confirm">Confirm</button>
+        </div>
+      </div>
+    </div>
     <div class="cl-section">
       <div id="cl-scan-status" class="cl-scan-status"></div>
       <div id="cl-auth-actions" class="cl-inline-actions">
@@ -6495,78 +7732,80 @@ function initializeSidebar() {
       </div>
     </div>
     <div class="cl-section" id="cl-section-current">
-      <div class="cl-section-title">Decision workspace</div>
+      <div class="cl-section-title">Decision</div>
       <div id="cl-thread-context"></div>
-    </div>
-    <div class="cl-section" id="cl-section-kpi">
-      <div class="cl-section-title">KPI summary</div>
-      <div id="cl-kpi-summary"></div>
-    </div>
-    <div class="cl-section" id="cl-section-agent">
-      <div class="cl-section-title">Agent timeline</div>
-      <div id="cl-agent-actions"></div>
-    </div>
-    <div class="cl-section" id="cl-section-batch">
-      <div class="cl-section-title">Batch agent ops</div>
-      <div id="cl-batch-agent-ops"></div>
-    </div>
-    <div class="cl-section" id="cl-section-audit">
-      <div class="cl-section-title">Detailed audit</div>
-      <div id="cl-audit-trail" class="cl-audit-list"></div>
     </div>
   `;
 
-  globalSidebarEl = container;
   const logoUrl = getAssetUrl(LOGO_PATH);
+
+  const configureSidebarPanel = (sidebarEl, mode) => {
+    if (!sidebarEl) return;
+    bindSidebarContext(sidebarEl, mode);
+
+    const logoImg = sidebarEl.querySelector('.cl-logo');
+    if (logoImg) {
+      logoImg.addEventListener('error', () => {
+        logoImg.remove();
+      });
+    }
+
+    const debugControls = sidebarEl.querySelector('#cl-debug-controls');
+    const debugRefresh = sidebarEl.querySelector('#cl-debug-refresh');
+    const debugScan = sidebarEl.querySelector('#cl-debug-scan');
+    const authorizeButton = sidebarEl.querySelector('#cl-authorize-gmail');
+
+    if (authorizeButton) {
+      authorizeButton.addEventListener('click', async () => {
+        authorizeButton.disabled = true;
+        const result = await queueManager.authorizeGmailNow();
+        if (result?.success) {
+          showToast('Gmail authorized. Autopilot is resuming.', 'success');
+          await queueManager.refreshQueue();
+        } else {
+          const message = String(result?.error || 'authorization_failed');
+          showToast(`Authorization failed: ${message}`, 'error');
+        }
+        authorizeButton.disabled = false;
+      });
+    }
+
+    if (queueManager?.isDebugUiEnabled()) {
+      if (debugControls) debugControls.style.display = 'flex';
+      if (debugRefresh) {
+        debugRefresh.addEventListener('click', async () => {
+          await queueManager.refreshQueue();
+          await refreshAuditTrail(true);
+        });
+      }
+      if (debugScan) {
+        debugScan.addEventListener('click', async () => {
+          await queueManager.scanNow('debug');
+          await refreshAuditTrail(true);
+        });
+      }
+    }
+  };
+
+  workSidebarEl = container;
+  opsSidebarEl = null;
+  globalSidebarEl = workSidebarEl;
+
+  configureSidebarPanel(workSidebarEl, SIDEBAR_MODE_WORK);
+
   sdk.Global.addSidebarContentPanel({
-    title: 'Clearledgr',
+    title: 'Clearledgr AP',
     iconUrl: logoUrl || null,
-    el: container,
+    el: workSidebarEl,
     hideTitleBar: false
   });
-  const logoImg = container.querySelector('.cl-logo');
-  if (logoImg) {
-    logoImg.addEventListener('error', () => {
-      logoImg.remove();
-    });
+
+  const restoredActiveItemId = readLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID);
+  if (restoredActiveItemId) {
+    selectedItemId = restoredActiveItemId;
   }
 
-  const debugControls = container.querySelector('#cl-debug-controls');
-  const debugRefresh = container.querySelector('#cl-debug-refresh');
-  const debugScan = container.querySelector('#cl-debug-scan');
-  const authorizeButton = container.querySelector('#cl-authorize-gmail');
-  if (authorizeButton) {
-    authorizeButton.addEventListener('click', async () => {
-      authorizeButton.disabled = true;
-      const result = await queueManager.authorizeGmailNow();
-      if (result?.success) {
-        showToast('Gmail authorized. Autopilot is resuming.', 'success');
-        await queueManager.refreshQueue();
-      } else {
-        const message = String(result?.error || 'authorization_failed');
-        showToast(`Authorization failed: ${message}`, 'error');
-      }
-      authorizeButton.disabled = false;
-    });
-  }
-
-  if (queueManager?.isDebugUiEnabled()) {
-    if (debugControls) debugControls.style.display = 'flex';
-    if (debugRefresh) {
-      debugRefresh.addEventListener('click', async () => {
-        await queueManager.refreshQueue();
-        await refreshAuditTrail(true);
-      });
-    }
-    if (debugScan) {
-      debugScan.addEventListener('click', async () => {
-        await queueManager.scanNow('debug');
-        await refreshAuditTrail(true);
-      });
-    }
-  }
-
-  renderSidebar();
+  renderAllSidebars();
 }
 
 function renderScanStatus() {
@@ -6649,12 +7888,17 @@ function registerThreadHandler() {
     getId()
       .then((threadId) => {
         currentThreadId = threadId;
-        renderThreadContext();
+        const threadItem = findItemByThreadId(threadId);
+        if (threadItem?.id) {
+          selectedItemId = threadItem.id;
+          writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, selectedItemId);
+        }
+        renderAllSidebars();
 
         threadView.on('destroy', () => {
           if (currentThreadId === threadId) {
             currentThreadId = null;
-            renderThreadContext();
+            renderAllSidebars();
           }
         });
       })
@@ -6744,8 +7988,15 @@ async function bootstrap() {
     kpiSnapshotState = kpis || null;
     if (selectedItemId && !findItemById(selectedItemId)) {
       selectedItemId = null;
+      writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, '');
     }
-    renderSidebar();
+    if (!selectedItemId) {
+      const restoredActiveItemId = readLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID);
+      if (restoredActiveItemId && findItemById(restoredActiveItemId)) {
+        selectedItemId = restoredActiveItemId;
+      }
+    }
+    renderAllSidebars();
     registerThreadRowLabels();
   });
 
