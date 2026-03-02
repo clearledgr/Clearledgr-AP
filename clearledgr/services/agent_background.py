@@ -13,7 +13,7 @@ Started on FastAPI app startup alongside GmailAutopilot.
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -179,25 +179,131 @@ async def _send_daily_digest():
         logger.debug(f"Daily digest generation failed: {e}")
 
 
+def _retry_backoff_seconds(attempt_number: int) -> int:
+    """Backoff schedule for durable ERP retry jobs."""
+    schedule = [300, 900, 1800, 3600]
+    safe_attempt = max(1, int(attempt_number or 1))
+    idx = min(len(schedule) - 1, safe_attempt - 1)
+    return schedule[idx]
+
+
 async def _drain_erp_post_retry_queue():
-    """Sweep durable job queues using the canonical AgentOrchestrator handlers.
-
-    This keeps one execution contract for:
-    - `erp_post_retry` durable jobs
-    - `post_process` durable jobs
-    """
+    """Sweep durable retry jobs via the canonical AP workflow runtime."""
     try:
-        from clearledgr.services.agent_orchestrator import get_orchestrator
+        from clearledgr.core.database import get_db
+        from clearledgr.services.invoice_workflow import get_invoice_workflow
 
-        orchestrator = get_orchestrator(DEFAULT_ORG_ID)
-        post_process_summary = await orchestrator.process_due_post_process_jobs(limit=25)
-        retry_summary = await orchestrator.process_due_retry_jobs(limit=25)
+        db = get_db()
+        if not hasattr(db, "list_due_agent_retry_jobs"):
+            return
 
-        if post_process_summary.get("claimed") or retry_summary.get("claimed"):
+        summary = {
+            "claimed": 0,
+            "completed": 0,
+            "rescheduled": 0,
+            "dead_letter": 0,
+        }
+        workflow = get_invoice_workflow(DEFAULT_ORG_ID)
+        due_jobs = db.list_due_agent_retry_jobs(
+            organization_id=DEFAULT_ORG_ID,
+            limit=25,
+        )
+
+        for job in due_jobs:
+            job_id = str(job.get("id") or "").strip()
+            if not job_id:
+                continue
+            claimed = db.claim_agent_retry_job(
+                job_id,
+                worker_id=f"agent_background:{DEFAULT_ORG_ID}",
+            )
+            if not claimed:
+                continue
+            summary["claimed"] += 1
+
+            job_type = str(claimed.get("job_type") or "").strip().lower()
+            if job_type == "erp_post_retry":
+                ap_item_id = str(claimed.get("ap_item_id") or "").strip()
+                if not ap_item_id:
+                    db.complete_agent_retry_job(
+                        job_id,
+                        status="dead_letter",
+                        last_error="missing_ap_item_id",
+                        result={"error": "missing_ap_item_id"},
+                    )
+                    summary["dead_letter"] += 1
+                    continue
+
+                outcome = await workflow.resume_workflow(ap_item_id)
+                outcome_status = str(outcome.get("status") or "").strip().lower()
+
+                if outcome_status == "recovered":
+                    db.complete_agent_retry_job(
+                        job_id,
+                        status="completed",
+                        result=outcome,
+                        last_error=None,
+                    )
+                    summary["completed"] += 1
+                    continue
+
+                retry_count = max(1, int(claimed.get("retry_count") or 1))
+                max_retries = max(1, int(claimed.get("max_retries") or 3))
+                if outcome_status == "still_failing" and retry_count < max_retries:
+                    next_retry_at = (
+                        datetime.now(timezone.utc)
+                        + timedelta(seconds=_retry_backoff_seconds(retry_count))
+                    ).isoformat()
+                    db.reschedule_agent_retry_job(
+                        job_id,
+                        next_retry_at=next_retry_at,
+                        last_error=str(outcome.get("reason") or "still_failing"),
+                        result=outcome,
+                        status="pending",
+                    )
+                    summary["rescheduled"] += 1
+                    continue
+
+                db.complete_agent_retry_job(
+                    job_id,
+                    status="dead_letter",
+                    last_error=str(
+                        outcome.get("reason")
+                        or outcome.get("error")
+                        or outcome_status
+                        or "retry_unrecoverable"
+                    ),
+                    result=outcome,
+                )
+                summary["dead_letter"] += 1
+                continue
+
+            # Legacy post-process jobs are no longer part of the canonical AP runtime.
+            if job_type == "post_process":
+                db.complete_agent_retry_job(
+                    job_id,
+                    status="dead_letter",
+                    last_error="post_process_runtime_removed",
+                    result={"error": "post_process_runtime_removed"},
+                )
+                summary["dead_letter"] += 1
+                continue
+
+            db.complete_agent_retry_job(
+                job_id,
+                status="dead_letter",
+                last_error=f"unsupported_retry_job_type:{job_type or 'unknown'}",
+                result={"error": "unsupported_retry_job_type", "job_type": job_type},
+            )
+            summary["dead_letter"] += 1
+
+        if summary["claimed"] > 0:
             logger.info(
-                "Durable queue drain: post_process_claimed=%s retry_claimed=%s",
-                post_process_summary.get("claimed"),
-                retry_summary.get("claimed"),
+                "Durable queue drain: claimed=%s completed=%s rescheduled=%s dead_letter=%s",
+                summary["claimed"],
+                summary["completed"],
+                summary["rescheduled"],
+                summary["dead_letter"],
             )
     except Exception as exc:
         logger.debug("Durable queue drain failed: %s", exc)

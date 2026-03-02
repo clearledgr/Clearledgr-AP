@@ -171,6 +171,60 @@ def test_admin_erp_connect_start_supports_sap_form(client, db):
     assert {"base_url", "username", "password"}.issubset(field_names)
 
 
+def test_admin_erp_connect_start_supports_netsuite_form(client, db):
+    response = client.post(
+        "/api/admin/integrations/erp/connect/start",
+        json={"organization_id": "default", "erp_type": "netsuite"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["erp_type"] == "netsuite"
+    assert payload["method"] == "form"
+    assert payload["submit_url"] == "/api/admin/integrations/erp/connect/netsuite"
+    field_names = {field["name"] for field in payload.get("fields", [])}
+    assert {
+        "account_id",
+        "consumer_key",
+        "consumer_secret",
+        "token_id",
+        "token_secret",
+    }.issubset(field_names)
+
+
+def test_admin_connect_netsuite_persists_connection(client, db, monkeypatch):
+    async def _fake_get_netsuite_accounts(_connection):
+        return [{"id": "2000", "name": "Accounts Payable"}]
+
+    monkeypatch.setattr(
+        "clearledgr.integrations.erp_router.get_netsuite_accounts",
+        _fake_get_netsuite_accounts,
+    )
+
+    connect = client.post(
+        "/api/admin/integrations/erp/connect/netsuite",
+        json={
+            "organization_id": "default",
+            "account_id": "123456_SB1",
+            "consumer_key": "consumer-key",
+            "consumer_secret": "consumer-secret",
+            "token_id": "token-id",
+            "token_secret": "token-secret",
+        },
+    )
+    assert connect.status_code == 200
+    payload = connect.json()
+    assert payload["success"] is True
+    assert payload["erp_type"] == "netsuite"
+    assert payload["accounts_found"] == 1
+
+    integrations = client.get("/api/admin/integrations?organization_id=default")
+    assert integrations.status_code == 200
+    body = integrations.json()
+    erp = next(item for item in body["integrations"] if item["name"] == "erp")
+    assert erp["connected"] is True
+    assert any((row.get("erp_type") == "netsuite") for row in erp.get("connections", []))
+
+
 def test_admin_connect_sap_persists_connection(client, db, monkeypatch):
     class _Resp:
         def __init__(self, status_code: int):
@@ -209,6 +263,37 @@ def test_admin_connect_sap_persists_connection(client, db, monkeypatch):
     erp = next(item for item in payload["integrations"] if item["name"] == "erp")
     assert erp["connected"] is True
     assert any((row.get("erp_type") == "sap") for row in erp.get("connections", []))
+
+
+def test_admin_teams_webhook_config_and_test(client, db, monkeypatch):
+    save = client.post(
+        "/api/admin/integrations/teams/webhook",
+        json={
+            "organization_id": "default",
+            "webhook_url": "https://example.org/teams/incoming-webhook",
+        },
+    )
+    assert save.status_code == 200
+    assert save.json()["success"] is True
+
+    integrations = client.get("/api/admin/integrations?organization_id=default")
+    assert integrations.status_code == 200
+    payload = integrations.json()
+    teams = next(item for item in payload["integrations"] if item["name"] == "teams")
+    assert teams["connected"] is True
+    assert teams["managed_by"] == "org"
+
+    class _FakeTeamsClient:
+        def _post_json(self, _payload):
+            return {"status": "sent", "status_code": 200}
+
+    monkeypatch.setattr(admin_console_module.TeamsAPIClient, "from_env", lambda _org_id=None: _FakeTeamsClient())
+    test = client.post(
+        "/api/admin/integrations/teams/test",
+        json={"organization_id": "default", "message": "test"},
+    )
+    assert test.status_code == 200
+    assert test.json()["success"] is True
 
 
 def test_admin_ops_learning_calibration_recompute_and_get(client, db):

@@ -14,7 +14,8 @@ _generated_cache: dict[str, str] = {}
 
 
 def _is_production() -> bool:
-    return os.getenv("ENV", "dev").lower() in ("production", "prod")
+    # Treat staging as production-like for secret enforcement.
+    return os.getenv("ENV", "dev").lower() in ("production", "prod", "staging", "stage")
 
 
 def require_secret(name: str) -> str:

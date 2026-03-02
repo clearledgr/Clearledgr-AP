@@ -40,6 +40,14 @@ def test_strict_profile_blocks_legacy_surfaces(monkeypatch):
         assert outlook_body["detail"] == "endpoint_disabled_in_ap_v1_profile"
         assert outlook_body["reason"] == "non_canonical_surface_disabled"
 
+        config_blocked = client.get("/config/organizations/default")
+        assert config_blocked.status_code == 404
+        assert config_blocked.json()["detail"] == "endpoint_disabled_in_ap_v1_profile"
+
+        erp_legacy_blocked = client.get("/erp/status/default")
+        assert erp_legacy_blocked.status_code == 404
+        assert erp_legacy_blocked.json()["detail"] == "endpoint_disabled_in_ap_v1_profile"
+
         canonical = client.get("/health")
         assert canonical.status_code == 200
 
@@ -98,4 +106,24 @@ def test_strict_profile_filters_legacy_paths_from_openapi(monkeypatch):
         assert "/email/tasks" not in paths
         assert "/audit/trail" not in paths
         assert "/outlook/status/{user_id}" not in paths
+        assert "/config/organizations/{organization_id}" not in paths
+        assert "/erp/status/{organization_id}" not in paths
         assert "/api/agent/intents/preview" in paths
+
+
+def test_strict_profile_route_surface_is_minimized(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
+    monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
+    monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
+
+    with TestClient(app) as _client:
+        paths = _mounted_paths()
+        assert len(paths) <= 150
+        assert not any(path.startswith("/config/") for path in paths)
+        assert "/erp/status/{organization_id}" not in paths
+        assert "/erp/quickbooks/connect" not in paths
+        assert "/erp/xero/connect" not in paths
+        # OAuth callbacks remain available for admin ERP install flows.
+        assert "/erp/quickbooks/callback" in paths
+        assert "/erp/xero/callback" in paths

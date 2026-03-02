@@ -186,7 +186,7 @@ class InvoiceWorkflowService:
         if TeamsAPIClient is None:
             return None
         if self._teams_client is None:
-            self._teams_client = TeamsAPIClient.from_env()
+            self._teams_client = TeamsAPIClient.from_env(self.organization_id)
         return self._teams_client
 
     @staticmethod

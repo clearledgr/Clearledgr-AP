@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 _QB_QUERY_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")
 _NS_LIKE_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")
 _NS_EMAIL_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\+]")
+_XERO_WHERE_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")
 
 
 def _sanitize_quickbooks_like_operand(value: Optional[str]) -> Optional[str]:
@@ -64,6 +65,62 @@ def _sanitize_netsuite_email_operand(value: Optional[str]) -> Optional[str]:
     if not sanitized:
         return None
     return sanitized[:160]
+
+
+def _sanitize_xero_where_operand(value: Optional[str]) -> Optional[str]:
+    """Return a safe operand for Xero where-clause Name.Contains filter."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    sanitized = _XERO_WHERE_VALUE_ALLOWED_CHARS.sub(" ", text)
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+    if not sanitized:
+        return None
+    return sanitized[:120]
+
+
+def _escape_query_literal(value: str) -> str:
+    """Escape single quotes for query syntaxes that require inline literals."""
+    return str(value).replace("'", "''")
+
+
+def _build_quickbooks_vendor_lookup_query(
+    *,
+    name_operand: Optional[str],
+    email_operand: Optional[str],
+) -> Optional[str]:
+    if name_operand:
+        literal = _escape_query_literal(name_operand)
+        return f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{literal}%'"
+    if email_operand:
+        literal = _escape_query_literal(email_operand)
+        return f"SELECT * FROM Vendor WHERE PrimaryEmailAddr LIKE '%{literal}%'"
+    return None
+
+
+def _build_netsuite_vendor_lookup_query(
+    *,
+    name_operand: Optional[str],
+    email_operand: Optional[str],
+) -> Optional[str]:
+    conditions: List[str] = []
+    if name_operand:
+        literal = _escape_query_literal(name_operand)
+        conditions.append(f"companyName LIKE '%{literal}%'")
+    if email_operand:
+        literal = _escape_query_literal(email_operand)
+        conditions.append(f"email = '{literal}'")
+    if not conditions:
+        return None
+    return f"SELECT id, companyName, email FROM vendor WHERE {' OR '.join(conditions)} FETCH FIRST 1 ROWS ONLY"
+
+
+def _build_xero_vendor_lookup_where(*, name_operand: Optional[str]) -> str:
+    where = "IsSupplier==true"
+    if name_operand:
+        literal = _escape_query_literal(name_operand)
+        where += f' AND Name.Contains("{literal}")'
+    return where
 
 
 @dataclass
@@ -1217,14 +1274,14 @@ async def find_vendor_quickbooks(
     if not connection.access_token or not connection.realm_id:
         return None
     
-    # Build query with strict input sanitization (QuickBooks query API has no bind params).
+    # Build query via canonical helper with strict operand sanitization.
     name_operand = _sanitize_quickbooks_like_operand(name)
     email_operand = _sanitize_quickbooks_like_operand(email)
-    if name_operand:
-        query = f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{name_operand}%'"
-    elif email_operand:
-        query = f"SELECT * FROM Vendor WHERE PrimaryEmailAddr LIKE '%{email_operand}%'"
-    else:
+    query = _build_quickbooks_vendor_lookup_query(
+        name_operand=name_operand,
+        email_operand=email_operand,
+    )
+    if not query:
         return None
     
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
@@ -1320,10 +1377,8 @@ async def find_vendor_xero(
         return None
     
     url = "https://api.xero.com/api.xro/2.0/Contacts"
-    params = {"where": f'IsSupplier==true'}
-    
-    if name:
-        params["where"] += f' AND Name.Contains("{name}")'
+    name_operand = _sanitize_xero_where_operand(name)
+    params = {"where": _build_xero_vendor_lookup_where(name_operand=name_operand)}
     
     try:
         async with httpx.AsyncClient() as client:
@@ -1408,19 +1463,15 @@ async def find_vendor_netsuite(
     if not connection.account_id:
         return None
     
-    # Build SuiteQL query with strict input sanitization (SuiteQL has no bind params).
-    conditions = []
+    # Build SuiteQL query with strict sanitization through shared helper.
     name_operand = _sanitize_netsuite_like_operand(name)
     email_operand = _sanitize_netsuite_email_operand(email)
-    if name_operand:
-        conditions.append(f"companyName LIKE '%{name_operand}%'")
-    if email_operand:
-        conditions.append(f"email = '{email_operand}'")
-    
-    if not conditions:
+    query = _build_netsuite_vendor_lookup_query(
+        name_operand=name_operand,
+        email_operand=email_operand,
+    )
+    if not query:
         return None
-    
-    query = f"SELECT id, companyName, email FROM vendor WHERE {' OR '.join(conditions)} FETCH FIRST 1 ROWS ONLY"
     
     url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/query/v1/suiteql"
     auth_header = build_netsuite_oauth_header(connection, "POST", url)

@@ -30,6 +30,7 @@ from clearledgr.services.learning_calibration import get_learning_calibration_se
 from clearledgr.services.policy_compliance import AP_POLICY_NAME, get_policy_compliance
 from clearledgr.services.gmail_api import generate_auth_url
 from clearledgr.services.slack_api import SlackAPIClient, resolve_slack_runtime
+from clearledgr.services.teams_api import TeamsAPIClient
 from clearledgr.services.subscription import PlanTier, get_subscription_service
 
 
@@ -197,6 +198,25 @@ def _erp_status_for_org(organization_id: str) -> Dict[str, Any]:
     }
 
 
+def _teams_status_for_org(organization_id: str) -> Dict[str, Any]:
+    db = get_db()
+    integration = db.get_organization_integration(organization_id, "teams") or {}
+    metadata = integration.get("metadata") if isinstance(integration.get("metadata"), dict) else {}
+    configured_webhook = str((metadata or {}).get("webhook_url") or "").strip()
+    env_webhook = str(os.getenv("TEAMS_APPROVAL_WEBHOOK_URL", "")).strip()
+    webhook_url = configured_webhook or env_webhook
+    return {
+        "name": "teams",
+        "connected": bool(webhook_url),
+        "status": integration.get("status") or ("connected" if webhook_url else "disconnected"),
+        "mode": integration.get("mode") or "per_org",
+        "webhook_configured": bool(webhook_url),
+        "webhook_url": configured_webhook,
+        "managed_by": "org" if configured_webhook else ("env" if env_webhook else "none"),
+        "last_sync_at": integration.get("last_sync_at"),
+    }
+
+
 def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
     db = get_db()
     org = db.ensure_organization(organization_id, organization_name=organization_id)
@@ -204,6 +224,7 @@ def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
     integrations = {
         "gmail": _gmail_status_for_org(organization_id, user),
         "slack": _slack_status_for_org(organization_id),
+        "teams": _teams_status_for_org(organization_id),
         "erp": _erp_status_for_org(organization_id),
     }
     required_actions: List[Dict[str, str]] = []
@@ -224,6 +245,8 @@ def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
         })
     if not integrations["slack"]["connected"]:
         required_actions.append({"code": "connect_slack", "message": "Connect Slack workspace"})
+    if not integrations["teams"]["connected"]:
+        required_actions.append({"code": "connect_teams", "message": "Connect Microsoft Teams webhook"})
     if not integrations["erp"]["connected"]:
         required_actions.append({"code": "connect_erp", "message": "Connect ERP system"})
 
@@ -325,6 +348,16 @@ class SlackTestRequest(BaseModel):
     message: str = "Clearledgr admin test: Slack approval channel is connected."
 
 
+class TeamsWebhookRequest(BaseModel):
+    organization_id: Optional[str] = None
+    webhook_url: str = Field(..., min_length=8, max_length=1024)
+
+
+class TeamsTestRequest(BaseModel):
+    organization_id: Optional[str] = None
+    message: str = "Clearledgr admin test: Teams approval channel is connected."
+
+
 class OnboardingStepRequest(BaseModel):
     organization_id: Optional[str] = None
     step: int = Field(..., ge=1, le=5)
@@ -359,6 +392,15 @@ class SAPConnectSubmitRequest(BaseModel):
     base_url: str = Field(..., min_length=8, max_length=512)
     username: str = Field(..., min_length=1, max_length=128)
     password: str = Field(..., min_length=1, max_length=256)
+
+
+class NetSuiteConnectSubmitRequest(BaseModel):
+    organization_id: Optional[str] = None
+    account_id: str = Field(..., min_length=1, max_length=128)
+    consumer_key: str = Field(..., min_length=1, max_length=256)
+    consumer_secret: str = Field(..., min_length=1, max_length=256)
+    token_id: str = Field(..., min_length=1, max_length=256)
+    token_secret: str = Field(..., min_length=1, max_length=256)
 
 
 class GmailConnectStartRequest(BaseModel):
@@ -406,6 +448,7 @@ def get_admin_bootstrap(
     integrations = [
         _gmail_status_for_org(org_id, user),
         _slack_status_for_org(org_id),
+        _teams_status_for_org(org_id),
         _erp_status_for_org(org_id),
     ]
 
@@ -414,7 +457,7 @@ def get_admin_bootstrap(
         "step": int(subscription.get("onboarding_step") or 0),
         "steps": [
             {"id": 1, "name": "Connect Gmail"},
-            {"id": 2, "name": "Connect Slack"},
+            {"id": 2, "name": "Connect Slack and Teams"},
             {"id": 3, "name": "Connect ERP"},
             {"id": 4, "name": "Set approval channel"},
             {"id": 5, "name": "Review AP policy defaults"},
@@ -485,6 +528,7 @@ def get_admin_integrations(
         "integrations": [
             _gmail_status_for_org(org_id, user),
             _slack_status_for_org(org_id),
+            _teams_status_for_org(org_id),
             _erp_status_for_org(org_id),
         ],
     }
@@ -682,6 +726,59 @@ async def test_slack_channel(
     }
 
 
+@router.post("/integrations/teams/webhook")
+def set_teams_webhook(
+    request: TeamsWebhookRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    webhook_url = str(request.webhook_url or "").strip()
+    if not webhook_url.startswith("https://"):
+        raise HTTPException(status_code=422, detail="invalid_teams_webhook_url")
+    db = get_db()
+    db.upsert_organization_integration(
+        organization_id=org_id,
+        integration_type="teams",
+        status="connected",
+        mode="per_org",
+        metadata={"webhook_url": webhook_url},
+        last_sync_at=_now_iso(),
+    )
+    return {"success": True, "organization_id": org_id}
+
+
+@router.post("/integrations/teams/test")
+def test_teams_webhook(
+    request: TeamsTestRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    client = TeamsAPIClient.from_env(org_id)
+    payload = {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "type": "AdaptiveCard",
+                    "version": "1.4",
+                    "body": [
+                        {"type": "TextBlock", "weight": "Bolder", "text": "Clearledgr Teams connectivity test"},
+                        {"type": "TextBlock", "wrap": True, "text": request.message},
+                    ],
+                },
+            }
+        ],
+    }
+    result = client._post_json(payload)
+    if result.get("status") != "sent":
+        raise HTTPException(status_code=400, detail=f"teams_test_failed:{result.get('reason') or result.get('status')}")
+    return {"success": True, "organization_id": org_id}
+
+
 @router.get("/integrations/slack/manifest")
 def slack_manifest_template(
     organization_id: Optional[str] = Query(default=None),
@@ -739,7 +836,7 @@ def erp_connect_start(
                 {"name": "token_id", "label": "Token ID", "type": "text", "required": True},
                 {"name": "token_secret", "label": "Token Secret", "type": "password", "required": True},
             ],
-            "submit_url": "/erp/netsuite/connect",
+            "submit_url": "/api/admin/integrations/erp/connect/netsuite",
             "help_text": "In NetSuite: Setup > Company > Enable Features > SuiteCloud > Token-Based Authentication. Then create an Integration record and generate a Token.",
         }
 
@@ -849,6 +946,48 @@ async def connect_sap(
         "organization_id": org_id,
         "erp_type": "sap",
         "base_url": base_url,
+    }
+
+
+@router.post("/integrations/erp/connect/netsuite")
+async def connect_netsuite(
+    request: NetSuiteConnectSubmitRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+
+    from clearledgr.integrations.erp_router import (
+        ERPConnection,
+        get_netsuite_accounts,
+        set_erp_connection,
+    )
+
+    connection = ERPConnection(
+        type="netsuite",
+        account_id=request.account_id,
+        consumer_key=request.consumer_key,
+        consumer_secret=request.consumer_secret,
+        token_id=request.token_id,
+        token_secret=request.token_secret,
+    )
+
+    try:
+        accounts = await get_netsuite_accounts(connection)
+        if accounts is None:
+            raise HTTPException(status_code=400, detail="netsuite_connection_test_failed")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"netsuite_connection_test_failed:{exc}") from exc
+
+    set_erp_connection(org_id, connection)
+    return {
+        "success": True,
+        "organization_id": org_id,
+        "erp_type": "netsuite",
+        "account_id": request.account_id,
+        "accounts_found": len(accounts) if isinstance(accounts, list) else 0,
     }
 
 

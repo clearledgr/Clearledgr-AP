@@ -20,11 +20,20 @@ from clearledgr.api import gmail_webhooks as gmail_webhooks_module
 from clearledgr.api import admin_console as admin_console_module
 from clearledgr.api import ap_items as ap_items_module
 from clearledgr.api import auth as auth_module
-from clearledgr.api import erp_connections as erp_connections_module
-from clearledgr.api import org_config as org_config_module
 from clearledgr.core.auth import TokenData
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _reset_test_client_state():
+    client.cookies.clear()
+    app.dependency_overrides.clear()
+    try:
+        yield
+    finally:
+        client.cookies.clear()
+        app.dependency_overrides.clear()
 
 
 class TestHealthEndpoints:
@@ -502,11 +511,10 @@ class TestAdminConsoleIntegrations:
 
 
 class TestERPEndpoints:
-    """Test ERP integration endpoints."""
+    """Test canonical ERP integration surfaces."""
     
-    def test_erp_status(self):
-        """Test ERP connection status."""
-        app.dependency_overrides[erp_connections_module.get_current_user] = lambda: TokenData(
+    def test_admin_integrations_includes_erp_status(self):
+        app.dependency_overrides[admin_console_module.get_current_user] = lambda: TokenData(
             user_id="erp-user-1",
             email="erp-user@example.com",
             organization_id="default",
@@ -514,13 +522,15 @@ class TestERPEndpoints:
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
         try:
-            response = client.get("/erp/status/default")
+            response = client.get("/api/admin/integrations?organization_id=default")
         finally:
-            app.dependency_overrides.pop(erp_connections_module.get_current_user, None)
+            app.dependency_overrides.pop(admin_console_module.get_current_user, None)
         assert response.status_code == 200
+        payload = response.json()
+        assert any(row.get("name") == "erp" for row in payload.get("integrations", []))
 
-    def test_erp_status_blocks_cross_org_for_non_admin(self):
-        app.dependency_overrides[erp_connections_module.get_current_user] = lambda: TokenData(
+    def test_admin_integrations_blocks_cross_org_for_non_admin(self):
+        app.dependency_overrides[admin_console_module.get_current_user] = lambda: TokenData(
             user_id="erp-user-2",
             email="erp-user-2@example.com",
             organization_id="default",
@@ -528,11 +538,11 @@ class TestERPEndpoints:
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
         try:
-            response = client.get("/erp/status/other-org")
+            response = client.get("/api/admin/integrations?organization_id=other-org")
         finally:
-            app.dependency_overrides.pop(erp_connections_module.get_current_user, None)
+            app.dependency_overrides.pop(admin_console_module.get_current_user, None)
         assert response.status_code == 403
-        assert response.json().get("detail") == "org_mismatch"
+        assert response.json().get("detail") == "org_access_denied"
     
     def test_oauth_status_route_not_mounted(self):
         """Legacy /oauth route family is not mounted in strict AP-v1 runtime."""
@@ -591,6 +601,46 @@ class TestExtensionEndpoints:
             "organization_id": "default",
         })
         assert response.status_code == 401
+
+    def test_approve_and_post_uses_canonical_invoice_workflow(self, monkeypatch):
+        captured: dict = {}
+
+        class _FakeWorkflow:
+            async def approve_invoice(self, **kwargs):
+                captured.update(kwargs)
+                return {"status": "approved", "invoice_id": kwargs.get("gmail_id")}
+
+        monkeypatch.setattr(
+            "clearledgr.services.invoice_workflow.get_invoice_workflow",
+            lambda _org_id: _FakeWorkflow(),
+        )
+
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        try:
+            response = client.post(
+                "/extension/approve-and-post",
+                json={
+                    "email_id": "thread-123",
+                    "extraction": {
+                        "vendor": "Acme Supplies",
+                        "amount": 842.19,
+                        "override_justification": "month_end_exception",
+                    },
+                    "override": True,
+                    "organization_id": "default",
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "approved"
+        assert captured["gmail_id"] == "thread-123"
+        assert captured["source_channel"] == "gmail_extension"
+        assert captured["allow_budget_override"] is True
+        assert captured["allow_confidence_override"] is True
+        assert captured["allow_po_exception_override"] is True
 
     def test_extension_register_gmail_token_success(self, monkeypatch):
         stored = {}
@@ -1497,7 +1547,7 @@ class TestExtensionEndpoints:
 
 
 class TestOrgConfigEndpoints:
-    """Test org config auth and org-scope boundaries."""
+    """Strict AP-v1 profile should not expose legacy /config routes."""
 
     @staticmethod
     def _fake_user(role: str = "user", org_id: str = "default"):
@@ -1509,46 +1559,43 @@ class TestOrgConfigEndpoints:
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
 
-    def test_org_config_requires_auth(self):
-        app.dependency_overrides.pop(org_config_module.get_current_user, None)
+    def test_org_config_surface_disabled_in_strict_profile(self):
         response = client.get("/config/organizations/default")
-        assert response.status_code == 401
+        assert response.status_code == 404
+        body = response.json()
+        assert body.get("detail") == "endpoint_disabled_in_ap_v1_profile"
 
-    def test_org_config_blocks_cross_org_for_non_admin(self):
-        app.dependency_overrides[org_config_module.get_current_user] = lambda: self._fake_user(role="user", org_id="default")
-        try:
-            response = client.get("/config/organizations/other-org/thresholds")
-        finally:
-            app.dependency_overrides.pop(org_config_module.get_current_user, None)
-        assert response.status_code == 403
-        assert response.json().get("detail") == "org_mismatch"
+    def test_org_config_thresholds_surface_disabled_in_strict_profile(self):
+        response = client.get("/config/organizations/other-org/thresholds")
+        assert response.status_code == 404
+        body = response.json()
+        assert body.get("detail") == "endpoint_disabled_in_ap_v1_profile"
 
-    def test_org_config_allows_same_org_for_non_admin(self):
-        app.dependency_overrides[org_config_module.get_current_user] = lambda: self._fake_user(role="user", org_id="default")
-        try:
-            response = client.get("/config/organizations/default/thresholds")
-        finally:
-            app.dependency_overrides.pop(org_config_module.get_current_user, None)
-        assert response.status_code == 200
-        assert "thresholds" in response.json()
+    def test_org_config_same_org_surface_disabled_in_strict_profile(self):
+        response = client.get("/config/organizations/default/thresholds")
+        assert response.status_code == 404
+        body = response.json()
+        assert body.get("detail") == "endpoint_disabled_in_ap_v1_profile"
 
 
 class TestSettingsEndpoints:
     """Test organization settings endpoints."""
     
     def test_get_settings(self):
-        """Test getting organization settings."""
+        """Legacy /settings surface is disabled in strict AP-v1 profile."""
         response = client.get("/settings/default")
-        assert response.status_code == 200
+        assert response.status_code == 404
+        assert response.json().get("detail") == "endpoint_disabled_in_ap_v1_profile"
     
     def test_update_approval_thresholds(self):
-        """Test updating approval thresholds."""
+        """Legacy /settings mutations are disabled in strict AP-v1 profile."""
         response = client.put("/settings/default/approval-thresholds", json={
             "auto_approve_limit": 500,
             "manager_approval_limit": 5000,
             "executive_approval_limit": 25000,
         })
-        assert response.status_code in [200, 404]  # 404 if org doesn't exist
+        assert response.status_code == 404
+        assert response.json().get("detail") == "endpoint_disabled_in_ap_v1_profile"
 
 
 class TestAgentIntentEndpoints:

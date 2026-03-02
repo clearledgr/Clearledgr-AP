@@ -453,15 +453,15 @@ class TestSecurityHardening:
                 )
 
     def test_require_secret_crashes_in_prod(self):
-        """require_secret raises RuntimeError in production if not set."""
+        """require_secret raises RuntimeError in production-like envs if not set."""
         from clearledgr.core.secrets import require_secret, _generated_cache
 
-        with patch.dict(os.environ, {"ENV": "production"}, clear=False):
-            # Remove the cached value if any
-            _generated_cache.pop("__TEST_SECRET__", None)
-            os.environ.pop("__TEST_SECRET__", None)
-            with pytest.raises(RuntimeError, match="not set"):
-                require_secret("__TEST_SECRET__")
+        for env_name in ("production", "staging"):
+            with patch.dict(os.environ, {"ENV": env_name}, clear=False):
+                _generated_cache.pop("__TEST_SECRET__", None)
+                os.environ.pop("__TEST_SECRET__", None)
+                with pytest.raises(RuntimeError, match="not set"):
+                    require_secret("__TEST_SECRET__")
 
 
 class TestBatchRetryRecoverability:

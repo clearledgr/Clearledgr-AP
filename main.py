@@ -42,7 +42,6 @@ import uuid
 from datetime import datetime, timezone
 from clearledgr.api import (
     v1_router,
-    erp_router,
     gmail_extension_router,
     slack_invoices_router,
     teams_invoices_router,
@@ -188,13 +187,14 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
     "/health",
     "/metrics",
     "/console",
+    # OAuth callbacks required for ERP admin connect flows.
+    "/erp/quickbooks/callback",
+    "/erp/xero/callback",
 }
 
 STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/v1",
     "/static",
-    "/api/v1",
-    "/api/erp",
     "/api/agent",
     "/api/ap",
     "/api/ops",
@@ -204,8 +204,6 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/teams",
     "/gmail",
     "/auth",
-    "/config",
-    "/erp",
 )
 
 
@@ -242,8 +240,10 @@ def _apply_runtime_surface_profile() -> None:
         app.state._runtime_surface_mode = "strict"
 
 
+STRICT_PROFILE_ACTIVE = bool(_runtime_surface_contract().get("strict_effective"))
+
+
 app.include_router(v1_router)
-app.include_router(erp_router)
 app.include_router(gmail_extension_router)
 app.include_router(slack_invoices_router)
 app.include_router(teams_invoices_router)
@@ -549,8 +549,9 @@ except ImportError:
 
 # Include Organization Config API
 try:
-    from clearledgr.api.org_config import router as org_config_router
-    app.include_router(org_config_router)
+    if not STRICT_PROFILE_ACTIVE:
+        from clearledgr.api.org_config import router as org_config_router
+        app.include_router(org_config_router)
 except ImportError:
     pass
 
@@ -563,8 +564,25 @@ except ImportError:
 
 # ERP Connections API (OAuth flows)
 try:
-    from clearledgr.api.erp_connections import router as erp_connections_router
-    app.include_router(erp_connections_router)
+    if STRICT_PROFILE_ACTIVE:
+        from clearledgr.api.erp_connections import quickbooks_callback, xero_callback
+
+        # In strict AP-v1 profile, only OAuth callback completion routes are exposed.
+        app.add_api_route(
+            "/erp/quickbooks/callback",
+            quickbooks_callback,
+            methods=["GET"],
+            tags=["ERP Connections"],
+        )
+        app.add_api_route(
+            "/erp/xero/callback",
+            xero_callback,
+            methods=["GET"],
+            tags=["ERP Connections"],
+        )
+    else:
+        from clearledgr.api.erp_connections import router as erp_connections_router
+        app.include_router(erp_connections_router)
 except ImportError:
     pass
 

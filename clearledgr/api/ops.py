@@ -102,6 +102,69 @@ def _workflow_stuck_minutes() -> int:
         return 120
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = str(os.getenv(name, "true" if default else "false")).strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(str(os.getenv(name, str(default))).strip())
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _is_production_env() -> bool:
+    return str(os.getenv("ENV", "dev")).strip().lower() in {"prod", "production"}
+
+
+def _schedule_from_env(name: str, default_csv: str) -> List[int]:
+    raw = str(os.getenv(name, default_csv)).strip()
+    schedule: List[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            schedule.append(max(0, int(part)))
+        except ValueError:
+            continue
+    return schedule or [int(v) for v in default_csv.split(",")]
+
+
+def _execution_contract_status() -> Dict[str, Any]:
+    production_env = _is_production_env()
+    planning_loop_requested = _env_flag("AGENT_PLANNING_LOOP", True)
+    planning_loop_enabled = True
+    legacy_fallback_requested = _env_flag("AGENT_LEGACY_FALLBACK_ON_ERROR", False)
+    legacy_fallback_on_error = False
+
+    warnings: List[str] = []
+    if not planning_loop_requested and planning_loop_enabled:
+        warnings.append(
+            "planning_loop_forced_on_in_production"
+            if production_env
+            else "planning_loop_opt_out_ignored"
+        )
+    if legacy_fallback_requested and not legacy_fallback_on_error:
+        warnings.append(
+            "legacy_fallback_forced_off_in_production"
+            if production_env
+            else "legacy_fallback_opt_in_ignored"
+        )
+
+    return {
+        "mode": "agentic_runtime",
+        "production_env": production_env,
+        "production_contract_enforced": production_env,
+        "planning_loop_requested": planning_loop_requested,
+        "planning_loop_enabled": planning_loop_enabled,
+        "legacy_fallback_requested": legacy_fallback_requested,
+        "legacy_fallback_on_error": legacy_fallback_on_error,
+        "warnings": warnings,
+    }
+
+
 def _resolve_runtime_surface_contract(request: Request) -> Dict[str, Any] | None:
     # Prefer the app's strict AP-v1 surface contract so diagnostics reflect
     # the effective runtime constraints reported by `main.py`.
@@ -303,17 +366,54 @@ async def get_autopilot_status(
     runtime_surface_contract = _resolve_runtime_surface_contract(request)
     if isinstance(runtime_surface_contract, dict):
         payload["runtime_surface"] = runtime_surface_contract
-    # Surface agent orchestrator runtime truth-in-claims so the Gmail sidebar and
-    # ops tools do not imply durable autonomy/retries when only in-memory retry
-    # behavior is available.
+    # Surface canonical runtime readiness and durable queue state.
     try:
-        from clearledgr.services.agent_orchestrator import get_orchestrator
+        from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
 
-        orchestrator = get_orchestrator(getattr(_user, "organization_id", "default") or "default")
-        payload["agent_runtime"] = orchestrator.runtime_status()
+        org_id = str(getattr(_user, "organization_id", "default") or "default")
+        runtime = get_platform_finance_runtime(org_id)
+        execution_contract = _execution_contract_status()
+        enabled_by_config = _env_flag("AP_AGENT_AUTONOMOUS_RETRY_ENABLED", True)
+        post_process_enabled = _env_flag("AP_AGENT_POST_PROCESS_DURABLE_ENABLED", True)
+        allow_non_durable_default = not _is_production_env()
+        allow_non_durable = _env_flag(
+            "AP_AGENT_NON_DURABLE_RETRY_ALLOWED",
+            allow_non_durable_default,
+        )
+        payload["agent_runtime"] = {
+            "available": True,
+            "mode": "finance_agent_runtime",
+            "organization_id": org_id,
+            "pending_retry_jobs": await runtime.resume_pending_agent_tasks(),
+            "ap_skill_readiness": runtime.skill_readiness("ap_v1", window_hours=168),
+            "autonomous_retry": {
+                "enabled": bool(enabled_by_config),
+                "durable": True,
+                "mode": "durable_db_retry_queue",
+                "post_process_mode": "durable_db_post_process_queue",
+                "allow_non_durable": bool(allow_non_durable),
+                "backoff_seconds": _schedule_from_env("AP_AGENT_RETRY_BACKOFF_SECONDS", "5,15,45"),
+                "poll_interval_seconds": max(1, _env_int("AP_AGENT_RETRY_POLL_SECONDS", 5)),
+                "worker_running": False,
+                "reason": None if enabled_by_config else "autonomous_retry_disabled_by_config",
+            },
+            "post_process": {
+                "enabled": bool(post_process_enabled),
+                "durable": True,
+                "mode": "durable_db_post_process_queue",
+                "backoff_seconds": _schedule_from_env("AP_AGENT_POST_PROCESS_BACKOFF_SECONDS", "5,15,45"),
+                "max_attempts": max(1, _env_int("AP_AGENT_POST_PROCESS_MAX_ATTEMPTS", 3)),
+                "allow_non_durable": False,
+                "worker_running": False,
+                "reason": None if post_process_enabled else "post_process_disabled_by_config",
+            },
+            "legacy_fallback_on_planner_error": execution_contract["legacy_fallback_on_error"],
+            "execution_contract": execution_contract,
+        }
     except Exception as exc:  # pragma: no cover - best effort diagnostics only
         payload["agent_runtime"] = {
             "available": False,
+            "mode": "finance_agent_runtime",
             "error": str(exc),
         }
     if temporal_blocked and not payload.get("error"):

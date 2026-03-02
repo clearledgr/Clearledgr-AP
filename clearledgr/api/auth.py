@@ -33,6 +33,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 ADMIN_ACCESS_COOKIE_NAME = "clearledgr_admin_access"
 ADMIN_REFRESH_COOKIE_NAME = "clearledgr_admin_refresh"
 ADMIN_CSRF_COOKIE_NAME = "clearledgr_admin_csrf"
+SESSION_TOKEN_PLACEHOLDER = "__cookie_session__"
 
 
 def _session_cookie_secure() -> bool:
@@ -260,8 +261,8 @@ async def login(request: LoginRequest, response: Response):
     Login with email and password.
     
     Returns:
-    - access_token: JWT for API access (expires in 60 min)
-    - refresh_token: JWT for getting new access tokens (expires in 7 days)
+    - Cookie-backed admin session (HttpOnly access + refresh cookies)
+    - Placeholder token fields for backward compatibility with existing clients
     """
     user = authenticate_user(request.email, request.password)
     
@@ -282,8 +283,8 @@ async def login(request: LoginRequest, response: Response):
     _set_admin_session_cookies(response, access_token, refresh_token)
     
     return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
+        access_token=SESSION_TOKEN_PLACEHOLDER,
+        refresh_token=SESSION_TOKEN_PLACEHOLDER,
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
 
@@ -325,8 +326,8 @@ async def refresh_token(
     _set_admin_session_cookies(response, access_token, new_refresh_token)
     
     return TokenResponse(
-        access_token=access_token,
-        refresh_token=new_refresh_token,
+        access_token=SESSION_TOKEN_PLACEHOLDER,
+        refresh_token=SESSION_TOKEN_PLACEHOLDER,
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
 
@@ -857,8 +858,8 @@ async def exchange_google_auth_code(request: GoogleAuthCodeExchangeRequest, resp
         raise HTTPException(status_code=400, detail="invalid_auth_code_payload")
     _set_admin_session_cookies(response, access_token, refresh_token)
     return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
+        access_token=SESSION_TOKEN_PLACEHOLDER,
+        refresh_token=SESSION_TOKEN_PLACEHOLDER,
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
 
@@ -911,7 +912,7 @@ async def accept_invite(request: InviteAcceptRequest, response: Response):
     return {
         "success": True,
         "user": user,
-        "access_token": access,
-        "refresh_token": refresh,
+        "access_token": SESSION_TOKEN_PLACEHOLDER,
+        "refresh_token": SESSION_TOKEN_PLACEHOLDER,
         "token_type": "bearer",
     }

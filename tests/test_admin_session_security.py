@@ -45,6 +45,9 @@ def test_login_sets_http_only_admin_session_and_csrf_cookies(db):
     assert response.cookies.get("clearledgr_admin_access")
     assert response.cookies.get("clearledgr_admin_refresh")
     assert response.cookies.get("clearledgr_admin_csrf")
+    payload = response.json()
+    assert payload.get("access_token") == "__cookie_session__"
+    assert payload.get("refresh_token") == "__cookie_session__"
 
 
 def test_cookie_session_auth_allows_auth_me_without_bearer_header(db):

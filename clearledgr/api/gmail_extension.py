@@ -828,10 +828,10 @@ async def approve_and_post(
     Slack approval buttons so behaviour is identical regardless of surface.
     """
     from clearledgr.core.ap_states import OverrideContext, OVERRIDE_TYPE_MULTI
-    from clearledgr.services.agent_orchestrator import get_orchestrator
+    from clearledgr.services.invoice_workflow import get_invoice_workflow
 
     org_id = _resolve_org_id_for_user(user, request.organization_id)
-    orchestrator = get_orchestrator(org_id)
+    workflow = get_invoice_workflow(org_id)
 
     # Resolve the AP item's gmail_id (thread_id) from request
     gmail_id = request.email_id
@@ -847,13 +847,17 @@ async def approve_and_post(
         if request.override else None
     )
 
-    result = await orchestrator.on_approval(
+    result = await workflow.approve_invoice(
         gmail_id=gmail_id,
         approved_by=actor,
         source_channel="gmail_extension",
+        source_channel_id="gmail_extension",
+        source_message_ref=gmail_id,
         allow_budget_override=request.override,
         allow_confidence_override=request.override,
         override_justification=justification,
+        allow_po_exception_override=request.override,
+        po_override_reason=justification,
         field_confidences=extract_field_confidences(request.extraction or {}),
         override_context=override_ctx,
     )

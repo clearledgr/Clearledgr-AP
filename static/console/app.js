@@ -220,16 +220,18 @@ function currentUserEmail() {
 function setupPage() {
   const gmail = integrationByName("gmail");
   const slack = integrationByName("slack");
+  const teams = integrationByName("teams");
   const erp = integrationByName("erp");
   const policyConfig = state.bootstrap?.policyPayload?.policy?.config_json || {};
   const slackChannel = slack.approval_channel || "";
 
   const gmailOk = !!gmail.connected;
   const slackOk = !!slack.connected;
+  const teamsOk = !!teams.connected;
   const erpOk = !!erp.connected;
   const channelOk = slackOk && !!slackChannel;
   const policyOk = policyConfig && Object.keys(policyConfig).length > 0;
-  const allReady = gmailOk && slackOk && erpOk && channelOk && policyOk;
+  const allReady = gmailOk && slackOk && teamsOk && erpOk && channelOk && policyOk;
 
   const erpType = erp.erp_type || "";
   const erpLabel = erpType ? erpType.charAt(0).toUpperCase() + erpType.slice(1) : "";
@@ -238,7 +240,7 @@ function setupPage() {
     <div class="panel">
       <h3>Setup steps</h3>
       <div class="readiness-list">
-        <div class="readiness-item">${checkMark(gmailOk && slackOk && erpOk)} 1) Integrations</div>
+        <div class="readiness-item">${checkMark(gmailOk && slackOk && teamsOk && erpOk)} 1) Integrations</div>
         <div class="readiness-item">${checkMark(channelOk)} 2) Approval channel</div>
         <div class="readiness-item">${checkMark(policyOk)} 3) AP policies</div>
         <div class="readiness-item">${checkMark(allReady)} 4) Launch</div>
@@ -271,6 +273,17 @@ function setupPage() {
           ${slackOk
             ? `<p class="connector-detail">Workspace: ${slack.team_name || "connected"}</p>`
             : '<button id="connect-slack-btn" class="connector-btn">Connect Slack</button>'}
+        </div>
+
+        <div class="connector-card ${teamsOk ? "done" : ""}">
+          <div class="connector-header">
+            <strong>Teams</strong>
+            ${statusBadge(teamsOk)}
+          </div>
+          <p class="muted">Sends approval cards to Microsoft Teams.</p>
+          ${teamsOk
+            ? `<p class="connector-detail">Webhook: ${teams.managed_by === "env" ? "managed by env" : "configured"}</p>`
+            : '<button id="open-teams-setup-btn" class="connector-btn">Configure Teams</button>'}
         </div>
 
       </div>
@@ -764,6 +777,7 @@ function opsPage() {
 function integrationsPage() {
   const integrations = state.bootstrap?.integrations || [];
   const slack = integrationByName("slack");
+  const teams = integrationByName("teams");
   return `
     <div class="panel">
       <table class="table">
@@ -790,6 +804,15 @@ function integrationsPage() {
         <button id="save-slack-channel-btn" class="alt">Save Channel</button>
         <button id="test-slack-btn" class="alt">Send Test Card</button>
       </div>
+    </div>
+    <div class="panel">
+      <h3>Teams Setup</h3>
+      <div class="row">
+        <input id="teams-webhook-input" placeholder="https://.../incomingwebhook/..." value="${teams.webhook_url || ""}" />
+        <button id="save-teams-webhook-btn" class="alt">Save Webhook</button>
+        <button id="test-teams-btn" class="alt" ${teams.connected ? "" : "disabled"}>Send Test Card</button>
+      </div>
+      <p class="muted">If managed by environment, set TEAMS_APPROVAL_WEBHOOK_URL on the backend.</p>
     </div>
   `;
 }
@@ -1241,6 +1264,15 @@ async function bindPageEvents() {
   const slackInstallBtn = qs("#slack-install-btn");
   if (slackInstallBtn) slackInstallBtn.onclick = slackConnectHandler;
 
+  const openTeamsSetupBtn = qs("#open-teams-setup-btn");
+  if (openTeamsSetupBtn) {
+    openTeamsSetupBtn.onclick = () => {
+      state.activePage = "integrations";
+      renderNav();
+      renderPage();
+    };
+  }
+
   // ERP connect buttons (QuickBooks, Xero)
   document.querySelectorAll(".erp-connect-btn").forEach((btn) => {
     btn.onclick = async () => {
@@ -1302,7 +1334,10 @@ async function bindPageEvents() {
       nsConnectBtn.textContent = "Testing connection...";
       nsConnectBtn.disabled = true;
       try {
-        await api("/erp/netsuite/connect", { method: "POST", body: JSON.stringify(payload) });
+        await api("/api/admin/integrations/erp/connect/netsuite", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
         toast("NetSuite connected!", "success");
         state.netsuiteFormVisible = false;
         await refreshAll();
@@ -1391,6 +1426,34 @@ async function bindPageEvents() {
         body: JSON.stringify({ organization_id: state.orgId, channel_id: channel }),
       });
       toast("Test message sent to Slack.");
+    };
+  }
+
+  const saveTeamsWebhookBtn = qs("#save-teams-webhook-btn");
+  if (saveTeamsWebhookBtn) {
+    saveTeamsWebhookBtn.onclick = async () => {
+      const webhook = qs("#teams-webhook-input").value.trim();
+      if (!webhook) {
+        toast("Teams webhook URL is required.", "error");
+        return;
+      }
+      await api("/api/admin/integrations/teams/webhook", {
+        method: "POST",
+        body: JSON.stringify({ organization_id: state.orgId, webhook_url: webhook }),
+      });
+      toast("Teams webhook saved.");
+      await refreshAll();
+    };
+  }
+
+  const testTeamsBtn = qs("#test-teams-btn");
+  if (testTeamsBtn && !testTeamsBtn.disabled) {
+    testTeamsBtn.onclick = async () => {
+      await api("/api/admin/integrations/teams/test", {
+        method: "POST",
+        body: JSON.stringify({ organization_id: state.orgId }),
+      });
+      toast("Test message sent to Teams.");
     };
   }
 

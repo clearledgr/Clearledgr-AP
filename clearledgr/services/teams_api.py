@@ -32,8 +32,21 @@ class TeamsAPIClient:
         self.timeout_seconds = timeout_seconds
 
     @classmethod
-    def from_env(cls) -> "TeamsAPIClient":
-        return cls(webhook_url=os.getenv("TEAMS_APPROVAL_WEBHOOK_URL"))
+    def from_env(cls, organization_id: Optional[str] = None) -> "TeamsAPIClient":
+        webhook_url = ""
+        if organization_id:
+            try:
+                from clearledgr.core.database import get_db
+
+                db = get_db()
+                integration = db.get_organization_integration(organization_id, "teams") or {}
+                metadata = integration.get("metadata") if isinstance(integration.get("metadata"), dict) else {}
+                webhook_url = str((metadata or {}).get("webhook_url") or "").strip()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Could not load Teams integration metadata for %s: %s", organization_id, exc)
+        if not webhook_url:
+            webhook_url = str(os.getenv("TEAMS_APPROVAL_WEBHOOK_URL", "")).strip()
+        return cls(webhook_url=webhook_url)
 
     def _post_json(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not self.webhook_url:

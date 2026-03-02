@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
+
+from clearledgr.core import database as db_module
+
+
+def test_metrics_use_durable_store_in_staging(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("ENV", "staging")
+    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "metrics-persistence.db"))
+    monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", "test-token-encryption-key")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    db_module._DB_INSTANCE = None
+    db = db_module.get_db()
+    db.initialize()
+
+    metrics_module = importlib.import_module("clearledgr.services.metrics")
+    metrics = importlib.reload(metrics_module)
+    metrics.reset_metrics()
+    metrics.record_request("GET", "/health", 200, 12.5)
+    metrics.record_error("http_500", "/api/test")
+    metrics.record_reconciliation_run("gmail", "success", 50.0)
+
+    with db.connect() as conn:
+        cur = conn.cursor()
+        cur.execute(db._prepare_sql("SELECT COUNT(*) AS cnt FROM api_request_metrics"))
+        request_count = int(dict(cur.fetchone())["cnt"])
+        cur.execute(db._prepare_sql("SELECT COUNT(*) AS cnt FROM api_error_metrics"))
+        error_count = int(dict(cur.fetchone())["cnt"])
+
+    payload = metrics.get_metrics()
+    assert request_count == 1
+    assert error_count == 1
+    assert payload["requests"]["total"] >= 1
+    assert payload["errors"]["total"] >= 1
+    assert payload["backend"]["mode"] == "durable_db"
+    assert int(payload["backend"]["retention_days"]) >= 1
+
+
+def test_metrics_prunes_rows_older_than_retention(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("ENV", "staging")
+    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "metrics-prune.db"))
+    monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", "test-token-encryption-key")
+    monkeypatch.setenv("API_METRICS_RETENTION_DAYS", "1")
+    monkeypatch.setenv("API_METRICS_PRUNE_INTERVAL_SECONDS", "5")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    db_module._DB_INSTANCE = None
+    db = db_module.get_db()
+    db.initialize()
+
+    metrics_module = importlib.import_module("clearledgr.services.metrics")
+    metrics = importlib.reload(metrics_module)
+    metrics.reset_metrics()
+    metrics.record_request("GET", "/health", 200, 10.0)
+
+    stale_ts = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    with db.connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            db._prepare_sql(
+                """
+                INSERT INTO api_request_metrics
+                (id, ts, method, path, status_code, duration_ms)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """
+            ),
+            ("req_stale", stale_ts, "GET", "/stale", 200, 1.0),
+        )
+        conn.commit()
+
+    # Force prune on next write by resetting the in-process monotonic marker.
+    metrics._LAST_PRUNE_MONOTONIC = 0.0
+    metrics.record_request("GET", "/healthz", 200, 11.0)
+
+    with db.connect() as conn:
+        cur = conn.cursor()
+        cur.execute(db._prepare_sql("SELECT COUNT(*) AS cnt FROM api_request_metrics WHERE path = ?"), ("/stale",))
+        stale_count = int(dict(cur.fetchone())["cnt"])
+
+    assert stale_count == 0

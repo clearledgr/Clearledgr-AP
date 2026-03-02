@@ -2,7 +2,12 @@ import asyncio
 import re
 
 from clearledgr.integrations import erp_router
-from clearledgr.integrations.erp_router import ERPConnection, find_vendor_netsuite, find_vendor_quickbooks
+from clearledgr.integrations.erp_router import (
+    ERPConnection,
+    find_vendor_netsuite,
+    find_vendor_quickbooks,
+    find_vendor_xero,
+)
 
 
 class _FakeResponse:
@@ -159,3 +164,33 @@ def test_netsuite_vendor_email_query_is_sanitized(monkeypatch):
     assert "'" not in operand
     assert "%" not in operand
     assert "_" not in operand
+
+
+def test_xero_vendor_name_where_clause_is_sanitized(monkeypatch):
+    captured = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, params=None, headers=None, timeout=None):
+            captured["where"] = str((params or {}).get("where") or "")
+            return _FakeResponse({"Contacts": []})
+
+    monkeypatch.setattr(erp_router.httpx, "AsyncClient", _FakeAsyncClient)
+
+    conn = ERPConnection(type="xero", access_token="token-1", tenant_id="tenant-1")
+    asyncio.run(find_vendor_xero(conn, name='Acme" OR Name.Contains("x")', email=None))
+
+    where_clause = captured["where"]
+    assert where_clause.startswith("IsSupplier==true")
+    assert "Name.Contains" in where_clause
+    # Ensure unsanitized quote/control fragments are not present.
+    assert '" OR ' not in where_clause
+    assert "''" not in where_clause

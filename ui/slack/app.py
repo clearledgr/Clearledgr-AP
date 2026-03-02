@@ -939,7 +939,7 @@ async def handle_invoice_approve(
     organization_id: str = DEFAULT_ORG_ID,
 ):
     """Handle invoice approval button click from Slack."""
-    from clearledgr.services.agent_orchestrator import get_orchestrator
+    from clearledgr.services.invoice_workflow import get_invoice_workflow
 
     # Immediately show processing state — replaces buttons with status text
     await update_message(
@@ -954,12 +954,13 @@ async def handle_invoice_approve(
 
     try:
         user_email = f"slack:{user_id}"
-
-        orchestrator = get_orchestrator(organization_id)
-        result = await orchestrator.on_approval(
+        workflow = get_invoice_workflow(organization_id, slack_channel=channel)
+        result = await workflow.approve_invoice(
             gmail_id=gmail_id,
             approved_by=user_email,
             source_channel="slack",
+            source_channel_id=channel,
+            source_message_ref=message_ts,
         )
 
         if result.get("status") != "approved":
@@ -990,7 +991,7 @@ async def handle_invoice_reject(
     organization_id: str = DEFAULT_ORG_ID,
 ):
     """Handle invoice rejection button click from Slack."""
-    from clearledgr.services.agent_orchestrator import get_orchestrator
+    from clearledgr.services.invoice_workflow import get_invoice_workflow
 
     # Immediately show processing state
     await update_message(
@@ -1005,13 +1006,14 @@ async def handle_invoice_reject(
 
     try:
         user_email = f"slack:{user_id}"
-
-        orchestrator = get_orchestrator(organization_id)
-        result = await orchestrator.on_rejection(
+        workflow = get_invoice_workflow(organization_id, slack_channel=channel)
+        result = await workflow.reject_invoice(
             gmail_id=gmail_id,
             rejected_by=user_email,
             reason="Rejected via Slack",
             source_channel="slack",
+            source_channel_id=channel,
+            source_message_ref=message_ts,
         )
 
         if result.get("status") != "rejected":
@@ -1042,15 +1044,17 @@ async def handle_budget_override(
     organization_id: str = DEFAULT_ORG_ID,
 ):
     """Handle budget override approval from Slack."""
-    from clearledgr.services.agent_orchestrator import get_orchestrator
+    from clearledgr.services.invoice_workflow import get_invoice_workflow
 
     try:
         user_email = f"slack:{user_id}"
-        orchestrator = get_orchestrator(organization_id)
-        result = await orchestrator.on_approval(
+        workflow = get_invoice_workflow(organization_id, slack_channel=channel)
+        result = await workflow.approve_invoice(
             gmail_id=gmail_id,
             approved_by=user_email,
             source_channel="slack",
+            source_channel_id=channel,
+            source_message_ref=message_ts,
             allow_budget_override=True,
             override_justification="Approved over budget in Slack",
         )
@@ -1094,16 +1098,18 @@ async def handle_budget_reject(
     organization_id: str = DEFAULT_ORG_ID,
 ):
     """Handle over-budget rejection from Slack."""
-    from clearledgr.services.agent_orchestrator import get_orchestrator
+    from clearledgr.services.invoice_workflow import get_invoice_workflow
 
     try:
         user_email = f"slack:{user_id}"
-        orchestrator = get_orchestrator(organization_id)
-        result = await orchestrator.on_rejection(
+        workflow = get_invoice_workflow(organization_id, slack_channel=channel)
+        result = await workflow.reject_invoice(
             gmail_id=gmail_id,
             rejected_by=user_email,
             reason="Rejected over budget in Slack",
             source_channel="slack",
+            source_channel_id=channel,
+            source_message_ref=message_ts,
         )
         if result.get("status") != "rejected":
             await send_message(channel, f"Budget rejection failed: {result.get('reason', 'Unknown error')}", organization_id=organization_id)
@@ -1280,11 +1286,14 @@ async def handle_clarifying_response(question_id: str, response_value: str, user
     and take autonomous action (approve, reject, flag, request more info).
     """
     from clearledgr.services.conversational_agent import get_conversational_agent
-    from clearledgr.services.agent_orchestrator import get_orchestrator
+    from clearledgr.services.correction_learning import get_correction_learning
+    from clearledgr.services.invoice_workflow import get_invoice_workflow
 
     try:
         user_email = f"slack:{user_id}"
         agent = get_conversational_agent(DEFAULT_ORG_ID)
+        workflow = get_invoice_workflow(DEFAULT_ORG_ID, slack_channel=channel)
+        correction_learning = get_correction_learning(DEFAULT_ORG_ID)
 
         # Process the response
         result = agent.handle_response(
@@ -1295,7 +1304,6 @@ async def handle_clarifying_response(question_id: str, response_value: str, user
 
         action = result.get("action", "unknown")
         invoice_id = result.get("invoice_id", "")
-        orchestrator = get_orchestrator(DEFAULT_ORG_ID)
 
         # Update the message to show response received
         response_text = f"<@{user_id}> responded: *{response_value}*"
@@ -1303,10 +1311,12 @@ async def handle_clarifying_response(question_id: str, response_value: str, user
         if action == "proceed":
             response_text += "\nProceeding with invoice processing..."
             if invoice_id:
-                approve_result = await orchestrator.on_approval(
+                approve_result = await workflow.approve_invoice(
                     gmail_id=invoice_id,
                     approved_by=user_email,
                     source_channel="slack",
+                    source_channel_id=channel,
+                    source_message_ref=message_ts,
                 )
                 status = approve_result.get("status", "unknown")
                 if status in ("approved", "posted"):
@@ -1318,11 +1328,13 @@ async def handle_clarifying_response(question_id: str, response_value: str, user
             reason = result.get("reason", "Rejected after clarification")
             response_text += f"\n{reason}"
             if invoice_id:
-                await orchestrator.on_rejection(
+                await workflow.reject_invoice(
                     gmail_id=invoice_id,
                     rejected_by=user_email,
                     reason=reason,
                     source_channel="slack",
+                    source_channel_id=channel,
+                    source_message_ref=message_ts,
                 )
 
         elif action == "flag_for_review":
@@ -1342,7 +1354,7 @@ async def handle_clarifying_response(question_id: str, response_value: str, user
             response_text += "\nPlease specify the GL code in a reply"
             # Record that we're waiting for GL so the agent can learn
             if invoice_id:
-                orchestrator.correction_learning.record_correction(
+                correction_learning.record_correction(
                     correction_type="gl_code",
                     original_value="unknown",
                     corrected_value="pending_user_input",
