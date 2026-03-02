@@ -18,13 +18,37 @@
       "ok": true
     },
     {
+      "id": "L05",
+      "ok": true
+    },
+    {
+      "id": "L06",
+      "ok": true
+    },
+    {
+      "id": "L07",
+      "ok": true
+    },
+    {
+      "id": "L09",
+      "ok": true
+    },
+    {
+      "id": "L10",
+      "ok": true
+    },
+    {
       "id": "L11",
+      "ok": true
+    },
+    {
+      "id": "L12",
       "ok": true
     }
   ],
   "manifest_path": "/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/MANIFEST.md",
   "manifest_tbd_count": 0,
-  "mode": "pilot",
+  "mode": "ga",
   "passed": true,
   "release_id": "ap-v1-2026-02-25-pilot-rc1",
   "required_items": [
@@ -32,14 +56,20 @@
     "L02",
     "L03",
     "L04",
-    "L11"
+    "L05",
+    "L06",
+    "L07",
+    "L09",
+    "L10",
+    "L11",
+    "L12"
   ],
   "warnings": [],
   "working_statuses": {
-    "erp_parity": "in_progress",
-    "failure_mode": "in_progress",
-    "rollback": "in_progress",
-    "runbooks": "in_progress",
+    "erp_parity": "done",
+    "failure_mode": "done",
+    "rollback": "done",
+    "runbooks": "done",
     "signoffs": "done"
   }
 }

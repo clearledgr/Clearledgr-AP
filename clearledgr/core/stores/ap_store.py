@@ -1287,6 +1287,31 @@ class APStore:
             rows = cur.fetchall()
         return [self._deserialize_audit_event(dict(row)) for row in rows]
 
+    def list_recent_ap_audit_events(self, organization_id: str, limit: int = 30) -> List[Dict[str, Any]]:
+        """Return recent AP audit events for an organization (newest first)."""
+        self.initialize()
+        safe_limit = max(1, min(int(limit or 30), 500))
+        sql = self._prepare_sql(
+            """
+            SELECT ae.*,
+                   ai.vendor_name AS vendor_name,
+                   ai.amount AS amount,
+                   ai.currency AS currency,
+                   ai.invoice_number AS invoice_number
+            FROM audit_events ae
+            LEFT JOIN ap_items ai ON ae.ap_item_id = ai.id
+            WHERE ae.organization_id = ?
+               OR (ae.organization_id IS NULL AND ai.organization_id = ?)
+            ORDER BY ae.ts DESC
+            LIMIT ?
+            """
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (organization_id, organization_id, safe_limit))
+            rows = cur.fetchall()
+        return [self._deserialize_audit_event(dict(row)) for row in rows]
+
     # ------------------------------------------------------------------
     # Workflow runs (durable local runtime)
     # ------------------------------------------------------------------

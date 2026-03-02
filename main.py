@@ -19,6 +19,7 @@ Run Instructions:
      -H "Content-Type: application/json" \
      -d '{"intent":"read_ap_workflow_health","input":{"limit":25},"organization_id":"default"}'
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -26,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
 import os
+import secrets
 from typing import Optional, List, Dict, Any
 from clearledgr.services.auth import get_api_key_optional
 from clearledgr.services.rate_limit import RateLimitMiddleware
@@ -45,6 +47,50 @@ from clearledgr.api import (
     slack_invoices_router,
     teams_invoices_router,
 )
+
+
+@asynccontextmanager
+async def app_lifespan(app: FastAPI):
+    """Canonical app lifecycle using FastAPI lifespan hooks."""
+    _apply_runtime_surface_profile()
+    try:
+        from clearledgr.services.gmail_autopilot import start_gmail_autopilot
+        await start_gmail_autopilot(app)
+        logger.info("Gmail autopilot started")
+    except Exception as e:
+        logger.warning(f"Gmail autopilot not started: {e}")
+
+    try:
+        from clearledgr.services.agent_background import start_agent_background
+        await start_agent_background(app)
+        logger.info("Agent background intelligence started")
+    except Exception as e:
+        logger.warning(f"Agent background not started: {e}")
+
+    try:
+        from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
+
+        runtime = get_platform_finance_runtime("default")
+        resumed = await runtime.resume_pending_agent_tasks()
+        logger.info("Finance agent runtime started (%d pending tasks discovered)", resumed)
+    except Exception as e:
+        logger.warning(f"Finance agent runtime not started: {e}")
+
+    try:
+        yield
+    finally:
+        try:
+            from clearledgr.services.gmail_autopilot import stop_gmail_autopilot
+            await stop_gmail_autopilot(app)
+        except Exception as e:
+            logger.warning(f"Gmail autopilot stop failed: {e}")
+
+        try:
+            from clearledgr.services.agent_background import stop_agent_background
+
+            await stop_agent_background()
+        except Exception as e:
+            logger.warning(f"Agent background stop failed: {e}")
 
 app = FastAPI(
     title="Clearledgr API",
@@ -92,6 +138,7 @@ app = FastAPI(
         {"url": "http://localhost:8000", "description": "Development server"},
         {"url": "https://api.clearledgr.com", "description": "Production server"},
     ],
+    lifespan=app_lifespan,
 )
 
 
@@ -273,12 +320,51 @@ class LegacySurfaceGuardMiddleware(BaseHTTPMiddleware):
             )
         return await call_next(request)
 
+
+class AdminSessionCSRFMiddleware(BaseHTTPMiddleware):
+    """Enforce CSRF header validation for cookie-authenticated mutating requests."""
+
+    SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+    EXEMPT_PATHS = {
+        "/auth/login",
+        "/auth/register",
+        "/auth/google-identity",
+        "/auth/google/start",
+        "/auth/google/callback",
+        "/auth/google/exchange",
+        "/auth/invites/accept",
+    }
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method.upper() in self.SAFE_METHODS:
+            return await call_next(request)
+        if request.url.path in self.EXEMPT_PATHS:
+            return await call_next(request)
+
+        # CSRF only applies to browser-cookie authenticated admin sessions.
+        if request.headers.get("authorization"):
+            return await call_next(request)
+
+        access_cookie = request.cookies.get("clearledgr_admin_access")
+        if not access_cookie:
+            return await call_next(request)
+
+        csrf_cookie = str(request.cookies.get("clearledgr_admin_csrf") or "").strip()
+        csrf_header = str(request.headers.get("X-CSRF-Token") or "").strip()
+        if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_cookie, csrf_header):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "csrf_validation_failed"},
+            )
+        return await call_next(request)
+
 # Add middleware in order (last added = outermost, executed first).
 # CorrelationIdMiddleware must be outermost so correlation_id is available to
 # all downstream middleware and handlers.
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(LegacySurfaceGuardMiddleware)
+app.add_middleware(AdminSessionCSRFMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
 
 
@@ -449,14 +535,8 @@ app.add_middleware(
     allow_origin_regex=_cors_allow_origin_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Request-ID"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Request-ID", "X-CSRF-Token"],
 )
-
-# Initialize database on startup
-@app.on_event("startup")
-async def startup_event():
-    """Initialize startup route profile and lazy DB initialization."""
-    _apply_runtime_surface_profile()
 
 # (Autonomous agent, chat, engine, and webhooks routers removed — archived to branch)
 
@@ -509,6 +589,13 @@ try:
 except ImportError:
     pass
 
+# AP audit feeds for admin/activity surfaces
+try:
+    from clearledgr.api.ap_audit import router as ap_audit_router
+    app.include_router(ap_audit_router)
+except ImportError:
+    pass
+
 # AP business policy management (versioned + auditable)
 try:
     from clearledgr.api.ap_policies import router as ap_policies_router
@@ -536,66 +623,6 @@ try:
         app.include_router(admin_console_router)
 except ImportError:
     pass
-
-# Start Gmail autopilot (24/7 background inbox scanning)
-@app.on_event("startup")
-async def startup_gmail_autopilot():
-    """Start Gmail autopilot for automatic invoice detection."""
-    try:
-        from clearledgr.services.gmail_autopilot import start_gmail_autopilot
-        await start_gmail_autopilot(app)
-        logger.info("Gmail autopilot started")
-    except Exception as e:
-        logger.warning(f"Gmail autopilot not started: {e}")
-
-
-@app.on_event("startup")
-async def startup_agent_background():
-    """Start agent background intelligence loop."""
-    try:
-        from clearledgr.services.agent_background import start_agent_background
-        await start_agent_background(app)
-        logger.info("Agent background intelligence started")
-    except Exception as e:
-        logger.warning(f"Agent background not started: {e}")
-
-
-@app.on_event("startup")
-async def startup_agent_runtime():
-    """Start the finance agent runtime and resume interrupted planner tasks."""
-    try:
-        from clearledgr.services.agent_orchestrator import get_orchestrator
-        from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
-
-        runtime = get_platform_finance_runtime("default")
-        resumed = await runtime.resume_pending_agent_tasks()
-        get_orchestrator("default").start_durable_workers()
-        logger.info("Finance agent runtime started (%d planner tasks resumed)", resumed)
-    except Exception as e:
-        logger.warning(f"Agent runtime not started: {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown_gmail_autopilot():
-    """Stop Gmail autopilot background service."""
-    try:
-        from clearledgr.services.gmail_autopilot import stop_gmail_autopilot
-        await stop_gmail_autopilot(app)
-    except Exception as e:
-        logger.warning(f"Gmail autopilot stop failed: {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown_agent_background():
-    """Stop agent background intelligence loop."""
-    try:
-        from clearledgr.services.agent_background import stop_agent_background
-        from clearledgr.services.agent_orchestrator import get_orchestrator
-
-        await stop_agent_background()
-        await get_orchestrator("default").stop_durable_workers()
-    except Exception as e:
-        logger.warning(f"Agent background stop failed: {e}")
 
 # Serve static files (admin page)
 static_dir = os.path.join(os.path.dirname(__file__), "static")

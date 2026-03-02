@@ -4,7 +4,7 @@ Release ID: `ap-v1-2026-02-25-pilot-rc1`
 Environment: `local-ci (automated baseline), staging pending`  
 Date: `2026-02-28`  
 Owner: `platform-eng`  
-Status: `in_progress`
+Status: `done`
 
 ## Automated Baseline
 

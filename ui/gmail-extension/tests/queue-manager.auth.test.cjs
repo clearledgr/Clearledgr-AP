@@ -35,3 +35,48 @@ test('auth result mapper returns operator-safe copy', async () => {
   const generic = manager.describeAuthResult({ error: 'authorization_failed' });
   assert.match(generic.toast, /authorization failed/i);
 });
+
+test('refreshQueue does not poll ops endpoints in Gmail Work runtime', async () => {
+  const ClearledgrQueueManager = await loadQueueManager();
+  const manager = new ClearledgrQueueManager();
+  manager.runtimeConfig = {
+    valid: true,
+    backendUrl: 'https://api.clearledgr.test',
+    organizationId: 'default',
+  };
+  manager.emitQueueUpdated = () => {};
+  manager.syncAgentSessions = async () => {};
+  manager.hasBackendCredential = () => true;
+  manager.getBackendAuthHeaders = (headers = {}) => ({ ...headers });
+
+  const originalFetch = global.fetch;
+  const urls = [];
+  global.fetch = async (url) => {
+    urls.push(String(url));
+    if (String(url).includes('/extension/worklist?')) {
+      return {
+        status: 200,
+        ok: true,
+        async json() {
+          return { items: [] };
+        },
+      };
+    }
+    return {
+      status: 404,
+      ok: false,
+      async json() {
+        return {};
+      },
+    };
+  };
+
+  try {
+    await manager.refreshQueue();
+  } finally {
+    global.fetch = originalFetch;
+  }
+
+  assert.ok(urls.some((url) => url.includes('/extension/worklist?')));
+  assert.equal(urls.some((url) => url.includes('/api/ops/')), false);
+});

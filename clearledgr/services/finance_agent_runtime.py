@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -788,14 +789,8 @@ class FinanceAgentRuntime:
         idempotency_key: Optional[str] = None,
         correlation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Run AP invoice processing via the internal planning engine.
-
-        This keeps a single public runtime surface (FinanceAgentRuntime) while
-        reusing the planner engine as an internal execution primitive.
-        """
-        from clearledgr.core.agent_runtime import get_planning_engine
-        from clearledgr.core.skills.ap_skill import APSkill
-        from clearledgr.core.skills.base import AgentTask
+        """Run AP invoice processing via canonical InvoiceWorkflowService path."""
+        from clearledgr.services.invoice_workflow import InvoiceData, get_invoice_workflow
 
         invoice = invoice_payload if isinstance(invoice_payload, dict) else {}
         gmail_id = str(invoice.get("gmail_id") or invoice.get("thread_id") or "").strip()
@@ -807,34 +802,65 @@ class FinanceAgentRuntime:
             or str(invoice.get("correlation_id") or "").strip()
             or None
         )
+        invoice_org = str(invoice.get("organization_id") or self.organization_id or "default").strip() or "default"
+        workflow = get_invoice_workflow(invoice_org)
+        attachment_list = attachments if isinstance(attachments, list) else []
+        attachment_url = ""
+        if attachment_list:
+            first_attachment = attachment_list[0] if isinstance(attachment_list[0], dict) else {}
+            attachment_url = str(
+                first_attachment.get("url")
+                or first_attachment.get("attachment_url")
+                or ""
+            ).strip()
 
-        planner = get_planning_engine()
-        planner.register_skill(APSkill(organization_id=self.organization_id))
+        amount_raw = invoice.get("amount", 0.0)
+        try:
+            amount_value = float(amount_raw)
+        except (TypeError, ValueError):
+            amount_value = 0.0
 
-        task = AgentTask(
-            task_type="ap_invoice_processing",
-            organization_id=self.organization_id,
-            payload={
-                "invoice": invoice,
-                "attachments": attachments or [],
-            },
-            idempotency_key=resolved_idempotency_key,
+        confidence_raw = invoice.get("confidence", 0.0)
+        try:
+            confidence_value = float(confidence_raw)
+        except (TypeError, ValueError):
+            confidence_value = 0.0
+
+        invoice_data = InvoiceData(
+            gmail_id=gmail_id or str(invoice.get("message_id") or "").strip() or f"invoice-{uuid.uuid4().hex[:10]}",
+            subject=str(invoice.get("subject") or "").strip() or "Invoice",
+            sender=str(invoice.get("sender") or "").strip() or "unknown@unknown.local",
+            vendor_name=str(invoice.get("vendor_name") or invoice.get("vendor") or "").strip() or "Unknown vendor",
+            amount=amount_value,
+            currency=str(invoice.get("currency") or "USD").strip() or "USD",
+            invoice_number=str(invoice.get("invoice_number") or "").strip() or None,
+            due_date=str(invoice.get("due_date") or "").strip() or None,
+            po_number=str(invoice.get("po_number") or "").strip() or None,
+            confidence=confidence_value,
+            attachment_url=attachment_url or None,
+            organization_id=invoice_org,
+            user_id=str(invoice.get("user_id") or self.actor_id or "").strip() or None,
+            invoice_text=str(invoice.get("invoice_text") or "").strip() or None,
             correlation_id=resolved_correlation_id,
+            field_confidences=invoice.get("field_confidences") if isinstance(invoice.get("field_confidences"), dict) else None,
         )
-        result = await planner.run_task(task)
-        response = dict(result.outcome or {})
-        response.setdefault("status", result.status)
-        response.setdefault("task_run_id", result.task_run_id)
+
+        result = await workflow.process_new_invoice(invoice_data)
+        response = dict(result or {})
+        if resolved_idempotency_key:
+            response.setdefault("idempotency_key", resolved_idempotency_key)
+        if resolved_correlation_id:
+            response.setdefault("correlation_id", resolved_correlation_id)
+        response.setdefault("execution_mode", "invoice_workflow_service")
         return response
 
     async def resume_pending_agent_tasks(self) -> int:
-        """Resume interrupted planner tasks for this runtime's organization."""
-        from clearledgr.core.agent_runtime import get_planning_engine
-        from clearledgr.core.skills.ap_skill import APSkill
-
-        planner = get_planning_engine()
-        planner.register_skill(APSkill(organization_id=self.organization_id))
-        return await planner.resume_pending_tasks()
+        """Return count of pending durable retry jobs for this organization."""
+        try:
+            jobs = self.db.list_agent_retry_jobs(self.organization_id, status="pending", limit=1000)
+            return len(jobs or [])
+        except Exception:
+            return 0
 
 
 _PLATFORM_RUNTIME_CACHE: Dict[str, FinanceAgentRuntime] = {}

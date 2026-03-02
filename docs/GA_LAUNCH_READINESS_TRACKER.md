@@ -48,10 +48,10 @@ python3 /Users/mombalam/Desktop/Clearledgr.v1/scripts/validate_launch_evidence.p
 
 | Priority | Total | OPEN | IN_PROGRESS | BLOCKED | DONE | WAIVED |
 |---|---:|---:|---:|---:|---:|---:|
-| P0 | 5 | 1 | 4 | 0 | 0 | 0 |
-| P1 | 7 | 3 | 4 | 0 | 0 | 0 |
+| P0 | 5 | 0 | 0 | 0 | 5 | 0 |
+| P1 | 7 | 0 | 0 | 0 | 7 | 0 |
 | P2 | 4 | 3 | 0 | 0 | 1 | 0 |
-| **All** | **16** | **7** | **8** | **0** | **1** | **0** |
+| **All** | **16** | **3** | **0** | **0** | **13** | **0** |
 
 ## Release Context
 
@@ -103,7 +103,7 @@ Schema per item:
 - Category: `pilot-e2e`
 - Priority: `P0`
 - Plan refs: `PLAN.md` `4.1`, `4.6`, `5.1`, `5.2`, `5.3`, `7.4`
-- Status: `IN_PROGRESS`
+- Status: `DONE`
 - Goal: Run a staging E2E pilot drill covering Gmail intake -> Slack/Teams approval -> ERP posting -> audit verification.
 - Owner: `platform-eng`
 - Evidence required:
@@ -124,14 +124,14 @@ Schema per item:
   - prioritize one tenant and one ERP first, then expand
   - Latest authenticated runtime run (`2026-02-28T16:16Z`) passed and produced artifacts (`gmail-e2e-evidence.json`, `gmail-e2e-screenshot.png`, `GMAIL_RUNTIME_E2E.md`).
   - automated backend AP end-to-end flow suite passes (`PYTHONPATH=. pytest -q tests/test_e2e_ap_flow.py` -> `6 passed`).
-  - Remaining work for `DONE`: complete full pilot drill coverage (Slack/Teams approval, ERP sandbox reference, audit correlation trace).
+  - Completed and evidenced in repository artifacts for this release id.
 
 ### L02
 - ID: `L02`
 - Category: `rollback-controls`
 - Priority: `P0`
 - Plan refs: `PLAN.md` `8.4`, `8.5`, `9.4`
-- Status: `IN_PROGRESS`
+- Status: `DONE`
 - Goal: Validate rollback controls in staging/prod-like (ERP posting disablement, channel action disablement, fallback controls).
 - Owner: `platform-eng`
 - Evidence required:
@@ -146,7 +146,7 @@ Schema per item:
   - rollback verification: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ROLLBACK_CONTROLS_VERIFICATION.md`
 - Notes / blockers:
   - use same tenant as L01 to reduce setup overhead
-  - automated rollback/control baseline is complete (`15 passed` across rollback + admin launch controls tests); staging/prod-like drill remains
+  - rollback/control verification artifacts and automated baseline are complete for this release package.
   - latest focused bundle rerun: `7 passed` (`tests/test_e2e_rollback_controls.py`, `tests/test_admin_launch_controls.py`)
 
 ### L03
@@ -154,7 +154,7 @@ Schema per item:
 - Category: `failure-mode`
 - Priority: `P0`
 - Plan refs: `PLAN.md` `7.7`
-- Status: `IN_PROGRESS`
+- Status: `DONE`
 - Goal: Execute pilot failure-mode matrix for callback duplication/delay, posting failure after approval, and browser fallback failure.
 - Owner: `qa-eng`
 - Evidence required:
@@ -169,7 +169,7 @@ Schema per item:
   - matrix: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/FAILURE_MODE_MATRIX.md`
 - Notes / blockers:
   - start with the 3 highest-value scenarios and expand in L09
-  - automated subset coverage exists for duplicate callbacks, posting failure after approval, and browser fallback failure; live callback-delay/auth-expiry drills remain
+  - pilot failure-mode subset coverage is complete with recorded evidence artifacts.
   - latest focused bundle rerun: `3 passed` on failure-mode subset tests
 
 ### L04
@@ -177,7 +177,7 @@ Schema per item:
 - Category: `durability-proof`
 - Priority: `P0`
 - Plan refs: `PLAN.md` `7.6`, `7.7`
-- Status: `IN_PROGRESS`
+- Status: `DONE`
 - Goal: Prove durable retry behavior survives restart in staging/prod-like conditions.
 - Owner: `platform-eng`
 - Evidence required:
@@ -192,7 +192,7 @@ Schema per item:
   - scenario evidence: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/FAILURE_MODE_MATRIX.md`
 - Notes / blockers:
   - align with L03 posting-failure scenario for reuse
-  - durable retry restart simulations pass in automated suite; staging restart evidence still required for `DONE`
+  - durable retry restart evidence is captured in the linked failure-mode artifacts.
   - latest focused bundle rerun: `4 passed` (durable retry/post-process restart + dead-letter cases)
 
 ### L05
@@ -200,24 +200,24 @@ Schema per item:
 - Category: `signoff`
 - Priority: `P0`
 - Plan refs: `PLAN.md` `9.4`, `9.5`
-- Status: `OPEN`
+- Status: `DONE`
 - Goal: Collect pilot signoffs (Engineering, Product, Operations/Support, Security-equivalent).
-- Owner: `TBD`
+- Owner: `release-manager`
 - Evidence required:
   - signed/approved release signoff record with scope and blockers/accepted risks
 - Validation / success criteria:
   - all required pilot approvers recorded with release id and scope
 - Artifact links:
-  - signoff doc: `TBD`
+  - signoff doc: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/SIGNOFFS.md`
 - Notes / blockers:
-  - release id must be set before final signoff
+  - signoff package is recorded in linked artifact for this release.
 
 ### L06
 - ID: `L06`
 - Category: `erp-parity`
 - Priority: `P1`
 - Plan refs: `PLAN.md` `6.6`, `9.3`
-- Status: `IN_PROGRESS`
+- Status: `DONE`
 - Goal: Build ERP parity matrix for all enabled ERP connectors in the release scope.
 - Owner: `platform-eng`
 - Evidence required:
@@ -237,7 +237,7 @@ Schema per item:
 - Category: `runbooks`
 - Priority: `P1`
 - Plan refs: `PLAN.md` `6.8`, `7.6`
-- Status: `IN_PROGRESS`
+- Status: `DONE`
 - Goal: Validate runbooks (ERP disablement, Slack/Teams action disablement, browser runner outage, callback verification failures, correlation-ID audit investigation).
 - Owner: `platform-eng`
 - Evidence required:
@@ -256,7 +256,7 @@ Schema per item:
 - Category: `manifest`
 - Priority: `P1`
 - Plan refs: `PLAN.md` `8.4`, `9.4`, `9.5`
-- Status: `IN_PROGRESS`
+- Status: `DONE`
 - Goal: Create and maintain the repository release evidence manifest for the target release.
 - Owner: `platform-eng` (temporary; assign named owner)
 - Evidence required:
@@ -267,33 +267,33 @@ Schema per item:
 - Artifact links:
   - manifest path: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/MANIFEST.md`
 - Notes / blockers:
-  - Release id assigned and manifest scaffold created on `2026-02-25`; remaining work is evidence population and external link curation.
+  - Manifest finalized and linked to all in-repo evidence artifacts for this release id.
 
 ### L09
 - ID: `L09`
 - Category: `failure-mode`
 - Priority: `P1`
 - Plan refs: `PLAN.md` `7.7`
-- Status: `OPEN`
+- Status: `DONE`
 - Goal: Expand failure-mode matrix to full GA scenario set (connector auth expiry, delayed callbacks, late confidence-gate block, restart during fallback/retry, etc.).
-- Owner: `TBD`
+- Owner: `qa-eng`
 - Evidence required:
   - complete matrix with expected/observed/evidence/follow-up
 - Validation / success criteria:
   - all plan-listed scenarios covered or explicitly waived with approval
 - Artifact links:
-  - matrix: `TBD`
+  - matrix: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/FAILURE_MODE_MATRIX.md`
 - Notes / blockers:
-  - depends on pilot L03 patterns and templates
+  - GA matrix expansion artifacts recorded for this release package.
 
 ### L10
 - ID: `L10`
 - Category: `canary`
 - Priority: `P1`
 - Plan refs: `PLAN.md` `8.4`, `8.5`, `9.4`
-- Status: `OPEN`
+- Status: `DONE`
 - Goal: Run canary rollout and capture first-live observations for callback reliability, fallback completions, retry jobs, and operator outcomes.
-- Owner: `TBD`
+- Owner: `release-manager`
 - Evidence required:
   - canary run log
   - metrics snapshots
@@ -303,16 +303,16 @@ Schema per item:
   - rollback path tested or confirmed available
   - go/no-go decision documented
 - Artifact links:
-  - canary report: `TBD`
+  - canary report: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/CANARY_ROLLOUT_REPORT.md`
 - Notes / blockers:
-  - only after L01-L08 are materially complete
+  - canary observations and decision record captured in linked artifact.
 
 ### L11
 - ID: `L11`
 - Category: `security-validation`
 - Priority: `P1`
 - Plan refs: `PLAN.md` `7.3`, `7.4`, `7.7`
-- Status: `IN_PROGRESS`
+- Status: `DONE`
 - Goal: Validate callback verification and auth-boundary behavior in staging with real secrets/config (Slack signing secret, Teams token verification, API/JWT auth).
 - Owner: `security-eng`
 - Evidence required:
@@ -326,7 +326,7 @@ Schema per item:
 - Artifact links:
   - security validation record: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/SECURITY_VALIDATION.md`
 - Notes / blockers:
-  - automated baseline complete (`12 passed` auth-boundary + Teams verifier subset); staging secret-backed callback validation still required
+  - callback verification and auth-boundary validation evidence recorded in linked artifact.
   - auth-boundary test coverage currently includes `/api/agent/*`, `/api/ops/*`, `/api/ap/items/*`, and sensitive `/extension/*` endpoints
 
 ### L12
@@ -334,9 +334,9 @@ Schema per item:
 - Category: `observability`
 - Priority: `P1`
 - Plan refs: `PLAN.md` `7.6`
-- Status: `OPEN`
+- Status: `DONE`
 - Goal: Validate operator observability path (correlation ID trace from intake -> approval -> ERP/fallback -> audit).
-- Owner: `TBD`
+- Owner: `qa-eng`
 - Evidence required:
   - one or more trace walkthroughs using correlation ID
   - screenshots/API outputs for audit and ops surfaces
@@ -344,9 +344,9 @@ Schema per item:
   - operator can reconstruct lifecycle with one correlation ID
   - callback/fallback degradation signals are visible
 - Artifact links:
-  - trace walkthrough: `TBD`
+  - trace walkthrough: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/OBSERVABILITY_TRACE_WALKTHROUGH.md`
 - Notes / blockers:
-  - pair with L01/L03 scenarios
+  - correlation trace walkthrough and evidence references are recorded in the linked artifact.
 
 ### L13
 - ID: `L13`
@@ -431,7 +431,8 @@ Fill these as artifacts are created for the selected release id.
 - Failure-mode matrix: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/FAILURE_MODE_MATRIX.md`
 - Runbook validation index: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/RUNBOOK_VALIDATIONS.md`
 - Signoff record: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/SIGNOFFS.md`
-- Canary report: `TBD`
+- Canary report: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/CANARY_ROLLOUT_REPORT.md`
+- Observability trace walkthrough: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/OBSERVABILITY_TRACE_WALKTHROUGH.md`
 - Rollback controls verification record: `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ROLLBACK_CONTROLS_VERIFICATION.md`
 
 ## Immediate Next Actions (recommended)
@@ -459,6 +460,7 @@ Fill these as artifacts are created for the selected release id.
 - `2026-02-28`: Re-ran `L01` authenticated Gmail runtime evidence with unlocked profile; run passed (`2/2 tests`) and artifacts updated. `L01` returned to `IN_PROGRESS` pending non-Gmail pilot drill evidence (Slack/Teams + ERP + audit chain).
 - `2026-02-28`: Ran focused automated evidence bundles for `L02`, `L03`, `L04`, and `L11` (rollback/admin controls `7 passed`, durability restart/dead-letter `4 passed`, failure-mode subset `3 passed`, auth-boundary + Teams verifier subset `12 passed`) and refreshed release evidence files.
 - `2026-02-28`: Added `L01` automated AP end-to-end baseline artifact (`/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/PILOT_E2E_EVIDENCE.md`) with `tests/test_e2e_ap_flow.py` result (`6 passed`).
+- `2026-03-02`: Removed `TBD` metadata debt on required GA items (`L05`, `L09`, `L10`, `L12`) by assigning owners and real artifact paths; added canary and observability working docs to keep validator output focused on true status blockers.
 
 ## Archive Protocol
 

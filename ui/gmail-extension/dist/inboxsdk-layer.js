@@ -61215,8 +61215,7 @@ class ClearledgrQueueManager {
 
     await this.ensureBackendAuthIfNeeded();
     const synced = await this.syncQueueWithBackend({ updateStatus: false });
-    const autopilot = await this.fetchAutopilotStatus();
-    this.applyRuntimeStatus({ synced, autopilot });
+    this.applyRuntimeStatus({ synced, extra: { lastScanAt: Date.now() } });
     if (this.scanStatus.state === 'auth_required') {
       void this.ensureBackendAuthIfNeeded();
     }
@@ -61511,8 +61510,7 @@ class ClearledgrQueueManager {
     if (this.backendSyncTimer) clearInterval(this.backendSyncTimer);
     this.backendSyncTimer = setInterval(async () => {
       const synced = await this.syncQueueWithBackend({ updateStatus: false });
-      const autopilot = await this.fetchAutopilotStatus();
-      this.applyRuntimeStatus({ synced, autopilot });
+      this.applyRuntimeStatus({ synced, extra: { lastScanAt: Date.now() } });
       await this.syncAgentSessions();
     }, 30000);
   }
@@ -61523,10 +61521,8 @@ class ClearledgrQueueManager {
     try {
       this.setScanStatus({ state: 'scanning', mode: 'backend_api', error: null });
       const backendSynced = await this.syncQueueWithBackend({ updateStatus: false });
-      const autopilot = await this.fetchAutopilotStatus();
       this.applyRuntimeStatus({
         synced: backendSynced,
-        autopilot,
         extra: {
           candidates: Array.isArray(this.queue) ? this.queue.length : 0,
           added: 0,
@@ -61653,31 +61649,10 @@ class ClearledgrQueueManager {
   }
 
   async fetchApKpis({ force = false } = {}) {
-    if (!this.runtimeConfig?.backendUrl) return null;
-    if (!force && this.kpiSnapshot) return this.kpiSnapshot;
-    if (this.kpiRequest) return this.kpiRequest;
-
-    const request = (async () => {
-      try {
-        const org = encodeURIComponent(this.runtimeConfig.organizationId || 'default');
-        const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ops/ap-kpis?organization_id=${org}`, {
-          method: 'GET'
-        });
-        if (!response.ok) return this.kpiSnapshot;
-        const payload = await response.json();
-        this.kpiSnapshot = payload?.kpis || null;
-        this.kpiUpdatedAt = Date.now();
-        this.emitQueueUpdated();
-        return this.kpiSnapshot;
-      } catch (_) {
-        return this.kpiSnapshot;
-      } finally {
-        this.kpiRequest = null;
-      }
-    })();
-
-    this.kpiRequest = request;
-    return request;
+    // Gmail Work UI no longer polls ops metrics.
+    // Keep a stable no-op for compatibility with existing listeners.
+    if (force) this.emitQueueUpdated();
+    return this.kpiSnapshot;
   }
 
   async syncQueueWithBackend({ updateStatus = false } = {}) {
@@ -61692,13 +61667,7 @@ class ClearledgrQueueManager {
         const payload = await worklistResponse.json();
         items = Array.isArray(payload?.items) ? payload.items.map((item) => this.normalizeWorklistItem(item)) : [];
       } else {
-        const pipelineUrl = `${this.runtimeConfig.backendUrl}/extension/pipeline?organization_id=${org}`;
-        const pipelineResponse = await this.backendFetch(pipelineUrl, { method: 'GET' });
-        if (!pipelineResponse.ok) throw new Error(`pipeline_${pipelineResponse.status}`);
-        const pipeline = await pipelineResponse.json();
-        Object.values(pipeline || {}).forEach((group) => {
-          if (Array.isArray(group)) items.push(...group.map((item) => this.normalizeWorklistItem(item)));
-        });
+        throw new Error(`worklist_${worklistResponse.status}`);
       }
 
       this.queue = this.sortQueueItems(items);
@@ -61714,46 +61683,24 @@ class ClearledgrQueueManager {
       return true;
     } catch (error) {
       if (updateStatus) {
-        this.setScanStatus({ state: 'error', mode: 'backend_api', error: error.message || 'pipeline_unavailable' });
+        this.setScanStatus({ state: 'error', mode: 'backend_api', error: error.message || 'worklist_unavailable' });
       }
       return false;
     }
   }
 
   async fetchAutopilotStatus() {
-    if (!this.runtimeConfig?.backendUrl) return null;
-    try {
-      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ops/autopilot-status`, {
-        method: 'GET'
-      });
-      if (!response.ok) return null;
-      const payload = await response.json();
-      const autopilot = payload?.autopilot || null;
-      this.autopilotStatus = autopilot;
-      return autopilot;
-    } catch (_) {
-      return null;
-    }
+    // Gmail Work UI no longer depends on ops autopilot polling.
+    return this.autopilotStatus || null;
   }
 
   applyRuntimeStatus({ synced, autopilot, extra = {} } = {}) {
-    const status = autopilot || this.autopilotStatus || {};
-    const backendError = !synced;
+    const _unused = autopilot; // compatibility: callers may still pass this key
+    void _unused;
     const mergedExtra = {
       ...extra
     };
-    if (typeof status?.failed_count === 'number' && !Number.isNaN(status.failed_count)) {
-      mergedExtra.failedCount = status.failed_count;
-    }
-    if (typeof status?.processed_count === 'number' && !Number.isNaN(status.processed_count)) {
-      mergedExtra.processedCount = status.processed_count;
-    }
-    if (!mergedExtra.lastScanAt && status?.last_run) {
-      const ts = Date.parse(status.last_run);
-      if (!Number.isNaN(ts)) {
-        mergedExtra.lastScanAt = ts;
-      }
-    }
+    if (!mergedExtra.lastScanAt) mergedExtra.lastScanAt = Date.now();
 
     if (this.backendAuthRequired) {
       this.setScanStatus({
@@ -61776,60 +61723,9 @@ class ClearledgrQueueManager {
       return;
     }
 
-    if (status?.enabled === false) {
-      this.setScanStatus({
-        state: 'blocked',
-        mode: 'backend_autopilot',
-        error: 'autopilot_disabled',
-        ...mergedExtra
-      });
-      return;
-    }
-
-    if ((status?.state || '') === 'blocked') {
-      this.setScanStatus({
-        state: 'blocked',
-        mode: 'backend_autopilot',
-        error: status?.error || 'autopilot_blocked',
-        ...mergedExtra
-      });
-      return;
-    }
-
-    if ((status?.state || '') === 'auth_required' || status?.has_tokens === false) {
-      this.setScanStatus({
-        state: 'auth_required',
-        mode: 'backend_autopilot',
-        error: 'auth_required',
-        ...mergedExtra
-      });
-      void this.ensureBackendAuthIfNeeded();
-      return;
-    }
-
-    if ((status?.state || '') === 'error') {
-      this.setScanStatus({
-        state: 'error',
-        mode: 'backend_autopilot',
-        error: status?.error || (backendError ? 'backend_unreachable' : 'autopilot_error'),
-        ...mergedExtra
-      });
-      return;
-    }
-
-    if ((status?.state || '') === 'degraded') {
-      this.setScanStatus({
-        state: 'error',
-        mode: 'backend_autopilot',
-        error: status?.error || 'autopilot_processing_failures',
-        ...mergedExtra
-      });
-      return;
-    }
-
     this.setScanStatus({
       state: 'idle',
-      mode: 'backend_autopilot',
+      mode: 'backend_api',
       error: null,
       ...mergedExtra
     });
@@ -61929,10 +61825,8 @@ class ClearledgrQueueManager {
 
       this.authPrompted = false;
       const synced = await this.syncQueueWithBackend({ updateStatus: false });
-      const autopilot = await this.fetchAutopilotStatus();
       this.applyRuntimeStatus({
         synced,
-        autopilot,
         extra: { lastScanAt: Date.now() }
       });
       authCompleted = true;
@@ -61953,10 +61847,8 @@ class ClearledgrQueueManager {
 
   async refreshQueue() {
     const synced = await this.syncQueueWithBackend({ updateStatus: false });
-    const autopilot = await this.fetchAutopilotStatus();
     this.applyRuntimeStatus({
       synced,
-      autopilot,
       extra: { lastScanAt: Date.now() }
     });
     await this.syncAgentSessions();
@@ -62905,7 +62797,6 @@ __webpack_require__.r(__webpack_exports__);
 const APP_ID = 'sdk_Clearledgr2026_dc12c60472';
 const INIT_KEY = '__clearledgr_ap_v1_inboxsdk_initialized';
 const LOGO_PATH = 'icons/icon48.png';
-const SIDEBAR_MODE_WORK = 'work';
 const STORAGE_ACTIVE_AP_ITEM_ID = 'clearledgr_active_ap_item_id';
 
 const STATE_LABELS = {
@@ -62938,6 +62829,8 @@ let sdk = null;
 let queueManager = null;
 let globalSidebarEl = null;
 let workSidebarEl = null;
+// Legacy test harness still introspects this symbol; runtime keeps it null because
+// Gmail ships a single Work surface and does not render an in-panel Ops sidebar.
 let opsSidebarEl = null;
 let currentThreadId = null;
 let selectedItemId = null;
@@ -62948,7 +62841,6 @@ let browserTabContext = [];
 let agentInsightsState = new Map();
 let sourcesState = new Map();
 let contextState = new Map();
-let kpiSnapshotState = null;
 let activeContextTab = 'email';
 let contextUiState = {
   itemId: null,
@@ -62979,7 +62871,6 @@ let batchOpsPolicyState = {
   amountThreshold: '',
   selectionPreset: 'queue_order'
 };
-let sidebarMode = SIDEBAR_MODE_WORK;
 let toastTimer = null;
 let rowDecorated = new Set();
 // Holds { to, subject, body } when a draft-reply is initiated; consumed by the compose handler.
@@ -63007,22 +62898,13 @@ let auditState = {
  * @property {string[]} quickActions
  */
 
-/**
- * @typedef {Object} OpsPanelViewModel
- * @property {string} statusLabel
- * @property {number} queueSize
- * @property {number} pendingApprovals
- * @property {boolean} hasAuditEvents
- */
-
-function activateSidebarContext(sidebarEl, mode = SIDEBAR_MODE_WORK) {
+function activateSidebarContext(sidebarEl) {
   globalSidebarEl = sidebarEl || null;
-  sidebarMode = SIDEBAR_MODE_WORK;
 }
 
-function bindSidebarContext(sidebarEl, mode = SIDEBAR_MODE_WORK) {
+function bindSidebarContext(sidebarEl) {
   if (!sidebarEl || sidebarEl.__clContextBound) return;
-  const activate = () => activateSidebarContext(sidebarEl, mode);
+  const activate = () => activateSidebarContext(sidebarEl);
   ['click', 'input', 'change', 'focusin', 'keydown'].forEach((eventName) => {
     sidebarEl.addEventListener(eventName, activate, true);
   });
@@ -64466,7 +64348,7 @@ function buildOperatorDecisionBrief(item, {
     nextStep = 'Reject only if policy/duplicate concerns are confirmed and non-recoverable.';
     expectedOutcome = 'Invoice is marked rejected and removed from posting path with reason logged.';
     tone = 'warning';
-  } else if (recommendation === 'approve' && ['validated', 'approved', 'ready_to_post'].includes(state)) {
+  } else if (recommendation === 'approve' && ['approved', 'ready_to_post'].includes(state)) {
     nextStep = 'Approve & Post now, then verify ERP reference in context.';
   }
 
@@ -66559,20 +66441,6 @@ function isOpsSidebarMode() {
   return false;
 }
 
-function renderSidebarModeSwitch() {
-  // Deprecated in split-panel UX. Kept as a no-op for compatibility.
-}
-
-function applySidebarModeVisibility() {
-  if (!globalSidebarEl) return;
-  globalSidebarEl.setAttribute('data-mode', SIDEBAR_MODE_WORK);
-  setSectionVisibility('cl-section-kpi', false);
-  setSectionVisibility('cl-section-batch', false);
-  setSectionVisibility('cl-section-audit', false);
-  setSectionVisibility('cl-section-agent', false);
-  setSectionVisibility('cl-section-current', true);
-}
-
 function renderThreadContext() {
   if (!globalSidebarEl) return;
   const context = globalSidebarEl.querySelector('#cl-thread-context');
@@ -66593,31 +66461,7 @@ function renderThreadContext() {
 }
 
 function renderAgentActions() {
-  if (!globalSidebarEl) return;
-  const container = globalSidebarEl.querySelector('#cl-agent-actions');
-  if (container) container.innerHTML = '';
-  setSectionVisibility('cl-section-agent', false);
-}
-
-function renderBatchAgentOps() {
-  if (!globalSidebarEl) return;
-  const container = globalSidebarEl.querySelector('#cl-batch-agent-ops');
-  if (container) container.innerHTML = '';
-  setSectionVisibility('cl-section-batch', false);
-}
-
-function renderAuditTrail() {
-  if (!globalSidebarEl) return;
-  const container = globalSidebarEl.querySelector('#cl-audit-trail');
-  if (container) container.innerHTML = '';
-  setSectionVisibility('cl-section-audit', false);
-}
-
-function renderKpiSummary() {
-  if (!globalSidebarEl) return;
-  const container = globalSidebarEl.querySelector('#cl-kpi-summary');
-  if (container) container.innerHTML = '';
-  setSectionVisibility('cl-section-kpi', false);
+  // Removed legacy mixed-mode side sections from Gmail Work runtime.
 }
 
 async function refreshAuditTrail(force = false) {
@@ -66667,19 +66511,14 @@ async function refreshAuditTrail(force = false) {
 
 function renderSidebar() {
   renderScanStatus();
-  renderSidebarModeSwitch();
   renderThreadContext();
   renderQueueList();
   renderAgentActions();
-  renderBatchAgentOps();
-  renderAuditTrail();
-  renderKpiSummary();
-  applySidebarModeVisibility();
 }
 
 function renderSidebarFor(sidebarEl) {
   if (!sidebarEl) return;
-  activateSidebarContext(sidebarEl, SIDEBAR_MODE_WORK);
+  activateSidebarContext(sidebarEl);
   const activeItem = getPrimaryItem();
   if (activeItem?.id) {
     writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, activeItem.id);
@@ -66690,7 +66529,7 @@ function renderSidebarFor(sidebarEl) {
 function renderAllSidebars() {
   renderSidebarFor(workSidebarEl);
   if (workSidebarEl) {
-    activateSidebarContext(workSidebarEl, SIDEBAR_MODE_WORK);
+    activateSidebarContext(workSidebarEl);
   }
   void refreshAuditTrail();
 }
@@ -68097,10 +67936,6 @@ function initializeSidebar() {
       .cl-detail-row span:last-child {
         color: var(--cl-text);
       }
-      .cl-debug-controls {
-        display: none;
-        gap: 8px;
-      }
       .cl-kpi-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -68174,10 +68009,6 @@ function initializeSidebar() {
         <button class="cl-btn cl-btn-secondary" id="cl-authorize-gmail">Authorize Gmail</button>
         <button class="cl-btn cl-btn-secondary" id="cl-open-admin-auth">Open Integrations</button>
       </div>
-      <div id="cl-debug-controls" class="cl-debug-controls">
-        <button class="cl-btn cl-btn-secondary" id="cl-debug-refresh">Refresh</button>
-        <button class="cl-btn cl-btn-secondary" id="cl-debug-scan">Scan</button>
-      </div>
     </div>
     <div class="cl-section" id="cl-section-current">
       <div class="cl-section-title">Decision</div>
@@ -68187,9 +68018,9 @@ function initializeSidebar() {
 
   const logoUrl = getAssetUrl(LOGO_PATH);
 
-  const configureSidebarPanel = (sidebarEl, mode) => {
+  const configureSidebarPanel = (sidebarEl) => {
     if (!sidebarEl) return;
-    bindSidebarContext(sidebarEl, mode);
+    bindSidebarContext(sidebarEl);
 
     const logoImg = sidebarEl.querySelector('.cl-logo');
     if (logoImg) {
@@ -68198,9 +68029,6 @@ function initializeSidebar() {
       });
     }
 
-    const debugControls = sidebarEl.querySelector('#cl-debug-controls');
-    const debugRefresh = sidebarEl.querySelector('#cl-debug-refresh');
-    const debugScan = sidebarEl.querySelector('#cl-debug-scan');
     const authorizeButton = sidebarEl.querySelector('#cl-authorize-gmail');
     const openAdminAuthButton = sidebarEl.querySelector('#cl-open-admin-auth');
 
@@ -68231,28 +68059,12 @@ function initializeSidebar() {
       });
     }
 
-    if (queueManager?.isDebugUiEnabled()) {
-      if (debugControls) debugControls.style.display = 'flex';
-      if (debugRefresh) {
-        debugRefresh.addEventListener('click', async () => {
-          await queueManager.refreshQueue();
-          await refreshAuditTrail(true);
-        });
-      }
-      if (debugScan) {
-        debugScan.addEventListener('click', async () => {
-          await queueManager.scanNow('debug');
-          await refreshAuditTrail(true);
-        });
-      }
-    }
   };
 
   workSidebarEl = container;
-  opsSidebarEl = null;
   globalSidebarEl = workSidebarEl;
 
-  configureSidebarPanel(workSidebarEl, SIDEBAR_MODE_WORK);
+  configureSidebarPanel(workSidebarEl);
 
   sdk.Global.addSidebarContentPanel({
     title: 'Clearledgr AP',
@@ -68450,7 +68262,7 @@ async function bootstrap() {
   queueManager = new _queue_manager_js__WEBPACK_IMPORTED_MODULE_1__.ClearledgrQueueManager();
   await queueManager.init();
 
-  queueManager.onQueueUpdated((queue, status, agentSessions, tabs, agentInsights, sources, contexts, kpis) => {
+  queueManager.onQueueUpdated((queue, status, agentSessions, tabs, agentInsights, sources, contexts) => {
     queueState = Array.isArray(queue) ? queue : [];
     scanStatus = status || {};
     agentSessionsState = agentSessions instanceof Map ? agentSessions : new Map();
@@ -68458,7 +68270,6 @@ async function bootstrap() {
     agentInsightsState = agentInsights instanceof Map ? agentInsights : new Map();
     sourcesState = sources instanceof Map ? sources : new Map();
     contextState = contexts instanceof Map ? contexts : new Map();
-    kpiSnapshotState = kpis || null;
     if (selectedItemId && !findItemById(selectedItemId)) {
       selectedItemId = null;
       writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, '');

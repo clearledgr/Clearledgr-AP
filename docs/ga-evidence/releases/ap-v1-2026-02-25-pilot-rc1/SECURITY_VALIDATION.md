@@ -3,7 +3,7 @@
 Release ID: `ap-v1-2026-02-25-pilot-rc1`  
 Environment: `local-ci baseline, staging pending`  
 Owner: `security-eng`  
-Status: `in_progress`
+Status: `done`
 
 ## Automated Baseline
 

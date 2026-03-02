@@ -8,8 +8,7 @@ import asyncio
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -142,15 +141,9 @@ def test_process_invoice_defaults_to_agentic_runtime(monkeypatch):
         "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
         new=AsyncMock(return_value={"status": "completed", "task_run_id": "task-1"}),
     ):
-        with patch.object(
-            orch,
-            "_process_invoice_legacy",
-            AsyncMock(return_value={"status": "legacy"}),
-        ) as legacy_mock:
-            result = asyncio.run(orch.process_invoice(invoice))
+        result = asyncio.run(orch.process_invoice(invoice))
 
     assert result["status"] == "completed"
-    legacy_mock.assert_not_awaited()
 
 
 def test_process_invoice_returns_failure_when_agentic_runtime_fails_and_legacy_fallback_disabled(monkeypatch):
@@ -163,16 +156,10 @@ def test_process_invoice_returns_failure_when_agentic_runtime_fails_and_legacy_f
         "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
         new=AsyncMock(side_effect=RuntimeError("anthropic_api_key_missing")),
     ):
-        with patch.object(
-            orch,
-            "_process_invoice_legacy",
-            AsyncMock(return_value={"status": "legacy"}),
-        ) as legacy_mock:
-            result = asyncio.run(orch.process_invoice(invoice))
+        result = asyncio.run(orch.process_invoice(invoice))
 
     assert result["status"] == "failed"
     assert result["reason"] == "agent_runtime_failed"
-    legacy_mock.assert_not_awaited()
 
 
 def test_process_invoice_ignores_explicit_legacy_fallback_when_agentic_runtime_fails(monkeypatch):
@@ -185,12 +172,7 @@ def test_process_invoice_ignores_explicit_legacy_fallback_when_agentic_runtime_f
         "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
         new=AsyncMock(side_effect=RuntimeError("anthropic_api_key_missing")),
     ):
-        with patch.object(
-            orch,
-            "_process_invoice_legacy",
-            AsyncMock(return_value={"status": "legacy"}),
-        ) as legacy_mock:
-            result = asyncio.run(orch.process_invoice(invoice))
+        result = asyncio.run(orch.process_invoice(invoice))
 
     assert result["status"] == "failed"
     assert result["reason"] == "agent_runtime_failed"
@@ -198,7 +180,6 @@ def test_process_invoice_ignores_explicit_legacy_fallback_when_agentic_runtime_f
     assert contract.get("legacy_fallback_requested") is True
     assert contract.get("legacy_fallback_on_error") is False
     assert "legacy_fallback_opt_in_ignored" in (contract.get("warnings") or [])
-    legacy_mock.assert_not_awaited()
 
 
 def test_process_invoice_ignores_explicit_agentic_opt_out(monkeypatch):
@@ -210,12 +191,7 @@ def test_process_invoice_ignores_explicit_agentic_opt_out(monkeypatch):
         "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
         new=AsyncMock(return_value={"status": "completed", "task_run_id": "task-2"}),
     ) as runtime_mock:
-        with patch.object(
-            orch,
-            "_process_invoice_legacy",
-            AsyncMock(return_value={"status": "legacy"}),
-        ) as legacy_mock:
-            result = asyncio.run(orch.process_invoice(invoice))
+        result = asyncio.run(orch.process_invoice(invoice))
 
     assert result["status"] == "completed"
     contract = result.get("runtime_contract") or {}
@@ -223,7 +199,6 @@ def test_process_invoice_ignores_explicit_agentic_opt_out(monkeypatch):
     assert contract.get("planning_loop_enabled") is True
     assert "planning_loop_opt_out_ignored" in (contract.get("warnings") or [])
     runtime_mock.assert_awaited_once()
-    legacy_mock.assert_not_awaited()
 
 
 def test_process_invoice_fails_closed_when_runtime_returns_non_dict(monkeypatch):
@@ -253,12 +228,7 @@ def test_process_invoice_forces_agentic_mode_in_production_when_opt_out_requeste
         "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
         new=AsyncMock(return_value={"status": "completed", "task_run_id": "task-prod-1"}),
     ) as runtime_mock:
-        with patch.object(
-            orch,
-            "_process_invoice_legacy",
-            AsyncMock(return_value={"status": "legacy"}),
-        ) as legacy_mock:
-            result = asyncio.run(orch.process_invoice(invoice))
+        result = asyncio.run(orch.process_invoice(invoice))
 
     assert result["status"] == "completed"
     assert result.get("execution_path") == "agentic_runtime"
@@ -268,7 +238,6 @@ def test_process_invoice_forces_agentic_mode_in_production_when_opt_out_requeste
     assert contract.get("planning_loop_enabled") is True
     assert "planning_loop_forced_on_in_production" in (contract.get("warnings") or [])
     runtime_mock.assert_awaited_once()
-    legacy_mock.assert_not_awaited()
 
 
 def test_process_invoice_ignores_legacy_fallback_flag_in_production(monkeypatch):
@@ -283,12 +252,7 @@ def test_process_invoice_ignores_legacy_fallback_flag_in_production(monkeypatch)
         "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
         new=AsyncMock(side_effect=RuntimeError("planner_failed")),
     ):
-        with patch.object(
-            orch,
-            "_process_invoice_legacy",
-            AsyncMock(return_value={"status": "legacy"}),
-        ) as legacy_mock:
-            result = asyncio.run(orch.process_invoice(invoice))
+        result = asyncio.run(orch.process_invoice(invoice))
 
     assert result["status"] == "failed"
     assert result["reason"] == "agent_runtime_failed"
@@ -297,7 +261,6 @@ def test_process_invoice_ignores_legacy_fallback_flag_in_production(monkeypatch)
     assert contract.get("legacy_fallback_requested") is True
     assert contract.get("legacy_fallback_on_error") is False
     assert "legacy_fallback_forced_off_in_production" in (contract.get("warnings") or [])
-    legacy_mock.assert_not_awaited()
 
 
 def test_runtime_status_exposes_execution_contract(monkeypatch):
@@ -352,22 +315,9 @@ def test_post_process_runtime_status_disables_non_durable_fallback_in_production
     assert status["allow_non_durable"] is False
 
 
-def test_legacy_flow_records_post_process_skipped_when_durable_queue_disabled(monkeypatch):
-    monkeypatch.setenv("AP_AGENT_POST_PROCESS_DURABLE_ENABLED", "false")
-
+def test_orchestrator_exposes_no_legacy_invoice_path():
     orch = AgentOrchestrator("default")
-    orch._workflow = SimpleNamespace(process_new_invoice=AsyncMock(return_value={"status": "approved", "erp_status": "success"}))
-    orch._reasoning = MagicMock()
-    orch._reasoning.reason_about_invoice.side_effect = RuntimeError("skip_reasoning")
-
-    invoice = _minimal_invoice()
-    with patch.object(orch, "_enqueue_post_process_job", return_value=None):
-        with patch.object(orch, "_record_post_process_gated_event") as gated_mock:
-            result = asyncio.run(orch._process_invoice_legacy(invoice))
-
-    assert result["status"] == "approved"
-    gated_mock.assert_called_once()
-    assert gated_mock.call_args.kwargs["reason"] == "post_process_disabled_by_config"
+    assert not hasattr(orch, "_process_invoice_legacy")
 
 
 def test_durable_retry_job_survives_restart_and_posts_to_erp(db, monkeypatch):

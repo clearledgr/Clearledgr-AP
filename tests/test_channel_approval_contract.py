@@ -447,6 +447,47 @@ def test_slack_interactive_request_info_duplicate_and_stale(monkeypatch, client,
     assert "stale/expired" in stale.json()["text"]
 
 
+def test_slack_interactive_duplicate_storm_is_idempotent(monkeypatch, client, db):
+    """Burst duplicate callbacks should execute workflow once and audit duplicates."""
+    item = _create_ap_item(db, gmail_id="thread-slack-storm")
+    db.update_ap_item(item["id"], metadata={"correlation_id": "corr-slack-storm"})
+    workflow = _WorkflowStub()
+
+    async def _return_body(request):
+        return await request.body()
+
+    monkeypatch.setattr("clearledgr.api.slack_invoices.require_slack_signature", _return_body)
+    monkeypatch.setattr("clearledgr.api.slack_invoices.get_invoice_workflow", lambda _org: workflow)
+
+    payload = {
+        "callback_id": "run-slack-storm-1",
+        "user": {"id": "U1", "username": "approver"},
+        "channel": {"id": "C1"},
+        "message": {"ts": "1712222222.000"},
+        "actions": [{"action_id": "request_info_thread-slack-storm", "value": "thread-slack-storm"}],
+    }
+    body = _slack_form_body(payload)
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": str(int(time.time())),
+    }
+
+    responses = [client.post("/slack/invoices/interactive", content=body, headers=headers) for _ in range(25)]
+
+    assert all(resp.status_code == 200 for resp in responses)
+    duplicate_responses = [
+        resp for resp in responses if "Duplicate action ignored" in str(resp.json().get("text") or "")
+    ]
+    assert len(duplicate_responses) >= 24
+    assert [name for name, _kwargs in workflow.calls] == ["request_budget_adjustment"]
+
+    events = db.list_ap_audit_events(item["id"])
+    processed = [e for e in events if e.get("event_type") == "channel_action_processed"]
+    duplicates = [e for e in events if e.get("event_type") == "channel_action_duplicate"]
+    assert len(processed) == 1
+    assert len(duplicates) >= 1
+
+
 def test_teams_interactive_requires_authorization_and_audits(monkeypatch, client, db):
     captured = []
     original_append = db.append_ap_audit_event

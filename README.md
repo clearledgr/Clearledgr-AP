@@ -27,6 +27,7 @@ If any document conflicts with `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, 
 7. Policy, audit, idempotency, and durability are mandatory.
 8. Current AP connector scope is NetSuite, QuickBooks, Xero, and SAP, each enabled by readiness gates.
 9. Current durable orchestration backend is `local_db` (DB-backed); Temporal remains optional and must be truthfully reported.
+10. Outlook intake is explicitly de-scoped for AP v1 GA (Gmail is the only inbox surface in production scope).
 
 Clearledgr is not a generic automation builder and not a dashboard-first AP tool.
 

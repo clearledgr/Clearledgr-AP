@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from clearledgr.models.patterns import MatchPattern
@@ -52,7 +52,7 @@ class PatternStore:
                 pattern.confidence,
                 pattern.match_count,
                 pattern.last_used.isoformat() if pattern.last_used else None,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
             ),
         )
 
@@ -86,5 +86,5 @@ class PatternStore:
                 last_used = ?
             WHERE pattern_id = ?
             """,
-            (datetime.utcnow().isoformat(), pattern_id),
+            (datetime.now(timezone.utc).isoformat(), pattern_id),
         )

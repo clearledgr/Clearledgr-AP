@@ -11,8 +11,6 @@ const PAGES = [
 ];
 
 const state = {
-  token: null,
-  refreshToken: null,
   orgId: "default",
   activePage: "setup",
   bootstrap: null,
@@ -23,22 +21,10 @@ const state = {
 
 const qs = (selector) => document.querySelector(selector);
 
-function getToken() {
-  return localStorage.getItem("cl_admin_token");
-}
-
-function setToken(token, refreshToken) {
-  if (token) localStorage.setItem("cl_admin_token", token);
-  if (refreshToken) localStorage.setItem("cl_admin_refresh_token", refreshToken);
-  state.token = token || state.token;
-  state.refreshToken = refreshToken || state.refreshToken;
-}
-
-function clearTokens() {
-  localStorage.removeItem("cl_admin_token");
-  localStorage.removeItem("cl_admin_refresh_token");
-  state.token = null;
-  state.refreshToken = null;
+function clearSession() {
+  document.cookie = "clearledgr_admin_access=; Max-Age=0; path=/";
+  document.cookie = "clearledgr_admin_refresh=; Max-Age=0; path=/";
+  document.cookie = "clearledgr_admin_csrf=; Max-Age=0; path=/";
 }
 
 function params() {
@@ -46,23 +32,36 @@ function params() {
 }
 
 async function api(path, options = {}) {
+  const method = String(options.method || "GET").trim().toUpperCase();
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
   };
-  if (state.token) {
-    headers.Authorization = `Bearer ${state.token}`;
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const csrfToken = readCookie("clearledgr_admin_csrf");
+    if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
   }
-
   const response = await fetch(path, {
     ...options,
     headers,
+    credentials: "include",
   });
   if (!response.ok) {
     const payload = await response.text();
-    throw new Error(payload || `HTTP ${response.status}`);
+    const error = new Error(payload || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
+  if (response.status === 204) return {};
   return response.json();
+}
+
+function readCookie(name) {
+  const prefix = `${name}=`;
+  const parts = String(document.cookie || "").split(";").map((part) => part.trim());
+  const match = parts.find((part) => part.startsWith(prefix));
+  if (!match) return "";
+  return decodeURIComponent(match.slice(prefix.length));
 }
 
 // ==================== TOAST NOTIFICATIONS ====================
@@ -1481,7 +1480,9 @@ async function submitLogin(event) {
     body: JSON.stringify({ email, password }),
     headers: {},
   });
-  setToken(login.access_token, login.refresh_token);
+  if (!login?.access_token) {
+    throw new Error("Login did not return an access token.");
+  }
   state.orgId = params().get("org") || state.orgId;
   localStorage.setItem("cl_admin_org", state.orgId);
   showConsole();
@@ -1506,7 +1507,9 @@ async function submitInviteAccept(event) {
     }),
     headers: {},
   });
-  setToken(payload.access_token, payload.refresh_token);
+  if (!payload?.access_token) {
+    throw new Error("Invite accept did not return an access token.");
+  }
   state.orgId = payload?.user?.organization_id || state.orgId;
   localStorage.setItem("cl_admin_org", state.orgId);
   state.inviteToken = null;
@@ -1525,8 +1528,6 @@ async function boot() {
     state.activePage = requestedPage;
   }
   const authCode = url.get("auth_code");
-  const token = url.get("token");
-  const refreshToken = url.get("refresh_token");
   if (authCode) {
     try {
       const exchange = await api("/auth/google/exchange", {
@@ -1534,21 +1535,19 @@ async function boot() {
         body: JSON.stringify({ auth_code: authCode }),
         headers: {},
       });
-      setToken(exchange.access_token, exchange.refresh_token);
+      if (!exchange?.access_token) {
+        throw new Error("Google exchange did not return access token");
+      }
       cleanUrlParams(["auth_code"]);
     } catch (error) {
       cleanUrlParams(["auth_code"]);
       console.error(error);
-      clearTokens();
+      clearSession();
       showAuth("Google sign-in session expired. Please sign in again.");
       return;
     }
-  } else if (token) {
-    setToken(token, refreshToken);
+  } else if (url.get("token") || url.get("refresh_token")) {
     cleanUrlParams(["token", "refresh_token"]);
-  } else {
-    state.token = getToken();
-    state.refreshToken = localStorage.getItem("cl_admin_refresh_token");
   }
 
   state.orgId = url.get("org") || localStorage.getItem("cl_admin_org") || "default";
@@ -1569,7 +1568,8 @@ async function boot() {
   qs("#login-form").addEventListener("submit", submitLogin);
   qs("#invite-form").addEventListener("submit", submitInviteAccept);
   qs("#logout-btn").addEventListener("click", () => {
-    clearTokens();
+    api("/auth/logout", { method: "POST" }).catch(() => {});
+    clearSession();
     showAuth("Signed out.");
   });
   qs("#google-login-btn").addEventListener("click", async () => {
@@ -1583,17 +1583,12 @@ async function boot() {
     window.location.href = payload.auth_url;
   });
 
-  if (!state.token) {
-    showAuth(state.inviteToken ? "Accept your team invite to join your organization." : "");
-    return;
-  }
-
   try {
     showConsole();
     await refreshAll();
   } catch (error) {
     console.error(error);
-    clearTokens();
+    clearSession();
     showAuth("Session expired. Sign in again.");
   }
 }

@@ -12,11 +12,58 @@ This is REAL integration, not mocked.
 
 import logging
 import httpx
+import re
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+_QB_QUERY_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")
+_NS_LIKE_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")
+_NS_EMAIL_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\+]")
+
+
+def _sanitize_quickbooks_like_operand(value: Optional[str]) -> Optional[str]:
+    """Return a safe LIKE operand for QuickBooks query strings.
+
+    QuickBooks query API does not support parameter binding. To prevent query
+    manipulation, we apply strict allowlist sanitization and remove wildcard
+    operators from user-provided values.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    sanitized = _QB_QUERY_VALUE_ALLOWED_CHARS.sub(" ", text)
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+    if not sanitized:
+        return None
+    return sanitized[:120]
+
+
+def _sanitize_netsuite_like_operand(value: Optional[str]) -> Optional[str]:
+    """Return a safe SuiteQL LIKE operand for NetSuite vendor search."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    sanitized = _NS_LIKE_VALUE_ALLOWED_CHARS.sub(" ", text)
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+    if not sanitized:
+        return None
+    return sanitized[:120]
+
+
+def _sanitize_netsuite_email_operand(value: Optional[str]) -> Optional[str]:
+    """Return a safe SuiteQL equality operand for NetSuite email search."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    sanitized = _NS_EMAIL_VALUE_ALLOWED_CHARS.sub("", text)
+    sanitized = sanitized.strip()
+    if not sanitized:
+        return None
+    return sanitized[:160]
 
 
 @dataclass
@@ -1170,11 +1217,13 @@ async def find_vendor_quickbooks(
     if not connection.access_token or not connection.realm_id:
         return None
     
-    # Build query
-    if name:
-        query = f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{name}%'"
-    elif email:
-        query = f"SELECT * FROM Vendor WHERE PrimaryEmailAddr LIKE '%{email}%'"
+    # Build query with strict input sanitization (QuickBooks query API has no bind params).
+    name_operand = _sanitize_quickbooks_like_operand(name)
+    email_operand = _sanitize_quickbooks_like_operand(email)
+    if name_operand:
+        query = f"SELECT * FROM Vendor WHERE DisplayName LIKE '%{name_operand}%'"
+    elif email_operand:
+        query = f"SELECT * FROM Vendor WHERE PrimaryEmailAddr LIKE '%{email_operand}%'"
     else:
         return None
     
@@ -1359,12 +1408,14 @@ async def find_vendor_netsuite(
     if not connection.account_id:
         return None
     
-    # Build SuiteQL query
+    # Build SuiteQL query with strict input sanitization (SuiteQL has no bind params).
     conditions = []
-    if name:
-        conditions.append(f"companyName LIKE '%{name}%'")
-    if email:
-        conditions.append(f"email = '{email}'")
+    name_operand = _sanitize_netsuite_like_operand(name)
+    email_operand = _sanitize_netsuite_email_operand(email)
+    if name_operand:
+        conditions.append(f"companyName LIKE '%{name_operand}%'")
+    if email_operand:
+        conditions.append(f"email = '{email_operand}'")
     
     if not conditions:
         return None

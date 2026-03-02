@@ -15,6 +15,9 @@ const FORBIDDEN_SNIPPETS = [
   'Batch operations',
   'View raw agent events',
   'Ops mode:',
+  'cl-debug-controls',
+  'cl-debug-refresh',
+  'cl-debug-scan',
 ];
 
 test('manifest content script is pinned to audited dist bundle', () => {

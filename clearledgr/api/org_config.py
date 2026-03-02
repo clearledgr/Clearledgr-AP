@@ -638,8 +638,8 @@ async def update_data_residency(
     if request.dpa_signed is not None:
         config.data_residency.dpa_signed = request.dpa_signed
         if request.dpa_signed:
-            from datetime import datetime
-            config.data_residency.dpa_signed_date = datetime.utcnow().isoformat()
+            from datetime import datetime, timezone
+            config.data_residency.dpa_signed_date = datetime.now(timezone.utc).isoformat()
     if request.deletion_request_enabled is not None:
         config.data_residency.deletion_request_enabled = request.deletion_request_enabled
     if request.data_portability_enabled is not None:

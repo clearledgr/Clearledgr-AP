@@ -801,6 +801,35 @@ def test_resume_workflow_still_failing_stays_in_failed_post(service, db, monkeyp
     assert row["state"] == "failed_post"
 
 
+def test_resume_workflow_retry_storm_recovers_once_without_double_post(service, db, monkeypatch):
+    """Repeated retries through outage/recovery should post exactly once."""
+    item = _create_ap_item(db, gmail_id="gmail-resume-storm", state="failed_post")
+    calls = {"count": 0}
+
+    async def _fake_post(_invoice, **_kwargs):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            return {"status": "error", "reason": "erp_timeout"}
+        return {"status": "success", "bill_id": "BILL-STORM-1"}
+
+    monkeypatch.setattr(service, "_post_to_erp", _fake_post)
+
+    first = asyncio.run(service.resume_workflow(item["id"]))
+    second = asyncio.run(service.resume_workflow(item["id"]))
+    third = asyncio.run(service.resume_workflow(item["id"]))
+    after_recovery = asyncio.run(service.resume_workflow(item["id"]))
+
+    assert first["status"] == "still_failing"
+    assert second["status"] == "still_failing"
+    assert third["status"] == "recovered"
+    assert after_recovery["status"] == "not_resumable"
+    assert calls["count"] == 3
+
+    row = db.get_invoice_status("gmail-resume-storm")
+    assert row["state"] == "posted_to_erp"
+    assert row["erp_reference"] == "BILL-STORM-1"
+
+
 def test_resume_workflow_not_resumable_for_posted_state(service, db, monkeypatch):
     """resume_workflow: posted_to_erp is terminal — returns not_resumable."""
     item = _create_ap_item(db, gmail_id="gmail-resume-posted", state="posted_to_erp")

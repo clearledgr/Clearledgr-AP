@@ -12,7 +12,7 @@ from functools import wraps
 from typing import Any, Dict, Optional
 
 import jwt
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Cookie
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
@@ -186,6 +186,7 @@ def _token_data_from_payload(payload: Dict[str, Any]) -> TokenData:
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    admin_access_cookie: Optional[str] = Cookie(default=None, alias="clearledgr_admin_access"),
 ) -> TokenData:
     """
     Get current authenticated user from JWT token or API key.
@@ -213,19 +214,26 @@ def get_current_user(
             )
         raise HTTPException(status_code=401, detail="Invalid API key")
 
+    if admin_access_cookie:
+        payload = decode_token(admin_access_cookie)
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+        return _token_data_from_payload(payload)
+
     raise HTTPException(
         status_code=401,
-        detail="Not authenticated. Provide Bearer token or X-API-Key header.",
+        detail="Not authenticated. Provide Bearer token, X-API-Key header, or valid admin session cookie.",
     )
 
 
 def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    admin_access_cookie: Optional[str] = Cookie(default=None, alias="clearledgr_admin_access"),
 ) -> Optional[TokenData]:
     """Get current user if authenticated, None otherwise."""
     try:
-        return get_current_user(credentials, x_api_key)
+        return get_current_user(credentials, x_api_key, admin_access_cookie)
     except HTTPException:
         return None
 

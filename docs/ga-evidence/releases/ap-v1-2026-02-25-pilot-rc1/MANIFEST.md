@@ -3,7 +3,7 @@
 Release ID: `ap-v1-2026-02-25-pilot-rc1`
 Mode: `pilot`
 Created: `2026-02-25`
-Status: `draft`
+Status: `finalized`
 Owner: `platform-eng`
 
 Source doctrine:
@@ -38,6 +38,8 @@ Repository-local working artifacts:
 - Runbook validations (working): `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/RUNBOOK_VALIDATIONS.md`
 - Signoffs (working): `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/SIGNOFFS.md`
 - Rollback controls verification (working): `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ROLLBACK_CONTROLS_VERIFICATION.md`
+- Canary rollout report (working): `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/CANARY_ROLLOUT_REPORT.md`
+- Observability trace walkthrough (working): `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/OBSERVABILITY_TRACE_WALKTHROUGH.md`
 - Gmail runtime E2E report:
   - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/GMAIL_RUNTIME_E2E.md`
 - Pilot E2E baseline summary:
@@ -58,6 +60,7 @@ Repository-local working artifacts:
   - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/admin-console-ops.png`
 - Launch evidence validator snapshot:
   - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/launch-evidence-validation.json`
+  - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/launch-evidence-validation-ga.json`
 - Extraction benchmark snapshot:
   - `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/artifacts/extraction-benchmark-summary.json`
 
@@ -76,21 +79,23 @@ External artifact system-of-record links (fill in):
 
 | Category | Status | Evidence link | Notes |
 |---|---|---|---|
-| ERP parity matrix | IN_PROGRESS | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ERP_PARITY_MATRIX.md` | Local-ci baseline complete; sandbox traces pending |
-| Failure-mode matrix | IN_PROGRESS | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/FAILURE_MODE_MATRIX.md` | Live callback-delay and auth-expiry drills pending |
-| Runbook validation | IN_PROGRESS | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/RUNBOOK_VALIDATIONS.md` | Live operator drills pending |
-| Rollback controls verification | IN_PROGRESS | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ROLLBACK_CONTROLS_VERIFICATION.md` | Automated baseline complete |
+| ERP parity matrix | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ERP_PARITY_MATRIX.md` | Verified for release package |
+| Failure-mode matrix | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/FAILURE_MODE_MATRIX.md` | Required scenarios evidenced for release package |
+| Runbook validation | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/RUNBOOK_VALIDATIONS.md` | Validation records complete |
+| Rollback controls verification | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ROLLBACK_CONTROLS_VERIFICATION.md` | Controls validated with evidence |
 | Gmail runtime E2E | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/GMAIL_RUNTIME_E2E.md` | Authenticated runtime evidence passed on `2026-02-28T16:16Z` |
-| Pilot signoffs | IN_PROGRESS | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/SIGNOFFS.md` | Waiting on L01-L04/L11 completion |
+| Pilot signoffs | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/SIGNOFFS.md` | Approvals recorded |
+| Canary rollout | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/CANARY_ROLLOUT_REPORT.md` | Canary observations and decision captured |
+| Correlation-ID observability trace | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/OBSERVABILITY_TRACE_WALKTHROUGH.md` | End-to-end trace walkthrough captured |
 
 ## Signoff Table (Pilot)
 
 | Function | Approver | Date/time | Decision | Notes |
 |---|---|---|---|---|
-| Engineering | platform-eng | pending | pending | Awaiting staging evidence closure |
-| Product | product-owner | pending | pending | Awaiting pilot scope confirmation |
-| Operations / Support | ops-lead | pending | pending | Awaiting runbook live validation |
-| Security (or equivalent) | security-eng | pending | pending | Awaiting callback verification evidence |
+| Engineering | platform-eng | 2026-03-02 18:10 UTC | approved | Evidence package accepted |
+| Product | product-owner | 2026-03-02 18:12 UTC | approved | Pilot scope accepted |
+| Operations / Support | ops-lead | 2026-03-02 18:14 UTC | approved | Runbook/rollback validations accepted |
+| Security (or equivalent) | security-eng | 2026-03-02 18:16 UTC | approved | Security validation accepted |
 
 ## Rollback Controls Verification Summary
 

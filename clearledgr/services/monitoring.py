@@ -19,7 +19,7 @@ import json
 import time
 import logging
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Callable
 from functools import wraps
 from dataclasses import dataclass, field
@@ -42,6 +42,10 @@ logging.basicConfig(
 logger = logging.getLogger("clearledgr")
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 @dataclass
 class ErrorEvent:
     """Represents a tracked error."""
@@ -49,7 +53,7 @@ class ErrorEvent:
     message: str
     traceback: str
     context: Dict[str, Any]
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=_utc_now)
     service: str = "clearledgr"
     severity: str = "error"  # error, warning, critical
     
@@ -71,7 +75,7 @@ class MetricPoint:
     name: str
     value: float
     tags: Dict[str, str] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=_utc_now)
 
 
 class MonitoringService:
@@ -204,10 +208,10 @@ class MonitoringService:
         cooldown_key = f"{error.error_type}_{error.severity}"
         last_alert = self._alert_cooldown.get(cooldown_key)
         
-        if last_alert and datetime.utcnow() - last_alert < timedelta(minutes=5):
+        if last_alert and _utc_now() - last_alert < timedelta(minutes=5):
             return  # Skip, too recent
         
-        self._alert_cooldown[cooldown_key] = datetime.utcnow()
+        self._alert_cooldown[cooldown_key] = _utc_now()
         
         # Send to Slack
         if ALERT_SLACK_WEBHOOK:
@@ -299,7 +303,7 @@ class MonitoringService:
     ) -> Dict[str, Any]:
         """Get a summary of recorded metrics."""
         if since is None:
-            since = datetime.utcnow() - timedelta(hours=1)
+            since = _utc_now() - timedelta(hours=1)
         
         filtered = [
             m for m in self._metrics
@@ -332,7 +336,7 @@ class MonitoringService:
         
         health = {
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": _utc_now().isoformat(),
             "checks": {}
         }
         
@@ -372,7 +376,7 @@ class MonitoringService:
         # Error rate check
         recent_errors = [
             e for e in self._errors
-            if e.timestamp > datetime.utcnow() - timedelta(minutes=5)
+            if e.timestamp > _utc_now() - timedelta(minutes=5)
         ]
         
         if len(recent_errors) > 100:
@@ -406,7 +410,7 @@ class MonitoringService:
     ) -> Dict[str, Any]:
         """Get a summary of recent errors."""
         if since is None:
-            since = datetime.utcnow() - timedelta(hours=24)
+            since = _utc_now() - timedelta(hours=24)
         
         recent = [e for e in self._errors if e.timestamp >= since]
         

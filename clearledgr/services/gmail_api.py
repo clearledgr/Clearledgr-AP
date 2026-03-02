@@ -378,7 +378,7 @@ class GmailAPIClient:
             from email.utils import parsedate_to_datetime
             date = parsedate_to_datetime(date_str)
         except Exception:
-            date = datetime.utcnow()
+            date = _utc_now()
         
         return GmailMessage(
             id=data["id"],

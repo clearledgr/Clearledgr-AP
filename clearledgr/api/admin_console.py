@@ -407,7 +407,6 @@ def get_admin_bootstrap(
         _gmail_status_for_org(org_id, user),
         _slack_status_for_org(org_id),
         _erp_status_for_org(org_id),
-        {"name": "outlook", "connected": False, "status": "coming_soon", "mode": "oauth"},
     ]
 
     onboarding = {
@@ -487,7 +486,6 @@ def get_admin_integrations(
             _gmail_status_for_org(org_id, user),
             _slack_status_for_org(org_id),
             _erp_status_for_org(org_id),
-            {"name": "outlook", "connected": False, "status": "coming_soon", "mode": "oauth"},
         ],
     }
 

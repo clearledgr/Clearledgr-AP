@@ -15,20 +15,73 @@ from typing import Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Response, Cookie
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 import re
 
 from clearledgr.core.auth import (
     LoginRequest, TokenResponse, User,
     create_user, authenticate_user,
     create_access_token, create_refresh_token,
-    decode_token, get_current_user, TokenData,
+    decode_token, get_current_user, get_optional_user, TokenData,
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+ADMIN_ACCESS_COOKIE_NAME = "clearledgr_admin_access"
+ADMIN_REFRESH_COOKIE_NAME = "clearledgr_admin_refresh"
+ADMIN_CSRF_COOKIE_NAME = "clearledgr_admin_csrf"
+
+
+def _session_cookie_secure() -> bool:
+    env_name = str(os.getenv("ENV", "dev")).strip().lower()
+    return env_name in {"prod", "production", "staging", "stage"}
+
+
+def _session_cookie_domain() -> Optional[str]:
+    raw = str(os.getenv("ADMIN_SESSION_COOKIE_DOMAIN", "")).strip()
+    return raw or None
+
+
+def _set_admin_session_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+    secure = _session_cookie_secure()
+    domain = _session_cookie_domain()
+    csrf_token = secrets.token_urlsafe(32)
+    cookie_kwargs = {
+        "path": "/",
+        "secure": secure,
+        "samesite": "lax",
+        "domain": domain,
+    }
+    response.set_cookie(
+        ADMIN_ACCESS_COOKIE_NAME,
+        access_token,
+        httponly=True,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        **cookie_kwargs,
+    )
+    response.set_cookie(
+        ADMIN_REFRESH_COOKIE_NAME,
+        refresh_token,
+        httponly=True,
+        max_age=7 * 24 * 60 * 60,
+        **cookie_kwargs,
+    )
+    response.set_cookie(
+        ADMIN_CSRF_COOKIE_NAME,
+        csrf_token,
+        httponly=False,
+        max_age=7 * 24 * 60 * 60,
+        **cookie_kwargs,
+    )
+
+
+def _clear_admin_session_cookies(response: Response) -> None:
+    domain = _session_cookie_domain()
+    for name in (ADMIN_ACCESS_COOKIE_NAME, ADMIN_REFRESH_COOKIE_NAME, ADMIN_CSRF_COOKIE_NAME):
+        response.delete_cookie(name, path="/", domain=domain)
 
 
 class RegisterRequest(BaseModel):
@@ -38,8 +91,9 @@ class RegisterRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
     organization_id: str = Field(..., min_length=1, max_length=50)
     
-    @validator("password")
-    def password_strength(cls, v):
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
         if len(v) < 8:
             raise ValueError("Password must be at least 8 characters")
         if not re.search(r"[A-Z]", v):
@@ -50,16 +104,18 @@ class RegisterRequest(BaseModel):
             raise ValueError("Password must contain at least one digit")
         return v
     
-    @validator("name")
-    def sanitize_name(cls, v):
+    @field_validator("name")
+    @classmethod
+    def sanitize_name(cls, v: str) -> str:
         # Remove any HTML/script tags
         v = re.sub(r"<[^>]*>", "", v)
         # Remove any SQL injection attempts
         v = re.sub(r"[;'\"\-\-]", "", v)
         return v.strip()
     
-    @validator("organization_id")
-    def sanitize_org_id(cls, v):
+    @field_validator("organization_id")
+    @classmethod
+    def sanitize_org_id(cls, v: str) -> str:
         # Only allow alphanumeric and hyphens
         if not re.match(r"^[a-zA-Z0-9\-_]+$", v):
             raise ValueError("Organization ID can only contain letters, numbers, hyphens, and underscores")
@@ -68,7 +124,7 @@ class RegisterRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     """Token refresh request."""
-    refresh_token: str
+    refresh_token: Optional[str] = None
 
 
 class InviteAcceptRequest(BaseModel):
@@ -199,7 +255,7 @@ async def register(request: RegisterRequest):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(request: LoginRequest):
+async def login(request: LoginRequest, response: Response):
     """
     Login with email and password.
     
@@ -223,6 +279,7 @@ async def login(request: LoginRequest):
     )
     
     refresh_token = create_refresh_token(user_id=user.id)
+    _set_admin_session_cookies(response, access_token, refresh_token)
     
     return TokenResponse(
         access_token=access_token,
@@ -232,11 +289,18 @@ async def login(request: LoginRequest):
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(request: RefreshRequest):
+async def refresh_token(
+    request: RefreshRequest,
+    response: Response,
+    refresh_cookie: Optional[str] = Cookie(default=None, alias=ADMIN_REFRESH_COOKIE_NAME),
+):
     """
     Get new access token using refresh token.
     """
-    payload = decode_token(request.refresh_token)
+    refresh_token_value = str(request.refresh_token or refresh_cookie or "").strip()
+    if not refresh_token_value:
+        raise HTTPException(status_code=401, detail="Refresh token required")
+    payload = decode_token(refresh_token_value)
     
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid token type")
@@ -258,6 +322,7 @@ async def refresh_token(request: RefreshRequest):
     )
     
     new_refresh_token = create_refresh_token(user_id=user.id)
+    _set_admin_session_cookies(response, access_token, new_refresh_token)
     
     return TokenResponse(
         access_token=access_token,
@@ -281,7 +346,10 @@ async def get_me(current_user: TokenData = Depends(get_current_user)):
 
 
 @router.post("/logout")
-async def logout(current_user: TokenData = Depends(get_current_user)):
+async def logout(
+    response: Response,
+    current_user: Optional[TokenData] = Depends(get_optional_user),
+):
     """
     Logout current user.
     
@@ -293,7 +361,8 @@ async def logout(current_user: TokenData = Depends(get_current_user)):
     # - Log the logout event
     # - Invalidate refresh tokens
     
-    return {"message": "Logged out successfully", "user_id": current_user.user_id}
+    _clear_admin_session_cookies(response)
+    return {"message": "Logged out successfully", "user_id": getattr(current_user, "user_id", None)}
 
 
 # ==================== GOOGLE IDENTITY ====================
@@ -780,12 +849,13 @@ async def google_web_auth_callback(
 
 
 @router.post("/google/exchange", response_model=TokenResponse)
-async def exchange_google_auth_code(request: GoogleAuthCodeExchangeRequest):
+async def exchange_google_auth_code(request: GoogleAuthCodeExchangeRequest, response: Response):
     payload = _consume_google_auth_code(request.auth_code)
     access_token = str(payload.get("access_token") or "").strip()
     refresh_token = str(payload.get("refresh_token") or "").strip()
     if not access_token or not refresh_token:
         raise HTTPException(status_code=400, detail="invalid_auth_code_payload")
+    _set_admin_session_cookies(response, access_token, refresh_token)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -794,7 +864,7 @@ async def exchange_google_auth_code(request: GoogleAuthCodeExchangeRequest):
 
 
 @router.post("/invites/accept")
-async def accept_invite(request: InviteAcceptRequest):
+async def accept_invite(request: InviteAcceptRequest, response: Response):
     """Accept an invite-link and create/join user account."""
     from clearledgr.core.database import get_db
     from clearledgr.core.auth import get_user_by_email
@@ -837,6 +907,7 @@ async def accept_invite(request: InviteAcceptRequest):
     db.accept_team_invite(str(invite.get("id")), accepted_by=user.id)
     access = create_access_token(user.id, user.email, user.organization_id, user.role)
     refresh = create_refresh_token(user.id)
+    _set_admin_session_cookies(response, access, refresh)
     return {
         "success": True,
         "user": user,

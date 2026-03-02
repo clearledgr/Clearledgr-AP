@@ -14,7 +14,7 @@ import json
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class VendorPattern:
     total_amount: float = 0.0
     avg_amount: float = 0.0
     currency: str = "USD"
-    last_used: datetime = field(default_factory=datetime.utcnow)
+    last_used: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     confidence: float = 0.5
     
     def update(self, amount: float):
@@ -38,7 +38,7 @@ class VendorPattern:
         self.occurrence_count += 1
         self.total_amount += amount
         self.avg_amount = self.total_amount / self.occurrence_count
-        self.last_used = datetime.utcnow()
+        self.last_used = datetime.now(timezone.utc)
         # Confidence increases with more occurrences
         self.confidence = min(0.99, 0.5 + (self.occurrence_count * 0.05))
 
@@ -125,7 +125,7 @@ class LearningService:
                 "original_gl": original_suggestion,
                 "corrected_gl": gl_code,
                 "amount": amount,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             self.stats["corrections_received"] += 1
             
@@ -276,7 +276,7 @@ class LearningService:
         """Export patterns as JSON for backup/transfer."""
         data = {
             "organization_id": self.organization_id,
-            "exported_at": datetime.utcnow().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
             "vendor_patterns": {},
             "amount_patterns": [],
             "statistics": self.get_statistics(),

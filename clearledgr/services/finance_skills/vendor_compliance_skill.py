@@ -47,7 +47,7 @@ class VendorComplianceSkill(FinanceSkill):
             ],
         },
         adapter_bindings={
-            "email": ["gmail", "outlook"],
+            "email": ["gmail"],
             "approval": ["slack", "teams", "email"],
             "erp": ["netsuite", "sap", "quickbooks", "xero"],
         },

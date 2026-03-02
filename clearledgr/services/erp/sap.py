@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
@@ -222,7 +222,7 @@ class SAPAdapter:
         return SAPGLLineItemList(items=items, mode=mode, message=message)
 
     def sync_payload(self) -> SAPSyncPayload:
-        timestamp = datetime.utcnow().isoformat() + "Z"
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         return SAPSyncPayload(
             vendors=self.list_vendors(),
             gl_accounts=self.list_gl_accounts(),
@@ -343,5 +343,5 @@ def merge_config(defaults: SAPDocumentConfig, override: SAPDocumentConfig) -> SA
 
 
 def build_document_id(prefix: str) -> str:
-    stamp = datetime.utcnow().strftime("%Y%m%d")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     return f"{prefix}-{stamp}-{uuid.uuid4().hex[:8]}"

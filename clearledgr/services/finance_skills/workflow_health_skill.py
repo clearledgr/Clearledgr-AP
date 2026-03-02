@@ -36,7 +36,7 @@ class WorkflowHealthSkill(FinanceSkill):
             "optional_refs": ["summary.sample_item_ids"],
         },
         adapter_bindings={
-            "email": ["gmail", "outlook"],
+            "email": ["gmail"],
             "approval": ["slack", "teams", "email"],
             "erp": ["netsuite", "sap", "quickbooks", "xero"],
         },

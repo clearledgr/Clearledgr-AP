@@ -12,7 +12,7 @@ Parses finance-related emails and attachments:
 import re
 import json
 from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 import base64
 import io
@@ -287,7 +287,7 @@ class EmailParser:
             "has_statement_attachment": any(a.get('type') == 'statement' for a in parsed_attachments),
             "confidence": self._calculate_confidence(email_type, amounts, invoice_numbers),
             "currency": primary_currency,
-            "parsed_at": datetime.utcnow().isoformat()
+            "parsed_at": datetime.now(timezone.utc).isoformat()
         }
     
     def parse_invoice_text(self, text: str) -> Dict[str, Any]:
@@ -320,7 +320,7 @@ class EmailParser:
             "due_date": self._extract_due_date(text),
             "line_items": line_items,
             "currency": self._detect_currency(text),
-            "parsed_at": datetime.utcnow().isoformat()
+            "parsed_at": datetime.now(timezone.utc).isoformat()
         }
     
     def parse_payment_confirmation(self, text: str) -> Dict[str, Any]:
@@ -363,7 +363,7 @@ class EmailParser:
             "payee": payee,
             "date": self._extract_dates(text)[0] if self._extract_dates(text) else None,
             "status": "completed",
-            "parsed_at": datetime.utcnow().isoformat()
+            "parsed_at": datetime.now(timezone.utc).isoformat()
         }
     
     def _classify_email(self, subject: str, body: str) -> str:

@@ -4,7 +4,7 @@ Agent Monitoring Service for Clearledgr Reconciliation v1
 Monitors data changes and triggers autonomous agent execution.
 """
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 
 
@@ -32,7 +32,7 @@ def detect_data_changes(
         "row_count": len(current_data),
         "previous_hash": previous_hash,
         "current_hash": current_hash,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
     
     if has_changed and previous_hash is not None:
@@ -208,4 +208,3 @@ def get_suggested_period(
         "period_end": period_end.strftime("%Y-%m-%d"),
         "period_type": period_type
     }
-

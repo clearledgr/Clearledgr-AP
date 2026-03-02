@@ -13,6 +13,7 @@ Like coding agents execute software tasks, Clearledgr executes finance workflows
 - One production skill domain: Accounts Payable
 - Embedded work surface: Gmail (`Clearledgr AP`, action-first)
 - Embedded approval surfaces: Slack and Teams
+- Outlook inbox intake is de-scoped for AP v1 GA (Gmail-only inbox scope)
 - ERP system-of-record execution with connector readiness gates:
   - NetSuite
   - QuickBooks

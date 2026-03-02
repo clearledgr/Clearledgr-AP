@@ -912,19 +912,20 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
 - Status: `DONE`
 - Type: `partial`
 - Plan refs: `PLAN.md` one-runtime doctrine; `README.md` canonical runtime contract
-- Problem: legacy orchestration branches and mixed pathing remained, increasing drift and behavior split risk.
+- Problem: legacy orchestration branch remained as dead code (`_process_invoice_legacy`), increasing drift risk.
 - Evidence:
-  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/agent_orchestrator.py` now enforces canonical agentic runtime dispatch in `process_invoice` and hard-disables legacy fallback/opt-out in `_planning_loop_enabled` and `_legacy_fallback_on_planner_error`.
-  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_agent_orchestrator_durable_retry.py` now asserts opt-out and fallback flags are ignored (including non-production) and runtime fails closed.
+  - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/agent_orchestrator.py` now enforces canonical agentic runtime dispatch in `process_invoice`, hard-disables fallback in `_legacy_fallback_on_planner_error`, and removes `_process_invoice_legacy`.
+  - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_agent_orchestrator_durable_retry.py` updated to assert no legacy path exposure and fail-closed runtime behavior.
 - Code touchpoints:
   - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/agent_orchestrator.py`
   - `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/finance_agent_runtime.py`
   - `/Users/mombalam/Desktop/Clearledgr.v1/tests/test_agent_orchestrator_durable_retry.py`
 - Acceptance criteria:
-  - Canonical runtime entry path is singular for AP execution.
-  - Legacy fallback branches removed or hard-disabled outside explicitly test-only scopes.
+  - Canonical runtime entry path is singular for AP execution. ✅
+  - Dead legacy orchestrator branch removed from runtime class. ✅
 - Validation/tests:
   - `PYTHONPATH=. pytest -q tests/test_agent_orchestrator_durable_retry.py tests/test_finance_agent_runtime.py` (`32 passed`)
+  - `PYTHONPATH=. pytest -q tests/test_agent_orchestrator_durable_retry.py tests/test_finance_agent_runtime.py tests/test_runtime_surface_scope.py tests/test_channel_approval_contract.py tests/test_teams_verify.py tests/test_admin_session_security.py tests/test_route_auth_policy_inventory.py` (`65 passed`)
 
 ### B42
 - Priority: `P1`
@@ -932,20 +933,20 @@ Source of truth: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `/Users/mombal
 - Status: `DONE`
 - Type: `partial`
 - Plan refs: `PLAN.md` Gmail work-only surface + Ops relocation
-- Problem: Gmail extension file still contained residual ops/batch/telemetry logic despite work-only product contract.
+- Problem: Gmail extension still carried debug controls and residual mixed-surface logic in the Work panel source.
 - Evidence:
-  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js` now hard-disables in-Gmail ops renderers (`renderAgentActions`, `renderBatchAgentOps`, `renderAuditTrail`, `renderKpiSummary`) and keeps Work surface + admin deep-link path only.
-  - Work rendering and audit refresh remain explicit via restored `renderSidebar`, `renderSidebarFor`, `renderAllSidebars`, and `refreshAuditTrail` functions in the same file.
+  - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js` removes `cl-debug-controls` UI and related event handlers from shipped Work surface.
+  - Work rendering remains action-first with Ops escape-hatch via `Open Ops Console` only.
 - Code touchpoints:
   - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js`
   - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/inboxsdk-layer.integration.test.cjs`
   - `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/tests/inboxsdk-layer-ui.test.cjs`
 - Acceptance criteria:
-  - Work surface code path excludes batch/ops/debug renderers.
-  - Admin Ops deep-link remains the only operations escape hatch.
+  - Work surface code path excludes in-panel debug controls and ops renderers. ✅
+  - Admin Ops deep-link remains the only operations escape hatch. ✅
 - Validation/tests:
-  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run test:integration` (`7 passed`)
-  - `rg -n 'Batch operations|Agentic snapshot|raw agent events|runOpsBatchAction' /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js` returns no matches.
+  - `cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension && npm run test:integration` (`14 passed`)
+  - `rg -n 'cl-debug-controls|cl-debug-refresh|cl-debug-scan|isDebugUiEnabled\\(' /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/src/inboxsdk-layer.js` returns no matches.
 
 ### B43
 - Priority: `P2`

@@ -13,7 +13,7 @@ import logging
 import os
 import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -256,7 +256,7 @@ async def process_gmail_notification(email_address: str, history_id: str):
             user_id=token.user_id,
             email=token.email,
             last_history_id=history_id,
-            last_scan_at=datetime.utcnow().isoformat(),
+            last_scan_at=datetime.now(timezone.utc).isoformat(),
             last_error=None,
         )
 
@@ -548,15 +548,19 @@ async def process_invoice_email(
         invoice_text=invoice_text,  # For discount detection
     )
     
-    # Submit to agent orchestrator (reasoning → reflection → workflow)
+    # Submit through canonical finance runtime (AP skill v1)
     try:
-        from clearledgr.services.agent_orchestrator import get_orchestrator
-        orchestrator = get_orchestrator(invoice.organization_id)
-        result = await orchestrator.process_invoice(invoice)
-        logger.info(f"Agent orchestrator result: {result.get('status')}")
+        from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
+        runtime = get_platform_finance_runtime(invoice.organization_id or organization_id)
+        result = await runtime.execute_ap_invoice_processing(
+            invoice_payload=invoice.__dict__,
+            attachments=attachments_with_content,
+            correlation_id=invoice.correlation_id,
+        )
+        logger.info("Finance runtime AP result: %s", result.get("status"))
         return result
     except Exception as e:
-        logger.error(f"Agent orchestrator failed: {e}")
+        logger.error("Finance runtime AP processing failed: %s", e)
         return {"status": "error", "error": str(e)}
 
 
@@ -700,7 +704,7 @@ async def gmail_callback(code: str, state: Optional[str] = None):
             email=token.email,
             last_history_id=watch_result.get("historyId") if watch_result else None,
             watch_expiration=watch_result.get("expiration") if watch_result else None,
-            last_watch_at=datetime.utcnow().isoformat() if watch_result else None,
+            last_watch_at=datetime.now(timezone.utc).isoformat() if watch_result else None,
             last_error=watch_error,
         )
         

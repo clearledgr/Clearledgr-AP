@@ -114,6 +114,7 @@ AP v1 does not include:
 3. FP&A aggregation as a primary shipped workflow.
 4. A standalone dashboard for daily AP operations.
 5. Consumer messaging channels (WhatsApp/Telegram).
+6. Outlook inbox intake in GA scope (explicitly de-scoped; Gmail is the only inbox surface for AP v1 GA).
 
 ### 2.5 Admin Console role (release taxonomy context)
 The Admin Console is in-scope for AP v1 as setup/operations infrastructure, not as the primary AP daily workflow UI.

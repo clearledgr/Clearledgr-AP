@@ -614,9 +614,19 @@ async def connect_sap(request: ERPConnectionRequest) -> Optional[ERPConnection]:
             status_code=400,
             detail="SAP requires base_url, username, and password",
         )
-    
+
+    tls_verify: Any = True
+    ca_bundle_path = str(os.getenv("SAP_TLS_CA_BUNDLE_PATH", "")).strip()
+    if ca_bundle_path:
+        if not os.path.exists(ca_bundle_path):
+            raise HTTPException(
+                status_code=400,
+                detail="SAP TLS CA bundle path does not exist. Update SAP_TLS_CA_BUNDLE_PATH.",
+            )
+        tls_verify = ca_bundle_path
+
     try:
-        async with httpx.AsyncClient(verify=False) as client:  # SAP often has self-signed certs
+        async with httpx.AsyncClient(verify=tls_verify) as client:
             response = await client.post(
                 f"{request.base_url}/Login",
                 json={

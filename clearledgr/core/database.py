@@ -31,11 +31,11 @@ except ImportError:  # pragma: no cover
     HAS_POSTGRES = False
 
 from clearledgr.core.stores.ap_store import APStore
+from clearledgr.core.stores.ap_runtime_store import APRuntimeStore, AP_RUNTIME_COMPAT_TABLES
 from clearledgr.core.stores.approval_chain_store import ApprovalChainStore
 from clearledgr.core.stores.auth_store import AuthStore
 from clearledgr.core.stores.browser_agent_store import BrowserAgentStore
 from clearledgr.core.stores.integration_store import IntegrationStore
-from clearledgr.core.stores.legacy_engine_store import LegacyEngineStore, LEGACY_ENGINE_TABLES
 from clearledgr.core.stores.metrics_store import MetricsStore
 from clearledgr.core.stores.policy_store import PolicyStore
 from clearledgr.core.stores.task_store import TaskStore
@@ -46,11 +46,11 @@ logger = logging.getLogger(__name__)
 
 class ClearledgrDB(
     APStore,
+    APRuntimeStore,
     ApprovalChainStore,
     AuthStore,
     IntegrationStore,
     BrowserAgentStore,
-    LegacyEngineStore,
     PolicyStore,
     MetricsStore,
     TaskStore,
@@ -915,14 +915,14 @@ class ClearledgrDB(
                 "ON task_runs(organization_id, status)"
             )
 
-            # Legacy engine reconciliation + AP workflow service tables
-            for table_sql in LEGACY_ENGINE_TABLES:
+            # AP runtime compatibility tables (legacy reconciliation stack removed).
+            for table_sql in AP_RUNTIME_COMPAT_TABLES:
                 cur.execute(table_sql)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_org_status ON transactions(organization_id, status)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_finance_emails_org ON finance_emails(organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_finance_emails_gmail_id ON finance_emails(gmail_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_recon_exceptions_org_status ON reconciliation_exceptions(organization_id, status)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_draft_entries_org_status ON draft_entries(organization_id, status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_gl_corrections_org ON gl_corrections(organization_id, corrected_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_gl_accounts_org_code ON gl_accounts(organization_id, code)")
 
             conn.commit()
 
