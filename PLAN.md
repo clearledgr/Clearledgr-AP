@@ -25,6 +25,8 @@ Clearledgr is a **Finance AI Agent**. AP is its first production skill. The agen
 10. **Execution is automated and audit-safe**; mutating/high‑risk actions are human‑confirmed by default unless policy explicitly allows autopilot.
 11. **Clearledgr runs one finance agent runtime with AP as the first production skill**; future workflows expand as skills on the same runtime rather than separate product runtimes.
 12. **Durability claims are truth-in-runtime claims**: AP v1 default durable orchestration backend is `local_db`; Temporal is optional and must only be claimed when actually enabled.
+13. **Initial rollout geography is Europe and Africa first**; wider regional expansion comes after EMEA launch stability targets are met.
+14. **Operator-facing time standard is Europe/London** for shared team coordination; persisted system timestamps remain UTC.
 
 ---
 

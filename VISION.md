@@ -14,6 +14,8 @@ Like coding agents execute software tasks, Clearledgr executes finance workflows
 - Embedded work surface: Gmail (`Clearledgr AP`, action-first)
 - Embedded approval surfaces: Slack and Teams
 - Outlook inbox intake is de-scoped for AP v1 GA (Gmail-only inbox scope)
+- Initial rollout sequence is Europe and Africa first
+- Shared operator time standard is `Europe/London` (system storage remains UTC)
 - ERP system-of-record execution with connector readiness gates:
   - NetSuite
   - QuickBooks

@@ -19,6 +19,9 @@ const state = {
   sapFormVisible: false,
 };
 
+const OPERATOR_TIMEZONE = "Europe/London";
+const OPERATOR_LOCALE = "en-GB";
+
 const qs = (selector) => document.querySelector(selector);
 
 function clearSession() {
@@ -138,6 +141,55 @@ function integrationByName(name) {
 
 function checkMark(ok) {
   return ok ? '<span class="check-ok">Connected</span>' : '<span class="check-no">Not connected</span>';
+}
+
+function formatOperatorDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    return date.toLocaleString(OPERATOR_LOCALE, {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: OPERATOR_TIMEZONE,
+    });
+  } catch (_) {
+    return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+}
+
+function formatOperatorDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    return date.toLocaleDateString(OPERATOR_LOCALE, {
+      day: "2-digit",
+      month: "short",
+      timeZone: OPERATOR_TIMEZONE,
+    });
+  } catch (_) {
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+}
+
+function formatOperatorTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    return date.toLocaleTimeString(OPERATOR_LOCALE, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: OPERATOR_TIMEZONE,
+    });
+  } catch (_) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
 }
 
 function hasOpsAccess() {
@@ -360,9 +412,7 @@ function _autopilotPanel(gmail) {
   const ws = gmail.watch_status || "unknown";
   const wsLabel = ws === "active" ? "Push (real-time)" : ws === "polling" ? "Polling (60s)" : "Disconnected";
   const wsClass = ws === "active" ? "ap-active" : ws === "polling" ? "ap-polling" : "ap-off";
-  const lastScan = gmail.last_sync_at
-    ? new Date(gmail.last_sync_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
-    : "Never";
+  const lastScan = gmail.last_sync_at ? formatOperatorDateTime(gmail.last_sync_at) : "Never";
   const processed = gmail.invoices_processed || 0;
   const dash = state.bootstrap?.dashboard || {};
   const total = dash.total_invoices || processed || 0;
@@ -488,8 +538,8 @@ function activityPage() {
         : `<div class="activity-timeline">
             ${events.map((ev) => {
               const ts = ev.ts || ev.timestamp || "";
-              const time = ts ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-              const date = ts ? new Date(ts).toLocaleDateString([], { month: "short", day: "numeric" }) : "";
+              const time = formatOperatorTime(ts);
+              const date = formatOperatorDate(ts);
               const evType = ev.event_type || ev.new_state || "event";
               const badge = _eventBadge(evType);
               const vendor = ev.vendor_name || (ev.payload_json ? (typeof ev.payload_json === "string" ? JSON.parse(ev.payload_json) : ev.payload_json).vendor_name : "") || "";
