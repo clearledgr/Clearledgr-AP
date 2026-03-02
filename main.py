@@ -198,7 +198,6 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/api/agent",
     "/api/ap",
     "/api/ops",
-    "/api/admin",
     "/extension",
     "/slack",
     "/teams",
@@ -206,11 +205,47 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/auth",
 )
 
+STRICT_PROFILE_ALLOWED_ADMIN_PATHS = {
+    "/api/admin/bootstrap",
+    "/api/admin/ga-readiness",
+    "/api/admin/health",
+    "/api/admin/integrations",
+    "/api/admin/integrations/erp/connect/netsuite",
+    "/api/admin/integrations/erp/connect/sap",
+    "/api/admin/integrations/erp/connect/start",
+    "/api/admin/integrations/gmail/connect/start",
+    "/api/admin/integrations/slack/channel",
+    "/api/admin/integrations/slack/install/callback",
+    "/api/admin/integrations/slack/install/start",
+    "/api/admin/integrations/slack/test",
+    "/api/admin/integrations/teams/test",
+    "/api/admin/integrations/teams/webhook",
+    "/api/admin/onboarding/status",
+    "/api/admin/onboarding/step",
+    "/api/admin/ops/connector-readiness",
+    "/api/admin/ops/learning-calibration",
+    "/api/admin/ops/learning-calibration/recompute",
+    "/api/admin/org/settings",
+    "/api/admin/policies/ap",
+    "/api/admin/rollback-controls",
+    "/api/admin/subscription",
+    "/api/admin/subscription/plan",
+}
+
+STRICT_PROFILE_ALLOWED_ADMIN_PREFIXES = (
+    "/api/admin/team/invites",
+)
+
 
 def _is_strict_profile_allowed_path(path: str) -> bool:
     normalized = path if path.startswith("/") else f"/{path}"
     if normalized in STRICT_PROFILE_ALLOWED_EXACT_PATHS:
         return True
+    if normalized in STRICT_PROFILE_ALLOWED_ADMIN_PATHS:
+        return True
+    for prefix in STRICT_PROFILE_ALLOWED_ADMIN_PREFIXES:
+        if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return True
     for prefix in STRICT_PROFILE_ALLOWED_PREFIXES:
         if normalized == prefix or normalized.startswith(f"{prefix}/"):
             return True

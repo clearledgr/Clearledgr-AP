@@ -124,6 +124,8 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
         assert "/erp/xero/connect" not in paths
+        assert "/api/admin/vendor-intelligence/bootstrap" not in paths
+        assert "/api/admin/integrations/slack/manifest" not in paths
         # OAuth callbacks remain available for admin ERP install flows.
         assert "/erp/quickbooks/callback" in paths
         assert "/erp/xero/callback" in paths
