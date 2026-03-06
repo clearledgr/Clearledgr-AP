@@ -1258,8 +1258,6 @@ def _append_extension_ap_audit(
     correlation_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    if not hasattr(db, "append_ap_audit_event"):
-        return None
     return db.append_ap_audit_event(
         {
             "ap_item_id": ap_item_id,
@@ -1278,7 +1276,7 @@ def _append_extension_ap_audit(
 
 def _load_idempotent_extension_response(db: Any, idempotency_key: Optional[str]) -> Optional[Dict[str, Any]]:
     key = str(idempotency_key or "").strip()
-    if not key or not hasattr(db, "get_ap_audit_event_by_key"):
+    if not key:
         return None
     existing = db.get_ap_audit_event_by_key(key)
     if not existing:

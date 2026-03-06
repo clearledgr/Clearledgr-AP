@@ -18,6 +18,7 @@ import json
 import secrets
 import logging
 from typing import Dict, Any, Optional
+from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode, parse_qs, urlparse
 
@@ -71,9 +72,35 @@ NETSUITE_TOKEN_SECRET = os.getenv("NETSUITE_TOKEN_SECRET", "")
 
 # State storage for OAuth (in production, use Redis)
 _oauth_states: Dict[str, Dict[str, Any]] = {}
+_env_name = str(os.getenv("ENV", "dev")).strip().lower()
+if _env_name in ("prod", "production", "staging", "stage"):
+    logger.warning(
+        "ERP OAuth state stored in-memory — not shared across workers. "
+        "Configure Redis-backed state storage for multi-instance deployments."
+    )
 
 # Frontend URL for redirects after OAuth
 FRONTEND_URL = os.getenv("FRONTEND_URL", "/")
+
+
+def _validate_return_url(url: Optional[str]) -> str:
+    """Validate return_url is same-origin as FRONTEND_URL to prevent open redirects."""
+    default = f"{FRONTEND_URL}/settings/erp"
+    if not url:
+        return default
+    try:
+        parsed = urlparse(url)
+        frontend_parsed = urlparse(FRONTEND_URL)
+        # Only allow same-host redirects (or relative paths)
+        if parsed.scheme and parsed.netloc:
+            if parsed.netloc != frontend_parsed.netloc:
+                logger.warning("Blocked open redirect attempt to %s", parsed.netloc)
+                return default
+        elif url.startswith("//"):
+            return default
+        return url
+    except Exception:
+        return default
 
 
 # ==================== REQUEST MODELS ====================
@@ -153,7 +180,7 @@ async def quickbooks_connect(
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = {
         "organization_id": org_id,
-        "return_url": request.return_url or f"{FRONTEND_URL}/settings/erp",
+        "return_url": _validate_return_url(request.return_url),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     
@@ -192,11 +219,17 @@ async def quickbooks_callback(
     
     if not state or state not in _oauth_states:
         raise HTTPException(status_code=400, detail="Invalid state")
-    
+
     state_data = _oauth_states.pop(state)
+    # Enforce 15-minute TTL on OAuth state tokens
+    created = state_data.get("created_at", "")
+    if created:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(created)).total_seconds()
+        if age > 900:
+            raise HTTPException(status_code=400, detail="State token expired")
     organization_id = state_data["organization_id"]
     return_url = state_data["return_url"]
-    
+
     if not code or not realmId:
         return RedirectResponse(f"{FRONTEND_URL}?erp_error=missing_params")
     
@@ -269,7 +302,7 @@ async def xero_connect(
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = {
         "organization_id": org_id,
-        "return_url": request.return_url or f"{FRONTEND_URL}/settings/erp",
+        "return_url": _validate_return_url(request.return_url),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     
@@ -304,11 +337,17 @@ async def xero_callback(
     
     if not state or state not in _oauth_states:
         raise HTTPException(status_code=400, detail="Invalid state")
-    
+
     state_data = _oauth_states.pop(state)
+    # Enforce 15-minute TTL on OAuth state tokens
+    created = state_data.get("created_at", "")
+    if created:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(created)).total_seconds()
+        if age > 900:
+            raise HTTPException(status_code=400, detail="State token expired")
     organization_id = state_data["organization_id"]
     return_url = state_data["return_url"]
-    
+
     if not code:
         return RedirectResponse(f"{FRONTEND_URL}?erp_error=missing_code")
     
@@ -574,3 +613,67 @@ async def _get_xero_accounts(connection: ERPConnection) -> list:
     except Exception as e:
         logger.error(f"Failed to get Xero accounts: {e}")
         return []
+
+
+# ==================== GL ACCOUNT MAP ====================
+
+class GLAccountMapRequest(BaseModel):
+    gl_account_map: Dict[str, str]
+
+
+@router.get("/gl-map")
+async def get_gl_account_map(
+    organization_id: str = Query(default="default"),
+    user: TokenData = Depends(get_current_user),
+):
+    """Return the per-tenant GL account code mapping stored in org settings.
+
+    Keys are account type names (e.g. "expenses", "accounts_payable");
+    values are ERP-specific account codes. An empty dict means the system
+    defaults from DEFAULT_ACCOUNT_MAP are used.
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    org = db.get_organization(org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="organization_not_found")
+    settings = org.get("settings_json") or org.get("settings") or {}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except Exception:
+            settings = {}
+    return {
+        "organization_id": org_id,
+        "gl_account_map": dict(settings.get("gl_account_map") or {}),
+    }
+
+
+@router.put("/gl-map")
+async def update_gl_account_map(
+    body: GLAccountMapRequest,
+    organization_id: str = Query(default="default"),
+    user: TokenData = Depends(get_current_user),
+):
+    """Store a per-tenant GL account code mapping in org settings.
+
+    Pass the full mapping dict — existing keys not in the request are removed.
+    Example body: {"gl_account_map": {"expenses": "6100", "accounts_payable": "2000"}}
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    org = db.get_organization(org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="organization_not_found")
+    settings = org.get("settings_json") or org.get("settings") or {}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except Exception:
+            settings = {}
+    settings["gl_account_map"] = dict(body.gl_account_map)
+    db.update_organization(org_id, settings_json=settings)
+    return {
+        "organization_id": org_id,
+        "gl_account_map": settings["gl_account_map"],
+    }

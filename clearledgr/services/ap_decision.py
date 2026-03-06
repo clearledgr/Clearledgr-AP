@@ -385,9 +385,12 @@ class APDecisionService:
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError:
-            obj = re.search(r"\{[\s\S]+\}", text)
+            obj = re.search(r"\{[\s\S]+?\}", text)
             if obj:
-                parsed = json.loads(obj.group(0))
+                try:
+                    parsed = json.loads(obj.group(0))
+                except json.JSONDecodeError:
+                    raise ValueError(f"Claude did not return valid JSON: {text[:200]}")
             else:
                 raise ValueError(f"Claude did not return valid JSON: {text[:200]}")
 

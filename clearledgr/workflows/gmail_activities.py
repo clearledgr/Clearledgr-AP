@@ -212,7 +212,7 @@ async def match_bank_feed_activity(payload: Dict[str, Any]) -> Dict[str, Any]:
             limit=200,
         ) or []
     except Exception:
-        logger.debug("Bank candidate lookup unavailable for org=%s", org_id)
+        logger.error("Bank candidate lookup unavailable for org=%s", org_id)
         raw_candidates = []
 
     scored: List[Dict[str, Any]] = []

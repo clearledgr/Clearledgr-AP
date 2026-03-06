@@ -230,7 +230,7 @@ class TaskStore:
         outcome: Dict[str, Any],
         status: str = "completed",
     ) -> None:
-        """Mark a task run as completed (or hitl_pause / max_steps_exceeded)."""
+        """Mark a task run as completed (or awaiting_human / max_steps_exceeded)."""
         self.initialize()
         now = _now()
 

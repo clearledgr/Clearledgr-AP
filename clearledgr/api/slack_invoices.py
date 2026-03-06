@@ -7,13 +7,15 @@ import logging
 import urllib.parse
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException, Request
+import httpx
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from clearledgr.core.approval_action_contract import (
     ApprovalActionContractError,
     NormalizedApprovalAction,
     is_stale_action,
     normalize_slack_action,
+    validate_action_state_preflight,
 )
 from clearledgr.core.database import get_db
 from clearledgr.core.launch_controls import get_channel_action_block_reason
@@ -55,8 +57,6 @@ def _audit_callback_event(
     reason: str | None = None,
     metadata: Dict[str, Any] | None = None,
 ) -> None:
-    if not hasattr(db, "append_ap_audit_event"):
-        return
     resolved_ap_item_id = ap_item_id or f"channel_callback:slack:{organization_id}"
     try:
         db.append_ap_audit_event(
@@ -74,7 +74,7 @@ def _audit_callback_event(
             }
         )
     except Exception as exc:  # pragma: no cover - best effort
-        logger.debug("Could not audit %s callback event: %s", source, exc)
+        logger.error("Could not audit %s callback event: %s", source, exc)
 
 
 def _resolve_ap_context(db, organization_id: str, gmail_id: str) -> tuple[str, str | None]:
@@ -111,6 +111,15 @@ def _resolve_correlation_id(db, ap_item_id: str | None, org_id: str, gmail_id: s
         return corr or None
     except Exception:
         return None
+
+
+async def _post_to_response_url(response_url: str, payload: Dict[str, Any]) -> None:
+    """Post a follow-up message to Slack's response_url (best-effort)."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(response_url, json=payload)
+    except Exception as exc:
+        logger.error("Failed to post Slack response_url follow-up: %s", exc)
 
 
 def _slack_duplicate_response() -> Dict[str, str]:
@@ -204,7 +213,7 @@ async def _dispatch_slack_action(
 
 
 @router.post("/interactive")
-async def handle_invoice_interactive(request: Request):
+async def handle_invoice_interactive(request: Request, background_tasks: BackgroundTasks):
     """Handle Slack interactive actions for invoice approvals."""
     db = get_db()
     try:
@@ -322,7 +331,7 @@ async def handle_invoice_interactive(request: Request):
         return _slack_stale_response()
 
     processed_key = f"{normalized.idempotency_key}:processed"
-    if hasattr(db, "get_ap_audit_event_by_key") and db.get_ap_audit_event_by_key(processed_key):
+    if db.get_ap_audit_event_by_key(processed_key):
         _audit_callback_event(
             db,
             event_type="channel_action_duplicate",
@@ -337,6 +346,32 @@ async def handle_invoice_interactive(request: Request):
         )
         return _slack_duplicate_response()
 
+    # H18: Pre-flight state check — reject actions invalid for current AP state.
+    ap_item_row = None
+    if normalized.ap_item_id and hasattr(db, "get_ap_item"):
+        try:
+            ap_item_row = db.get_ap_item(normalized.ap_item_id)
+        except Exception:
+            pass
+    preflight_block = validate_action_state_preflight(normalized, ap_item_row)
+    if preflight_block:
+        _audit_callback_event(
+            db,
+            event_type="channel_action_blocked",
+            source="slack",
+            organization_id=normalized.organization_id,
+            ap_item_id=normalized.ap_item_id,
+            actor_id=normalized.actor_id,
+            idempotency_key=f"{normalized.idempotency_key}:preflight_blocked",
+            reason=preflight_block,
+            metadata={"action": normalized.to_dict()},
+            correlation_id=normalized.correlation_id,
+        )
+        return {
+            "response_type": "ephemeral",
+            "text": f"Action not allowed: {preflight_block}",
+        }
+
     _audit_callback_event(
         db,
         event_type="channel_action_received",
@@ -348,6 +383,8 @@ async def handle_invoice_interactive(request: Request):
         metadata={"action": normalized.to_dict()},
         correlation_id=normalized.correlation_id,
     )
+
+    response_url = str(payload.get("response_url") or "").strip()
 
     workflow = get_invoice_workflow(normalized.organization_id)
     try:
@@ -383,4 +420,9 @@ async def handle_invoice_interactive(request: Request):
         },
         correlation_id=normalized.correlation_id,
     )
-    return {"response_type": response.get("response_type", "ephemeral"), "text": response.get("text", "Action received.")}
+
+    final_reply = {"response_type": response.get("response_type", "ephemeral"), "text": response.get("text", "Action received.")}
+    if response_url:
+        background_tasks.add_task(_post_to_response_url, response_url, final_reply)
+        return {"response_type": "ephemeral", "text": "Processing..."}
+    return final_reply

@@ -12,7 +12,7 @@ import uuid
 import logging
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -33,9 +33,14 @@ from clearledgr.integrations.erp_router import (
     get_erp_connection,
     ERPConnection,
 )
+from clearledgr.core.auth import get_current_user, TokenData
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/oauth", tags=["ERP OAuth"])
+router = APIRouter(
+    prefix="/oauth",
+    tags=["ERP OAuth"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 def _oauth_success_response(erp_name: str) -> HTMLResponse:

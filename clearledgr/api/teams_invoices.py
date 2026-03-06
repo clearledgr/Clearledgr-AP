@@ -13,6 +13,7 @@ from clearledgr.core.approval_action_contract import (
     NormalizedApprovalAction,
     is_stale_action,
     normalize_teams_action,
+    validate_action_state_preflight,
 )
 from clearledgr.core.database import get_db
 from clearledgr.core.launch_controls import get_channel_action_block_reason
@@ -90,7 +91,7 @@ def _upsert_teams_metadata(
                 organization_id=organization_id,
             )
         except Exception as exc:
-            logger.debug("upsert_channel_thread failed: %s", exc)
+            logger.error("upsert_channel_thread failed: %s", exc)
 
 
 def _audit_callback_event(
@@ -105,8 +106,6 @@ def _audit_callback_event(
     reason: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
-    if not hasattr(db, "append_ap_audit_event"):
-        return
     resolved_ap_item_id = ap_item_id or f"channel_callback:teams:{organization_id}"
     try:
         db.append_ap_audit_event(
@@ -124,7 +123,7 @@ def _audit_callback_event(
             }
         )
     except Exception as exc:  # pragma: no cover - best effort
-        logger.debug("Could not audit teams callback event: %s", exc)
+        logger.error("Could not audit teams callback event: %s", exc)
 
 
 def _resolve_ap_context(db, organization_id: str, email_id: str) -> tuple[str, Optional[str]]:
@@ -324,7 +323,7 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
         }
 
     processed_key = f"{normalized.idempotency_key}:processed"
-    if hasattr(db, "get_ap_audit_event_by_key") and db.get_ap_audit_event_by_key(processed_key):
+    if db.get_ap_audit_event_by_key(processed_key):
         _audit_callback_event(
             db,
             event_type="channel_action_duplicate",
@@ -343,6 +342,43 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
             "reason": "duplicate_callback",
         }
 
+    # H18: Pre-flight state check — reject actions invalid for current AP state.
+    ap_item_row = None
+    if normalized.ap_item_id and hasattr(db, "get_ap_item"):
+        try:
+            ap_item_row = db.get_ap_item(normalized.ap_item_id)
+        except Exception:
+            pass
+    preflight_block = validate_action_state_preflight(normalized, ap_item_row)
+    if preflight_block:
+        _audit_callback_event(
+            db,
+            event_type="channel_action_blocked",
+            organization_id=normalized.organization_id,
+            ap_item_id=normalized.ap_item_id,
+            actor_id=normalized.actor_id,
+            idempotency_key=f"{normalized.idempotency_key}:preflight_blocked",
+            reason=preflight_block,
+            metadata={"action": normalized.to_dict()},
+            correlation_id=normalized.correlation_id,
+        )
+        _upsert_teams_metadata(
+            normalized.organization_id,
+            normalized.gmail_id,
+            conversation_id=normalized.source_channel_id,
+            message_id=normalized.source_message_ref,
+            actor=normalized.actor_display,
+            action=normalized.raw_action or normalized.action,
+            status="blocked",
+            reason=preflight_block,
+        )
+        return {
+            "status": "blocked",
+            "action": normalized.action,
+            "email_id": normalized.gmail_id,
+            "reason": preflight_block,
+        }
+
     _audit_callback_event(
         db,
         event_type="channel_action_received",
@@ -355,7 +391,25 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
     )
 
     workflow = get_invoice_workflow(normalized.organization_id)
-    result = await _dispatch_teams_action(workflow, normalized)
+    # H5: Wrap dispatch in try/except to emit channel_action_failed audit event
+    # on any exception — parity with Slack handler (PLAN.md §5.3-5).
+    try:
+        result = await _dispatch_teams_action(workflow, normalized)
+    except Exception as dispatch_exc:
+        _audit_callback_event(
+            db,
+            event_type="channel_action_failed",
+            organization_id=normalized.organization_id,
+            ap_item_id=normalized.ap_item_id,
+            actor_id=normalized.actor_id,
+            idempotency_key=f"{normalized.idempotency_key}:failed",
+            metadata={
+                "action": normalized.to_dict(),
+                "error": type(dispatch_exc).__name__,
+            },
+            correlation_id=normalized.correlation_id,
+        )
+        raise
 
     result_status = str(result.get("status") or "unknown")
     result_reason = str(result.get("reason") or "")
@@ -403,7 +457,7 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
                 reason=result_reason or None,
             )
         except Exception as _upd_exc:
-            logger.debug("Non-fatal: Teams card update failed: %s", _upd_exc)
+            logger.error("Non-fatal: Teams card update failed: %s", _upd_exc)
 
     return {
         "status": result_status,

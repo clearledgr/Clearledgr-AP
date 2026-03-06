@@ -823,7 +823,7 @@ async def send_overdue_summary(
             organization_id=organization_id,
         )
     except Exception as exc:
-        logger.debug("send_overdue_summary failed: %s", exc)
+        logger.error("send_overdue_summary failed: %s", exc)
         return False
 
 
@@ -863,7 +863,7 @@ async def send_approval_reminder(
                 await client.send_dm(uid, dm_text)
                 reminder_sent = True
             except Exception as dm_err:
-                logger.debug("Approval reminder DM to %s failed: %s", uid, dm_err)
+                logger.error("Approval reminder DM to %s failed: %s", uid, dm_err)
 
         if is_escalation:
             channel = (
@@ -883,7 +883,7 @@ async def send_approval_reminder(
             )
             reminder_sent = reminder_sent or bool(escalation_sent)
     except Exception as exc:
-        logger.debug("send_approval_reminder failed: %s", exc)
+        logger.error("send_approval_reminder failed: %s", exc)
         return False
     return reminder_sent
 

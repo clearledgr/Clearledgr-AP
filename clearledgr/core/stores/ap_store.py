@@ -335,7 +335,7 @@ class APStore:
                 }
             )
         except Exception as exc:  # pragma: no cover - best effort
-            logger.debug("Could not audit rejected AP state transition for %s: %s", ap_item_id, exc)
+            logger.error("Could not audit rejected AP state transition for %s: %s", ap_item_id, exc)
 
     def get_ap_item(self, ap_item_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
@@ -375,7 +375,20 @@ class APStore:
         status_raw = kwargs.get("status", "received")
         state = normalize_state(status_raw)
 
+        # Derive invoice_key so the UNIQUE(organization_id, invoice_key) constraint
+        # prevents duplicate AP items.  NULL invoice_key bypasses the constraint in
+        # SQLite, so we always generate one from available identifiers.
+        invoice_key = kwargs.get("invoice_key")
+        if not invoice_key:
+            inv_num = kwargs.get("invoice_number") or ""
+            vendor = kwargs.get("vendor") or ""
+            if inv_num and vendor:
+                invoice_key = f"{vendor}::{inv_num}"
+            elif gmail_id:
+                invoice_key = f"gmail::{gmail_id}"
+
         payload = {
+            "invoice_key": invoice_key,
             "thread_id": gmail_id,
             "message_id": kwargs.get("message_id"),
             "subject": kwargs.get("email_subject") or kwargs.get("subject"),
@@ -658,6 +671,32 @@ class APStore:
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (organization_id, message_id, message_id))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def get_ap_item_by_erp_reference(self, organization_id: str, erp_reference: str) -> Optional[Dict[str, Any]]:
+        """Look up AP item by its ERP reference (indexed)."""
+        self.initialize()
+        sql = self._prepare_sql(
+            "SELECT * FROM ap_items WHERE organization_id = ? AND erp_reference = ? "
+            "ORDER BY created_at DESC LIMIT 1"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (organization_id, erp_reference))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def get_ap_item_by_invoice_number(self, organization_id: str, invoice_number: str) -> Optional[Dict[str, Any]]:
+        """Look up AP item by invoice number."""
+        self.initialize()
+        sql = self._prepare_sql(
+            "SELECT * FROM ap_items WHERE organization_id = ? AND invoice_number = ? "
+            "ORDER BY created_at DESC LIMIT 1"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (organization_id, invoice_number))
             row = cur.fetchone()
         return dict(row) if row else None
 
@@ -1183,7 +1222,7 @@ class APStore:
                 ))
                 conn.commit()
         except Exception as exc:
-            logger.debug("upsert_channel_thread failed (non-fatal): %s", exc)
+            logger.error("upsert_channel_thread failed (non-fatal): %s", exc)
 
     def get_channel_threads(self, ap_item_id: str) -> List[Dict[str, Any]]:
         """Return all channel thread records for an AP item."""
@@ -1353,10 +1392,20 @@ class APStore:
             conn.commit()
         return self.get_workflow_run(run_id) or {"id": run_id}
 
+    _WORKFLOW_RUN_ALLOWED_COLUMNS = frozenset({
+        "status", "current_step", "ap_item_id", "started_at",
+        "input", "input_json", "result", "result_json",
+        "error", "error_json", "metadata", "metadata_json",
+        "completed_at", "updated_at",
+    })
+
     def update_workflow_run(self, workflow_run_id: str, **kwargs: Any) -> bool:
         self.initialize()
         if not kwargs:
             return False
+        bad_keys = set(kwargs.keys()) - self._WORKFLOW_RUN_ALLOWED_COLUMNS
+        if bad_keys:
+            raise ValueError(f"Disallowed columns for workflow_run update: {bad_keys}")
         payload = dict(kwargs)
         for key in ("input_json", "result_json", "error_json", "metadata_json"):
             if key in payload and isinstance(payload[key], dict):

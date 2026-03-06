@@ -301,6 +301,19 @@ class ClearledgrDB(
                 )
             """)
 
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS google_auth_codes (
+                    auth_code TEXT PRIMARY KEY,
+                    access_token TEXT NOT NULL,
+                    refresh_token TEXT,
+                    organization_id TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT
+                )
+                """
+            )
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS gmail_autopilot_state (
                     user_id TEXT PRIMARY KEY,
@@ -481,6 +494,11 @@ class ClearledgrDB(
                     approval_policy_version TEXT,
                     post_attempted_at TEXT,
                     last_error TEXT,
+                    po_number TEXT,
+                    attachment_url TEXT,
+                    slack_channel_id TEXT,
+                    slack_thread_id TEXT,
+                    slack_message_ts TEXT,
                     organization_id TEXT,
                     user_id TEXT,
                     created_at TEXT,
@@ -752,6 +770,7 @@ class ClearledgrDB(
 
             cur.execute("CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_tokens(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_oauth_provider ON oauth_tokens(provider)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_google_auth_codes_expires_at ON google_auth_codes(expires_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_autopilot_email ON gmail_autopilot_state(email)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_erp_org ON erp_connections(organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_org_domain ON organizations(domain)")
@@ -771,6 +790,8 @@ class ClearledgrDB(
             self._ensure_column(cur, "ap_items", "supersedes_ap_item_id", "TEXT")
             self._ensure_column(cur, "ap_items", "supersedes_invoice_key", "TEXT")
             self._ensure_column(cur, "ap_items", "superseded_by_ap_item_id", "TEXT")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_erp_ref ON ap_items(organization_id, erp_reference)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_org_invoice_num ON ap_items(organization_id, invoice_number)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_supersedes ON ap_items(supersedes_ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_superseded_by ON ap_items(superseded_by_ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_item_sources_item ON ap_item_sources(ap_item_id)")
@@ -841,6 +862,13 @@ class ClearledgrDB(
             self._ensure_column(cur, "slack_installations", "metadata_json", "TEXT")
             self._ensure_column(cur, "subscriptions", "onboarding_completed", "INTEGER DEFAULT 0")
             self._ensure_column(cur, "subscriptions", "onboarding_step", "INTEGER DEFAULT 0")
+
+            # AP columns added for PO tracking, attachments, and Slack thread state.
+            self._ensure_column(cur, "ap_items", "po_number", "TEXT")
+            self._ensure_column(cur, "ap_items", "attachment_url", "TEXT")
+            self._ensure_column(cur, "ap_items", "slack_channel_id", "TEXT")
+            self._ensure_column(cur, "ap_items", "slack_thread_id", "TEXT")
+            self._ensure_column(cur, "ap_items", "slack_message_ts", "TEXT")
 
             # Extraction confidence: field-level scores stored as JSON blob so accuracy
             # trends are queryable per-field without parsing audit events.

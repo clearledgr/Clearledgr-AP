@@ -24,6 +24,7 @@ _QB_QUERY_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")
 _NS_LIKE_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")
 _NS_EMAIL_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\+]")
 _XERO_WHERE_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")
+_SAP_ODATA_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")
 
 
 def _sanitize_quickbooks_like_operand(value: Optional[str]) -> Optional[str]:
@@ -76,6 +77,22 @@ def _sanitize_xero_where_operand(value: Optional[str]) -> Optional[str]:
     sanitized = re.sub(r"\s+", " ", sanitized).strip()
     if not sanitized:
         return None
+    return sanitized[:120]
+
+
+def _sanitize_odata_value(value: Optional[str]) -> str:
+    """Return a safe OData filter operand for SAP Business Partner search.
+
+    Prevents OData filter injection by stripping non-alphanumeric characters
+    and escaping single quotes.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    sanitized = _SAP_ODATA_VALUE_ALLOWED_CHARS.sub(" ", text)
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+    # OData single-quote escape: ' → ''
+    sanitized = sanitized.replace("'", "''")
     return sanitized[:120]
 
 
@@ -134,7 +151,8 @@ class ERPConnection:
     realm_id: Optional[str] = None  # QuickBooks company ID
     tenant_id: Optional[str] = None  # Xero tenant ID
     base_url: Optional[str] = None  # SAP OData URL or NetSuite account URL
-    
+    company_code: Optional[str] = None  # SAP company code (e.g., "1000")
+
     # NetSuite specific
     account_id: Optional[str] = None  # NetSuite account ID (e.g., "1234567")
     consumer_key: Optional[str] = None  # NetSuite consumer key (TBA)
@@ -178,6 +196,7 @@ def get_erp_connection(organization_id: str) -> Optional[ERPConnection]:
         base_url=conn.get('base_url'),
         client_id=creds.get('client_id'),
         client_secret=creds.get('client_secret'),
+        company_code=creds.get('company_code'),
         account_id=creds.get('account_id'),
         consumer_key=creds.get('consumer_key'),
         consumer_secret=creds.get('consumer_secret'),
@@ -206,7 +225,9 @@ def set_erp_connection(organization_id: str, connection: ERPConnection):
         credentials['token_id'] = connection.token_id
     if connection.token_secret:
         credentials['token_secret'] = connection.token_secret
-    
+    if connection.company_code:
+        credentials['company_code'] = connection.company_code
+
     db.save_erp_connection(
         organization_id=organization_id,
         erp_type=connection.type,
@@ -321,11 +342,11 @@ async def post_to_quickbooks(
             }
             
     except httpx.HTTPStatusError as e:
-        logger.error(f"QuickBooks API error: {e.response.text}")
-        return {"status": "error", "reason": str(e), "details": e.response.text}
+        logger.error("QuickBooks API error: %s", e.response.status_code)
+        return {"status": "error", "erp": "quickbooks", "reason": f"QuickBooks API {e.response.status_code}"}
     except Exception as e:
-        logger.error(f"QuickBooks error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("QuickBooks error: %s", type(e).__name__)
+        return {"status": "error", "erp": "quickbooks", "reason": "posting_failed"}
 
 
 async def refresh_quickbooks_token(connection: ERPConnection) -> Optional[str]:
@@ -351,7 +372,7 @@ async def refresh_quickbooks_token(connection: ERPConnection) -> Optional[str]:
             
             return connection.access_token
     except Exception as e:
-        logger.error(f"Failed to refresh QuickBooks token: {e}")
+        logger.error("Failed to refresh QuickBooks token: %s", type(e).__name__)
         return None
 
 
@@ -421,11 +442,11 @@ async def post_to_xero(
             return {"status": "error", "reason": "No journal returned"}
             
     except httpx.HTTPStatusError as e:
-        logger.error(f"Xero API error: {e.response.text}")
-        return {"status": "error", "reason": str(e), "details": e.response.text}
+        logger.error("Xero API error: %s", e.response.status_code)
+        return {"status": "error", "erp": "xero", "reason": f"Xero API {e.response.status_code}"}
     except Exception as e:
-        logger.error(f"Xero error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("Xero error: %s", type(e).__name__)
+        return {"status": "error", "erp": "xero", "reason": "posting_failed"}
 
 
 async def refresh_xero_token(connection: ERPConnection) -> Optional[str]:
@@ -451,7 +472,7 @@ async def refresh_xero_token(connection: ERPConnection) -> Optional[str]:
             
             return connection.access_token
     except Exception as e:
-        logger.error(f"Failed to refresh Xero token: {e}")
+        logger.error("Failed to refresh Xero token: %s", type(e).__name__)
         return None
 
 
@@ -539,11 +560,11 @@ async def post_to_netsuite(
             }
             
     except httpx.HTTPStatusError as e:
-        logger.error(f"NetSuite API error: {e.response.text}")
-        return {"status": "error", "reason": str(e), "details": e.response.text}
+        logger.error("NetSuite API error: %s", e.response.status_code)
+        return {"status": "error", "erp": "netsuite", "reason": f"NetSuite API {e.response.status_code}"}
     except Exception as e:
-        logger.error(f"NetSuite error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("NetSuite error: %s", type(e).__name__)
+        return {"status": "error", "erp": "netsuite", "reason": "posting_failed"}
 
 
 def build_netsuite_oauth_header(
@@ -718,42 +739,65 @@ async def post_to_sap(
             }
             
     except httpx.HTTPStatusError as e:
-        logger.error(f"SAP OData error: {e.response.text}")
-        return {"status": "error", "reason": str(e), "details": e.response.text}
+        logger.error("SAP OData error: %s", e.response.status_code)
+        return {"status": "error", "erp": "sap", "reason": f"SAP API {e.response.status_code}"}
     except Exception as e:
-        logger.error(f"SAP error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("SAP error: %s", type(e).__name__)
+        return {"status": "error", "erp": "sap", "reason": "posting_failed"}
 
 
 # ==================== ACCOUNT MAPPING ====================
 
-# Default GL account mappings - can be customized per organization
+# Default GL account mappings - can be customized per organization via settings_json["gl_account_map"]
 DEFAULT_ACCOUNT_MAP = {
     "quickbooks": {
         "cash": "1",  # Default checking account
         "accounts_receivable": "4",
         "payment_fees": "74",  # Bank Service Charges
         "revenue": "1",
+        "expenses": "7",  # Expenses (default AP bill debit account)
     },
     "xero": {
         "cash": "090",  # Business Bank Account
         "accounts_receivable": "610",  # Accounts Receivable
         "payment_fees": "404",  # Bank Fees
         "revenue": "200",  # Sales
+        "expenses": "400",  # General Expenses (default AP bill debit account)
     },
     "netsuite": {
         "cash": "1000",  # Cash and Cash Equivalents
         "accounts_receivable": "1200",  # Accounts Receivable
         "payment_fees": "6800",  # Bank Service Charges
         "revenue": "4000",  # Sales Revenue
+        "expenses": "67",  # Vendor expense (default AP bill debit account)
     },
     "sap": {
         "cash": "1000",  # Cash
         "accounts_receivable": "1100",  # AR
         "payment_fees": "6200",  # Bank Charges
         "revenue": "4000",  # Revenue
+        "expenses": "6000",  # General Expenses (default AP invoice GL account)
     },
 }
+
+
+def _get_org_gl_map(organization_id: str) -> Dict[str, str]:
+    """Load per-tenant GL account mapping from org settings_json["gl_account_map"]."""
+    try:
+        import json as _json
+        db = _get_db()
+        org = db.get_organization(organization_id)
+        if not org:
+            return {}
+        settings = org.get("settings_json") or org.get("settings") or {}
+        if isinstance(settings, str):
+            try:
+                settings = _json.loads(settings)
+            except Exception:
+                return {}
+        return dict(settings.get("gl_account_map") or {})
+    except Exception:
+        return {}
 
 
 def get_account_code(
@@ -817,20 +861,67 @@ async def post_bill(
                 "idempotency_key": idempotency_key,
             }
 
+    # H10: At-source idempotency check — prevent concurrent duplicate posts
+    # by checking if this idempotency_key already has a success audit event.
+    if idempotency_key and ap_item_id:
+        try:
+            db = _get_db()
+            existing_event = db.get_ap_audit_event_by_key(idempotency_key)
+            if existing_event and str(existing_event.get("event_type") or "") == "erp_post_succeeded":
+                logger.info(
+                    "Idempotency: key %s already succeeded, skipping duplicate post",
+                    idempotency_key,
+                )
+                meta = existing_event.get("metadata") or {}
+                if isinstance(meta, str):
+                    import json as _json
+                    try:
+                        meta = _json.loads(meta)
+                    except Exception:
+                        meta = {}
+                return {
+                    "status": "already_posted",
+                    "reference_id": meta.get("erp_reference"),
+                    "idempotency_key": idempotency_key,
+                }
+        except Exception:
+            pass  # Non-fatal — proceed with post
+
     connection = get_erp_connection(organization_id)
 
     if not connection:
         logger.warning("No ERP connected for %s", organization_id)
-        return {"status": "skipped", "reason": "No ERP connected", "idempotency_key": idempotency_key}
+        return {"status": "skipped", "reason": "No ERP Connected", "idempotency_key": idempotency_key}
+
+    gl_map = _get_org_gl_map(organization_id)
 
     if connection.type == "quickbooks":
-        result = await post_bill_to_quickbooks(connection, bill)
+        result = await post_bill_to_quickbooks(connection, bill, gl_map=gl_map)
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            new_token = await refresh_quickbooks_token(connection)
+            if new_token:
+                set_erp_connection(organization_id, connection)
+                result = await post_bill_to_quickbooks(connection, bill, gl_map=gl_map)
     elif connection.type == "xero":
-        result = await post_bill_to_xero(connection, bill)
+        result = await post_bill_to_xero(connection, bill, gl_map=gl_map)
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            new_token = await refresh_xero_token(connection)
+            if new_token:
+                set_erp_connection(organization_id, connection)
+                result = await post_bill_to_xero(connection, bill, gl_map=gl_map)
     elif connection.type == "netsuite":
-        result = await post_bill_to_netsuite(connection, bill)
+        result = await post_bill_to_netsuite(connection, bill, gl_map=gl_map)
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            # H7: NetSuite uses OAuth 1.0a — no token refresh, but retry once
+            # in case of transient clock-skew causing signature mismatch.
+            logger.warning("NetSuite 401 for org %s — retrying once (clock-skew mitigation)", organization_id)
+            result = await post_bill_to_netsuite(connection, bill, gl_map=gl_map)
     elif connection.type == "sap":
-        result = await post_bill_to_sap(connection, bill)
+        result = await post_bill_to_sap(connection, bill, gl_map=gl_map)
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            # H9: SAP B1 session may have expired — retry forces a fresh Login.
+            logger.warning("SAP 401 for org %s — retrying with fresh session", organization_id)
+            result = await post_bill_to_sap(connection, bill, gl_map=gl_map)
     else:
         result = {"status": "error", "reason": f"Unknown ERP type: {connection.type}"}
 
@@ -842,15 +933,18 @@ async def post_bill(
 async def post_bill_to_quickbooks(
     connection: ERPConnection,
     bill: Bill,
+    gl_map: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Post vendor bill to QuickBooks Online.
-    
+
     API: https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/bill
     """
     if not connection.access_token or not connection.realm_id:
-        return {"status": "error", "reason": "QuickBooks not properly configured"}
-    
+        return {"status": "error", "erp": "quickbooks", "reason": "QuickBooks not properly configured"}
+
+    expense_account = get_account_code("quickbooks", "expenses", gl_map)
+
     # Build QuickBooks Bill format
     qb_bill = {
         "VendorRef": {"value": bill.vendor_id, "name": bill.vendor_name},
@@ -860,7 +954,7 @@ async def post_bill_to_quickbooks(
         "PrivateNote": bill.description or f"Invoice from {bill.vendor_name}",
         "Line": [],
     }
-    
+
     # Add line items or create single expense line
     if bill.line_items:
         for i, item in enumerate(bill.line_items):
@@ -870,7 +964,7 @@ async def post_bill_to_quickbooks(
                 "Amount": item.get("amount", 0),
                 "Description": item.get("description", ""),
                 "AccountBasedExpenseLineDetail": {
-                    "AccountRef": {"value": item.get("account_id", "7")},  # Default: Expenses
+                    "AccountRef": {"value": item.get("account_id", expense_account)},
                 }
             })
     else:
@@ -881,12 +975,12 @@ async def post_bill_to_quickbooks(
             "Amount": bill.amount,
             "Description": bill.description or f"Invoice {bill.invoice_number}",
             "AccountBasedExpenseLineDetail": {
-                "AccountRef": {"value": "7"},  # Expenses
+                "AccountRef": {"value": expense_account},
             }
         })
-    
+
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/bill"
-    
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -899,15 +993,15 @@ async def post_bill_to_quickbooks(
                 },
                 timeout=30,
             )
-            
+
             if response.status_code == 401:
-                return {"status": "error", "reason": "Token expired", "needs_reauth": True}
-            
+                return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
+
             response.raise_for_status()
             result = response.json()
-            
+
             bill_data = result.get("Bill", {})
-            logger.info(f"Posted Bill to QuickBooks: {bill_data.get('Id')}")
+            logger.info("Posted Bill to QuickBooks: %s", bill_data.get("Id"))
             return {
                 "status": "success",
                 "erp": "quickbooks",
@@ -915,28 +1009,37 @@ async def post_bill_to_quickbooks(
                 "doc_number": bill_data.get("DocNumber"),
                 "sync_token": bill_data.get("SyncToken"),
             }
-            
+
     except httpx.HTTPStatusError as e:
-        logger.error(f"QuickBooks Bill API error: {e.response.text}")
-        return {"status": "error", "reason": str(e), "details": e.response.text}
+        status_code = e.response.status_code
+        logger.error("QuickBooks Bill API HTTP error: status=%d", status_code)
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": f"http_{status_code}",
+            "needs_reauth": status_code == 401,
+        }
     except Exception as e:
-        logger.error(f"QuickBooks Bill error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("QuickBooks Bill error: %s", type(e).__name__)
+        return {"status": "error", "erp": "quickbooks", "reason": "bill_posting_failed"}
 
 
 async def post_bill_to_xero(
     connection: ERPConnection,
     bill: Bill,
+    gl_map: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Post vendor bill to Xero.
-    
+
     API: https://developer.xero.com/documentation/api/accounting/invoices
     Type: ACCPAY (Accounts Payable / Bill)
     """
     if not connection.access_token or not connection.tenant_id:
-        return {"status": "error", "reason": "Xero not properly configured"}
-    
+        return {"status": "error", "erp": "xero", "reason": "Xero not properly configured"}
+
+    expense_account = get_account_code("xero", "expenses", gl_map)
+
     # Build Xero Invoice (ACCPAY type = Bill)
     xero_bill = {
         "Type": "ACCPAY",  # Accounts Payable = Bill
@@ -948,7 +1051,7 @@ async def post_bill_to_xero(
         "Status": "AUTHORISED",  # Ready for payment
         "LineItems": [],
     }
-    
+
     # Add line items
     if bill.line_items:
         for item in bill.line_items:
@@ -956,7 +1059,7 @@ async def post_bill_to_xero(
                 "Description": item.get("description", ""),
                 "Quantity": item.get("quantity", 1),
                 "UnitAmount": item.get("unit_amount", item.get("amount", 0)),
-                "AccountCode": item.get("account_code", "400"),  # Default: Advertising
+                "AccountCode": item.get("account_code", expense_account),
                 "TaxType": item.get("tax_type", "NONE"),
             })
     else:
@@ -964,12 +1067,12 @@ async def post_bill_to_xero(
             "Description": bill.description or f"Invoice {bill.invoice_number}",
             "Quantity": 1,
             "UnitAmount": bill.amount,
-            "AccountCode": "400",
+            "AccountCode": expense_account,
             "TaxType": "NONE",
         })
-    
+
     url = "https://api.xero.com/api.xro/2.0/Invoices"
-    
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -982,46 +1085,55 @@ async def post_bill_to_xero(
                 },
                 timeout=30,
             )
-            
+
             if response.status_code == 401:
-                return {"status": "error", "reason": "Token expired", "needs_reauth": True}
-            
+                return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
+
             response.raise_for_status()
             result = response.json()
-            
+
             invoices = result.get("Invoices", [])
             if invoices:
                 inv = invoices[0]
-                logger.info(f"Posted Bill to Xero: {inv.get('InvoiceID')}")
+                logger.info("Posted Bill to Xero: %s", inv.get("InvoiceID"))
                 return {
                     "status": "success",
                     "erp": "xero",
                     "bill_id": inv.get("InvoiceID"),
                     "invoice_number": inv.get("InvoiceNumber"),
                 }
-            
-            return {"status": "error", "reason": "No invoice returned"}
-            
+
+            return {"status": "error", "erp": "xero", "reason": "no_invoice_returned"}
+
     except httpx.HTTPStatusError as e:
-        logger.error(f"Xero Bill API error: {e.response.text}")
-        return {"status": "error", "reason": str(e), "details": e.response.text}
+        status_code = e.response.status_code
+        logger.error("Xero Bill API HTTP error: status=%d", status_code)
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reason": f"http_{status_code}",
+            "needs_reauth": status_code == 401,
+        }
     except Exception as e:
-        logger.error(f"Xero Bill error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("Xero Bill error: %s", type(e).__name__)
+        return {"status": "error", "erp": "xero", "reason": "bill_posting_failed"}
 
 
 async def post_bill_to_netsuite(
     connection: ERPConnection,
     bill: Bill,
+    gl_map: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Post vendor bill to NetSuite.
-    
+
     API: https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/record_vendorbill.html
     """
     if not connection.account_id:
-        return {"status": "error", "reason": "NetSuite account ID not configured"}
-    
+        return {"status": "error", "erp": "netsuite", "reason": "NetSuite account ID not configured"}
+
+    expense_account = get_account_code("netsuite", "expenses", gl_map)
+
     # Build NetSuite Vendor Bill format
     ns_bill = {
         "entity": {"id": bill.vendor_id},  # Vendor reference
@@ -1032,27 +1144,27 @@ async def post_bill_to_netsuite(
         "item": {"items": []},
         "expense": {"items": []},
     }
-    
+
     # Add line items as expenses
     if bill.line_items:
         for i, item in enumerate(bill.line_items):
             ns_bill["expense"]["items"].append({
                 "line": i + 1,
-                "account": {"id": item.get("account_id", "67")},  # Default expense account
+                "account": {"id": item.get("account_id", expense_account)},
                 "amount": item.get("amount", 0),
                 "memo": item.get("description", ""),
             })
     else:
         ns_bill["expense"]["items"].append({
             "line": 1,
-            "account": {"id": "67"},  # Expenses
+            "account": {"id": expense_account},
             "amount": bill.amount,
             "memo": bill.description or f"Invoice {bill.invoice_number}",
         })
-    
+
     url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/vendorBill"
     auth_header = build_netsuite_oauth_header(connection, "POST", url)
-    
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -1065,98 +1177,209 @@ async def post_bill_to_netsuite(
                 },
                 timeout=60,
             )
-            
+
             if response.status_code == 401:
-                return {"status": "error", "reason": "Authentication failed", "needs_reauth": True}
-            
+                return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
+
             response.raise_for_status()
+
+            # H6: Handle async 202 response — poll Location header for result
+            if response.status_code == 202:
+                location = response.headers.get("Location", "").strip()
+                if location:
+                    # Poll for the result (up to 5 attempts with 2s delay)
+                    import asyncio as _asyncio
+                    for _attempt in range(5):
+                        await _asyncio.sleep(2)
+                        poll_resp = await client.get(
+                            location,
+                            headers={"Authorization": auth_header},
+                            timeout=30,
+                        )
+                        if poll_resp.status_code == 200:
+                            poll_result = poll_resp.json()
+                            bill_id = poll_result.get("id") or poll_result.get("internalId")
+                            logger.info("Posted Vendor Bill to NetSuite (async): %s", bill_id)
+                            return {
+                                "status": "success",
+                                "erp": "netsuite",
+                                "bill_id": bill_id,
+                                "tran_id": poll_result.get("tranId"),
+                            }
+                        if poll_resp.status_code != 202:
+                            break
+                    logger.warning("NetSuite async job did not complete within polling window")
+                    return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
+                # No Location header — treat 202 body as best-effort
+                logger.warning("NetSuite returned 202 without Location header")
+
             result = response.json()
-            
+
             bill_id = result.get("id") or result.get("internalId")
-            logger.info(f"Posted Vendor Bill to NetSuite: {bill_id}")
+            logger.info("Posted Vendor Bill to NetSuite: %s", bill_id)
             return {
                 "status": "success",
                 "erp": "netsuite",
                 "bill_id": bill_id,
                 "tran_id": result.get("tranId"),
             }
-            
+
     except httpx.HTTPStatusError as e:
-        logger.error(f"NetSuite Vendor Bill API error: {e.response.text}")
-        return {"status": "error", "reason": str(e), "details": e.response.text}
+        status_code = e.response.status_code
+        logger.error("NetSuite Vendor Bill API HTTP error: status=%d", status_code)
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": f"http_{status_code}",
+            "needs_reauth": status_code == 401,
+        }
     except Exception as e:
-        logger.error(f"NetSuite Vendor Bill error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("NetSuite Vendor Bill error: %s", type(e).__name__)
+        return {"status": "error", "erp": "netsuite", "reason": "bill_posting_failed"}
 
 
 async def post_bill_to_sap(
     connection: ERPConnection,
     bill: Bill,
+    gl_map: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
-    Post vendor bill to SAP (A/P Invoice).
-    
+    Post vendor bill to SAP B1 (A/P Invoice via Service Layer).
+
     SAP B1: https://help.sap.com/docs/SAP_BUSINESS_ONE
+    Validates required fields before posting. company_code must be set in
+    the ERP connection credentials (stored as settings_json["gl_account_map"]).
     """
     if not connection.access_token or not connection.base_url:
-        return {"status": "error", "reason": "SAP not properly configured"}
-    
+        return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
+
+    # Pre-flight validation — block before hitting the SAP API
+    missing_fields = []
+    if not bill.vendor_id:
+        missing_fields.append("vendor_id")
+    if not bill.amount or bill.amount <= 0:
+        missing_fields.append("amount")
+    if not connection.company_code:
+        missing_fields.append("company_code")
+    if missing_fields:
+        logger.error("SAP pre-flight validation failed: missing %s", missing_fields)
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": "sap_validation_failed",
+            "missing_fields": missing_fields,
+        }
+
+    expense_account = get_account_code("sap", "expenses", gl_map)
+
     sap_bill = {
         "CardCode": bill.vendor_id,  # Vendor code
+        "CompanyCode": connection.company_code,
         "DocDate": bill.invoice_date or datetime.now().strftime("%Y-%m-%d"),
         "DocDueDate": bill.due_date,
         "NumAtCard": bill.invoice_number,  # Vendor's reference
         "Comments": bill.description or f"Invoice from {bill.vendor_name}",
         "DocumentLines": [],
     }
-    
+
     if bill.line_items:
         for i, item in enumerate(bill.line_items):
             sap_bill["DocumentLines"].append({
                 "LineNum": i,
                 "ItemDescription": item.get("description", ""),
-                "AccountCode": item.get("account_code", ""),
+                "AccountCode": item.get("account_code", expense_account),
                 "LineTotal": item.get("amount", 0),
             })
     else:
         sap_bill["DocumentLines"].append({
             "LineNum": 0,
             "ItemDescription": bill.description or f"Invoice {bill.invoice_number}",
+            "AccountCode": expense_account,
             "LineTotal": bill.amount,
         })
     
     url = f"{connection.base_url}/PurchaseInvoices"
     
+    # B5: SAP B1 Service Layer uses session auth + CSRF token for mutations.
+    # Step 1: Establish session (POST /Login) if needed.
+    # Step 2: Fetch CSRF token (GET with X-CSRF-Token: Fetch header).
+    # Step 3: POST /PurchaseInvoices with session cookie + CSRF token.
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                json=sap_bill,
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Content-Type": "application/json",
-                },
-                timeout=60,
-            )
-            
+            # SAP B1 session login
+            login_url = f"{connection.base_url}/Login"
+            login_payload = {
+                "CompanyDB": connection.company_code or "",
+                "UserName": "",
+                "Password": "",
+            }
+            # Decode stored credentials (base64-encoded username:password)
+            try:
+                import base64
+                decoded = base64.b64decode(connection.access_token).decode("utf-8")
+                if ":" in decoded:
+                    login_payload["UserName"], login_payload["Password"] = decoded.split(":", 1)
+            except Exception:
+                # Fallback: treat access_token as session cookie directly
+                pass
+
+            session_cookie = None
+            csrf_token = None
+
+            if login_payload["UserName"]:
+                login_resp = await client.post(login_url, json=login_payload, timeout=30)
+                if login_resp.status_code == 200:
+                    session_cookie = login_resp.cookies.get("B1SESSION")
+                else:
+                    return {"status": "error", "erp": "sap", "reason": "sap_login_failed", "needs_reauth": True}
+            else:
+                # Legacy path: use access_token as session cookie
+                session_cookie = connection.access_token
+
+            # Fetch CSRF token
+            headers = {"X-CSRF-Token": "Fetch"}
+            if session_cookie:
+                headers["Cookie"] = f"B1SESSION={session_cookie}"
+            csrf_resp = await client.get(url, headers=headers, timeout=30)
+            csrf_token = csrf_resp.headers.get("x-csrf-token", "")
+
+            # Post the invoice
+            post_headers = {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": csrf_token,
+            }
+            if session_cookie:
+                post_headers["Cookie"] = f"B1SESSION={session_cookie}"
+
+            response = await client.post(url, json=sap_bill, headers=post_headers, timeout=60)
+
+            if response.status_code == 401:
+                return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
+
             response.raise_for_status()
             result = response.json()
-            
+
             doc_entry = result.get("DocEntry")
-            logger.info(f"Posted A/P Invoice to SAP: {doc_entry}")
+            logger.info("Posted A/P Invoice to SAP: %s", doc_entry)
             return {
                 "status": "success",
                 "erp": "sap",
                 "bill_id": doc_entry,
                 "doc_num": result.get("DocNum"),
             }
-            
+
     except httpx.HTTPStatusError as e:
-        logger.error(f"SAP A/P Invoice error: {e.response.text}")
-        return {"status": "error", "reason": str(e), "details": e.response.text}
+        status_code = e.response.status_code
+        logger.error("SAP A/P Invoice HTTP error: status=%d", status_code)
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": f"http_{status_code}",
+            "needs_reauth": status_code == 401,
+        }
     except Exception as e:
-        logger.error(f"SAP A/P Invoice error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("SAP A/P Invoice error: %s", type(e).__name__)
+        return {"status": "error", "erp": "sap", "reason": "bill_posting_failed"}
 
 
 # ==================== VENDOR MANAGEMENT ====================
@@ -1261,8 +1484,8 @@ async def create_vendor_quickbooks(
                 "display_name": vendor_data.get("DisplayName"),
             }
     except Exception as e:
-        logger.error(f"QuickBooks vendor creation error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("QuickBooks vendor creation error: %s", type(e).__name__)
+        return {"status": "error", "erp": "quickbooks", "reason": "vendor_creation_failed"}
 
 
 async def find_vendor_quickbooks(
@@ -1363,8 +1586,8 @@ async def create_vendor_xero(
                 }
             return {"status": "error", "reason": "No contact returned"}
     except Exception as e:
-        logger.error(f"Xero vendor creation error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("Xero vendor creation error: %s", type(e).__name__)
+        return {"status": "error", "erp": "xero", "reason": "vendor_creation_failed"}
 
 
 async def find_vendor_xero(
@@ -1450,8 +1673,8 @@ async def create_vendor_netsuite(
                 "entity_id": result.get("entityId"),
             }
     except Exception as e:
-        logger.error(f"NetSuite vendor creation error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("NetSuite vendor creation error: %s", type(e).__name__)
+        return {"status": "error", "erp": "netsuite", "reason": "vendor_creation_failed"}
 
 
 async def find_vendor_netsuite(
@@ -1542,8 +1765,8 @@ async def create_vendor_sap(
                 "name": result.get("CardName"),
             }
     except Exception as e:
-        logger.error(f"SAP vendor creation error: {e}")
-        return {"status": "error", "reason": str(e)}
+        logger.error("SAP vendor creation error: %s", type(e).__name__)
+        return {"status": "error", "erp": "sap", "reason": "vendor_creation_failed"}
 
 
 async def find_vendor_sap(
@@ -1557,9 +1780,11 @@ async def find_vendor_sap(
     
     filters = ["CardType eq 'cSupplier'"]
     if name:
-        filters.append(f"contains(CardName, '{name}')")
+        safe_name = _sanitize_odata_value(name)
+        filters.append(f"contains(CardName, '{safe_name}')")
     if email:
-        filters.append(f"EmailAddress eq '{email}'")
+        safe_email = _sanitize_odata_value(email)
+        filters.append(f"EmailAddress eq '{safe_email}'")
     
     url = f"{connection.base_url}/BusinessPartners"
     params = {"$filter": " and ".join(filters), "$top": 1}

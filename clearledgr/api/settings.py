@@ -18,10 +18,15 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 
 from clearledgr.core.database import get_db
+from clearledgr.core.auth import get_current_user, TokenData
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/settings", tags=["settings"])
+router = APIRouter(
+    prefix="/settings",
+    tags=["settings"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 # ==================== DATA MODELS ====================

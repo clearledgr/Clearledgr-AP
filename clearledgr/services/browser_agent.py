@@ -288,7 +288,11 @@ class BrowserAgentService:
         host = ""
         if raw_url:
             try:
-                host = urlparse(raw_url).hostname or ""
+                parsed_url = urlparse(raw_url)
+                scheme = (parsed_url.scheme or "").lower()
+                if scheme in ("javascript", "data", "file", "vbscript"):
+                    return PolicyDecision(False, False, f"blocked_scheme:{scheme}", scope=scope_label)
+                host = parsed_url.hostname or ""
             except Exception:
                 return PolicyDecision(False, False, "invalid_url", scope=scope_label)
 

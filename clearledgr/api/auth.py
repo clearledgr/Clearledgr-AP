@@ -27,6 +27,7 @@ from clearledgr.core.auth import (
     decode_token, get_current_user, get_optional_user, TokenData,
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
+from clearledgr.core.database import get_db
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -110,8 +111,8 @@ class RegisterRequest(BaseModel):
     def sanitize_name(cls, v: str) -> str:
         # Remove any HTML/script tags
         v = re.sub(r"<[^>]*>", "", v)
-        # Remove any SQL injection attempts
-        v = re.sub(r"[;'\"\-\-]", "", v)
+        # Remove SQL-dangerous characters but preserve hyphens/apostrophes in names
+        v = re.sub(r"[;\"\\]", "", v)
         return v.strip()
     
     @field_validator("organization_id")
@@ -169,9 +170,6 @@ def _unsign_google_state(state: str) -> dict:
     return decoded
 
 
-_google_auth_code_store: Dict[str, Dict[str, Any]] = {}
-
-
 def _google_auth_code_ttl_seconds() -> int:
     raw = str(os.getenv("GOOGLE_AUTH_CODE_TTL_SECONDS", "180")).strip()
     try:
@@ -183,7 +181,13 @@ def _google_auth_code_ttl_seconds() -> int:
 
 def _sanitize_redirect_path(redirect_path: Optional[str]) -> str:
     path = str(redirect_path or "/").strip()
-    if not path.startswith("/"):
+    if (
+        not path.startswith("/")
+        or path.startswith("//")
+        or path.startswith("/\\")
+        or "\x00" in path
+        or "://" in path
+    ):
         raise HTTPException(status_code=400, detail="invalid_redirect_path")
     return path
 
@@ -201,45 +205,63 @@ def _append_query_params(url: str, params: Dict[str, Any]) -> str:
 
 def _issue_google_auth_code(*, access_token: str, refresh_token: str, organization_id: str) -> str:
     now = datetime.now(timezone.utc)
-    expired_codes = []
-    for code, payload in _google_auth_code_store.items():
-        expires_at = payload.get("expires_at")
-        if isinstance(expires_at, datetime) and expires_at < now:
-            expired_codes.append(code)
-    for code in expired_codes:
-        _google_auth_code_store.pop(code, None)
-
+    db = get_db()
+    try:
+        db.purge_expired_google_auth_codes()
+    except Exception:
+        # Best-effort purge; issuance must continue even if cleanup fails.
+        pass
     auth_code = secrets.token_urlsafe(32)
-    _google_auth_code_store[auth_code] = {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "organization_id": str(organization_id or "default"),
-        "expires_at": now + timedelta(seconds=_google_auth_code_ttl_seconds()),
-    }
+    expires_at = now + timedelta(seconds=_google_auth_code_ttl_seconds())
+    db.save_google_auth_code(
+        auth_code=auth_code,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        organization_id=str(organization_id or "default"),
+        expires_at=expires_at.isoformat(),
+    )
     return auth_code
 
 
 def _consume_google_auth_code(code: str) -> Dict[str, Any]:
-    payload = _google_auth_code_store.pop(str(code or "").strip(), None)
+    db = get_db()
+    payload = db.consume_google_auth_code(str(code or "").strip())
     if not payload:
         raise HTTPException(status_code=400, detail="invalid_auth_code")
-    expires_at = payload.get("expires_at")
-    if isinstance(expires_at, datetime) and datetime.now(timezone.utc) > expires_at:
+    expires_at_raw = str(payload.get("expires_at") or "").strip()
+    expires_at: Optional[datetime] = None
+    if expires_at_raw:
+        try:
+            expires_at = datetime.fromisoformat(expires_at_raw.replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            else:
+                expires_at = expires_at.astimezone(timezone.utc)
+        except Exception:
+            expires_at = None
+    if expires_at and datetime.now(timezone.utc) > expires_at:
         raise HTTPException(status_code=400, detail="expired_auth_code")
     return payload
 
 
 @router.post("/register", response_model=User)
-async def register(request: RegisterRequest):
+async def register(
+    request: RegisterRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
     """
-    Register a new user.
-    
+    Register a new user.  Requires admin/owner authentication.
+
     Password requirements:
     - At least 8 characters
     - At least one uppercase letter
     - At least one lowercase letter
     - At least one digit
     """
+    if current_user.role not in {"admin", "owner"}:
+        raise HTTPException(status_code=403, detail="admin_required")
+    if str(request.organization_id) != str(current_user.organization_id):
+        raise HTTPException(status_code=403, detail="org_mismatch")
     try:
         user = create_user(
             email=request.email,
@@ -387,32 +409,26 @@ class GoogleIdentityResponse(BaseModel):
 async def authenticate_with_google_identity(request: GoogleIdentityRequest):
     """
     Authenticate using Google Identity from Gmail.
-    
+
     This is used by the Gmail extension. Since the user is already
     signed into Gmail, we trust their Google identity and:
-    
+
     1. If they're a registered Clearledgr user, return a token
-    2. If not, auto-create an account based on their email domain
-    
+    2. If not, return 403 — open registration is disabled
+
     No password needed - they're already authenticated with Google.
     """
-    from clearledgr.core.auth import get_user_by_email, create_user_from_google
-    
-    # Check if user exists
+    from clearledgr.core.auth import get_user_by_email
+
+    # Only allow existing users — no auto-registration via Google identity
     user = get_user_by_email(request.email)
     is_new = False
-    
+
     if not user:
-        # Auto-create user based on email domain
-        # e.g., user@company.com -> organization: company
-        domain = request.email.split("@")[1].split(".")[0]
-        
-        user = create_user_from_google(
-            email=request.email,
-            google_id=request.google_id,
-            organization_id=domain,
+        raise HTTPException(
+            status_code=403,
+            detail="no_account_found",
         )
-        is_new = True
     
     # Generate Clearledgr token
     access_token = create_access_token(

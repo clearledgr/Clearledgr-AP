@@ -442,7 +442,7 @@ class InvoiceWorkflowService:
                     metadata["correlation_id"] = correlation_id
                     self.db.update_ap_item(ap_item_id, metadata=metadata)
             except Exception as exc:
-                logger.debug("Could not persist AP correlation ID for %s: %s", ap_item_id, exc)
+                logger.error("Could not persist AP correlation ID for %s: %s", ap_item_id, exc)
         return correlation_id
 
     def _canonical_invoice_state(self, invoice_row: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -705,7 +705,7 @@ class InvoiceWorkflowService:
                 }
             )
         except Exception as exc:
-            logger.debug("Could not save approval snapshot for %s: %s", gmail_id, exc)
+            logger.error("Could not save approval snapshot for %s: %s", gmail_id, exc)
 
     def _approval_snapshot_by_decision_key(
         self,
@@ -717,7 +717,7 @@ class InvoiceWorkflowService:
         try:
             return self.db.get_approval_by_decision_key(ap_item_id, decision_idempotency_key)
         except Exception as exc:
-            logger.debug("Could not read approval snapshot by decision key: %s", exc)
+            logger.error("Could not read approval snapshot by decision key: %s", exc)
             return None
 
     @staticmethod
@@ -745,15 +745,14 @@ class InvoiceWorkflowService:
         correlation_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        if not ap_item_id or not decision_idempotency_key or not hasattr(self.db, "append_ap_audit_event"):
+        if not ap_item_id or not decision_idempotency_key:
             return True
         lock_key = f"approval_action_lock:{decision_idempotency_key}"
-        if hasattr(self.db, "get_ap_audit_event_by_key"):
-            try:
-                if self.db.get_ap_audit_event_by_key(lock_key):
-                    return False
-            except Exception:
-                pass
+        try:
+            if self.db.get_ap_audit_event_by_key(lock_key):
+                return False
+        except Exception:
+            pass
         try:
             self.db.append_ap_audit_event(
                 {
@@ -773,11 +772,11 @@ class InvoiceWorkflowService:
         except Exception as exc:
             # Unique constraint races can surface here; treat an existing key as duplicate lock held.
             try:
-                if hasattr(self.db, "get_ap_audit_event_by_key") and self.db.get_ap_audit_event_by_key(lock_key):
+                if self.db.get_ap_audit_event_by_key(lock_key):
                     return False
             except Exception:
                 pass
-            logger.debug("Could not persist decision-action lock %s: %s", lock_key, exc)
+            logger.error("Could not persist decision-action lock %s: %s", lock_key, exc)
             return True
 
     def _update_ap_item_metadata(self, ap_item_id: Optional[str], updates: Dict[str, Any]) -> None:
@@ -798,7 +797,7 @@ class InvoiceWorkflowService:
             metadata.update(updates or {})
             self.db.update_ap_item(ap_item_id, metadata=metadata)
         except Exception as exc:
-            logger.debug("Could not update AP metadata for %s: %s", ap_item_id, exc)
+            logger.error("Could not update AP metadata for %s: %s", ap_item_id, exc)
 
     @staticmethod
     def _safe_int(value: Any, default: int = 0) -> int:
@@ -827,7 +826,7 @@ class InvoiceWorkflowService:
         source: str = "invoice_workflow",
         correlation_id: Optional[str] = None,
     ) -> None:
-        if not ap_item_id or not hasattr(self.db, "append_ap_audit_event"):
+        if not ap_item_id:
             return
         try:
             self.db.append_ap_audit_event(
@@ -844,7 +843,7 @@ class InvoiceWorkflowService:
                 }
             )
         except Exception as exc:
-            logger.debug("Could not record vendor follow-up event for %s: %s", ap_item_id, exc)
+            logger.error("Could not record vendor follow-up event for %s: %s", ap_item_id, exc)
 
     def _apply_needs_info_followup_metadata(
         self,
@@ -960,7 +959,7 @@ class InvoiceWorkflowService:
                 question=question,
             )
         except Exception as exc:
-            logger.debug("needs_info draft creation skipped for %s: %s", ap_item_id, exc)
+            logger.error("needs_info draft creation skipped for %s: %s", ap_item_id, exc)
             return None
 
     @staticmethod
@@ -1051,7 +1050,7 @@ class InvoiceWorkflowService:
                     action_outcome=action_outcome,
                 )
             except Exception as exc:
-                logger.debug("Could not persist vendor decision feedback: %s", exc)
+                logger.error("Could not persist vendor decision feedback: %s", exc)
 
         if (
             final_state
@@ -1073,7 +1072,7 @@ class InvoiceWorkflowService:
                     invoice_date=invoice_date,
                 )
             except Exception as exc:
-                logger.debug("Could not update vendor profile from human outcome: %s", exc)
+                logger.error("Could not update vendor profile from human outcome: %s", exc)
 
     def _maybe_record_ap_decision_override(
         self,
@@ -1087,10 +1086,10 @@ class InvoiceWorkflowService:
         Disagreement: human approved something Claude said escalate/reject,
         or human rejected something Claude said approve.
         """
-        if not ap_item_id or not hasattr(self.db, "append_ap_audit_event"):
+        if not ap_item_id:
             return
         try:
-            row = self.db.get_ap_item(ap_item_id) if hasattr(self.db, "get_ap_item") else None
+            row = self.db.get_ap_item(ap_item_id)
             if not row:
                 return
             meta_raw = row.get("metadata") or {}
@@ -1121,7 +1120,7 @@ class InvoiceWorkflowService:
                 human_action, claude_rec, ap_item_id, actor_id,
             )
         except Exception as exc:
-            logger.debug("Could not record ap_decision_override: %s", exc)
+            logger.error("Could not record ap_decision_override: %s", exc)
 
     def _load_budget_context_from_invoice_row(
         self,
@@ -1186,6 +1185,29 @@ class InvoiceWorkflowService:
                     "details": details or {},
                 }
             )
+
+        # 0) Field-presence checks — required fields must be non-null/non-empty.
+        #    PLAN.md §4.2-1: deterministic field presence/format check.
+        _REQUIRED_FIELDS = {
+            "vendor_name": invoice.vendor_name,
+            "amount": invoice.amount,
+            "invoice_number": invoice.invoice_number,
+        }
+        for field_name, field_val in _REQUIRED_FIELDS.items():
+            if field_val is None or (isinstance(field_val, str) and not field_val.strip()):
+                add_reason(
+                    f"missing_required_field_{field_name}",
+                    f"Required field '{field_name}' is missing or empty",
+                    severity="error",
+                    details={"field": field_name},
+                )
+            elif isinstance(field_val, (int, float)) and field_val <= 0:
+                add_reason(
+                    f"invalid_required_field_{field_name}",
+                    f"Required field '{field_name}' has invalid value: {field_val}",
+                    severity="error",
+                    details={"field": field_name, "value": field_val},
+                )
 
         # 1) Policy checks (PO-required and any explicit blocking actions).
         policy_result = invoice.policy_compliance
@@ -1309,7 +1331,31 @@ class InvoiceWorkflowService:
                     details=budget,
                 )
 
-        # 4) Critical-field confidence gate (launch-critical, server-enforced).
+        # 4) Duplicate invoice check — same vendor + invoice_number already exists.
+        #    PLAN.md §4.2: deterministic dedup at validation boundary.
+        if invoice.vendor_name and invoice.invoice_number:
+            try:
+                existing = None
+                if hasattr(self.db, "get_ap_item_by_vendor_invoice"):
+                    existing = self.db.get_ap_item_by_vendor_invoice(
+                        self.organization_id,
+                        invoice.vendor_name,
+                        invoice.invoice_number,
+                    )
+                if existing and str(existing.get("state") or "") not in ("rejected",):
+                    add_reason(
+                        "duplicate_invoice",
+                        f"Duplicate: invoice {invoice.invoice_number} from {invoice.vendor_name} already exists (state={existing.get('state')})",
+                        severity="error",
+                        details={
+                            "existing_ap_item_id": str(existing.get("id") or ""),
+                            "existing_state": str(existing.get("state") or ""),
+                        },
+                    )
+            except Exception as dedup_exc:
+                logger.warning("Duplicate check failed (non-fatal): %s", dedup_exc)
+
+        # 5) Critical-field confidence gate (launch-critical, server-enforced).
         confidence_gate = self._evaluate_invoice_confidence_gate(invoice)
         if confidence_gate.get("requires_field_review"):
             add_reason(
@@ -1384,7 +1430,23 @@ class InvoiceWorkflowService:
                 )
                 if by_vendor_invoice:
                     ap_item_id = str(by_vendor_invoice.get("id") or "")
-            if ap_item_id and hasattr(self.db, "append_ap_audit_event"):
+            if ap_item_id:
+                # H1/H12: Populate exception_code and exception_severity on the AP item
+                # at workflow time so they are durable and queryable (PLAN.md §4.4).
+                primary_code = reason_codes[0] if reason_codes else "validation_failed"
+                severity = "error"
+                for r in (gate.get("reasons") or []):
+                    if isinstance(r, dict) and r.get("severity") == "error":
+                        severity = "error"
+                        break
+                try:
+                    self.db.update_ap_item(
+                        ap_item_id,
+                        exception_code=primary_code,
+                        exception_severity=severity,
+                    )
+                except Exception:
+                    pass  # Non-fatal — audit event is the authoritative record
                 self.db.append_ap_audit_event(
                     {
                         "ap_item_id": ap_item_id,
@@ -1402,7 +1464,7 @@ class InvoiceWorkflowService:
                     }
                 )
         except Exception as exc:
-            logger.debug("Could not append deterministic validation audit event: %s", exc)
+            logger.error("Could not append deterministic validation audit event: %s", exc)
 
     def _get_ap_decision(
         self,
@@ -1844,13 +1906,25 @@ class InvoiceWorkflowService:
                         invoice_date=invoice.due_date,
                     )
             except Exception as exc:
-                logger.debug("[VendorStore] Failed to update vendor profile after auto-post: %s", exc)
+                logger.error("[VendorStore] Failed to update vendor profile after auto-post: %s", exc)
             
             # Notify in Slack (informational, not approval)
             try:
                 await self._send_posted_notification(invoice, result, reason)
             except Exception as e:
                 logger.warning(f"Failed to send Slack notification: {e}")
+
+            # M1: Transition posted_to_erp → closed (terminal state).
+            # All post-processing (learning, vendor profile, notifications) is
+            # complete — the AP item lifecycle is finished.
+            try:
+                self._transition_invoice_state(
+                    gmail_id=invoice.gmail_id,
+                    target_state="closed",
+                    correlation_id=correlation_id,
+                )
+            except Exception as close_exc:
+                logger.warning("Failed to transition to closed: %s", close_exc)
         else:
             failure_reason = (
                 str(result.get("error_message") or "")
@@ -2041,7 +2115,34 @@ class InvoiceWorkflowService:
                     )
             
             logger.info(f"Sent approval request to Slack: {message.ts}")
-            
+
+            # H4: Audit approval request dispatch (PLAN.md §4.7)
+            if ap_item_id:
+                channels_notified = ["slack"]
+                if isinstance(teams_status, dict) and teams_status.get("status") == "sent":
+                    channels_notified.append("teams")
+                try:
+                    self.db.append_ap_audit_event(
+                        {
+                            "ap_item_id": ap_item_id,
+                            "event_type": "approval_requested",
+                            "actor_type": "system",
+                            "actor_id": "invoice_workflow",
+                            "reason": f"Approval request sent to {', '.join(channels_notified)}",
+                            "metadata": {
+                                "channels": channels_notified,
+                                "slack_channel": message.channel,
+                                "slack_ts": message.ts,
+                                "vendor": invoice.vendor_name,
+                                "amount": invoice.amount,
+                            },
+                            "organization_id": self.organization_id,
+                            "source": "invoice_workflow",
+                        }
+                    )
+                except Exception:
+                    pass  # Non-fatal
+
             return {
                 "status": "pending_approval",
                 "invoice_id": invoice.gmail_id,
@@ -2927,7 +3028,7 @@ class InvoiceWorkflowService:
                     },
                 },
             )
-            if ap_item_id and hasattr(self.db, "append_ap_audit_event"):
+            if ap_item_id:
                 try:
                     _override_meta: Dict[str, Any] = {
                         "source_channel": resolved_source_channel,
@@ -2953,7 +3054,7 @@ class InvoiceWorkflowService:
                         }
                     )
                 except Exception as exc:
-                    logger.debug("Could not append confidence override audit event: %s", exc)
+                    logger.error("Could not append confidence override audit event: %s", exc)
 
         self._maybe_record_ap_decision_override(
             ap_item_id, "approved", approved_by, correlation_id=correlation_id
@@ -3088,6 +3189,16 @@ class InvoiceWorkflowService:
                 amount=invoice.amount,
                 invoice_date=invoice.due_date,
             )
+
+            # M1: Transition posted_to_erp → closed (terminal state).
+            try:
+                self._transition_invoice_state(
+                    gmail_id=gmail_id,
+                    target_state="closed",
+                    correlation_id=correlation_id,
+                )
+            except Exception as close_exc:
+                logger.warning("Failed to transition to closed: %s", close_exc)
         else:
             failure_reason = (
                 str(result.get("error_message") or "")
@@ -3101,6 +3212,8 @@ class InvoiceWorkflowService:
                 correlation_id=correlation_id,
                 post_attempted_at=post_attempted_at,
                 last_error=failure_reason,
+                exception_code="erp_post_failed",
+                exception_severity="error",
             )
             self._record_approval_snapshot(
                 ap_item_id=ap_item_id,
@@ -3450,7 +3563,7 @@ class InvoiceWorkflowService:
                 post_attempted_at=post_attempted_at,
                 last_error=None,
             )
-            if ap_item_id and hasattr(self.db, "append_ap_audit_event"):
+            if ap_item_id:
                 try:
                     self.db.append_ap_audit_event(
                         {
@@ -3470,12 +3583,19 @@ class InvoiceWorkflowService:
                         }
                     )
                 except Exception as exc:
-                    logger.debug("Could not append erp_post_resumed audit event: %s", exc)
+                    logger.error("Could not append erp_post_resumed audit event: %s", exc)
             logger.info(
                 "resume_workflow: ap_item_id=%s recovered to posted_to_erp (ref=%s)",
                 ap_item_id,
                 erp_reference,
             )
+            # M1: Transition posted_to_erp → closed after successful recovery.
+            try:
+                self._transition_invoice_state(
+                    gmail_id, "closed", correlation_id=correlation_id,
+                )
+            except Exception as close_exc:
+                logger.warning("Failed to transition recovered item to closed: %s", close_exc)
             return {
                 "status": "recovered",
                 "ap_item_id": ap_item_id,
@@ -3688,7 +3808,40 @@ class InvoiceWorkflowService:
         idempotency_key: Optional[str] = None,
         correlation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Post approved invoice to ERP as a Bill."""
+        """Post approved invoice to ERP as a Bill.
+
+        Enforces state guard (PLAN.md §4.6-1): posting only from ``ready_to_post``.
+        Enforces mandatory idempotency key (PLAN.md §7.3-1): generates one if
+        the caller did not provide one.
+        """
+        # B2: State guard — only post from ready_to_post (PLAN.md §4.6)
+        ap_item_id = self._lookup_ap_item_id(
+            gmail_id=invoice.gmail_id,
+            vendor_name=invoice.vendor_name,
+            invoice_number=invoice.invoice_number,
+        )
+        if ap_item_id:
+            db = _get_db()
+            existing = db.get_ap_item(ap_item_id)
+            current_state = str(existing.get("state") or "").strip().lower() if existing else ""
+            if current_state not in ("ready_to_post",):
+                logger.error(
+                    "State guard: refusing ERP post for AP item %s in state '%s' (expected ready_to_post)",
+                    ap_item_id, current_state,
+                )
+                return {
+                    "status": "error",
+                    "reason": "illegal_state_for_posting",
+                    "current_state": current_state,
+                    "expected_state": "ready_to_post",
+                }
+
+        # B3: Mandatory idempotency key — generate if not provided (PLAN.md §7.3)
+        if not idempotency_key:
+            import uuid as _uuid
+            idempotency_key = f"auto:{invoice.gmail_id or invoice.invoice_number or ''}:{_uuid.uuid4().hex[:8]}"
+            logger.warning("Generated auto idempotency_key=%s (caller did not provide one)", idempotency_key)
+
         # First, get or create vendor
         vendor = Vendor(
             name=invoice.vendor_name,
@@ -3722,6 +3875,29 @@ class InvoiceWorkflowService:
             invoice_number=invoice.invoice_number,
         )
 
+        # H3: Audit ERP post attempt before execution (PLAN.md §4.7)
+        if ap_item_id:
+            try:
+                self.db.append_ap_audit_event(
+                    {
+                        "ap_item_id": ap_item_id,
+                        "event_type": "erp_post_attempted",
+                        "actor_type": "system",
+                        "actor_id": "invoice_workflow",
+                        "metadata": {
+                            "idempotency_key": idempotency_key,
+                            "vendor": invoice.vendor_name,
+                            "amount": invoice.amount,
+                            "invoice_number": invoice.invoice_number,
+                        },
+                        "organization_id": self.organization_id,
+                        "correlation_id": correlation_id or invoice.correlation_id,
+                        "source": "invoice_workflow",
+                    }
+                )
+            except Exception:
+                pass  # Non-fatal
+
         result = await post_bill_api_first(
             organization_id=self.organization_id,
             bill=bill,
@@ -3736,7 +3912,32 @@ class InvoiceWorkflowService:
             idempotency_key=idempotency_key,
             correlation_id=correlation_id or invoice.correlation_id,
         )
-        
+
+        # H3: Audit ERP post result (PLAN.md §4.7)
+        if ap_item_id:
+            post_event_type = "erp_post_succeeded" if result.get("status") == "success" else "erp_post_failed"
+            try:
+                self.db.append_ap_audit_event(
+                    {
+                        "ap_item_id": ap_item_id,
+                        "event_type": post_event_type,
+                        "actor_type": "system",
+                        "actor_id": "invoice_workflow",
+                        "metadata": {
+                            "idempotency_key": idempotency_key,
+                            "erp_reference": result.get("erp_reference") or result.get("bill_id"),
+                            "erp_type": result.get("erp") or result.get("erp_type"),
+                            "status": result.get("status"),
+                            "reason": result.get("reason"),
+                        },
+                        "organization_id": self.organization_id,
+                        "correlation_id": correlation_id or invoice.correlation_id,
+                        "source": "invoice_workflow",
+                    }
+                )
+            except Exception:
+                pass  # Non-fatal
+
         if result.get("status") == "success":
             result["vendor_id"] = vendor_id
             logger.info(f"Posted bill to ERP: {result.get('bill_id')}")

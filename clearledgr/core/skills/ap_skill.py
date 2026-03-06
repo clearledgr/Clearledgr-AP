@@ -13,7 +13,7 @@ Each handler:
   - Accepts **kwargs (extra args from Claude are silently ignored).
   - Accepts organization_id injected by the runtime.
   - NEVER raises — returns {"ok": False, "error": "..."} on failure.
-  - Sets {"is_hitl_pause": True} when a human decision is required.
+  - Sets {"is_hitl_pause": True} when a human decision is required (runtime maps to "awaiting_human").
 """
 from __future__ import annotations
 

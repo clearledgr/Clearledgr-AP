@@ -259,7 +259,7 @@ class FinanceAgentRuntime:
 
     def _load_idempotent_response(self, idempotency_key: Optional[str]) -> Optional[Dict[str, Any]]:
         key = str(idempotency_key or "").strip()
-        if not key or not hasattr(self.db, "get_ap_audit_event_by_key"):
+        if not key:
             return None
         existing = self.db.get_ap_audit_event_by_key(key)
         if not existing:
@@ -291,8 +291,6 @@ class FinanceAgentRuntime:
         skill_id: Optional[str] = None,
         evidence_refs: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
-        if not hasattr(self.db, "append_ap_audit_event"):
-            return None
         metadata_payload = dict(metadata or {})
         response_payload = (
             metadata_payload.get("response")

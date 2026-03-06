@@ -304,7 +304,7 @@ def test_approve_invoice_success_transitions_through_ready_to_post(service, db, 
     assert result["status"] == "approved"
 
     row = db.get_invoice_status("gmail-approve-success")
-    assert row["state"] == "posted_to_erp"
+    assert row["state"] == "closed"  # M1: posted_to_erp now transitions to closed
     assert row["erp_reference"] == "BILL-123"
 
 
@@ -666,7 +666,7 @@ def test_approve_invoice_allows_confidence_override_with_justification_and_audit
     assert result["confidence_override"] is True
 
     row = db.get_invoice_status("gmail-confidence-override")
-    assert row["state"] == "posted_to_erp"
+    assert row["state"] == "closed"  # M1: posted_to_erp now transitions to closed
 
     stored = db.get_ap_item(item["id"])
     metadata_raw = stored.get("metadata")
@@ -700,7 +700,7 @@ def test_auto_approve_success_transitions_through_ready_to_post(service, db, mon
     assert result["status"] == "auto_approved"
 
     row = db.get_invoice_status("gmail-auto-success")
-    assert row["state"] == "posted_to_erp"
+    assert row["state"] == "closed"  # M1: posted_to_erp now transitions to closed
     assert row["erp_reference"] == "BILL-AUTO-1"
 
     transitions = _transition_pairs(db, item["id"])
@@ -759,7 +759,7 @@ def test_resume_workflow_from_failed_post_succeeds(service, db, monkeypatch):
     assert result["erp_reference"] == "BILL-RESUME-1"
 
     row = db.get_invoice_status("gmail-resume-ok")
-    assert row["state"] == "posted_to_erp"
+    assert row["state"] == "closed"  # M1: posted_to_erp now transitions to closed
     assert row["erp_reference"] == "BILL-RESUME-1"
 
     audit_events = db.list_ap_audit_events(item["id"])
@@ -780,7 +780,7 @@ def test_resume_workflow_from_ready_to_post_succeeds(service, db, monkeypatch):
 
     assert result["status"] == "recovered"
     row = db.get_invoice_status("gmail-resume-rtp")
-    assert row["state"] == "posted_to_erp"
+    assert row["state"] == "closed"  # M1: posted_to_erp now transitions to closed
 
 
 def test_resume_workflow_still_failing_stays_in_failed_post(service, db, monkeypatch):
@@ -826,7 +826,7 @@ def test_resume_workflow_retry_storm_recovers_once_without_double_post(service, 
     assert calls["count"] == 3
 
     row = db.get_invoice_status("gmail-resume-storm")
-    assert row["state"] == "posted_to_erp"
+    assert row["state"] == "closed"  # M1: posted_to_erp now transitions to closed
     assert row["erp_reference"] == "BILL-STORM-1"
 
 

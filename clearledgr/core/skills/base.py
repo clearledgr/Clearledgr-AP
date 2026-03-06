@@ -64,11 +64,11 @@ class SkillResult:
     """The runtime's final output after the planning loop completes.
 
     Attributes:
-        status: "completed" | "hitl_pause" | "failed" | "max_steps_exceeded"
+        status: "completed" | "awaiting_human" | "failed" | "max_steps_exceeded"
         task_run_id: Primary key of the task_runs DB row.
         outcome: Skill-specific result dict.
         step_count: How many tool calls were made.
-        hitl_context: Set when status=="hitl_pause" — describes what human action is needed.
+        hitl_context: Set when status=="awaiting_human" — describes what human action is needed.
         error: Set when status=="failed".
     """
 

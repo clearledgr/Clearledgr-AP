@@ -60748,7 +60748,7 @@ __nested_webpack_exports__ = __nested_webpack_exports__["default"];
 /*!**************************!*\
   !*** ./queue-manager.js ***!
   \**************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+(__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) {
 
 "use strict";
 __webpack_require__.r(__webpack_exports__);
@@ -62735,18 +62735,6 @@ class ClearledgrQueueManager {
 /******/ 	}
 /******/ 	
 /************************************************************************/
-/******/ 	/* webpack/runtime/compat get default export */
-/******/ 	(() => {
-/******/ 		// getDefaultExport function for compatibility with non-harmony modules
-/******/ 		__webpack_require__.n = (module) => {
-/******/ 			var getter = module && module.__esModule ?
-/******/ 				() => (module['default']) :
-/******/ 				() => (module);
-/******/ 			__webpack_require__.d(getter, { a: getter });
-/******/ 			return getter;
-/******/ 		};
-/******/ 	})();
-/******/ 	
 /******/ 	/* webpack/runtime/define property getters */
 /******/ 	(() => {
 /******/ 		// define getter functions for harmony exports
@@ -62785,7 +62773,6 @@ var __webpack_exports__ = {};
   \*******************************/
 __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _inboxsdk_core__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @inboxsdk/core */ "./node_modules/@inboxsdk/core/inboxsdk.js");
-/* harmony import */ var _inboxsdk_core__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_inboxsdk_core__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var _queue_manager_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ../queue-manager.js */ "./queue-manager.js");
 /**
  * Clearledgr AP v1 InboxSDK Layer
@@ -67692,227 +67679,6 @@ function initializeSidebar() {
         font-weight: 700;
         white-space: nowrap;
       }
-      .cl-agent-recommendation {
-        margin-top: 8px;
-        border: 1px solid #a7f3d0;
-        background: #ecfdf5;
-        border-radius: 8px;
-        padding: 8px;
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-      }
-      .cl-agent-recommendation-title {
-        font-size: 11px;
-        font-weight: 700;
-        color: #065f46;
-      }
-      .cl-agent-proactive {
-        margin-top: 8px;
-        border: 1px solid #bfdbfe;
-        background: #eff6ff;
-        border-radius: 8px;
-        padding: 8px;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-      .cl-agent-proactive-title {
-        font-size: 11px;
-        font-weight: 700;
-        color: #1d4ed8;
-      }
-      .cl-agent-action {
-        flex: 1;
-      }
-      .cl-agent-brief {
-        margin-top: 8px;
-        border: 1px solid var(--cl-border);
-        border-radius: 8px;
-        padding: 8px;
-        background: #f9fafb;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .cl-agent-brief-title {
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--cl-text);
-      }
-      .cl-agent-preview-payload {
-        margin: 2px 0 0;
-        border: 1px solid #d1d5db;
-        border-radius: 6px;
-        background: #fff;
-        padding: 8px;
-        font-size: 10px;
-        line-height: 1.35;
-        color: #111827;
-        white-space: pre-wrap;
-        word-break: break-word;
-        max-height: 220px;
-        overflow: auto;
-      }
-      .cl-batch-note {
-        font-size: 10px;
-        color: var(--cl-muted);
-        line-height: 1.35;
-      }
-      .cl-batch-config {
-        border: 1px dashed var(--cl-border);
-        border-radius: 8px;
-        padding: 8px;
-        background: #fff;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .cl-batch-config-row {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 6px;
-      }
-      .cl-batch-config-label {
-        font-size: 10px;
-        color: var(--cl-muted);
-        font-weight: 600;
-      }
-      .cl-batch-config-select,
-      .cl-batch-config-input {
-        border: 1px solid var(--cl-border);
-        border-radius: 6px;
-        background: #fff;
-        color: var(--cl-text);
-        font-size: 10px;
-        padding: 4px 6px;
-      }
-      .cl-batch-config-select {
-        min-width: 56px;
-      }
-      .cl-batch-config-input {
-        width: 92px;
-      }
-      .cl-batch-card {
-        border: 1px solid var(--cl-border);
-        border-radius: 8px;
-        padding: 8px;
-        background: #ffffff;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .cl-batch-card-title {
-        font-size: 11px;
-        font-weight: 700;
-        color: var(--cl-text);
-      }
-      .cl-batch-card-metrics {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        font-size: 10px;
-        color: var(--cl-muted);
-      }
-      .cl-batch-card-metrics span {
-        border: 1px solid #d1d5db;
-        border-radius: 999px;
-        padding: 2px 6px;
-        background: #f9fafb;
-      }
-      .cl-agent-related-row {
-        border-top: 1px solid var(--cl-border);
-        padding-top: 6px;
-      }
-      .cl-agent-related-row:first-child {
-        border-top: 0;
-        padding-top: 0;
-      }
-      .cl-batch-summary-actions {
-        margin-top: 2px;
-      }
-      .cl-agent-brief-details {
-        border-top: 1px solid var(--cl-border);
-        margin-top: 2px;
-        padding-top: 6px;
-      }
-      .cl-batch-result-group {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .cl-batch-result-group-title {
-        font-size: 10px;
-        font-weight: 700;
-        color: #374151;
-      }
-      .cl-batch-result-group-body {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .cl-batch-result-list {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .cl-batch-result-row {
-        border: 1px solid #e5e7eb;
-        border-radius: 6px;
-        padding: 6px;
-        background: #fff;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-      .cl-batch-result-main {
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 6px;
-      }
-      .cl-batch-result-status {
-        font-size: 9px;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-        font-weight: 700;
-        border: 1px solid #d1d5db;
-        border-radius: 999px;
-        padding: 2px 6px;
-        background: #f9fafb;
-        color: #374151;
-      }
-      .cl-batch-result-status-success {
-        border-color: #86efac;
-        color: #166534;
-        background: #f0fdf4;
-      }
-      .cl-batch-result-status-warn {
-        border-color: #fcd34d;
-        color: #92400e;
-        background: #fffbeb;
-      }
-      .cl-batch-result-status-error {
-        border-color: #fecaca;
-        color: #991b1b;
-        background: #fef2f2;
-      }
-      .cl-batch-result-label {
-        font-size: 10px;
-        color: #111827;
-        font-weight: 600;
-      }
-      .cl-batch-result-detail {
-        font-size: 10px;
-        color: #4b5563;
-        line-height: 1.3;
-      }
-      .cl-agent-related-title {
-        font-size: 11px;
-        color: #1f2937;
-        font-weight: 600;
-      }
       .cl-details {
         border-top: 1px dashed var(--cl-border);
         margin-top: 4px;
@@ -67932,14 +67698,6 @@ function initializeSidebar() {
         outline: 2px solid #0f766e;
         outline-offset: 2px;
       }
-      .cl-activity-strip {
-        border-top: 1px dashed var(--cl-border);
-        margin-top: 4px;
-        padding-top: 6px;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
       .cl-detail-grid {
         display: flex;
         flex-direction: column;
@@ -67955,40 +67713,6 @@ function initializeSidebar() {
       }
       .cl-detail-row span:last-child {
         color: var(--cl-text);
-      }
-      .cl-kpi-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 6px;
-      }
-      .cl-kpi-heading {
-        margin-top: 6px;
-        font-size: 10px;
-        font-weight: 700;
-        color: #334155;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-      }
-      .cl-kpi-tile {
-        border: 1px solid var(--cl-border);
-        border-radius: 8px;
-        padding: 6px;
-        background: #ffffff;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-      .cl-kpi-tile span {
-        font-size: 10px;
-        color: var(--cl-muted);
-      }
-      .cl-kpi-tile strong {
-        font-size: 12px;
-        color: var(--cl-text);
-      }
-      .cl-kpi-footnote {
-        font-size: 10px;
-        color: var(--cl-muted);
       }
       @media (prefers-reduced-motion: reduce) {
         .cl-sidebar *,

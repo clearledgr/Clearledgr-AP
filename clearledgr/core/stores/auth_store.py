@@ -53,6 +53,9 @@ class AuthStore:
         import uuid
         token_id = f"TOK-{uuid.uuid4().hex}"
 
+        encrypted_access = self._encrypt_secret(access_token)
+        encrypted_refresh = self._encrypt_secret(refresh_token)
+
         if self.use_postgres:
             sql = self._prepare_sql("""
                 INSERT INTO oauth_tokens
@@ -65,19 +68,31 @@ class AuthStore:
                               email = EXCLUDED.email,
                               updated_at = EXCLUDED.updated_at
             """)
-            params = (token_id, user_id, provider, access_token, refresh_token, expires_at, email, now, now)
+            params = (token_id, user_id, provider, encrypted_access, encrypted_refresh, expires_at, email, now, now)
         else:
             sql = self._prepare_sql("""
                 INSERT OR REPLACE INTO oauth_tokens
                 (id, user_id, provider, access_token, refresh_token, expires_at, email, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """)
-            params = (token_id, user_id, provider, access_token, refresh_token, expires_at, email, now, now)
+            params = (token_id, user_id, provider, encrypted_access, encrypted_refresh, expires_at, email, now, now)
 
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)
             conn.commit()
+
+    def _decrypt_oauth_row(self, row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+        result = dict(row)
+        for field in ("access_token", "refresh_token"):
+            if result.get(field):
+                try:
+                    result[field] = self._decrypt_secret(result[field])
+                except Exception:
+                    pass  # Return raw value if decryption fails (legacy unencrypted data)
+        return result
 
     def get_oauth_token(self, user_id: str, provider: str) -> Optional[Dict[str, Any]]:
         self.initialize()
@@ -86,7 +101,7 @@ class AuthStore:
             cur = conn.cursor()
             cur.execute(sql, (user_id, provider))
             row = cur.fetchone()
-        return dict(row) if row else None
+        return self._decrypt_oauth_row(dict(row) if row else None)
 
     def get_oauth_token_by_email(self, email: str, provider: str) -> Optional[Dict[str, Any]]:
         self.initialize()
@@ -95,7 +110,7 @@ class AuthStore:
             cur = conn.cursor()
             cur.execute(sql, (email, provider))
             row = cur.fetchone()
-        return dict(row) if row else None
+        return self._decrypt_oauth_row(dict(row) if row else None)
 
     def list_oauth_tokens(self, provider: Optional[str] = None) -> List[Dict[str, Any]]:
         self.initialize()
@@ -109,7 +124,7 @@ class AuthStore:
             cur = conn.cursor()
             cur.execute(sql, params)
             rows = cur.fetchall()
-        return [dict(row) for row in rows]
+        return [self._decrypt_oauth_row(dict(row)) for row in rows]
 
     def delete_oauth_token(self, user_id: str, provider: str) -> None:
         self.initialize()
@@ -118,6 +133,75 @@ class AuthStore:
             cur = conn.cursor()
             cur.execute(sql, (user_id, provider))
             conn.commit()
+
+    # ------------------------------------------------------------------
+    # Google web OAuth auth-code exchange cache (durable)
+    # ------------------------------------------------------------------
+
+    def save_google_auth_code(
+        self,
+        auth_code: str,
+        access_token: str,
+        refresh_token: Optional[str],
+        organization_id: str,
+        expires_at: str,
+    ) -> None:
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+        sql = self._prepare_sql(
+            """
+            INSERT OR REPLACE INTO google_auth_codes
+            (auth_code, access_token, refresh_token, organization_id, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """
+        )
+        encrypted_access = self._encrypt_secret(access_token)
+        encrypted_refresh = self._encrypt_secret(refresh_token or "")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                sql,
+                (
+                    str(auth_code),
+                    encrypted_access,
+                    encrypted_refresh,
+                    str(organization_id or "default"),
+                    str(expires_at),
+                    now,
+                ),
+            )
+            conn.commit()
+
+    def consume_google_auth_code(self, auth_code: str) -> Optional[Dict[str, Any]]:
+        self.initialize()
+        select_sql = self._prepare_sql("SELECT * FROM google_auth_codes WHERE auth_code = ?")
+        delete_sql = self._prepare_sql("DELETE FROM google_auth_codes WHERE auth_code = ?")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(select_sql, (str(auth_code),))
+            row = cur.fetchone()
+            cur.execute(delete_sql, (str(auth_code),))
+            conn.commit()
+        if not row:
+            return None
+        result = dict(row)
+        for field in ("access_token", "refresh_token"):
+            if result.get(field):
+                try:
+                    result[field] = self._decrypt_secret(result[field])
+                except Exception:
+                    pass  # Legacy unencrypted data — return as-is
+        return result
+
+    def purge_expired_google_auth_codes(self) -> int:
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+        sql = self._prepare_sql("DELETE FROM google_auth_codes WHERE expires_at IS NOT NULL AND expires_at < ?")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (now,))
+            conn.commit()
+            return int(cur.rowcount or 0)
 
     # ------------------------------------------------------------------
     # Organizations
@@ -185,10 +269,18 @@ class AuthStore:
             result.append(data)
         return result
 
+    _ORGANIZATION_ALLOWED_COLUMNS = frozenset({
+        "name", "domain", "settings_json", "settings", "integration_mode",
+        "subscription_tier", "is_active", "updated_at",
+    })
+
     def update_organization(self, organization_id: str, **kwargs) -> bool:
         self.initialize()
         if not kwargs:
             return False
+        bad_keys = set(kwargs.keys()) - self._ORGANIZATION_ALLOWED_COLUMNS
+        if bad_keys:
+            raise ValueError(f"Disallowed columns for organization update: {bad_keys}")
         payload = dict(kwargs)
         if "settings" in payload and "settings_json" not in payload:
             payload["settings_json"] = payload.pop("settings")
@@ -395,10 +487,18 @@ class AuthStore:
             result.append(data)
         return result
 
+    _USER_ALLOWED_COLUMNS = frozenset({
+        "name", "email", "password_hash", "role", "is_active",
+        "organization_id", "google_id", "updated_at",
+    })
+
     def update_user(self, user_id: str, **kwargs) -> bool:
         self.initialize()
         if not kwargs:
             return False
+        bad_keys = set(kwargs.keys()) - self._USER_ALLOWED_COLUMNS
+        if bad_keys:
+            raise ValueError(f"Disallowed columns for user update: {bad_keys}")
         payload = dict(kwargs)
         if "is_active" in payload:
             payload["is_active"] = 1 if bool(payload["is_active"]) else 0

@@ -55,8 +55,6 @@ def _audit_runner_callback_unauthorized(
     endpoint: str,
     reason: str,
 ) -> None:
-    if not hasattr(db, "append_ap_audit_event"):
-        return
     session_id = str((session or {}).get("id") or "unknown")
     ap_item_id = str((session or {}).get("ap_item_id") or "") or f"agent_runner_callback:{session_id}"
     organization_id = str((session or {}).get("organization_id") or user.organization_id or "default")

@@ -338,7 +338,7 @@ Best regards"""
             )
             return draft_id or None
         except Exception as exc:
-            logger.debug("create_gmail_draft failed for ap_item_id=%s: %s", ap_item_id, exc)
+            logger.error("create_gmail_draft failed for ap_item_id=%s: %s", ap_item_id, exc)
             return None
     
     def _vendor_requires_po(self, vendor: str) -> bool:

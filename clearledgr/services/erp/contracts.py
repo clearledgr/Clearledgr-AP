@@ -102,13 +102,10 @@ class RouterBackedERPBillAdapter:
         db = get_db()
         candidate = None
         if reference:
-            for row in db.list_ap_items(org_id, limit=5000):
-                if str(row.get("erp_reference") or "").strip() == reference:
-                    candidate = row
-                    break
-                if str(row.get("invoice_number") or "").strip() == reference:
-                    candidate = row
-                    break
+            # B6: Use indexed DB lookup instead of linear scan (PLAN.md §6.2-7)
+            candidate = db.get_ap_item_by_erp_reference(org_id, reference)
+            if not candidate:
+                candidate = db.get_ap_item_by_invoice_number(org_id, reference)
         if not candidate:
             return {
                 "status": "not_found",

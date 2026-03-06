@@ -160,17 +160,58 @@ class MetricsStore:
             if latency_min >= 0:
                 approval_latencies.append(latency_min)
 
+        # H13/H14: Also fetch retry and per-ERP breakdown events
+        retry_events = self.list_audit_events(
+            organization_id,
+            event_types=["erp_post_resumed", "erp_post_retry_enqueued"],
+            limit=10000,
+        )
+        succeeded_events = self.list_audit_events(
+            organization_id,
+            event_types=["erp_post_succeeded"],
+            limit=10000,
+        )
+
         cutoff = now - timedelta(hours=24)
         attempted_24h = 0
         failed_24h = 0
+        retry_24h = 0
+        retry_success_24h = 0
+        per_erp_attempted: Dict[str, int] = {}
+        per_erp_failed: Dict[str, int] = {}
         for event in post_events:
             ts = self._parse_iso(event.get("ts"))
             if not ts or ts < cutoff:
                 continue
+            meta = event.get("metadata") or {}
+            if isinstance(meta, str):
+                try:
+                    import json as _json
+                    meta = _json.loads(meta)
+                except Exception:
+                    meta = {}
+            erp_type = str(meta.get("erp_type") or meta.get("erp") or "unknown")
             if event.get("event_type") == "erp_post_attempted":
                 attempted_24h += 1
+                per_erp_attempted[erp_type] = per_erp_attempted.get(erp_type, 0) + 1
             elif event.get("event_type") == "erp_post_failed":
                 failed_24h += 1
+                per_erp_failed[erp_type] = per_erp_failed.get(erp_type, 0) + 1
+        for event in retry_events:
+            ts = self._parse_iso(event.get("ts"))
+            if ts and ts >= cutoff:
+                retry_24h += 1
+        for event in succeeded_events:
+            ts = self._parse_iso(event.get("ts"))
+            meta = event.get("metadata") or {}
+            if isinstance(meta, str):
+                try:
+                    import json as _json
+                    meta = _json.loads(meta)
+                except Exception:
+                    meta = {}
+            if ts and ts >= cutoff and meta.get("is_retry"):
+                retry_success_24h += 1
 
         failure_rate_24h = (failed_24h / attempted_24h) if attempted_24h else 0.0
         callback_verification_failures_24h = 0
@@ -201,6 +242,23 @@ class MetricsStore:
                 "attempted_24h": attempted_24h,
                 "failed_24h": failed_24h,
                 "failure_rate_24h": round(failure_rate_24h, 4),
+                "per_erp": {
+                    erp: {
+                        "attempted": per_erp_attempted.get(erp, 0),
+                        "failed": per_erp_failed.get(erp, 0),
+                        "failure_rate": round(
+                            per_erp_failed.get(erp, 0) / per_erp_attempted[erp], 4
+                        ) if per_erp_attempted.get(erp) else 0.0,
+                    }
+                    for erp in sorted(set(list(per_erp_attempted.keys()) + list(per_erp_failed.keys())))
+                },
+            },
+            "retry": {
+                "retry_count_24h": retry_24h,
+                "retry_success_24h": retry_success_24h,
+                "retry_success_rate": round(
+                    retry_success_24h / retry_24h, 4
+                ) if retry_24h else 0.0,
             },
             "post_failure_rate": {
                 "attempted_24h": attempted_24h,

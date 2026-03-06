@@ -58,7 +58,7 @@ We are building an agentic finance layer for Gmail.
 
 **Key Constraints:**
 
-1. **State Management:** Every user action in Gmail must trigger a Temporal Workflow to ensure 100% execution reliability even if the tab closes.
+1. **State Management:** Every user action in Gmail must trigger a durable workflow (DB-backed `local_db` runtime by default; Temporal only when `temporal_available=true`) to ensure execution reliability even if the tab closes.
 
 2. **Verification:** Before suggesting a 'Post to Ledger' action, the agent must cross-reference the extracted email data against our 'Bank_Feed_Cache' and 'ERP_Registry'.
 
@@ -171,15 +171,15 @@ async function getData() {
 
 ---
 
-## Temporal Workflow Integration
+## Durable Workflow Integration
 
-The extension triggers backend Temporal workflows for reliable execution. Even if the browser tab closes, workflows complete.
+The extension triggers backend durable workflows for reliable execution. Even if the browser tab closes, workflows complete. AP v1 defaults to `local_db` (DB-backed) runtime. Temporal is optional and only active when `temporal_available=true` in runtime status.
 
 ### Architecture
 ```
-Extension (background.js) 
+Extension (background.js)
     → API Call (FastAPI /extension/*)
-        → Temporal Workflow (clearledgr-gmail task queue)
+        → Durable Workflow (local_db default, Temporal optional)
             → Activities (classify, extract, match, post)
 ```
 

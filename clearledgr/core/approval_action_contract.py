@@ -61,6 +61,34 @@ class NormalizedApprovalAction:
         }
 
 
+# H18: Pre-flight policy check at approval action boundary (PLAN.md §B)
+# Maps action → set of valid AP item states the action may be dispatched from.
+_ACTION_VALID_STATES = {
+    "approve": {"needs_approval"},
+    "reject": {"needs_approval"},
+    "request_info": {"needs_approval", "validated"},
+}
+
+
+def validate_action_state_preflight(
+    action: NormalizedApprovalAction,
+    ap_item: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Return a block reason if the action cannot proceed, else None.
+
+    Checks that the AP item exists and is in a valid state for the
+    requested action. This is a boundary guard called before dispatching
+    to the workflow service.
+    """
+    if not ap_item:
+        return None  # New items — let workflow handle
+    current_state = str(ap_item.get("state") or "").strip().lower()
+    valid_states = _ACTION_VALID_STATES.get(action.action)
+    if valid_states and current_state and current_state not in valid_states:
+        return f"action_{action.action}_invalid_for_state_{current_state}"
+    return None
+
+
 def _epoch_from_any(value: Any) -> Optional[int]:
     if value in (None, ""):
         return None

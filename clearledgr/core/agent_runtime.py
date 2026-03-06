@@ -17,7 +17,7 @@ Usage:
         idempotency_key=f"invoice:{invoice.gmail_id}",
     )
     result = await planner.run_task(task)
-    # result.status in ("completed", "hitl_pause", "failed", "max_steps_exceeded")
+    # result.status in ("completed", "awaiting_human", "failed", "max_steps_exceeded")
 """
 from __future__ import annotations
 
@@ -106,7 +106,7 @@ class AgentPlanningEngine:
            b. Execute the tool handler (never raises)
            c. Checkpoint the result
            d. Feed result back into messages
-        5. If tool returns is_hitl_pause=True → pause for human input
+        5. If tool returns is_awaiting_human=True → pause for human input
         6. After MAX_PLANNING_STEPS → surface max_steps_exceeded
         """
         from clearledgr.core.database import get_db
@@ -189,8 +189,8 @@ class AgentPlanningEngine:
             else:
                 output = {"ok": False, "error": f"Unknown tool: {tool_name!r}"}
 
-            is_hitl = bool(output.get("is_hitl_pause"))
-            next_status = "hitl_pause" if is_hitl else "running"
+            is_hitl = bool(output.get("is_awaiting_human"))
+            next_status = "awaiting_human" if is_hitl else "running"
 
             # Checkpoint result
             db.update_task_run_step(
@@ -212,9 +212,9 @@ class AgentPlanningEngine:
 
             if is_hitl:
                 hitl_ctx = output.get("hitl_context") or {}
-                db.complete_task_run(task_run_id, hitl_ctx, status="hitl_pause")
+                db.complete_task_run(task_run_id, hitl_ctx, status="awaiting_human")
                 return SkillResult(
-                    status="hitl_pause",
+                    status="awaiting_human",
                     task_run_id=task_run_id,
                     outcome=hitl_ctx,
                     step_count=step,
@@ -354,8 +354,16 @@ class AgentPlanningEngine:
                 continue
             try:
                 payload = json.loads(row.get("input_payload") or "{}")
-            except Exception:
-                payload = {}
+            except Exception as exc:
+                logger.error(
+                    "[AgentRuntime] resume: corrupted input_payload for task_run id=%s: %s",
+                    row.get("id"), exc,
+                )
+                try:
+                    db.fail_task_run(row["id"], error="input_payload_corrupted")
+                except Exception:
+                    pass
+                continue
             task = AgentTask(
                 task_type=row["task_type"],
                 organization_id=row["organization_id"],

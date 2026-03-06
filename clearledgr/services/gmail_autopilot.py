@@ -63,9 +63,40 @@ class GmailAutopilot:
         if self._running:
             return
         self._running = True
+        # B7: Run catch-up scan on startup to backfill missed emails (PLAN.md §7.7.3)
+        try:
+            await self._catchup_rescan()
+        except Exception as exc:
+            logger.warning("Gmail autopilot startup catch-up failed: %s", exc)
         self._task = asyncio.create_task(self._run_loop())
         self._status = {"state": "running"}
         logger.info("Gmail autopilot started")
+
+    async def _catchup_rescan(self) -> None:
+        """Rescan emails missed during backend downtime.
+
+        Extends the scan window to ``poll_seed_hours`` for any user whose
+        ``last_scan_at`` is older than the current poll interval, ensuring
+        emails that arrived during an outage are not silently dropped.
+        """
+        tokens = token_store.list_all()
+        now = datetime.now(timezone.utc)
+        catchup_count = 0
+        for token in tokens:
+            state = self._db.get_gmail_autopilot_state(token.user_id) or {}
+            last_scan_at = _parse_iso(state.get("last_scan_at"))
+            if last_scan_at and (now - last_scan_at).total_seconds() > self.poll_interval * 2:
+                # Stale — widen window to poll_seed_hours for catch-up
+                self._db.save_gmail_autopilot_state(
+                    user_id=token.user_id,
+                    email=token.email,
+                    last_scan_at=(now - timedelta(hours=self.poll_seed_hours)).isoformat(),
+                )
+                catchup_count += 1
+        if catchup_count:
+            logger.info("Gmail autopilot: reset scan window for %d users after outage", catchup_count)
+            # Run one immediate tick to process the backfill
+            await self._tick()
 
     async def stop(self) -> None:
         self._running = False

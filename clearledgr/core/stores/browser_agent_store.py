@@ -55,10 +55,18 @@ class BrowserAgentStore:
             conn.commit()
         return self.get_agent_session(session_id) or {}
 
+    _AGENT_SESSION_ALLOWED_COLUMNS = frozenset({
+        "status", "state", "current_step", "result_json", "error", "metadata",
+        "completed_at", "updated_at",
+    })
+
     def update_agent_session(self, session_id: str, **kwargs) -> bool:
         self.initialize()
         if not kwargs:
             return False
+        bad_keys = set(kwargs.keys()) - self._AGENT_SESSION_ALLOWED_COLUMNS
+        if bad_keys:
+            raise ValueError(f"Disallowed columns for agent_session update: {bad_keys}")
         now = datetime.now(timezone.utc).isoformat()
         kwargs["updated_at"] = now
         if "metadata" in kwargs and isinstance(kwargs["metadata"], dict):

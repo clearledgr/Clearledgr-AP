@@ -43,7 +43,7 @@ class TeamsAPIClient:
                 metadata = integration.get("metadata") if isinstance(integration.get("metadata"), dict) else {}
                 webhook_url = str((metadata or {}).get("webhook_url") or "").strip()
             except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Could not load Teams integration metadata for %s: %s", organization_id, exc)
+                logger.error("Could not load Teams integration metadata for %s: %s", organization_id, exc)
         if not webhook_url:
             webhook_url = str(os.getenv("TEAMS_APPROVAL_WEBHOOK_URL", "")).strip()
         return cls(webhook_url=webhook_url)
@@ -376,10 +376,10 @@ class TeamsAPIClient:
                 return {"status": "updated", "status_code": status_code}
             return {"status": "error", "status_code": status_code}
         except URLError as exc:
-            logger.warning("Teams card update failed: %s", exc)
+            logger.error("Teams card update failed: %s", exc)
             return {"status": "error", "reason": str(exc)}
         except Exception as exc:
-            logger.warning("Teams card update unexpected error: %s", exc)
+            logger.error("Teams card update unexpected error: %s", exc)
             return {"status": "error", "reason": str(exc)}
 
     def send_invoice_budget_card(

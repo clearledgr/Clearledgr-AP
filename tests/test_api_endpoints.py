@@ -54,9 +54,29 @@ class TestHealthEndpoints:
 
 class TestAuthEndpoints:
     """Test authentication endpoints."""
-    
+
+    def _admin_override(self):
+        """Override get_current_user with an admin TokenData."""
+        from clearledgr.core.auth import get_current_user
+        app.dependency_overrides[get_current_user] = lambda: TokenData(
+            user_id="admin-user", email="admin@test.com", role="admin",
+            organization_id="test-org",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+    def test_register_requires_auth(self):
+        """Registration without auth returns 401."""
+        response = client.post("/auth/register", json={
+            "email": "test@example.com",
+            "password": "StrongPass123!",
+            "name": "Test User",
+            "organization_id": "test-org",
+        })
+        assert response.status_code == 401
+
     def test_register_validation(self):
         """Test registration validates password strength."""
+        self._admin_override()
         # Weak password should fail
         response = client.post("/auth/register", json={
             "email": "test@example.com",
@@ -65,9 +85,10 @@ class TestAuthEndpoints:
             "organization_id": "test-org",
         })
         assert response.status_code == 422  # Validation error
-    
+
     def test_register_success(self):
         """Test successful registration."""
+        self._admin_override()
         response = client.post("/auth/register", json={
             "email": "newuser@example.com",
             "password": "StrongPass123!",
@@ -144,8 +165,6 @@ class TestAuthEndpoints:
         )
         monkeypatch.setattr("clearledgr.core.auth.get_user_by_email", lambda _email: None)
         monkeypatch.setattr("clearledgr.core.auth.create_user_from_google", lambda **_kwargs: fake_user)
-        monkeypatch.setattr(auth_module, "_google_auth_code_store", {})
-
         response = client.get(
             "/auth/google/callback",
             params={"code": "google-code-1", "state": state},
@@ -875,6 +894,7 @@ class TestExtensionEndpoints:
         assert client.get("/extension/invoice-status/email-1").status_code == 401
         assert client.get("/extension/workflow/wf-1").status_code == 401
         assert client.get("/extension/ap/AP-1/explain").status_code == 401
+        # Field-correction endpoint is not exposed in strict AP-v1 runtime profile.
         assert client.post(
             "/extension/record-field-correction",
             json={
@@ -883,7 +903,7 @@ class TestExtensionEndpoints:
                 "original_value": "Old",
                 "corrected_value": "New",
             },
-        ).status_code == 401
+        ).status_code == 404
 
     def test_sensitive_extension_endpoints_enforce_org_scope(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user

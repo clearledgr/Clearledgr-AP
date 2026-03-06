@@ -108,6 +108,10 @@ class IntegrationStore:
         import uuid
         connection_id = f"ERP-{uuid.uuid4().hex}"
         credentials_json = json.dumps(credentials) if credentials else None
+        # Encrypt sensitive fields at rest
+        encrypted_access = self._encrypt_secret(access_token) if access_token else None
+        encrypted_refresh = self._encrypt_secret(refresh_token) if refresh_token else None
+        encrypted_creds = self._encrypt_secret(credentials_json) if credentials_json else None
 
         if self.use_postgres:
             sql = self._prepare_sql("""
@@ -125,8 +129,8 @@ class IntegrationStore:
                               is_active = 1,
                               updated_at = EXCLUDED.updated_at
             """)
-            params = (connection_id, organization_id, erp_type, access_token, refresh_token, realm_id,
-                      tenant_id, base_url, credentials_json, now, now)
+            params = (connection_id, organization_id, erp_type, encrypted_access, encrypted_refresh, realm_id,
+                      tenant_id, base_url, encrypted_creds, now, now)
         else:
             sql = self._prepare_sql("""
                 INSERT OR REPLACE INTO erp_connections
@@ -134,13 +138,30 @@ class IntegrationStore:
                  credentials, is_active, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
             """)
-            params = (connection_id, organization_id, erp_type, access_token, refresh_token, realm_id,
-                      tenant_id, base_url, credentials_json, now, now)
+            params = (connection_id, organization_id, erp_type, encrypted_access, encrypted_refresh, realm_id,
+                      tenant_id, base_url, encrypted_creds, now, now)
 
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)
             conn.commit()
+
+    def _decrypt_erp_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """Decrypt ERP connection credentials with legacy unencrypted fallback."""
+        result = dict(row)
+        for field in ("access_token", "refresh_token"):
+            if result.get(field):
+                try:
+                    result[field] = self._decrypt_secret(result[field])
+                except Exception:
+                    pass  # Legacy unencrypted data — return as-is
+        if result.get("credentials"):
+            try:
+                decrypted = self._decrypt_secret(result["credentials"])
+                result["credentials"] = decrypted
+            except Exception:
+                pass  # Legacy unencrypted — return as-is
+        return result
 
     def get_erp_connections(self, organization_id: str) -> List[Dict[str, Any]]:
         self.initialize()
@@ -151,7 +172,7 @@ class IntegrationStore:
             cur = conn.cursor()
             cur.execute(sql, (organization_id,))
             rows = cur.fetchall()
-        return [dict(row) for row in rows]
+        return [self._decrypt_erp_row(dict(row)) for row in rows]
 
     def delete_erp_connection(self, organization_id: str, erp_type: str) -> bool:
         self.initialize()

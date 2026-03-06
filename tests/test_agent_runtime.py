@@ -353,7 +353,7 @@ def test_hitl_pause(tmp_path, monkeypatch):
     async def _hitl_tool(organization_id="default", **_) -> Dict:
         return {
             "ok": True,
-            "is_hitl_pause": True,
+            "is_awaiting_human": True,
             "hitl_context": {"question": "Please approve this invoice", "invoice_id": "inv-123"},
         }
 
@@ -380,14 +380,14 @@ def test_hitl_pause(tmp_path, monkeypatch):
     with patch.object(runtime, "_call_claude_with_tools", side_effect=fake_claude):
         result = asyncio.run(runtime.run_task(_make_task("hitl_skill", key="hitl-test")))
 
-    assert result.status == "hitl_pause"
+    assert result.status == "awaiting_human"
     assert result.hitl_context is not None
     assert result.hitl_context.get("question") == "Please approve this invoice"
     assert call_count == 1  # loop stopped after HITL
 
     from clearledgr.core.database import get_db
     row = get_db().get_task_run(result.task_run_id)
-    assert row["status"] == "hitl_pause"
+    assert row["status"] == "awaiting_human"
 
 
 # ---------------------------------------------------------------------------

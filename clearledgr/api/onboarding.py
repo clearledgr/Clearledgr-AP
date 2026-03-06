@@ -20,11 +20,16 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
 from clearledgr.core.database import get_db
+from clearledgr.core.auth import get_current_user, TokenData
 from clearledgr.integrations.erp_router import ERPConnection, set_erp_connection
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/onboarding", tags=["Onboarding"])
+router = APIRouter(
+    prefix="/onboarding",
+    tags=["Onboarding"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 # ==================== MODELS ====================

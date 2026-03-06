@@ -181,7 +181,7 @@ class CorrectionLearningService:
                     f"Loaded {len(self._learned_rules)} learned rules for {self.organization_id}"
                 )
         except Exception as e:
-            logger.debug(f"Could not load learned rules: {e}")
+            logger.error("Could not load learned rules: %s", e)
 
     def _persist_correction(self, correction: Correction):
         """Write a correction to the DB."""
@@ -211,7 +211,7 @@ class CorrectionLearningService:
                 )
                 conn.commit()
         except Exception as e:
-            logger.debug(f"Could not persist correction: {e}")
+            logger.error("Could not persist correction: %s", e)
 
     def _persist_rule(self, rule: LearningRule):
         """Upsert a learned rule to the DB."""
@@ -239,7 +239,7 @@ class CorrectionLearningService:
                 )
                 conn.commit()
         except Exception as e:
-            logger.debug(f"Could not persist rule: {e}")
+            logger.error("Could not persist rule: %s", e)
 
     # ------------------------------------------------------------------
     # Core methods

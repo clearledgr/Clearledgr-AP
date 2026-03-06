@@ -197,12 +197,65 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/static",
     "/api/agent",
     "/api/ap",
-    "/api/ops",
-    "/extension",
     "/slack",
     "/teams",
     "/gmail",
     "/auth",
+)
+
+STRICT_PROFILE_ALLOWED_OPS_PATHS = {
+    "/api/ops/tenant-health",
+    "/api/ops/ap-kpis",
+    "/api/ops/ap-kpis/digest",
+    "/api/ops/ap-aggregation",
+    "/api/ops/browser-agent",
+    "/api/ops/erp-routing-strategy",
+    "/api/ops/tenant-health/all",
+    "/api/ops/autopilot-status",
+    "/api/ops/extraction-quality",
+    "/api/ops/ap-decision-health",
+    "/api/ops/monitoring-thresholds",
+    "/api/ops/monitoring-thresholds/check",
+    "/api/ops/retry-queue",
+}
+
+STRICT_PROFILE_ALLOWED_OPS_PREFIXES = (
+    "/api/ops/retry-queue/",
+)
+
+STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
+    "/extension/triage",
+    "/extension/process",
+    "/extension/scan",
+    "/extension/pipeline",
+    "/extension/worklist",
+    "/extension/gmail/register-token",
+    "/extension/approve-and-post",
+    "/extension/verify-confidence",
+    "/extension/match-bank",
+    "/extension/match-erp",
+    "/extension/escalate",
+    "/extension/submit-for-approval",
+    "/extension/reject-invoice",
+    "/extension/budget-decision",
+    "/extension/approval-nudge",
+    "/extension/vendor-followup",
+    "/extension/route-low-risk-approval",
+    "/extension/retry-recoverable-failure",
+    "/extension/finance-summary-share",
+    "/extension/health",
+    "/extension/suggestions/gl-code",
+    "/extension/suggestions/vendor",
+    "/extension/suggestions/amount-validation",
+}
+
+STRICT_PROFILE_ALLOWED_EXTENSION_PREFIXES = (
+    "/extension/invoice-status/",
+    "/extension/invoice-pipeline/",
+    "/extension/workflow/",
+    "/extension/ap/",
+    "/extension/suggestions/form-prefill/",
+    "/extension/needs-info-draft/",
 )
 
 STRICT_PROFILE_ALLOWED_ADMIN_PATHS = {
@@ -241,10 +294,20 @@ def _is_strict_profile_allowed_path(path: str) -> bool:
     normalized = path if path.startswith("/") else f"/{path}"
     if normalized in STRICT_PROFILE_ALLOWED_EXACT_PATHS:
         return True
+    if normalized in STRICT_PROFILE_ALLOWED_OPS_PATHS:
+        return True
+    if normalized in STRICT_PROFILE_ALLOWED_EXTENSION_PATHS:
+        return True
     if normalized in STRICT_PROFILE_ALLOWED_ADMIN_PATHS:
         return True
     for prefix in STRICT_PROFILE_ALLOWED_ADMIN_PREFIXES:
         if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return True
+    for prefix in STRICT_PROFILE_ALLOWED_OPS_PREFIXES:
+        if normalized.startswith(prefix):
+            return True
+    for prefix in STRICT_PROFILE_ALLOWED_EXTENSION_PREFIXES:
+        if normalized.startswith(prefix):
             return True
     for prefix in STRICT_PROFILE_ALLOWED_PREFIXES:
         if normalized == prefix or normalized.startswith(f"{prefix}/"):
@@ -393,9 +456,29 @@ class AdminSessionCSRFMiddleware(BaseHTTPMiddleware):
             )
         return await call_next(request)
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Inject standard security headers into every response."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-XSS-Protection", "1; mode=block")
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' https:; font-src 'self'; connect-src 'self' https:; "
+            "frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'",
+        )
+        return response
+
 # Add middleware in order (last added = outermost, executed first).
 # CorrelationIdMiddleware must be outermost so correlation_id is available to
 # all downstream middleware and handlers.
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(LegacySurfaceGuardMiddleware)
@@ -429,7 +512,6 @@ app.openapi = custom_openapi
 async def clearledgr_exception_handler(request: Request, exc: ClearledgrError):
     """Handle all ClearledgrErrors with structured responses."""
     from fastapi.responses import JSONResponse
-    from clearledgr.services.monitoring import get_monitor
     
     status_map = {
         "INVALID_CSV": 400,
@@ -451,22 +533,8 @@ async def clearledgr_exception_handler(request: Request, exc: ClearledgrError):
     }
     
     log_error(exc.code.value, str(exc), exc.context)
-    
-    # Track in monitoring service
-    monitor = get_monitor()
     status_code = status_map.get(exc.code.value, 500)
-    severity = "error" if status_code >= 500 else "warning"
-    monitor.capture_error(
-        exc,
-        context={
-            "path": str(request.url.path),
-            "method": request.method,
-            "code": exc.code.value,
-            **exc.context
-        },
-        severity=severity,
-        alert=status_code >= 500  # Only alert on server errors
-    )
+    record_error(exc.code.value, str(request.url.path))
     
     return JSONResponse(
         status_code=status_code,
@@ -479,20 +547,8 @@ async def clearledgr_exception_handler(request: Request, exc: ClearledgrError):
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Handle unhandled exceptions with monitoring and structured response."""
     from fastapi.responses import JSONResponse
-    from clearledgr.services.monitoring import get_monitor
-    
-    # Track in monitoring service
-    monitor = get_monitor()
-    error_id = monitor.capture_error(
-        exc,
-        context={
-            "path": str(request.url.path),
-            "method": request.method,
-            "query_params": str(request.query_params),
-        },
-        severity="critical",
-        alert=True
-    )
+    error_id = str(uuid.uuid4())
+    record_error("unhandled_exception", str(request.url.path))
     
     return JSONResponse(
         status_code=500,
@@ -538,6 +594,13 @@ def _resolve_cors_policy(configured_origins_raw: str, configured_regex_raw: str)
         # Fall back to safe canonical defaults instead of `*`.
         logger.warning("CORS_ALLOW_ORIGINS wildcard ignored; falling back to canonical origin allowlist")
 
+    _UNSAFE_CORS_PATTERNS = {".*", ".+", "^.*$", "^.+$", "", ".*\\..*"}
+    if configured_regex and configured_regex in _UNSAFE_CORS_PATTERNS:
+        logger.error(
+            "CORS_ALLOW_ORIGIN_REGEX=%r is too permissive; falling back to default",
+            configured_regex,
+        )
+        configured_regex = ""
     default_regex = configured_regex or r"^chrome-extension://[a-z]{32}$"
     return _default_cors_origins, default_regex
 
@@ -708,13 +771,32 @@ async def health():
     Returns API status, version, and detailed health checks.
     No authentication required.
     """
-    from clearledgr.services.monitoring import get_monitor
-    
-    monitor = get_monitor()
-    health_status = await monitor.check_health()
-    
+    from clearledgr.core.database import get_db
+
+    checks: Dict[str, Dict[str, Any]] = {}
+    status = "healthy"
+    try:
+        db = get_db()
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            _ = cur.fetchone()
+        checks["database"] = {"status": "healthy"}
+    except Exception as exc:  # noqa: BLE001
+        checks["database"] = {"status": "unhealthy", "error": str(exc)}
+        status = "unhealthy"
+
+    metrics_payload = get_metrics()
+    backend_info = metrics_payload.get("backend", {}) if isinstance(metrics_payload, dict) else {}
+    checks["metrics_backend"] = {
+        "status": "healthy",
+        "mode": str(backend_info.get("mode") or "unknown"),
+    }
+
     return {
-        **health_status,
+        "status": status,
+        "checks": checks,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "v1.0.0",
         "runtime_surface_contract": _runtime_surface_contract(),
     }

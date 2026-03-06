@@ -34,7 +34,7 @@ async def _slack_alert(text: str, blocks=None):
         from ui.slack.app import send_message
         await send_message(SLACK_CHANNEL, text, blocks=blocks, organization_id=DEFAULT_ORG_ID)
     except Exception as e:
-        logger.debug(f"Slack alert failed: {e}")
+        logger.error("Slack alert failed: %s", e)
 
 
 async def start_agent_background(app=None):
@@ -121,7 +121,7 @@ async def _check_overdue_tasks():
                 )
             except Exception as _kpi_err:
                 # Fall back to plain-text alert if KPI dashboard fails
-                logger.debug("KPI dashboard failed, falling back to plain alert: %s", _kpi_err)
+                logger.error("KPI dashboard failed, falling back to plain alert: %s", _kpi_err)
                 lines = [":clock3: *AP Status Check*"]
                 if overdue:
                     lines.append(f"\n*{len(overdue)} overdue item(s):*")
@@ -138,7 +138,7 @@ async def _check_overdue_tasks():
                         lines.append(f"  • {vendor} — stuck in `{state}`")
                 await _slack_alert("\n".join(lines))
     except Exception as e:
-        logger.debug(f"Overdue task check failed: {e}")
+        logger.error("Overdue task check failed: %s", e)
 
 
 async def _check_anomalies():
@@ -158,7 +158,7 @@ async def _check_anomalies():
                 lines.append(f"  • *{atype}:* {desc}")
             await _slack_alert("\n".join(lines))
     except Exception as e:
-        logger.debug(f"Anomaly detection failed: {e}")
+        logger.error("Anomaly detection failed: %s", e)
 
 
 async def _send_daily_digest():
@@ -176,7 +176,7 @@ async def _send_daily_digest():
                 lines.append(f"  • {insight.title}")
             await _slack_alert("\n".join(lines))
     except Exception as e:
-        logger.debug(f"Daily digest generation failed: {e}")
+        logger.error("Daily digest generation failed: %s", e)
 
 
 def _retry_backoff_seconds(attempt_number: int) -> int:
@@ -306,7 +306,7 @@ async def _drain_erp_post_retry_queue():
                 summary["dead_letter"],
             )
     except Exception as exc:
-        logger.debug("Durable queue drain failed: %s", exc)
+        logger.error("Durable queue drain failed: %s", exc)
 
 
 async def _check_approval_timeouts(org_id: str):
@@ -357,28 +357,27 @@ async def _check_approval_timeouts(org_id: str):
                     organization_id=org_id,
                 )
 
-                if hasattr(db, "append_ap_audit_event"):
-                    try:
-                        db.append_ap_audit_event(
-                            {
-                                "ap_item_id": ap_item_id,
-                                "event_type": "approval_nudge_sent" if reminder_sent else "approval_nudge_failed",
-                                "actor_type": "system",
-                                "actor_id": "agent_background",
-                                "reason": f"approval_nudge_auto_{milestone}",
-                                "metadata": {
-                                    "auto": True,
-                                    "milestone": milestone,
-                                    "hours_pending": min_hours,
-                                    "approver_count": len(approver_ids or []),
-                                },
-                                "organization_id": org_id,
-                                "source": "agent_background",
-                                "idempotency_key": f"approval_nudge_auto:{ap_item_id}:{milestone}",
-                            }
-                        )
-                    except Exception as audit_exc:
-                        logger.debug("Could not append auto-approval-nudge audit event: %s", audit_exc)
+                try:
+                    db.append_ap_audit_event(
+                        {
+                            "ap_item_id": ap_item_id,
+                            "event_type": "approval_nudge_sent" if reminder_sent else "approval_nudge_failed",
+                            "actor_type": "system",
+                            "actor_id": "agent_background",
+                            "reason": f"approval_nudge_auto_{milestone}",
+                            "metadata": {
+                                "auto": True,
+                                "milestone": milestone,
+                                "hours_pending": min_hours,
+                                "approver_count": len(approver_ids or []),
+                            },
+                            "organization_id": org_id,
+                            "source": "agent_background",
+                            "idempotency_key": f"approval_nudge_auto:{ap_item_id}:{milestone}",
+                        }
+                    )
+                except Exception as audit_exc:
+                    logger.error("Could not append auto-approval-nudge audit event: %s", audit_exc)
 
                 # Build metadata patch — include escalation record for 24h
                 patch: dict = {
@@ -402,7 +401,7 @@ async def _check_approval_timeouts(org_id: str):
                     ap_item_id,
                 )
     except Exception as exc:
-        logger.debug("Approval timeout check failed: %s", exc)
+        logger.error("Approval timeout check failed: %s", exc)
 
 
 async def _check_period_end():
@@ -423,4 +422,4 @@ async def _check_period_end():
                 f"Review pending AP items before the cutoff."
             )
     except Exception as e:
-        logger.debug(f"Period-end detection failed: {e}")
+        logger.error("Period-end detection failed: %s", e)
