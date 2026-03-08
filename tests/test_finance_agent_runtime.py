@@ -542,3 +542,37 @@ def test_runtime_audit_rows_include_canonical_audit_event_schema():
     assert canonical.get("entity_id") == "ap-route-1"
     assert canonical.get("action")
     assert canonical.get("timestamp")
+
+
+def test_execute_ap_invoice_processing_fails_closed_when_planner_unavailable():
+    db = _FakeDB()
+    runtime = _runtime(db)
+
+    invoice_payload = {
+        "gmail_id": "gmail-fail-closed-1",
+        "organization_id": "default",
+        "sender": "billing@example.com",
+        "subject": "Invoice INV-FAIL-1",
+        "vendor_name": "Planner Down Co",
+        "amount": 42.0,
+        "currency": "USD",
+    }
+
+    with patch(
+        "clearledgr.core.agent_runtime.get_planning_engine",
+        side_effect=RuntimeError("planner unavailable"),
+    ):
+        result = asyncio.run(
+            runtime.execute_ap_invoice_processing(
+                invoice_payload=invoice_payload,
+                idempotency_key="idem-fail-closed-1",
+                correlation_id="corr-fail-closed-1",
+            )
+        )
+
+    assert result["status"] == "error"
+    assert result["reason"] == "planning_engine_unavailable"
+    assert result["execution_mode"] == "agent_planning_engine"
+    assert result["agent_status"] == "failed"
+    assert result["idempotency_key"] == "idem-fail-closed-1"
+    assert result["correlation_id"] == "corr-fail-closed-1"

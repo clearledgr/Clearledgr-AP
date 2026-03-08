@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from main import _runtime_surface_contract, app
+from main import STRICT_PROFILE_ALLOWED_PREFIXES, _runtime_surface_contract, app
 
 
 def _mounted_paths() -> set[str]:
@@ -119,7 +119,7 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
 
     with TestClient(app) as _client:
         paths = _mounted_paths()
-        assert len(paths) <= 133
+        assert len(paths) <= 130
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
@@ -130,3 +130,22 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         # OAuth callbacks remain available for admin ERP install flows.
         assert "/erp/quickbooks/callback" in paths
         assert "/erp/xero/callback" in paths
+        assert set(STRICT_PROFILE_ALLOWED_PREFIXES) == {"/v1", "/static"}
+
+
+def test_strict_profile_blocks_unknown_prefixed_routes(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
+    monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
+    monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
+
+    with TestClient(app) as client:
+        for path in (
+            "/auth/noncanonical-probe",
+            "/gmail/noncanonical-probe",
+            "/api/agent/noncanonical-probe",
+            "/api/ap/noncanonical-probe",
+        ):
+            blocked = client.get(path)
+            assert blocked.status_code == 404
+            assert blocked.json().get("detail") == "endpoint_disabled_in_ap_v1_profile"

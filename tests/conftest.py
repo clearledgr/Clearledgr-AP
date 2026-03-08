@@ -6,6 +6,18 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def allow_in_memory_rate_limit_backend_for_tests(monkeypatch):
+    """Keep test runs independent from external Redis dependencies.
+
+    Production/staging startup enforces Redis-backed rate limiting. Tests toggle
+    ENV frequently and run without Redis, so we opt in to the documented escape
+    hatch unless a test overrides it explicitly.
+    """
+    monkeypatch.setenv("AP_V1_ALLOW_IN_MEMORY_RATE_LIMIT_IN_PRODUCTION", "true")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def reset_rate_limit_store():
     """Reset the in-memory rate-limit counter before every test.
 

@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
 import os
+import re
 import secrets
 from typing import Optional, List, Dict, Any
 from clearledgr.services.auth import get_api_key_optional
@@ -209,12 +210,6 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
 STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/v1",
     "/static",
-    "/api/agent",
-    "/api/ap",
-    "/slack",
-    "/teams",
-    "/gmail",
-    "/auth",
 )
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
@@ -232,10 +227,6 @@ STRICT_PROFILE_ALLOWED_OPS_PATHS = {
     "/api/ops/monitoring-thresholds/check",
     "/api/ops/retry-queue",
 }
-
-STRICT_PROFILE_ALLOWED_OPS_PREFIXES = (
-    "/api/ops/retry-queue/",
-)
 
 STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
     "/extension/triage",
@@ -263,15 +254,6 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
     "/extension/suggestions/amount-validation",
 }
 
-STRICT_PROFILE_ALLOWED_EXTENSION_PREFIXES = (
-    "/extension/invoice-status/",
-    "/extension/invoice-pipeline/",
-    "/extension/workflow/",
-    "/extension/ap/",
-    "/extension/suggestions/form-prefill/",
-    "/extension/needs-info-draft/",
-)
-
 STRICT_PROFILE_ALLOWED_ADMIN_PATHS = {
     "/api/admin/bootstrap",
     "/api/admin/ga-readiness",
@@ -297,10 +279,84 @@ STRICT_PROFILE_ALLOWED_ADMIN_PATHS = {
     "/api/admin/rollback-controls",
     "/api/admin/subscription",
     "/api/admin/subscription/plan",
+    "/api/admin/team/invites",
 }
 
-STRICT_PROFILE_ALLOWED_ADMIN_PREFIXES = (
-    "/api/admin/team/invites",
+STRICT_PROFILE_ALLOWED_AUTH_PATHS = {
+    "/auth/google-identity",
+    "/auth/google/callback",
+    "/auth/google/exchange",
+    "/auth/google/start",
+    "/auth/invites/accept",
+    "/auth/login",
+    "/auth/logout",
+    "/auth/me",
+    "/auth/refresh",
+    "/auth/register",
+    "/auth/users",
+    "/auth/users/invite",
+}
+
+STRICT_PROFILE_ALLOWED_GMAIL_PATHS = {
+    "/gmail/callback",
+    "/gmail/disconnect",
+    "/gmail/push",
+}
+
+STRICT_PROFILE_ALLOWED_AGENT_PATHS = {
+    "/api/agent/intents/execute",
+    "/api/agent/intents/execute-request",
+    "/api/agent/intents/preview",
+    "/api/agent/intents/preview-request",
+    "/api/agent/intents/skills",
+    "/api/agent/policies/browser",
+    "/api/agent/sessions",
+}
+
+STRICT_PROFILE_ALLOWED_AP_PATHS = {
+    "/api/ap/audit/recent",
+    "/api/ap/items/metrics/aggregation",
+    "/api/ap/policies",
+}
+
+STRICT_PROFILE_ALLOWED_INTERACTIVE_CALLBACK_PATHS = {
+    "/slack/invoices/interactive",
+    "/teams/invoices/interactive",
+}
+
+STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"^/api/admin/team/invites/[^/]+/revoke$",
+        r"^/api/agent/intents/skills/[^/]+/readiness$",
+        r"^/api/agent/sessions/[^/]+$",
+        r"^/api/agent/sessions/[^/]+/commands$",
+        r"^/api/agent/sessions/[^/]+/commands/preview$",
+        r"^/api/agent/sessions/[^/]+/complete$",
+        r"^/api/agent/sessions/[^/]+/macros/[^/]+$",
+        r"^/api/agent/sessions/[^/]+/results$",
+        r"^/api/ap/items/[^/]+/audit$",
+        r"^/api/ap/items/[^/]+/context$",
+        r"^/api/ap/items/[^/]+/merge$",
+        r"^/api/ap/items/[^/]+/resubmit$",
+        r"^/api/ap/items/[^/]+/retry-post$",
+        r"^/api/ap/items/[^/]+/sources$",
+        r"^/api/ap/items/[^/]+/sources/link$",
+        r"^/api/ap/items/[^/]+/split$",
+        r"^/api/ap/policies/[^/]+$",
+        r"^/api/ap/policies/[^/]+/audit$",
+        r"^/api/ap/policies/[^/]+/versions$",
+        r"^/api/ops/retry-queue/[^/]+/(retry|skip)$",
+        r"^/auth/users/[^/]+$",
+        r"^/auth/users/[^/]+/role$",
+        r"^/extension/ap/[^/]+/explain$",
+        r"^/extension/invoice-pipeline/[^/]+$",
+        r"^/extension/invoice-status/[^/]+$",
+        r"^/extension/needs-info-draft/[^/]+$",
+        r"^/extension/suggestions/form-prefill/[^/]+$",
+        r"^/extension/workflow/[^/]+$",
+        r"^/gmail/status/[^/]+$",
+    )
 )
 
 
@@ -314,14 +370,18 @@ def _is_strict_profile_allowed_path(path: str) -> bool:
         return True
     if normalized in STRICT_PROFILE_ALLOWED_ADMIN_PATHS:
         return True
-    for prefix in STRICT_PROFILE_ALLOWED_ADMIN_PREFIXES:
-        if normalized == prefix or normalized.startswith(f"{prefix}/"):
-            return True
-    for prefix in STRICT_PROFILE_ALLOWED_OPS_PREFIXES:
-        if normalized.startswith(prefix):
-            return True
-    for prefix in STRICT_PROFILE_ALLOWED_EXTENSION_PREFIXES:
-        if normalized.startswith(prefix):
+    if normalized in STRICT_PROFILE_ALLOWED_AUTH_PATHS:
+        return True
+    if normalized in STRICT_PROFILE_ALLOWED_GMAIL_PATHS:
+        return True
+    if normalized in STRICT_PROFILE_ALLOWED_AGENT_PATHS:
+        return True
+    if normalized in STRICT_PROFILE_ALLOWED_AP_PATHS:
+        return True
+    if normalized in STRICT_PROFILE_ALLOWED_INTERACTIVE_CALLBACK_PATHS:
+        return True
+    for pattern in STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS:
+        if pattern.match(normalized):
             return True
     for prefix in STRICT_PROFILE_ALLOWED_PREFIXES:
         if normalized == prefix or normalized.startswith(f"{prefix}/"):

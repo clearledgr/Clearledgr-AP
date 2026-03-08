@@ -8,6 +8,7 @@ packaged as finance skills and dispatched by intent.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,8 @@ from clearledgr.services.finance_skills import (
     VendorComplianceSkill,
     WorkflowHealthSkill,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class IntentNotSupportedError(ValueError):
@@ -787,8 +790,8 @@ class FinanceAgentRuntime:
         idempotency_key: Optional[str] = None,
         correlation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Run AP invoice processing via canonical InvoiceWorkflowService path."""
-        from clearledgr.services.invoice_workflow import InvoiceData, get_invoice_workflow
+        """Run AP invoice processing through the canonical planning engine path."""
+        from clearledgr.services.invoice_workflow import InvoiceData
 
         invoice = invoice_payload if isinstance(invoice_payload, dict) else {}
         gmail_id = str(invoice.get("gmail_id") or invoice.get("thread_id") or "").strip()
@@ -801,7 +804,6 @@ class FinanceAgentRuntime:
             or None
         )
         invoice_org = str(invoice.get("organization_id") or self.organization_id or "default").strip() or "default"
-        workflow = get_invoice_workflow(invoice_org)
         attachment_list = attachments if isinstance(attachments, list) else []
         attachment_url = ""
         if attachment_list:
@@ -844,7 +846,8 @@ class FinanceAgentRuntime:
         )
 
         # Route through AgentPlanningEngine (Claude tool-use planning loop).
-        # Fallback to direct InvoiceWorkflowService if planner unavailable.
+        # Fail closed if planner is unavailable; never bypass policy gates with
+        # a direct workflow fallback.
         try:
             from clearledgr.core.agent_runtime import get_planning_engine
             from clearledgr.core.skills.base import AgentTask
@@ -867,14 +870,26 @@ class FinanceAgentRuntime:
             response["task_run_id"] = skill_result.task_run_id
             response["step_count"] = skill_result.step_count
             response["agent_status"] = skill_result.status
+            if skill_result.status == "failed":
+                response.setdefault("status", "error")
+                response.setdefault("reason", str(skill_result.error or "agent_planning_failed"))
+            elif skill_result.status == "awaiting_human":
+                response.setdefault("status", "pending_approval")
+            elif skill_result.status == "max_steps_exceeded":
+                response.setdefault("status", "error")
+                response.setdefault("reason", "agent_max_steps_exceeded")
         except Exception as planner_exc:
-            logger.warning(
-                "[FinanceAgentRuntime] planning engine unavailable, falling back to direct workflow: %s",
+            logger.error(
+                "[FinanceAgentRuntime] planning engine unavailable; AP processing failed closed: %s",
                 planner_exc,
             )
-            result = await workflow.process_new_invoice(invoice_data)
-            response = dict(result or {})
-            response["execution_mode"] = "invoice_workflow_service_fallback"
+            response = {
+                "status": "error",
+                "reason": "planning_engine_unavailable",
+                "detail": "AP planner unavailable; no workflow execution was performed.",
+                "execution_mode": "agent_planning_engine",
+                "agent_status": "failed",
+            }
 
         if resolved_idempotency_key:
             response.setdefault("idempotency_key", resolved_idempotency_key)
