@@ -843,22 +843,60 @@ class FinanceAgentRuntime:
             field_confidences=invoice.get("field_confidences") if isinstance(invoice.get("field_confidences"), dict) else None,
         )
 
-        result = await workflow.process_new_invoice(invoice_data)
-        response = dict(result or {})
+        # Route through AgentPlanningEngine (Claude tool-use planning loop).
+        # Fallback to direct InvoiceWorkflowService if planner unavailable.
+        try:
+            from clearledgr.core.agent_runtime import get_planning_engine
+            from clearledgr.core.skills.base import AgentTask
+
+            planner = get_planning_engine()
+            if "ap_invoice_processing" not in planner._skills:
+                raise RuntimeError("APSkill not registered")
+
+            task = AgentTask(
+                task_type="ap_invoice_processing",
+                organization_id=invoice_org,
+                payload={"invoice": invoice_data.__dict__},
+                idempotency_key=resolved_idempotency_key,
+                correlation_id=resolved_correlation_id,
+            )
+            skill_result = await planner.run_task(task)
+
+            response = dict(skill_result.outcome or {})
+            response["execution_mode"] = "agent_planning_engine"
+            response["task_run_id"] = skill_result.task_run_id
+            response["step_count"] = skill_result.step_count
+            response["agent_status"] = skill_result.status
+        except Exception as planner_exc:
+            logger.warning(
+                "[FinanceAgentRuntime] planning engine unavailable, falling back to direct workflow: %s",
+                planner_exc,
+            )
+            result = await workflow.process_new_invoice(invoice_data)
+            response = dict(result or {})
+            response["execution_mode"] = "invoice_workflow_service_fallback"
+
         if resolved_idempotency_key:
             response.setdefault("idempotency_key", resolved_idempotency_key)
         if resolved_correlation_id:
             response.setdefault("correlation_id", resolved_correlation_id)
-        response.setdefault("execution_mode", "invoice_workflow_service")
         return response
 
     async def resume_pending_agent_tasks(self) -> int:
-        """Return count of pending durable retry jobs for this organization."""
+        """Resume interrupted planning engine tasks and count pending retry jobs."""
+        count = 0
+        try:
+            from clearledgr.core.agent_runtime import get_planning_engine
+
+            count += await get_planning_engine().resume_pending_tasks()
+        except Exception:
+            pass
         try:
             jobs = self.db.list_agent_retry_jobs(self.organization_id, status="pending", limit=1000)
-            return len(jobs or [])
+            count += len(jobs or [])
         except Exception:
-            return 0
+            pass
+        return count
 
 
 _PLATFORM_RUNTIME_CACHE: Dict[str, FinanceAgentRuntime] = {}

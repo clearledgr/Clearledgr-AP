@@ -1512,7 +1512,12 @@ async def submit_for_approval(
         # Ensure auto-approve threshold is met
         invoice.confidence = max(invoice.confidence, workflow.auto_approve_threshold)
 
-    result = await workflow.process_new_invoice(invoice)
+    from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
+
+    _ext_runtime = get_platform_finance_runtime(org_id)
+    result = await _ext_runtime.execute_ap_invoice_processing(
+        invoice_payload=invoice.__dict__,
+    )
     
     # Log result
     trail.log(

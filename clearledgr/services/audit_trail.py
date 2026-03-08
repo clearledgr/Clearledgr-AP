@@ -296,14 +296,17 @@ class AuditTrailService:
         return event
     
     def _persist_event(self, invoice_id: str, event: AuditEvent) -> None:
-        """Persist event to database."""
+        """Persist event to database via append_ap_audit_event."""
         try:
-            if hasattr(self.db, 'save_audit_event'):
-                self.db.save_audit_event(
-                    invoice_id=invoice_id,
-                    organization_id=self.organization_id,
-                    event=event.to_dict(),
-                )
+            self.db.append_ap_audit_event({
+                "ap_item_id": invoice_id,
+                "event_type": event.event_type.value if hasattr(event.event_type, 'value') else str(event.event_type),
+                "actor_type": event.actor,
+                "actor_id": event.actor,
+                "organization_id": self.organization_id,
+                "metadata": event.to_dict(),
+                "source": "audit_trail_service",
+            })
         except Exception as e:
             logger.warning(f"Failed to persist audit event: {e}")
     
@@ -313,17 +316,14 @@ class AuditTrailService:
         if invoice_id in self._trails:
             return self._trails[invoice_id]
         
-        # Try to load from database
+        # Try to load from database via list_ap_audit_events
         try:
-            if hasattr(self.db, 'get_audit_trail'):
-                data = self.db.get_audit_trail(
-                    invoice_id=invoice_id,
-                    organization_id=self.organization_id,
-                )
-                if data:
-                    trail = self._dict_to_trail(data)
-                    self._trails[invoice_id] = trail
-                    return trail
+            events = self.db.list_ap_audit_events(invoice_id) or []
+            if events:
+                data = {"invoice_id": invoice_id, "events": events}
+                trail = self._dict_to_trail(data)
+                self._trails[invoice_id] = trail
+                return trail
         except Exception as e:
             logger.warning(f"Failed to load audit trail: {e}")
         

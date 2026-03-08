@@ -19,6 +19,8 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+_ERP_TIMEOUT = 30  # seconds — applied to all outbound ERP HTTP calls
+
 
 _QB_QUERY_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")
 _NS_LIKE_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")
@@ -286,8 +288,8 @@ async def post_to_quickbooks(
     https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/journalentry
     """
     if not connection.access_token or not connection.realm_id:
-        return {"status": "error", "reason": "QuickBooks not properly configured"}
-    
+        return {"status": "error", "erp": "quickbooks", "reason": "QuickBooks not properly configured"}
+
     # Build QuickBooks journal entry format
     qb_entry = {
         "TxnDate": entry.get("date", datetime.now().strftime("%Y-%m-%d")),
@@ -313,7 +315,7 @@ async def post_to_quickbooks(
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/journalentry"
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 url,
                 json=qb_entry,
@@ -328,11 +330,11 @@ async def post_to_quickbooks(
             if response.status_code == 401:
                 # Token expired - would need to refresh
                 logger.warning("QuickBooks token expired, needs refresh")
-                return {"status": "error", "reason": "Token expired", "needs_reauth": True}
-            
+                return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
+
             response.raise_for_status()
             result = response.json()
-            
+
             logger.info(f"Posted to QuickBooks: {result.get('JournalEntry', {}).get('Id')}")
             return {
                 "status": "success",
@@ -355,7 +357,7 @@ async def refresh_quickbooks_token(connection: ERPConnection) -> Optional[str]:
         return None
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
                 data={
@@ -389,8 +391,8 @@ async def post_to_xero(
     https://developer.xero.com/documentation/api/accounting/manualjournals
     """
     if not connection.access_token or not connection.tenant_id:
-        return {"status": "error", "reason": "Xero not properly configured"}
-    
+        return {"status": "error", "erp": "xero", "reason": "Xero not properly configured"}
+
     # Build Xero manual journal format
     xero_journal = {
         "Date": entry.get("date", datetime.now().strftime("%Y-%m-%d")),
@@ -410,7 +412,7 @@ async def post_to_xero(
     url = "https://api.xero.com/api.xro/2.0/ManualJournals"
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 url,
                 json={"ManualJournals": [xero_journal]},
@@ -424,11 +426,11 @@ async def post_to_xero(
             
             if response.status_code == 401:
                 logger.warning("Xero token expired, needs refresh")
-                return {"status": "error", "reason": "Token expired", "needs_reauth": True}
-            
+                return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
+
             response.raise_for_status()
             result = response.json()
-            
+
             journals = result.get("ManualJournals", [])
             if journals:
                 journal_id = journals[0].get("ManualJournalID")
@@ -438,8 +440,8 @@ async def post_to_xero(
                     "erp": "xero",
                     "entry_id": journal_id,
                 }
-            
-            return {"status": "error", "reason": "No journal returned"}
+
+            return {"status": "error", "erp": "xero", "reason": "No journal returned"}
             
     except httpx.HTTPStatusError as e:
         logger.error("Xero API error: %s", e.response.status_code)
@@ -455,7 +457,7 @@ async def refresh_xero_token(connection: ERPConnection) -> Optional[str]:
         return None
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 "https://identity.xero.com/connect/token",
                 data={
@@ -491,8 +493,8 @@ async def post_to_netsuite(
     https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_1544787084.html
     """
     if not connection.account_id:
-        return {"status": "error", "reason": "NetSuite account ID not configured"}
-    
+        return {"status": "error", "erp": "netsuite", "reason": "NetSuite account ID not configured"}
+
     # Build NetSuite journal entry format
     ns_entry = {
         "tranDate": entry.get("date", datetime.now().strftime("%Y-%m-%d")),
@@ -530,7 +532,7 @@ async def post_to_netsuite(
     )
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/journalEntry",
                 json=ns_entry,
@@ -544,8 +546,8 @@ async def post_to_netsuite(
             
             if response.status_code == 401:
                 logger.warning("NetSuite authentication failed")
-                return {"status": "error", "reason": "Authentication failed", "needs_reauth": True}
-            
+                return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
+
             response.raise_for_status()
             result = response.json()
             
@@ -650,7 +652,7 @@ async def get_netsuite_accounts(connection: ERPConnection) -> List[Dict[str, Any
     )
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.get(
                 f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/account",
                 headers={
@@ -691,8 +693,8 @@ async def post_to_sap(
     Uses SAP Business One Service Layer or S/4HANA OData.
     """
     if not connection.access_token or not connection.base_url:
-        return {"status": "error", "reason": "SAP not properly configured"}
-    
+        return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
+
     # Build SAP journal entry format
     sap_entry = {
         "ReferenceDate": entry.get("date", datetime.now().strftime("%Y-%m-%d")),
@@ -716,7 +718,7 @@ async def post_to_sap(
     url = f"{connection.base_url}/JournalEntries"
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 url,
                 json=sap_entry,
@@ -927,6 +929,26 @@ async def post_bill(
 
     if isinstance(result, dict) and idempotency_key and not result.get("idempotency_key"):
         result = {**result, "idempotency_key": idempotency_key}
+
+    # Attachment forwarding (non-fatal)
+    if (
+        isinstance(result, dict)
+        and result.get("status") == "success"
+        and bill.attachment_url
+    ):
+        bill_ref = result.get("bill_id") or result.get("erp_reference") or result.get("reference_id")
+        if bill_ref:
+            try:
+                attach_result = await attach_file_to_erp_bill(
+                    organization_id=organization_id,
+                    bill_id=str(bill_ref),
+                    attachment_url=bill.attachment_url,
+                )
+                if attach_result:
+                    result["attachment_forwarded"] = True
+            except Exception:
+                logger.warning("Attachment forwarding failed (non-fatal)")
+
     return result
 
 
@@ -982,7 +1004,7 @@ async def post_bill_to_quickbooks(
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/bill"
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 url,
                 json=qb_bill,
@@ -1074,7 +1096,7 @@ async def post_bill_to_xero(
     url = "https://api.xero.com/api.xro/2.0/Invoices"
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 url,
                 json={"Invoices": [xero_bill]},
@@ -1166,7 +1188,7 @@ async def post_bill_to_netsuite(
     auth_header = build_netsuite_oauth_header(connection, "POST", url)
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 url,
                 json=ns_bill,
@@ -1305,7 +1327,7 @@ async def post_bill_to_sap(
     # Step 2: Fetch CSRF token (GET with X-CSRF-Token: Fetch header).
     # Step 3: POST /PurchaseInvoices with session cookie + CSRF token.
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             # SAP B1 session login
             login_url = f"{connection.base_url}/Login"
             login_payload = {
@@ -1447,8 +1469,8 @@ async def create_vendor_quickbooks(
 ) -> Dict[str, Any]:
     """Create vendor in QuickBooks."""
     if not connection.access_token or not connection.realm_id:
-        return {"status": "error", "reason": "QuickBooks not configured"}
-    
+        return {"status": "error", "erp": "quickbooks", "reason": "QuickBooks not configured"}
+
     qb_vendor = {
         "DisplayName": vendor.name,
         "PrintOnCheckName": vendor.name,
@@ -1464,7 +1486,7 @@ async def create_vendor_quickbooks(
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/vendor"
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 url,
                 json=qb_vendor,
@@ -1510,7 +1532,7 @@ async def find_vendor_quickbooks(
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.get(
                 url,
                 params={"query": query},
@@ -1540,8 +1562,8 @@ async def create_vendor_xero(
 ) -> Dict[str, Any]:
     """Create vendor (Contact) in Xero."""
     if not connection.access_token or not connection.tenant_id:
-        return {"status": "error", "reason": "Xero not configured"}
-    
+        return {"status": "error", "erp": "xero", "reason": "Xero not configured"}
+
     xero_contact = {
         "Name": vendor.name,
         "IsSupplier": True,
@@ -1562,7 +1584,7 @@ async def create_vendor_xero(
     url = "https://api.xero.com/api.xro/2.0/Contacts"
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 url,
                 json={"Contacts": [xero_contact]},
@@ -1584,7 +1606,7 @@ async def create_vendor_xero(
                     "vendor_id": c.get("ContactID"),
                     "name": c.get("Name"),
                 }
-            return {"status": "error", "reason": "No contact returned"}
+            return {"status": "error", "erp": "xero", "reason": "No contact returned"}
     except Exception as e:
         logger.error("Xero vendor creation error: %s", type(e).__name__)
         return {"status": "error", "erp": "xero", "reason": "vendor_creation_failed"}
@@ -1604,7 +1626,7 @@ async def find_vendor_xero(
     params = {"where": _build_xero_vendor_lookup_where(name_operand=name_operand)}
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.get(
                 url,
                 params=params,
@@ -1638,8 +1660,8 @@ async def create_vendor_netsuite(
 ) -> Dict[str, Any]:
     """Create vendor in NetSuite."""
     if not connection.account_id:
-        return {"status": "error", "reason": "NetSuite not configured"}
-    
+        return {"status": "error", "erp": "netsuite", "reason": "NetSuite not configured"}
+
     ns_vendor = {
         "companyName": vendor.name,
         "entityId": vendor.name.replace(" ", "_")[:32],  # External ID
@@ -1654,7 +1676,7 @@ async def create_vendor_netsuite(
     auth_header = build_netsuite_oauth_header(connection, "POST", url)
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 url,
                 json=ns_vendor,
@@ -1700,7 +1722,7 @@ async def find_vendor_netsuite(
     auth_header = build_netsuite_oauth_header(connection, "POST", url)
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 url,
                 json={"q": query},
@@ -1734,8 +1756,8 @@ async def create_vendor_sap(
 ) -> Dict[str, Any]:
     """Create vendor (Business Partner) in SAP."""
     if not connection.access_token or not connection.base_url:
-        return {"status": "error", "reason": "SAP not configured"}
-    
+        return {"status": "error", "erp": "sap", "reason": "SAP not configured"}
+
     sap_bp = {
         "CardName": vendor.name,
         "CardType": "cSupplier",
@@ -1746,7 +1768,7 @@ async def create_vendor_sap(
     url = f"{connection.base_url}/BusinessPartners"
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.post(
                 url,
                 json=sap_bp,
@@ -1790,7 +1812,7 @@ async def find_vendor_sap(
     params = {"$filter": " and ".join(filters), "$top": 1}
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
             response = await client.get(
                 url,
                 params=params,
@@ -1853,5 +1875,460 @@ async def get_or_create_vendor(
             "vendor_id": result["vendor_id"],
             "name": vendor.name,
         }
-    
+
     return result
+
+
+# ==================== BILL LOOKUP (ERP PRE-FLIGHT) ====================
+
+
+async def find_bill_quickbooks(
+    connection: ERPConnection,
+    invoice_number: str,
+) -> Optional[Dict[str, Any]]:
+    """Check if a bill with this invoice number already exists in QuickBooks."""
+    if not connection.access_token or not connection.realm_id:
+        return None
+    safe_number = _sanitize_quickbooks_like_operand(invoice_number)
+    if not safe_number:
+        return None
+    literal = _escape_query_literal(safe_number)
+    query = f"SELECT Id, DocNumber, TotalAmt FROM Bill WHERE DocNumber = '{literal}'"
+    url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                params={"query": query},
+                headers={"Authorization": f"Bearer {connection.access_token}"},
+                timeout=30,
+            )
+            response.raise_for_status()
+            bills = response.json().get("QueryResponse", {}).get("Bill", [])
+            if bills:
+                b = bills[0]
+                return {
+                    "bill_id": b.get("Id"),
+                    "doc_number": b.get("DocNumber"),
+                    "amount": b.get("TotalAmt"),
+                    "erp": "quickbooks",
+                }
+    except Exception as e:
+        logger.error("QuickBooks bill lookup error: %s", e)
+    return None
+
+
+async def find_bill_xero(
+    connection: ERPConnection,
+    invoice_number: str,
+) -> Optional[Dict[str, Any]]:
+    """Check if a bill (accounts payable invoice) already exists in Xero."""
+    if not connection.access_token or not connection.tenant_id:
+        return None
+    safe_number = _sanitize_xero_where_operand(invoice_number)
+    if not safe_number:
+        return None
+    literal = _escape_query_literal(safe_number)
+    where_clause = f'Type=="ACCPAY" AND InvoiceNumber=="{literal}"'
+    url = "https://api.xero.com/api.xro/2.0/Invoices"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                params={"where": where_clause},
+                headers={
+                    "Authorization": f"Bearer {connection.access_token}",
+                    "xero-tenant-id": connection.tenant_id,
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            invoices = response.json().get("Invoices", [])
+            if invoices:
+                inv = invoices[0]
+                return {
+                    "bill_id": inv.get("InvoiceID"),
+                    "doc_number": inv.get("InvoiceNumber"),
+                    "amount": inv.get("Total"),
+                    "erp": "xero",
+                }
+    except Exception as e:
+        logger.error("Xero bill lookup error: %s", e)
+    return None
+
+
+async def find_bill_netsuite(
+    connection: ERPConnection,
+    invoice_number: str,
+) -> Optional[Dict[str, Any]]:
+    """Check if a vendor bill already exists in NetSuite."""
+    if not connection.account_id:
+        return None
+    safe_number = _sanitize_netsuite_like_operand(invoice_number)
+    if not safe_number:
+        return None
+    literal = _escape_query_literal(safe_number)
+    query = (
+        f"SELECT id, tranid, amount FROM transaction "
+        f"WHERE tranid = '{literal}' AND type = 'VendBill' "
+        f"FETCH FIRST 1 ROWS ONLY"
+    )
+    url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/query/v1/suiteql"
+    auth_header = build_netsuite_oauth_header(connection, "POST", url)
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.post(
+                url,
+                json={"q": query},
+                headers={
+                    "Authorization": auth_header,
+                    "Content-Type": "application/json",
+                    "Prefer": "transient",
+                },
+                timeout=60,
+            )
+            response.raise_for_status()
+            items = response.json().get("items", [])
+            if items:
+                row = items[0]
+                return {
+                    "bill_id": str(row.get("id")),
+                    "doc_number": row.get("tranid"),
+                    "amount": row.get("amount"),
+                    "erp": "netsuite",
+                }
+    except Exception as e:
+        logger.error("NetSuite bill lookup error: %s", e)
+    return None
+
+
+async def find_bill_sap(
+    connection: ERPConnection,
+    invoice_number: str,
+) -> Optional[Dict[str, Any]]:
+    """Check if a purchase invoice already exists in SAP."""
+    if not connection.access_token or not connection.base_url:
+        return None
+    safe_number = _sanitize_odata_value(invoice_number)
+    if not safe_number:
+        return None
+    url = f"{connection.base_url}/PurchaseInvoices"
+    params = {
+        "$filter": f"NumAtCard eq '{safe_number}'",
+        "$top": "1",
+        "$select": "DocEntry,NumAtCard,DocTotal",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                params=params,
+                headers={"Authorization": f"Bearer {connection.access_token}"},
+                timeout=60,
+            )
+            response.raise_for_status()
+            items = response.json().get("value", [])
+            if items:
+                row = items[0]
+                return {
+                    "bill_id": str(row.get("DocEntry")),
+                    "doc_number": row.get("NumAtCard"),
+                    "amount": row.get("DocTotal"),
+                    "erp": "sap",
+                }
+    except Exception as e:
+        logger.error("SAP bill lookup error: %s", e)
+    return None
+
+
+# ==================== ERP PRE-FLIGHT ORCHESTRATOR ====================
+
+
+_BILL_FINDERS = {
+    "quickbooks": find_bill_quickbooks,
+    "xero": find_bill_xero,
+    "netsuite": find_bill_netsuite,
+    "sap": find_bill_sap,
+}
+
+_VENDOR_FINDERS = {
+    "quickbooks": find_vendor_quickbooks,
+    "xero": find_vendor_xero,
+    "netsuite": find_vendor_netsuite,
+    "sap": find_vendor_sap,
+}
+
+
+async def erp_preflight_check(
+    organization_id: str,
+    vendor_name: Optional[str] = None,
+    invoice_number: Optional[str] = None,
+    gl_codes: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Non-blocking ERP pre-flight check run during the validation gate.
+
+    Checks vendor existence, bill duplicate, and GL mapping validity.
+    Each check is independently wrapped — one failure does not block others.
+    Returns None-valued fields for checks that were not run.
+    """
+    result: Dict[str, Any] = {
+        "vendor_exists": None,
+        "vendor_erp_id": None,
+        "bill_exists": None,
+        "bill_erp_ref": None,
+        "gl_valid": None,
+        "invalid_gl_codes": [],
+        "erp_type": None,
+        "erp_available": False,
+        "checks_run": [],
+    }
+
+    connection = get_erp_connection(organization_id)
+    if not connection:
+        return result
+
+    result["erp_type"] = connection.type
+    result["erp_available"] = True
+
+    # 1. Vendor existence check
+    if vendor_name:
+        finder = _VENDOR_FINDERS.get(connection.type)
+        if finder:
+            try:
+                vendor = await finder(connection, name=vendor_name)
+                result["vendor_exists"] = vendor is not None
+                if vendor:
+                    result["vendor_erp_id"] = vendor.get("vendor_id")
+                result["checks_run"].append("vendor_lookup")
+            except Exception as e:
+                logger.warning("ERP preflight vendor check failed (non-fatal): %s", e)
+
+    # 2. Bill duplicate check
+    if invoice_number:
+        finder = _BILL_FINDERS.get(connection.type)
+        if finder:
+            try:
+                bill = await finder(connection, invoice_number)
+                result["bill_exists"] = bill is not None
+                if bill:
+                    result["bill_erp_ref"] = bill
+                result["checks_run"].append("bill_lookup")
+            except Exception as e:
+                logger.warning("ERP preflight bill check failed (non-fatal): %s", e)
+
+    # 3. GL code validation against org mapping
+    if gl_codes:
+        gl_map = _get_org_gl_map(organization_id)
+        if gl_map:
+            valid_codes = set(gl_map.values())
+            invalid = [c for c in gl_codes if c not in valid_codes]
+            result["gl_valid"] = len(invalid) == 0
+            result["invalid_gl_codes"] = invalid
+            result["checks_run"].append("gl_validation")
+
+    return result
+
+
+async def verify_bill_posted(
+    organization_id: str,
+    invoice_number: str,
+    expected_amount: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Verify a bill actually exists in the ERP after posting.
+
+    Reuses the ``find_bill_*`` functions built for pre-flight checks.
+    Returns ``{"verified": bool, "bill": ..., "erp_type": str, "reason": str}``.
+
+    Non-fatal by design — callers should default to ``verified=True`` on error
+    so the pipeline is never blocked by a verification failure.
+    """
+    org_id = str(organization_id or "").strip() or "default"
+    inv_num = str(invoice_number or "").strip()
+    if not inv_num:
+        return {"verified": False, "bill": None, "erp_type": None, "reason": "no_invoice_number"}
+
+    connection = get_erp_connection(org_id)
+    if not connection:
+        return {"verified": True, "bill": None, "erp_type": None, "reason": "no_erp_connection"}
+
+    erp_type = str(connection.type or "").strip().lower()
+    finder = _BILL_FINDERS.get(erp_type)
+    if not finder:
+        return {"verified": True, "bill": None, "erp_type": erp_type, "reason": "no_finder_for_erp"}
+
+    try:
+        bill = await finder(connection, inv_num)
+    except Exception as exc:
+        logger.warning("Post-posting verification lookup failed: %s", exc)
+        return {"verified": True, "bill": None, "erp_type": erp_type, "reason": f"lookup_error:{exc}"}
+
+    if not bill:
+        return {"verified": False, "bill": None, "erp_type": erp_type, "reason": "bill_not_found_in_erp"}
+
+    # Amount tolerance check (± 0.01 to handle rounding)
+    if expected_amount is not None:
+        erp_amount = bill.get("amount")
+        if erp_amount is not None and abs(float(erp_amount) - float(expected_amount)) > 0.01:
+            return {
+                "verified": False,
+                "bill": bill,
+                "erp_type": erp_type,
+                "reason": f"amount_mismatch:expected={expected_amount},got={erp_amount}",
+            }
+
+    return {"verified": True, "bill": bill, "erp_type": erp_type, "reason": "confirmed"}
+
+
+# ---------------------------------------------------------------------------
+# Attachment forwarding — upload invoice PDF to ERP bill after posting
+# ---------------------------------------------------------------------------
+
+async def _download_attachment(url: str) -> Optional[bytes]:
+    """Download file bytes from a URL. Returns None on failure."""
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.content
+    except Exception as exc:
+        logger.warning("Attachment download failed from %s: %s", url, exc)
+        return None
+
+
+async def _attach_to_quickbooks(
+    connection: ERPConnection, bill_id: str, file_bytes: bytes, filename: str,
+) -> Optional[Dict[str, Any]]:
+    """Upload attachment to a QuickBooks Bill via the Attachable API."""
+    creds = connection.credentials or {}
+    access_token = creds.get("access_token", "")
+    realm_id = creds.get("realm_id", "")
+    base_url = creds.get("base_url", "https://quickbooks.api.intuit.com")
+    if not access_token or not realm_id:
+        return None
+    url = f"{base_url}/v3/company/{realm_id}/upload?minorversion=73"
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+    import io
+    files = {"file_content_01": (filename, io.BytesIO(file_bytes), "application/pdf")}
+    metadata = json.dumps({
+        "AttachableRef": [{"EntityRef": {"type": "Bill", "value": bill_id}}],
+        "FileName": filename,
+        "ContentType": "application/pdf",
+    })
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, headers=headers, files=files, data={"file_metadata_01": metadata})
+        resp.raise_for_status()
+    return {"attached": True, "erp": "quickbooks"}
+
+
+async def _attach_to_xero(
+    connection: ERPConnection, bill_id: str, file_bytes: bytes, filename: str,
+) -> Optional[Dict[str, Any]]:
+    """Upload attachment to a Xero ACCPAY Invoice."""
+    creds = connection.credentials or {}
+    access_token = creds.get("access_token", "")
+    tenant_id = creds.get("tenant_id", "")
+    if not access_token or not tenant_id:
+        return None
+    safe_name = _sanitize_xero_where_operand(filename) or "invoice.pdf"
+    url = f"https://api.xero.com/api.xro/2.0/Invoices/{bill_id}/Attachments/{safe_name}"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "xero-tenant-id": tenant_id,
+        "Content-Type": "application/pdf",
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.put(url, headers=headers, content=file_bytes)
+        resp.raise_for_status()
+    return {"attached": True, "erp": "xero"}
+
+
+async def _attach_to_netsuite(
+    connection: ERPConnection, bill_id: str, file_bytes: bytes, filename: str,
+) -> Optional[Dict[str, Any]]:
+    """Upload attachment to a NetSuite VendorBill."""
+    creds = connection.credentials or {}
+    account_id = creds.get("account_id", "")
+    if not account_id:
+        return None
+    import base64
+    encoded = base64.b64encode(file_bytes).decode()
+    base_url = f"https://{account_id}.suitetalk.api.netsuite.com"
+    url = f"{base_url}/services/rest/record/v1/vendorbill/{bill_id}/file"
+    headers = build_netsuite_oauth_header(connection, url, "POST")
+    headers["Content-Type"] = "application/json"
+    payload = {"name": filename, "content": encoded}
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+    return {"attached": True, "erp": "netsuite"}
+
+
+async def _attach_to_sap(
+    connection: ERPConnection, bill_id: str, file_bytes: bytes, filename: str,
+) -> Optional[Dict[str, Any]]:
+    """Upload attachment to a SAP Business One PurchaseInvoice."""
+    creds = connection.credentials or {}
+    base_url = str(creds.get("base_url") or "").rstrip("/")
+    session_id = creds.get("session_id", "")
+    if not base_url or not session_id:
+        return None
+    import base64
+    encoded = base64.b64encode(file_bytes).decode()
+    url = f"{base_url}/Attachments2"
+    headers = {"Cookie": f"B1SESSION={session_id}", "Content-Type": "application/json"}
+    payload = {
+        "Attachments2_Lines": [{
+            "SourcePath": filename,
+            "FileName": filename,
+            "FileExtension": "pdf",
+            "Override": "tNO",
+        }],
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Create attachment record
+        resp = await client.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+    return {"attached": True, "erp": "sap"}
+
+
+_ATTACHMENT_UPLOADERS = {
+    "quickbooks": _attach_to_quickbooks,
+    "xero": _attach_to_xero,
+    "netsuite": _attach_to_netsuite,
+    "sap": _attach_to_sap,
+}
+
+
+async def attach_file_to_erp_bill(
+    organization_id: str,
+    bill_id: str,
+    attachment_url: str,
+    filename: str = "invoice.pdf",
+) -> Optional[Dict[str, Any]]:
+    """Download an attachment and upload it to the ERP bill.
+
+    Returns ``{"attached": True, "erp": str}`` on success, ``None`` on failure.
+    Non-fatal — callers should treat None as a warning, never block on it.
+    """
+    connection = get_erp_connection(organization_id)
+    if not connection:
+        return None
+
+    erp_type = str(connection.type or "").strip().lower()
+    uploader = _ATTACHMENT_UPLOADERS.get(erp_type)
+    if not uploader:
+        logger.info("No attachment uploader for ERP type: %s", erp_type)
+        return None
+
+    file_bytes = await _download_attachment(attachment_url)
+    if not file_bytes:
+        return None
+
+    try:
+        return await uploader(connection, bill_id, file_bytes, filename)
+    except Exception as exc:
+        logger.warning("Attachment upload to %s failed: %s", erp_type, exc)
+        return None

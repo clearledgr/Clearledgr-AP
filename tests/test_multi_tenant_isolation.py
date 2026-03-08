@@ -58,7 +58,7 @@ def _item_payload(
     *,
     item_id: str,
     org_id: str,
-    state: str = "pending_review",
+    state: str = "received",
     amount: float = 500.0,
 ) -> dict:
     return {

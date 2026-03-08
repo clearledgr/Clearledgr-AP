@@ -198,7 +198,7 @@ class AgentReflection:
                 numeric = re.sub(r'[^\d.]', '', match)
                 try:
                     found_amounts.append(float(numeric))
-                except:
+                except Exception:
                     pass
         
         if not found_amounts:
@@ -279,7 +279,7 @@ class AgentReflection:
                 days_diff = (due_dt - inv_dt).days
                 if days_diff > 365:
                     issues.append(f"Due date is {days_diff} days after invoice date - unusually long")
-            except:
+            except Exception:
                 pass
         
         return issues

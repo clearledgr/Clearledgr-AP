@@ -318,7 +318,7 @@ class ProactiveInsightsService:
         yesterday = self._get_spending_for_period(days_ago_start=2, days_ago_end=1)
         today_total = sum(today.values())
         yesterday_total = sum(yesterday.values())
-        today_count = self._get_invoice_count(days=1)
+        today_count = len(today)
 
         if today_total > 0:
             insights.append(Insight(
@@ -382,28 +382,24 @@ class ProactiveInsightsService:
     def _get_vendor_history(self, vendor: str, days: int = 90) -> List[Dict[str, Any]]:
         """Get historical invoices for a vendor."""
         try:
-            if hasattr(self.db, 'get_invoices_by_vendor'):
-                return self.db.get_invoices_by_vendor(
-                    vendor=vendor,
-                    organization_id=self.organization_id,
-                    days=days,
-                ) or []
-        except:
-            pass
-        return []
-    
+            return self.db.get_ap_items_by_vendor(
+                organization_id=self.organization_id,
+                vendor_name=vendor,
+                days=days,
+            ) or []
+        except Exception:
+            return []
+
     def _get_recent_spending(self, days: int = 30) -> Dict[str, float]:
         """Get spending by vendor for recent period."""
         try:
-            if hasattr(self.db, 'get_spending_by_vendor'):
-                return self.db.get_spending_by_vendor(
-                    organization_id=self.organization_id,
-                    days=days,
-                ) or {}
-        except:
-            pass
-        return {}
-    
+            return self.db.get_spending_by_vendor(
+                organization_id=self.organization_id,
+                days=days,
+            ) or {}
+        except Exception:
+            return {}
+
     def _get_spending_for_period(
         self,
         days_ago_start: int,
@@ -411,15 +407,13 @@ class ProactiveInsightsService:
     ) -> Dict[str, float]:
         """Get spending for a specific period."""
         try:
-            if hasattr(self.db, 'get_spending_for_period'):
-                return self.db.get_spending_for_period(
-                    organization_id=self.organization_id,
-                    days_ago_start=days_ago_start,
-                    days_ago_end=days_ago_end,
-                ) or {}
-        except:
-            pass
-        return {}
+            return self.db.get_spending_for_period(
+                organization_id=self.organization_id,
+                days_ago_start=days_ago_start,
+                days_ago_end=days_ago_end,
+            ) or {}
+        except Exception:
+            return {}
     
     def _check_spending_spike(
         self,
@@ -482,7 +476,7 @@ class ProactiveInsightsService:
                         created = datetime.fromisoformat(created.replace("Z", "+00:00"))
                     if created.replace(tzinfo=None) >= cutoff:
                         recent_count += 1
-                except:
+                except Exception:
                     pass
         
         if recent_count >= 3:
@@ -508,14 +502,12 @@ class ProactiveInsightsService:
     def _get_upcoming_due(self) -> List[Dict[str, Any]]:
         """Get invoices due in next 7 days."""
         try:
-            if hasattr(self.db, 'get_upcoming_due'):
-                return self.db.get_upcoming_due(
-                    organization_id=self.organization_id,
-                    days=7,
-                ) or []
-        except:
-            pass
-        return []
+            return self.db.get_upcoming_due(
+                organization_id=self.organization_id,
+                days=7,
+            ) or []
+        except Exception:
+            return []
     
     def _find_recurring_patterns(self) -> List[Dict[str, Any]]:
         """Find recurring expenses that could be optimized."""

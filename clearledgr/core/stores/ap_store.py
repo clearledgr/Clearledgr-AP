@@ -1961,3 +1961,101 @@ class APStore:
         if "metadata_json" in row and "metadata" not in row:
             row["metadata"] = row.get("metadata_json") or {}
         return row
+
+    # ------------------------------------------------------------------ #
+    # Ancillary query helpers (vendor spending, upcoming due)             #
+    # ------------------------------------------------------------------ #
+
+    def get_ap_items_by_vendor(
+        self, organization_id: str, vendor_name: str, days: int = 90, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """AP items for a vendor within a date window."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).isoformat()
+        sql = self._prepare_sql(
+            "SELECT * FROM ap_items WHERE organization_id = ? AND vendor_name = ? "
+            "AND created_at >= ? ORDER BY created_at DESC LIMIT ?"
+        )
+        try:
+            with self.connect() as conn:
+                if self.use_postgres:
+                    cur = conn.cursor()
+                    cur.execute(sql, (organization_id, vendor_name, cutoff, limit))
+                    return [dict(r) for r in cur.fetchall()]
+                else:
+                    conn.row_factory = __import__("sqlite3").Row
+                    cur = conn.cursor()
+                    cur.execute(sql, (organization_id, vendor_name, cutoff, limit))
+                    return [dict(r) for r in cur.fetchall()]
+        except Exception as exc:
+            logger.warning("[APStore] get_ap_items_by_vendor failed: %s", exc)
+            return []
+
+    def get_spending_by_vendor(
+        self, organization_id: str, days: int = 30
+    ) -> Dict[str, float]:
+        """Spending grouped by vendor for a time window. Returns {vendor: total}."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).isoformat()
+        sql = self._prepare_sql(
+            "SELECT vendor_name, SUM(amount) as total "
+            "FROM ap_items WHERE organization_id = ? "
+            "AND created_at >= ? AND amount IS NOT NULL "
+            "GROUP BY vendor_name ORDER BY total DESC"
+        )
+        try:
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, cutoff))
+                return {row[0]: float(row[1] or 0) for row in cur.fetchall() if row[0]}
+        except Exception as exc:
+            logger.warning("[APStore] get_spending_by_vendor failed: %s", exc)
+            return {}
+
+    def get_spending_for_period(
+        self, organization_id: str, days_ago_start: int, days_ago_end: int
+    ) -> Dict[str, float]:
+        """Spending grouped by vendor for a specific past period."""
+        now = datetime.now(timezone.utc)
+        start = (now - timedelta(days=max(1, days_ago_start))).isoformat()
+        end = (now - timedelta(days=max(0, days_ago_end))).isoformat()
+        sql = self._prepare_sql(
+            "SELECT vendor_name, SUM(amount) as total "
+            "FROM ap_items WHERE organization_id = ? "
+            "AND created_at >= ? AND created_at < ? AND amount IS NOT NULL "
+            "GROUP BY vendor_name ORDER BY total DESC"
+        )
+        try:
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, start, end))
+                return {row[0]: float(row[1] or 0) for row in cur.fetchall() if row[0]}
+        except Exception as exc:
+            logger.warning("[APStore] get_spending_for_period failed: %s", exc)
+            return {}
+
+    def get_upcoming_due(
+        self, organization_id: str, days: int = 7
+    ) -> List[Dict[str, Any]]:
+        """AP items with due_date within N days that aren't yet posted."""
+        now = datetime.now(timezone.utc)
+        today = now.strftime("%Y-%m-%d")
+        horizon = (now + timedelta(days=max(1, days))).strftime("%Y-%m-%d")
+        sql = self._prepare_sql(
+            "SELECT * FROM ap_items WHERE organization_id = ? "
+            "AND due_date IS NOT NULL AND due_date >= ? AND due_date <= ? "
+            "AND state NOT IN ('posted_to_erp', 'rejected', 'closed') "
+            "ORDER BY due_date ASC LIMIT 50"
+        )
+        try:
+            with self.connect() as conn:
+                if self.use_postgres:
+                    cur = conn.cursor()
+                    cur.execute(sql, (organization_id, today, horizon))
+                    return [dict(r) for r in cur.fetchall()]
+                else:
+                    conn.row_factory = __import__("sqlite3").Row
+                    cur = conn.cursor()
+                    cur.execute(sql, (organization_id, today, horizon))
+                    return [dict(r) for r in cur.fetchall()]
+        except Exception as exc:
+            logger.warning("[APStore] get_upcoming_due failed: %s", exc)
+            return []

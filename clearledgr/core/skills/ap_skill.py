@@ -13,7 +13,7 @@ Each handler:
   - Accepts **kwargs (extra args from Claude are silently ignored).
   - Accepts organization_id injected by the runtime.
   - NEVER raises — returns {"ok": False, "error": "..."} on failure.
-  - Sets {"is_hitl_pause": True} when a human decision is required (runtime maps to "awaiting_human").
+  - Sets {"is_awaiting_human": True} when a human decision is required (runtime pauses for HITL).
 """
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ async def _handle_enrich_with_context(
     organization_id: str = "default",
     **_kwargs,
 ) -> Dict[str, Any]:
-    """Fetch vendor history, correction learning, and priority for the invoice."""
+    """Fetch vendor history, correction learning, reflection, and reasoning for the invoice."""
     try:
         from clearledgr.core.database import get_db
         from clearledgr.services.correction_learning import get_correction_learning_service
@@ -55,12 +55,60 @@ async def _handle_enrich_with_context(
         invoice = _build_invoice(invoice_payload)
         db = get_db()
 
+        # --- Gap 3: Self-reflection validates extraction before enrichment ---
+        reflection_data: Dict[str, Any] = {}
+        invoice_text = getattr(invoice, "invoice_text", "") or ""
+        try:
+            from clearledgr.services.agent_reflection import get_agent_reflection
+
+            if invoice_text:
+                reflection = get_agent_reflection()
+                reflection_result = reflection.reflect_on_extraction(
+                    extraction={
+                        "vendor": invoice.vendor_name,
+                        "total_amount": invoice.amount,
+                        "due_date": getattr(invoice, "due_date", None),
+                        "invoice_number": getattr(invoice, "invoice_number", None),
+                        "currency": getattr(invoice, "currency", "USD"),
+                    },
+                    original_text=invoice_text,
+                )
+                reflection_data = {
+                    "self_verified": reflection_result.self_verified,
+                    "corrections_made": reflection_result.corrections_made,
+                    "issues_found": reflection_result.issues_found,
+                    "confidence_adjustment": reflection_result.confidence_adjustment,
+                    "reflection_notes": reflection_result.reflection_notes,
+                }
+        except Exception as refl_exc:
+            logger.debug("[APSkill] reflection skipped: %s", refl_exc)
+
+        # --- Vendor enrichment (existing) ---
         vendor_profile = db.get_vendor_profile(organization_id, invoice.vendor_name) or {}
         vendor_history = db.get_vendor_invoice_history(organization_id, invoice.vendor_name, limit=6) or []
         decision_feedback = db.get_vendor_decision_feedback(organization_id, invoice.vendor_name) or []
 
         correction_svc = get_correction_learning_service(organization_id)
         correction_suggestions = correction_svc.suggest(invoice.vendor_name, invoice.amount)
+
+        # --- Gap 2: Reasoning factors provide contextual enrichment ---
+        reasoning_data: Dict[str, Any] = {}
+        try:
+            from clearledgr.services.agent_reasoning import get_reasoning_agent
+
+            if invoice_text:
+                agent = get_reasoning_agent(organization_id)
+                decision = agent.reason_about_invoice(invoice_text)
+                reasoning_data = {
+                    "reasoning_factors": [
+                        {"name": f.name, "score": f.score, "explanation": f.explanation}
+                        for f in (decision.factors or [])
+                    ],
+                    "reasoning_risks": decision.risks or [],
+                    "reasoning_confidence": decision.confidence,
+                }
+        except Exception as reason_exc:
+            logger.debug("[APSkill] reasoning skipped: %s", reason_exc)
 
         return {
             "ok": True,
@@ -70,6 +118,8 @@ async def _handle_enrich_with_context(
             "correction_suggestions": correction_suggestions,
             "vendor_name": invoice.vendor_name,
             "amount": invoice.amount,
+            "reflection": reflection_data,
+            "reasoning": reasoning_data,
         }
     except Exception as exc:
         logger.warning("[APSkill] enrich_with_context failed: %s", exc)
@@ -87,7 +137,7 @@ async def _handle_run_validation_gate(
 
         invoice = _build_invoice(invoice_payload)
         workflow = get_invoice_workflow(organization_id)
-        gate = workflow._evaluate_deterministic_validation(invoice)
+        gate = await workflow._evaluate_deterministic_validation(invoice)
         passed = not gate.get("failed", False)
         return {
             "ok": True,
@@ -153,16 +203,19 @@ async def _handle_execute_routing(
     recommendation: str = "escalate",
     confidence: float = 0.0,
     reason: str = "",
+    risk_flags: Optional[list] = None,
+    info_needed: Optional[str] = None,
     organization_id: str = "default",
     **_kwargs,
 ) -> Dict[str, Any]:
     """Route invoice: auto-approve or request human review (HITL pause).
 
-    Sets invoice.confidence based on the recommendation before handing off
-    to process_new_invoice, which determines the actual routing path.
+    Passes the pre-computed AP decision from the planning loop into
+    process_new_invoice so that Claude Sonnet is NOT called a second time.
     """
     try:
         from clearledgr.services.invoice_workflow import get_invoice_workflow
+        from clearledgr.services.ap_decision import APDecision
 
         invoice = _build_invoice(invoice_payload)
         workflow = get_invoice_workflow(organization_id)
@@ -177,7 +230,20 @@ async def _handle_execute_routing(
             # Anything below threshold → workflow sends for human review
             invoice.confidence = min(confidence, APPROVAL_THRESHOLD - 0.01)
 
-        result = await workflow.process_new_invoice(invoice)
+        # Build pre-computed APDecision so process_new_invoice skips its
+        # internal _get_ap_decision() call (avoids double Sonnet invocation).
+        pre_computed_decision = APDecision(
+            recommendation=recommendation,
+            reasoning=reason or f"Agent planning loop decided: {recommendation}",
+            confidence=confidence,
+            info_needed=info_needed,
+            risk_flags=risk_flags or [],
+            vendor_context_used={},
+            model="agent_planning_loop",
+            fallback=False,
+        )
+
+        result = await workflow.process_new_invoice(invoice, ap_decision=pre_computed_decision)
         needs_human = result.get("status") in (
             "pending_approval", "needs_info", "escalated", "failed"
         )
@@ -186,7 +252,7 @@ async def _handle_execute_routing(
             "status": result.get("status"),
             "invoice_id": result.get("invoice_id"),
             "recommendation": recommendation,
-            "is_hitl_pause": needs_human,
+            "is_awaiting_human": needs_human,
             "hitl_context": {
                 "invoice_id": result.get("invoice_id"),
                 "recommendation": recommendation,
@@ -301,6 +367,15 @@ class APSkill(FinanceSkill):
                         "reason": {
                             "type": "string",
                             "description": "Brief reason for the routing decision.",
+                        },
+                        "risk_flags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Risk flags from get_ap_decision.",
+                        },
+                        "info_needed": {
+                            "type": "string",
+                            "description": "If needs_info: the question to ask the vendor.",
                         },
                     },
                     "required": ["invoice_payload", "recommendation"],

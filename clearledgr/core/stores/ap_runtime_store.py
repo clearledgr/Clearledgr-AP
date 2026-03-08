@@ -80,11 +80,29 @@ CREATE TABLE IF NOT EXISTS gl_accounts (
 )
 """
 
+_CLARIFYING_QUESTIONS_SQL = """
+CREATE TABLE IF NOT EXISTS clarifying_questions (
+    id TEXT PRIMARY KEY,
+    invoice_id TEXT,
+    question_type TEXT,
+    question_text TEXT,
+    options_json TEXT,
+    slack_ts TEXT,
+    slack_channel TEXT,
+    response TEXT,
+    status TEXT DEFAULT 'pending',
+    organization_id TEXT,
+    created_at TEXT,
+    responded_at TEXT
+)
+"""
+
 AP_RUNTIME_COMPAT_TABLES = [
     _TRANSACTIONS_SQL,
     _FINANCE_EMAILS_SQL,
     _GL_CORRECTIONS_SQL,
     _GL_ACCOUNTS_SQL,
+    _CLARIFYING_QUESTIONS_SQL,
 ]
 
 
@@ -389,8 +407,8 @@ class APRuntimeStore:
                 """
                 INSERT INTO gl_corrections
                     (id, invoice_id, vendor, original_gl, corrected_gl, reason,
-                     was_correct, confidence_impact, corrected_by, organization_id, corrected_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                     was_correct, corrected_by, organization_id, corrected_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
                 """
             )
             cur.execute(
@@ -403,7 +421,6 @@ class APRuntimeStore:
                     correction_dict.get("corrected_gl", ""),
                     correction_dict.get("reason", ""),
                     correction_dict.get("was_correct", 0),
-                    correction_dict.get("confidence_impact", 0.0),
                     correction_dict.get("corrected_by", ""),
                     organization_id,
                     now,
@@ -425,10 +442,61 @@ class APRuntimeStore:
         return [dict(row) for row in rows]
 
     def get_gl_stats(self, organization_id: str) -> Dict[str, Any]:
-        corrections = self.get_gl_corrections(organization_id, limit=10000)
+        from datetime import datetime, timedelta, timezone
+
+        count_sql = self._prepare_sql(
+            "SELECT COUNT(*) FROM gl_corrections WHERE organization_id=?"
+        )
+        vendor_sql = self._prepare_sql(
+            "SELECT vendor, COUNT(*) as correction_count "
+            "FROM gl_corrections WHERE organization_id=? "
+            "GROUP BY vendor ORDER BY correction_count DESC LIMIT 10"
+        )
+        remap_sql = self._prepare_sql(
+            "SELECT original_gl, corrected_gl, COUNT(*) as freq "
+            "FROM gl_corrections WHERE organization_id=? "
+            "GROUP BY original_gl, corrected_gl ORDER BY freq DESC LIMIT 10"
+        )
+        now = datetime.now(timezone.utc)
+        last_30 = (now - timedelta(days=30)).isoformat()
+        prior_30 = (now - timedelta(days=60)).isoformat()
+        trend_sql = self._prepare_sql(
+            "SELECT "
+            "SUM(CASE WHEN corrected_at >= ? THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN corrected_at >= ? AND corrected_at < ? THEN 1 ELSE 0 END) "
+            "FROM gl_corrections WHERE organization_id=?"
+        )
+
+        with self.connect() as conn:
+            cur = conn.cursor()
+
+            cur.execute(count_sql, (organization_id,))
+            total = (cur.fetchone() or (0,))[0] or 0
+
+            cur.execute(vendor_sql, (organization_id,))
+            by_vendor = [
+                {"vendor": row[0], "correction_count": row[1]}
+                for row in cur.fetchall()
+            ]
+
+            cur.execute(remap_sql, (organization_id,))
+            common_remaps = [
+                {"original_gl": row[0], "corrected_gl": row[1], "freq": row[2]}
+                for row in cur.fetchall()
+            ]
+
+            cur.execute(trend_sql, (last_30, prior_30, last_30, organization_id))
+            trend_row = cur.fetchone() or (0, 0)
+
         return {
             "organization_id": organization_id,
-            "total_corrections": len(corrections),
+            "total_corrections": int(total),
+            "by_vendor": by_vendor,
+            "common_remaps": common_remaps,
+            "trend": {
+                "last_30_days": int(trend_row[0] or 0),
+                "prior_30_days": int(trend_row[1] or 0),
+            },
         }
 
     def get_gl_accounts(self, organization_id: str) -> List[Dict[str, Any]]:
@@ -445,6 +513,89 @@ class APRuntimeStore:
             except Exception:
                 continue
         return accounts
+
+    # ------------------------------------------------------------------ #
+    # Clarifying questions                                                #
+    # ------------------------------------------------------------------ #
+
+    def save_clarifying_question(
+        self,
+        organization_id: str,
+        question_id: str,
+        invoice_id: str,
+        question_type: str,
+        question_text: str,
+        options: Optional[List[str]] = None,
+        slack_ts: Optional[str] = None,
+        slack_channel: Optional[str] = None,
+    ) -> None:
+        """Persist a clarifying question for later retrieval."""
+        import uuid as _uuid
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat()
+        sql = self._prepare_sql(
+            "INSERT INTO clarifying_questions "
+            "(id, invoice_id, question_type, question_text, options_json, "
+            "slack_ts, slack_channel, status, organization_id, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "slack_ts=excluded.slack_ts, slack_channel=excluded.slack_channel"
+        )
+        try:
+            with self.connect() as conn:
+                conn.execute(sql, (
+                    question_id,
+                    invoice_id,
+                    question_type,
+                    question_text,
+                    json.dumps(options or []),
+                    slack_ts,
+                    slack_channel,
+                    "pending",
+                    organization_id,
+                    now,
+                ))
+                conn.commit()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "[APRuntimeStore] save_clarifying_question failed: %s", exc
+            )
+
+    def get_clarifying_question(self, question_id: str) -> Optional[Dict[str, Any]]:
+        """Load a clarifying question by ID."""
+        sql = self._prepare_sql(
+            "SELECT * FROM clarifying_questions WHERE id = ?"
+        )
+        try:
+            with self.connect() as conn:
+                if self.use_postgres:
+                    cur = conn.cursor()
+                    cur.execute(sql, (question_id,))
+                    row = cur.fetchone()
+                    if row:
+                        result = dict(row)
+                        if isinstance(result.get("options_json"), str):
+                            result["options"] = json.loads(result["options_json"])
+                        return result
+                else:
+                    import sqlite3
+                    conn.row_factory = sqlite3.Row
+                    cur = conn.cursor()
+                    cur.execute(sql, (question_id,))
+                    row = cur.fetchone()
+                    if row:
+                        result = dict(row)
+                        if isinstance(result.get("options_json"), str):
+                            result["options"] = json.loads(result["options_json"])
+                        return result
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "[APRuntimeStore] get_clarifying_question failed: %s", exc
+            )
+        return None
 
     def save_gl_account(self, organization_id: str, account_dict: Dict[str, Any]) -> None:
         import uuid as _uuid

@@ -34,6 +34,14 @@ class ERPBillAdapter(Protocol):
     ) -> Dict[str, Any]:
         ...
 
+    async def find_bill(
+        self,
+        organization_id: str,
+        invoice_number: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Check if bill with this invoice number exists in ERP."""
+        ...
+
     async def reconcile(
         self,
         organization_id: str,
@@ -80,6 +88,20 @@ class RouterBackedERPBillAdapter:
             ap_item_id=ap_item_id,
             idempotency_key=idempotency_key,
         )
+
+    async def find_bill(
+        self,
+        organization_id: str,
+        invoice_number: str,
+    ) -> Optional[Dict[str, Any]]:
+        from clearledgr.integrations.erp_router import erp_preflight_check
+        result = await erp_preflight_check(
+            organization_id=organization_id,
+            invoice_number=invoice_number,
+        )
+        if result.get("bill_exists"):
+            return result.get("bill_erp_ref")
+        return None
 
     async def get_status(
         self,

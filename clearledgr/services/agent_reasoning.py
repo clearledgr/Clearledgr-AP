@@ -622,8 +622,8 @@ Be precise. If uncertain about a field, say so in the reasoning."""
                 if due < datetime.now():
                     days_overdue = (datetime.now() - due).days
                     risks.append(f"Invoice is {days_overdue} days overdue")
-            except:
-                pass
+            except (ValueError, TypeError):
+                logger.debug("date parse failed for due_date: %s", due_date)
         
         # Risk: Amount variance
         pattern = vendor_context.get("pattern")

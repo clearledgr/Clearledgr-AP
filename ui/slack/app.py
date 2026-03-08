@@ -234,16 +234,44 @@ async def slack_interactions(request: Request):
     form = dict(x.split("=") for x in body.decode().split("&"))
     payload = json.loads(form.get("payload", "{}").replace("%22", '"').replace("%7B", "{").replace("%7D", "}"))
     
+    payload_type = payload.get("type", "")
+    trigger_id = payload.get("trigger_id", "")
+
+    # Handle modal submissions
+    if payload_type == "view_submission":
+        callback_id = payload.get("view", {}).get("callback_id", "")
+        if callback_id.startswith("expense_reject_modal_"):
+            expense_id = callback_id.replace("expense_reject_modal_", "")
+            submitting_user = payload.get("user", {}).get("id", "")
+            values = payload.get("view", {}).get("state", {}).get("values", {})
+            reason = (
+                values.get("reason_block", {})
+                .get("rejection_reason", {})
+                .get("value", "No reason provided")
+            )
+            # Retrieve channel/ts from private_metadata
+            import urllib.parse as _urlparse
+            meta = dict(_urlparse.parse_qsl(payload.get("view", {}).get("private_metadata", "")))
+            meta_channel = meta.get("channel", "")
+            meta_ts = meta.get("ts", "")
+            if meta_channel and meta_ts:
+                await update_message(
+                    meta_channel, meta_ts,
+                    f"*Expense Rejected*\n\nRejected by <@{submitting_user}>\n*Reason:* {reason}",
+                )
+        return {"response_action": "clear"}
+
     action_id = ""
     if payload.get("actions"):
         action_id = payload["actions"][0].get("action_id", "")
-    
+
     user_id = payload.get("user", {}).get("id", "")
     channel = payload.get("channel", {}).get("id", "")
     message_ts = payload.get("message", {}).get("ts", "")
+    message_payload = payload.get("message", {})
     team_id = payload.get("team", {}).get("id", "")
     org_id = _resolve_org_id_for_team(team_id)
-    
+
     # Handle actions
     if action_id.startswith("approve_invoice_"):
         gmail_id = action_id.replace("approve_invoice_", "")
@@ -296,11 +324,11 @@ async def slack_interactions(request: Request):
     
     elif action_id.startswith("reject_expense_"):
         expense_id = action_id.replace("reject_expense_", "")
-        await handle_expense_reject(expense_id, user_id, channel, message_ts)
-    
+        await handle_expense_reject(expense_id, user_id, channel, message_ts, trigger_id=trigger_id)
+
     elif action_id.startswith("need_receipt_"):
         expense_id = action_id.replace("need_receipt_", "")
-        await handle_need_receipt(expense_id, user_id, channel, message_ts)
+        await handle_need_receipt(expense_id, user_id, channel, message_ts, message=message_payload)
     
     # Clarifying question responses (2026-01-23)
     elif action_id.startswith("clarify_"):
@@ -1214,22 +1242,78 @@ async def handle_expense_approve(expense_id: str, user_id: str, channel: str, me
         await send_message(channel, f"Error approving expense: {str(e)}")
 
 
-async def handle_expense_reject(expense_id: str, user_id: str, channel: str, message_ts: str):
-    """Handle expense rejection button click."""
-    # For now, just update the message. TODO: Add reason modal
-    await update_message(
-        channel, message_ts,
-        f"*Expense Rejected*\n\nRejected by <@{user_id}>"
-    )
+async def handle_expense_reject(
+    expense_id: str, user_id: str, channel: str, message_ts: str,
+    trigger_id: str = "",
+):
+    """Handle expense rejection button click — opens a modal for the reason."""
+    if not trigger_id:
+        # Fallback if trigger_id unavailable (shouldn't happen in practice)
+        await update_message(
+            channel, message_ts,
+            f"*Expense Rejected*\n\nRejected by <@{user_id}>",
+        )
+        return
+
+    import urllib.parse as _urlparse
+    private_metadata = _urlparse.urlencode({"channel": channel, "ts": message_ts})
+    await slack_api("views.open", {
+        "trigger_id": trigger_id,
+        "view": {
+            "type": "modal",
+            "callback_id": f"expense_reject_modal_{expense_id}",
+            "private_metadata": private_metadata,
+            "title": {"type": "plain_text", "text": "Reject Expense"},
+            "submit": {"type": "plain_text", "text": "Reject"},
+            "close": {"type": "plain_text", "text": "Cancel"},
+            "blocks": [
+                {
+                    "type": "input",
+                    "block_id": "reason_block",
+                    "label": {"type": "plain_text", "text": "Rejection Reason"},
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "rejection_reason",
+                        "multiline": True,
+                        "placeholder": {"type": "plain_text", "text": "Why is this expense being rejected?"},
+                    },
+                },
+            ],
+        },
+    })
 
 
-async def handle_need_receipt(expense_id: str, user_id: str, channel: str, message_ts: str):
-    """Handle 'need receipt' button click."""
-    # TODO: Get original poster and DM them
+async def handle_need_receipt(
+    expense_id: str, user_id: str, channel: str, message_ts: str,
+    message: Optional[Dict] = None,
+):
+    """Handle 'need receipt' button click — DM the original poster."""
+    import re
+
+    # Update the channel message
     await update_message(
         channel, message_ts,
-        f"*Receipt Requested*\n\n<@{user_id}> requested a receipt for this expense."
+        f"*Receipt Requested*\n\n<@{user_id}> requested a receipt for this expense.",
     )
+
+    # Extract original poster from message text/blocks and DM them
+    original_poster_id = None
+    if message:
+        msg_text = message.get("text", "")
+        # Slack user mentions look like <@U12345ABC>
+        match = re.search(r"<@(U[A-Z0-9]+)>", msg_text)
+        if match:
+            original_poster_id = match.group(1)
+
+    if original_poster_id and original_poster_id != user_id:
+        dm_result = await slack_api("conversations.open", {"users": original_poster_id})
+        dm_channel = (dm_result or {}).get("channel", {}).get("id")
+        if dm_channel:
+            await send_message(
+                dm_channel,
+                f"<@{user_id}> has requested a receipt for expense `{expense_id}`. "
+                f"Please upload or forward the receipt.",
+            )
 
 
 async def handle_approve(item_id: str, user_id: str, channel: str, message_ts: str):

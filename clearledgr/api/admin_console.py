@@ -430,6 +430,7 @@ class LearningCalibrationRecomputeRequest(BaseModel):
     window_days: int = Field(default=180, ge=1, le=365)
     min_feedback: int = Field(default=20, ge=1, le=1000)
     limit: int = Field(default=5000, ge=10, le=100000)
+    auto_apply: bool = Field(default=False)
 
 
 @router.get("/bootstrap")
@@ -1223,6 +1224,7 @@ def recompute_ops_learning_calibration(
         window_days=request.window_days,
         min_feedback=request.min_feedback,
         limit=request.limit,
+        auto_apply=request.auto_apply,
     )
     return {
         "success": True,

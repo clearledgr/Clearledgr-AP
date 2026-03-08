@@ -869,13 +869,17 @@ class PolicyComplianceService:
     def add_policy(self, policy: Policy) -> None:
         """Add a new policy."""
         self.policies.append(policy)
-        # Persist to database if available
+        # Persist to database
         try:
-            if hasattr(self.db, 'save_policy'):
-                self.db.save_policy(self.organization_id, policy.__dict__)
-        except:
+            self.db.upsert_ap_policy_version(
+                self.organization_id,
+                policy_name=policy.policy_id,
+                config=policy.__dict__,
+                updated_by="policy_compliance_service",
+            )
+        except Exception:
             pass
-    
+
     def update_policy(self, policy_id: str, updates: Dict[str, Any]) -> bool:
         """Update an existing policy."""
         for i, policy in enumerate(self.policies):

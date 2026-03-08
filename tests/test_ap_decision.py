@@ -5,13 +5,14 @@ Claude API calls are monkeypatched so tests run offline.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -101,18 +102,19 @@ class TestAPDecisionService:
 
         # Patch the HTTP call
         with patch.object(APDecisionService, "_call_claude",
+                          new_callable=AsyncMock,
                           return_value=_fake_claude_response(
                               "approve",
                               "Test Vendor Inc has 6 clean invoices at avg $2,400. "
                               "Current amount $2,500 is within 2σ. No anomalies. Approving.",
                           )):
             svc = APDecisionService(api_key="test-key")
-            decision = svc.decide(
+            decision = asyncio.run(svc.decide(
                 invoice,
                 vendor_profile=vendor_profile,
                 vendor_history=vendor_history,
                 validation_gate={"passed": True, "reason_codes": []},
-            )
+            ))
 
         assert decision.recommendation == "approve"
         assert decision.fallback is False
@@ -137,18 +139,19 @@ class TestAPDecisionService:
 
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         with patch.object(APDecisionService, "_call_claude",
+                          new_callable=AsyncMock,
                           return_value=_fake_claude_response(
                               "escalate",
                               "Bank details changed 5 days ago — flagging for human review.",
                               risk_flags=["bank_details_changed"],
                           )):
             svc = APDecisionService(api_key="test-key")
-            decision = svc.decide(
+            decision = asyncio.run(svc.decide(
                 invoice,
                 vendor_profile=vendor_profile,
                 vendor_history=[],
                 validation_gate={"passed": True, "reason_codes": []},
-            )
+            ))
 
         assert decision.recommendation == "escalate"
         assert "bank_details_changed" in decision.risk_flags
@@ -169,18 +172,19 @@ class TestAPDecisionService:
 
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         with patch.object(APDecisionService, "_call_claude",
+                          new_callable=AsyncMock,
                           return_value=_fake_claude_response(
                               "needs_info",
                               "PO reference is required for PO Vendor Corp but was not found.",
                               info_needed="Please provide the PO number for invoice INV-001.",
                           )):
             svc = APDecisionService(api_key="test-key")
-            decision = svc.decide(
+            decision = asyncio.run(svc.decide(
                 invoice,
                 vendor_profile=vendor_profile,
                 vendor_history=[],
                 validation_gate={"passed": True, "reason_codes": ["po_required_missing"]},
-            )
+            ))
 
         assert decision.recommendation == "needs_info"
         assert decision.info_needed is not None
@@ -194,10 +198,10 @@ class TestAPDecisionService:
 
         invoice = _make_invoice(confidence=0.97)
         svc = APDecisionService(api_key=None)
-        decision = svc.decide(
+        decision = asyncio.run(svc.decide(
             invoice,
             validation_gate={"passed": True, "reason_codes": []},
-        )
+        ))
 
         assert decision.fallback is True
         assert decision.recommendation in {"approve", "needs_info", "escalate", "reject"}
@@ -213,10 +217,10 @@ class TestAPDecisionService:
 
         invoice = _make_invoice(confidence=0.72)
         svc = APDecisionService(api_key=None)
-        decision = svc.decide(
+        decision = asyncio.run(svc.decide(
             invoice,
             validation_gate={"passed": True, "reason_codes": []},
-        )
+        ))
 
         assert decision.fallback is True
         assert decision.recommendation == "escalate"
@@ -230,7 +234,7 @@ class TestAPDecisionService:
         invoice = _make_invoice(confidence=0.97, vendor_name="Feedback Vendor")
         svc = APDecisionService(api_key=None)
 
-        decision = svc.decide(
+        decision = asyncio.run(svc.decide(
             invoice,
             validation_gate={"passed": True, "reason_codes": []},
             decision_feedback={
@@ -238,7 +242,7 @@ class TestAPDecisionService:
                 "strictness_bias": "strict",
                 "override_rate": 0.5,
             },
-        )
+        ))
 
         assert decision.fallback is True
         assert decision.recommendation == "escalate"

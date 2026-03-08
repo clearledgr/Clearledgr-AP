@@ -20,6 +20,7 @@ from clearledgr.core.approval_action_contract import (
 from clearledgr.core.database import get_db
 from clearledgr.core.launch_controls import get_channel_action_block_reason
 from clearledgr.core.slack_verify import require_slack_signature
+from clearledgr.services.audit_trail import get_audit_trail
 from clearledgr.services.invoice_workflow import get_invoice_workflow
 
 router = APIRouter(prefix="/slack/invoices", tags=["slack-invoices"])
@@ -114,12 +115,22 @@ def _resolve_correlation_id(db, ap_item_id: str | None, org_id: str, gmail_id: s
 
 
 async def _post_to_response_url(response_url: str, payload: Dict[str, Any]) -> None:
-    """Post a follow-up message to Slack's response_url (best-effort)."""
+    """Post a follow-up message to Slack's response_url with retry on failure."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(response_url, json=payload)
+            resp = await client.post(response_url, json=payload)
+            resp.raise_for_status()
     except Exception as exc:
-        logger.error("Failed to post Slack response_url follow-up: %s", exc)
+        logger.warning("Slack response_url failed, enqueueing for retry: %s", exc)
+        try:
+            db = get_db()
+            db.enqueue_notification(
+                organization_id="system",
+                channel="slack_response_url",
+                payload={"response_url": response_url, "body": payload},
+            )
+        except Exception as enq_exc:
+            logger.error("Failed to enqueue Slack callback retry: %s", enq_exc)
 
 
 def _slack_duplicate_response() -> Dict[str, str]:
@@ -185,6 +196,11 @@ async def _dispatch_slack_action(
         if doc_num:
             detail += f" | Doc #: {doc_num}"
         prefix = "Budget override approved and posted." if action.action_variant == "budget_override" else "Posted to ERP."
+        try:
+            trail = get_audit_trail(action.organization_id or "default")
+            trail.log_approval(invoice_id=action.gmail_id, approved_by=action.actor_id, comment=f"Approved in Slack ({detail})")
+        except Exception:
+            pass
         return {"response_type": "ephemeral", "text": f"{prefix} {detail}", "result": result}
 
     if action.action == "request_info":
@@ -206,6 +222,11 @@ async def _dispatch_slack_action(
             **common_kwargs,
         )
         if result.get("status") == "rejected":
+            try:
+                trail = get_audit_trail(action.organization_id or "default")
+                trail.log_rejection(invoice_id=action.gmail_id, rejected_by=action.actor_id, reason=action.reason or "rejected_in_slack")
+            except Exception:
+                pass
             return {"response_type": "ephemeral", "text": "Invoice rejected.", "result": result}
         return {"response_type": "ephemeral", "text": f"Reject failed: {result.get('reason', result.get('status', 'unknown'))}", "result": result}
 

@@ -77,6 +77,7 @@ class ClearledgrDB(
         self._fernet = None
         self._initialized = False
         self._fallback_warned = False
+        self._pg_pool = None
 
     def _sqlite_connection(self):
         conn = sqlite3.connect(self.db_path)
@@ -87,7 +88,22 @@ class ClearledgrDB(
     def connect(self):
         if self.use_postgres:
             try:
-                conn = psycopg.connect(self.dsn, row_factory=dict_row)
+                if self._pg_pool is None:
+                    try:
+                        from psycopg_pool import ConnectionPool
+                        self._pg_pool = ConnectionPool(
+                            self.dsn,
+                            min_size=2,
+                            max_size=int(os.getenv("DB_POOL_MAX_SIZE", "10")),
+                            kwargs={"row_factory": dict_row},
+                        )
+                        logger.info("Postgres connection pool initialized (max_size=%s)", os.getenv("DB_POOL_MAX_SIZE", "10"))
+                    except ImportError:
+                        logger.warning("psycopg_pool not installed — using unpooled Postgres connections")
+                if self._pg_pool is not None:
+                    conn = self._pg_pool.getconn()
+                else:
+                    conn = psycopg.connect(self.dsn, row_factory=dict_row)
             except Exception as exc:
                 if not self.allow_sqlite_fallback:
                     raise
@@ -106,7 +122,13 @@ class ClearledgrDB(
         try:
             yield conn
         finally:
-            conn.close()
+            if self._pg_pool is not None and self.use_postgres:
+                try:
+                    self._pg_pool.putconn(conn)
+                except Exception:
+                    conn.close()
+            else:
+                conn.close()
 
     def _prepare_sql(self, sql: str) -> str:
         if self.use_postgres:
@@ -193,6 +215,67 @@ class ClearledgrDB(
             BEFORE DELETE ON ap_policy_audit_events
             BEGIN
                 SELECT RAISE(ABORT, 'ap_policy_audit_events is append-only');
+            END;
+        """)
+
+    def _install_ap_state_guard(self, cur) -> None:
+        """Enforce valid AP item states at the DB level.
+
+        Prevents direct SQL from setting an invalid state value.
+        Application-level transition validation (ap_states.py) remains
+        the primary guard; this is a defence-in-depth measure.
+        """
+        from clearledgr.core.ap_states import VALID_STATE_VALUES
+
+        if self.use_postgres:
+            states_list = ", ".join(f"'{s}'" for s in sorted(VALID_STATE_VALUES))
+            cur.execute(f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_trigger
+                        WHERE tgname = 'enforce_valid_ap_state'
+                    ) THEN
+                        CREATE OR REPLACE FUNCTION clearledgr_check_ap_state()
+                        RETURNS TRIGGER AS $t$
+                        BEGIN
+                            IF NEW.state NOT IN ({states_list}) THEN
+                                RAISE EXCEPTION 'Invalid AP item state: %', NEW.state;
+                            END IF;
+                            RETURN NEW;
+                        END;
+                        $t$ LANGUAGE plpgsql;
+
+                        CREATE TRIGGER enforce_valid_ap_state
+                        BEFORE INSERT OR UPDATE OF state ON ap_items
+                        FOR EACH ROW
+                        EXECUTE FUNCTION clearledgr_check_ap_state();
+                    END IF;
+                END
+                $$;
+            """)
+            return
+
+        # SQLite: BEFORE INSERT and BEFORE UPDATE triggers
+        states_list = ", ".join(f"'{s}'" for s in sorted(VALID_STATE_VALUES))
+        cur.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS enforce_valid_ap_state_insert
+            BEFORE INSERT ON ap_items
+            BEGIN
+                SELECT CASE
+                    WHEN NEW.state NOT IN ({states_list})
+                    THEN RAISE(ABORT, 'Invalid AP item state')
+                END;
+            END;
+        """)
+        cur.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS enforce_valid_ap_state_update
+            BEFORE UPDATE OF state ON ap_items
+            BEGIN
+                SELECT CASE
+                    WHEN NEW.state NOT IN ({states_list})
+                    THEN RAISE(ABORT, 'Invalid AP item state')
+                END;
             END;
         """)
 
@@ -814,6 +897,7 @@ class ClearledgrDB(
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_policy_versions_org_name ON ap_policy_versions(organization_id, policy_name, version)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_policy_audit_org_name ON ap_policy_audit_events(organization_id, policy_name, created_at)")
             self._install_audit_append_only_guards(cur)
+            self._install_ap_state_guard(cur)
 
             # Evolve existing DBs without external migration dependency.
             self._ensure_column(cur, "ap_items", "workflow_id", "TEXT")

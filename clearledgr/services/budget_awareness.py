@@ -223,15 +223,20 @@ class BudgetAwarenessService:
         self._spending: Dict[str, float] = {}
     
     def _load_budgets(self) -> List[Budget]:
-        """Load budgets for the organization."""
+        """Load budgets from org settings, falling back to defaults."""
         try:
-            if hasattr(self.db, 'get_budgets'):
-                custom_budgets = self.db.get_budgets(self.organization_id)
-                if custom_budgets:
-                    return [self._dict_to_budget(b) for b in custom_budgets]
-        except:
+            org = self.db.get_organization(self.organization_id)
+            if org:
+                raw_settings = org.get("settings_json") or org.get("settings") or {}
+                if isinstance(raw_settings, str):
+                    import json
+                    raw_settings = json.loads(raw_settings)
+                if isinstance(raw_settings, dict):
+                    custom_budgets = raw_settings.get("budgets")
+                    if isinstance(custom_budgets, list) and custom_budgets:
+                        return [self._dict_to_budget(b) for b in custom_budgets]
+        except Exception:
             pass
-        
         return DEFAULT_BUDGETS.copy()
     
     def _dict_to_budget(self, data: Dict[str, Any]) -> Budget:
@@ -354,26 +359,25 @@ class BudgetAwarenessService:
             return BudgetStatus.HEALTHY
     
     def _get_budget_spending(self, budget_id: str) -> float:
-        """Get current spending for a budget."""
-        # Check in-memory first
+        """Get current spending for a budget.
+
+        Derives spending from posted AP items rather than a dedicated budget
+        table.  Falls back to in-memory tracking for the current session.
+        """
         if budget_id in self._spending:
             return self._spending[budget_id]
-        
-        # Try database
+
+        # Derive from AP item spending data (last 30 days)
         try:
-            if hasattr(self.db, 'get_budget_spending'):
-                spent = self.db.get_budget_spending(
-                    budget_id=budget_id,
-                    organization_id=self.organization_id,
-                    period="monthly",
-                )
-                if spent is not None:
-                    self._spending[budget_id] = spent
-                    return spent
-        except:
+            spending = self.db.get_spending_by_vendor(
+                organization_id=self.organization_id,
+                days=30,
+            ) or {}
+            total = sum(spending.values())
+            self._spending[budget_id] = total
+            return total
+        except Exception:
             pass
-        
-        # Return 0 if no data
         return 0
     
     def record_spending(
@@ -381,20 +385,13 @@ class BudgetAwarenessService:
         budget_id: str,
         amount: float,
     ) -> None:
-        """Record spending against a budget."""
+        """Record spending against a budget (in-memory tracking).
+
+        Budget spending is derived from posted AP items, so this only updates
+        the in-memory accumulator for the current session.
+        """
         current = self._get_budget_spending(budget_id)
         self._spending[budget_id] = current + amount
-        
-        # Persist to database
-        try:
-            if hasattr(self.db, 'record_budget_spending'):
-                self.db.record_budget_spending(
-                    budget_id=budget_id,
-                    organization_id=self.organization_id,
-                    amount=amount,
-                )
-        except:
-            pass
     
     def get_report(self) -> BudgetReport:
         """

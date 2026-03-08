@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -33,6 +34,7 @@ from clearledgr.core.skills.base import AgentTask, FinanceSkill, SkillResult
 logger = logging.getLogger(__name__)
 
 MAX_PLANNING_STEPS = 10
+MAX_TASK_SECONDS = int(os.getenv("AGENT_MAX_TASK_SECONDS", "600"))
 CLAUDE_MODEL = os.getenv("AGENT_RUNTIME_MODEL", "claude-sonnet-4-6")
 
 
@@ -122,7 +124,22 @@ class AgentPlanningEngine:
         system_prompt = skill.build_system_prompt(task)
 
         step = already_done
+        start_time = time.monotonic()
         while step < MAX_PLANNING_STEPS:
+            elapsed = time.monotonic() - start_time
+            if elapsed > MAX_TASK_SECONDS:
+                logger.warning(
+                    "[AgentRuntime] task %s timed out after %.0fs (limit %ds)",
+                    task_run_id, elapsed, MAX_TASK_SECONDS,
+                )
+                db.fail_task_run(task_run_id, "max_execution_time_exceeded")
+                return SkillResult(
+                    status="failed",
+                    task_run_id=task_run_id,
+                    outcome={"steps": step, "elapsed_seconds": round(elapsed)},
+                    step_count=step,
+                    error="max_execution_time_exceeded",
+                )
             try:
                 response = await self._call_claude_with_tools(system_prompt, messages, tools)
             except Exception as exc:

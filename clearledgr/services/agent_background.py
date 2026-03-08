@@ -99,10 +99,9 @@ async def _run_loop():
 async def _check_overdue_tasks():
     """Check for overdue and stale AP items, send nudges to Slack."""
     try:
-        from clearledgr.services.task_scheduler import TaskScheduler
+        from clearledgr.services.task_scheduler import run_all_checks
 
-        scheduler = TaskScheduler(organization_id=DEFAULT_ORG_ID)
-        results = scheduler.run_all_checks()
+        results = run_all_checks()
 
         overdue = results.get("overdue", [])
         stale = results.get("stale", [])
@@ -203,9 +202,8 @@ async def _drain_erp_post_retry_queue():
             "rescheduled": 0,
             "dead_letter": 0,
         }
-        workflow = get_invoice_workflow(DEFAULT_ORG_ID)
         due_jobs = db.list_due_agent_retry_jobs(
-            organization_id=DEFAULT_ORG_ID,
+            organization_id=None,
             limit=25,
         )
 
@@ -213,9 +211,10 @@ async def _drain_erp_post_retry_queue():
             job_id = str(job.get("id") or "").strip()
             if not job_id:
                 continue
+            job_org_id = str(job.get("organization_id") or DEFAULT_ORG_ID).strip()
             claimed = db.claim_agent_retry_job(
                 job_id,
-                worker_id=f"agent_background:{DEFAULT_ORG_ID}",
+                worker_id=f"agent_background:{job_org_id}",
             )
             if not claimed:
                 continue
@@ -234,6 +233,7 @@ async def _drain_erp_post_retry_queue():
                     summary["dead_letter"] += 1
                     continue
 
+                workflow = get_invoice_workflow(job_org_id)
                 outcome = await workflow.resume_workflow(ap_item_id)
                 outcome_status = str(outcome.get("status") or "").strip().lower()
 
@@ -407,10 +407,9 @@ async def _check_approval_timeouts(org_id: str):
 async def _check_period_end():
     """Detect period-end and alert about closing deadlines in Slack."""
     try:
-        from clearledgr.services.agent_monitoring import AgentMonitoringService
+        from clearledgr.services.agent_monitoring import detect_period_end
 
-        monitoring = AgentMonitoringService(organization_id=DEFAULT_ORG_ID)
-        period_info = monitoring.detect_period_end()
+        period_info = detect_period_end()
 
         if period_info and period_info.get("is_period_end"):
             period_type = period_info.get("period_type", "month")

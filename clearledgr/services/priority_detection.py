@@ -361,24 +361,22 @@ class PriorityDetectionService:
         vendor = invoice.get("vendor", "")
         
         try:
-            if hasattr(self.db, 'get_payment_history'):
-                history = self.db.get_payment_history(
-                    vendor=vendor,
-                    organization_id=self.organization_id,
-                ) or []
-                
-                # Check for recent late payments
-                late_count = sum(1 for h in history if h.get("was_late", False))
-                if late_count >= 2:
-                    return PriorityFactor(
-                        name="Relationship Risk",
-                        score=0.9,
-                        weight=self.WEIGHTS["relationship_risk"],
-                        reason=f"Previous late payments to this vendor ({late_count})",
-                    )
-        except:
+            history = self.db.get_vendor_payment_lateness(
+                organization_id=self.organization_id,
+                vendor_name=vendor,
+            ) or []
+
+            late_count = sum(1 for h in history if h.get("was_late", False))
+            if late_count >= 2:
+                return PriorityFactor(
+                    name="Relationship Risk",
+                    score=0.9,
+                    weight=self.WEIGHTS["relationship_risk"],
+                    reason=f"Previous late payments to this vendor ({late_count})",
+                )
+        except Exception:
             pass
-        
+
         return PriorityFactor(
             name="Relationship Risk",
             score=0.3,

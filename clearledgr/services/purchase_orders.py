@@ -807,23 +807,23 @@ class PurchaseOrderService:
         try:
             from clearledgr.core.database import get_db
             db = get_db()
-            if hasattr(db, "_write_audit_event"):
-                db._write_audit_event(
-                    org_id=self.organization_id,
-                    ap_item_id=match.invoice_id,
-                    event_type="po_match_override",
-                    prev_state=prev_status,
-                    new_state="override",
-                    actor_type="user",
-                    actor_id=override_by,
-                    payload={
-                        "match_id": match_id,
-                        "override_reason": reason,
-                        "exceptions": match.exceptions,
-                        "price_variance": match.price_variance,
-                        "quantity_variance": match.quantity_variance,
-                    },
-                )
+            db.append_ap_audit_event({
+                "ap_item_id": match.invoice_id,
+                "event_type": "po_match_override",
+                "from_state": prev_status,
+                "to_state": "override",
+                "actor_type": "user",
+                "actor_id": override_by,
+                "metadata": {
+                    "match_id": match_id,
+                    "override_reason": reason,
+                    "exceptions": match.exceptions,
+                    "price_variance": match.price_variance,
+                    "quantity_variance": match.quantity_variance,
+                },
+                "organization_id": self.organization_id,
+                "source": "purchase_orders",
+            })
         except Exception as exc:
             logger.warning("Failed to write PO override audit event: %s", exc)
 

@@ -177,15 +177,11 @@ class CrossInvoiceAnalyzer:
     def _get_recent_invoices(self, vendor: str, days: int = 90) -> List[Dict[str, Any]]:
         """Get recent invoices for a vendor."""
         try:
-            # Get invoices from database
-            # This uses the database's invoice history
-            invoices = self.db.get_invoices_by_vendor(
-                vendor=vendor,
-                organization_id=self.organization_id,
-                days=days,
-            ) if hasattr(self.db, 'get_invoices_by_vendor') else []
-            
-            return invoices or []
+            if hasattr(self.db, "get_vendor_invoice_history"):
+                return self.db.get_vendor_invoice_history(
+                    self.organization_id, vendor, limit=50
+                ) or []
+            return []
         except Exception as e:
             logger.warning(f"Failed to get recent invoices: {e}")
             return []
@@ -236,9 +232,9 @@ class CrossInvoiceAnalyzer:
                     if days_apart <= self.DUPLICATE_DAYS_WINDOW:
                         match_score += 0.2
                         match_reasons.append(f"Within {days_apart} days of previous invoice")
-                except:
+                except Exception:
                     pass
-            
+
             # Create alert if match score is high enough
             if match_score >= 0.5:
                 severity = "high" if match_score >= 0.8 else "warning"
@@ -357,7 +353,7 @@ class CrossInvoiceAnalyzer:
             
             cutoff = datetime.now() - timedelta(days=days)
             return date_value.replace(tzinfo=None) >= cutoff
-        except:
+        except Exception:
             return False
 
 

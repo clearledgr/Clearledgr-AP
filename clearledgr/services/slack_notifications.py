@@ -115,6 +115,47 @@ async def send_with_retry(
     return False
 
 
+async def _retry_slack_response_url(payload: dict) -> bool:
+    """Retry a failed Slack response_url POST."""
+    response_url = payload.get("response_url", "")
+    body = payload.get("body", {})
+    if not response_url:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(response_url, json=body)
+            resp.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.warning("Slack response_url retry failed: %s", exc)
+        return False
+
+
+async def _retry_teams_card_update(payload: dict) -> bool:
+    """Retry a failed Teams card update."""
+    service_url = payload.get("service_url", "")
+    conversation_id = payload.get("conversation_id", "")
+    activity_id = payload.get("activity_id", "")
+    if not (service_url and conversation_id and activity_id):
+        return False
+    try:
+        from clearledgr.services.teams_api import TeamsAPIClient
+        client = TeamsAPIClient()
+        client.update_activity(
+            service_url=service_url,
+            conversation_id=conversation_id,
+            activity_id=activity_id,
+            result_status=payload.get("result_status", "unknown"),
+            actor_display=payload.get("actor_display", "unknown"),
+            action=payload.get("action", "unknown"),
+            reason=payload.get("reason"),
+        )
+        return True
+    except Exception as exc:
+        logger.warning("Teams card update retry failed: %s", exc)
+        return False
+
+
 async def process_retry_queue() -> int:
     """Process pending notifications in the retry queue.
 
@@ -128,12 +169,22 @@ async def process_retry_queue() -> int:
     for notif in pending:
         import json as _json
         payload = _json.loads(notif["payload_json"]) if isinstance(notif["payload_json"], str) else notif["payload_json"]
-        ok = await _post_slack_blocks(
-            blocks=payload.get("blocks", []),
-            text=payload.get("text", ""),
-            preferred_channel=payload.get("preferred_channel"),
-            organization_id=notif.get("organization_id"),
-        )
+        channel = str(notif.get("channel") or "").strip()
+        ok = False
+        try:
+            if channel == "slack_response_url":
+                ok = await _retry_slack_response_url(payload)
+            elif channel == "teams_card_update":
+                ok = await _retry_teams_card_update(payload)
+            else:
+                ok = await _post_slack_blocks(
+                    blocks=payload.get("blocks", []),
+                    text=payload.get("text", ""),
+                    preferred_channel=payload.get("preferred_channel"),
+                    organization_id=notif.get("organization_id"),
+                )
+        except Exception as dispatch_exc:
+            logger.warning("Retry dispatch error for %s: %s", notif["id"], dispatch_exc)
         if ok:
             db.mark_notification_sent(notif["id"])
             logger.info("Retry succeeded for notification %s", notif["id"])
@@ -578,7 +629,7 @@ async def send_invoice_approval_notification(
                 color = "#C62828"  # Red for overdue
             else:
                 color = "#1565C0"  # Blue for normal
-        except:
+        except Exception:
             color = "#1565C0"
     else:
         color = "#1565C0"

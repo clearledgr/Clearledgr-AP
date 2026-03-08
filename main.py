@@ -76,6 +76,20 @@ async def app_lifespan(app: FastAPI):
         logger.warning(f"Finance agent runtime not started: {e}")
 
     try:
+        from clearledgr.core.agent_runtime import get_planning_engine
+        from clearledgr.core.skills.ap_skill import APSkill
+
+        planner = get_planning_engine()
+        planner.register_skill(APSkill())
+        planner_resumed = await planner.resume_pending_tasks()
+        logger.info(
+            "Agent planning engine started, APSkill registered (%d tasks resumed)",
+            planner_resumed,
+        )
+    except Exception as e:
+        logger.warning(f"Agent planning engine not started: {e}")
+
+    try:
         yield
     finally:
         try:

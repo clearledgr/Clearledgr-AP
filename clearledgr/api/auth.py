@@ -707,23 +707,25 @@ async def invite_user(
         raise HTTPException(status_code=400, detail="User already exists")
     
     db = get_db()
-    
-    # Create pending user
-    user_id = db.save_user(
+
+    # Create invite token (reuses the existing team invite system)
+    from datetime import datetime, timedelta, timezone
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    invite = db.create_team_invite(
+        organization_id=requesting_user.organization_id,
         email=email,
         role=role,
-        organization_id=requesting_user.organization_id,
-        user_id=str(uuid.uuid4())
+        created_by=current_user.user_id,
+        expires_at=expires_at,
     )
-    
-    # TODO: Send invitation email
-    # In production, queue an email task
-    
+    base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")
+    invite_link = f"{base}/api/auth/google/start?invite_token={invite.get('token')}"
+
     return {
-        "message": "User invited",
-        "user_id": user_id,
+        "message": "Invitation created",
         "email": email,
-        "role": role
+        "role": role,
+        "invite_link": invite_link,
     }
 
 

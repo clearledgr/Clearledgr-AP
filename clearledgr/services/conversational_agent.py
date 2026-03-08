@@ -406,19 +406,18 @@ class ConversationalAgent:
             status="active",
         )
         
-        # Also store in database for persistence
+        # Persist to database
         try:
-            if hasattr(self.db, 'store_clarifying_question'):
-                self.db.store_clarifying_question(
-                    question_id=question.question_id,
-                    invoice_id=question.invoice_id,
-                    question_type=question.question_type.value,
-                    question_text=question.question_text,
-                    options=[o.get("value") for o in question.options],
-                    slack_ts=slack_ts,
-                    slack_channel=channel,
-                    organization_id=self.organization_id,
-                )
+            self.db.save_clarifying_question(
+                organization_id=self.organization_id,
+                question_id=question.question_id,
+                invoice_id=question.invoice_id,
+                question_type=question.question_type.value,
+                question_text=question.question_text,
+                options=[o.get("value") for o in question.options],
+                slack_ts=slack_ts,
+                slack_channel=channel,
+            )
         except Exception as e:
             logger.warning(f"Failed to persist question to database: {e}")
     
@@ -520,15 +519,14 @@ class ConversationalAgent:
     def _load_conversation(self, question_id: str) -> Optional[ConversationState]:
         """Load conversation from database."""
         try:
-            if hasattr(self.db, 'get_clarifying_question'):
-                data = self.db.get_clarifying_question(question_id)
-                if data:
-                    return ConversationState(
-                        conversation_id=question_id,
-                        invoice_id=data.get("invoice_id", ""),
-                        organization_id=data.get("organization_id", ""),
-                        status=data.get("status", "active"),
-                    )
+            data = self.db.get_clarifying_question(question_id)
+            if data:
+                return ConversationState(
+                    conversation_id=question_id,
+                    invoice_id=data.get("invoice_id", ""),
+                    organization_id=data.get("organization_id", ""),
+                    status=data.get("status", "active"),
+                )
         except Exception as e:
             logger.warning(f"Failed to load conversation: {e}")
         return None

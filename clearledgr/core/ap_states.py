@@ -69,6 +69,9 @@ LEGACY_STATE_MAP: Dict[str, APState] = {
 
 TERMINAL_STATES = frozenset({APState.REJECTED, APState.CLOSED})
 
+# All valid state strings — used for DB-level enforcement triggers.
+VALID_STATE_VALUES: FrozenSet[str] = frozenset(s.value for s in APState)
+
 
 class IllegalTransitionError(ValueError):
     """Raised when an AP item state transition violates the state machine."""

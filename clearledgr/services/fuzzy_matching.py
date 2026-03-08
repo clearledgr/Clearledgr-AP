@@ -314,7 +314,7 @@ def smart_match_score(
                 "impact": "positive" if date_score >= 0.5 else "negative",
                 "score": date_score
             })
-        except:
+        except Exception:
             pass
     
     # Vendor matching

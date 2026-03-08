@@ -124,10 +124,8 @@ def _transition_pairs(db, ap_item_id: str) -> List[Tuple[str, str]]:
 
 
 def test_process_new_invoice_advances_to_validated_before_routing(service, db, monkeypatch):
-    monkeypatch.setattr(
-        service,
-        "_evaluate_deterministic_validation",
-        lambda _invoice: {
+    async def _fake_validation(_invoice):
+        return {
             "passed": True,
             "checked_at": "2026-02-25T00:00:00+00:00",
             "reason_codes": [],
@@ -136,7 +134,12 @@ def test_process_new_invoice_advances_to_validated_before_routing(service, db, m
             "po_match_result": None,
             "budget_impact": [],
             "budget": {"status": "healthy"},
-        },
+        }
+
+    monkeypatch.setattr(
+        service,
+        "_evaluate_deterministic_validation",
+        _fake_validation,
     )
 
     async def _fake_send_for_approval(_invoice, extra_context=None):
@@ -167,10 +170,8 @@ def test_process_new_invoice_advances_to_validated_before_routing(service, db, m
 
 
 def test_workflow_state_transition_audits_share_single_correlation_id_across_intake_and_approval(service, db, monkeypatch):
-    monkeypatch.setattr(
-        service,
-        "_evaluate_deterministic_validation",
-        lambda _invoice: {
+    async def _fake_validation(_invoice):
+        return {
             "passed": True,
             "checked_at": "2026-02-25T00:00:00+00:00",
             "reason_codes": [],
@@ -179,7 +180,12 @@ def test_workflow_state_transition_audits_share_single_correlation_id_across_int
             "po_match_result": None,
             "budget_impact": [],
             "budget": {"status": "healthy"},
-        },
+        }
+
+    monkeypatch.setattr(
+        service,
+        "_evaluate_deterministic_validation",
+        _fake_validation,
     )
 
     async def _fake_send_for_approval(_invoice, extra_context=None):

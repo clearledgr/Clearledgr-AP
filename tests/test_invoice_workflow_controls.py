@@ -162,10 +162,8 @@ def test_budget_exceeded_forces_manual_approval(monkeypatch):
 
 def test_healthy_invoice_can_auto_approve(monkeypatch):
     service, calls = _setup_service(monkeypatch)
-    monkeypatch.setattr(
-        service,
-        "_evaluate_deterministic_validation",
-        lambda _invoice: {
+    async def _fake_validation(_invoice):
+        return {
             "passed": True,
             "checked_at": "2026-02-25T00:00:00+00:00",
             "reason_codes": [],
@@ -174,7 +172,12 @@ def test_healthy_invoice_can_auto_approve(monkeypatch):
             "po_match_result": None,
             "budget_impact": [],
             "budget": {"status": "healthy"},
-        },
+        }
+
+    monkeypatch.setattr(
+        service,
+        "_evaluate_deterministic_validation",
+        _fake_validation,
     )
 
     invoice = InvoiceData(

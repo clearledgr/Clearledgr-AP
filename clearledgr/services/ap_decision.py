@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-import requests
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,101 @@ def _days_since(iso: Optional[str]) -> Optional[int]:
         return None
 
 
+def compute_vendor_risk_score(
+    vendor_profile: Optional[Dict[str, Any]] = None,
+    cross_invoice_analysis: Optional[Dict[str, Any]] = None,
+    anomaly_signals: Optional[Dict[str, Any]] = None,
+    decision_feedback: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Compute a composite vendor risk score from 0.0 (safe) to 1.0 (high risk).
+
+    Components (each 0.0-1.0, weighted):
+      - vendor_familiarity (0.30): new vendors are riskier
+      - duplicate_risk    (0.25): from cross-invoice analysis
+      - anomaly_risk      (0.20): amount/volume anomalies
+      - override_risk     (0.15): high human override rate
+      - bank_change_risk  (0.10): recent bank detail changes
+    """
+    vendor_profile = vendor_profile or {}
+    cross_invoice_analysis = cross_invoice_analysis or {}
+    anomaly_signals = anomaly_signals or {}
+    decision_feedback = decision_feedback or {}
+
+    scores: Dict[str, float] = {}
+    flags: list = []
+
+    # 1. Vendor familiarity (new = risky)
+    invoice_count = int(vendor_profile.get("invoice_count") or 0)
+    if invoice_count == 0:
+        scores["vendor_familiarity"] = 1.0
+        flags.append("new_vendor")
+    elif invoice_count < 3:
+        scores["vendor_familiarity"] = 0.6
+        flags.append("low_history")
+    else:
+        scores["vendor_familiarity"] = 0.0
+
+    # 2. Duplicate risk
+    duplicates = cross_invoice_analysis.get("duplicates") or []
+    if any(d.get("severity") == "high" for d in duplicates):
+        scores["duplicate_risk"] = 1.0
+        flags.append("high_duplicate_match")
+    elif duplicates:
+        scores["duplicate_risk"] = 0.5
+        flags.append("possible_duplicate")
+    else:
+        scores["duplicate_risk"] = 0.0
+
+    # 3. Anomaly risk
+    anomalies = cross_invoice_analysis.get("anomalies") or []
+    volume_anomaly = anomaly_signals.get("volume", {})
+    if any(a.get("severity") == "high" for a in anomalies) or volume_anomaly.get("is_anomaly"):
+        scores["anomaly_risk"] = 1.0
+        flags.append("amount_anomaly")
+    elif anomalies:
+        scores["anomaly_risk"] = 0.4
+    else:
+        scores["anomaly_risk"] = 0.0
+
+    # 4. Override risk (humans keep disagreeing with agent)
+    override_rate = float(decision_feedback.get("override_rate") or 0.0)
+    if override_rate >= 0.4:
+        scores["override_risk"] = 1.0
+        flags.append("high_override_rate")
+    elif override_rate >= 0.2:
+        scores["override_risk"] = 0.5
+    else:
+        scores["override_risk"] = 0.0
+
+    # 5. Bank change recency
+    bank_days = _days_since(vendor_profile.get("bank_details_changed_at"))
+    if bank_days is not None and bank_days <= 14:
+        scores["bank_change_risk"] = 1.0
+        flags.append("recent_bank_change")
+    elif bank_days is not None and bank_days <= 30:
+        scores["bank_change_risk"] = 0.5
+        flags.append("bank_change_30d")
+    else:
+        scores["bank_change_risk"] = 0.0
+
+    # Weighted composite
+    weights = {
+        "vendor_familiarity": 0.30,
+        "duplicate_risk": 0.25,
+        "anomaly_risk": 0.20,
+        "override_risk": 0.15,
+        "bank_change_risk": 0.10,
+    }
+    composite = sum(scores.get(k, 0) * w for k, w in weights.items())
+
+    return {
+        "score": round(composite, 3),
+        "components": scores,
+        "flags": flags,
+        "level": "high" if composite >= 0.7 else "medium" if composite >= 0.4 else "low",
+    }
+
+
 def _format_history_row(h: Dict[str, Any]) -> str:
     date = (h.get("invoice_date") or h.get("created_at") or "")[:10]
     amt = h.get("amount")
@@ -109,6 +204,9 @@ def _build_reasoning_prompt(
     correction_suggestions: Dict[str, Any],
     validation_gate: Dict[str, Any],
     org_config: Dict[str, Any],
+    cross_invoice_analysis: Optional[Dict[str, Any]] = None,
+    anomaly_signals: Optional[Dict[str, Any]] = None,
+    vendor_risk_score: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Assemble the full reasoning prompt for Claude."""
 
@@ -248,6 +346,41 @@ def _build_reasoning_prompt(
         sections.append(learned_section)
     sections.append("ORG POLICY:\n" + "\n".join(policy_lines))
     sections.append(f"VALIDATION GATE: {gate_str}")
+
+    # ---- Duplicate / cross-invoice alerts ----
+    if cross_invoice_analysis and cross_invoice_analysis.get("has_issues"):
+        dup_lines = ["DUPLICATE / CROSS-INVOICE ALERTS:"]
+        for d in (cross_invoice_analysis.get("duplicates") or [])[:3]:
+            dup_lines.append(
+                f"  [{(d.get('severity') or '?').upper()}] {d.get('message', '')} "
+                f"(match score: {d.get('match_score', 0):.1f})"
+            )
+        for a in (cross_invoice_analysis.get("anomalies") or [])[:2]:
+            dup_lines.append(f"  [{(a.get('severity') or '?').upper()}] {a.get('message', '')}")
+        for r in (cross_invoice_analysis.get("recommendations") or [])[:2]:
+            dup_lines.append(f"  Recommendation: {r}")
+        sections.append("\n".join(dup_lines))
+
+    # ---- Anomaly signals ----
+    if anomaly_signals:
+        vol = anomaly_signals.get("volume") or {}
+        if vol.get("is_anomaly"):
+            sections.append(
+                f"ANOMALY SIGNALS:\n"
+                f"  Volume {vol.get('anomaly_type', 'anomaly')}: "
+                f"z-score {vol.get('z_score', 0):.1f}, "
+                f"avg {vol.get('average_volume', 0):.2f}. "
+                f"{vol.get('suggestion', '')}"
+            )
+
+    # ---- Vendor risk score ----
+    if vendor_risk_score and vendor_risk_score.get("score", 0) > 0.1:
+        sections.append(
+            f"VENDOR RISK SCORE: {vendor_risk_score['score']:.2f}/1.00 "
+            f"({vendor_risk_score.get('level', 'unknown')})\n"
+            f"  Flags: {', '.join(vendor_risk_score.get('flags') or ['none'])}"
+        )
+
     sections.append("CURRENT INVOICE:\n" + "\n".join(invoice_lines))
     if fc_lines:
         sections.append("FIELD CONFIDENCE SCORES:\n" + "\n".join(fc_lines))
@@ -261,7 +394,7 @@ Decide what to do with this invoice. Choose exactly one action:
 
 Consider:
 1. Does the amount match the vendor's historical pattern (within ~2 standard deviations)?
-2. Are there anomaly signals (bank details changed, amount spike, duplicate timing, missing required fields)?
+2. Are there anomaly signals (bank details changed, amount spike, duplicate alerts, vendor risk score, missing required fields)?
 3. Did the validation gate pass? If not, what are the reason codes?
 4. Is field confidence sufficient for autonomous action (>= 95% for critical fields)?
 5. Is this vendor always approved with no anomalies? If so, lean toward approve unless a risk flag is present.
@@ -284,7 +417,7 @@ class APDecisionService:
     def is_available(self) -> bool:
         return bool(self._api_key)
 
-    def decide(
+    async def decide(
         self,
         invoice: Any,  # InvoiceData
         *,
@@ -294,6 +427,9 @@ class APDecisionService:
         correction_suggestions: Optional[Dict[str, Any]] = None,
         validation_gate: Optional[Dict[str, Any]] = None,
         org_config: Optional[Dict[str, Any]] = None,
+        cross_invoice_analysis: Optional[Dict[str, Any]] = None,
+        anomaly_signals: Optional[Dict[str, Any]] = None,
+        vendor_risk_score: Optional[Dict[str, Any]] = None,
     ) -> APDecision:
         """Call Claude with vendor context to decide how to route this invoice.
 
@@ -317,6 +453,10 @@ class APDecisionService:
             "feedback_count": int(decision_feedback.get("total_feedback") or 0),
             "feedback_override_rate": float(decision_feedback.get("override_rate") or 0.0),
             "feedback_strictness_bias": str(decision_feedback.get("strictness_bias") or "neutral"),
+            "has_duplicate_alerts": bool(
+                cross_invoice_analysis and cross_invoice_analysis.get("has_issues")
+            ),
+            "vendor_risk_level": (vendor_risk_score or {}).get("level", "unknown"),
         }
 
         if not self._api_key:
@@ -326,6 +466,10 @@ class APDecisionService:
                 validation_gate,
                 vendor_context_used,
                 decision_feedback=decision_feedback,
+                vendor_risk_score=vendor_risk_score,
+                vendor_profile=vendor_profile,
+                cross_invoice_analysis=cross_invoice_analysis,
+                org_config=org_config,
             )
 
         try:
@@ -337,8 +481,11 @@ class APDecisionService:
                 correction_suggestions=correction_suggestions,
                 validation_gate=validation_gate,
                 org_config=org_config,
+                cross_invoice_analysis=cross_invoice_analysis,
+                anomaly_signals=anomaly_signals,
+                vendor_risk_score=vendor_risk_score,
             )
-            raw = self._call_claude(prompt)
+            raw = await self._call_claude(prompt)
             return self._parse_response(raw, vendor_context_used)
         except Exception as exc:
             logger.warning("[APDecision] Claude call failed (%s) — using rule-based fallback", exc)
@@ -347,11 +494,15 @@ class APDecisionService:
                 validation_gate,
                 vendor_context_used,
                 decision_feedback=decision_feedback,
+                vendor_risk_score=vendor_risk_score,
+                vendor_profile=vendor_profile,
+                cross_invoice_analysis=cross_invoice_analysis,
+                org_config=org_config,
             )
             result.fallback = True
             return result
 
-    def _call_claude(self, prompt: str) -> Dict[str, Any]:
+    async def _call_claude(self, prompt: str) -> Dict[str, Any]:
         headers = {
             "x-api-key": self._api_key,
             "anthropic-version": _ANTHROPIC_VERSION,
@@ -363,7 +514,8 @@ class APDecisionService:
             "temperature": 0.1,
             "messages": [{"role": "user", "content": prompt}],
         }
-        resp = requests.post(_API_URL, headers=headers, json=payload, timeout=_TIMEOUT)
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.post(_API_URL, headers=headers, json=payload)
         resp.raise_for_status()
         return resp.json()
 
@@ -415,19 +567,24 @@ class APDecisionService:
         validation_gate: Dict[str, Any],
         vendor_context_used: Optional[Dict[str, Any]] = None,
         decision_feedback: Optional[Dict[str, Any]] = None,
+        vendor_risk_score: Optional[Dict[str, Any]] = None,
+        vendor_profile: Optional[Dict[str, Any]] = None,
+        cross_invoice_analysis: Optional[Dict[str, Any]] = None,
+        org_config: Optional[Dict[str, Any]] = None,
     ) -> APDecision:
-        """Rule-based decision that replicates the existing routing logic.
-
-        Used when Claude is unavailable, so the workflow is never blocked.
-        """
+        """Rule-based decision using vendor context when Claude is unavailable."""
         gate_passed = validation_gate.get("passed", True)
         reason_codes = validation_gate.get("reason_codes") or []
         confidence = _safe_float(getattr(invoice, "confidence", None)) or 0.0
         decision_feedback = decision_feedback or {}
+        vendor_profile = vendor_profile or {}
+        cross_invoice_analysis = cross_invoice_analysis or {}
+        org_config = org_config or {}
+        auto_threshold = float(org_config.get("auto_approve_confidence_threshold", 0.95))
         strictness_bias = str(decision_feedback.get("strictness_bias") or "neutral").strip().lower()
         has_strict_feedback = strictness_bias == "strict" and int(decision_feedback.get("total_feedback") or 0) >= 3
 
-        # Check for a missing PO on a PO-required vendor
+        # Step 1: PO required but missing → needs_info
         po_required = "po_required_missing" in reason_codes
         if po_required and not getattr(invoice, "po_number", None):
             return APDecision(
@@ -447,6 +604,7 @@ class APDecisionService:
                 fallback=True,
             )
 
+        # Step 2: Validation gate failed → escalate
         if not gate_passed:
             return APDecision(
                 recommendation="escalate",
@@ -462,7 +620,28 @@ class APDecisionService:
                 fallback=True,
             )
 
-        if gate_passed and has_strict_feedback and confidence >= 0.95:
+        # Step 3: Bank details changed within 30 days → fraud signal → escalate
+        bank_changed_at = vendor_profile.get("bank_details_changed_at")
+        if bank_changed_at:
+            days_since_change = _days_since(bank_changed_at)
+            if days_since_change is not None and days_since_change <= 30:
+                return APDecision(
+                    recommendation="escalate",
+                    reasoning=(
+                        f"Bank account details for {invoice.vendor_name} were changed "
+                        f"{days_since_change} day(s) ago — a potential fraud signal. "
+                        "Routing to human review."
+                    ),
+                    confidence=max(0.7, confidence - 0.2),
+                    info_needed=None,
+                    risk_flags=["bank_details_recently_changed"],
+                    vendor_context_used=vendor_context_used or {},
+                    model="fallback",
+                    fallback=True,
+                )
+
+        # Step 4: Strict human feedback bias → escalate
+        if gate_passed and has_strict_feedback and confidence >= auto_threshold:
             return APDecision(
                 recommendation="escalate",
                 reasoning=(
@@ -478,7 +657,85 @@ class APDecisionService:
                 fallback=True,
             )
 
-        if confidence >= 0.95:
+        # Step 5: High vendor risk score → escalate
+        risk_level = (vendor_risk_score or {}).get("level", "low")
+        risk_flags_from_score = (vendor_risk_score or {}).get("flags") or []
+        if risk_level == "high":
+            return APDecision(
+                recommendation="escalate",
+                reasoning=(
+                    f"Vendor risk score is high for {invoice.vendor_name} "
+                    f"(flags: {', '.join(risk_flags_from_score)}). "
+                    "Routing to human review regardless of extraction confidence."
+                ),
+                confidence=max(0.7, confidence - 0.15),
+                info_needed=None,
+                risk_flags=risk_flags_from_score,
+                vendor_context_used=vendor_context_used or {},
+                model="fallback",
+                fallback=True,
+            )
+
+        # Step 6: Duplicate invoice detected → escalate
+        cross_duplicates = cross_invoice_analysis.get("duplicates") or []
+        if cross_duplicates:
+            return APDecision(
+                recommendation="escalate",
+                reasoning=(
+                    f"Duplicate invoice signal detected for {invoice.vendor_name} "
+                    f"(${getattr(invoice, 'amount', 0):.2f}). "
+                    "Routing to human review to confirm this is not a re-submission."
+                ),
+                confidence=max(0.7, confidence - 0.1),
+                info_needed=None,
+                risk_flags=["duplicate_invoice_detected"],
+                vendor_context_used=vendor_context_used or {},
+                model="fallback",
+                fallback=True,
+            )
+
+        # Step 7: Amount >2σ from vendor historical average → escalate
+        avg = _safe_float(vendor_profile.get("avg_invoice_amount"))
+        stddev = _safe_float(vendor_profile.get("amount_stddev"))
+        current_amount = _safe_float(getattr(invoice, "amount", None)) or 0.0
+        if avg is not None and stddev is not None and stddev > 0:
+            if abs(current_amount - avg) > 2 * stddev:
+                return APDecision(
+                    recommendation="escalate",
+                    reasoning=(
+                        f"Invoice amount ${current_amount:.2f} for {invoice.vendor_name} "
+                        f"is more than 2 standard deviations from the historical average "
+                        f"(avg=${avg:.2f}, σ=${stddev:.2f}). Routing to human review."
+                    ),
+                    confidence=max(0.65, confidence - 0.15),
+                    info_needed=None,
+                    risk_flags=["amount_anomaly_2sigma"],
+                    vendor_context_used=vendor_context_used or {},
+                    model="fallback",
+                    fallback=True,
+                )
+
+        # Step 8: Trusted vendor (always approved) → approve at lower threshold
+        always_approved = bool(vendor_profile.get("always_approved"))
+        trusted_threshold = max(0.90, auto_threshold - 0.05)
+        if always_approved and confidence >= trusted_threshold:
+            return APDecision(
+                recommendation="approve",
+                reasoning=(
+                    f"{invoice.vendor_name} has a 100% approval history and extraction confidence "
+                    f"is {confidence:.0%} (trusted vendor threshold: {trusted_threshold:.0%}). "
+                    "Safe to proceed."
+                ),
+                confidence=confidence,
+                info_needed=None,
+                risk_flags=[],
+                vendor_context_used=vendor_context_used or {},
+                model="fallback",
+                fallback=True,
+            )
+
+        # Step 9: Confidence meets org threshold → approve
+        if confidence >= auto_threshold:
             return APDecision(
                 recommendation="approve",
                 reasoning=(
@@ -494,12 +751,14 @@ class APDecisionService:
                 fallback=True,
             )
 
+        # Step 10: Default → escalate (below threshold)
         return APDecision(
             recommendation="escalate",
             reasoning=(
-                f"Extraction confidence is {confidence:.0%} — below the 95% threshold "
-                f"for autonomous approval of {invoice.vendor_name} "
-                f"${getattr(invoice, 'amount', 0):.2f}. Routing to human review."
+                f"Extraction confidence is {confidence:.0%} — below the "
+                f"{auto_threshold:.0%} threshold for autonomous approval of "
+                f"{invoice.vendor_name} ${getattr(invoice, 'amount', 0):.2f}. "
+                "Routing to human review."
             ),
             confidence=confidence,
             info_needed=None,

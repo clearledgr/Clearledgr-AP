@@ -530,3 +530,53 @@ class VendorStore:
             "[VendorStore] Updated profile for %r: count=%d avg=%.2f always_approved=%s",
             vendor_name, invoice_count, avg_amount or 0, always_approved,
         )
+
+    # ------------------------------------------------------------------ #
+    # Payment lateness analysis                                           #
+    # ------------------------------------------------------------------ #
+
+    def get_vendor_payment_lateness(
+        self, organization_id: str, vendor_name: str, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Check if vendor invoices were paid late (due_date < posted date).
+
+        Returns recent invoice history rows with a computed ``was_late`` flag
+        for each row that has both a due_date-like field and a created_at.
+        """
+        sql = self._prepare_sql(
+            "SELECT ap_item_id, invoice_date, amount, final_state, created_at "
+            "FROM vendor_invoice_history "
+            "WHERE organization_id = ? AND vendor_name = ? AND final_state = 'posted_to_erp' "
+            "ORDER BY created_at DESC LIMIT ?"
+        )
+        try:
+            with self.connect() as conn:
+                if self.use_postgres:
+                    cur = conn.cursor()
+                    cur.execute(sql, (organization_id, vendor_name, limit))
+                    rows = [dict(r) for r in cur.fetchall()]
+                else:
+                    conn.row_factory = __import__("sqlite3").Row
+                    cur = conn.cursor()
+                    cur.execute(sql, (organization_id, vendor_name, limit))
+                    rows = [dict(r) for r in cur.fetchall()]
+
+            # Compute was_late: invoice_date (proxy for due) < created_at (proxy for pay)
+            for row in rows:
+                inv_date = row.get("invoice_date") or ""
+                posted_date = row.get("created_at") or ""
+                was_late = False
+                try:
+                    if inv_date and posted_date:
+                        inv_dt = datetime.fromisoformat(inv_date[:10])
+                        post_dt = datetime.fromisoformat(posted_date[:10])
+                        # If posted more than 30 days after invoice date, consider late
+                        was_late = (post_dt - inv_dt).days > 30
+                except (ValueError, TypeError):
+                    pass
+                row["was_late"] = was_late
+
+            return rows
+        except Exception as exc:
+            logger.warning("[VendorStore] get_vendor_payment_lateness failed: %s", exc)
+            return []

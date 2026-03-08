@@ -99,6 +99,7 @@ class LearningCalibrationService:
                 "Collect more operator outcomes before applying calibration changes.",
             ],
             "correction_learning": {"status": "not_available"},
+            "applied_changes": [],
         }
 
     @staticmethod
@@ -111,6 +112,7 @@ class LearningCalibrationService:
         window_days: int = 180,
         min_feedback: int = 20,
         limit: int = 5000,
+        auto_apply: bool = False,
     ) -> Dict[str, Any]:
         rows = self._load_feedback_rows(window_days=window_days, limit=limit)
         if not rows:
@@ -249,6 +251,52 @@ class LearningCalibrationService:
             "recommendations": recommendations,
             "correction_learning": correction_learning,
         }
+
+        # Auto-apply threshold adjustments when enabled
+        applied_changes: List[Dict[str, Any]] = []
+        if auto_apply and status in ("recalibration_needed", "stable"):
+            try:
+                _db = self.db or get_db()
+                _org_row = _db.get_organization(self.organization_id) or {}
+                _raw_settings = _org_row.get("settings_json") or _org_row.get("settings") or {}
+                if isinstance(_raw_settings, str):
+                    _raw_settings = json.loads(_raw_settings)
+                if not isinstance(_raw_settings, dict):
+                    _raw_settings = {}
+                _cfg_dict = _raw_settings.get("org_config") or {}
+                if not isinstance(_cfg_dict, dict):
+                    _cfg_dict = {}
+
+                current_threshold = _safe_float(
+                    _cfg_dict.get("auto_approve_confidence_threshold", 0.95), 0.95
+                )
+                new_threshold = current_threshold
+
+                if status == "recalibration_needed":
+                    # Tighten: human disagreement is high, lower the auto-approve bar
+                    new_threshold = max(0.80, round(current_threshold - 0.02, 4))
+                elif status == "stable" and current_threshold < 0.95 and override_rate < 0.1:
+                    # Relax: stable performance, gradually return toward default
+                    new_threshold = min(0.95, round(current_threshold + 0.01, 4))
+
+                if new_threshold != current_threshold:
+                    _cfg_dict["auto_approve_confidence_threshold"] = new_threshold
+                    _raw_settings["org_config"] = _cfg_dict
+                    _db.update_organization(self.organization_id, settings=_raw_settings)
+                    applied_changes.append({
+                        "field": "auto_approve_confidence_threshold",
+                        "old_value": current_threshold,
+                        "new_value": new_threshold,
+                        "reason": status,
+                        "applied_at": _now_iso(),
+                    })
+            except Exception as _exc:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "[LearningCalibration] auto_apply failed (non-fatal): %s", _exc
+                )
+
+        snapshot["applied_changes"] = applied_changes
         return self._persist_snapshot(snapshot, window_days=window_days, min_feedback=min_feedback)
 
     def _persist_snapshot(

@@ -3281,6 +3281,28 @@ function buildBlockedReasons(item, contextPayload, confidencePercent) {
     });
   }
 
+  // ERP pre-flight checks
+  const erpPreflight = contextPayload?.erp_preflight || {};
+  if (erpPreflight.bill_exists === true) {
+    reasons.push({
+      label: 'Duplicate bill in ERP',
+      detail: `This invoice already exists in ${erpPreflight.erp_type || 'ERP'}.`,
+    });
+  }
+  if (erpPreflight.vendor_exists === false) {
+    reasons.push({
+      label: 'Vendor not in ERP',
+      detail: `Vendor not found in ${erpPreflight.erp_type || 'ERP'}. Create vendor before posting.`,
+    });
+  }
+  if (erpPreflight.gl_valid === false) {
+    const invalid = Array.isArray(erpPreflight.invalid_gl_codes) ? erpPreflight.invalid_gl_codes.join(', ') : '';
+    reasons.push({
+      label: 'GL code invalid',
+      detail: `GL codes not recognized: ${invalid}`,
+    });
+  }
+
   const state = String(item?.state || '').trim().toLowerCase();
   if (['needs_approval', 'pending_approval'].includes(state)) {
     reasons.push({

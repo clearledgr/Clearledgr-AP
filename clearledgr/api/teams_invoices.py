@@ -457,7 +457,24 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
                 reason=result_reason or None,
             )
         except Exception as _upd_exc:
-            logger.error("Non-fatal: Teams card update failed: %s", _upd_exc)
+            logger.warning("Teams card update failed, enqueueing for retry: %s", _upd_exc)
+            try:
+                _db = get_db()
+                _db.enqueue_notification(
+                    organization_id="system",
+                    channel="teams_card_update",
+                    payload={
+                        "service_url": service_url,
+                        "conversation_id": normalized.source_channel_id,
+                        "activity_id": activity_id,
+                        "result_status": result_status,
+                        "actor_display": normalized.actor_display or normalized.actor_id or "unknown",
+                        "action": normalized.action,
+                        "reason": result_reason or None,
+                    },
+                )
+            except Exception as _enq_exc:
+                logger.error("Failed to enqueue Teams callback retry: %s", _enq_exc)
 
     return {
         "status": result_status,
