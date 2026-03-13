@@ -81,7 +81,7 @@ function normalizeBackendUrl(raw) {
   if (!url) {
     url = getConfiguredBackendUrl();
   }
-  if (!url) return 'http://127.0.0.1:8000';
+  if (!url) return 'http://127.0.0.1:8010';
   if (!/^https?:\/\//i.test(url)) url = `http://${url}`;
   if (url.endsWith('/v1')) url = url.slice(0, -3);
   try {

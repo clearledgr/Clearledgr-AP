@@ -335,20 +335,8 @@ import { ClearledgrQueueManager } from './queue-manager.js';
     }
   }
 
-  async function sendAgingData() {
-    try {
-      const settings = await getRuntimeSettings();
-      const response = await fetch(
-        `${settings.backendUrl}/ap/aging/summary?organization_id=${encodeURIComponent(settings.organizationId)}`
-      );
-      if (!response.ok) return;
-      const data = await response.json();
-      emit('clearledgr:aging-data', data);
-    } catch (err) {
-      console.warn('[Clearledgr] Aging fetch failed:', err?.message || err);
-      emit('clearledgr:aging-data', { buckets: [], total: 0, error: 'unavailable' });
-    }
-  }
+  // sendAgingData removed — /ap/aging/summary endpoint does not exist
+  // and the clearledgr:aging-data event is not consumed by any listener.
 
   // ---------------------------------------------------------------------------
   // EVENT HANDLERS (called by InboxSDK UI)
@@ -974,7 +962,7 @@ import { ClearledgrQueueManager } from './queue-manager.js';
 
     window.addEventListener('clearledgr:connect-erp', handleConnectErp);
     window.addEventListener('clearledgr:request-erp-status', sendErpStatus);
-    window.addEventListener('clearledgr:request-aging-data', sendAgingData);
+
 
     window.addEventListener('clearledgr:clear-data', handleClearData);
     window.addEventListener('clearledgr:export-csv', handleExportCsv);

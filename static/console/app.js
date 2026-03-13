@@ -34,6 +34,35 @@ function params() {
   return new URLSearchParams(window.location.search);
 }
 
+// Circuit breaker: prevent infinite 401 retry loops.
+let _refreshInFlight = false;
+let _refreshFailed = false;
+
+async function refreshAdminSession() {
+  if (_refreshFailed) return false;
+  if (_refreshInFlight) return false;
+  _refreshInFlight = true;
+  try {
+    const refreshCookie = readCookie("clearledgr_admin_refresh");
+    const resp = await fetch("/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ refresh_token: refreshCookie || "" }),
+    });
+    if (!resp.ok) {
+      _refreshFailed = true;
+      return false;
+    }
+    return true;
+  } catch {
+    _refreshFailed = true;
+    return false;
+  } finally {
+    _refreshInFlight = false;
+  }
+}
+
 async function api(path, options = {}) {
   const method = String(options.method || "GET").trim().toUpperCase();
   const headers = {
@@ -49,6 +78,17 @@ async function api(path, options = {}) {
     headers,
     credentials: "include",
   });
+  // On 401: attempt ONE token refresh, then retry the original request once.
+  if (response.status === 401 && !options.__skipRefresh) {
+    const refreshed = await refreshAdminSession();
+    if (refreshed) {
+      return api(path, { ...options, __skipRefresh: true });
+    }
+    // Refresh failed — fall through to auth screen
+    clearSession();
+    showAuth("Session expired. Sign in again.");
+    throw new Error("Session expired");
+  }
   if (!response.ok) {
     const payload = await response.text();
     const error = new Error(payload || `HTTP ${response.status}`);
@@ -355,7 +395,7 @@ function setupPage() {
           <label>Token Secret</label>
           <input id="ns-token-secret" type="password" />
         </div>
-        <div class="row" style="margin-top:10px">
+        <div class="row mt-10">
           <button id="ns-connect-btn" class="connector-btn">Test & Connect</button>
           <button id="ns-cancel-btn" class="alt">Cancel</button>
         </div>
@@ -372,7 +412,7 @@ function setupPage() {
           <label>Password</label>
           <input id="sap-password" type="password" />
         </div>
-        <div class="row" style="margin-top:10px">
+        <div class="row mt-10">
           <button id="sap-connect-btn" class="connector-btn">Test & Connect</button>
           <button id="sap-cancel-btn" class="alt">Cancel</button>
         </div>
@@ -525,7 +565,7 @@ function activityPage() {
       </div>
     </div>
 
-    <div class="kpi-row" style="margin-top:0">
+    <div class="kpi-row mt-0">
       <div class="kpi-card">
         <strong>${dash.auto_approved_rate ? (dash.auto_approved_rate * 100).toFixed(0) + "%" : "—"}</strong>
         <span>Auto-approved</span>
@@ -570,7 +610,7 @@ function activityPage() {
             }).join("")}
           </div>`
       }
-      <div class="row" style="margin-top:10px">
+      <div class="row mt-10">
         <button id="refresh-activity-btn" class="alt">Refresh</button>
       </div>
     </div>
@@ -724,7 +764,7 @@ function opsPage() {
           ? `<ul>${learningSnapshot.recommendations.slice(0, 3).map((item) => `<li>${item}</li>`).join("")}</ul>`
           : '<p class="muted">No calibration recommendations yet.</p>'
       }
-      <details style="margin-top:10px">
+      <details class="mt-10">
         <summary>Top vendor calibration gaps</summary>
         <pre>${JSON.stringify((learningSnapshot?.top_vendor_calibration_gaps || []).slice(0, 10), null, 2)}</pre>
       </details>
@@ -760,11 +800,11 @@ function opsPage() {
       <div class="row">
         <button id="ops-refresh-btn" class="alt">Refresh Ops data</button>
       </div>
-      <details style="margin-top:10px">
+      <details class="mt-10">
         <summary>View raw agent/audit events</summary>
         <pre>${JSON.stringify(recentAudit.slice(0, 40), null, 2)}</pre>
       </details>
-      <details style="margin-top:10px">
+      <details class="mt-10">
         <summary>Evidence viewer (worklist snapshot)</summary>
         <pre>${JSON.stringify(worklist.slice(0, 20), null, 2)}</pre>
       </details>
@@ -912,7 +952,14 @@ function planPage() {
     </div>
     <div class="panel">
       <h3>Usage</h3>
-      <pre>${JSON.stringify(sub.usage || {}, null, 2)}</pre>
+      ${(() => {
+        const u = sub.usage || {};
+        const keys = Object.keys(u);
+        if (!keys.length) return '<p class="muted">No usage data yet.</p>';
+        return `<div class="kpi-row">${keys.map(k =>
+          `<div class="kpi-card"><strong>${typeof u[k] === "number" ? u[k].toLocaleString() : u[k]}</strong><span>${k.replace(/_/g, " ")}</span></div>`
+        ).join("")}</div>`;
+      })()}
     </div>
   `;
 }

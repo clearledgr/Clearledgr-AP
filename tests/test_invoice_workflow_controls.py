@@ -105,7 +105,7 @@ def test_po_match_exception_forces_manual_approval(monkeypatch):
             return _FakeMatch()
 
     monkeypatch.setattr(
-        "clearledgr.services.invoice_workflow.get_purchase_order_service",
+        "clearledgr.services.purchase_orders.get_purchase_order_service",
         lambda _org: _FakePOService(),
     )
 

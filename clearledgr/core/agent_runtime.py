@@ -188,9 +188,12 @@ class AgentPlanningEngine:
             input_args = tc.get("input", {})
 
             # Checkpoint BEFORE executing — if we crash here, we retry this step on resume
-            db.update_task_run_step(
-                task_run_id, step, tool_name, input_args, {}, status="running"
-            )
+            try:
+                db.update_task_run_step(
+                    task_run_id, step, tool_name, input_args, {}, status="running"
+                )
+            except Exception as exc:
+                logger.error("[AgentRuntime] Pre-exec checkpoint failed (step %d): %s", step, exc)
 
             # Execute tool (NEVER raises — returns {"ok": False, "error": "..."} on failure)
             tool = tool_map.get(tool_name)
@@ -210,9 +213,12 @@ class AgentPlanningEngine:
             next_status = "awaiting_human" if is_hitl else "running"
 
             # Checkpoint result
-            db.update_task_run_step(
-                task_run_id, step + 1, tool_name, input_args, output, status=next_status
-            )
+            try:
+                db.update_task_run_step(
+                    task_run_id, step + 1, tool_name, input_args, output, status=next_status
+                )
+            except Exception as exc:
+                logger.error("[AgentRuntime] Post-exec checkpoint failed (step %d): %s", step, exc)
 
             # Feed back into message history
             messages.append({"role": "assistant", "content": content})
@@ -251,6 +257,10 @@ class AgentPlanningEngine:
     # Claude API (raw httpx — consistent with ap_decision.py)
     # ------------------------------------------------------------------
 
+    _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503})
+    _MAX_RETRIES = 3
+    _BASE_DELAY = 1.0  # seconds
+
     async def _call_claude_with_tools(
         self,
         system: str,
@@ -259,8 +269,9 @@ class AgentPlanningEngine:
     ) -> Dict[str, Any]:
         """POST to Anthropic messages API with tool_use enabled.
 
-        Returns the raw response dict. Raises RuntimeError when the API key
-        is missing.
+        Retries up to ``_MAX_RETRIES`` times with exponential backoff for
+        transient failures (429, 500, 502, 503).  Returns the raw response
+        dict.  Raises RuntimeError when the API key is missing.
         """
         api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
         if not api_key:
@@ -274,18 +285,45 @@ class AgentPlanningEngine:
             "tools": tools,
             "messages": messages,
         }
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+
+        last_exc: Optional[Exception] = None
         async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json=payload,
-            )
-            resp.raise_for_status()
-            return resp.json()
+            for attempt in range(self._MAX_RETRIES + 1):
+                try:
+                    resp = await client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers=headers,
+                        json=payload,
+                    )
+                    if resp.status_code in self._RETRYABLE_STATUS_CODES and attempt < self._MAX_RETRIES:
+                        delay = self._BASE_DELAY * (2 ** attempt)
+                        logger.warning(
+                            "[AgentRuntime] Claude API returned %s, retrying in %.1fs (attempt %d/%d)",
+                            resp.status_code, delay, attempt + 1, self._MAX_RETRIES,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    resp.raise_for_status()
+                    return resp.json()
+                except httpx.HTTPStatusError:
+                    raise  # non-retryable status or exhausted retries
+                except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
+                    last_exc = exc
+                    if attempt < self._MAX_RETRIES:
+                        delay = self._BASE_DELAY * (2 ** attempt)
+                        logger.warning(
+                            "[AgentRuntime] Claude API network error (%s), retrying in %.1fs (attempt %d/%d)",
+                            type(exc).__name__, delay, attempt + 1, self._MAX_RETRIES,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise RuntimeError(f"Claude API failed after {self._MAX_RETRIES} retries: {last_exc}") from last_exc
+        raise RuntimeError(f"Claude API failed after {self._MAX_RETRIES} retries: {last_exc}")
 
     # ------------------------------------------------------------------
     # Checkpoint resume

@@ -27,7 +27,7 @@ const STATE_COLORS = {
   received: '#2563eb',
   validated: '#0f766e',
   needs_info: '#b45309',
-  needs_approval: '#b45309',
+  needs_approval: '#c2410c',
   approved: '#15803d',
   ready_to_post: '#0f766e',
   posted_to_erp: '#7c3aed',
