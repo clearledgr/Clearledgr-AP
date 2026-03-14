@@ -153,14 +153,22 @@ class AgentPlanningEngine:
                     error=str(exc),
                 )
 
-            content = response.get("content", [])
-            tool_calls = [b for b in content if b.get("type") == "tool_use"]
+            content = response.get("content") or []
+            if not isinstance(content, list):
+                logger.warning("[AgentRuntime] Unexpected content type %s, treating as empty", type(content).__name__)
+                content = []
+
+            stop_reason = response.get("stop_reason", "")
+            if stop_reason == "max_tokens":
+                logger.warning("[AgentRuntime] Response truncated (max_tokens) at step %d", step)
+
+            tool_calls = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
 
             if not tool_calls:
                 # Prevent fake completion: at least one tool execution is required
                 # before a task can be marked completed.
                 text = " ".join(
-                    b.get("text", "") for b in content if b.get("type") == "text"
+                    b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
                 )
                 if step <= 0:
                     error = "planning_returned_no_tool_use"
@@ -185,7 +193,10 @@ class AgentPlanningEngine:
             tc = tool_calls[0]
             tool_name = tc.get("name", "")
             tool_call_id = tc.get("id", f"call_{step}")
-            input_args = tc.get("input", {})
+            input_args = tc.get("input") or {}
+            if not isinstance(input_args, dict):
+                logger.warning("[AgentRuntime] Tool %s returned non-dict input: %s", tool_name, type(input_args).__name__)
+                input_args = {}
 
             # Checkpoint BEFORE executing — if we crash here, we retry this step on resume
             try:

@@ -19,6 +19,20 @@
 ### ~~Wire NotificationObserver into workflow~~ ✓
 - **Status:** Done (2026-03-13) — registered in `InvoiceWorkflowService.__init__`; DB table, `enqueue_notification()`, and retry queue already existed
 
+## P2 — Operational
+
+### Operational health dashboard
+- **What:** `/ops/health` page in admin console — AP pipeline latency p50/p95, agent task success rate, Claude API error rate, notification delivery rate
+- **Why:** No real-time visibility into system health; operators rely on logs to detect degradation
+- **Effort:** M
+- **Depends on:** Metrics already collected via `_ap_ops_metrics` table; needs frontend rendering
+
+### Pre-commit hook for secret prevention
+- **What:** Git pre-commit hook that blocks commits containing patterns matching API keys, tokens, or credentials
+- **Why:** `.env` and token files are gitignored but accidental inline secrets in source code have no guardrail
+- **Effort:** S
+- **Depends on:** Nothing — standalone hook script
+
 ## P3 — Operational
 
 ### Staging E2E drill automation

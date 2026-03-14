@@ -20,7 +20,7 @@ __pycache__/
 *.sqlite3-wal
 *.log
 *.pid
-.claude/settings.local.json
+.claude/
 Screenshot *.png
 Claude rules.jpeg
 
