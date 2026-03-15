@@ -1193,4 +1193,38 @@ export const STATE_PILL_CSS = `
   .cl-pill-closed { color: #0f766e; border-color: #0f766e; }
   .cl-pill-rejected { color: #b91c1c; border-color: #b91c1c; }
   .cl-pill-failed-post { color: #b91c1c; border-color: #b91c1c; }
+  .cl-warning-text { color: #b45309; }
+  .cl-approval-progress {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #c2410c;
+    padding: 4px 0;
+  }
+  .cl-approval-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #c2410c;
+    animation: cl-pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes cl-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .cl-pdf-thumb {
+    width: 48px;
+    height: 48px;
+    border-radius: 6px;
+    border: 1px solid var(--cl-border, #e5e7eb);
+    object-fit: cover;
+    flex-shrink: 0;
+    background: #f1f5f9;
+  }
+  .cl-thread-header-with-thumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
 `;

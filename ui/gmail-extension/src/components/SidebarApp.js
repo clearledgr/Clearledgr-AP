@@ -9,7 +9,7 @@ import AgentTimeline from './AgentTimeline.js';
 import ActionDialog, { useActionDialog } from './ActionDialog.js';
 import {
   getStateLabel, formatAmount, trimText, getAssetUrl,
-  getDecisionSummary, normalizeBudgetContext,
+  getDecisionSummary, getExceptionReason, normalizeBudgetContext,
   getSourceThreadId, getSourceMessageId, openSourceEmail,
 } from '../utils/formatters.js';
 
@@ -162,32 +162,73 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   const confidencePercent = Number.isFinite(confidenceNumber) ? Math.round(Math.max(0, Math.min(1, confidenceNumber)) * 100) : null;
   const auditEvents = s.auditState.itemId === item.id && Array.isArray(s.auditState.events) ? s.auditState.events : [];
 
-  // Actions
+  // Actions with Delight 4: optimistic state updates
   const [doApproval, approvalPending] = useAction(async () => {
+    setOptimisticState('needs_approval');
     const result = await queueManager.requestApproval(item);
-    showToast(result?.status === 'needs_approval' || result?.status === 'pending_approval' ? 'Approval request sent' : 'Unable to route approval', result?.status ? 'success' : 'error');
+    const ok = result?.status === 'needs_approval' || result?.status === 'pending_approval';
+    showToast(ok ? 'Approval request sent' : 'Unable to route approval', ok ? 'success' : 'error');
+    if (!ok) setOptimisticState(null);
     await queueManager.refreshQueue();
+    setOptimisticState(null);
   });
   const [doNudge, nudgePending] = useAction(async () => {
     const result = await queueManager.nudgeApproval(item);
     showToast(result?.status === 'nudged' ? 'Approval reminder sent' : 'Unable to send reminder', result?.status === 'nudged' ? 'success' : 'error');
   });
   const [doRetry, retryPending] = useAction(async () => {
+    setOptimisticState('ready_to_post');
     const result = await queueManager.retryFailedPost(item);
-    showToast(result?.status === 'ready_to_post' || result?.status === 'posted' || result?.status === 'completed' ? 'ERP retry submitted' : (result?.reason || 'Retry failed'), result?.status ? 'success' : 'error');
+    const ok = result?.status === 'ready_to_post' || result?.status === 'posted' || result?.status === 'completed';
+    showToast(ok ? 'ERP retry submitted' : (result?.reason || 'Retry failed'), ok ? 'success' : 'error');
+    if (!ok) setOptimisticState(null);
     await queueManager.refreshQueue();
+    setOptimisticState(null);
   });
   const [doPost, postPending] = useAction(async () => {
+    setOptimisticState('posted_to_erp');
     const result = await queueManager.approveAndPost(item, { override: false });
-    showToast(result?.status === 'posted' || result?.status === 'approved' || result?.status === 'posted_to_erp' ? 'Invoice posted to ERP' : (result?.reason || 'ERP posting failed'), result?.status ? 'success' : 'error');
+    const ok = result?.status === 'posted' || result?.status === 'approved' || result?.status === 'posted_to_erp';
+    showToast(ok ? 'Invoice posted to ERP' : (result?.reason || 'ERP posting failed'), ok ? 'success' : 'error');
+    if (!ok) setOptimisticState(null);
     await queueManager.refreshQueue();
+    setOptimisticState(null);
   });
   const [dialog, openDialog] = useActionDialog();
+  // Delight 1: Smart reason defaults — pre-populate from exception code
+  const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : '';
   const [doReject, rejectPending] = useAction(async () => {
-    const reason = await openDialog({ actionType: 'reject', title: 'Reject invoice', label: 'Rejection reason', confirmLabel: 'Reject' });
+    const reason = await openDialog({
+      actionType: 'reject',
+      title: 'Reject invoice',
+      label: 'Rejection reason',
+      confirmLabel: 'Reject',
+      defaultValue: smartDefault,
+    });
     if (!reason) return;
-    window.dispatchEvent(new CustomEvent('clearledgr:reject-invoice', { detail: { emailId: item.id || item.thread_id, reason } }));
+    // Delight 2: Undo toast — 5s window to undo reject
+    const emailId = item.id || item.thread_id;
+    let undone = false;
+    showToast('Invoice rejected. Undo?', 'info');
+    const undoTimer = setTimeout(() => {
+      if (!undone) window.dispatchEvent(new CustomEvent('clearledgr:reject-invoice', { detail: { emailId, reason } }));
+    }, 5000);
+    // Store undo handler on toast element for click detection
+    if (_toastEl) {
+      const origClick = _toastEl.onclick;
+      _toastEl.style.cursor = 'pointer';
+      _toastEl.onclick = () => {
+        undone = true;
+        clearTimeout(undoTimer);
+        showToast('Rejection undone', 'success');
+        _toastEl.onclick = origClick;
+        _toastEl.style.cursor = '';
+      };
+    }
   });
+  // Delight 4: Optimistic updates — show pending state immediately
+  const [optimisticState, setOptimisticState] = useState(null);
+  const displayState = optimisticState || state;
 
   const openSource = useCallback(() => {
     if (!openSourceEmail(item)) showToast('Unable to open source email', 'error');
@@ -214,13 +255,21 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
           <button class="cl-btn cl-btn-secondary cl-nav-btn" onClick=${goNext} disabled=${itemIndex >= totalItems - 1}>Next</button>
         </div>
       </div>
-      <div class="cl-thread-header">
+      <div class="cl-thread-header ${item?.has_attachment ? 'cl-thread-header-with-thumb' : ''}">
+        ${/* Delight 5: PDF thumbnail placeholder for items with attachments */
+          item?.has_attachment && html`<div class="cl-pdf-thumb" title="PDF attachment">PDF</div>`}
         <div class="cl-thread-title">${vendor}</div>
-        <${StatePill} state=${state} />
+        <${StatePill} state=${displayState} />
       </div>
       <div class="cl-thread-main">${amount} · Invoice ${invoiceNumber} · Due ${dueDate}${poNumber ? ` · PO ${poNumber}` : ' · No PO'}</div>
 
-      ${decision.tone === 'warning' && html`<div class="cl-agent-detail" style="color:#b45309">${decision.detail}</div>`}
+      ${decision.tone === 'warning' && html`<div class="cl-agent-detail cl-warning-text">${decision.detail}</div>`}
+      ${/* Delight 3: Approval progress indicator */ ''}
+      ${['needs_approval', 'pending_approval'].includes(displayState) && approvalPending && html`
+        <div class="cl-approval-progress">
+          <span class="cl-approval-dot"></span> Waiting for approver response...
+        </div>
+      `}
 
       ${primaryLabel && html`
         <button class="cl-btn cl-btn-primary cl-primary-cta" onClick=${primaryHandler} disabled=${primaryPending}>

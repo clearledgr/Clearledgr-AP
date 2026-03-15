@@ -42,6 +42,7 @@ export default function ActionDialog({ visible, config, onClose }) {
     title = 'Add context',
     label = 'Reason',
     placeholder = '',
+    defaultValue = '',
     confirmLabel = 'Confirm',
     cancelLabel = 'Cancel',
     required: requiredProp,
@@ -54,10 +55,10 @@ export default function ActionDialog({ visible, config, onClose }) {
 
   useEffect(() => {
     if (visible) {
-      setValue('');
+      setValue(defaultValue || '');
       setTimeout(() => inputRef.current?.focus(), 0);
     }
-  }, [visible]);
+  }, [visible, defaultValue]);
 
   const handleConfirm = useCallback(() => {
     const trimmed = value.trim();
