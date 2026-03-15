@@ -1,0 +1,86 @@
+/* Clearledgr Design Tokens — single source of truth for both surfaces */
+
+:root,
+:host {
+  /* Brand */
+  --cl-accent: #0d8c73;
+  --cl-accent-soft: #e3f4ef;
+  --cl-accent-hover: #0a7462;
+  --cl-accent-text: #0e6655;
+
+  /* Neutrals */
+  --cl-bg: #f3f0e8;
+  --cl-panel: #fffdf8;
+  --cl-surface: #ffffff;
+  --cl-ink: #172231;
+  --cl-muted: #627185;
+  --cl-line: #d6d0c0;
+
+  /* Danger */
+  --cl-danger: #c54637;
+  --cl-danger-soft: #fee2e2;
+  --cl-danger-text: #991b1b;
+
+  /* Warning */
+  --cl-warning: #b45309;
+  --cl-warning-soft: #fef3c7;
+  --cl-warning-text: #92400e;
+
+  /* Info */
+  --cl-info: #2563eb;
+  --cl-info-soft: #dbeafe;
+  --cl-info-text: #1e40af;
+
+  /* Success */
+  --cl-success: #0e6655;
+  --cl-success-soft: #d1fae5;
+  --cl-success-text: #065f46;
+
+  /* AP State Colors */
+  --cl-state-received: #2563eb;
+  --cl-state-validated: #0f766e;
+  --cl-state-needs-info: #b45309;
+  --cl-state-needs-approval: #c2410c;
+  --cl-state-approved: #15803d;
+  --cl-state-ready-to-post: #0f766e;
+  --cl-state-posted: #7c3aed;
+  --cl-state-closed: #0f766e;
+  --cl-state-rejected: #b91c1c;
+  --cl-state-failed: #b91c1c;
+
+  /* Typography */
+  --cl-font-display: "Space Grotesk", sans-serif;
+  --cl-font-body: "IBM Plex Sans", sans-serif;
+  --cl-font-mono: "IBM Plex Mono", monospace;
+
+  /* Spacing */
+  --cl-space-xs: 4px;
+  --cl-space-sm: 8px;
+  --cl-space-md: 12px;
+  --cl-space-lg: 16px;
+  --cl-space-xl: 24px;
+  --cl-space-2xl: 32px;
+
+  /* Radii */
+  --cl-radius-sm: 6px;
+  --cl-radius-md: 10px;
+  --cl-radius-lg: 14px;
+  --cl-radius-pill: 999px;
+
+  /* Shadows */
+  --cl-shadow-sm: 0 1px 3px rgba(51, 49, 37, 0.08);
+  --cl-shadow-md: 0 4px 12px rgba(51, 49, 37, 0.1);
+  --cl-shadow-lg: 0 12px 40px rgba(51, 49, 37, 0.12);
+
+  /* Transitions */
+  --cl-transition-fast: 0.15s ease;
+  --cl-transition-normal: 0.25s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  :host {
+    --cl-transition-fast: 0s;
+    --cl-transition-normal: 0s;
+  }
+}

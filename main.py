@@ -543,8 +543,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
         response.headers.setdefault(
             "Content-Security-Policy",
-            "default-src 'self'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' https:; font-src 'self'; connect-src 'self' https:; "
+            "default-src 'self'; script-src 'self'; "
+            "style-src 'self' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' https: data:; connect-src 'self' https:; "
             "frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'",
         )
         return response

@@ -21,11 +21,19 @@
     "test:e2e-evidence:validate": "node scripts/gmail-e2e-evidence.cjs",
     "evidence:ui-hardening": "node scripts/capture-ui-hardening-evidence.cjs"
   },
-  "keywords": ["gmail", "chrome-extension", "invoice", "finance", "automation"],
+  "keywords": [
+    "gmail",
+    "chrome-extension",
+    "invoice",
+    "finance",
+    "automation"
+  ],
   "author": "Clearledgr",
   "license": "ISC",
   "dependencies": {
-    "@inboxsdk/core": "^2.2.11"
+    "@inboxsdk/core": "^2.2.11",
+    "htm": "^3.1.1",
+    "preact": "^10.29.0"
   },
   "devDependencies": {
     "acorn": "^8.15.0",

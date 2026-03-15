@@ -42,6 +42,10 @@ module.exports = {
   ],
   resolve: {
     extensions: ['.js', '.mjs'],
+    alias: {
+      '@shared': path.resolve(__dirname, '..', 'shared'),
+    },
+    modules: [path.resolve(__dirname, 'node_modules'), 'node_modules'],
   },
   // Target web for content script compatibility
   target: 'web',
