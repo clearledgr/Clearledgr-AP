@@ -49,21 +49,23 @@ from clearledgr.api import (
 )
 
 
-@asynccontextmanager
-async def app_lifespan(app: FastAPI):
-    """Canonical app lifecycle using FastAPI lifespan hooks."""
-    _apply_runtime_surface_profile()
+async def _deferred_startup(app):
+    """Run slow startup tasks in the background so the server binds immediately."""
     try:
         from clearledgr.services.gmail_autopilot import start_gmail_autopilot
-        await start_gmail_autopilot(app)
+        await asyncio.wait_for(start_gmail_autopilot(app), timeout=10.0)
         logger.info("Gmail autopilot started")
+    except asyncio.TimeoutError:
+        logger.warning("Gmail autopilot startup timed out (10s) — skipping")
     except Exception as e:
         logger.warning(f"Gmail autopilot not started: {e}")
 
     try:
         from clearledgr.services.agent_background import start_agent_background
-        await start_agent_background(app)
+        await asyncio.wait_for(start_agent_background(app), timeout=10.0)
         logger.info("Agent background intelligence started")
+    except asyncio.TimeoutError:
+        logger.warning("Agent background startup timed out (10s) — skipping")
     except Exception as e:
         logger.warning(f"Agent background not started: {e}")
 
@@ -71,8 +73,10 @@ async def app_lifespan(app: FastAPI):
         from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
 
         runtime = get_platform_finance_runtime("default")
-        resumed = await runtime.resume_pending_agent_tasks()
+        resumed = await asyncio.wait_for(runtime.resume_pending_agent_tasks(), timeout=10.0)
         logger.info("Finance agent runtime started (%d pending tasks discovered)", resumed)
+    except asyncio.TimeoutError:
+        logger.warning("Finance agent runtime startup timed out (10s) — skipping")
     except Exception as e:
         logger.warning(f"Finance agent runtime not started: {e}")
 
@@ -82,14 +86,23 @@ async def app_lifespan(app: FastAPI):
 
         planner = get_planning_engine()
         planner.register_skill(APSkill())
-        planner_resumed = await planner.resume_pending_tasks()
+        planner_resumed = await asyncio.wait_for(planner.resume_pending_tasks(), timeout=10.0)
         logger.info(
             "Agent planning engine started, APSkill registered (%d tasks resumed)",
             planner_resumed,
         )
+    except asyncio.TimeoutError:
+        logger.warning("Agent planning engine startup timed out (10s) — skipping")
     except Exception as e:
         logger.warning(f"Agent planning engine not started: {e}")
 
+
+@asynccontextmanager
+async def app_lifespan(app: FastAPI):
+    """Canonical app lifecycle — fires slow startup in background so server binds fast."""
+    _apply_runtime_surface_profile()
+    # Fire all slow startup tasks in the background so uvicorn binds immediately
+    asyncio.create_task(_deferred_startup(app))
     try:
         yield
     finally:
@@ -533,6 +546,24 @@ class AdminSessionCSRFMiddleware(BaseHTTPMiddleware):
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Inject standard security headers into every response."""
 
+    # Import maps are inline JSON blocks that require script-src allowance.
+    # The admin console uses an import map for Preact bare-specifier resolution.
+    _CONSOLE_CSP = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' https: data:; connect-src 'self' https:; "
+        "frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'"
+    )
+    _API_CSP = (
+        "default-src 'self'; script-src 'self'; "
+        "style-src 'self' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' https: data:; connect-src 'self' https:; "
+        "frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'"
+    )
+
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
@@ -541,13 +572,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault(
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
         )
+        # Console pages need unsafe-inline for import maps; API routes stay strict
+        is_console = request.url.path.startswith("/console") or request.url.path.startswith("/static/console")
         response.headers.setdefault(
             "Content-Security-Policy",
-            "default-src 'self'; script-src 'self'; "
-            "style-src 'self' https://fonts.googleapis.com; "
-            "font-src 'self' https://fonts.gstatic.com; "
-            "img-src 'self' https: data:; connect-src 'self' https:; "
-            "frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'",
+            self._CONSOLE_CSP if is_console else self._API_CSP,
         )
         return response
 
