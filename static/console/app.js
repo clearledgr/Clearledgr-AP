@@ -22,15 +22,15 @@ class ErrorBoundary extends Component {
 // ==================== CONFIG ====================
 
 const PAGES = [
-  { id: 'setup', title: 'Setup', subtitle: 'Connect your tools and start processing invoices.' },
-  { id: 'activity', title: 'Activity', subtitle: 'See what Clearledgr processed and what needs attention.' },
-  { id: 'ops', title: 'Ops', subtitle: 'Monitoring, batch actions, and operational recovery controls.' },
-  { id: 'integrations', title: 'Integrations', subtitle: 'Connect and verify Gmail, Slack, and ERP.' },
-  { id: 'organization', title: 'Organization', subtitle: 'Manage organization profile and runtime settings.' },
-  { id: 'policies', title: 'AP Policies', subtitle: 'Configure policy behavior for AP decisioning.' },
-  { id: 'team', title: 'Team', subtitle: 'Invite teammates and manage access.' },
-  { id: 'plan', title: 'Plan & Usage', subtitle: 'Track plan, trial, onboarding, and usage.' },
-  { id: 'health', title: 'Health', subtitle: 'See required actions before production rollout.' },
+  { id: 'setup', title: 'Get Started', subtitle: 'Connect your tools and go live in minutes.' },
+  { id: 'activity', title: 'Activity', subtitle: 'Your invoice processing at a glance.' },
+  { id: 'ops', title: 'Operations', subtitle: 'Monitor performance and take bulk actions.' },
+  { id: 'integrations', title: 'Connections', subtitle: 'Gmail, Slack, Teams, and your accounting software.' },
+  { id: 'organization', title: 'Company', subtitle: 'Your organization profile and preferences.' },
+  { id: 'policies', title: 'Approval Rules', subtitle: 'Control how invoices are reviewed and approved.' },
+  { id: 'team', title: 'Team', subtitle: 'Invite your colleagues to Clearledgr.' },
+  { id: 'plan', title: 'Plan', subtitle: 'Your subscription and usage.' },
+  { id: 'health', title: 'System Status', subtitle: 'Everything you need before going live.' },
 ];
 
 const TZ = 'Europe/London';
@@ -307,23 +307,27 @@ function SetupPage({ bootstrap, orgId, onNav, onRefresh }) {
   });
 
   const ws = gmail.watch_status || 'unknown';
-  const wsLabel = ws === 'active' ? 'Push (real-time)' : ws === 'polling' ? 'Polling (60s)' : 'Disconnected';
+  const wsLabel = ws === 'active' ? 'Live monitoring' : ws === 'polling' ? 'Checking periodically' : 'Not connected';
   const wsClass = ws === 'active' ? 'ap-active' : ws === 'polling' ? 'ap-polling' : 'ap-off';
   const dash = bootstrap?.dashboard || {};
+  const doneCount = [gmailOk && slackOk && teamsOk && erpOk, channelOk, policyOk, allReady].filter(Boolean).length;
 
   return html`
-    <div class="panel"><h3>Setup steps</h3>
-      <div class="readiness-list">
-        <div class="readiness-item">${checkMark(gmailOk && slackOk && teamsOk && erpOk)} 1) Integrations</div>
-        <div class="readiness-item">${checkMark(channelOk)} 2) Approval channel</div>
-        <div class="readiness-item">${checkMark(policyOk)} 3) AP policies</div>
-        <div class="readiness-item">${checkMark(allReady)} 4) Launch</div>
+    <div class="panel"><h3>Finish setting up Clearledgr</h3>
+      <p class="muted">${doneCount} of 4 complete</p>
+      <div style="height:4px;background:#e8e5e0;border-radius:2px;margin:12px 0 16px;overflow:hidden">
+        <div style="height:100%;width:${doneCount * 25}%;background:var(--accent);border-radius:2px;transition:width 0.3s"></div>
       </div>
-      <p class="muted">Follow this order: Integrations → Channel → Policies → Launch.</p>
+      <div class="readiness-list">
+        <div class="readiness-item">${checkMark(gmailOk && slackOk && teamsOk && erpOk)} Connect your tools</div>
+        <div class="readiness-item">${checkMark(channelOk)} Set approval channel</div>
+        <div class="readiness-item">${checkMark(policyOk)} Review approval rules</div>
+        <div class="readiness-item">${checkMark(allReady)} Go live</div>
+      </div>
     </div>
 
-    <div class="panel"><h3>Step 1: Connect integrations</h3>
-      <p class="muted">One-click setup for each service.</p>
+    <div class="panel"><h3>Connect your tools</h3>
+      <p class="muted">Clearledgr works with the tools your team already uses.</p>
       <div class="connector-grid">
         <div class="connector-card ${gmailOk ? 'done' : ''}">
           <div class="connector-header"><strong>Gmail</strong>${statusBadge(gmailOk)}</div>
@@ -343,8 +347,8 @@ function SetupPage({ bootstrap, orgId, onNav, onRefresh }) {
       </div>
     </div>
 
-    <div class="panel"><h3>Step 1b: Choose your ERP</h3>
-      <p class="muted">Connect the accounting system where bills get posted.</p>
+    <div class="panel"><h3>Connect your accounting software</h3>
+      <p class="muted">Where should Clearledgr post approved invoices?</p>
       <div class="connector-grid connector-grid-3">
         ${['quickbooks', 'xero'].map(t => html`
           <div class="connector-card ${erpOk && erpType === t ? 'done' : ''}">
@@ -390,8 +394,8 @@ function SetupPage({ bootstrap, orgId, onNav, onRefresh }) {
       </div>`}
     </div>
 
-    <div class="panel ${slackOk ? '' : 'panel-disabled'}"><h3>Step 2: Approval channel</h3>
-      <p class="muted">Where should Clearledgr send invoice approval requests in Slack?</p>
+    <div class="panel ${slackOk ? '' : 'panel-disabled'}"><h3>Set your approval channel</h3>
+      <p class="muted">Which Slack channel should receive invoice approval requests?</p>
       <div class="row">
         <input id="slack-channel-input" placeholder="#finance-approvals" value=${slack.approval_channel || ''} disabled=${!slackOk} />
         <button class="alt" onClick=${saveChannel} disabled=${!slackOk || channelPending}>Save Channel</button>
@@ -399,31 +403,32 @@ function SetupPage({ bootstrap, orgId, onNav, onRefresh }) {
       </div>
     </div>
 
-    <div class="panel"><h3>Step 3: AP policy readiness</h3>
-      <p class="muted">Review policy thresholds before launch.</p>
-      <div class="readiness-list"><div class="readiness-item">${checkMark(policyOk)} Policy config loaded</div></div>
-      <div class="row"><button class="alt" onClick=${() => onNav('policies')}>Open AP Policies</button></div>
+    <div class="panel"><h3>Review your approval rules</h3>
+      <p class="muted">Set thresholds for auto-approval, manual review, and escalation.</p>
+      <div class="readiness-list"><div class="readiness-item">${checkMark(policyOk)} Rules configured</div></div>
+      <div class="row"><button class="alt" onClick=${() => onNav('policies')}>Configure Rules</button></div>
     </div>
 
-    ${gmail.connected && html`<div class="panel autopilot-panel"><h3>Autopilot Status</h3>
+    ${gmail.connected && html`<div class="panel autopilot-panel"><h3>Invoice monitoring</h3>
       <div class="autopilot-grid">
-        <div class="autopilot-item"><span class="autopilot-dot ${wsClass}"></span><div><strong>Gmail Watch</strong><span class="muted">${wsLabel}</span></div></div>
-        <div class="autopilot-item"><span class="autopilot-dot ${(dash.total_invoices || 0) > 0 ? 'ap-active' : 'ap-polling'}"></span><div><strong>${dash.total_invoices || 0} invoices</strong><span class="muted">processed</span></div></div>
-        <div class="autopilot-item"><div><strong>Last scan</strong><span class="muted">${gmail.last_sync_at ? fmtDateTime(gmail.last_sync_at) : 'Never'}</span></div></div>
-        <div class="autopilot-item"><div><strong>Email</strong><span class="muted">${gmail.email || '—'}</span></div></div>
+        <div class="autopilot-item"><span class="autopilot-dot ${wsClass}"></span><div><strong>Inbox</strong><span class="muted">${wsLabel}</span></div></div>
+        <div class="autopilot-item"><span class="autopilot-dot ${(dash.total_invoices || 0) > 0 ? 'ap-active' : 'ap-polling'}"></span><div><strong>${dash.total_invoices || 0}</strong><span class="muted">invoices processed</span></div></div>
+        <div class="autopilot-item"><div><strong>Last checked</strong><span class="muted">${gmail.last_sync_at ? fmtDateTime(gmail.last_sync_at) : 'Not yet'}</span></div></div>
+        <div class="autopilot-item"><div><strong>Account</strong><span class="muted">${gmail.email || '—'}</span></div></div>
       </div>
     </div>`}
 
-    <div class="panel"><h3>Step 4: Launch readiness</h3>
+    <div class="panel"><h3>Ready to go live?</h3>
+      <p class="muted">Once everything is connected, Clearledgr will automatically process invoices from your inbox.</p>
       <div class="readiness-list">
-        <div class="readiness-item">${checkMark(gmailOk)} Gmail</div>
-        <div class="readiness-item">${checkMark(slackOk)} Slack</div>
-        <div class="readiness-item">${checkMark(erpOk)} ERP (${erpType || 'none'})</div>
-        <div class="readiness-item">${checkMark(channelOk)} Approval channel</div>
-        <div class="readiness-item">${checkMark(policyOk)} AP policies</div>
+        <div class="readiness-item">${checkMark(gmailOk)} Gmail connected</div>
+        <div class="readiness-item">${checkMark(slackOk)} Slack connected</div>
+        <div class="readiness-item">${checkMark(erpOk)} Accounting software (${erpType ? erpType.charAt(0).toUpperCase() + erpType.slice(1) : 'none yet'})</div>
+        <div class="readiness-item">${checkMark(channelOk)} Approval channel set</div>
+        <div class="readiness-item">${checkMark(policyOk)} Approval rules reviewed</div>
       </div>
       <button class="launch-btn" disabled=${!allReady || launchPending} onClick=${launch}>
-        ${allReady ? (launchPending ? 'Launching...' : 'Launch Clearledgr') : 'Complete setup above to launch'}
+        ${allReady ? (launchPending ? 'Going live...' : 'Go Live') : 'Complete the steps above to go live'}
       </button>
     </div>
   `;
@@ -436,16 +441,16 @@ function ActivityPage({ bootstrap, onRefresh }) {
 
   return html`
     <div class="kpi-row">
-      <div class="kpi-card"><strong>${dash.total_invoices || 0}</strong><span>Total invoices</span></div>
-      <div class="kpi-card kpi-warning"><strong>${dash.pending_approval || 0}</strong><span>Pending approval</span></div>
+      <div class="kpi-card"><strong>${dash.total_invoices || 0}</strong><span>Invoices processed</span></div>
+      <div class="kpi-card kpi-warning"><strong>${dash.pending_approval || 0}</strong><span>Awaiting approval</span></div>
       <div class="kpi-card kpi-success"><strong>${dash.posted_today || 0}</strong><span>Posted today</span></div>
       <div class="kpi-card kpi-danger"><strong>${dash.rejected_today || 0}</strong><span>Rejected today</span></div>
     </div>
     <div class="kpi-row mt-0">
-      <div class="kpi-card"><strong>${dash.auto_approved_rate ? (dash.auto_approved_rate * 100).toFixed(0) + '%' : '—'}</strong><span>Auto-approved</span></div>
-      <div class="kpi-card"><strong>${dash.avg_processing_time_hours ? dash.avg_processing_time_hours.toFixed(1) + 'h' : '—'}</strong><span>Avg processing</span></div>
-      <div class="kpi-card"><strong>${fmtDollar(dash.total_amount_pending)}</strong><span>Pending amount</span></div>
-      <div class="kpi-card kpi-success"><strong>${fmtDollar(dash.total_amount_posted_today)}</strong><span>Posted today</span></div>
+      <div class="kpi-card"><strong>${dash.auto_approved_rate ? (dash.auto_approved_rate * 100).toFixed(0) + '%' : '—'}</strong><span>Auto-approved rate</span></div>
+      <div class="kpi-card"><strong>${dash.avg_processing_time_hours ? dash.avg_processing_time_hours.toFixed(1) + 'h' : '—'}</strong><span>Avg. processing time</span></div>
+      <div class="kpi-card"><strong>${fmtDollar(dash.total_amount_pending)}</strong><span>Pending value</span></div>
+      <div class="kpi-card kpi-success"><strong>${fmtDollar(dash.total_amount_posted_today)}</strong><span>Posted value today</span></div>
     </div>
     <div class="panel"><h3>Recent Activity</h3>
       ${events.length === 0 ? html`<p class="muted">No activity yet. Invoices will appear here once they start processing.</p>` :
@@ -614,30 +619,41 @@ function IntegrationsPage({ bootstrap, orgId, onRefresh }) {
 
 function OrganizationPage({ bootstrap, orgId, onRefresh }) {
   const org = bootstrap?.organization || {};
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [saveOrg] = useAction(async () => {
     await api('/api/admin/org/settings', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, patch: { organization_name: document.getElementById('org-name-input')?.value?.trim(), domain: document.getElementById('org-domain-input')?.value?.trim(), integration_mode: document.getElementById('org-mode-input')?.value } }) });
-    toast('Organization saved.'); onRefresh();
+    toast('Company details saved.'); onRefresh();
   });
   const [saveJson] = useAction(async () => {
     const patch = JSON.parse(document.getElementById('org-settings-json')?.value);
     await api('/api/admin/org/settings', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, patch }) });
-    toast('Settings JSON saved.'); onRefresh();
+    toast('Settings saved.'); onRefresh();
   });
 
   return html`
-    <div class="panel"><h3>Organization</h3>
-      <label>Name</label><input id="org-name-input" value=${org.name || ''} />
-      <label>Domain</label><input id="org-domain-input" value=${org.domain || ''} />
-      <label>Integration mode</label>
-      <select id="org-mode-input">
-        <option value="shared" selected=${org.integration_mode === 'shared'}>shared</option>
-        <option value="per_org" selected=${org.integration_mode === 'per_org'}>per_org</option>
-      </select>
-      <div class="row"><button onClick=${saveOrg}>Save Organization</button></div>
+    <div class="panel"><h3>Company details</h3>
+      <div style="display:flex;flex-direction:column;gap:16px;margin-top:8px">
+        <div><label>Company name</label><input id="org-name-input" value=${org.name || ''} placeholder="Your company name" /></div>
+        <div><label>Domain</label><input id="org-domain-input" value=${org.domain || ''} placeholder="company.com" /></div>
+        <div><label>Integration mode</label>
+          <select id="org-mode-input">
+            <option value="shared" selected=${org.integration_mode === 'shared'}>Shared (all team members use same connections)</option>
+            <option value="per_org" selected=${org.integration_mode === 'per_org'}>Per organization (separate connections)</option>
+          </select>
+        </div>
+      </div>
+      <div class="row" style="margin-top:20px"><button onClick=${saveOrg}>Save</button></div>
     </div>
-    <div class="panel"><h3>Raw Settings JSON</h3>
-      <textarea id="org-settings-json">${JSON.stringify(org.settings || {}, null, 2)}</textarea>
-      <div class="row"><button class="alt" onClick=${saveJson}>Save Settings JSON</button></div>
+    <div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">Advanced settings</h3>
+        <button class="alt" onClick=${() => setShowAdvanced(!showAdvanced)}>${showAdvanced ? 'Hide' : 'Show'}</button>
+      </div>
+      ${showAdvanced && html`
+        <p class="muted" style="margin-top:12px">Raw configuration — for developers only.</p>
+        <textarea id="org-settings-json" style="margin-top:8px">${JSON.stringify(org.settings || {}, null, 2)}</textarea>
+        <div class="row" style="margin-top:12px"><button class="alt" onClick=${saveJson}>Save Settings</button></div>
+      `}
     </div>
   `;
 }
@@ -645,16 +661,40 @@ function OrganizationPage({ bootstrap, orgId, onRefresh }) {
 function PoliciesPage({ bootstrap, orgId, onRefresh }) {
   const policy = bootstrap?.policyPayload || {};
   const configJson = (policy.policy || {}).config_json || {};
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [savePolicy] = useAction(async () => {
     const config = JSON.parse(document.getElementById('policy-json')?.value);
     await api('/api/admin/policies/ap', { method: 'PUT', body: JSON.stringify({ organization_id: orgId, config, enabled: true }) });
-    toast('Policy updated.'); onRefresh();
+    toast('Approval rules updated.'); onRefresh();
   });
 
-  return html`<div class="panel"><h3>AP Policy (${policy.policy_name || 'ap_business_v1'})</h3>
-    <textarea id="policy-json">${JSON.stringify(configJson, null, 2)}</textarea>
-    <div class="row"><button onClick=${savePolicy}>Save Policy</button></div>
-  </div>`;
+  const autoApproveThreshold = configJson.auto_approve_threshold || configJson.confidence_threshold || 'Not set';
+  const maxAutoAmount = configJson.max_auto_approve_amount || configJson.auto_approve_max_amount || 'No limit';
+  const requirePO = configJson.require_po !== false ? 'Yes' : 'No';
+
+  return html`
+    <div class="panel">
+      <h3>How invoices are handled</h3>
+      <p class="muted">These rules control when invoices are auto-approved, sent for review, or escalated.</p>
+      <div class="readiness-list" style="margin-top:16px">
+        <div class="readiness-item"><strong>Auto-approval confidence:</strong> ${autoApproveThreshold}</div>
+        <div class="readiness-item"><strong>Max auto-approve amount:</strong> ${typeof maxAutoAmount === 'number' ? '$' + maxAutoAmount.toLocaleString() : maxAutoAmount}</div>
+        <div class="readiness-item"><strong>Require PO match:</strong> ${requirePO}</div>
+        <div class="readiness-item"><strong>Policy:</strong> ${policy.policy_name || 'Default'}</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">Advanced configuration</h3>
+        <button class="alt" onClick=${() => setShowAdvanced(!showAdvanced)}>${showAdvanced ? 'Hide' : 'Show'}</button>
+      </div>
+      ${showAdvanced && html`
+        <p class="muted" style="margin-top:12px">Edit the full policy configuration. Changes take effect immediately.</p>
+        <textarea id="policy-json" style="margin-top:8px">${JSON.stringify(configJson, null, 2)}</textarea>
+        <div class="row" style="margin-top:12px"><button onClick=${savePolicy}>Save Changes</button></div>
+      `}
+    </div>
+  `;
 }
 
 function TeamPage({ bootstrap, orgId, onRefresh }) {
@@ -692,35 +732,64 @@ function PlanPage({ bootstrap, orgId, onRefresh }) {
   const sub = bootstrap?.subscription || {};
   const usage = sub.usage || {};
   const usageKeys = Object.keys(usage);
+  const planName = (sub.plan || 'free').charAt(0).toUpperCase() + (sub.plan || 'free').slice(1);
   const [changePlan] = useAction(async (plan) => {
     await api('/api/admin/subscription/plan', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, plan }) });
     toast(`Plan updated to ${plan}.`); onRefresh();
   });
 
   return html`
-    <div class="panel"><h3>Plan</h3>
-      <p><strong>${(sub.plan || 'free').toUpperCase()}</strong> (${sub.status || 'active'})</p>
-      <div class="row">
-        ${['free', 'trial', 'pro', 'enterprise'].map(p => html`<button class=${p === 'pro' || p === 'enterprise' ? '' : 'alt'} onClick=${() => changePlan(p)}>${p.charAt(0).toUpperCase() + p.slice(1)}</button>`)}
+    <div class="panel">
+      <h3>Your plan</h3>
+      <div style="display:flex;align-items:center;gap:12px;margin:12px 0 16px">
+        <span style="font-size:28px;font-weight:700;letter-spacing:-0.02em">${planName}</span>
+        <span class="status-badge connected">${sub.status || 'Active'}</span>
+      </div>
+      <p class="muted">Choose your plan. Billing portal coming soon.</p>
+      <div class="row" style="margin-top:12px">
+        ${['free', 'trial', 'pro', 'enterprise'].map(p => html`<button class=${sub.plan === p ? '' : 'alt'} onClick=${() => changePlan(p)} disabled=${sub.plan === p}>${p.charAt(0).toUpperCase() + p.slice(1)}</button>`)}
       </div>
     </div>
-    <div class="panel"><h3>Usage</h3>
-      ${usageKeys.length ? html`<div class="kpi-row">${usageKeys.map(k => html`<div class="kpi-card"><strong>${typeof usage[k] === 'number' ? usage[k].toLocaleString() : usage[k]}</strong><span>${k.replace(/_/g, ' ')}</span></div>`)}</div>` : html`<p class="muted">No usage data yet.</p>`}
+    <div class="panel"><h3>Usage this period</h3>
+      ${usageKeys.length ? html`<div class="kpi-row">${usageKeys.map(k => html`<div class="kpi-card"><strong>${typeof usage[k] === 'number' ? usage[k].toLocaleString() : usage[k]}</strong><span>${k.replace(/_/g, ' ')}</span></div>`)}</div>` : html`<p class="muted">Usage data will appear here once invoices are processed.</p>`}
     </div>
   `;
 }
 
 function HealthPage({ bootstrap }) {
   const health = bootstrap?.health || {};
+  const integrations = health.integrations || {};
+  const actions = health.required_actions || [];
+
   return html`
-    <div class="panel"><h3>Diagnostics</h3>
-      <table class="table"><thead><tr><th>Integration</th><th>Status</th></tr></thead>
-        <tbody>${Object.entries(health.integrations || {}).map(([k, v]) => html`<tr><td>${k}</td><td>${typeof v === 'object' ? JSON.stringify(v) : String(v)}</td></tr>`)}</tbody>
-      </table>
+    <div class="panel">
+      <h3>${actions.length ? 'Action required' : 'All systems go'}</h3>
+      <p class="muted">${actions.length ? 'Complete these items before going live.' : 'Everything looks good. Your system is ready.'}</p>
+      ${actions.length > 0 && html`
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
+          ${actions.map((a, i) => html`
+            <div key=${i} class="readiness-item" style="border-left:3px solid var(--amber)">
+              ${a.message}
+            </div>
+          `)}
+        </div>
+      `}
     </div>
-    <div class="panel"><h3>Required actions</h3>
-      <ul>${(health.required_actions || []).map(a => html`<li>${a.message}</li>`)}</ul>
-      ${!(health.required_actions || []).length && html`<p class="muted">None</p>`}
+    <div class="panel">
+      <h3>Connection status</h3>
+      <table class="table">
+        <thead><tr><th>Service</th><th>Status</th></tr></thead>
+        <tbody>
+          ${Object.entries(integrations).map(([name, status]) => {
+            const isOk = status === true || status === 'connected' || status?.connected === true;
+            return html`<tr>
+              <td style="font-weight:500">${name.charAt(0).toUpperCase() + name.slice(1)}</td>
+              <td>${html`<span class="status-badge ${isOk ? 'connected' : ''}">${isOk ? 'Connected' : 'Not connected'}</span>`}</td>
+            </tr>`;
+          })}
+          ${!Object.keys(integrations).length && html`<tr><td colspan="2" class="muted">No integration data yet.</td></tr>`}
+        </tbody>
+      </table>
     </div>
   `;
 }
