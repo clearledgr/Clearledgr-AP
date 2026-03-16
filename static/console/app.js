@@ -24,13 +24,14 @@ class ErrorBoundary extends Component {
 const PAGES = [
   { id: 'setup', title: 'Get Started', subtitle: 'Connect your tools and go live in minutes.' },
   { id: 'activity', title: 'Activity', subtitle: 'Your invoice processing at a glance.' },
-  { id: 'ops', title: 'Operations', subtitle: 'Monitor performance and take bulk actions.' },
   { id: 'integrations', title: 'Connections', subtitle: 'Gmail, Slack, Teams, and your accounting software.' },
-  { id: 'organization', title: 'Company', subtitle: 'Your organization profile and preferences.' },
   { id: 'policies', title: 'Approval Rules', subtitle: 'Control how invoices are reviewed and approved.' },
   { id: 'team', title: 'Team', subtitle: 'Invite your colleagues to Clearledgr.' },
+  { id: 'organization', title: 'Company', subtitle: 'Your organization profile and preferences.' },
   { id: 'plan', title: 'Plan', subtitle: 'Your subscription and usage.' },
-  { id: 'health', title: 'System Status', subtitle: 'Everything you need before going live.' },
+  // Below: admin-only pages, hidden from nav for regular users
+  { id: 'ops', title: 'Operations', subtitle: 'Monitor performance and take bulk actions.', adminOnly: true },
+  { id: 'health', title: 'System Status', subtitle: 'Technical diagnostics.', adminOnly: true },
 ];
 
 const TZ = 'Europe/London';
@@ -242,14 +243,23 @@ function AuthShell({ onLogin, inviteToken }) {
 
 // ==================== NAV ====================
 
-function SideNav({ pages, active, onNav, orgLabel, onLogout }) {
+function SideNav({ pages, active, onNav, orgLabel, onLogout, userEmail }) {
+  const initials = String(userEmail || '?').charAt(0).toUpperCase();
   return html`<aside class="side-nav">
     <div class="brand">Clearledgr</div>
     <div class="org-chip">${orgLabel}</div>
     <nav>
       ${pages.map(p => html`<button key=${p.id} class="nav-btn ${active === p.id ? 'active' : ''}" onClick=${() => onNav(p.id)}>${p.title}</button>`)}
     </nav>
-    <button class="logout" onClick=${onLogout}>Log out</button>
+    <div style="margin-top:auto;padding:12px 8px;border-top:1px solid rgba(255,255,255,0.08)">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">${initials}</div>
+        <div style="overflow:hidden">
+          <div style="font-size:13px;color:#fff;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${userEmail || 'User'}</div>
+        </div>
+      </div>
+      <button class="logout" onClick=${onLogout}>Log out</button>
+    </div>
   </aside>`;
 }
 
@@ -931,7 +941,8 @@ function AdminApp() {
 
   if (!authed) return html`<${AuthShell} onLogin=${handleLogin} inviteToken=${inviteToken} />`;
 
-  const visiblePages = PAGES.filter(p => !(p.id === 'ops' && !hasOpsAccess(bootstrap)));
+  const isAdmin = hasOpsAccess(bootstrap);
+  const visiblePages = PAGES.filter(p => !p.adminOnly || isAdmin);
   const page = visiblePages.find(p => p.id === activePage) || visiblePages[0];
   const PageComponent = PAGE_MAP[page.id] || SetupPage;
   const orgId = orgIdRef.current;
@@ -939,7 +950,7 @@ function AdminApp() {
 
   return html`
     <div class="shell">
-      <${SideNav} pages=${visiblePages} active=${page.id} onNav=${navigate} orgLabel=${orgLabel} onLogout=${handleLogout} />
+      <${SideNav} pages=${visiblePages} active=${page.id} onNav=${navigate} orgLabel=${orgLabel} onLogout=${handleLogout} userEmail=${bootstrap?.current_user?.email} />
       <main class="content">
         <header class="topbar"><h2>${page.title}</h2><p>${page.subtitle}</p></header>
         <section>
