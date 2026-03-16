@@ -19,6 +19,20 @@
 ### ~~Wire NotificationObserver into workflow~~ ✓
 - **Status:** Done (2026-03-13) — registered in `InvoiceWorkflowService.__init__`; DB table, `enqueue_notification()`, and retry queue already existed
 
+## P1 — Design & UX
+
+### Admin console visual redesign
+- **What:** Full visual redesign of admin console to match Fyxer/Mixmax quality bar — warm palette, generous whitespace, card-based layout, setup wizard with progress bar, dense data tables with avatars and status pills, professional typography
+- **Why:** Current UI is functional MVP-level; not production-quality for customer-facing use
+- **Effort:** L
+- **Depends on:** Preact component architecture (DONE), design tokens (DONE)
+- **References:** app.fyxer.com (warm minimal), app.mixmax.com (dense productivity)
+
+### Gmail extension sidebar visual polish
+- **What:** Apply same visual redesign to extension sidebar — match the admin console quality bar
+- **Effort:** M
+- **Depends on:** Admin console redesign (establish patterns first)
+
 ## P2 — Operational
 
 ### Operational health dashboard
