@@ -15,6 +15,12 @@ class APFinanceSkill(FinanceSkill):
 
     _INTENTS = frozenset(
         {
+            "request_approval",
+            "approve_invoice",
+            "request_info",
+            "nudge_approval",
+            "reject_invoice",
+            "post_to_erp",
             "prepare_vendor_followups",
             "route_low_risk_for_approval",
             "retry_recoverable_failures",
@@ -51,6 +57,36 @@ class APFinanceSkill(FinanceSkill):
         },
         action_catalog=[
             {
+                "intent": "request_approval",
+                "class": "mutating",
+                "description": "Route a validated AP item to the configured approval surface.",
+            },
+            {
+                "intent": "approve_invoice",
+                "class": "mutating",
+                "description": "Record an approval decision from a channel surface and continue ERP posting flow.",
+            },
+            {
+                "intent": "request_info",
+                "class": "mutating",
+                "description": "Return an AP item to needs-info with a recorded reason.",
+            },
+            {
+                "intent": "nudge_approval",
+                "class": "mutating",
+                "description": "Send a reminder for an approval request that is still pending.",
+            },
+            {
+                "intent": "reject_invoice",
+                "class": "mutating",
+                "description": "Reject an AP item with a recorded operator reason.",
+            },
+            {
+                "intent": "post_to_erp",
+                "class": "mutating",
+                "description": "Post an approved AP item to ERP through the canonical workflow path.",
+            },
+            {
                 "intent": "route_low_risk_for_approval",
                 "class": "mutating",
                 "description": "Route eligible AP items to approval surfaces.",
@@ -69,6 +105,8 @@ class APFinanceSkill(FinanceSkill):
         policy_pack={
             "deterministic_prechecks": [
                 "state_guard",
+                "approval_waiting_guard",
+                "posting_readiness_guard",
                 "recoverability_guard",
                 "followup_sla_guard",
                 "followup_attempt_limit_guard",
@@ -76,6 +114,7 @@ class APFinanceSkill(FinanceSkill):
             ],
             "hitl_gates": [
                 "approval_required",
+                "reject_reason_capture",
                 "followup_reason_capture",
                 "retry_recoverability_confirmation",
             ],
@@ -157,6 +196,122 @@ class APFinanceSkill(FinanceSkill):
             }
 
         workflow = get_invoice_workflow(runtime.organization_id)
+        if normalized_intent == "request_approval":
+            state = str(ap_item.get("state") or "").strip().lower()
+            reason_codes = []
+            if state not in {"received", "validated"}:
+                reason_codes.append("state_not_ready_for_approval")
+            precheck = {
+                "eligible": not reason_codes,
+                "reason_codes": reason_codes,
+                "state": state,
+            }
+            return {
+                "intent": normalized_intent,
+                "ap_item": ap_item,
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "workflow": workflow,
+            }
+
+        if normalized_intent == "approve_invoice":
+            state = str(ap_item.get("state") or "").strip().lower()
+            reason_codes = []
+            if state not in {"needs_approval", "pending_approval"}:
+                reason_codes.append("state_not_waiting_for_approval")
+            precheck = {
+                "eligible": not reason_codes,
+                "reason_codes": reason_codes,
+                "state": state,
+            }
+            return {
+                "intent": normalized_intent,
+                "ap_item": ap_item,
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "workflow": workflow,
+            }
+
+        if normalized_intent == "request_info":
+            state = str(ap_item.get("state") or "").strip().lower()
+            reason_codes = []
+            if state not in {"validated", "needs_approval", "pending_approval"}:
+                reason_codes.append("state_not_request_info_allowed")
+            precheck = {
+                "eligible": not reason_codes,
+                "reason_codes": reason_codes,
+                "state": state,
+            }
+            return {
+                "intent": normalized_intent,
+                "ap_item": ap_item,
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "workflow": workflow,
+            }
+
+        if normalized_intent == "nudge_approval":
+            state = str(ap_item.get("state") or "").strip().lower()
+            reason_codes = []
+            if state not in {"needs_approval", "pending_approval"}:
+                reason_codes.append("state_not_waiting_for_approval")
+            precheck = {
+                "eligible": not reason_codes,
+                "reason_codes": reason_codes,
+                "state": state,
+            }
+            return {
+                "intent": normalized_intent,
+                "ap_item": ap_item,
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "workflow": workflow,
+            }
+
+        if normalized_intent == "reject_invoice":
+            state = str(ap_item.get("state") or "").strip().lower()
+            reason_codes = []
+            if state not in {"received", "validated", "needs_info", "needs_approval", "pending_approval"}:
+                reason_codes.append("state_not_rejectable")
+            if not str(payload.get("reason") or "").strip():
+                reason_codes.append("rejection_reason_required")
+            precheck = {
+                "eligible": not reason_codes,
+                "reason_codes": reason_codes,
+                "state": state,
+            }
+            return {
+                "intent": normalized_intent,
+                "ap_item": ap_item,
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "workflow": workflow,
+            }
+
+        if normalized_intent == "post_to_erp":
+            state = str(ap_item.get("state") or "").strip().lower()
+            reason_codes = []
+            if state not in {"approved", "ready_to_post"}:
+                reason_codes.append("state_not_ready_to_post")
+            precheck = {
+                "eligible": not reason_codes,
+                "reason_codes": reason_codes,
+                "state": state,
+            }
+            return {
+                "intent": normalized_intent,
+                "ap_item": ap_item,
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "workflow": workflow,
+            }
+
         if normalized_intent == "route_low_risk_for_approval":
             precheck = workflow.evaluate_batch_route_low_risk_for_approval(ap_item)
             return {
@@ -183,6 +338,72 @@ class APFinanceSkill(FinanceSkill):
 
     def audit_contract(self, intent: str) -> Dict[str, Any]:
         normalized_intent = str(intent or "").strip().lower()
+        if normalized_intent == "request_approval":
+            return {
+                "source": "finance_agent_runtime",
+                "idempotent": True,
+                "mutates_ap_state": True,
+                "events": [
+                    "approval_request_routed",
+                    "approval_request_blocked",
+                    "approval_request_failed",
+                ],
+            }
+        if normalized_intent == "nudge_approval":
+            return {
+                "source": "finance_agent_runtime",
+                "idempotent": True,
+                "mutates_ap_state": False,
+                "events": [
+                    "approval_nudge_sent",
+                    "approval_nudge_failed",
+                    "approval_nudge_blocked",
+                ],
+            }
+        if normalized_intent == "approve_invoice":
+            return {
+                "source": "finance_agent_runtime",
+                "idempotent": True,
+                "mutates_ap_state": True,
+                "events": [
+                    "invoice_approved",
+                    "invoice_approval_blocked",
+                    "invoice_approval_failed",
+                ],
+            }
+        if normalized_intent == "request_info":
+            return {
+                "source": "finance_agent_runtime",
+                "idempotent": True,
+                "mutates_ap_state": True,
+                "events": [
+                    "info_request_recorded",
+                    "info_request_blocked",
+                    "info_request_failed",
+                ],
+            }
+        if normalized_intent == "reject_invoice":
+            return {
+                "source": "finance_agent_runtime",
+                "idempotent": True,
+                "mutates_ap_state": True,
+                "events": [
+                    "invoice_rejected",
+                    "invoice_reject_blocked",
+                    "invoice_reject_failed",
+                ],
+            }
+        if normalized_intent == "post_to_erp":
+            return {
+                "source": "finance_agent_runtime",
+                "idempotent": True,
+                "mutates_ap_state": True,
+                "events": [
+                    "erp_post_completed",
+                    "erp_post_failed",
+                    "erp_post_blocked",
+                ],
+            }
         if normalized_intent == "prepare_vendor_followups":
             return {
                 "source": "finance_agent_runtime",
@@ -238,7 +459,67 @@ class APFinanceSkill(FinanceSkill):
         precheck = context["policy_precheck"]
         status = "eligible" if precheck.get("eligible") else "blocked"
 
-        if normalized_intent == "prepare_vendor_followups":
+        if normalized_intent == "request_approval":
+            operator_copy = {
+                "what_happened": "Validated this invoice for approval routing from Gmail.",
+                "why_now": "Clearledgr checks the current invoice state before sending an approval request.",
+                "recommended_now": (
+                    "Request approval now."
+                    if precheck.get("eligible")
+                    else "Resolve the blocking state before requesting approval."
+                ),
+            }
+        elif normalized_intent == "approve_invoice":
+            operator_copy = {
+                "what_happened": "Validated that this invoice can still be approved from the approval surface.",
+                "why_now": "Approval decisions are only accepted while the invoice is still waiting on approval.",
+                "recommended_now": (
+                    "Approve this invoice."
+                    if precheck.get("eligible")
+                    else "Refresh the invoice and use the allowed next step."
+                ),
+            }
+        elif normalized_intent == "request_info":
+            operator_copy = {
+                "what_happened": "Validated that this invoice can be sent back for more information.",
+                "why_now": "Clearledgr only records info requests while the invoice is still in a reviewable state.",
+                "recommended_now": (
+                    "Send this invoice back for more information."
+                    if precheck.get("eligible")
+                    else "Refresh the invoice and use the allowed next step."
+                ),
+            }
+        elif normalized_intent == "nudge_approval":
+            operator_copy = {
+                "what_happened": "Validated that this invoice is still waiting on an approver.",
+                "why_now": "Nudges are only allowed while the approval request is still pending.",
+                "recommended_now": (
+                    "Send an approval reminder."
+                    if precheck.get("eligible")
+                    else "Wait until the invoice is back in an approval-pending state."
+                ),
+            }
+        elif normalized_intent == "reject_invoice":
+            operator_copy = {
+                "what_happened": "Validated that this invoice can still be rejected.",
+                "why_now": "Clearledgr requires a rejection reason and a rejectable state before recording the decision.",
+                "recommended_now": (
+                    "Reject this invoice with a reason."
+                    if precheck.get("eligible")
+                    else "Provide a reason or return the invoice to a rejectable state."
+                ),
+            }
+        elif normalized_intent == "post_to_erp":
+            operator_copy = {
+                "what_happened": "Validated that this invoice is ready for ERP posting.",
+                "why_now": "Posting is only allowed once approval and posting-readiness checks are complete.",
+                "recommended_now": (
+                    "Post this invoice to ERP."
+                    if precheck.get("eligible")
+                    else "Wait until the invoice reaches a postable state."
+                ),
+            }
+        elif normalized_intent == "prepare_vendor_followups":
             operator_copy = {
                 "what_happened": "Validated vendor follow-up draft eligibility for a needs-info item.",
                 "why_now": "Follow-up attempts and SLA timing were checked before preparing a draft.",
@@ -547,6 +828,494 @@ class APFinanceSkill(FinanceSkill):
                 metadata={
                     "intent": normalized_intent,
                     "policy_precheck": precheck,
+                    "response": response,
+                },
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        if normalized_intent == "request_approval":
+            workflow = context["workflow"]
+            if not precheck.get("eligible"):
+                response = {
+                    "skill_id": self.skill_id,
+                    "intent": normalized_intent,
+                    "status": "blocked",
+                    "reason": "state_not_ready_for_approval",
+                    "email_id": email_id,
+                    "ap_item_id": ap_item_id,
+                    "policy_precheck": precheck,
+                    "audit_contract": self.audit_contract(normalized_intent),
+                }
+                audit_row = runtime._append_runtime_audit(
+                    ap_item_id=ap_item_id,
+                    event_type="approval_request_blocked",
+                    reason="state_not_ready_for_approval",
+                    metadata={
+                        "intent": normalized_intent,
+                        "policy_precheck": precheck,
+                        "response": response,
+                    },
+                    correlation_id=correlation_id,
+                    idempotency_key=idempotency_key,
+                )
+                response["audit_event_id"] = (audit_row or {}).get("id")
+                return response
+
+            invoice = workflow.build_invoice_data_from_ap_item(ap_item, actor_id=runtime.actor_email)
+            if not invoice.gmail_id:
+                raise ValueError("missing_gmail_reference")
+            workflow_result = await workflow._send_for_approval(
+                invoice,
+                extra_context={
+                    "intent": normalized_intent,
+                    "policy_precheck": precheck,
+                },
+            )
+            routed = str((workflow_result or {}).get("status") or "").strip().lower() == "pending_approval"
+            response = {
+                "skill_id": self.skill_id,
+                "intent": normalized_intent,
+                "status": "pending_approval" if routed else "error",
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "result": workflow_result,
+                "audit_contract": self.audit_contract(normalized_intent),
+                "next_step": "wait_for_approval" if routed else "review_blockers",
+            }
+            audit_row = runtime._append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="approval_request_routed" if routed else "approval_request_failed",
+                reason="runtime_request_approval",
+                metadata={
+                    "intent": normalized_intent,
+                    "policy_precheck": precheck,
+                    "result": workflow_result,
+                    "response": response,
+                },
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        if normalized_intent == "approve_invoice":
+            workflow = context["workflow"]
+            if not precheck.get("eligible"):
+                response = {
+                    "skill_id": self.skill_id,
+                    "intent": normalized_intent,
+                    "status": "blocked",
+                    "reason": "state_not_waiting_for_approval",
+                    "email_id": email_id,
+                    "ap_item_id": ap_item_id,
+                    "policy_precheck": precheck,
+                    "audit_contract": self.audit_contract(normalized_intent),
+                }
+                audit_row = runtime._append_runtime_audit(
+                    ap_item_id=ap_item_id,
+                    event_type="invoice_approval_blocked",
+                    reason="state_not_waiting_for_approval",
+                    metadata={
+                        "intent": normalized_intent,
+                        "policy_precheck": precheck,
+                        "response": response,
+                    },
+                    correlation_id=correlation_id,
+                    idempotency_key=idempotency_key,
+                )
+                response["audit_event_id"] = (audit_row or {}).get("id")
+                return response
+
+            approve_override = (
+                str(payload.get("action_variant") or "").strip().lower() == "budget_override"
+                or runtime._as_bool(payload.get("approve_override"))
+            )
+            justification = str(
+                payload.get("reason")
+                or payload.get("override_justification")
+                or ""
+            ).strip() or None
+            result = await workflow.approve_invoice(
+                gmail_id=email_id,
+                approved_by=str(payload.get("actor_id") or runtime.actor_email or runtime.actor_id or "approval_surface"),
+                source_channel=str(payload.get("source_channel") or "approval_surface").strip() or "approval_surface",
+                source_channel_id=str(payload.get("source_channel_id") or "").strip() or None,
+                source_message_ref=str(payload.get("source_message_ref") or email_id).strip() or email_id,
+                actor_display=str(payload.get("actor_display") or "").strip() or None,
+                action_run_id=str(payload.get("action_run_id") or "").strip() or None,
+                decision_request_ts=str(payload.get("decision_request_ts") or "").strip() or None,
+                decision_idempotency_key=idempotency_key,
+                correlation_id=correlation_id,
+                allow_budget_override=approve_override,
+                override_justification=justification,
+            )
+            result_status = str((result or {}).get("status") or "").strip().lower()
+            approved = result_status in {"approved", "posted", "posted_to_erp"}
+            response = {
+                "skill_id": self.skill_id,
+                "intent": normalized_intent,
+                "status": result_status or ("approved" if approved else "error"),
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "result": result,
+                "audit_contract": self.audit_contract(normalized_intent),
+                "next_step": "none" if approved else "review_blockers",
+            }
+            audit_row = runtime._append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_approved" if approved else "invoice_approval_failed",
+                reason="runtime_approve_invoice",
+                metadata={
+                    "intent": normalized_intent,
+                    "policy_precheck": precheck,
+                    "result": result,
+                    "response": response,
+                },
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        if normalized_intent == "request_info":
+            workflow = context["workflow"]
+            if not precheck.get("eligible"):
+                response = {
+                    "skill_id": self.skill_id,
+                    "intent": normalized_intent,
+                    "status": "blocked",
+                    "reason": "state_not_request_info_allowed",
+                    "email_id": email_id,
+                    "ap_item_id": ap_item_id,
+                    "policy_precheck": precheck,
+                    "audit_contract": self.audit_contract(normalized_intent),
+                }
+                audit_row = runtime._append_runtime_audit(
+                    ap_item_id=ap_item_id,
+                    event_type="info_request_blocked",
+                    reason="state_not_request_info_allowed",
+                    metadata={
+                        "intent": normalized_intent,
+                        "policy_precheck": precheck,
+                        "response": response,
+                    },
+                    correlation_id=correlation_id,
+                    idempotency_key=idempotency_key,
+                )
+                response["audit_event_id"] = (audit_row or {}).get("id")
+                return response
+
+            result = await workflow.request_budget_adjustment(
+                gmail_id=email_id,
+                requested_by=str(payload.get("actor_id") or runtime.actor_email or runtime.actor_id or "approval_surface"),
+                reason=str(payload.get("reason") or "request_info").strip() or "request_info",
+                source_channel=str(payload.get("source_channel") or "approval_surface").strip() or "approval_surface",
+                source_channel_id=str(payload.get("source_channel_id") or "").strip() or None,
+                source_message_ref=str(payload.get("source_message_ref") or email_id).strip() or email_id,
+                actor_display=str(payload.get("actor_display") or "").strip() or None,
+                action_run_id=str(payload.get("action_run_id") or "").strip() or None,
+                decision_request_ts=str(payload.get("decision_request_ts") or "").strip() or None,
+                decision_idempotency_key=idempotency_key,
+                correlation_id=correlation_id,
+            )
+            result_status = str((result or {}).get("status") or "").strip().lower()
+            moved_to_needs_info = result_status == "needs_info"
+            response = {
+                "skill_id": self.skill_id,
+                "intent": normalized_intent,
+                "status": result_status or ("needs_info" if moved_to_needs_info else "error"),
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "result": result,
+                "audit_contract": self.audit_contract(normalized_intent),
+                "next_step": "wait_for_vendor_response" if moved_to_needs_info else "review_blockers",
+            }
+            audit_row = runtime._append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="info_request_recorded" if moved_to_needs_info else "info_request_failed",
+                reason="runtime_request_info",
+                metadata={
+                    "intent": normalized_intent,
+                    "policy_precheck": precheck,
+                    "result": result,
+                    "response": response,
+                },
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        if normalized_intent == "nudge_approval":
+            workflow = context["workflow"]
+            if not precheck.get("eligible"):
+                response = {
+                    "skill_id": self.skill_id,
+                    "intent": normalized_intent,
+                    "status": "blocked",
+                    "reason": "state_not_waiting_for_approval",
+                    "email_id": email_id,
+                    "ap_item_id": ap_item_id,
+                    "policy_precheck": precheck,
+                    "audit_contract": self.audit_contract(normalized_intent),
+                }
+                audit_row = runtime._append_runtime_audit(
+                    ap_item_id=ap_item_id,
+                    event_type="approval_nudge_blocked",
+                    reason="state_not_waiting_for_approval",
+                    metadata={
+                        "intent": normalized_intent,
+                        "policy_precheck": precheck,
+                        "response": response,
+                    },
+                    correlation_id=correlation_id,
+                    idempotency_key=idempotency_key,
+                )
+                response["audit_event_id"] = (audit_row or {}).get("id")
+                return response
+
+            message = str(payload.get("message") or "").strip()
+            try:
+                amount_num = float(ap_item.get("amount") or 0.0)
+            except (TypeError, ValueError):
+                amount_num = 0.0
+            nudge_text = message or (
+                f"Reminder: approval is still pending for "
+                f"{ap_item.get('vendor_name') or ap_item.get('vendor') or 'invoice'} "
+                f"({ap_item.get('currency') or 'USD'} {amount_num:,.2f}). "
+                "Please review when available."
+            )
+
+            slack_result: Dict[str, Any] = {"status": "skipped", "reason": "no_slack_thread"}
+            teams_result: Dict[str, Any] = {"status": "skipped", "reason": "teams_unavailable"}
+
+            slack_thread = runtime.db.get_slack_thread(email_id) if hasattr(runtime.db, "get_slack_thread") else None
+            if slack_thread and getattr(workflow, "slack_client", None):
+                try:
+                    sent = await workflow.slack_client.send_message(
+                        channel=str(slack_thread.get("channel_id") or ""),
+                        thread_ts=str(slack_thread.get("thread_ts") or slack_thread.get("thread_id") or ""),
+                        text=nudge_text,
+                    )
+                    slack_result = {
+                        "status": "sent",
+                        "channel_id": sent.channel,
+                        "thread_ts": sent.thread_ts or sent.ts,
+                        "message_ts": sent.ts,
+                    }
+                except Exception as exc:
+                    slack_result = {"status": "error", "reason": str(exc)}
+
+            teams_meta = runtime._parse_json_dict(ap_item.get("metadata")).get("teams")
+            if isinstance(teams_meta, dict) and getattr(workflow, "teams_client", None):
+                try:
+                    budget_payload = {
+                        "status": ap_item.get("budget_status") or "unknown",
+                        "requires_decision": bool(ap_item.get("budget_requires_decision")),
+                    }
+                    result = workflow.teams_client.send_invoice_budget_card(
+                        email_id=email_id,
+                        organization_id=runtime.organization_id,
+                        vendor=str(ap_item.get("vendor_name") or ap_item.get("vendor") or "Unknown"),
+                        amount=amount_num,
+                        currency=str(ap_item.get("currency") or "USD"),
+                        invoice_number=ap_item.get("invoice_number"),
+                        budget=budget_payload,
+                    )
+                    teams_result = result if isinstance(result, dict) else {"status": "sent"}
+                except Exception as exc:
+                    teams_result = {"status": "error", "reason": str(exc)}
+
+            sent_any = slack_result.get("status") == "sent" or teams_result.get("status") == "sent"
+            response = {
+                "skill_id": self.skill_id,
+                "intent": normalized_intent,
+                "status": "nudged" if sent_any else "error",
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "slack": slack_result,
+                "teams": teams_result,
+                "audit_contract": self.audit_contract(normalized_intent),
+                "next_step": "wait_for_approval",
+            }
+            audit_row = runtime._append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="approval_nudge_sent" if sent_any else "approval_nudge_failed",
+                reason="approval_nudge",
+                metadata={
+                    "intent": normalized_intent,
+                    "policy_precheck": precheck,
+                    "message": nudge_text[:400],
+                    "response": response,
+                },
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        if normalized_intent == "reject_invoice":
+            workflow = context["workflow"]
+            if not precheck.get("eligible"):
+                reason_codes = set(precheck.get("reason_codes") or [])
+                blocked_reason = (
+                    "rejection_reason_required"
+                    if "rejection_reason_required" in reason_codes
+                    else "state_not_rejectable"
+                )
+                response = {
+                    "skill_id": self.skill_id,
+                    "intent": normalized_intent,
+                    "status": "blocked",
+                    "reason": blocked_reason,
+                    "email_id": email_id,
+                    "ap_item_id": ap_item_id,
+                    "policy_precheck": precheck,
+                    "audit_contract": self.audit_contract(normalized_intent),
+                }
+                audit_row = runtime._append_runtime_audit(
+                    ap_item_id=ap_item_id,
+                    event_type="invoice_reject_blocked",
+                    reason=blocked_reason,
+                    metadata={
+                        "intent": normalized_intent,
+                        "policy_precheck": precheck,
+                        "response": response,
+                    },
+                    correlation_id=correlation_id,
+                    idempotency_key=idempotency_key,
+                )
+                response["audit_event_id"] = (audit_row or {}).get("id")
+                return response
+
+            result = await workflow.reject_invoice(
+                gmail_id=email_id,
+                reason=str(payload.get("reason") or "").strip(),
+                rejected_by=runtime.actor_email or "gmail_extension",
+                source_channel="gmail_extension",
+                source_channel_id="gmail_extension",
+                source_message_ref=email_id,
+                decision_idempotency_key=idempotency_key,
+                correlation_id=correlation_id,
+            )
+            rejected = str((result or {}).get("status") or "").strip().lower() == "rejected"
+            response = {
+                "skill_id": self.skill_id,
+                "intent": normalized_intent,
+                "status": "rejected" if rejected else "error",
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "result": result,
+                "audit_contract": self.audit_contract(normalized_intent),
+                "next_step": "none" if rejected else "review_blockers",
+            }
+            audit_row = runtime._append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_rejected" if rejected else "invoice_reject_failed",
+                reason="runtime_reject_invoice",
+                metadata={
+                    "intent": normalized_intent,
+                    "policy_precheck": precheck,
+                    "result": result,
+                    "response": response,
+                },
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        if normalized_intent == "post_to_erp":
+            workflow = context["workflow"]
+            if not precheck.get("eligible"):
+                response = {
+                    "skill_id": self.skill_id,
+                    "intent": normalized_intent,
+                    "status": "blocked",
+                    "reason": "state_not_ready_to_post",
+                    "email_id": email_id,
+                    "ap_item_id": ap_item_id,
+                    "policy_precheck": precheck,
+                    "audit_contract": self.audit_contract(normalized_intent),
+                }
+                audit_row = runtime._append_runtime_audit(
+                    ap_item_id=ap_item_id,
+                    event_type="erp_post_blocked",
+                    reason="state_not_ready_to_post",
+                    metadata={
+                        "intent": normalized_intent,
+                        "policy_precheck": precheck,
+                        "response": response,
+                    },
+                    correlation_id=correlation_id,
+                    idempotency_key=idempotency_key,
+                )
+                response["audit_event_id"] = (audit_row or {}).get("id")
+                return response
+
+            override = runtime._as_bool(payload.get("override"))
+            justification = str(payload.get("override_justification") or payload.get("reason") or "").strip() or None
+            field_confidences = payload.get("field_confidences")
+            if not isinstance(field_confidences, dict):
+                metadata = runtime._parse_json_dict(ap_item.get("metadata"))
+                field_confidences = metadata.get("field_confidences") if isinstance(metadata.get("field_confidences"), dict) else None
+
+            override_ctx = None
+            if override:
+                from clearledgr.core.ap_states import OverrideContext, OVERRIDE_TYPE_MULTI
+
+                override_ctx = OverrideContext(
+                    override_type=OVERRIDE_TYPE_MULTI,
+                    justification=justification or "override_requested_in_gmail",
+                    actor_id=runtime.actor_email or "gmail_extension",
+                )
+
+            result = await workflow.approve_invoice(
+                gmail_id=email_id,
+                approved_by=runtime.actor_email or "gmail_extension",
+                source_channel="gmail_extension",
+                source_channel_id="gmail_extension",
+                source_message_ref=email_id,
+                allow_budget_override=override,
+                allow_confidence_override=override,
+                override_justification=justification,
+                allow_po_exception_override=override,
+                po_override_reason=justification,
+                field_confidences=field_confidences,
+                override_context=override_ctx,
+                decision_idempotency_key=idempotency_key,
+                correlation_id=correlation_id,
+            )
+            result_status = str((result or {}).get("status") or "").strip().lower()
+            posted = result_status in {"posted", "approved", "posted_to_erp"}
+            response = {
+                "skill_id": self.skill_id,
+                "intent": normalized_intent,
+                "status": result_status or ("posted_to_erp" if posted else "error"),
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "erp_reference": (result or {}).get("erp_reference") if isinstance(result, dict) else None,
+                "policy_precheck": precheck,
+                "result": result,
+                "audit_contract": self.audit_contract(normalized_intent),
+                "next_step": "none" if posted else "review_blockers",
+            }
+            audit_row = runtime._append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="erp_post_completed" if posted else "erp_post_failed",
+                reason="runtime_post_to_erp",
+                metadata={
+                    "intent": normalized_intent,
+                    "policy_precheck": precheck,
+                    "result": result,
                     "response": response,
                 },
                 correlation_id=correlation_id,

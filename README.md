@@ -1,6 +1,6 @@
-# Clearledgr — Finance AI Agent (AP Skill v1)
+# Clearledgr — Finance Execution Layer
 
-Clearledgr is the finance execution agent platform.
+Clearledgr is the execution layer for finance operations, embedding AI agents into the tools finance teams already use.
 
 AP v1 is the first production skill domain: Gmail-first intake, Slack/Teams approvals, ERP write-back, and full audit traceability.
 
@@ -21,15 +21,16 @@ If any document conflicts with `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, 
 1. One Clearledgr finance execution agent runtime.
 2. AP is the first production skill domain.
 3. Gmail is the primary AP operator surface.
-4. Slack and Teams are approval/decision surfaces.
-5. ERP is the system of record.
-6. Human-in-the-loop is intentional for risky actions.
-7. Policy, audit, idempotency, and durability are mandatory.
-8. Current AP connector scope is NetSuite, QuickBooks, Xero, and SAP, each enabled by readiness gates.
-9. Current durable orchestration backend is `local_db` (DB-backed); Temporal remains optional and must be truthfully reported.
-10. Outlook intake is explicitly de-scoped for AP v1 GA (Gmail is the only inbox surface in production scope).
-11. Initial rollout is Europe and Africa first (before any broader regional expansion).
-12. Operator-facing timestamps are standardized to `Europe/London`; backend storage/audit timestamps remain UTC.
+4. Gmail default pinned navigation stays intentionally small: `Home`, `Pipeline`, `Connections`.
+5. Slack and Teams are approval/decision surfaces.
+6. ERP is the system of record.
+7. Human-in-the-loop is intentional for risky actions.
+8. Policy, audit, idempotency, and durability are mandatory.
+9. Current AP connector scope is NetSuite, QuickBooks, Xero, and SAP, each enabled by readiness gates.
+10. Current durable orchestration backend is `local_db` (DB-backed); Temporal remains optional and must be truthfully reported.
+11. Outlook intake is explicitly de-scoped for AP v1 GA (Gmail is the only inbox surface in production scope).
+12. Initial rollout is Europe and Africa first (before any broader regional expansion).
+13. Operator-facing timestamps are standardized to `Europe/London`; backend storage/audit timestamps remain UTC.
 
 Clearledgr is not a generic automation builder and not a dashboard-first AP tool.
 
@@ -42,19 +43,23 @@ Clearledgr is not a generic automation builder and not a dashboard-first AP tool
 5. On approval and eligibility, Clearledgr posts to ERP.
 6. End-to-end audit events are recorded and surfaced.
 
-## Gmail Operator Surface (Work-Only)
+## Gmail Operator Surface
 
-Gmail now runs a single decision-first operator panel:
+Gmail is the primary Clearledgr product surface, following a Streak-style model:
 
-1. `Clearledgr AP` (Work panel)
+1. `Clearledgr AP` thread panel is the daily execution workspace.
    - Focused invoice identity strip (vendor, amount, due date, invoice number, PO status).
    - One status badge + concise blocker chips.
    - One state-driven primary CTA with small secondary actions.
-   - Evidence checklist + collapsed context/audit details.
+   - Evidence checklist + collapsed audit disclosure.
    - Audit copy is backend-owned via `/api/ap/items/{ap_item_id}/audit` `operator_*` fields (UI renders backend operator wording, not local reason-code phrase maps).
-2. Ops controls are intentionally removed from Gmail.
-   - KPI telemetry, batch operations, raw agent events, and debug tools live in Admin Console `/console?page=ops`.
-   - Gmail shows `Open Ops Console` only for admin/operator roles.
+2. Gmail-native page routes handle setup, pipeline views, monitoring, policy management, team access, and plan/health pages.
+   - Default pinned nav is `Home`, `Pipeline`, and `Connections`.
+   - `Activity` and other secondary pages stay available from Home or via pinning, but are not pinned by default.
+   - `Health` and comparable admin pages are role-gated secondary pages.
+   - These pages are still inside Gmail and do not require a separate operating console for normal use.
+   - Ops/telemetry/batch/debug content remains out of the thread panel itself and is role-gated in Gmail-native routed pages.
+3. Gmail authorization is explicit and user-initiated from inline CTAs (`Connect Gmail` / `Connections`); the extension does not auto-launch Gmail OAuth on startup.
 
 Reason capture is inline and non-blocking (reason sheet); native browser `prompt/confirm` dialogs are not used in AP action flows.
 
@@ -63,15 +68,17 @@ UI hardening guardrails:
 1. Extension ships from `dist/inboxsdk-layer.js` only, with CI parity checks that fail on stale or off-doctrine bundle content.
 2. Legacy extension popup/options/demo surfaces are removed from shipped root and archived under `/Users/mombalam/Desktop/Clearledgr.v1/docs/legacy/gmail-extension-ui/`.
 3. Work audit copy is backend-owned from `/api/ap/items/{ap_item_id}/audit` (`operator_*` fields); Gmail fallback copy stays generic-safe and does not display raw reason codes.
+4. Gmail extension build/watch now uses Bun locally; `npm run build` and `npm run start` delegate to Bun-backed bundling while preserving audited `dist` parity checks.
 
-## Onboarding and Account Backbone (Admin-First)
+## Onboarding and Account Backbone
 
-Clearledgr onboarding and account management follows an admin-first model:
+Clearledgr onboarding and account management still follows an admin-first model, but it remains Gmail-native:
 
-1. Admin Console owns onboarding (`/console?page=integrations`) for Gmail, Slack/Teams, and ERP setup.
-2. Team roles/invites are managed in Admin Console APIs (`/api/admin/team/*` + `/auth/invites/*`).
-3. Gmail sidebar stays execution-focused; when auth/setup is required it links operators to Admin Console integration setup.
-4. OAuth entry points for setup are launched from authenticated Admin Console endpoints (for example, `/api/admin/integrations/gmail/connect/start`).
+1. Gmail routed pages own onboarding for Gmail, Slack/Teams, and ERP setup.
+2. Team roles/invites are managed through the same authenticated backend APIs (`/api/admin/team/*` + `/auth/invites/*`).
+3. `Home` is a lightweight launch hub for readiness, recent activity, and navigation, not a dashboard-heavy control center.
+4. The thread panel stays execution-focused; setup/config flows live in Gmail-native pages rather than a separate dashboard.
+5. OAuth entry points for setup are launched from authenticated backend endpoints and surfaced inside the Gmail product shell.
 
 ## Runtime Shape (Agent + Skills)
 
@@ -129,7 +136,7 @@ ERP API-first adapter contract is provider-agnostic and shared across NetSuite/Q
 
 - Gmail extension: `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/`
 - Slack app: `/Users/mombalam/Desktop/Clearledgr.v1/ui/slack/`
-- Admin console surface: served from `/console` (when enabled)
+- Optional support console surface: served from `/console` (when enabled), but it is not the canonical daily operator shell
 
 ### Launch and Readiness Docs
 
@@ -166,7 +173,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 - API docs: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
-- Admin console (if enabled): `http://localhost:8000/console`
+- Optional support console (if enabled): `http://localhost:8000/console`
 
 ### 5. Run core regression slices
 

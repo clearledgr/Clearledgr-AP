@@ -112,6 +112,7 @@ class BulkScanRequest(BaseModel):
 class ApproveAndPostRequest(BaseModel):
     """Request to approve and post an invoice with HITL gate."""
     email_id: str
+    ap_item_id: Optional[str] = None
     extraction: Dict[str, Any]
     bank_match: Optional[Dict[str, Any]] = None
     erp_match: Optional[Dict[str, Any]] = None
@@ -714,6 +715,25 @@ def get_extension_worklist(
     }
 
 
+@router.get("/by-thread/{thread_id}")
+async def get_ap_item_by_thread(
+    thread_id: str,
+    organization_id: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Look up AP item by Gmail thread_id for contextual sidebar (Streak pattern).
+
+    When a user opens a Gmail thread, the sidebar fetches this endpoint to show
+    that thread's invoice data — even if the item isn't in the local queue yet.
+    """
+    org_id = _resolve_org_id_for_user(user, organization_id)
+    db = get_db()
+    item = db.get_ap_item_by_thread(org_id, thread_id)
+    if not item:
+        return {"found": False, "thread_id": thread_id, "item": None}
+    return {"found": True, "thread_id": thread_id, "item": build_worklist_item(db, item)}
+
+
 @router.post("/gmail/register-token")
 async def register_gmail_token(request: RegisterGmailTokenRequest):
     """Register Gmail OAuth access token obtained by the browser extension.
@@ -766,7 +786,15 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
 
     user = get_user_by_email(profile_email.lower())
     if user is None:
-        raise HTTPException(status_code=403, detail="extension_user_not_provisioned")
+        # Auto-provision: create user from Google identity on first extension login
+        from clearledgr.core.auth import create_user_from_google
+        org_id = str(request.organization_id or "default").strip() or "default"
+        user = create_user_from_google(
+            email=profile_email.lower(),
+            google_id=profile_email.lower(),
+            organization_id=org_id,
+        )
+        logger.info("Auto-provisioned extension user: %s org=%s", profile_email, org_id)
 
     resolved_org_id = str(getattr(user, "organization_id", None) or "default").strip() or "default"
     requested_org = str(request.organization_id or "").strip()
@@ -815,6 +843,108 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
     }
 
 
+class ExchangeCodeRequest(BaseModel):
+    code: str
+    redirect_uri: str
+    organization_id: Optional[str] = "default"
+
+
+@router.post("/gmail/exchange-code")
+async def exchange_gmail_code(request: ExchangeCodeRequest):
+    """Exchange an OAuth authorization code for access + refresh tokens.
+
+    The extension uses authorization code flow (response_type=code, access_type=offline)
+    so the backend gets a refresh token for 24/7 server-side scanning.
+    The extension only needs the access token; the backend stores the refresh token.
+    """
+    from clearledgr.services.gmail_api import exchange_code_for_tokens
+    from clearledgr.core.auth import create_user_from_google
+
+    code = str(request.code or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="missing_authorization_code")
+
+    # Exchange code for tokens via Google OAuth — returns GmailToken with refresh token
+    try:
+        gmail_token = await exchange_code_for_tokens(
+            code=code,
+            redirect_uri=str(request.redirect_uri or "").strip(),
+        )
+    except Exception as exc:
+        logger.warning("Gmail code exchange failed: %s", exc)
+        raise HTTPException(status_code=400, detail=f"code_exchange_failed: {exc}")
+
+    access_token = gmail_token.access_token
+    refresh_token = gmail_token.refresh_token or ""
+    profile_email = gmail_token.email
+    expires_in = max(60, int((gmail_token.expires_at - datetime.now(timezone.utc)).total_seconds())) if gmail_token.expires_at else 3600
+
+    if not access_token:
+        raise HTTPException(status_code=400, detail="no_access_token_from_google")
+    if not profile_email:
+        raise HTTPException(status_code=400, detail="could_not_determine_email")
+
+    # Provision user if needed
+    user = get_user_by_email(profile_email.lower())
+    if user is None:
+        org_id = str(request.organization_id or "default").strip() or "default"
+        user = create_user_from_google(
+            email=profile_email.lower(),
+            google_id=profile_email.lower(),
+            organization_id=org_id,
+        )
+        logger.info("Auto-provisioned user via code exchange: %s", profile_email)
+
+    user_id = str(getattr(user, "id", "") or "").strip() or profile_email
+    resolved_org_id = str(getattr(user, "organization_id", None) or "default").strip()
+
+    # Store token WITH refresh token — this is what enables 24/7 server-side scanning
+    token_store.store(
+        GmailToken(
+            user_id=user_id,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+            email=profile_email,
+        )
+    )
+    logger.info(
+        "Gmail code exchange: email=%s refresh=%s org=%s",
+        profile_email, "yes" if refresh_token else "NO", resolved_org_id,
+    )
+
+    # Save autopilot state so server-side scanning picks up this user
+    db = get_db()
+    db.save_gmail_autopilot_state(
+        user_id=user_id,
+        email=profile_email,
+        last_error=None,
+    )
+
+    # Create backend session token for the extension
+    backend_token_ttl = max(300, min(expires_in, 3600))
+    backend_access_token = create_access_token(
+        user_id=user_id,
+        email=str(getattr(user, "email", profile_email) or profile_email),
+        organization_id=resolved_org_id,
+        role=str(getattr(user, "role", None) or "user"),
+        expires_delta=timedelta(seconds=backend_token_ttl),
+    )
+
+    return {
+        "success": True,
+        "access_token": access_token,
+        "expires_in": expires_in,
+        "email": profile_email,
+        "user_id": user_id,
+        "organization_id": resolved_org_id,
+        "has_refresh_token": bool(refresh_token),
+        "backend_access_token": backend_access_token,
+        "backend_token_type": "bearer",
+        "backend_expires_in": backend_token_ttl,
+    }
+
+
 @router.post("/approve-and-post", dependencies=[Depends(get_current_user)])
 async def approve_and_post(
     request: ApproveAndPostRequest,
@@ -824,42 +954,47 @@ async def approve_and_post(
     """
     Approve and post an invoice to ERP — inline from Gmail extension.
 
-    Uses the same ``InvoiceWorkflowService.approve_invoice()`` path as
-    Slack approval buttons so behaviour is identical regardless of surface.
+    Canonical runtime fallback for older route/page surfaces.
+    The canonical AP-first path is ``post_to_erp`` through the finance runtime,
+    which preserves legal state transitions and policy guards.
     """
-    from clearledgr.core.ap_states import OverrideContext, OVERRIDE_TYPE_MULTI
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
+    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
     org_id = _resolve_org_id_for_user(user, request.organization_id)
-    workflow = get_invoice_workflow(org_id)
-
-    # Resolve the AP item's gmail_id (thread_id) from request
-    gmail_id = request.email_id
-
     actor = _authenticated_actor(user, fallback="gmail_extension")
-    justification = (request.extraction.get("override_justification", "") if request.override else None)
-    override_ctx = (
-        OverrideContext(
-            override_type=OVERRIDE_TYPE_MULTI,
-            justification=str(justification or "override_requested_in_gmail"),
-            actor_id=actor,
-        )
-        if request.override else None
+    db = get_db()
+    ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.ap_item_id or request.email_id)
+    ap_item_id = str((ap_item or {}).get("id") or request.ap_item_id or "").strip() or None
+    gmail_ref = str((ap_item or {}).get("thread_id") or request.email_id or "").strip()
+    runtime = FinanceAgentRuntime(
+        organization_id=org_id,
+        actor_id=getattr(user, "user_id", None) or actor,
+        actor_email=actor,
+        db=db,
+    )
+    result = await runtime.execute_intent(
+        "post_to_erp",
+        {
+            "ap_item_id": ap_item_id,
+            "email_id": gmail_ref,
+            "override": bool(request.override),
+            "override_justification": (
+                request.extraction.get("override_justification", "") if isinstance(request.extraction, dict) else ""
+            ) or None,
+            "field_confidences": extract_field_confidences(request.extraction or {}),
+            "source_channel": "gmail_extension",
+            "source_channel_id": "gmail_extension",
+            "source_message_ref": gmail_ref,
+        },
     )
 
-    result = await workflow.approve_invoice(
-        gmail_id=gmail_id,
-        approved_by=actor,
-        source_channel="gmail_extension",
-        source_channel_id="gmail_extension",
-        source_message_ref=gmail_id,
-        allow_budget_override=request.override,
-        allow_confidence_override=request.override,
-        override_justification=justification,
-        allow_po_exception_override=request.override,
-        po_override_reason=justification,
-        field_confidences=extract_field_confidences(request.extraction or {}),
-        override_context=override_ctx,
+    audit.record_event(
+        user_email=actor,
+        action="post_to_erp_runtime",
+        entity_type="invoice",
+        entity_id=str(ap_item_id or request.email_id),
+        organization_id=org_id,
+        metadata={"result": result, "override": bool(request.override)},
     )
 
     return {
@@ -1114,6 +1249,7 @@ class SubmitForApprovalRequest(BaseModel):
 class RejectInvoiceRequest(BaseModel):
     """Request to reject an invoice from Gmail sidebar."""
     email_id: str
+    ap_item_id: Optional[str] = None
     reason: str
     organization_id: Optional[str] = None
     user_email: Optional[str] = None
@@ -1122,6 +1258,7 @@ class RejectInvoiceRequest(BaseModel):
 class BudgetDecisionRequest(BaseModel):
     """Budget decision from Gmail/embedded approval surfaces."""
     email_id: str
+    ap_item_id: Optional[str] = None
     decision: str  # approve_override | request_budget_adjustment | reject
     justification: Optional[str] = None
     organization_id: Optional[str] = None
@@ -1131,6 +1268,7 @@ class BudgetDecisionRequest(BaseModel):
 class ApprovalNudgeRequest(BaseModel):
     """Request to nudge pending approvers for an invoice."""
     email_id: str
+    ap_item_id: Optional[str] = None
     message: Optional[str] = None
     idempotency_key: Optional[str] = None
     organization_id: Optional[str] = None
@@ -1150,6 +1288,7 @@ class VendorFollowupRequest(BaseModel):
 class FinanceSummaryShareRequest(BaseModel):
     """Request to prepare/share a finance-lead exception summary."""
     email_id: str
+    ap_item_id: Optional[str] = None
     target: str = "email_draft"  # email_draft | slack_thread | teams_reply
     preview_only: bool = False
     recipient_email: Optional[str] = None
@@ -1161,6 +1300,7 @@ class FinanceSummaryShareRequest(BaseModel):
 class RouteLowRiskApprovalRequest(BaseModel):
     """Batch route low-risk validated item into approval surfaces."""
     email_id: str
+    ap_item_id: Optional[str] = None
     reason: Optional[str] = None
     idempotency_key: Optional[str] = None
     organization_id: Optional[str] = None
@@ -1170,6 +1310,7 @@ class RouteLowRiskApprovalRequest(BaseModel):
 class RetryRecoverableFailureRequest(BaseModel):
     """Batch retry for recoverable failed_post AP items."""
     email_id: str
+    ap_item_id: Optional[str] = None
     reason: Optional[str] = None
     idempotency_key: Optional[str] = None
     organization_id: Optional[str] = None
@@ -1232,17 +1373,20 @@ def _merge_ap_item_metadata(db: Any, ap_item: Dict[str, Any], updates: Dict[str,
     return metadata
 
 
-def _resolve_ap_item_for_extension_action(db: Any, organization_id: str, email_id: str) -> Optional[Dict[str, Any]]:
+def _resolve_ap_item_for_extension_action(db: Any, organization_id: str, reference_id: str) -> Optional[Dict[str, Any]]:
     item = None
+    ref = str(reference_id or "").strip()
+    if not ref:
+        return None
     getter = getattr(db, "get_ap_item", None)
     if callable(getter):
-        item = getter(email_id)
+        item = getter(ref)
         if item and str(item.get("organization_id") or organization_id) != organization_id:
             item = None
     if not item and hasattr(db, "get_ap_item_by_thread"):
-        item = db.get_ap_item_by_thread(organization_id, email_id)
+        item = db.get_ap_item_by_thread(organization_id, ref)
     if not item and hasattr(db, "get_ap_item_by_message_id"):
-        item = db.get_ap_item_by_message_id(organization_id, email_id)
+        item = db.get_ap_item_by_message_id(organization_id, ref)
     return item
 
 
@@ -1582,22 +1726,39 @@ async def reject_invoice(
     user=Depends(get_current_user),
 ):
     """Reject an invoice and keep pipeline state in sync."""
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
+    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     rejected_by = _authenticated_actor(user)
-    workflow = get_invoice_workflow(org_id)
-    result = await workflow.reject_invoice(
-        gmail_id=request.email_id,
-        reason=request.reason,
-        rejected_by=rejected_by,
+    db = get_db()
+    ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.ap_item_id or request.email_id)
+    ap_item_id = str((ap_item or {}).get("id") or request.ap_item_id or "").strip() or None
+    gmail_ref = str((ap_item or {}).get("thread_id") or request.email_id or "").strip()
+    runtime = FinanceAgentRuntime(
+        organization_id=org_id,
+        actor_id=getattr(user, "user_id", None) or rejected_by,
+        actor_email=rejected_by,
+        db=db,
+    )
+    result = await runtime.execute_intent(
+        "reject_invoice",
+        {
+            "ap_item_id": ap_item_id,
+            "email_id": gmail_ref,
+            "reason": request.reason,
+            "source_channel": "gmail_extension",
+            "source_channel_id": "gmail_extension",
+            "source_message_ref": gmail_ref,
+            "actor_id": rejected_by,
+            "actor_display": rejected_by,
+        },
     )
 
     audit.record_event(
         user_email=rejected_by,
         action="invoice_rejected",
         entity_type="invoice",
-        entity_id=request.email_id,
+        entity_id=str(ap_item_id or request.email_id),
         organization_id=org_id,
         metadata={"reason": request.reason, "result": result},
     )
@@ -1614,43 +1775,73 @@ async def budget_decision(
     user=Depends(get_current_user),
 ):
     """Handle explicit budget decisions from Gmail sidebar surfaces."""
-    from clearledgr.core.ap_states import OverrideContext, OVERRIDE_TYPE_BUDGET
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
+    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     actor = _authenticated_actor(user)
-    workflow = get_invoice_workflow(org_id)
     decision = str(request.decision or "").strip().lower()
+    db = get_db()
+    ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.ap_item_id or request.email_id)
+    if not ap_item:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+    ap_item_id = str(ap_item.get("id") or request.ap_item_id or "").strip()
+    gmail_ref = str(ap_item.get("thread_id") or request.email_id or "").strip()
+    runtime = FinanceAgentRuntime(
+        organization_id=org_id,
+        actor_id=getattr(user, "user_id", None) or actor,
+        actor_email=actor,
+        db=db,
+    )
 
     if decision == "approve_override":
         if not str(request.justification or "").strip():
             raise HTTPException(status_code=400, detail="justification_required")
-        ctx = OverrideContext(
-            override_type=OVERRIDE_TYPE_BUDGET,
-            justification=str(request.justification),
-            actor_id=actor,
+        result = await runtime.execute_intent(
+            "approve_invoice",
+            {
+                "ap_item_id": ap_item_id,
+                "email_id": gmail_ref,
+                "approve_override": True,
+                "action_variant": "budget_override",
+                "reason": request.justification,
+                "override_justification": request.justification,
+                "source_channel": "gmail_extension",
+                "source_channel_id": "gmail_extension",
+                "source_message_ref": gmail_ref,
+                "actor_id": actor,
+                "actor_display": actor,
+            },
         )
-        result = await workflow.approve_invoice(
-            gmail_id=request.email_id,
-            approved_by=actor,
-            allow_budget_override=True,
-            override_justification=request.justification,
-            override_context=ctx,
-        )
-        if result.get("status") not in {"approved", "error"}:
+        if result.get("status") not in {"approved", "posted", "posted_to_erp", "error"}:
             raise HTTPException(status_code=400, detail=result.get("reason", "budget_override_failed"))
     elif decision == "request_budget_adjustment":
-        result = await workflow.request_budget_adjustment(
-            gmail_id=request.email_id,
-            requested_by=actor,
-            reason=request.justification or "budget_adjustment_requested_in_gmail",
+        result = await runtime.execute_intent(
+            "request_info",
+            {
+                "ap_item_id": ap_item_id,
+                "email_id": gmail_ref,
+                "reason": request.justification or "budget_adjustment_requested_in_gmail",
+                "source_channel": "gmail_extension",
+                "source_channel_id": "gmail_extension",
+                "source_message_ref": gmail_ref,
+                "actor_id": actor,
+                "actor_display": actor,
+            },
         )
     elif decision == "reject":
         reason = request.justification or "rejected_over_budget_in_gmail"
-        result = await workflow.reject_invoice(
-            gmail_id=request.email_id,
-            reason=reason,
-            rejected_by=actor,
+        result = await runtime.execute_intent(
+            "reject_invoice",
+            {
+                "ap_item_id": ap_item_id,
+                "email_id": gmail_ref,
+                "reason": reason,
+                "source_channel": "gmail_extension",
+                "source_channel_id": "gmail_extension",
+                "source_message_ref": gmail_ref,
+                "actor_id": actor,
+                "actor_display": actor,
+            },
         )
     else:
         raise HTTPException(status_code=400, detail="invalid_budget_decision")
@@ -1659,9 +1850,11 @@ async def budget_decision(
         user_email=actor,
         action="budget_decision",
         entity_type="invoice",
-        entity_id=request.email_id,
+        entity_id=ap_item_id or request.email_id,
         organization_id=org_id,
         metadata={
+            "ap_item_id": ap_item_id,
+            "email_id": gmail_ref,
             "decision": decision,
             "justification": request.justification,
             "result": result,
@@ -1677,7 +1870,7 @@ async def approval_nudge(
     user = Depends(get_current_user),
 ):
     """Send a dedicated approver nudge for pending approvals (Slack/Teams best effort)."""
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
+    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     actor_email = _authenticated_actor(user)
@@ -1685,7 +1878,7 @@ async def approval_nudge(
     replay = _load_idempotent_extension_response(db, request.idempotency_key)
     if replay:
         return replay
-    ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.email_id)
+    ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.ap_item_id or request.email_id)
     if not ap_item:
         raise HTTPException(status_code=404, detail="ap_item_not_found")
 
@@ -1697,89 +1890,24 @@ async def approval_nudge(
     if not gmail_id:
         raise HTTPException(status_code=400, detail="missing_gmail_reference")
 
-    workflow = get_invoice_workflow(org_id)
-    try:
-        amount_num = float(ap_item.get("amount") or 0.0)
-    except (TypeError, ValueError):
-        amount_num = 0.0
-
-    nudge_text = (
-        str(request.message).strip()
-        if request.message and str(request.message).strip()
-        else (
-            f"Reminder: approval is still pending for "
-            f"{ap_item.get('vendor_name') or ap_item.get('vendor') or 'invoice'} "
-            f"({ap_item.get('currency') or 'USD'} {amount_num:,.2f}). "
-            "Please review when available."
-        )
-    )
-
-    slack_result: Dict[str, Any] = {"status": "skipped", "reason": "no_slack_thread"}
-    teams_result: Dict[str, Any] = {"status": "skipped", "reason": "teams_unavailable"}
-
-    slack_thread = db.get_slack_thread(gmail_id) if hasattr(db, "get_slack_thread") else None
-    if slack_thread and getattr(workflow, "slack_client", None):
-        try:
-            sent = await workflow.slack_client.send_message(
-                channel=str(slack_thread.get("channel_id") or ""),
-                thread_ts=str(slack_thread.get("thread_ts") or slack_thread.get("thread_id") or ""),
-                text=nudge_text,
-            )
-            slack_result = {
-                "status": "sent",
-                "channel_id": sent.channel,
-                "thread_ts": sent.thread_ts or sent.ts,
-                "message_ts": sent.ts,
-            }
-        except Exception as exc:
-            slack_result = {"status": "error", "reason": str(exc)}
-
-    teams_meta = _parse_json_dict(ap_item.get("metadata")).get("teams")
-    if isinstance(teams_meta, dict) and getattr(workflow, "teams_client", None):
-        try:
-            budget_payload = {
-                "status": ap_item.get("budget_status") or "unknown",
-                "requires_decision": bool(ap_item.get("budget_requires_decision")),
-            }
-            result = workflow.teams_client.send_invoice_budget_card(
-                email_id=gmail_id,
-                organization_id=org_id,
-                vendor=str(ap_item.get("vendor_name") or ap_item.get("vendor") or "Unknown"),
-                amount=amount_num,
-                currency=str(ap_item.get("currency") or "USD"),
-                invoice_number=ap_item.get("invoice_number"),
-                budget=budget_payload,
-            )
-            teams_result = result if isinstance(result, dict) else {"status": "sent"}
-        except Exception as exc:
-            teams_result = {"status": "error", "reason": str(exc)}
-
-    correlation_id = str(
-        ap_item.get("correlation_id")
-        or _parse_json_dict(ap_item.get("metadata")).get("correlation_id")
-        or ""
-    ).strip() or None
-
-    audit_row = _append_extension_ap_audit(
-        db,
-        ap_item_id=str(ap_item.get("id") or request.email_id),
+    runtime = FinanceAgentRuntime(
         organization_id=org_id,
-        event_type="approval_nudge_sent" if slack_result.get("status") == "sent" or teams_result.get("status") == "sent" else "approval_nudge_failed",
-        actor_id=actor_email,
-        reason="approval_nudge",
-        metadata={
-            "slack": slack_result,
-            "teams": teams_result,
-            "message": nudge_text[:400],
-            "response": {
-                "status": "nudged" if slack_result.get("status") == "sent" or teams_result.get("status") == "sent" else "error",
-                "email_id": request.email_id,
-                "ap_item_id": str(ap_item.get("id") or ""),
-                "slack": slack_result,
-                "teams": teams_result,
-            },
+        actor_id=getattr(user, "user_id", None) or actor_email,
+        actor_email=actor_email,
+        db=db,
+    )
+    response = await runtime.execute_intent(
+        "nudge_approval",
+        {
+            "ap_item_id": str(ap_item.get("id") or request.ap_item_id or "").strip() or None,
+            "email_id": gmail_id,
+            "message": str(request.message or "").strip() or None,
+            "source_channel": "gmail_extension",
+            "source_channel_id": "gmail_extension",
+            "source_message_ref": gmail_id,
+            "actor_id": actor_email,
+            "actor_display": actor_email,
         },
-        correlation_id=correlation_id,
         idempotency_key=request.idempotency_key,
     )
 
@@ -1790,21 +1918,14 @@ async def approval_nudge(
         entity_id=str(ap_item.get("id") or request.email_id),
         organization_id=org_id,
         metadata={
-            "email_id": request.email_id,
-            "slack": slack_result,
-            "teams": teams_result,
-            "audit_event_id": (audit_row or {}).get("id"),
+            "ap_item_id": str(ap_item.get("id") or request.ap_item_id or "").strip() or None,
+            "email_id": gmail_id,
+            "result": response,
+            "audit_event_id": response.get("audit_event_id"),
         },
     )
 
-    return {
-        "status": "nudged" if slack_result.get("status") == "sent" or teams_result.get("status") == "sent" else "error",
-        "email_id": request.email_id,
-        "ap_item_id": str(ap_item.get("id") or ""),
-        "slack": slack_result,
-        "teams": teams_result,
-        "audit_event_id": (audit_row or {}).get("id"),
-    }
+    return response
 
 
 @router.post("/vendor-followup", dependencies=[Depends(get_current_user)])
@@ -1898,6 +2019,7 @@ async def route_low_risk_approval(
         response = await runtime.execute_intent(
             "route_low_risk_for_approval",
             {
+                "ap_item_id": request.ap_item_id,
                 "email_id": request.email_id,
                 "reason": request.reason,
             },
@@ -1916,9 +2038,10 @@ async def route_low_risk_approval(
         user_email=actor_email,
         action="route_low_risk_for_approval",
         entity_type="invoice",
-        entity_id=str(response.get("ap_item_id") or request.email_id),
+        entity_id=str(response.get("ap_item_id") or request.ap_item_id or request.email_id),
         organization_id=org_id,
         metadata={
+            "ap_item_id": response.get("ap_item_id") or request.ap_item_id,
             "email_id": request.email_id,
             "status": response.get("status"),
             "policy_precheck": response.get("policy_precheck"),
@@ -1952,6 +2075,7 @@ async def retry_recoverable_failure(
         response = await runtime.execute_intent(
             "retry_recoverable_failures",
             {
+                "ap_item_id": request.ap_item_id,
                 "email_id": request.email_id,
                 "reason": request.reason,
             },
@@ -1970,9 +2094,10 @@ async def retry_recoverable_failure(
         user_email=actor_email,
         action="retry_recoverable_failure",
         entity_type="invoice",
-        entity_id=str(response.get("ap_item_id") or request.email_id),
+        entity_id=str(response.get("ap_item_id") or request.ap_item_id or request.email_id),
         organization_id=org_id,
         metadata={
+            "ap_item_id": response.get("ap_item_id") or request.ap_item_id,
             "email_id": request.email_id,
             "status": response.get("status"),
             "reason": response.get("reason"),
@@ -1999,7 +2124,7 @@ async def finance_summary_share(
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     actor_email = _authenticated_actor(user)
     db = get_db()
-    ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.email_id)
+    ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.ap_item_id or request.email_id)
     if not ap_item:
         raise HTTPException(status_code=404, detail="ap_item_not_found")
 

@@ -52,7 +52,7 @@ import { ClearledgrQueueManager } from './queue-manager.js';
     const configuredBackendUrl = String(
       extensionConfig.API_URL || extensionConfig.BACKEND_URL || ''
     ).trim();
-    let backendUrl = data.backendUrl || nested.backendUrl || nested.apiEndpoint || configuredBackendUrl || 'http://127.0.0.1:8000';
+    let backendUrl = data.backendUrl || nested.backendUrl || nested.apiEndpoint || configuredBackendUrl || 'http://127.0.0.1:8010';
     backendUrl = String(backendUrl).trim();
     if (!/^https?:\/\//i.test(backendUrl)) backendUrl = `http://${backendUrl}`;
     if (backendUrl.endsWith('/v1')) backendUrl = backendUrl.slice(0, -3);

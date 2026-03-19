@@ -20,8 +20,7 @@ from clearledgr.core.approval_action_contract import (
 from clearledgr.core.database import get_db
 from clearledgr.core.launch_controls import get_channel_action_block_reason
 from clearledgr.core.slack_verify import require_slack_signature
-from clearledgr.services.audit_trail import get_audit_trail
-from clearledgr.services.invoice_workflow import get_invoice_workflow
+from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
 router = APIRouter(prefix="/slack/invoices", tags=["slack-invoices"])
 logger = logging.getLogger(__name__)
@@ -147,88 +146,120 @@ def _slack_stale_response() -> Dict[str, str]:
     }
 
 
-async def _dispatch_slack_action(
-    workflow,
-    action: NormalizedApprovalAction,
-) -> Dict[str, Any]:
-    common_kwargs = {
-        "source_channel": "slack",
-        "source_channel_id": action.source_channel_id,
-        "source_message_ref": action.source_message_ref,
-        "slack_channel": action.source_channel_id,
-        "slack_ts": action.source_message_ref,
-        "actor_display": action.actor_display,
-        "action_run_id": action.run_id,
-        "decision_request_ts": action.request_ts,
-        "decision_idempotency_key": action.idempotency_key,
-        "correlation_id": action.correlation_id,
-    }
+async def _dispatch_slack_action(action: NormalizedApprovalAction) -> Dict[str, Any]:
+    runtime = FinanceAgentRuntime(
+        organization_id=action.organization_id or "default",
+        actor_id=action.actor_id or "slack_user",
+        actor_email=action.actor_display or action.actor_id or "slack_user",
+        db=get_db(),
+    )
+
     if action.action == "approve":
-        result = await workflow.approve_invoice(
-            gmail_id=action.gmail_id,
-            approved_by=action.actor_id,
-            allow_budget_override=bool(action.action_variant == "budget_override"),
-            override_justification=action.reason if action.action_variant == "budget_override" else None,
-            **common_kwargs,
+        result = await runtime.execute_intent(
+            "approve_invoice",
+            {
+                "ap_item_id": action.ap_item_id,
+                "email_id": action.gmail_id,
+                "reason": action.reason,
+                "source_channel": "slack",
+                "source_channel_id": action.source_channel_id,
+                "source_message_ref": action.source_message_ref,
+                "actor_id": action.actor_id,
+                "actor_display": action.actor_display,
+                "action_run_id": action.run_id,
+                "decision_request_ts": action.request_ts,
+                "correlation_id": action.correlation_id,
+                "action_variant": action.action_variant,
+            },
+            idempotency_key=action.idempotency_key,
         )
-        if result.get("status") == "needs_budget_decision":
+        workflow_result = result.get("result") if isinstance(result.get("result"), dict) else result
+        status = str(workflow_result.get("status") or result.get("status") or "").strip().lower()
+        if status == "needs_budget_decision":
             return {
                 "response_type": "ephemeral",
                 "text": "Budget decision required. Use Approve override, Request info, or Reject.",
                 "result": result,
             }
-        if result.get("status") == "needs_field_review":
+        if status == "needs_field_review":
             return {
                 "response_type": "ephemeral",
                 "text": "Field review required before posting. Open the invoice to review critical fields.",
                 "result": result,
             }
-        if result.get("status") != "approved":
+        if status not in {"approved", "posted", "posted_to_erp"}:
             return {
                 "response_type": "ephemeral",
-                "text": f"Approve failed: {result.get('reason', result.get('status', 'unknown'))}",
+                "text": f"Approve failed: {workflow_result.get('reason', result.get('reason', status or 'unknown'))}",
                 "result": result,
             }
-        erp_result = result.get("erp_result") or {}
+        erp_result = workflow_result.get("erp_result") or {}
         doc_num = erp_result.get("doc_num") or erp_result.get("document_number") or erp_result.get("erp_document")
         bill_id = erp_result.get("bill_id")
         detail = f"Bill ID: {bill_id}" if bill_id else "Posted"
         if doc_num:
             detail += f" | Doc #: {doc_num}"
         prefix = "Budget override approved and posted." if action.action_variant == "budget_override" else "Posted to ERP."
-        try:
-            trail = get_audit_trail(action.organization_id or "default")
-            trail.log_approval(invoice_id=action.gmail_id, approved_by=action.actor_id, comment=f"Approved in Slack ({detail})")
-        except Exception:
-            pass
         return {"response_type": "ephemeral", "text": f"{prefix} {detail}", "result": result}
 
     if action.action == "request_info":
-        result = await workflow.request_budget_adjustment(
-            gmail_id=action.gmail_id,
-            requested_by=action.actor_id,
-            reason=action.reason or "request_info_in_slack",
-            **common_kwargs,
+        result = await runtime.execute_intent(
+            "request_info",
+            {
+                "ap_item_id": action.ap_item_id,
+                "email_id": action.gmail_id,
+                "reason": action.reason or "budget_adjustment_requested_in_slack",
+                "source_channel": "slack",
+                "source_channel_id": action.source_channel_id,
+                "source_message_ref": action.source_message_ref,
+                "actor_id": action.actor_id,
+                "actor_display": action.actor_display,
+                "action_run_id": action.run_id,
+                "decision_request_ts": action.request_ts,
+                "correlation_id": action.correlation_id,
+                "action_variant": action.action_variant,
+            },
+            idempotency_key=action.idempotency_key,
         )
-        if result.get("status") == "needs_info":
-            return {"response_type": "ephemeral", "text": "Request for info recorded. Invoice moved to Needs info.", "result": result}
-        return {"response_type": "ephemeral", "text": f"Request failed: {result.get('reason', result.get('status', 'unknown'))}", "result": result}
+        status = str(result.get("status") or "").strip().lower()
+        if status == "needs_info":
+            return {
+                "response_type": "ephemeral",
+                "text": "Request for info recorded. Invoice moved to Needs info.",
+                "result": result,
+            }
+        return {
+            "response_type": "ephemeral",
+            "text": f"Request failed: {result.get('reason', status or 'unknown')}",
+            "result": result,
+        }
 
     if action.action == "reject":
-        result = await workflow.reject_invoice(
-            gmail_id=action.gmail_id,
-            reason=action.reason or "rejected_in_slack",
-            rejected_by=action.actor_id,
-            **common_kwargs,
+        result = await runtime.execute_intent(
+            "reject_invoice",
+            {
+                "ap_item_id": action.ap_item_id,
+                "email_id": action.gmail_id,
+                "reason": action.reason or "rejected_in_slack",
+                "source_channel": "slack",
+                "source_channel_id": action.source_channel_id,
+                "source_message_ref": action.source_message_ref,
+                "actor_id": action.actor_id,
+                "actor_display": action.actor_display,
+                "action_run_id": action.run_id,
+                "decision_request_ts": action.request_ts,
+                "correlation_id": action.correlation_id,
+                "action_variant": action.action_variant,
+            },
+            idempotency_key=action.idempotency_key,
         )
-        if result.get("status") == "rejected":
-            try:
-                trail = get_audit_trail(action.organization_id or "default")
-                trail.log_rejection(invoice_id=action.gmail_id, rejected_by=action.actor_id, reason=action.reason or "rejected_in_slack")
-            except Exception:
-                pass
+        if str(result.get("status") or "").strip().lower() == "rejected":
             return {"response_type": "ephemeral", "text": "Invoice rejected.", "result": result}
-        return {"response_type": "ephemeral", "text": f"Reject failed: {result.get('reason', result.get('status', 'unknown'))}", "result": result}
+        return {
+            "response_type": "ephemeral",
+            "text": f"Reject failed: {result.get('reason', result.get('status', 'unknown'))}",
+            "result": result,
+        }
 
     raise HTTPException(status_code=400, detail="unsupported_action")
 
@@ -407,9 +438,8 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
 
     response_url = str(payload.get("response_url") or "").strip()
 
-    workflow = get_invoice_workflow(normalized.organization_id)
     try:
-        response = await _dispatch_slack_action(workflow, normalized)
+        response = await _dispatch_slack_action(normalized)
     except HTTPException as exc:
         _audit_callback_event(
             db,

@@ -13,3 +13,10 @@ Available gstack skills:
 - `/retro` — Retrospective
 
 If gstack skills aren't working, rebuild by running: `cd .claude/skills/gstack && ./setup`
+
+## Design System
+Always read DESIGN.md before making any visual or UI decisions.
+All font choices, colors, spacing, and aesthetic direction are defined there.
+Do not deviate without explicit user approval.
+In QA mode, flag any code that doesn't match DESIGN.md.
+Brand colors: mint green `#00D67E` + navy `#0A1628`. NOT terracotta/orange.

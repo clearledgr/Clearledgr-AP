@@ -18,7 +18,7 @@ from clearledgr.core.approval_action_contract import (
 from clearledgr.core.database import get_db
 from clearledgr.core.launch_controls import get_channel_action_block_reason
 from clearledgr.core.teams_verify import verify_teams_token
-from clearledgr.services.invoice_workflow import get_invoice_workflow
+from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
 
 router = APIRouter(prefix="/teams/invoices", tags=["teams-invoices"])
@@ -164,38 +164,70 @@ def _resolve_correlation_id(db, ap_item_id: Optional[str], email_id: str) -> Opt
         return None
 
 
-async def _dispatch_teams_action(workflow, action: NormalizedApprovalAction) -> Dict[str, Any]:
-    kwargs = {
-        "source_channel": "teams",
-        "source_channel_id": action.source_channel_id,
-        "source_message_ref": action.source_message_ref,
-        "actor_display": action.actor_display,
-        "action_run_id": action.run_id,
-        "decision_request_ts": action.request_ts,
-        "decision_idempotency_key": action.idempotency_key,
-        "correlation_id": action.correlation_id,
-    }
+async def _dispatch_teams_action(action: NormalizedApprovalAction) -> Dict[str, Any]:
+    runtime = FinanceAgentRuntime(
+        organization_id=action.organization_id or "default",
+        actor_id=action.actor_id or "teams_user",
+        actor_email=action.actor_display or action.actor_id or "teams_user",
+        db=get_db(),
+    )
+
     if action.action == "approve":
-        return await workflow.approve_invoice(
-            gmail_id=action.gmail_id,
-            approved_by=action.actor_id,
-            allow_budget_override=bool(action.action_variant == "budget_override"),
-            override_justification=action.reason if action.action_variant == "budget_override" else None,
-            **kwargs,
+        return await runtime.execute_intent(
+            "approve_invoice",
+            {
+                "ap_item_id": action.ap_item_id,
+                "email_id": action.gmail_id,
+                "reason": action.reason,
+                "source_channel": "teams",
+                "source_channel_id": action.source_channel_id,
+                "source_message_ref": action.source_message_ref,
+                "actor_id": action.actor_id,
+                "actor_display": action.actor_display,
+                "action_run_id": action.run_id,
+                "decision_request_ts": action.request_ts,
+                "correlation_id": action.correlation_id,
+                "action_variant": action.action_variant,
+            },
+            idempotency_key=action.idempotency_key,
         )
     if action.action == "request_info":
-        return await workflow.request_budget_adjustment(
-            gmail_id=action.gmail_id,
-            requested_by=action.actor_id,
-            reason=action.reason or "request_info_in_teams",
-            **kwargs,
+        return await runtime.execute_intent(
+            "request_info",
+            {
+                "ap_item_id": action.ap_item_id,
+                "email_id": action.gmail_id,
+                "reason": action.reason or "budget_adjustment_requested_in_teams",
+                "source_channel": "teams",
+                "source_channel_id": action.source_channel_id,
+                "source_message_ref": action.source_message_ref,
+                "actor_id": action.actor_id,
+                "actor_display": action.actor_display,
+                "action_run_id": action.run_id,
+                "decision_request_ts": action.request_ts,
+                "correlation_id": action.correlation_id,
+                "action_variant": action.action_variant,
+            },
+            idempotency_key=action.idempotency_key,
         )
     if action.action == "reject":
-        return await workflow.reject_invoice(
-            gmail_id=action.gmail_id,
-            reason=action.reason or "rejected_in_teams",
-            rejected_by=action.actor_id,
-            **kwargs,
+        return await runtime.execute_intent(
+            "reject_invoice",
+            {
+                "ap_item_id": action.ap_item_id,
+                "email_id": action.gmail_id,
+                "reason": action.reason or "rejected_in_teams",
+                "source_channel": "teams",
+                "source_channel_id": action.source_channel_id,
+                "source_message_ref": action.source_message_ref,
+                "actor_id": action.actor_id,
+                "actor_display": action.actor_display,
+                "action_run_id": action.run_id,
+                "decision_request_ts": action.request_ts,
+                "correlation_id": action.correlation_id,
+                "action_variant": action.action_variant,
+            },
+            idempotency_key=action.idempotency_key,
         )
     raise HTTPException(status_code=400, detail="unsupported_action")
 
@@ -390,11 +422,10 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
         correlation_id=normalized.correlation_id,
     )
 
-    workflow = get_invoice_workflow(normalized.organization_id)
     # H5: Wrap dispatch in try/except to emit channel_action_failed audit event
     # on any exception — parity with Slack handler (PLAN.md §5.3-5).
     try:
-        result = await _dispatch_teams_action(workflow, normalized)
+        result = await _dispatch_teams_action(normalized)
     except Exception as dispatch_exc:
         _audit_callback_event(
             db,

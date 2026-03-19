@@ -1,9 +1,9 @@
 'use strict';
 
-const { merge } = require('webpack-merge');
 const common = require('./webpack.common.cjs');
 
-module.exports = merge(common, {
+module.exports = {
+  ...common,
   mode: 'production',
   devtool: 'source-map',
-});
+};

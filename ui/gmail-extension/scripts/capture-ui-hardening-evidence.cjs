@@ -7,7 +7,7 @@ const { chromium } = require('playwright');
 const { createInboxSdkIntegrationRuntime } = require('../tests/inboxsdk-integration-harness.cjs');
 
 const DEFAULT_RELEASE_ID = 'ap-v1-2026-02-25-pilot-rc1';
-const DEFAULT_BACKEND_URL = 'http://127.0.0.1:8000';
+const DEFAULT_BACKEND_URL = 'http://127.0.0.1:8010';
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {

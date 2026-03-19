@@ -1347,7 +1347,7 @@ async def retry_erp_post(
     organization_id: str = "default",
     _user=Depends(get_current_user),
 ):
-    """Retry posting an AP item to ERP through the canonical workflow resume path."""
+    """Retry posting an AP item through the canonical finance runtime."""
     verify_org_access(organization_id, _user)
     db = get_db()
     item = db.get_ap_item(ap_item_id)
@@ -1364,34 +1364,53 @@ async def retry_erp_post(
             detail=f"Can only retry from failed_post state (current: {current_state})",
         )
 
-    from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
-    workflow = InvoiceWorkflowService(organization_id=organization_id)
+    runtime = FinanceAgentRuntime(
+        organization_id=organization_id,
+        actor_id=getattr(_user, "user_id", None) or getattr(_user, "email", None) or "ap_retry",
+        actor_email=getattr(_user, "email", None) or getattr(_user, "user_id", None) or "ap_retry",
+        db=db,
+    )
     try:
-        resume_result = await workflow.resume_workflow(ap_item_id)
+        retry_result = await runtime.execute_intent(
+            "retry_recoverable_failures",
+            {
+                "ap_item_id": ap_item_id,
+                "email_id": str(item.get("thread_id") or ap_item_id),
+                "reason": "retry_post_api",
+            },
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=safe_error(exc, "ERP posting")) from exc
 
-    status = str((resume_result or {}).get("status") or "").strip().lower()
-    if status == "recovered":
+    status = str((retry_result or {}).get("status") or "").strip().lower()
+    if status == "posted":
         return {
             "status": "posted",
             "ap_item_id": ap_item_id,
-            "erp_reference": (resume_result or {}).get("erp_reference"),
-            "resume_result": resume_result,
+            "erp_reference": (retry_result or {}).get("erp_reference"),
+            "resume_result": retry_result.get("result") if isinstance(retry_result, dict) else None,
+            "retry_result": retry_result,
         }
-    if status == "still_failing":
-        reason = str((resume_result or {}).get("reason") or "erp_post_failed")
+    if status == "blocked":
+        reason = str((retry_result or {}).get("reason") or "retry_not_recoverable")
+        raise HTTPException(status_code=400, detail=reason)
+    if status == "ready_to_post":
+        return {
+            "status": "ready_to_post",
+            "ap_item_id": ap_item_id,
+            "erp_reference": (retry_result or {}).get("erp_reference"),
+            "resume_result": retry_result.get("result") if isinstance(retry_result, dict) else None,
+            "retry_result": retry_result,
+        }
+    if status == "error":
+        reason = str((retry_result or {}).get("reason") or "erp_post_failed")
         raise HTTPException(
             status_code=502,
             detail=f"ERP posting failed: {reason}",
         )
-    if status == "not_resumable":
-        reason = str((resume_result or {}).get("reason") or "state_does_not_support_resume")
-        raise HTTPException(status_code=400, detail=reason)
-    if status == "error":
-        reason = str((resume_result or {}).get("reason") or "retry_failed")
-        raise HTTPException(status_code=400, detail=reason)
+    raise HTTPException(status_code=502, detail=f"ERP posting failed: {status or 'retry_failed'}")
 
     return {
         "status": status or "unknown",

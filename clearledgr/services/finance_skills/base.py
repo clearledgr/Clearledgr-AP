@@ -17,7 +17,13 @@ if TYPE_CHECKING:
 
 
 class FinanceSkill(ABC):
-    """Contract for skills hosted by the finance agent runtime."""
+    """Contract for operational skills hosted by the finance agent runtime.
+
+    Also known as OperationalSkill. Provides preview/execute for runtime intents.
+
+    For the planning skill ABC (Claude tool-use in AgentPlanningEngine),
+    see clearledgr.core.skills.base.FinanceSkill (PlanningSkill).
+    """
 
     @property
     @abstractmethod
@@ -119,3 +125,23 @@ class FinanceSkill(ABC):
         details.setdefault("action_execution", action.to_dict())
         response.details = details
         return response
+
+    # ---- Optional: workflow-specific metrics & entity resolution ----
+    # Override in subclass to provide workflow KPIs for skill_readiness().
+    # Default returns None (manifest-only skill).
+
+    def collect_runtime_metrics(
+        self, runtime: "FinanceAgentRuntime", window_hours: int = 168
+    ) -> Optional[Dict[str, Any]]:
+        """Override to provide workflow-specific KPI collection for readiness gates."""
+        return None
+
+    def resolve_entity(
+        self, runtime: "FinanceAgentRuntime", reference: str
+    ) -> Dict[str, Any]:
+        """Override to resolve a workflow entity by reference (e.g., AP item by ID)."""
+        raise LookupError("entity_resolution_not_implemented")
+
+
+# Alias for clarity — OperationalSkill is the skill type used by FinanceAgentRuntime
+OperationalSkill = FinanceSkill

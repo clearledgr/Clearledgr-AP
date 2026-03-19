@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { h } from 'preact';
-import { render, screen } from '@testing-library/preact';
+import { render, screen, cleanup, fireEvent } from '@testing-library/preact';
 import htm from 'htm';
 import store from '../utils/store.js';
 
@@ -14,12 +14,22 @@ const { default: SidebarApp } = await import('./SidebarApp.js');
 
 const mockQueueManager = {
   runtimeConfig: { backendUrl: 'http://localhost:8010', organizationId: 'test-org', authEntryMode: 'inline' },
+  backendFetch: vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      erp_connected: true,
+      slack_connected: true,
+      approval_thresholds: [{ amount: 500 }],
+    }),
+  }),
   authorizeGmailNow: vi.fn().mockResolvedValue({ success: true }),
   refreshQueue: vi.fn().mockResolvedValue(undefined),
   fetchItemContext: vi.fn().mockResolvedValue({}),
   fetchAuditTrail: vi.fn().mockResolvedValue([]),
   requestApproval: vi.fn().mockResolvedValue({ status: 'needs_approval' }),
   nudgeApproval: vi.fn().mockResolvedValue({ status: 'nudged' }),
+  rejectInvoice: vi.fn().mockResolvedValue({ status: 'rejected' }),
+  prepareVendorFollowup: vi.fn().mockResolvedValue({ status: 'prepared' }),
   retryFailedPost: vi.fn().mockResolvedValue({ status: 'ready_to_post' }),
   approveAndPost: vi.fn().mockResolvedValue({ status: 'posted' }),
 };
@@ -37,6 +47,7 @@ beforeEach(() => {
   store.sourcesState = new Map();
   store.rowDecorated = new Set();
   vi.clearAllMocks();
+  cleanup();
 });
 
 describe('SidebarApp', () => {
@@ -47,13 +58,13 @@ describe('SidebarApp', () => {
 
   it('renders header with logo and title', () => {
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Clearledgr AP')).toBeTruthy();
+    expect(screen.getByText('Clearledgr')).toBeTruthy();
   });
 
   it('renders scan status when monitoring active', () => {
     store.scanStatus = { state: 'idle' };
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Monitoring active.')).toBeTruthy();
+    expect(screen.getByText(/Monitoring active/)).toBeTruthy();
   });
 
   it('renders auth required state', () => {
@@ -71,7 +82,7 @@ describe('SidebarApp', () => {
   it('renders error state', () => {
     store.scanStatus = { state: 'error', error: 'backend_down' };
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText(/Cannot sync/)).toBeTruthy();
+    expect(screen.getByText(/Backend unreachable/)).toBeTruthy();
   });
 
   it('renders invoice when queue has items', () => {
@@ -87,7 +98,8 @@ describe('SidebarApp', () => {
     store.selectedItemId = 'inv-1';
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
     expect(screen.getByText('Acme Corp')).toBeTruthy();
-    expect(screen.getByText(/USD 1500\.00/)).toBeTruthy();
+    expect(screen.getByText('1,500.00')).toBeTruthy();
+    expect(screen.getByText('USD')).toBeTruthy();
     expect(screen.getByText(/INV-001/)).toBeTruthy();
     expect(screen.getByText('Needs approval')).toBeTruthy();
   });
@@ -96,14 +108,22 @@ describe('SidebarApp', () => {
     store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'needs_approval', amount: 100 }];
     store.selectedItemId = 'inv-1';
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Send approval request')).toBeTruthy();
+    expect(screen.getByText('Nudge approver')).toBeTruthy();
   });
 
-  it('renders Approve & Post for approved state', () => {
+  it('does not render Approve & Post for approved state', () => {
     store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'approved', amount: 100 }];
     store.selectedItemId = 'inv-1';
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Approve & Post')).toBeTruthy();
+    expect(screen.queryByText('Approve & Post')).toBeNull();
+    expect(screen.getByText(/Approval received\. Clearledgr is preparing the posting step\./)).toBeTruthy();
+  });
+
+  it('renders Preview ERP post for ready_to_post state', () => {
+    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'ready_to_post', amount: 100 }];
+    store.selectedItemId = 'inv-1';
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+    expect(screen.getByText('Preview ERP post')).toBeTruthy();
   });
 
   it('renders Retry ERP post for failed_post state', () => {
@@ -113,35 +133,83 @@ describe('SidebarApp', () => {
     expect(screen.getByText('Retry ERP post')).toBeTruthy();
   });
 
-  it('renders navigator with prev/next', () => {
+  it('renders navigator with prev/next for multi-item queue', () => {
     store.queueState = [
       { id: 'a', vendor_name: 'First', state: 'received', amount: 100 },
       { id: 'b', vendor_name: 'Second', state: 'received', amount: 200 },
     ];
     store.selectedItemId = 'a';
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Invoice 1 of 2')).toBeTruthy();
-    expect(screen.getByText('Prev')).toBeTruthy();
-    expect(screen.getByText('Next')).toBeTruthy();
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    expect(screen.getByLabelText('Previous')).toBeTruthy();
+    expect(screen.getByLabelText('Next')).toBeTruthy();
   });
 
   it('disables Prev on first item', () => {
-    store.queueState = [{ id: 'a', vendor_name: 'Only', state: 'received', amount: 100 }];
+    store.queueState = [
+      { id: 'a', vendor_name: 'First', state: 'received', amount: 100 },
+      { id: 'b', vendor_name: 'Second', state: 'received', amount: 200 },
+    ];
     store.selectedItemId = 'a';
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    const prevBtn = screen.getByText('Prev');
+    const prevBtn = screen.getByLabelText('Previous');
     expect(prevBtn.disabled).toBe(true);
   });
 
-  it('renders context fields in details', () => {
-    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'received', amount: 100, subject: 'Invoice from Test', sender: 'test@example.com', exception_code: 'po_missing_reference', confidence: 0.87 }];
+  it('renders evidence checklist instead of legacy context panels', () => {
+    store.queueState = [{
+      id: 'inv-1',
+      vendor_name: 'Test',
+      state: 'received',
+      amount: 100,
+      subject: 'Invoice from Test',
+      sender: 'test@example.com',
+      exception_code: 'po_missing_reference',
+      confidence: 0.87,
+      has_attachment: true,
+    }];
     store.selectedItemId = 'inv-1';
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Context fields')).toBeTruthy();
+    expect(screen.getByText('Evidence checklist')).toBeTruthy();
+    expect(screen.getByText('Attachment')).toBeTruthy();
+    expect(screen.queryByText('Context fields')).toBeNull();
+    expect(screen.queryByText(/Agent timeline/i)).toBeNull();
   });
 
-  it('renders Decision section title', () => {
+  it('hides navigator for single-item queue', () => {
+    store.queueState = [{ id: 'a', vendor_name: 'Only', state: 'received', amount: 100 }];
+    store.selectedItemId = 'a';
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Decision')).toBeTruthy();
+    expect(screen.queryByLabelText('Previous')).toBeNull();
+  });
+
+  it('renders invoice count badge in header', () => {
+    store.queueState = [
+      { id: 'a', vendor_name: 'A', state: 'received', amount: 100 },
+      { id: 'b', vendor_name: 'B', state: 'received', amount: 200 },
+    ];
+    store.selectedItemId = 'a';
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+    expect(screen.getByText('2 invoices')).toBeTruthy();
+  });
+
+  it('uses the backend reject call instead of the legacy window event path', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'needs_approval', amount: 100 }];
+    store.selectedItemId = 'inv-1';
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+
+    fireEvent.click(screen.getByText('Reject'));
+    fireEvent.input(screen.getByLabelText('Rejection reason'), { target: { value: 'Duplicate invoice' } });
+    const rejectButtons = screen.getAllByText('Reject', { selector: 'button' });
+    fireEvent.click(rejectButtons[rejectButtons.length - 1]);
+
+    await Promise.resolve();
+    expect(mockQueueManager.rejectInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'inv-1' }),
+      { reason: 'Duplicate invoice' }
+    );
+    expect(dispatchSpy).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'clearledgr:reject-invoice' }));
+    dispatchSpy.mockRestore();
   });
 });

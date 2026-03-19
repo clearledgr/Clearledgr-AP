@@ -26,8 +26,8 @@ echo "========================================"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-# Build InboxSDK layer with webpack (bundles ES modules)
-echo "Building InboxSDK layer with webpack..."
+# Build InboxSDK layer with the Bun-backed audited bundle path
+echo "Building InboxSDK layer..."
 npm run build --silent
 
 # Copy extension files (InboxSDK-only implementation)

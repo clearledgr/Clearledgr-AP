@@ -142,6 +142,126 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         )
         return operator
 
+    if event_type == "approval_request_routed":
+        operator.update(
+            {
+                "code": "approval_request_sent",
+                "title": "Approval request sent",
+                "message": reason or "Clearledgr routed this invoice to the approver.",
+                "severity": "info",
+                "next_action": "Wait for approval callback or send a reminder.",
+            }
+        )
+        return operator
+
+    if event_type == "approval_request_blocked":
+        operator.update(
+            {
+                "code": "approval_request_blocked",
+                "title": "Approval request blocked",
+                "message": reason or "This invoice could not be sent for approval from its current status.",
+                "severity": "warning",
+                "next_action": "Review the current blocker, then retry approval routing.",
+            }
+        )
+        return operator
+
+    if event_type == "approval_request_failed":
+        operator.update(
+            {
+                "code": "approval_request_failed",
+                "title": "Approval request failed",
+                "message": reason or "Clearledgr could not send this invoice for approval.",
+                "severity": "warning",
+                "next_action": "Retry approval routing or review the connected approval channel.",
+            }
+        )
+        return operator
+
+    if event_type == "invoice_approved":
+        operator.update(
+            {
+                "code": "invoice_approved",
+                "title": "Approval recorded",
+                "message": reason or "Approver decision was recorded and posting continued.",
+                "severity": "success",
+                "next_action": "Wait for ERP posting result if this invoice is still processing.",
+            }
+        )
+        return operator
+
+    if event_type == "invoice_approval_failed":
+        operator.update(
+            {
+                "code": "invoice_approval_failed",
+                "title": "Approval could not complete",
+                "message": reason or "Approval was received, but Clearledgr could not finish the next step.",
+                "severity": "warning",
+                "next_action": "Review the current invoice state and retry the allowed next step.",
+            }
+        )
+        return operator
+
+    if event_type == "invoice_approval_blocked":
+        operator.update(
+            {
+                "code": "invoice_approval_blocked",
+                "title": "Approval could not be recorded",
+                "message": reason or "This invoice is no longer waiting for approval.",
+                "severity": "warning",
+                "next_action": "Refresh the invoice and use the allowed next step.",
+            }
+        )
+        return operator
+
+    if event_type == "info_request_recorded":
+        operator.update(
+            {
+                "code": "info_request_recorded",
+                "title": "More information requested",
+                "message": reason or "This invoice was sent back for more information.",
+                "severity": "info",
+                "next_action": "Wait for the missing details, then continue review.",
+            }
+        )
+        return operator
+
+    if event_type == "info_request_blocked":
+        operator.update(
+            {
+                "code": "info_request_blocked",
+                "title": "Could not request more information",
+                "message": reason or "This invoice cannot be moved to needs info from its current status.",
+                "severity": "warning",
+                "next_action": "Refresh the invoice and retry the allowed next step.",
+            }
+        )
+        return operator
+
+    if event_type == "info_request_failed":
+        operator.update(
+            {
+                "code": "info_request_failed",
+                "title": "Could not request more information",
+                "message": reason or "Clearledgr could not move this invoice back to needs info.",
+                "severity": "warning",
+                "next_action": "Refresh the invoice and retry the allowed next step.",
+            }
+        )
+        return operator
+
+    if event_type == "approval_nudge_blocked":
+        operator.update(
+            {
+                "code": "approval_reminder_blocked",
+                "title": "Reminder could not be sent",
+                "message": reason or "This invoice is no longer waiting for approval.",
+                "severity": "warning",
+                "next_action": "Refresh the invoice and use the allowed next step.",
+            }
+        )
+        return operator
+
     if event_type == "approval_nudge_failed":
         operator.update(
             {
@@ -166,6 +286,30 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         )
         return operator
 
+    if event_type == "invoice_reject_blocked":
+        operator.update(
+            {
+                "code": "invoice_reject_blocked",
+                "title": "Rejection blocked",
+                "message": reason or "This invoice cannot be rejected from its current status.",
+                "severity": "warning",
+                "next_action": "Refresh the invoice and use the allowed next step.",
+            }
+        )
+        return operator
+
+    if event_type == "invoice_reject_failed":
+        operator.update(
+            {
+                "code": "invoice_reject_failed",
+                "title": "Rejection failed",
+                "message": reason or "Clearledgr could not reject this invoice.",
+                "severity": "warning",
+                "next_action": "Retry rejection or review the current invoice status.",
+            }
+        )
+        return operator
+
     if event_type in {
         "browser_session_created",
         "erp_api_fallback_preview_created",
@@ -179,6 +323,18 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
                 "message": reason or "Prepared secure ERP browser fallback session.",
                 "severity": "info",
                 "next_action": "Continue approval/posting flow.",
+            }
+        )
+        return operator
+
+    if event_type == "erp_post_blocked":
+        operator.update(
+            {
+                "code": "erp_post_blocked",
+                "title": "ERP posting blocked",
+                "message": reason or "This invoice is not ready to post yet.",
+                "severity": "warning",
+                "next_action": "Complete the required approval or review step first.",
             }
         )
         return operator
@@ -251,6 +407,18 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         )
         return operator
 
+    if event_type == "erp_post_completed":
+        operator.update(
+            {
+                "code": "erp_posted",
+                "title": "Posted to ERP",
+                "message": reason or "Invoice posting completed successfully.",
+                "severity": "success",
+                "next_action": "No action required.",
+            }
+        )
+        return operator
+
     if event_type in {"erp_api_failed", "erp_browser_fallback_failed"}:
         operator.update(
             {
@@ -259,6 +427,138 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
                 "message": reason or "Posting did not complete.",
                 "severity": "error",
                 "next_action": "Retry ERP post or escalate for review.",
+            }
+        )
+        return operator
+
+    if event_type == "erp_post_failed":
+        operator.update(
+            {
+                "code": "erp_post_failed",
+                "title": "ERP posting failed",
+                "message": reason or "Posting did not complete.",
+                "severity": "error",
+                "next_action": "Retry ERP post or escalate for review.",
+            }
+        )
+        return operator
+
+    if event_type == "route_low_risk_for_approval":
+        operator.update(
+            {
+                "code": "approval_request_sent",
+                "title": "Approval request sent",
+                "message": reason or "Clearledgr routed this low-risk invoice for approval.",
+                "severity": "info",
+                "next_action": "Wait for approval callback.",
+            }
+        )
+        return operator
+
+    if event_type == "route_low_risk_for_approval_blocked":
+        operator.update(
+            {
+                "code": "approval_request_blocked",
+                "title": "Approval request blocked",
+                "message": reason or "This invoice did not pass the low-risk approval checks.",
+                "severity": "warning",
+                "next_action": "Review the blocker and route approval manually if needed.",
+            }
+        )
+        return operator
+
+    if event_type == "route_low_risk_for_approval_failed":
+        operator.update(
+            {
+                "code": "approval_request_failed",
+                "title": "Approval request failed",
+                "message": reason or "Clearledgr could not route this invoice for approval.",
+                "severity": "warning",
+                "next_action": "Retry approval routing or review the approval channel.",
+            }
+        )
+        return operator
+
+    if event_type == "retry_recoverable_failure_blocked":
+        operator.update(
+            {
+                "code": "retry_blocked",
+                "title": "Retry blocked",
+                "message": reason or "This failed ERP post is not safe to retry automatically.",
+                "severity": "warning",
+                "next_action": "Review the failure and decide the next step manually.",
+            }
+        )
+        return operator
+
+    if event_type == "retry_recoverable_failure_completed":
+        operator.update(
+            {
+                "code": "retry_completed",
+                "title": "Retry completed",
+                "message": reason or "Clearledgr retried the ERP post successfully.",
+                "severity": "success",
+                "next_action": "No action required.",
+            }
+        )
+        return operator
+
+    if event_type == "retry_recoverable_failure_failed":
+        operator.update(
+            {
+                "code": "retry_failed",
+                "title": "Retry failed",
+                "message": reason or "Clearledgr could not recover this ERP posting failure.",
+                "severity": "warning",
+                "next_action": "Review the connector result and retry manually if appropriate.",
+            }
+        )
+        return operator
+
+    if event_type == "vendor_followup_waiting_sla":
+        operator.update(
+            {
+                "code": "vendor_followup_waiting",
+                "title": "Waiting before next vendor follow-up",
+                "message": reason or "Clearledgr is waiting for the vendor follow-up window.",
+                "severity": "info",
+                "next_action": "Wait for the next scheduled follow-up time.",
+            }
+        )
+        return operator
+
+    if event_type == "vendor_followup_blocked":
+        operator.update(
+            {
+                "code": "vendor_followup_blocked",
+                "title": "Vendor follow-up blocked",
+                "message": reason or "A vendor follow-up could not be prepared from the current invoice state.",
+                "severity": "warning",
+                "next_action": "Review the invoice state or required evidence first.",
+            }
+        )
+        return operator
+
+    if event_type == "vendor_followup_failed":
+        operator.update(
+            {
+                "code": "vendor_followup_failed",
+                "title": "Vendor follow-up failed",
+                "message": reason or "Clearledgr could not prepare the vendor follow-up.",
+                "severity": "warning",
+                "next_action": "Retry the follow-up or draft the request manually.",
+            }
+        )
+        return operator
+
+    if event_type == "vendor_followup_draft_prepared":
+        operator.update(
+            {
+                "code": "vendor_followup_prepared",
+                "title": "Vendor follow-up prepared",
+                "message": reason or "A vendor follow-up draft is ready to send.",
+                "severity": "info",
+                "next_action": "Review the draft and send it when ready.",
             }
         )
         return operator

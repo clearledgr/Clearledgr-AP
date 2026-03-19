@@ -25,7 +25,7 @@ function EmailTab({ item, ctx, freshness }) {
   const email = ctx.email || {};
   const sources = Array.isArray(email.sources) ? email.sources : [];
   return html`
-    <div class="cl-context-meta">Linked email sources: ${Number(email.source_count || 0)}</div>
+    <div class="cl-context-meta">${Number(email.source_count || 0)} linked source${Number(email.source_count || 0) !== 1 ? 's' : ''}</div>
     ${freshness && html`<${ContextRow}>${freshness}</>`}
     ${sources.length === 0 && html`<div class="cl-empty">No linked email sources yet.</div>`}
     ${sources.slice(0, 5).map((src, i) => html`
@@ -50,9 +50,9 @@ function WebTab({ item, ctx, freshness, agentInsight }) {
   const tabs = Array.isArray(agentInsight?.relatedTabs) ? agentInsight.relatedTabs : [];
 
   return html`
-    <div class="cl-context-meta">Browser events: ${web.browser_event_count || 0} · Related tabs: ${agentInsight?.relatedCount || 0}</div>
+    <div class="cl-context-meta">${web.browser_event_count || 0} events \u00b7 ${agentInsight?.relatedCount || 0} tabs</div>
     <${ContextRow}>
-      <div><strong>Coverage:</strong> portals ${coverage.payment_portal ? 'yes' : 'no'} · procurement ${coverage.procurement ? 'yes' : 'no'} · bank ${coverage.bank ? 'yes' : 'no'} · sheets ${coverage.spreadsheets ? 'yes' : 'no'} · dms ${coverage.dms ? 'yes' : 'no'}</div>
+      <div><strong>Coverage:</strong> portals ${coverage.payment_portal ? 'yes' : 'no'} \u00b7 procurement ${coverage.procurement ? 'yes' : 'no'} \u00b7 bank ${coverage.bank ? 'yes' : 'no'} \u00b7 sheets ${coverage.spreadsheets ? 'yes' : 'no'} \u00b7 dms ${coverage.dms ? 'yes' : 'no'}</div>
     <//>
     ${freshness && html`<${ContextRow}>${freshness}</>`}
     ${portals.length === 0 && html`<div class="cl-empty">No vendor portal sources detected.</div>`}
@@ -86,20 +86,20 @@ function ApprovalsTab({ item, ctx, freshness }) {
   const threadPreview = Array.isArray(approvals.slack?.thread_preview) ? approvals.slack.thread_preview : [];
 
   return html`
-    <div class="cl-context-meta">Approval records: ${approvals.count || 0}</div>
+    <div class="cl-context-meta">${approvals.count || 0} approval record${(approvals.count || 0) !== 1 ? 's' : ''}</div>
     ${latest
       ? html`<${ContextRow}><div><strong>Latest:</strong> ${latest.status || 'pending'}</div></>`
       : html`<div class="cl-empty">No approval record yet.</div>`}
-    ${budgetStatus && html`<div class="cl-context-row ${budgetStatusTone(budgetContext.status)}"><div><strong>Budget widget:</strong> ${budgetStatus}</div></div>`}
+    ${budgetStatus && html`<div class="cl-context-row ${budgetStatusTone(budgetContext.status)}"><div><strong>Budget:</strong> ${budgetStatus}</div></div>`}
     ${budgetContext.checks.slice(0, 3).map((check, i) => html`
       <${ContextRow} key=${i}>
         <div><strong>${check.name || 'Budget'}:</strong> ${check.status || 'unknown'}</div>
-        <div>${formatAmount(check.remaining, item.currency || 'USD')} remaining · ${formatAmount(check.invoice_amount, item.currency || 'USD')} invoice</div>
+        <div>${formatAmount(check.remaining, item.currency || 'USD')} remaining \u00b7 ${formatAmount(check.invoice_amount, item.currency || 'USD')} invoice</div>
       <//>
     `)}
-    ${budgetContext.requiresDecision && html`<div class="cl-context-row cl-context-warning"><div>Decision required: approve override (with justification), request budget adjustment, or reject.</div></div>`}
+    ${budgetContext.requiresDecision && html`<div class="cl-context-row cl-context-warning"><div>Decision required: approve override, request adjustment, or reject.</div></div>`}
     ${(teams.channel || teams.state || teams.thread || teams.message_id) && html`<${ContextRow}><div><strong>Teams:</strong> ${teams.state || teams.channel || teams.thread || teams.message_id}</div></>`}
-    ${Number(payroll.count || 0) > 0 && html`<${ContextRow}><div><strong>Payroll context:</strong> ${payroll.count} entries · ${formatAmount(payroll.total_amount, item.currency || 'USD')}</div></>`}
+    ${Number(payroll.count || 0) > 0 && html`<${ContextRow}><div><strong>Payroll:</strong> ${payroll.count} entries \u00b7 ${formatAmount(payroll.total_amount, item.currency || 'USD')}</div></>`}
     ${freshness && html`<${ContextRow}>${freshness}</>`}
     ${threadPreview.slice(0, 3).map((entry, i) => html`<${ContextRow} key="tp${i}"><div>${trimText(entry.text || '', 120)}</div></>`)}
   `;
@@ -110,7 +110,7 @@ function ErpTab({ item, ctx, freshness }) {
   const po = ctx.po_match || {};
   const budget = ctx.budget || {};
   return html`
-    <div class="cl-context-meta">Connector available: ${erp.connector_available ? 'Yes' : 'No'}</div>
+    <div class="cl-context-meta">Connector: ${erp.connector_available ? 'Connected' : 'Not connected'}</div>
     <${ContextRow}>
       <div><strong>Status:</strong> ${erp.state || item.state || 'unknown'}</div>
       <div><strong>Reference:</strong> ${erp.erp_reference || 'N/A'}</div>
@@ -136,20 +136,20 @@ export default function ThreadContext({ item, queueManager }) {
     if (!item?.id || !queueManager?.fetchItemContext) return;
     store.update({ contextUiState: { itemId: item.id, loading: true, error: '' } });
     try {
-      await queueManager.fetchItemContext(item, { refresh: true });
+      await queueManager.fetchItemContext(item.id, { refresh: true });
       store.update({ contextUiState: { itemId: item.id, loading: false, error: '' } });
     } catch (err) {
       store.update({ contextUiState: { itemId: item.id, loading: false, error: err?.message || 'Failed to load context' } });
     }
   }, [item?.id, queueManager]);
 
-  if (loading) return html`<div class="cl-empty">Loading invoice context...</div>`;
+  if (loading) return html`<div class="cl-empty">Loading invoice context\u2026</div>`;
   if (error) return html`<div class="cl-empty">${error}</div>`;
-  if (!ctx) return html`<div class="cl-empty">Context will load automatically for this invoice.</div>`;
+  if (!ctx) return html`<div class="cl-empty">Context will load automatically.</div>`;
 
   const freshness = ctx.freshness || {};
   const ageText = formatAgeSeconds(freshness.age_seconds);
-  const freshnessEl = ageText ? `Context refreshed ${ageText} ago` : null;
+  const freshnessEl = ageText ? `Updated ${ageText} ago` : null;
 
   const TabComponent = TAB_MAP[activeTab] || EmailTab;
 
@@ -160,7 +160,7 @@ export default function ThreadContext({ item, queueManager }) {
           role="tab" aria-selected=${activeTab === tab.id}
           onClick=${() => setActiveTab(tab.id)}>${tab.label}</button>
       `)}
-      <button class="cl-btn cl-btn-secondary cl-context-refresh" onClick=${refreshContext}>Refresh</button>
+      <button class="cl-btn cl-btn-secondary cl-context-refresh" onClick=${refreshContext} aria-label="Refresh context">\u21BB</button>
     </div>
     <div class="cl-context-body" role="tabpanel">
       <${TabComponent} item=${item} ctx=${ctx} freshness=${freshnessEl} agentInsight=${agentInsight} />

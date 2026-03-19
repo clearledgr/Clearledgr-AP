@@ -1,7 +1,7 @@
 {
   "display_information": {
     "name": "Clearledgr",
-    "description": "Embedded AP approvals and exception actions for finance teams",
+    "description": "Finance execution agents — approvals, exceptions, and workflow actions",
     "background_color": "#0a1628",
     "long_description": "Clearledgr is an embedded finance execution agent. In Slack, teams review AP exceptions, approve/reject invoices, and track AP execution outcomes without leaving chat."
   },

@@ -1,18 +1,18 @@
 {
   "name": "clearledgr-gmail-extension",
   "version": "0.2.0",
-  "description": "Autonomous AP automation — invoices processed 24/7, right inside Gmail",
+  "description": "Finance execution agents embedded in Gmail — AP workflows today, more coming",
   "type": "module",
   "main": "background.js",
   "scripts": {
-    "start": "webpack --config webpack.dev.cjs --watch",
-    "build": "webpack --config webpack.dev.cjs && npm run verify:bundle",
-    "build:prod": "webpack --config webpack.prod.cjs",
+    "start": "bun build ./src/inboxsdk-layer.js ./node_modules/@inboxsdk/core/pageWorld.js --target=browser --format=iife --sourcemap=none --outdir dist --entry-naming=[name].js --watch",
+    "build": "node scripts/build-extension.cjs --config webpack.dev.cjs --verify",
+    "build:prod": "node scripts/build-extension.cjs --config webpack.prod.cjs",
     "verify:bundle": "node scripts/verify-bundle-parity.cjs",
     "verify:bundle:strict": "node scripts/verify-bundle-parity.cjs --check-git-clean",
     "test": "node --test tests/*.test.cjs",
     "test:components": "vitest run",
-    "test:integration": "node --test tests/inboxsdk-layer.integration.test.cjs tests/bundle-contract.test.cjs tests/queue-manager.auth.test.cjs && npm run verify:bundle",
+    "test:integration": "node --test tests/inboxsdk-layer.integration.test.cjs tests/inboxsdk-layer-ui.test.cjs tests/bundle-contract.test.cjs tests/queue-manager.auth.test.cjs tests/queue-manager.agent-intents.test.cjs && npm run verify:bundle",
     "test:browser-harness": "RUN_GMAIL_BROWSER_HARNESS=1 node --test tests/inboxsdk-layer.browser-harness.test.cjs",
     "test:browser-harness:ci": "RUN_GMAIL_BROWSER_HARNESS=1 GMAIL_BROWSER_HARNESS_REQUIRE_BROWSER=1 node --test tests/inboxsdk-layer.browser-harness.test.cjs",
     "test:e2e-smoke": "RUN_GMAIL_E2E=1 node --test tests/inboxsdk-layer.e2e-smoke.test.cjs",
@@ -40,12 +40,7 @@
     "@testing-library/preact": "^3.2.4",
     "@testing-library/user-event": "^14.6.1",
     "acorn": "^8.15.0",
-    "copy-webpack-plugin": "^12.0.2",
     "jsdom": "^27.0.1",
-    "source-map-loader": "^5.0.0",
-    "vitest": "^3.2.4",
-    "webpack": "^5.91.0",
-    "webpack-cli": "^5.1.4",
-    "webpack-merge": "^5.10.0"
+    "vitest": "^3.2.4"
   }
 }

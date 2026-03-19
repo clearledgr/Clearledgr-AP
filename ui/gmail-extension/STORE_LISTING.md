@@ -6,12 +6,12 @@
 
 **Short Description** (132 chars max):
 ```
-Agentic AP for Gmail. Extract invoices, route approvals in Slack/Teams, and post to ERP with policy checks and audit trails.
+Finance execution agents for Gmail. Process invoices, route approvals, post to ERP — AP first, more workflows next.
 ```
 
 **Detailed Description**:
 ```
-Clearledgr is an embedded finance execution agent for Accounts Payable.
+Clearledgr embeds AI agents into the tools finance teams already use to execute finance workflows end-to-end. AP is the first workflow.
 
 It runs AP workflows where finance teams already work: Gmail for operators, Slack/Teams for approvals, and ERP for system-of-record posting.
 
@@ -94,13 +94,13 @@ SUPPORT
 ## Promotional Images
 
 1. **Small Promo Tile** (440x280)
-   - "Clearledgr AP Agent for Gmail"
+   - "Clearledgr — Finance Agents for Gmail"
 
 2. **Large Promo Tile** (920x680)
    - Gmail + Slack/Teams + ERP execution path
 
 3. **Marquee** (1400x560)
-   - "Embedded Agentic AP Execution"
+   - "Embedded Finance Execution Agents"
 
 ## Store Listing URLs
 

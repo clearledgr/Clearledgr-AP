@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
@@ -10,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from main import STRICT_PROFILE_ALLOWED_PREFIXES, _runtime_surface_contract, app
+from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
 
 def _mounted_paths() -> set[str]:
@@ -149,3 +151,20 @@ def test_strict_profile_blocks_unknown_prefixed_routes(monkeypatch):
             blocked = client.get(path)
             assert blocked.status_code == 404
             assert blocked.json().get("detail") == "endpoint_disabled_in_ap_v1_profile"
+
+
+def test_ap_runtime_registers_sidebar_core_intents():
+    runtime = FinanceAgentRuntime(
+        organization_id="default",
+        actor_id="operator-1",
+        actor_email="operator@example.com",
+        db=MagicMock(),
+    )
+
+    supported = runtime.supported_intents
+    assert "request_approval" in supported
+    assert "approve_invoice" in supported
+    assert "request_info" in supported
+    assert "nudge_approval" in supported
+    assert "reject_invoice" in supported
+    assert "post_to_erp" in supported

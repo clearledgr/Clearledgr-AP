@@ -24,8 +24,8 @@ NOISE_PATTERNS = [
     r"\b(tips?|guide|how\s+to|best\s+practices|insights?)\b",
     # Account/security
     r"\b(password|security\s+alert|verify|login\s+alert|account\s+alert)\b",
-    # Non-AP financial notices
-    r"\b(payment\s+received|payment\s+confirmed|receipt|order\s+confirmation)\b",
+    # Non-AP financial (confirmations only — receipts are AP-relevant)
+    r"\b(payment\s+received|payment\s+confirmed|order\s+confirmation)\b",
     r"\b(card\s+declined|payment\s+failed|chargeback|dispute|refund)\b",
 ]
 
@@ -124,15 +124,8 @@ Return JSON:
     except Exception as exc:  # noqa: BLE001
         logger.warning("AP LLM classification failed, using rules: %s", exc)
 
-    # Rule-based classification
+    # Rule-based classification — score everything first, then decide
     noise_hits = _count_matches(NOISE_PATTERNS, combined)
-    if noise_hits >= 1:
-        return {
-            "type": "NOISE",
-            "confidence": min(0.95, 0.7 + 0.1 * noise_hits),
-            "reason": "noise_signals",
-            "method": "rules",
-        }
 
     invoice_score = 0
     payment_score = 0
@@ -155,13 +148,22 @@ Return JSON:
     if any(re.search(p, sender_lower) for p in BILLING_SENDER_PATTERNS):
         invoice_score += 1
 
+    # "receipt" in subject/body is AP-relevant (vendor receipts, SaaS receipts)
+    if re.search(r"\breceipt\b", combined):
+        invoice_score += 2
+
+    # "your invoice is available" is a strong invoice signal
+    if re.search(r"\binvoice\s+is\s+available\b", combined):
+        invoice_score += 3
+
     attachment_names = " ".join([str(a.get("filename") or a.get("name") or "") for a in attachments]).lower()
     if attachment_names:
         if "invoice" in attachment_names or "bill" in attachment_names:
             invoice_score += 2
         invoice_score += 1
 
-    if invoice_score >= 5 and invoice_score >= payment_score:
+    # Invoice/payment signals override noise when strong enough
+    if invoice_score >= 3 and invoice_score >= payment_score:
         return {
             "type": "INVOICE",
             "confidence": min(0.95, 0.6 + 0.05 * invoice_score),
@@ -170,13 +172,22 @@ Return JSON:
             "score": invoice_score,
         }
 
-    if payment_score >= 4 and payment_score > invoice_score:
+    if payment_score >= 3 and payment_score > invoice_score:
         return {
             "type": "PAYMENT_REQUEST",
             "confidence": min(0.9, 0.55 + 0.05 * payment_score),
             "reason": "payment_request_signals",
             "method": "rules",
             "score": payment_score,
+        }
+
+    # Only classify as noise if no AP signals at all
+    if noise_hits >= 1:
+        return {
+            "type": "NOISE",
+            "confidence": min(0.95, 0.7 + 0.1 * noise_hits),
+            "reason": "noise_signals",
+            "method": "rules",
         }
 
     return {

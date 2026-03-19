@@ -81,14 +81,17 @@ class SkillResult:
 
 
 class FinanceSkill(abc.ABC):
-    """Abstract base class for a finance domain skill module.
+    """Abstract base class for a planning skill (used by AgentPlanningEngine).
 
-    A skill knows:
+    Also known as PlanningSkill. A skill knows:
     1. What tools Claude can call (get_tools).
     2. How to build the system prompt that opens the planning loop.
     3. What task_type name it handles (skill_name property).
 
     Tools call existing service methods — they do not re-implement logic.
+
+    For the operational skill ABC (preview/execute for runtime intents),
+    see clearledgr.services.finance_skills.base.FinanceSkill (OperationalSkill).
     """
 
     @property
@@ -103,3 +106,7 @@ class FinanceSkill(abc.ABC):
     @abc.abstractmethod
     def build_system_prompt(self, task: AgentTask) -> str:
         """Return the system-level instruction that opens the planning loop."""
+
+
+# Alias for clarity — PlanningSkill is the skill type used by AgentPlanningEngine
+PlanningSkill = FinanceSkill

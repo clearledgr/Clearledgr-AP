@@ -33,12 +33,26 @@ const store = {
 
   findItemByThreadId(threadId) {
     if (!threadId) return null;
-    return this.queueState.find(item => item.thread_id === threadId || item.threadId === threadId) || null;
+    return this.queueState.find((item) => (
+      item.thread_id === threadId
+      || item.threadId === threadId
+      || item.message_id === threadId
+      || item.messageId === threadId
+    )) || null;
   },
 
   findItemById(itemId) {
     if (!itemId) return null;
     return this.queueState.find(item => item.id === itemId || item.invoice_key === itemId) || null;
+  },
+
+  setSelectedItem(itemId) {
+    this.update({
+      selectedItemId: itemId || null,
+      activeContextTab: 'email',
+      auditState: { itemId: null, loading: false, events: [] },
+      contextUiState: { itemId: null, loading: false, error: '' },
+    });
   },
 
   getPrimaryItem() {
@@ -62,12 +76,7 @@ const store = {
     const next = Math.max(0, Math.min(this.queueState.length - 1, current + offset));
     const nextItem = this.queueState[next];
     if (!nextItem) return;
-    this.update({
-      selectedItemId: nextItem.id || nextItem.invoice_key || null,
-      activeContextTab: 'email',
-      auditState: { itemId: null, loading: false, events: [] },
-      contextUiState: { itemId: null, loading: false, error: '' },
-    });
+    this.setSelectedItem(nextItem.id || nextItem.invoice_key || null);
   },
 };
 

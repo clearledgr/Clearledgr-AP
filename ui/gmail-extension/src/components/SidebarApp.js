@@ -1,43 +1,64 @@
-/** Root sidebar Preact component — replaces renderSidebarFor() + renderAllSidebars() */
+/** Root sidebar Preact component — compact AP-first Gmail work surface */
 import { h, Component } from 'preact';
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import htm from 'htm';
 import store from '../utils/store.js';
 import { SIDEBAR_CSS, STATE_PILL_CSS } from '../styles.js';
-import ThreadContext from './ThreadContext.js';
-import AgentTimeline from './AgentTimeline.js';
 import ActionDialog, { useActionDialog } from './ActionDialog.js';
 import {
-  getStateLabel, formatAmount, trimText, getAssetUrl,
-  getDecisionSummary, getExceptionReason, normalizeBudgetContext,
-  getSourceThreadId, getSourceMessageId, openSourceEmail,
+  getStateLabel,
+  formatAmount,
+  trimText,
+  getAssetUrl,
+  normalizeBudgetContext,
+  getIssueSummary,
+  getExceptionReason,
+  getSourceThreadId,
+  getSourceMessageId,
+  openSourceEmail,
+  formatDateTime,
+  getAuditEventPayload,
+  normalizeAuditEventType,
 } from '../utils/formatters.js';
+import {
+  normalizeWorkState,
+  getPrimaryActionConfig,
+  getWorkStateNotice,
+  canRejectWorkItem,
+  canNudgeApprover,
+} from '../utils/work-actions.js';
 
 const html = htm.bind(h);
 const LOGO_PATH = 'icons/icon48.png';
 
-// ==================== ERROR BOUNDARY ====================
-
 class ErrorBoundary extends Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(error) { return { error }; }
-  componentDidCatch(e, info) { console.error('[Clearledgr]', e, info?.componentStack || ''); }
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('[Clearledgr]', error, info?.componentStack || '');
+  }
+
   render() {
     if (this.state.error) {
       return html`<div class="cl-empty" role="alert">
         <p>${this.props.fallback || 'Something went wrong.'}</p>
-        <button class="cl-btn cl-btn-secondary" onClick=${() => this.setState({ error: null })}>Retry</button>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => this.setState({ error: null })}>Retry</button>
       </div>`;
     }
     return this.props.children;
   }
 }
 
-// ==================== HOOKS ====================
-
 function useStore() {
   const [, update] = useState(0);
-  useEffect(() => store.subscribe(() => update(n => n + 1)), []);
+  useEffect(() => store.subscribe(() => update((n) => n + 1)), []);
   return store;
 }
 
@@ -45,19 +66,29 @@ function useAction(fn) {
   const [pending, setPending] = useState(false);
   const ref = useRef(null);
   const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const exec = useCallback(async (...args) => {
     if (ref.current) return ref.current;
     setPending(true);
-    const p = fn(...args);
-    ref.current = p;
-    try { const r = await p; return r; }
-    finally { ref.current = null; if (mounted.current) setPending(false); }
+    const promise = fn(...args);
+    ref.current = promise;
+    try {
+      return await promise;
+    } finally {
+      ref.current = null;
+      if (mounted.current) setPending(false);
+    }
   }, [fn]);
+
   return [exec, pending];
 }
-
-// ==================== TOAST ====================
 
 let _toastEl = null;
 let _toastTimer = null;
@@ -68,135 +99,315 @@ export function showToast(message, tone = 'info') {
   _toastEl.dataset.tone = tone;
   _toastEl.style.display = 'block';
   clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => { if (_toastEl) _toastEl.style.display = 'none'; }, 3000);
+  _toastTimer = setTimeout(() => {
+    if (_toastEl) _toastEl.style.display = 'none';
+  }, 3000);
 }
 
 function Toast() {
   const ref = useRef(null);
-  useEffect(() => { _toastEl = ref.current; return () => { _toastEl = null; }; }, []);
+  useEffect(() => {
+    _toastEl = ref.current;
+    return () => {
+      _toastEl = null;
+    };
+  }, []);
   return html`<div ref=${ref} class="cl-toast" style="display:none"></div>`;
 }
 
-// ==================== SCAN STATUS ====================
-
-function ScanStatus({ queueManager }) {
+function ScanStatus() {
   const s = useStore();
   const status = s.scanStatus;
   const state = status?.state || 'idle';
 
-  const [authorize, authPending] = useAction(async () => {
-    const result = await queueManager.authorizeGmailNow();
-    if (result?.success) {
-      showToast('Gmail authorized. Autopilot is resuming.', 'success');
-      await queueManager.refreshQueue();
-    } else {
-      const msg = queueManager.describeAuthResult?.(result) || { toast: 'Authorization failed', severity: 'error' };
-      showToast(msg.toast, msg.severity || 'error');
-    }
-  });
-
-  const openAdmin = useCallback(() => {
-    const base = String(queueManager?.runtimeConfig?.backendUrl || '').replace(/\/+$/, '');
-    const org = encodeURIComponent(String(queueManager?.runtimeConfig?.organizationId || 'default'));
-    window.open(base ? `${base}/console?org=${org}&page=integrations` : `/console?org=${org}&page=integrations`, '_blank', 'noopener,noreferrer');
-  }, [queueManager]);
-
   let text = '';
   let tone = '';
-  let showAuth = false;
-  let inlineAuth = false;
 
-  if (state === 'initializing') text = 'Preparing inbox monitor.';
+  if (state === 'initializing') text = 'Preparing invoice monitoring.';
   else if (state === 'scanning') text = 'Scanning inbox for invoices.';
   else if (state === 'auth_required') {
-    inlineAuth = String(queueManager?.runtimeConfig?.authEntryMode || '').toLowerCase() === 'inline';
-    text = inlineAuth ? 'Connect Gmail to resume invoice monitoring.' : 'Gmail connection required. Connect Gmail in Admin Console.';
-    showAuth = true;
+    text = 'Connect Gmail to continue monitoring.';
+    tone = 'warning';
   } else if (state === 'blocked') {
-    text = (status?.error || '') === 'temporal_unavailable' ? 'Automation engine is unavailable.' : 'Setup required before invoice monitoring can run.';
-    tone = 'error';
+    text = 'Finish setup before monitoring can continue.';
+    tone = 'warning';
   } else if (state === 'error') {
     const err = String(status?.error || '');
-    if (err.includes('backend')) text = 'Cannot sync: backend is unreachable.';
-    else if (err.includes('temporal')) text = 'Cannot process invoices: automation engine unavailable.';
-    else if (err.includes('processing')) { const fc = Number(status?.failedCount || 0); text = fc > 0 ? `${fc} email(s) failed to process. Retrying automatically.` : 'Some emails failed to process. Retrying automatically.'; }
-    else text = 'Inbox sync issue. Retrying automatically.';
+    if (err.includes('backend')) text = 'Backend unreachable.';
+    else if (err.includes('temporal')) text = 'Processing is temporarily unavailable.';
+    else if (err.includes('processing')) {
+      const failedCount = Number(status?.failedCount || 0);
+      text = failedCount > 0 ? `${failedCount} email(s) need another processing attempt.` : 'Processing issue. Retrying.';
+    } else text = 'Inbox sync issue. Retrying.';
     tone = 'error';
   } else {
     const lastScan = status?.lastScanAt ? new Date(status.lastScanAt) : null;
-    text = lastScan ? `Monitoring active. Last scan ${lastScan.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : 'Monitoring active.';
+    text = lastScan
+      ? `Monitoring active · ${lastScan.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      : 'Monitoring active';
   }
 
-  return html`
-    <div class="cl-section">
-      <div class="cl-scan-status" data-tone=${tone}>${text}</div>
-      ${showAuth && html`<div class="cl-inline-actions">
-        ${inlineAuth && html`<button class="cl-btn cl-btn-secondary" onClick=${authorize} disabled=${authPending}>${authPending ? 'Connecting...' : 'Authorize Gmail'}</button>`}
-        ${!inlineAuth && html`<button class="cl-btn cl-btn-secondary" onClick=${openAdmin}>Open Integrations</button>`}
-      </div>`}
-    </div>
-  `;
+  return html`<div class="cl-scan-status" data-tone=${tone}>${text}</div>`;
 }
-
-// ==================== WORK PANEL (Thread Context) ====================
 
 function StatePill({ state }) {
   const cls = `cl-pill cl-pill-${String(state || 'received').replace(/_/g, '-')}`;
   return html`<span class=${cls}>${getStateLabel(state)}</span>`;
 }
 
+function getBlockers(item, state, budgetContext) {
+  const blockers = [];
+  const add = (id, label, detail) => {
+    if (!label) return;
+    if (blockers.some((entry) => entry.id === id || entry.label === label)) return;
+    blockers.push({ id, label, detail });
+  };
+
+  if (budgetContext?.requiresDecision) {
+    add(
+      'budget',
+      'Budget review required',
+      'A budget decision is still needed before this invoice can move forward.',
+    );
+  }
+
+  const exceptionCode = String(item?.exception_code || '').trim().toLowerCase();
+  const exceptionReason = getExceptionReason(exceptionCode);
+  if (exceptionReason) {
+    add('exception', exceptionReason, getIssueSummary(item));
+  }
+
+  if (!item?.po_number && exceptionCode.includes('po')) {
+    add('po', 'PO reference missing', 'Link the correct PO before continuing this invoice.');
+  }
+
+  const confidence = Number(item?.confidence);
+  if (Number.isFinite(confidence) && confidence < 0.95 && !['posted_to_erp', 'closed', 'rejected'].includes(state)) {
+    add(
+      'confidence',
+      'Review extracted fields',
+      `Current confidence is ${Math.round(confidence * 100)}%, so a quick field check is still required.`,
+    );
+  }
+
+  if (state === 'needs_approval') {
+    add('approval', 'Waiting on approver', 'The approval request is still outstanding.');
+  }
+
+  if (state === 'needs_info') {
+    add('needs_info', 'Missing invoice details', 'Clearledgr still needs more information before routing or posting.');
+  }
+
+  if (state === 'failed_post') {
+    add('failed_post', 'ERP posting failed', 'Retry the ERP post or review the connector response.');
+  }
+
+  if (blockers.length === 0 && state === 'received') {
+    add('received', 'Ready for review', 'This invoice is ready for AP validation and approval routing.');
+  }
+
+  if (blockers.length === 0 && state === 'validated') {
+    add('validated', 'Ready for approval', 'Checks are complete and the invoice can be routed to approval.');
+  }
+
+  return blockers.slice(0, 4);
+}
+
+function getEvidenceChecklist(item, state, contextPayload) {
+  const approvals = contextPayload?.approvals || {};
+  const erp = contextPayload?.erp || {};
+  const hasEmail = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item?.subject);
+  const hasAttachment = Boolean(item?.has_attachment || Number(item?.attachment_count || 0) > 0);
+  const hasApproval = Boolean(
+    Number(approvals.count || 0) > 0
+    || ['needs_approval', 'approved', 'ready_to_post', 'posted_to_erp', 'closed'].includes(state)
+  );
+  const hasErpLink = Boolean(item?.erp_reference || item?.erp_bill_id || erp.erp_reference || erp.connector_available || erp.state);
+
+  return [
+    {
+      key: 'email',
+      label: 'Email',
+      status: hasEmail ? 'ok' : 'missing',
+      text: hasEmail ? 'Linked' : 'Not linked',
+    },
+    {
+      key: 'attachment',
+      label: 'Attachment',
+      status: hasAttachment ? 'ok' : 'missing',
+      text: hasAttachment ? 'Attached' : 'No file',
+    },
+    {
+      key: 'approval',
+      label: 'Approval',
+      status: hasApproval ? 'ok' : 'missing',
+      text: hasApproval ? (state === 'needs_approval' ? 'Routed' : 'Available') : 'Not routed',
+    },
+    {
+      key: 'erp',
+      label: 'ERP',
+      status: hasErpLink ? 'ok' : 'missing',
+      text: hasErpLink
+        ? (item?.erp_reference || erp.erp_reference ? 'Linked' : 'Connected')
+        : 'Not connected',
+    },
+  ];
+}
+
+function getAuditRow(event) {
+  const payload = getAuditEventPayload(event);
+  const eventType = normalizeAuditEventType(
+    event?.event_type || event?.eventType || payload?.event_type || event?.action || 'action_recorded',
+  );
+  const safeTitle = eventType === 'state_transition' ? 'Status updated' : 'Action recorded';
+  let safeDetail = 'Action recorded for this invoice.';
+  if (eventType === 'state_transition') safeDetail = 'Invoice status changed.';
+  else if (eventType === 'erp_post_completed') safeDetail = 'Invoice posting completed successfully.';
+  else if (eventType === 'erp_post_failed') safeDetail = 'Clearledgr could not complete ERP posting.';
+  const title = trimText(
+    String(event?.operator_title || safeTitle),
+    72,
+  );
+  return {
+    title,
+    detail: trimText(String(event?.operator_message || safeDetail).trim(), 160),
+    timestamp: formatDateTime(event?.ts || event?.created_at || event?.createdAt || event?.updated_at || event?.updatedAt),
+  };
+}
+
+function EvidenceChecklist({ entries }) {
+  return html`
+    <div class="cl-evidence-section" aria-label="Evidence checklist">
+      <div class="cl-section-title">Evidence checklist</div>
+      <div class="cl-evidence-list">
+        ${entries.map((entry) => html`
+          <div key=${entry.key} class="cl-evidence-row">
+            <span class="cl-evidence-label">${entry.label}</span>
+            <span class="cl-evidence-status" data-status=${entry.status}>${entry.text}</span>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function AuditDisclosure({ events, loading }) {
+  const visibleEvents = Array.isArray(events) ? events.slice(0, 6) : [];
+  return html`
+    <details class="cl-details">
+      <summary>View audit${visibleEvents.length ? ` (${visibleEvents.length})` : ''}</summary>
+      <div class="cl-audit-list">
+        ${loading && html`<div class="cl-empty">Loading audit…</div>`}
+        ${!loading && visibleEvents.length === 0 && html`<div class="cl-empty">No audit events yet.</div>`}
+        ${!loading && visibleEvents.map((event, index) => {
+          const row = getAuditRow(event);
+          return html`
+            <div key=${event?.id || index} class="cl-audit-row">
+              <div class="cl-audit-main">
+                <div class="cl-audit-type">${row.title}</div>
+                ${row.timestamp && html`<div class="cl-audit-time">${row.timestamp}</div>`}
+              </div>
+              <div class="cl-audit-detail">${row.detail}</div>
+            </div>
+          `;
+        })}
+      </div>
+    </details>
+  `;
+}
+
+function AuthPrompt({ queueManager }) {
+  const goConnections = useCallback(() => store.sdk?.Router?.goto?.('clearledgr/connections'), []);
+  const [authorize, pending] = useAction(async () => {
+    const result = await queueManager?.authorizeGmailNow?.();
+    const ok = Boolean(result?.success || result?.authorized || result?.status === 'ok');
+    showToast(ok ? 'Gmail connected' : 'Authorization failed', ok ? 'success' : 'error');
+    if (ok && queueManager?.refreshQueue) {
+      await queueManager.refreshQueue();
+    }
+  });
+
+  return html`
+    <div class="cl-section cl-auth-panel">
+      <div class="cl-section-title">Action required</div>
+      <div class="cl-auth-copy">Connect Gmail once so Clearledgr can keep monitoring invoices in this mailbox.</div>
+      <div class="cl-thread-actions">
+        <button class="cl-btn cl-primary-cta" onClick=${authorize} disabled=${pending}>
+          ${pending ? 'Connecting…' : 'Connect Gmail'}
+        </button>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${goConnections}>Connections</button>
+      </div>
+    </div>
+  `;
+}
+
 function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   const s = useStore();
   const humanIndex = itemIndex >= 0 ? itemIndex + 1 : 1;
-  const state = String(item?.state || 'received').toLowerCase();
+  const state = normalizeWorkState(item?.state || 'received');
   const vendor = item.vendor_name || item.vendor || item.sender || 'Unknown vendor';
-  const amount = formatAmount(item.amount, item.currency || 'USD');
+  const amountLabel = formatAmount(item.amount, item.currency || 'USD');
   const invoiceNumber = item.invoice_number || 'N/A';
   const dueDate = item.due_date || 'N/A';
-  const poNumber = item.po_number || null;
+  const poLabel = item.po_number ? `PO ${item.po_number}` : 'No PO';
   const contextPayload = item?.id ? s.contextState.get(item.id) || null : null;
   const budgetContext = normalizeBudgetContext(contextPayload || {}, item);
-  const decision = getDecisionSummary(item, budgetContext);
-  const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
-  const confidenceNumber = Number(item.confidence);
-  const confidencePercent = Number.isFinite(confidenceNumber) ? Math.round(Math.max(0, Math.min(1, confidenceNumber)) * 100) : null;
+  const blockers = getBlockers(item, state, budgetContext);
+  const evidence = getEvidenceChecklist(item, state, contextPayload);
   const auditEvents = s.auditState.itemId === item.id && Array.isArray(s.auditState.events) ? s.auditState.events : [];
+  const stateNotice = getWorkStateNotice(state);
+  const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : '';
+  const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
 
-  // Actions with Delight 4: optimistic state updates
+  const [optimisticState, setOptimisticState] = useState(null);
+  const displayState = normalizeWorkState(optimisticState || state);
+  const [dialog, openDialog] = useActionDialog();
+
   const [doApproval, approvalPending] = useAction(async () => {
     setOptimisticState('needs_approval');
     const result = await queueManager.requestApproval(item);
-    const ok = result?.status === 'needs_approval' || result?.status === 'pending_approval';
+    const ok = ['needs_approval', 'pending_approval'].includes(String(result?.status || '').toLowerCase());
     showToast(ok ? 'Approval request sent' : 'Unable to route approval', ok ? 'success' : 'error');
     if (!ok) setOptimisticState(null);
     await queueManager.refreshQueue();
     setOptimisticState(null);
   });
+
   const [doNudge, nudgePending] = useAction(async () => {
     const result = await queueManager.nudgeApproval(item);
-    showToast(result?.status === 'nudged' ? 'Approval reminder sent' : 'Unable to send reminder', result?.status === 'nudged' ? 'success' : 'error');
+    const ok = String(result?.status || '').toLowerCase() === 'nudged';
+    showToast(ok ? 'Approval reminder sent' : 'Unable to send reminder', ok ? 'success' : 'error');
+    if (ok) await queueManager.refreshQueue();
   });
+
+  const [doPrepareInfo, prepareInfoPending] = useAction(async () => {
+    const result = await queueManager.prepareVendorFollowup(item, {
+      reason: 'Request missing invoice details from vendor',
+    });
+    const ok = ['prepared', 'queued'].includes(String(result?.status || '').toLowerCase());
+    showToast(ok ? 'Info request draft prepared' : 'Unable to prepare info request', ok ? 'success' : 'error');
+  });
+
   const [doRetry, retryPending] = useAction(async () => {
     setOptimisticState('ready_to_post');
     const result = await queueManager.retryFailedPost(item);
-    const ok = result?.status === 'ready_to_post' || result?.status === 'posted' || result?.status === 'completed';
+    const ok = ['ready_to_post', 'posted', 'completed'].includes(String(result?.status || '').toLowerCase());
     showToast(ok ? 'ERP retry submitted' : (result?.reason || 'Retry failed'), ok ? 'success' : 'error');
     if (!ok) setOptimisticState(null);
     await queueManager.refreshQueue();
     setOptimisticState(null);
   });
+
   const [doPost, postPending] = useAction(async () => {
     setOptimisticState('posted_to_erp');
     const result = await queueManager.approveAndPost(item, { override: false });
-    const ok = result?.status === 'posted' || result?.status === 'approved' || result?.status === 'posted_to_erp';
+    const ok = ['posted', 'approved', 'posted_to_erp'].includes(String(result?.status || '').toLowerCase());
     showToast(ok ? 'Invoice posted to ERP' : (result?.reason || 'ERP posting failed'), ok ? 'success' : 'error');
     if (!ok) setOptimisticState(null);
     await queueManager.refreshQueue();
     setOptimisticState(null);
   });
-  const [dialog, openDialog] = useActionDialog();
-  // Delight 1: Smart reason defaults — pre-populate from exception code
-  const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : '';
+
   const [doReject, rejectPending] = useAction(async () => {
     const reason = await openDialog({
       actionType: 'reject',
@@ -206,166 +417,215 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
       defaultValue: smartDefault,
     });
     if (!reason) return;
-    // Delight 2: Undo toast — 5s window to undo reject
-    const emailId = item.id || item.thread_id;
-    let undone = false;
-    showToast('Invoice rejected. Undo?', 'info');
-    const undoTimer = setTimeout(() => {
-      if (!undone) window.dispatchEvent(new CustomEvent('clearledgr:reject-invoice', { detail: { emailId, reason } }));
-    }, 5000);
-    // Store undo handler on toast element for click detection
-    if (_toastEl) {
-      const origClick = _toastEl.onclick;
-      _toastEl.style.cursor = 'pointer';
-      _toastEl.onclick = () => {
-        undone = true;
-        clearTimeout(undoTimer);
-        showToast('Rejection undone', 'success');
-        _toastEl.onclick = origClick;
-        _toastEl.style.cursor = '';
-      };
+    const result = await queueManager.rejectInvoice(item, { reason });
+    const ok = String(result?.status || '').toLowerCase() === 'rejected';
+    showToast(ok ? 'Invoice rejected' : 'Unable to reject invoice', ok ? 'success' : 'error');
+    if (ok) {
+      await queueManager.refreshQueue();
     }
   });
-  // Delight 4: Optimistic updates — show pending state immediately
-  const [optimisticState, setOptimisticState] = useState(null);
-  const displayState = optimisticState || state;
 
+  const [doPreviewPost, previewPending] = useAction(async () => {
+    const confirmed = await openDialog({
+      dialogMode: 'confirm',
+      actionType: 'preview_erp_post',
+      title: 'Preview ERP post',
+      message: 'Review this invoice before posting it to the ERP.',
+      previewLines: [
+        vendor,
+        amountLabel,
+        `Invoice ${invoiceNumber}`,
+        dueDate && dueDate !== 'N/A' ? `Due ${dueDate}` : null,
+      ].filter(Boolean),
+      confirmLabel: 'Post to ERP',
+      cancelLabel: 'Cancel',
+    });
+    if (!confirmed) return;
+    await doPost();
+  });
+
+  const goPrev = useCallback(() => store.selectItemByOffset(-1), []);
+  const goNext = useCallback(() => store.selectItemByOffset(1), []);
   const openSource = useCallback(() => {
     if (!openSourceEmail(item)) showToast('Unable to open source email', 'error');
   }, [item]);
 
-  const goPrev = useCallback(() => store.selectItemByOffset(-1), []);
-  const goNext = useCallback(() => store.selectItemByOffset(1), []);
-
-  // Determine primary action
-  let primaryLabel = null;
+  const primaryAction = getPrimaryActionConfig(displayState);
   let primaryHandler = null;
   let primaryPending = false;
-  if (state === 'needs_approval' || state === 'pending_approval') { primaryLabel = 'Send approval request'; primaryHandler = doApproval; primaryPending = approvalPending; }
-  else if (state === 'needs_info') { primaryLabel = 'Request info'; primaryHandler = doApproval; primaryPending = approvalPending; }
-  else if (state === 'approved' || state === 'ready_to_post') { primaryLabel = 'Approve & Post'; primaryHandler = doPost; primaryPending = postPending; }
-  else if (state === 'failed_post') { primaryLabel = 'Retry ERP post'; primaryHandler = doRetry; primaryPending = retryPending; }
+  let primaryClass = '';
+  if (primaryAction?.id === 'request_approval') {
+    primaryHandler = doApproval;
+    primaryPending = approvalPending;
+  } else if (primaryAction?.id === 'prepare_info_request') {
+    primaryHandler = doPrepareInfo;
+    primaryPending = prepareInfoPending;
+  } else if (primaryAction?.id === 'nudge_approver') {
+    primaryHandler = doNudge;
+    primaryPending = nudgePending;
+  } else if (primaryAction?.id === 'preview_erp_post') {
+    primaryHandler = doPreviewPost;
+    primaryPending = previewPending || postPending;
+    primaryClass = 'cl-btn-approve';
+  } else if (primaryAction?.id === 'retry_erp_post') {
+    primaryHandler = doRetry;
+    primaryPending = retryPending;
+  }
 
   return html`
     <div class="cl-thread-card cl-work-surface">
-      <div class="cl-navigator">
-        <div class="cl-thread-main">Invoice ${humanIndex} of ${totalItems || 1}</div>
-        <div class="cl-nav-buttons">
-          <button class="cl-btn cl-btn-secondary cl-nav-btn" onClick=${goPrev} disabled=${itemIndex <= 0}>Prev</button>
-          <button class="cl-btn cl-btn-secondary cl-nav-btn" onClick=${goNext} disabled=${itemIndex >= totalItems - 1}>Next</button>
+      ${totalItems > 1 && html`
+        <div class="cl-navigator">
+          <div class="cl-nav-label">Invoice ${humanIndex} of ${totalItems}</div>
+          <div class="cl-nav-buttons">
+            <button class="cl-nav-btn" onClick=${goPrev} disabled=${itemIndex <= 0} aria-label="Previous">‹</button>
+            <button class="cl-nav-btn" onClick=${goNext} disabled=${itemIndex >= totalItems - 1} aria-label="Next">›</button>
+          </div>
         </div>
-      </div>
-      <div class="cl-thread-header ${item?.has_attachment ? 'cl-thread-header-with-thumb' : ''}">
-        ${/* Delight 5: PDF thumbnail placeholder for items with attachments */
-          item?.has_attachment && html`<div class="cl-pdf-thumb" title="PDF attachment">PDF</div>`}
-        <div class="cl-thread-title">${vendor}</div>
+      `}
+
+      <div class="cl-thread-header">
+        <div class="cl-thread-header-copy">
+          <div class="cl-thread-title">${vendor}</div>
+          <div class="cl-thread-meta-inline">${amountLabel} · Invoice ${invoiceNumber} · Due ${dueDate} · ${poLabel}</div>
+        </div>
         <${StatePill} state=${displayState} />
       </div>
-      <div class="cl-thread-main">${amount} · Invoice ${invoiceNumber} · Due ${dueDate}${poNumber ? ` · PO ${poNumber}` : ' · No PO'}</div>
 
-      ${decision.tone === 'warning' && html`<div class="cl-agent-detail cl-warning-text">${decision.detail}</div>`}
-      ${/* Delight 3: Approval progress indicator */ ''}
-      ${['needs_approval', 'pending_approval'].includes(displayState) && approvalPending && html`
-        <div class="cl-approval-progress">
-          <span class="cl-approval-dot"></span> Waiting for approver response...
+      ${blockers.length > 0 && html`
+        <div class="cl-blocker-list" aria-label="What is blocking this invoice">
+          ${blockers.map((blocker) => html`
+            <div key=${blocker.id} class="cl-blocker-row">
+              <div class="cl-blocker-label">${blocker.label}</div>
+              ${blocker.detail && html`<div class="cl-blocker-detail">${blocker.detail}</div>`}
+            </div>
+          `)}
         </div>
       `}
 
-      ${primaryLabel && html`
-        <button class="cl-btn cl-btn-primary cl-primary-cta" onClick=${primaryHandler} disabled=${primaryPending}>
-          ${primaryPending ? 'Processing...' : primaryLabel}
+      ${stateNotice && html`<div class="cl-state-note">${stateNotice}</div>`}
+
+      ${primaryAction?.label && primaryHandler && html`
+        <button class="cl-btn cl-primary-cta ${primaryClass}" onClick=${primaryHandler} disabled=${primaryPending}>
+          ${primaryPending ? 'Processing…' : primaryAction.label}
         </button>
       `}
-      ${!primaryLabel && html`<div class="cl-agent-detail">No primary action required.</div>`}
 
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource} disabled=${!canOpenSource}>Open email</button>
-        ${['received', 'validated', 'needs_approval', 'pending_approval', 'needs_info'].includes(state) && html`
+        ${canRejectWorkItem(displayState) && html`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
         `}
-        ${['needs_approval', 'pending_approval'].includes(state) && html`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Send reminder</button>
-        `}
-        ${state === 'ready_to_post' && html`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doPost} disabled=${postPending}>Post to ERP</button>
+        ${canNudgeApprover(displayState) && primaryAction?.id !== 'nudge_approver' && html`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Nudge approver</button>
         `}
       </div>
 
-      <${ErrorBoundary} fallback="Context tabs unavailable">
-        <${ThreadContext} item=${item} queueManager=${queueManager} />
-      <//>
-
-      <details class="cl-details">
-        <summary>Context fields</summary>
-        <div class="cl-detail-grid">
-          ${item?.subject && html`<div class="cl-detail-row"><span>Subject</span><span>${trimText(item.subject, 120)}</span></div>`}
-          ${item?.sender && html`<div class="cl-detail-row"><span>Sender</span><span>${trimText(item.sender, 96)}</span></div>`}
-          ${item?.exception_code && html`<div class="cl-detail-row"><span>Exception</span><span>${String(item.exception_code).replace(/_/g, ' ')}</span></div>`}
-          ${Number.isFinite(confidencePercent) && html`<div class="cl-detail-row"><span>Confidence</span><span>${confidencePercent}%</span></div>`}
-        </div>
-      </details>
-
-      <details class="cl-details">
-        <summary>Agent timeline (${auditEvents.length})</summary>
-        <${ErrorBoundary} fallback="Timeline unavailable">
-          <${AgentTimeline} agentEvents=${[]} auditEvents=${auditEvents} loading=${s.auditState.loading} />
-        <//>
-      </details>
-
+      <${EvidenceChecklist} entries=${evidence} />
+      <${AuditDisclosure} events=${auditEvents} loading=${Boolean(s.auditState.loading && s.auditState.itemId === item.id)} />
       <${ActionDialog} ...${dialog} />
     </div>
   `;
 }
 
-// ==================== SIDEBAR APP ====================
+function EmptyState({ queueCount }) {
+  const openPipeline = useCallback(() => store.sdk?.Router?.goto?.('clearledgr/pipeline'), []);
+  const openHome = useCallback(() => store.sdk?.Router?.goto?.('clearledgr/home'), []);
+  const threadSelected = Boolean(store.currentThreadId);
+
+  if (threadSelected) {
+    return html`<div class="cl-section"><div class="cl-empty">
+      <p>No invoice is linked to this thread.</p>
+      <p class="cl-muted">Open the AP pipeline to work invoices that Clearledgr has already detected.</p>
+      <div class="cl-thread-actions">
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
+      </div>
+    </div></div>`;
+  }
+
+  if (queueCount > 0) {
+    return html`<div class="cl-section"><div class="cl-empty">
+      <p>${queueCount} invoice${queueCount !== 1 ? 's are' : ' is'} ready in the AP pipeline.</p>
+      <p class="cl-muted">Open a thread to work a specific invoice, or review the queue in Pipeline.</p>
+      <div class="cl-thread-actions">
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
+      </div>
+    </div></div>`;
+  }
+
+  return html`<div class="cl-section"><div class="cl-empty">
+    <p>No invoices in queue.</p>
+    <p class="cl-muted">Clearledgr is monitoring this mailbox and will surface AP work here as invoices arrive.</p>
+    <div class="cl-thread-actions">
+      <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
+    </div>
+  </div></div>`;
+}
 
 export default function SidebarApp({ queueManager }) {
   const s = useStore();
   const item = s.getPrimaryItem();
   const itemIndex = s.getPrimaryItemIndex();
   const logoUrl = getAssetUrl(LOGO_PATH);
+  const queueCount = s.queueState.length;
+  const authRequired = s.scanStatus?.state === 'auth_required';
 
-  // Auto-fetch context when item changes
   useEffect(() => {
     if (item?.id && queueManager?.fetchItemContext) {
-      queueManager.fetchItemContext(item).catch(() => {});
+      queueManager.fetchItemContext(item.id).catch(() => {});
     }
-  }, [item?.id]);
+  }, [item?.id, queueManager]);
 
-  // Auto-fetch audit trail when item changes
   useEffect(() => {
     if (!item?.id || !queueManager?.fetchAuditTrail) return;
-    if (s.auditState.itemId === item.id && s.auditState.events.length > 0) return;
     store.update({ auditState: { itemId: item.id, loading: true, events: [] } });
-    queueManager.fetchAuditTrail(item).then(events => {
+    queueManager.fetchAuditTrail(item.id).then((events) => {
       if (store.getPrimaryItem()?.id === item.id) {
-        store.update({ auditState: { itemId: item.id, loading: false, events: Array.isArray(events) ? events : [] } });
+        store.update({
+          auditState: {
+            itemId: item.id,
+            loading: false,
+            events: Array.isArray(events) ? events : [],
+          },
+        });
       }
     }).catch(() => {
       store.update({ auditState: { itemId: item.id, loading: false, events: [] } });
     });
-  }, [item?.id]);
+  }, [item?.id, queueManager]);
 
   return html`
     <div class="cl-sidebar">
       <style>${SIDEBAR_CSS}${STATE_PILL_CSS}</style>
+
       <div class="cl-header">
         <div class="cl-title">
-          ${logoUrl && html`<img class="cl-logo" src=${logoUrl} alt="Clearledgr" onError=${e => e.target.remove()} />`}
+          ${logoUrl && html`<img class="cl-logo" src=${logoUrl} alt="Clearledgr" onError=${(e) => e.target.remove()} />`}
           Clearledgr AP
         </div>
-        <div class="cl-subtitle">Embedded accounts payable execution</div>
+        <div class="cl-header-right">
+          ${queueCount > 0 && html`<span class="cl-header-badge">${queueCount} invoice${queueCount !== 1 ? 's' : ''}</span>`}
+        </div>
       </div>
+
       <${Toast} />
+
       <${ErrorBoundary} fallback="Scan status unavailable">
-        <${ScanStatus} queueManager=${queueManager} />
+        <${ScanStatus} />
       <//>
-      <div class="cl-section">
-        <div class="cl-section-title">Decision</div>
-        <${ErrorBoundary} fallback="Could not load invoice details">
-          ${item ? html`<${WorkPanel} item=${item} queueManager=${queueManager} itemIndex=${itemIndex} totalItems=${s.queueState.length} />` : html`<div class="cl-empty">No invoices in queue.</div>`}
+
+      ${authRequired && html`
+        <${ErrorBoundary} fallback="Authorization prompt unavailable">
+          <${AuthPrompt} queueManager=${queueManager} />
         <//>
-      </div>
+      `}
+
+      <${ErrorBoundary} fallback="Could not load invoice details">
+        ${item
+          ? html`<${WorkPanel} item=${item} queueManager=${queueManager} itemIndex=${itemIndex} totalItems=${queueCount} />`
+          : html`<${EmptyState} queueCount=${queueCount} />`}
+      <//>
     </div>
   `;
 }

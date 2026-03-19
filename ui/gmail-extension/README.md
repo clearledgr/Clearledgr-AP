@@ -76,9 +76,19 @@ This extension can use Clearledgr backend services:
 
 To modify the extension:
 1. Make changes to the source files
-2. Go to `chrome://extensions/`
-3. Click the refresh icon on the Clearledgr extension
-4. Reload Gmail to see changes
+2. Rebuild the shipped Gmail bundle with Bun-backed tooling:
+   - `npm run build`
+   - `npm run build:prod`
+   - Bun must be installed locally and available on `PATH`, or pointed to via `CLEARLEDGR_BUN_BIN`.
+3. Go to `chrome://extensions/`
+4. Click the refresh icon on the Clearledgr extension
+5. Reload Gmail to see changes
+
+Build toolchain note:
+
+- The extension no longer uses webpack as the active local build path.
+- `scripts/build-extension.cjs` drives Bun bundling for `dist/inboxsdk-layer.js` and `dist/pageWorld.js`, then applies the audited fingerprint and parity checks.
+- `npm run start` uses Bun watch mode for the Gmail Work bundle.
 
 ## Testing
 
@@ -105,7 +115,7 @@ Run authenticated Gmail runtime assertions (requires logged-in Gmail profile):
 
 Generate deterministic UI hardening screenshot evidence (Work + Admin Ops surfaces):
 
-- `npm run evidence:ui-hardening -- --release-id ap-v1-2026-02-25-pilot-rc1 --backend-url http://127.0.0.1:8000`
+- `npm run evidence:ui-hardening -- --release-id ap-v1-2026-02-25-pilot-rc1 --backend-url http://127.0.0.1:8010`
 
 Optional environment variables for E2E:
 

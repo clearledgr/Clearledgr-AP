@@ -40,6 +40,7 @@ from clearledgr.core.stores.metrics_store import MetricsStore
 from clearledgr.core.stores.policy_store import PolicyStore
 from clearledgr.core.stores.task_store import TaskStore
 from clearledgr.core.stores.vendor_store import VendorStore
+from clearledgr.core.stores.recon_store import ReconStore
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class ClearledgrDB(
     MetricsStore,
     TaskStore,
     VendorStore,
+    ReconStore,
 ):
     def __init__(self, db_path: str = "clearledgr.db"):
         self.dsn = os.getenv("DATABASE_URL")
@@ -1035,6 +1037,10 @@ class ClearledgrDB(
             cur.execute("CREATE INDEX IF NOT EXISTS idx_finance_emails_gmail_id ON finance_emails(gmail_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_gl_corrections_org ON gl_corrections(organization_id, corrected_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_gl_accounts_org_code ON gl_accounts(organization_id, code)")
+
+            # Reconciliation tables
+            for sql in ReconStore.RECON_TABLES_SQL:
+                cur.execute(sql)
 
             conn.commit()
 

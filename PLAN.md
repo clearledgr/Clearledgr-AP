@@ -10,10 +10,10 @@
 ## Summary
 This document is the single source of truth for Clearledgr AP v1 doctrine, product positioning, engineering contracts, and GA launch gates.
 
-Clearledgr is a **Finance AI Agent**. AP is its first production skill. The agent is embedded in the tools finance teams already use and executes AP workflows end-to-end with policy controls and an auditable trail. It is not a generic automation builder and not a standalone AP platform dashboard. AP v1 starts inside Gmail, routes approvals through Slack and Teams, posts to ERP systems as the system of record, and provides policy-governed orchestration plus an auditable execution trail.
+Clearledgr is the **execution layer for finance operations**, embedding AI agents into the tools finance teams already use to execute finance workflows end-to-end. AP is its first production workflow. The agents are embedded in email, spreadsheets, ERPs, and communication tools — they don't just surface information, they perform the work. It is not a generic automation builder and not a standalone platform dashboard. AP v1 starts inside Gmail, routes approvals through Slack and Teams (or directly in email), posts to ERP systems as the system of record, and provides policy-governed orchestration plus an auditable execution trail.
 
 ### Locked product decisions
-1. **Clearledgr is a Finance AI Agent** (external positioning). AP is the first production skill; new finance skills are added over time.
+1. **Clearledgr is the execution layer for finance operations** (external positioning). AP is the first production workflow; new finance workflows are added over time.
 2. **AP v1 starts in Gmail** (inbox-native intake and triage).
 3. **Approvals happen in Slack and Teams at v1 GA** (co-equal channel parity requirement at GA).
 4. **ERP remains the system of record**; Clearledgr orchestrates and executes.
@@ -118,10 +118,10 @@ AP v1 does not include:
 5. Consumer messaging channels (WhatsApp/Telegram).
 6. Outlook inbox intake in GA scope (explicitly de-scoped; Gmail is the only inbox surface for AP v1 GA).
 
-### 2.5 Admin Console role (release taxonomy context)
-The Admin Console is in-scope for AP v1 as setup/operations infrastructure, not as the primary AP daily workflow UI.
+### 2.5 Gmail-native operations shell (release taxonomy context)
+Clearledgr uses Gmail as the primary product shell for AP v1. The thread panel remains the daily AP execution UI, while Gmail-native routed pages handle setup and operational administration.
 
-Admin Console responsibilities:
+Gmail-native admin/operator responsibilities:
 1. Integration setup and diagnostics.
 2. Policy configuration.
 3. Team access and onboarding.
@@ -130,8 +130,11 @@ Admin Console responsibilities:
 
 Onboarding spine decision (locked):
 1. Use an admin-first onboarding/account-management backbone for all tenant setup and reconnect flows.
-2. OAuth integration setup is initiated from authenticated Admin Console APIs.
-3. Gmail work UI must not become an onboarding/configuration surface.
+2. OAuth integration setup is initiated from authenticated backend APIs surfaced inside Gmail-native pages.
+3. Gmail thread work UI must not become a cluttered onboarding/configuration surface.
+4. Gmail shell default pinned nav remains intentionally sparse: `Home`, `Pipeline`, `Connections`.
+5. `Activity` and other secondary pages remain available from Home or pinning, not as default clutter.
+6. Gmail authorization is explicit from inline CTAs; the extension must not auto-launch Gmail OAuth at startup.
 
 ---
 
@@ -139,11 +142,13 @@ Onboarding spine decision (locked):
 
 ### 3.1 Gmail thread card doctrine (primary AP operator experience)
 The Gmail thread is the AP workflow control surface. Each invoice thread (or grouped invoice entity) should present a compact AP card that shows:
-1. **Status** (for example: `received`, `validating`, `needs_info`, `awaiting_approval`, `approved`, `ready_to_post`, `posted`, `failed_post`)
-2. **Extracted fields** (vendor, invoice number, amount, PO, due date)
-3. **Exceptions** (duplicate risk, PO mismatch, budget mismatch, low confidence, missing data)
-4. **Next action** (single prioritized action)
-5. **Audit breadcrumbs** (who approved, when posted, why rejected/overridden)
+1. **Invoice identity strip** (vendor, invoice number, amount, due date, PO status)
+2. **One status badge**
+3. **Plain-language blockers** (for example: waiting on approver, PO missing, review extracted fields)
+4. **One primary next action** (single prioritized action)
+5. **Compact secondary actions**
+6. **Evidence checklist**
+7. **Collapsed audit disclosure**
 
 ### 3.2 Progressive disclosure rules (required)
 To avoid a "cluttered plugin" outcome:
@@ -171,35 +176,40 @@ Each approval card must show:
 5. Link back to Gmail context / AP item details
 6. Clear result feedback (decision accepted, duplicate click ignored, action blocked, etc.)
 
-### 3.5 Admin Console UX doctrine (non-daily workflow)
-Admin Console is for setup and operations, not routine AP processing.
+### 3.5 Gmail-native admin pages doctrine (non-daily workflow)
+Gmail-native routed pages are for setup and operations, not routine AP processing.
 
-It must provide:
+They must provide:
 1. Integration setup (Gmail, Slack, Teams, ERP)
 2. Approval channel configuration
 3. Policy configuration and version visibility
 4. Health and required-action diagnostics
 5. Team access / invites
 6. Plan/subscription visibility
+7. A lightweight `Home` launch hub for readiness, recent activity, and quick links
 
-### 3.6 Gmail work-only doctrine (Ops moved to Admin Console)
+Operational shell rules:
+1. `Home`, `Pipeline`, and `Connections` are the default pinned pages.
+2. `Activity` is secondary and available from Home or user pinning.
+3. Health/debug/admin pages are role-gated and never default pinned.
+4. Routed pages may support future-skill groundwork, but AP remains the only production-grade workflow in launch doctrine.
+
+### 3.6 Gmail thread work doctrine
 AP v1 Gmail UX is a single operator workspace and must not regress to mixed diagnostic surfaces:
 
 1. **Work panel (`Clearledgr AP`)** is action-first and decision-focused.
 2. Gmail must not render KPI telemetry, batch controls, raw agent events, or debug panels.
 3. Work panel must keep operator-critical context above fold:
    - invoice identity strip
-   - decision brief (`What happened`, `Why this needs decision`, `Best next step`)
-   - primary actions
-4. Evidence and diagnostics in Work panel must use progressive disclosure by default:
-   - `Sources`
-   - `Context`
-   - `Technical details`
-5. Ops/monitoring/batch/debug must be provided via Admin Console `/console?page=ops` with admin/operator access gating.
+   - status badge + blockers
+   - primary action + compact secondary actions
+4. Evidence and audit in Work panel must use progressive disclosure by default.
+5. Ops/monitoring/batch/debug must be provided via Gmail-native routed pages with admin/operator access gating, not embedded in the thread work card.
 6. Reason capture for reject/override/budget/escalation actions must use inline reason sheet UX, not native browser dialogs (`prompt/confirm`).
 7. Extension shipping bundle must enforce `src -> dist` parity in CI; stale `dist` or forbidden legacy Gmail strings are release blockers.
 8. Legacy extension popup/options/demo surfaces are not part of AP v1 runtime UX; if retained, they must live under docs archival paths and not ship.
 9. Work audit copy must be backend-owned (`operator_title`, `operator_message`, `operator_severity`, optional `operator_action_hint`) for canonical material events.
+10. Gmail auth must be initiated from inline CTAs in the product shell, not from automatic startup popups.
 
 ---
 
@@ -786,7 +796,7 @@ These defaults apply unless superseded by a later explicit revision to this `PLA
 ### Channel defaults
 1. Gmail is the primary AP intake/triage operator surface.
 2. Slack and Teams are co-equal GA approval channels.
-3. Admin Console is setup/ops only, not daily AP workflow UI.
+3. Gmail-native routed pages handle setup/ops workflows; the thread panel remains the daily AP workflow UI.
 
 ### Runtime/durability defaults
 1. AP v1 durable orchestration defaults to the DB-backed `local_db` runtime.

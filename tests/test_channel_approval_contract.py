@@ -67,21 +67,19 @@ def _slack_form_body(payload: dict) -> bytes:
     return encoded.encode("utf-8")
 
 
-class _WorkflowStub:
+class _RuntimeStub:
     def __init__(self):
         self.calls = []
 
-    async def approve_invoice(self, **kwargs):
-        self.calls.append(("approve_invoice", kwargs))
-        return {"status": "approved", "erp_result": {"bill_id": "BILL-1"}}
-
-    async def request_budget_adjustment(self, **kwargs):
-        self.calls.append(("request_budget_adjustment", kwargs))
-        return {"status": "needs_info"}
-
-    async def reject_invoice(self, **kwargs):
-        self.calls.append(("reject_invoice", kwargs))
-        return {"status": "rejected"}
+    async def execute_intent(self, intent, payload=None, *, idempotency_key=None):
+        self.calls.append((intent, {"payload": dict(payload or {}), "idempotency_key": idempotency_key}))
+        if intent == "approve_invoice":
+            return {"status": "approved", "result": {"status": "approved", "erp_result": {"bill_id": "BILL-1"}}}
+        if intent == "request_info":
+            return {"status": "needs_info"}
+        if intent == "reject_invoice":
+            return {"status": "rejected"}
+        return {"status": "error", "reason": "unsupported_intent"}
 
 
 def test_slack_and_teams_card_builders_include_request_info_action():
@@ -388,13 +386,16 @@ def test_slack_interactive_invalid_payload_audits(monkeypatch, client, db):
 def test_slack_interactive_request_info_duplicate_and_stale(monkeypatch, client, db):
     item = _create_ap_item(db, gmail_id="thread-slack-1")
     db.update_ap_item(item["id"], metadata={"correlation_id": "corr-slack-1"})
-    workflow = _WorkflowStub()
+    runtime = _RuntimeStub()
 
     async def _return_body(request):
         return await request.body()
 
     monkeypatch.setattr("clearledgr.api.slack_invoices.require_slack_signature", _return_body)
-    monkeypatch.setattr("clearledgr.api.slack_invoices.get_invoice_workflow", lambda _org: workflow)
+    async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
+        return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
+
+    monkeypatch.setattr("clearledgr.api.slack_invoices.FinanceAgentRuntime.execute_intent", _runtime_execute)
 
     payload = {
         "callback_id": "run-slack-1",
@@ -418,12 +419,13 @@ def test_slack_interactive_request_info_duplicate_and_stale(monkeypatch, client,
     assert second.status_code == 200
     assert "Duplicate action ignored" in second.json()["text"]
 
-    assert [name for name, _kwargs in workflow.calls] == ["request_budget_adjustment"]
-    call_kwargs = workflow.calls[0][1]
-    assert call_kwargs["reason"] == "budget_adjustment_requested_in_slack"
-    assert call_kwargs["source_channel"] == "slack"
-    assert call_kwargs["decision_idempotency_key"]
-    assert call_kwargs["correlation_id"] == "corr-slack-1"
+    assert [name for name, _kwargs in runtime.calls] == ["request_info"]
+    call_kwargs = runtime.calls[0][1]
+    assert call_kwargs["payload"]["ap_item_id"] == item["id"]
+    assert call_kwargs["payload"]["reason"] == "budget_adjustment_requested_in_slack"
+    assert call_kwargs["payload"]["source_channel"] == "slack"
+    assert call_kwargs["idempotency_key"]
+    assert call_kwargs["payload"]["correlation_id"] == "corr-slack-1"
 
     events = db.list_ap_audit_events(item["id"])
     event_types = [e.get("event_type") for e in events]
@@ -451,13 +453,16 @@ def test_slack_interactive_duplicate_storm_is_idempotent(monkeypatch, client, db
     """Burst duplicate callbacks should execute workflow once and audit duplicates."""
     item = _create_ap_item(db, gmail_id="thread-slack-storm")
     db.update_ap_item(item["id"], metadata={"correlation_id": "corr-slack-storm"})
-    workflow = _WorkflowStub()
+    runtime = _RuntimeStub()
 
     async def _return_body(request):
         return await request.body()
 
     monkeypatch.setattr("clearledgr.api.slack_invoices.require_slack_signature", _return_body)
-    monkeypatch.setattr("clearledgr.api.slack_invoices.get_invoice_workflow", lambda _org: workflow)
+    async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
+        return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
+
+    monkeypatch.setattr("clearledgr.api.slack_invoices.FinanceAgentRuntime.execute_intent", _runtime_execute)
 
     payload = {
         "callback_id": "run-slack-storm-1",
@@ -479,7 +484,7 @@ def test_slack_interactive_duplicate_storm_is_idempotent(monkeypatch, client, db
         resp for resp in responses if "Duplicate action ignored" in str(resp.json().get("text") or "")
     ]
     assert len(duplicate_responses) >= 24
-    assert [name for name, _kwargs in workflow.calls] == ["request_budget_adjustment"]
+    assert [name for name, _kwargs in runtime.calls] == ["request_info"]
 
     events = db.list_ap_audit_events(item["id"])
     processed = [e for e in events if e.get("event_type") == "channel_action_processed"]
@@ -550,12 +555,15 @@ def test_teams_interactive_invalid_payload_audits(monkeypatch, client, db):
 
 def test_teams_interactive_common_contract_request_info_duplicate_invalid_and_stale(monkeypatch, client, db):
     item = _create_ap_item(db, gmail_id="thread-teams-1")
-    workflow = _WorkflowStub()
+    runtime = _RuntimeStub()
     monkeypatch.setattr(
         "clearledgr.api.teams_invoices.verify_teams_token",
         lambda _auth: {"appid": "bot-test", "iat": int(time.time())},
     )
-    monkeypatch.setattr("clearledgr.api.teams_invoices.get_invoice_workflow", lambda _org: workflow)
+    async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
+        return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
+
+    monkeypatch.setattr("clearledgr.api.teams_invoices.FinanceAgentRuntime.execute_intent", _runtime_execute)
 
     headers = {"Authorization": "Bearer test-token"}
     payload = {
@@ -578,11 +586,12 @@ def test_teams_interactive_common_contract_request_info_duplicate_invalid_and_st
     assert second.status_code == 200
     assert second.json()["status"] == "duplicate"
 
-    assert [name for name, _kwargs in workflow.calls] == ["request_budget_adjustment"]
-    kwargs = workflow.calls[0][1]
-    assert kwargs["reason"] == "budget_adjustment_requested_in_teams"
-    assert kwargs["source_channel"] == "teams"
-    assert kwargs["decision_idempotency_key"]
+    assert [name for name, _kwargs in runtime.calls] == ["request_info"]
+    kwargs = runtime.calls[0][1]
+    assert kwargs["payload"]["ap_item_id"] == item["id"]
+    assert kwargs["payload"]["reason"] == "budget_adjustment_requested_in_teams"
+    assert kwargs["payload"]["source_channel"] == "teams"
+    assert kwargs["idempotency_key"]
 
     invalid_payload = {
         **payload,
@@ -623,13 +632,16 @@ def test_slack_interactive_blocks_actions_when_rollout_control_disables_slack(mo
             }
         },
     )
-    workflow = _WorkflowStub()
+    runtime = _RuntimeStub()
 
     async def _return_body(request):
         return await request.body()
 
     monkeypatch.setattr("clearledgr.api.slack_invoices.require_slack_signature", _return_body)
-    monkeypatch.setattr("clearledgr.api.slack_invoices.get_invoice_workflow", lambda _org: workflow)
+    async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
+        return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
+
+    monkeypatch.setattr("clearledgr.api.slack_invoices.FinanceAgentRuntime.execute_intent", _runtime_execute)
 
     payload = {
         "callback_id": "run-slack-blocked-1",
@@ -648,7 +660,7 @@ def test_slack_interactive_blocks_actions_when_rollout_control_disables_slack(mo
     )
     assert response.status_code == 200
     assert "temporarily disabled" in response.json()["text"]
-    assert workflow.calls == []
+    assert runtime.calls == []
 
     events = db.list_ap_audit_events(item["id"])
     event_types = [e.get("event_type") for e in events]
@@ -667,12 +679,15 @@ def test_teams_interactive_blocks_actions_when_rollout_control_disables_teams(mo
             }
         },
     )
-    workflow = _WorkflowStub()
+    runtime = _RuntimeStub()
     monkeypatch.setattr(
         "clearledgr.api.teams_invoices.verify_teams_token",
         lambda _auth: {"appid": "bot-test", "iat": int(time.time())},
     )
-    monkeypatch.setattr("clearledgr.api.teams_invoices.get_invoice_workflow", lambda _org: workflow)
+    async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
+        return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
+
+    monkeypatch.setattr("clearledgr.api.teams_invoices.FinanceAgentRuntime.execute_intent", _runtime_execute)
 
     response = client.post(
         "/teams/invoices/interactive",
@@ -691,7 +706,7 @@ def test_teams_interactive_blocks_actions_when_rollout_control_disables_teams(mo
     body = response.json()
     assert body["status"] == "blocked"
     assert body["reason"] == "teams_rollback_control_enabled"
-    assert workflow.calls == []
+    assert runtime.calls == []
 
     events = db.list_ap_audit_events(item["id"])
     event_types = [e.get("event_type") for e in events]

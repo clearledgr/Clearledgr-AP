@@ -2,13 +2,13 @@
 
 export const STATE_LABELS = {
   received: 'Received', validated: 'Validated', needs_info: 'Needs info',
-  needs_approval: 'Needs approval', approved: 'Approved', ready_to_post: 'Ready to post',
+  needs_approval: 'Needs approval', pending_approval: 'Needs approval', approved: 'Approved', ready_to_post: 'Ready to post',
   posted_to_erp: 'Posted to ERP', closed: 'Closed', rejected: 'Rejected', failed_post: 'Failed post',
 };
 
 export const STATE_COLORS = {
   received: '#2563eb', validated: '#0f766e', needs_info: '#b45309',
-  needs_approval: '#c2410c', approved: '#15803d', ready_to_post: '#0f766e',
+  needs_approval: '#c2410c', pending_approval: '#c2410c', approved: '#15803d', ready_to_post: '#0f766e',
   posted_to_erp: '#7c3aed', closed: '#0f766e', rejected: '#b91c1c', failed_post: '#b91c1c',
 };
 
@@ -120,7 +120,7 @@ export function getIssueSummary(item) {
   if (ec === 'policy_validation_failed') return 'Invoice violated AP policy checks';
   const state = String(item?.state || '');
   if (state === 'needs_info') return 'Missing required invoice fields';
-  if (state === 'needs_approval') return 'Pending human approval';
+  if (state === 'needs_approval' || state === 'pending_approval') return 'Pending human approval';
   if (state === 'failed_post') return 'ERP posting failed and needs retry';
   if (state === 'approved') return 'Approved and waiting for ERP posting';
   if (state === 'ready_to_post') return 'Ready to post to ERP';
@@ -156,7 +156,7 @@ export function getDecisionSummary(item, budgetContext) {
   const state = String(item?.state || 'received').toLowerCase();
   if (budgetContext?.requiresDecision) return { title: 'Budget review required', detail: 'Choose override, budget adjustment, or rejection.', tone: 'warning' };
   if (state === 'needs_info' || String(item?.exception_code || '').trim()) return { title: 'Needs review', detail: getIssueSummary(item), tone: 'warning' };
-  if (state === 'needs_approval') return { title: 'Approval required', detail: 'Route to approver with full context.', tone: 'neutral' };
+  if (state === 'needs_approval' || state === 'pending_approval') return { title: 'Approval required', detail: 'Route to approver with full context.', tone: 'neutral' };
   if (state === 'approved' || state === 'ready_to_post') return { title: 'Ready for posting', detail: 'Required checks are complete.', tone: 'good' };
   if (state === 'posted_to_erp' || state === 'closed') return { title: 'Completed', detail: 'Invoice has already been posted.', tone: 'good' };
   if (state === 'failed_post') return { title: 'Posting failed', detail: 'Retry posting or escalate this invoice.', tone: 'warning' };

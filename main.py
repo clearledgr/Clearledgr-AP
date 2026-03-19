@@ -9,16 +9,19 @@ Run Instructions:
    pip install -r requirements
 
 2. Run the app locally with uvicorn:
-   uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+   uvicorn main:app --host 0.0.0.0 --port 8010 --reload
 
 3. Test /health endpoint:
-   curl http://localhost:8000/health
+   curl http://localhost:8010/health
 
 4. Test runtime intent preview endpoint:
-   curl -X POST http://localhost:8000/api/agent/intents/preview \
+   curl -X POST http://localhost:8010/api/agent/intents/preview \
      -H "Content-Type: application/json" \
      -d '{"intent":"read_ap_workflow_health","input":{"limit":25},"organization_id":"default"}'
 """
+from dotenv import load_dotenv
+load_dotenv()
+
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
@@ -84,12 +87,14 @@ async def _deferred_startup(app):
     try:
         from clearledgr.core.agent_runtime import get_planning_engine
         from clearledgr.core.skills.ap_skill import APSkill
+        from clearledgr.core.skills.recon_skill import ReconciliationSkill
 
         planner = get_planning_engine()
         planner.register_skill(APSkill())
+        planner.register_skill(ReconciliationSkill())
         planner_resumed = await asyncio.wait_for(planner.resume_pending_tasks(), timeout=10.0)
         logger.info(
-            "Agent planning engine started, APSkill registered (%d tasks resumed)",
+            "Agent planning engine started, AP + Reconciliation skills registered (%d tasks resumed)",
             planner_resumed,
         )
     except asyncio.TimeoutError:
@@ -249,6 +254,7 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
     "/extension/pipeline",
     "/extension/worklist",
     "/extension/gmail/register-token",
+    "/extension/gmail/exchange-code",
     "/extension/approve-and-post",
     "/extension/verify-confidence",
     "/extension/match-bank",
@@ -270,9 +276,14 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
 
 STRICT_PROFILE_ALLOWED_ADMIN_PATHS = {
     "/api/admin/bootstrap",
+    "/api/admin/dashboard",
     "/api/admin/ga-readiness",
     "/api/admin/health",
     "/api/admin/integrations",
+    "/api/admin/org",
+    "/api/admin/org/settings",
+    "/api/admin/subscription",
+    "/api/admin/subscription/plan",
     "/api/admin/integrations/erp/connect/netsuite",
     "/api/admin/integrations/erp/connect/sap",
     "/api/admin/integrations/erp/connect/start",
@@ -369,6 +380,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/extension/needs-info-draft/[^/]+$",
         r"^/extension/suggestions/form-prefill/[^/]+$",
         r"^/extension/workflow/[^/]+$",
+        r"^/extension/by-thread/[^/]+$",
         r"^/gmail/status/[^/]+$",
     )
 )

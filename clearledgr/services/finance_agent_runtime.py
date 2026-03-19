@@ -57,6 +57,9 @@ class FinanceAgentRuntime:
         self.register_skill(APFinanceSkill())
         self.register_skill(VendorComplianceSkill())
         self.register_skill(WorkflowHealthSkill())
+        # Lazy import to avoid circular dependency
+        from clearledgr.services.finance_skills.recon_skill import ReconciliationFinanceSkill
+        self.register_skill(ReconciliationFinanceSkill())
 
     def register_skill(self, skill: FinanceSkill) -> None:
         """Register a skill and map all of its intents."""
@@ -182,9 +185,9 @@ class FinanceAgentRuntime:
     @staticmethod
     def _item_reference(payload: Dict[str, Any]) -> str:
         return str(
-            payload.get("email_id")
-            or payload.get("ap_item_id")
+            payload.get("ap_item_id")
             or payload.get("item_id")
+            or payload.get("email_id")
             or ""
         ).strip()
 
@@ -623,6 +626,16 @@ class FinanceAgentRuntime:
         }
         if not manifest.get("is_valid"):
             base["blocked_reasons"].append("manifest_incomplete")
+
+        # Delegate to skill's collect_runtime_metrics if available.
+        # This allows non-AP skills to provide their own KPI collection.
+        if hasattr(skill, 'collect_runtime_metrics'):
+            skill_metrics = skill.collect_runtime_metrics(self, window_hours=window_hours)
+            if skill_metrics is not None:
+                base.update(skill_metrics)
+                if "status" not in base:
+                    base["status"] = "ready" if not base.get("blocked_reasons") else "blocked"
+                return base
 
         if token != "ap_v1":
             base["status"] = "manifest_only"

@@ -34,3 +34,4 @@ ui/gmail-extension/.npm/
 
 # OS/editor noise
 .DS_Store
+.gstack/

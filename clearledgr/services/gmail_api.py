@@ -23,7 +23,7 @@ from cryptography.fernet import Fernet
 logger = logging.getLogger(__name__)
 
 # Configuration
-DEFAULT_GOOGLE_REDIRECT_URI = "http://localhost:8000/gmail/callback"
+DEFAULT_GOOGLE_REDIRECT_URI = "http://localhost:8010/gmail/callback"
 PUBSUB_TOPIC = os.getenv("GMAIL_PUBSUB_TOPIC", "projects/clearledgr/topics/gmail-push")
 TOKEN_KEY_FILE = os.getenv("TOKEN_ENCRYPTION_KEY_FILE", ".clearledgr_token_key")
 
@@ -101,10 +101,12 @@ OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 GMAIL_PROFILE_URL = f"{GMAIL_API_BASE}/users/me/profile"
 
-# Scopes needed for autonomous processing
+# Scopes needed for autonomous processing.
+# Sheets scope enables reconciliation workflows (read bank statements, write results).
 GMAIL_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",  # Read emails
-    "https://www.googleapis.com/auth/gmail.modify",    # Manage labels
+    "https://www.googleapis.com/auth/gmail.readonly",   # Read emails
+    "https://www.googleapis.com/auth/gmail.modify",     # Manage labels, create drafts
+    "https://www.googleapis.com/auth/spreadsheets",     # Read/write Google Sheets (reconciliation)
 ]
 
 

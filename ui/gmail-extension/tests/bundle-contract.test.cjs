@@ -6,6 +6,7 @@ const path = require('node:path');
 const EXTENSION_ROOT = path.resolve(__dirname, '..');
 const MANIFEST_PATH = path.join(EXTENSION_ROOT, 'manifest.json');
 const DIST_BUNDLE_PATH = path.join(EXTENSION_ROOT, 'dist', 'inboxsdk-layer.js');
+const DIST_META_PATH = path.join(EXTENSION_ROOT, 'dist', 'inboxsdk-layer.meta.json');
 
 const FORBIDDEN_SNIPPETS = [
   'Agentic snapshot',
@@ -32,7 +33,9 @@ test('manifest content script is pinned to audited dist bundle', () => {
 
 test('dist bundle excludes forbidden legacy Gmail ops strings', () => {
   assert.ok(fs.existsSync(DIST_BUNDLE_PATH), 'dist/inboxsdk-layer.js should exist');
+  assert.ok(fs.existsSync(DIST_META_PATH), 'dist/inboxsdk-layer.meta.json should exist');
   const bundle = fs.readFileSync(DIST_BUNDLE_PATH, 'utf8');
+  const metadata = JSON.parse(fs.readFileSync(DIST_META_PATH, 'utf8'));
   FORBIDDEN_SNIPPETS.forEach((snippet) => {
     assert.equal(
       bundle.includes(snippet),
@@ -40,6 +43,11 @@ test('dist bundle excludes forbidden legacy Gmail ops strings', () => {
       `dist bundle still contains forbidden snippet: ${snippet}`
     );
   });
+  assert.equal(
+    bundle.includes(`clearledgr-source-fingerprint:${metadata.fingerprint}`),
+    true,
+    'dist bundle should embed the audited source fingerprint banner'
+  );
 });
 
 test('legacy popup/options/demo surfaces are removed from extension package root', () => {

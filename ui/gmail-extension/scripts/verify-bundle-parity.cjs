@@ -3,13 +3,19 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execSync } = require('node:child_process');
+const {
+  BUNDLE_FINGERPRINT_BANNER_PREFIX,
+  computeSourceFingerprint,
+} = require('./source-fingerprint.cjs');
 
 const EXTENSION_ROOT = path.resolve(__dirname, '..');
 const MANIFEST_PATH = path.join(EXTENSION_ROOT, 'manifest.json');
 const DIST_BUNDLE_PATH = path.join(EXTENSION_ROOT, 'dist', 'inboxsdk-layer.js');
+const FINGERPRINT_PATH = path.join(EXTENSION_ROOT, 'dist', 'inboxsdk-layer.meta.json');
 const DIST_FILES = [
   path.join(EXTENSION_ROOT, 'dist', 'inboxsdk-layer.js'),
   path.join(EXTENSION_ROOT, 'dist', 'pageWorld.js'),
+  FINGERPRINT_PATH,
 ];
 const FORBIDDEN_ROOT_FILES = [
   'popup.html',
@@ -65,8 +71,11 @@ function verifyDistFilesExist() {
   });
 }
 
-function verifyForbiddenContent() {
-  const bundle = fs.readFileSync(DIST_BUNDLE_PATH, 'utf8');
+function readBundle() {
+  return fs.readFileSync(DIST_BUNDLE_PATH, 'utf8');
+}
+
+function verifyForbiddenContent(bundle) {
   for (const snippet of FORBIDDEN_SNIPPETS) {
     if (bundle.includes(snippet)) {
       fail(
@@ -82,6 +91,26 @@ function verifyNoLegacyRootSurfaces() {
     if (fs.existsSync(filePath)) {
       fail(`Legacy extension UI surface must not exist in shipped root: ${fileName}`);
     }
+  }
+}
+
+function verifyFingerprintParity() {
+  if (!fs.existsSync(FINGERPRINT_PATH)) {
+    fail(`Missing bundle fingerprint artifact: ${path.relative(EXTENSION_ROOT, FINGERPRINT_PATH)}`);
+  }
+  const metadata = readJson(FINGERPRINT_PATH);
+  const expected = computeSourceFingerprint(EXTENSION_ROOT).fingerprint;
+  const actual = String(metadata?.fingerprint || '').trim();
+  if (!actual) {
+    fail('Bundle fingerprint metadata is missing the fingerprint value.');
+  }
+  if (actual !== expected) {
+    fail('dist bundle fingerprint is stale versus current source inputs. Run npm run build and commit dist changes.');
+  }
+  const bundle = readBundle();
+  const expectedBanner = `${BUNDLE_FINGERPRINT_BANNER_PREFIX}${actual}`;
+  if (!bundle.includes(expectedBanner)) {
+    fail('dist bundle is missing the source fingerprint banner. Run npm run build to regenerate the audited bundle.');
   }
 }
 
@@ -106,13 +135,18 @@ function verifyGitCleanDist() {
   }
 }
 
-function main() {
+function verifyBundleParity() {
   verifyManifestContract();
   verifyDistFilesExist();
-  verifyForbiddenContent();
+  verifyForbiddenContent(readBundle());
   verifyNoLegacyRootSurfaces();
+  verifyFingerprintParity();
   verifyGitCleanDist();
   console.log('[bundle-verify] OK');
 }
 
-main();
+if (require.main === module) {
+  verifyBundleParity();
+}
+
+module.exports = { verifyBundleParity };

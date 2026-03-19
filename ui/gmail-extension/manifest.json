@@ -3,13 +3,14 @@
   "name": "Clearledgr",
   "version": "1.2026.001",
   "version_name": "1.2026.001 Phoenix",
-  "description": "Finance AI Agent for AP execution, right inside Gmail",
+  "description": "Finance execution agents embedded in Gmail — AP workflows today, more coming",
   "permissions": [
     "activeTab",
     "scripting",
     "storage",
     "identity",
-    "identity.email"
+    "identity.email",
+    "notifications"
   ],
   "oauth2": {
     "client_id": "333271407440-j42m0b6sh4j42bvlkr0vko7l058uf3ja.apps.googleusercontent.com",
@@ -29,8 +30,6 @@
     "https://documentai.googleapis.com/*",
     "https://api.clearledgr.com/*",
     "https://staging-api.clearledgr.com/*",
-    "http://localhost:8000/*",
-    "http://127.0.0.1:8000/*",
     "http://localhost:8010/*",
     "http://127.0.0.1:8010/*"
   ],

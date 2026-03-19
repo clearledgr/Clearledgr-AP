@@ -29,6 +29,7 @@ const PAGES = [
   { id: 'team', title: 'Team', subtitle: 'Invite your colleagues to Clearledgr.' },
   { id: 'organization', title: 'Company', subtitle: 'Your organization profile and preferences.' },
   { id: 'plan', title: 'Plan', subtitle: 'Your subscription and usage.' },
+  { id: 'reconciliation', title: 'Reconciliation', subtitle: 'Match bank transactions to invoices.' },
   // Below: admin-only pages, hidden from nav for regular users
   { id: 'ops', title: 'Operations', subtitle: 'Monitor performance and take bulk actions.', adminOnly: true },
   { id: 'health', title: 'System Status', subtitle: 'Technical diagnostics.', adminOnly: true },
@@ -149,7 +150,21 @@ function eventBadge(eventType) {
   if (t.includes('received') || t.includes('classified')) return { label: 'Received', cls: 'ev-received' };
   if (t.includes('validated')) return { label: 'Validated', cls: 'ev-validated' };
   if (t.includes('failed') || t.includes('error')) return { label: 'Error', cls: 'ev-error' };
-  return { label: eventType, cls: '' };
+  if (t === 'state_transition') return { label: 'Status changed', cls: 'ev-received' };
+  if (t === 'decision_made') return { label: 'Decision recorded', cls: 'ev-approved' };
+  if (t === 'invoice_created') return { label: 'Invoice created', cls: 'ev-received' };
+  if (t === 'enrichment_complete') return { label: 'Data extracted', cls: 'ev-validated' };
+  return { label: eventType.replace(/_/g, ' ').toLowerCase(), cls: '' };
+}
+
+function humanizeStatus(raw) {
+  const map = { connected: 'Connected', disconnected: 'Not connected', unknown: 'Unknown' };
+  return map[raw] || raw;
+}
+
+function humanizeMode(raw) {
+  const map = { oauth: 'OAuth sign-in', shared: 'Shared workspace', per_org: 'Per-organization', '': '-', '-': '-' };
+  return map[raw] || raw;
 }
 
 function resolveRef(item) { return String(item?.thread_id || item?.message_id || item?.id || '').trim(); }
@@ -313,7 +328,7 @@ function SetupPage({ bootstrap, orgId, onNav, onRefresh }) {
   });
   const [launch, launchPending] = useAction(async () => {
     await api('/api/admin/onboarding/step', { method: 'POST', body: JSON.stringify({ organization_id: orgId, step: 5 }) });
-    toast('Clearledgr is live! Invoices will now be processed automatically.', 'success'); onRefresh();
+    toast('Clearledgr is live! Your finance agents are now running.', 'success'); onRefresh();
   });
 
   const ws = gmail.watch_status || 'unknown';
@@ -325,7 +340,7 @@ function SetupPage({ bootstrap, orgId, onNav, onRefresh }) {
   return html`
     <div class="panel"><h3>Finish setting up Clearledgr</h3>
       <p class="muted">${doneCount} of 4 complete</p>
-      <div style="height:4px;background:#e8e5e0;border-radius:2px;margin:12px 0 16px;overflow:hidden">
+      <div style="height:4px;background:#E2E8F0;border-radius:2px;margin:12px 0 16px;overflow:hidden">
         <div style="height:100%;width:${doneCount * 25}%;background:var(--accent);border-radius:2px;transition:width 0.3s"></div>
       </div>
       <div class="readiness-list">
@@ -429,7 +444,7 @@ function SetupPage({ bootstrap, orgId, onNav, onRefresh }) {
     </div>`}
 
     <div class="panel"><h3>Ready to go live?</h3>
-      <p class="muted">Once everything is connected, Clearledgr will automatically process invoices from your inbox.</p>
+      <p class="muted">Once everything is connected, Clearledgr's agents will start executing your finance workflows.</p>
       <div class="readiness-list">
         <div class="readiness-item">${checkMark(gmailOk)} Gmail connected</div>
         <div class="readiness-item">${checkMark(slackOk)} Slack connected</div>
@@ -608,7 +623,7 @@ function IntegrationsPage({ bootstrap, orgId, onRefresh }) {
 
   return html`
     <div class="panel"><table class="table"><thead><tr><th>Integration</th><th>Status</th><th>Mode</th><th>Last sync</th></tr></thead>
-      <tbody>${integrations.map(i => html`<tr><td>${i.name}</td><td>${i.status || 'unknown'}</td><td>${i.mode || '-'}</td><td>${i.last_sync_at || '-'}</td></tr>`)}</tbody></table></div>
+      <tbody>${integrations.map(i => html`<tr><td style="text-transform:capitalize">${i.name}</td><td><span class="status-badge ${i.status === 'connected' ? 'connected' : ''}">${humanizeStatus(i.status || 'unknown')}</span></td><td>${humanizeMode(i.mode || '-')}</td><td>${i.last_sync_at || '-'}</td></tr>`)}</tbody></table></div>
     <div class="panel"><h3>Slack Setup</h3>
       <div class="row">
         <button onClick=${connectSlack}>Install to Slack</button>
@@ -804,9 +819,74 @@ function HealthPage({ bootstrap }) {
   `;
 }
 
+// ==================== RECONCILIATION ====================
+
+function ReconciliationPage({ bootstrap, orgId, onRefresh }) {
+  const [sheetUrl, setSheetUrl] = useState('');
+  const [range, setRange] = useState('Sheet1!A:F');
+  const [starting, setStarting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const startRecon = useCallback(async () => {
+    if (!sheetUrl.trim()) return;
+    setStarting(true);
+    try {
+      // Extract spreadsheet ID from URL
+      const match = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+      const spreadsheetId = match ? match[1] : sheetUrl.trim();
+      const r = await api(`/api/agent/execute-intent`, {
+        method: 'POST',
+        body: JSON.stringify({
+          intent: 'start_reconciliation',
+          organization_id: orgId,
+          payload: { spreadsheet_id: spreadsheetId, range: range.trim() },
+        }),
+      });
+      setResult(r);
+      toast('Reconciliation started.', 'success');
+      onRefresh();
+    } catch (e) {
+      toast(`Failed: ${e.message}`, 'error');
+    } finally {
+      setStarting(false);
+    }
+  }, [sheetUrl, range, orgId, onRefresh]);
+
+  return html`
+    <div class="panel">
+      <h3>Start reconciliation</h3>
+      <p class="muted">Paste a Google Sheets URL containing bank or card transactions. Clearledgr's agent will match them against posted AP items.</p>
+      <div style="display:flex;flex-direction:column;gap:12px;margin-top:16px">
+        <label>Google Sheet URL</label>
+        <input placeholder="https://docs.google.com/spreadsheets/d/..." value=${sheetUrl} onInput=${e => setSheetUrl(e.target.value)} />
+        <label>Sheet range</label>
+        <input placeholder="Sheet1!A:F" value=${range} onInput=${e => setRange(e.target.value)} />
+        <button onClick=${startRecon} disabled=${starting || !sheetUrl.trim()}>
+          ${starting ? 'Starting...' : 'Start reconciliation'}
+        </button>
+      </div>
+      ${result && html`
+        <div class="panel" style="margin-top:16px;background:var(--green-soft)">
+          <p><strong>Session:</strong> ${result.details?.session_id || 'Created'}</p>
+          <p class="muted">${result.details?.next_step || 'Agent will import and match transactions.'}</p>
+        </div>
+      `}
+    </div>
+    <div class="panel">
+      <h3>How it works</h3>
+      <p class="muted">
+        1. Import transactions from your spreadsheet<br/>
+        2. Match each transaction against posted invoices (by amount and date)<br/>
+        3. Flag exceptions for human review<br/>
+        4. Write results back to the sheet
+      </p>
+    </div>
+  `;
+}
+
 // ==================== MAIN APP ====================
 
-const PAGE_MAP = { setup: SetupPage, activity: ActivityPage, ops: OpsPage, integrations: IntegrationsPage, organization: OrganizationPage, policies: PoliciesPage, team: TeamPage, plan: PlanPage, health: HealthPage };
+const PAGE_MAP = { setup: SetupPage, activity: ActivityPage, ops: OpsPage, integrations: IntegrationsPage, organization: OrganizationPage, policies: PoliciesPage, team: TeamPage, plan: PlanPage, health: HealthPage, reconciliation: ReconciliationPage };
 
 function AdminApp() {
   const [authed, setAuthed] = useState(false);

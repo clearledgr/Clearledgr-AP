@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/gmail", tags=["gmail"])
 
+from clearledgr.services.gmail_labels import apply_label as apply_clearledgr_label
+
 _ORG_ADMIN_ROLES = {"admin", "owner", "api"}
 
 
@@ -393,21 +395,14 @@ async def process_single_email(
             confidence=classification.get("confidence", 0.0),
         )
     
-    # Add processed label
-    try:
-        # First ensure the label exists
-        labels = await client.list_labels()
-        clearledgr_label = next(
-            (l for l in labels if l["name"] == "Clearledgr/Processed"),
-            None
-        )
-        
-        if not clearledgr_label:
-            clearledgr_label = await client.create_label("Clearledgr/Processed")
-        
-        await client.add_label(message.id, [clearledgr_label["id"]])
-    except Exception as e:
-        logger.warning(f"Could not add label: {e}")
+    # Apply Gmail labels — users see AP status in their inbox (Fyxer pattern)
+    user_email = message.sender or ""
+    await apply_clearledgr_label(client, message.id, "processed", user_email)
+    if category == "invoice":
+        await apply_clearledgr_label(client, message.id, "invoice", user_email)
+        await apply_clearledgr_label(client, message.id, "needs_approval", user_email)
+    elif category == "payment_request":
+        await apply_clearledgr_label(client, message.id, "payment", user_email)
 
 
 async def classify_email_with_llm(
@@ -558,10 +553,56 @@ async def process_invoice_email(
             correlation_id=invoice.correlation_id,
         )
         logger.info("Finance runtime AP result: %s", result.get("status"))
-        return result
     except Exception as e:
         logger.error("Finance runtime AP processing failed: %s", e)
-        return {"status": "error", "error": str(e)}
+        result = {"status": "error", "error": str(e)}
+
+    # Create draft summary on the thread (Fyxer pattern)
+    # User opens the thread → sees a draft with the extracted invoice data
+    try:
+        await _create_invoice_draft_summary(client, message, invoice)
+    except Exception as exc:
+        logger.warning("Could not create draft summary: %s", exc)
+
+    return result
+
+
+async def _create_invoice_draft_summary(client: GmailAPIClient, message, invoice):
+    """Create a Gmail draft reply summarizing the extracted invoice data.
+
+    Fyxer pattern: the user opens a thread and finds a draft with structured
+    invoice data ready to forward, approve, or reference.
+    """
+    vendor = invoice.vendor_name or "Unknown"
+    amount = invoice.amount or 0
+    currency = invoice.currency or "USD"
+    inv_num = invoice.invoice_number or "N/A"
+    due = invoice.due_date or "Not specified"
+
+    amount_str = f"${amount:,.2f}" if isinstance(amount, (int, float)) and amount else str(amount)
+
+    body = (
+        f"Clearledgr detected an invoice in this thread.\n\n"
+        f"  Vendor:     {vendor}\n"
+        f"  Amount:     {amount_str} {currency}\n"
+        f"  Invoice #:  {inv_num}\n"
+        f"  Due date:   {due}\n"
+        f"  Confidence: {invoice.confidence:.0%}\n\n"
+        f"Status: Needs approval\n"
+        f"---\n"
+        f"This draft was created by Clearledgr. "
+        f"Delete it if not needed, or forward it to your approver."
+    )
+
+    thread_id = getattr(message, 'thread_id', None) or message.id
+    to_addr = getattr(message, 'sender', '') or ''
+
+    await client.create_draft(
+        thread_id=thread_id,
+        to=to_addr,
+        subject=f"Re: {message.subject or 'Invoice'}",
+        body=body,
+    )
 
 
 def _extract_vendor_from_sender(sender: str) -> str:
@@ -673,7 +714,18 @@ async def gmail_callback(code: str, state: Optional[str] = None):
         
         # Store token
         token_store.store(token)
-        
+
+        # Pre-create Clearledgr labels so they appear in Gmail immediately
+        try:
+            from clearledgr.services.gmail_labels import CLEARLEDGR_LABELS, ensure_label
+            label_client = GmailAPIClient(token.user_id)
+            if await label_client.ensure_authenticated():
+                for key in CLEARLEDGR_LABELS:
+                    await ensure_label(label_client, key, token.email or "")
+                logger.info("Pre-created Clearledgr labels for %s", token.email)
+        except Exception as exc:
+            logger.warning("Could not pre-create labels: %s", exc)
+
         watch_result: Dict[str, Any] = {}
         watch_status = "skipped"
         watch_error: Optional[str] = None

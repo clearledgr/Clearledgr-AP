@@ -9,8 +9,8 @@ import {
 const html = htm.bind(h);
 
 const BUCKETS = [
-  { id: 'blocked', label: 'Blocked / failed' },
-  { id: 'awaiting_approval', label: 'Awaiting approval' },
+  { id: 'blocked', label: 'Blocked / Failed' },
+  { id: 'awaiting_approval', label: 'Awaiting Approval' },
   { id: 'executing', label: 'Executing' },
   { id: 'planned', label: 'Planned' },
   { id: 'completed', label: 'Completed' },
@@ -68,7 +68,7 @@ function buildEntries(agentEvents, auditEvents, maxEntries = 14) {
     const fromState = String(event?.from_state || payload?.from_state || '').trim();
     const toState = String(event?.to_state || payload?.to_state || '').trim();
     const title = (fromState || toState)
-      ? `State: ${getStateLabel(fromState || 'received')} → ${getStateLabel(toState || fromState || 'received')}`
+      ? `${getStateLabel(fromState || 'received')} \u2192 ${getStateLabel(toState || fromState || 'received')}`
       : prettifyEventType(eventType || 'audit_event');
     const reason = String(event?.decision_reason || event?.reason || payload?.reason || payload?.error_message || '').trim();
 
@@ -91,10 +91,10 @@ export default function AgentTimeline({ agentEvents, auditEvents, loading }) {
   const entries = buildEntries(agentEvents, auditEvents);
 
   if (!entries.length && loading) {
-    return html`<div class="cl-agent-timeline-empty">Loading timeline breadcrumbs…</div>`;
+    return html`<div class="cl-agent-timeline-empty">Loading timeline\u2026</div>`;
   }
   if (!entries.length) {
-    return html`<div class="cl-agent-timeline-empty">No agent timeline events yet.</div>`;
+    return html`<div class="cl-agent-timeline-empty">No timeline events yet.</div>`;
   }
 
   const grouped = new Map();

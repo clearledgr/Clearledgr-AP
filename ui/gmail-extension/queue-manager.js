@@ -101,7 +101,21 @@ class ClearledgrQueueManager {
 
   getItemByThreadId(threadId) {
     if (!threadId) return null;
-    return this.queue.find((item) => item.thread_id === threadId || item.threadId === threadId) || null;
+    return this.queue.find((item) => (
+      item.thread_id === threadId
+      || item.threadId === threadId
+      || item.message_id === threadId
+      || item.messageId === threadId
+    )) || null;
+  }
+
+  buildItemLocator(item) {
+    const apItemId = String(item?.id || item?.ap_item_id || '').trim();
+    const emailId = String(item?.thread_id || item?.threadId || item?.message_id || item?.messageId || apItemId).trim();
+    return {
+      ap_item_id: apItemId || undefined,
+      email_id: emailId || undefined,
+    };
   }
 
   getAgentSessionForItem(itemId) {
@@ -595,10 +609,10 @@ class ClearledgrQueueManager {
     const configuredAuthEntryMode = String(
       extensionConfig.AUTH_ENTRY_MODE || extensionConfig.SIDEBAR_AUTH_ENTRY_MODE || ''
     ).trim().toLowerCase();
-    const backendUrl = String(raw.backendUrl || configuredBackendUrl || 'http://127.0.0.1:8000')
+    const backendUrl = String(raw.backendUrl || configuredBackendUrl || 'http://127.0.0.1:8010')
       .trim()
       .replace(/\/+$/, '');
-    const authEntryMode = String(raw.authEntryMode || configuredAuthEntryMode || 'admin_console')
+    const authEntryMode = String(raw.authEntryMode || configuredAuthEntryMode || 'inline')
       .trim()
       .toLowerCase() === 'inline'
       ? 'inline'
@@ -1477,6 +1491,7 @@ class ClearledgrQueueManager {
 
   async verifyConfidence(item) {
     if (!item || !this.runtimeConfig?.backendUrl) return null;
+    const locator = this.buildItemLocator(item);
     const extraction = {
       vendor: item.vendor_name || item.vendor || '',
       amount: item.amount,
@@ -1488,7 +1503,7 @@ class ClearledgrQueueManager {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email_id: item.thread_id || item.message_id || item.id,
+          ...locator,
           extraction,
           organization_id: this.runtimeConfig.organizationId || 'default',
         })
@@ -1500,39 +1515,23 @@ class ClearledgrQueueManager {
     }
   }
 
-  async approveAndPost(item, { override = false, overrideJustification = '' } = {}) {
+  async approveAndPost(item, { override = false, overrideJustification = '', idempotencyKey = '' } = {}) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'error', reason: 'invalid' };
-    const extraction = {
-      vendor: item.vendor_name || item.vendor || '',
-      amount: item.amount,
-      currency: item.currency || 'USD',
-      invoice_number: item.invoice_number || '',
-      due_date: item.due_date || '',
-    };
-    if (override && overrideJustification) {
-      extraction.override_justification = overrideJustification;
-    }
+    const locator = this.buildItemLocator(item);
     try {
-      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/approve-and-post`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email_id: item.thread_id || item.message_id || item.id,
-          extraction,
-          override,
-          organization_id: this.runtimeConfig.organizationId || 'default',
-          user_email: this.runtimeConfig.userEmail || 'gmail_extension',
-        })
-      });
-      if (!response.ok) {
-        let detail = '';
-        try {
-          const errPayload = await response.json();
-          detail = errPayload?.detail || '';
-        } catch (_) {}
-        return { status: 'error', reason: detail || `http_${response.status}` };
-      }
-      const result = await response.json();
+      const result = await this.executeAgentIntent(
+        'post_to_erp',
+        {
+          ...locator,
+          override: Boolean(override),
+          override_justification: overrideJustification || undefined,
+          field_confidences: item.field_confidences || undefined,
+        },
+        {
+          idempotencyKey,
+          defaultStatus: 'error',
+        }
+      );
       await this.syncQueueWithBackend({ updateStatus: false });
       this.emitQueueUpdated();
       return result;
@@ -1584,70 +1583,65 @@ class ClearledgrQueueManager {
     reason = '',
   } = {}) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
-    const key = String(idempotencyKey || '').trim();
-    const payload = {
-      email_id: item.thread_id || item.message_id || item.id,
-      invoice_key: item.invoice_key,
-      subject: item.subject,
-      sender: item.sender,
-      vendor: item.vendor_name || item.vendor,
-      amount: item.amount,
-      currency: item.currency,
-      invoice_number: item.invoice_number,
-      due_date: item.due_date,
-      confidence: item.confidence || 0,
-      organization_id: this.runtimeConfig.organizationId,
-      user_email: this.runtimeConfig.userEmail,
-      slack_channel: this.runtimeConfig.slackChannel,
-      idempotency_key: key || undefined,
-      agent_decision: forceHumanReview
-        ? {
-            decision: 'needs_review',
-            reasoning: { summary: reason || 'batch_route_low_risk_for_approval' },
-          }
-        : undefined,
-    };
-
-    const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/submit-for-approval`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      return { status: 'error' };
-    }
-    const result = await response.json();
-    if (result.ap_item) this.upsertQueueItem(result.ap_item);
+    const locator = this.buildItemLocator(item);
+    const result = await this.executeAgentIntent(
+      'request_approval',
+      {
+        ...locator,
+        force_human_review: Boolean(forceHumanReview),
+        reason: reason || undefined,
+      },
+      {
+        idempotencyKey,
+        defaultStatus: 'pending_approval',
+      }
+    );
     this.emitQueueUpdated();
+    await this.syncQueueWithBackend({ updateStatus: false });
     return result;
   }
 
-  async nudgeApproval(item, { message = '' } = {}) {
+  async nudgeApproval(item, { message = '', idempotencyKey = '' } = {}) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const locator = this.buildItemLocator(item);
     try {
-      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/approval-nudge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email_id: item.thread_id || item.message_id || item.id,
+      const result = await this.executeAgentIntent(
+        'nudge_approval',
+        {
+          ...locator,
           message: message || undefined,
-          organization_id: this.runtimeConfig.organizationId || 'default',
-          user_email: this.runtimeConfig.userEmail || 'gmail_extension',
-        })
-      });
-      if (!response.ok) {
-        let detail = '';
-        try {
-          const errPayload = await response.json();
-          detail = errPayload?.detail || '';
-        } catch (_) {}
-        return { status: 'error', reason: detail || `http_${response.status}` };
-      }
-      const result = await response.json();
+        },
+        {
+          idempotencyKey,
+          defaultStatus: 'error',
+        }
+      );
       await this.syncQueueWithBackend({ updateStatus: false });
       this.emitQueueUpdated();
       return result || { status: 'nudged' };
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async rejectInvoice(item, { reason = '', idempotencyKey = '' } = {}) {
+    if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid', reason: 'invalid' };
+    const locator = this.buildItemLocator(item);
+    try {
+      const result = await this.executeAgentIntent(
+        'reject_invoice',
+        {
+          ...locator,
+          reason: reason || 'Rejected from Gmail',
+        },
+        {
+          idempotencyKey,
+          defaultStatus: 'error',
+        }
+      );
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result || { status: 'rejected' };
     } catch (_) {
       return { status: 'error', reason: 'network_error' };
     }
@@ -1697,11 +1691,11 @@ class ClearledgrQueueManager {
   async prepareVendorFollowup(item, { reason = '', force = false, idempotencyKey = '' } = {}) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
     try {
-      const reference = item.id || item.thread_id || item.message_id;
+      const locator = this.buildItemLocator(item);
       const result = await this.executeAgentIntent(
         'prepare_vendor_followups',
         {
-          email_id: reference,
+          ...locator,
           reason: reason || undefined,
           force: Boolean(force),
         },
@@ -1750,11 +1744,11 @@ class ClearledgrQueueManager {
   async routeLowRiskForApproval(item, { idempotencyKey = '', reason = '' } = {}) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
     try {
-      const reference = item.id || item.thread_id || item.message_id;
+      const locator = this.buildItemLocator(item);
       const result = await this.executeAgentIntent(
         'route_low_risk_for_approval',
         {
-          email_id: reference,
+          ...locator,
           reason: reason || undefined,
         },
         {
@@ -1773,11 +1767,11 @@ class ClearledgrQueueManager {
   async retryRecoverableFailure(item, { idempotencyKey = '', reason = '' } = {}) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
     try {
-      const reference = item.id || item.thread_id || item.message_id;
+      const locator = this.buildItemLocator(item);
       const result = await this.executeAgentIntent(
         'retry_recoverable_failures',
         {
-          email_id: reference,
+          ...locator,
           reason: reason || undefined,
         },
         {
@@ -1800,12 +1794,13 @@ class ClearledgrQueueManager {
     previewOnly = false
   } = {}) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const locator = this.buildItemLocator(item);
     try {
       const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/finance-summary-share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email_id: item.thread_id || item.message_id || item.id,
+          ...locator,
           target,
           preview_only: Boolean(previewOnly),
           recipient_email: recipientEmail || this.runtimeConfig.financeLeadEmail || undefined,
@@ -1834,8 +1829,9 @@ class ClearledgrQueueManager {
 
   async submitBudgetDecision(item, decision, justification = '') {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const locator = this.buildItemLocator(item);
     const payload = {
-      email_id: item.thread_id || item.message_id || item.id,
+      ...locator,
       decision,
       justification,
       organization_id: this.runtimeConfig.organizationId,

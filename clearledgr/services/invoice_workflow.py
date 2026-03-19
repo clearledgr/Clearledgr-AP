@@ -2,10 +2,10 @@
 Invoice Workflow Service
 
 Orchestrates the complete invoice lifecycle:
-Gmail Detection → Data Extraction → Slack Approval → ERP Posting
+Gmail Detection → Data Extraction → Approval Routing → ERP Posting
 
-This is the heart of "Streak for Finance" - bringing AP workflow into the tools
-finance teams already use.
+Core AP execution workflow — agents detect invoices, validate, route approvals,
+and post to ERP inside the tools finance teams already use.
 """
 
 import json

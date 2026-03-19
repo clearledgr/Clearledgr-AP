@@ -34,13 +34,17 @@ export function useActionDialog() {
 
 export default function ActionDialog({ visible, config, onClose }) {
   const inputRef = useRef(null);
+  const confirmRef = useRef(null);
   const dialogRef = useRef(null);
   const [value, setValue] = useState('');
 
   const {
     actionType = 'generic',
+    dialogMode = 'input',
     title = 'Add context',
     label = 'Reason',
+    message = '',
+    previewLines = [],
     placeholder = '',
     defaultValue = '',
     confirmLabel = 'Confirm',
@@ -52,22 +56,30 @@ export default function ActionDialog({ visible, config, onClose }) {
   const defaults = getReasonSheetDefaults(actionType);
   const chipList = Array.isArray(chipsProp) && chipsProp.length ? chipsProp : defaults.chips;
   const isRequired = requiredProp !== undefined ? Boolean(requiredProp) : Boolean(defaults.required);
+  const isConfirmOnly = dialogMode === 'confirm';
 
   useEffect(() => {
     if (visible) {
       setValue(defaultValue || '');
-      setTimeout(() => inputRef.current?.focus(), 0);
+      setTimeout(() => {
+        if (isConfirmOnly) confirmRef.current?.focus();
+        else inputRef.current?.focus();
+      }, 0);
     }
-  }, [visible, defaultValue]);
+  }, [visible, defaultValue, isConfirmOnly]);
 
   const handleConfirm = useCallback(() => {
+    if (isConfirmOnly) {
+      onClose?.(true);
+      return;
+    }
     const trimmed = value.trim();
     if (isRequired && !trimmed) {
       inputRef.current?.focus();
       return;
     }
     onClose?.(trimmed);
-  }, [value, isRequired, onClose]);
+  }, [isConfirmOnly, value, isRequired, onClose]);
 
   const handleCancel = useCallback(() => onClose?.(null), [onClose]);
 
@@ -102,27 +114,35 @@ export default function ActionDialog({ visible, config, onClose }) {
   if (!visible) return null;
 
   return html`
-    <div ref=${dialogRef} class="cl-action-dialog" aria-hidden="false"
+    <div ref=${dialogRef} class="cl-action-dialog" style="display:flex" aria-hidden="false"
       onClick=${handleBackdrop} onKeyDown=${handleDialogKeyDown}>
       <div class="cl-action-dialog-card" role="dialog" aria-modal="true" aria-labelledby="cl-dialog-title">
         <div class="cl-action-dialog-title" id="cl-dialog-title">${title}</div>
-        <label class="cl-action-dialog-label" id="cl-dialog-label">${label}</label>
-        <div class="cl-action-dialog-chips">
-          ${chipList.map((chip, i) => html`
-            <button key=${i} type="button" class="cl-action-chip"
-              onClick=${() => handleChip(chip)}>${chip}</button>
-          `)}
-        </div>
-        <input ref=${inputRef} class="cl-action-dialog-input" type="text"
-          value=${value} onInput=${e => setValue(e.target.value)}
-          onKeyDown=${handleKeyDown} placeholder=${placeholder}
-          aria-labelledby="cl-dialog-label" />
-        <div class="cl-action-dialog-hint">
-          ${isRequired ? 'A reason is required for this action.' : 'Optional note. Choose a quick reason or write your own.'}
-        </div>
+        ${message && html`<div class="cl-action-dialog-message">${message}</div>`}
+        ${Array.isArray(previewLines) && previewLines.length > 0 && html`
+          <div class="cl-action-dialog-preview">
+            ${previewLines.map((line, index) => html`<div key=${index} class="cl-action-dialog-preview-line">${line}</div>`)}
+          </div>
+        `}
+        ${!isConfirmOnly && html`
+          <label class="cl-action-dialog-label" id="cl-dialog-label">${label}</label>
+          <div class="cl-action-dialog-chips">
+            ${chipList.map((chip, i) => html`
+              <button key=${i} type="button" class="cl-action-chip"
+                onClick=${() => handleChip(chip)}>${chip}</button>
+            `)}
+          </div>
+          <input ref=${inputRef} class="cl-action-dialog-input" type="text"
+            value=${value} onInput=${e => setValue(e.target.value)}
+            onKeyDown=${handleKeyDown} placeholder=${placeholder}
+            aria-labelledby="cl-dialog-label" />
+          <div class="cl-action-dialog-hint">
+            ${isRequired ? 'A reason is required for this action.' : 'Optional note. Choose a quick reason or type your own.'}
+          </div>
+        `}
         <div class="cl-action-dialog-actions">
-          <button class="cl-btn cl-btn-secondary cl-action-dialog-cancel" onClick=${handleCancel}>${cancelLabel}</button>
-          <button class="cl-btn cl-action-dialog-confirm" onClick=${handleConfirm}>${confirmLabel}</button>
+          <button class="cl-btn cl-btn-secondary" onClick=${handleCancel}>${cancelLabel}</button>
+          <button ref=${confirmRef} class="cl-btn" onClick=${handleConfirm}>${confirmLabel}</button>
         </div>
       </div>
     </div>

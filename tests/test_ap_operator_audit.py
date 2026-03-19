@@ -114,6 +114,45 @@ def test_normalize_operator_audit_event_maps_erp_fallback_requested():
     assert "fallback" in str(fallback_requested["operator_message"]).lower()
 
 
+def test_normalize_operator_audit_event_maps_runtime_event_classes_to_plain_language():
+    approval_sent = normalize_operator_audit_event(
+        {
+            "id": "evt-10",
+            "event_type": "approval_request_routed",
+        }
+    )
+    erp_posted = normalize_operator_audit_event(
+        {
+            "id": "evt-11",
+            "event_type": "erp_post_completed",
+        }
+    )
+    retry_done = normalize_operator_audit_event(
+        {
+            "id": "evt-12",
+            "event_type": "retry_recoverable_failure_completed",
+        }
+    )
+    followup_ready = normalize_operator_audit_event(
+        {
+            "id": "evt-13",
+            "event_type": "vendor_followup_draft_prepared",
+        }
+    )
+
+    assert approval_sent["operator_title"] == "Approval request sent"
+    assert "routed" in str(approval_sent["operator_message"]).lower()
+
+    assert erp_posted["operator_title"] == "Posted to ERP"
+    assert "completed successfully" in str(erp_posted["operator_message"]).lower()
+
+    assert retry_done["operator_title"] == "Retry completed"
+    assert "retried" in str(retry_done["operator_message"]).lower()
+
+    assert followup_ready["operator_title"] == "Vendor follow-up prepared"
+    assert "draft is ready" in str(followup_ready["operator_message"]).lower()
+
+
 def test_normalize_operator_audit_event_prefers_canonical_mapping_over_stale_operator_payload():
     row = normalize_operator_audit_event(
         {

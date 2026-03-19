@@ -4,11 +4,11 @@
 
 Before building anything, read `MVP_SCOPE.md` for the V1 scope definition.
 
-**V1 = "Streak for AP"** - Invoice approval workflow inside Gmail + Slack.
+**V1 = AP-first finance execution** — agents process invoices end-to-end inside Gmail + Slack/Teams + ERP.
 **NOT V1:** Bank reconciliation, Sheets integration, PO matching.
 
 ## Project Overview
-Clearledgr is an AI-powered finance operations platform that embeds into existing workflows (Gmail, Slack) to automate invoice processing. Target market: Growing companies (50-500 employees) using QuickBooks/Xero/NetSuite.
+Clearledgr is the execution layer for finance operations, embedding AI agents into the tools finance teams already use (email, spreadsheets, ERPs, communication tools, internal systems) to execute finance workflows end-to-end. AP is the first workflow. Target market: Growing companies (50-500 employees) using QuickBooks/Xero/NetSuite.
 
 ---
 

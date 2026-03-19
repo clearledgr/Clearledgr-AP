@@ -258,3 +258,35 @@ class OverrideContext:
         if self.extra:
             d.update(self.extra)
         return d
+
+
+# ==================== WorkflowStateMachine protocol conformance ====================
+
+AP_TERMINAL_STATES: FrozenSet[APState] = frozenset({APState.REJECTED, APState.CLOSED})
+
+
+class _APStateMachine:
+    """Satisfies WorkflowStateMachine protocol via structural typing."""
+
+    @staticmethod
+    def states() -> FrozenSet[str]:
+        return frozenset(s.value for s in APState)
+
+    @staticmethod
+    def transitions() -> Dict[str, FrozenSet[str]]:
+        return {k.value: frozenset(v.value for v in vs) for k, vs in VALID_TRANSITIONS.items()}
+
+    @staticmethod
+    def terminal_states() -> FrozenSet[str]:
+        return frozenset(s.value for s in AP_TERMINAL_STATES)
+
+    @staticmethod
+    def validate_transition(current: str, target: str) -> bool:
+        return validate_transition(current, target)
+
+    @staticmethod
+    def normalize(raw: str) -> str:
+        return normalize_state(raw)
+
+
+AP_STATE_MACHINE = _APStateMachine()

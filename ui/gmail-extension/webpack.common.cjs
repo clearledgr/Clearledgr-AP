@@ -1,7 +1,6 @@
 'use strict';
 
 const path = require('path');
-const CopyPlugin = require('copy-webpack-plugin');
 
 module.exports = {
   entry: {
@@ -11,16 +10,6 @@ module.exports = {
     pageWorld: '@inboxsdk/core/pageWorld.js',
     // InboxSDK background script
     'inboxsdk-background': '@inboxsdk/core/background.js',
-  },
-  devtool: 'source-map',
-  module: {
-    rules: [
-      {
-        test: /\.m?js$/,
-        enforce: 'pre',
-        use: ['source-map-loader'],
-      },
-    ],
   },
   output: {
     path: path.resolve(__dirname, 'dist'),
@@ -33,12 +22,6 @@ module.exports = {
     chunkFormat: false,
   },
   plugins: [
-    new CopyPlugin({
-      patterns: [
-        // Copy pageWorld to web_accessible_resources
-        { from: 'node_modules/@inboxsdk/core/pageWorld.js', to: 'pageWorld.js' },
-      ],
-    }),
   ],
   resolve: {
     extensions: ['.js', '.mjs'],

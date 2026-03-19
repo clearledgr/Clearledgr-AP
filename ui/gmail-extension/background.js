@@ -193,7 +193,9 @@ function launchWebAuthFlow() {
     const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     authUrl.searchParams.set('client_id', OAUTH_CONFIG.webClientId);
     authUrl.searchParams.set('redirect_uri', redirectUrl);
-    authUrl.searchParams.set('response_type', 'token');
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('access_type', 'offline');
+    authUrl.searchParams.set('prompt', 'consent');
     authUrl.searchParams.set('scope', OAUTH_CONFIG.scopes.join(' '));
     authUrl.searchParams.set('include_granted_scopes', 'true');
 
@@ -206,12 +208,20 @@ function launchWebAuthFlow() {
         reject(new Error('No OAuth response URL'));
         return;
       }
+      // Authorization code flow: code is in query params, not hash fragment
       const url = new URL(responseUrl);
+      const code = url.searchParams.get('code');
+      if (code) {
+        // Exchange code for tokens via backend (backend has client_secret)
+        exchangeCodeForTokens(code, redirectUrl).then(resolve).catch(reject);
+        return;
+      }
+      // Fallback: implicit flow (access_token in hash)
       const params = new URLSearchParams(url.hash.slice(1));
       const token = params.get('access_token');
       const expiresIn = parseInt(params.get('expires_in') || '3600', 10);
       if (!token) {
-        reject(new Error('No access token'));
+        reject(new Error('No access token or authorization code'));
         return;
       }
       cachedToken = token;
@@ -221,6 +231,39 @@ function launchWebAuthFlow() {
     });
   });
 }
+
+async function exchangeCodeForTokens(code, redirectUri) {
+  const backendUrl = await getBackendUrl();
+  const response = await fetchWithRetry(`${backendUrl}/extension/gmail/exchange-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, redirect_uri: redirectUri })
+  }, 1);
+  if (!response.ok) {
+    let detail = `code_exchange_failed_${response.status}`;
+    try {
+      const payload = await response.json();
+      if (payload?.detail) detail = String(payload.detail);
+    } catch (_) { /* ignore */ }
+    throw new Error(detail);
+  }
+  const result = await response.json();
+  // Backend exchanged code and stored tokens (including refresh token for 24/7 scanning).
+  // Cache the access token locally for extension API calls.
+  const accessToken = result.access_token || '';
+  const expiresIn = Number(result.expires_in || 3600);
+  if (accessToken) {
+    cachedToken = accessToken;
+    tokenExpiry = Date.now() + (expiresIn * 1000) - 60000;
+    chrome.storage.local.set({ gmail_token: accessToken, gmail_token_expiry: tokenExpiry });
+  }
+  // Mark that backend registration is already done (code exchange did it)
+  codeExchangeResult = result;
+  return accessToken;
+}
+
+// Set by exchangeCodeForTokens so ensureGmailAuthWithBackend can skip double-registration
+let codeExchangeResult = null;
 
 function getTokenTtlSeconds() {
   if (!tokenExpiry) return 3600;
@@ -286,7 +329,14 @@ async function ensureGmailAuthWithBackend(interactive = true) {
   const run = async () => {
     let attemptedFreshToken = false;
     while (true) {
+      codeExchangeResult = null;
       const token = await getAuthToken(wantsInteractive);
+      // If token came from code exchange, backend already has it (with refresh token)
+      if (codeExchangeResult) {
+        const result = codeExchangeResult;
+        codeExchangeResult = null;
+        return result;
+      }
       try {
         return await registerGmailTokenWithBackend(token);
       } catch (error) {
@@ -890,5 +940,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .then((result) => sendResponse({ success: true, result }))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
+  }
+
+  if (request.action === 'showNotification') {
+    const { title, message, iconUrl, notificationId } = request;
+    chrome.notifications.create(notificationId || `cl-${Date.now()}`, {
+      type: 'basic',
+      iconUrl: iconUrl || 'icons/icon128.png',
+      title: title || 'Clearledgr',
+      message: message || '',
+      priority: 1,
+    });
+    sendResponse({ success: true });
+    return false;
   }
 });

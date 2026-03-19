@@ -2,9 +2,9 @@
 
 ## Core Thesis
 
-Clearledgr is a Finance AI Agent.
+Clearledgr is the execution layer for finance operations — AI agents embedded in the tools finance teams already use.
 
-Like coding agents execute software tasks, Clearledgr executes finance workflows with policy gates, human controls, durable execution, and auditable outcomes.
+Like coding agents execute software tasks, Clearledgr's agents execute finance workflows end-to-end across email, spreadsheets, ERPs, and communication tools — with policy gates, human controls, durable execution, and auditable outcomes.
 
 ## Product Direction
 
@@ -58,12 +58,16 @@ Clearledgr runs one core agent runtime with reusable skill contracts:
 
 ## Surface Doctrine
 
-1. Gmail is Work-only: decision-first operator experience for AP items.
-2. Slack/Teams are approval and escalation decision surfaces.
-3. Admin Console is for ops/monitoring/batch/debug and setup controls.
-4. Ops/telemetry/batch/raw debug content does not live in Gmail work UI.
-5. Onboarding/account management is Admin-first (team roles, integrations, reconnects), with Gmail linking out when setup is required.
-6. Gmail extension release integrity is CI-enforced: shipped `dist` must match source doctrine and cannot include legacy popup/options/demo surfaces.
+1. Gmail is the primary Clearledgr product shell.
+2. Gmail thread sidebar is the daily AP execution surface: action-first, decision-first, compact.
+3. Gmail-native routed pages handle onboarding, integrations, monitoring, policy management, team access, plan, and health.
+4. Default pinned Gmail nav stays intentionally sparse: `Home`, `Pipeline`, `Connections`.
+5. `Activity` and other secondary pages remain available through Home or user pinning, not as default clutter.
+6. Slack/Teams are approval and escalation decision surfaces.
+7. Ops/telemetry/batch/raw debug content does not live in the Gmail thread work card; it is role-gated in Gmail-native routed pages.
+8. Onboarding/account management is admin-first, but it remains inside the Gmail product shell rather than forcing a separate operating console.
+9. Gmail authorization is explicit from inline product CTAs, not automatic startup popups.
+10. Gmail extension release integrity is CI-enforced: shipped `dist` must match source doctrine and cannot include legacy popup/options/demo surfaces.
 
 ## Positioning
 
