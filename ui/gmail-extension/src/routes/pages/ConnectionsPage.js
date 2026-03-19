@@ -44,27 +44,37 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
   const erp = integrationByName(bootstrap, 'erp');
   const slack = integrationByName(bootstrap, 'slack');
   const teams = integrationByName(bootstrap, 'teams');
+  const gmailReconnectRequired = Boolean(gmail.connected && (gmail.requires_reconnect || gmail.durable === false));
+
+  const [connectGmail, gmailPending] = useAction(async () => {
+    const authUrl = bootstrap?.gmail_auth_url || bootstrap?.integrations?.find?.((it) => it.type === 'gmail')?.auth_url;
+    if (authUrl) {
+      oauthBridge.startOAuth(authUrl, 'gmail');
+      return;
+    }
+    navigate?.('clearledgr/home');
+  });
 
   const [connectSlack, slackPending] = useAction(async () => {
-    const p = await api('/api/admin/integrations/slack/install/start', { method: 'POST', body: JSON.stringify({ organization_id: orgId, mode: 'per_org', redirect_path: '/console' }) });
+    const p = await api('/api/workspace/integrations/slack/install/start', { method: 'POST', body: JSON.stringify({ organization_id: orgId, mode: 'per_org', redirect_path: '/workspace' }) });
     oauthBridge.startOAuth(p.auth_url, 'slack');
   });
   const [saveChannel, saveChannelPending] = useAction(async () => {
-    await api('/api/admin/integrations/slack/channel', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById('cl-slack-channel')?.value?.trim() }) });
+    await api('/api/workspace/integrations/slack/channel', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById('cl-slack-channel')?.value?.trim() }) });
     toast('Channel saved.'); onRefresh();
   });
   const [testSlackMsg, testSlackPending] = useAction(async () => {
-    await api('/api/admin/integrations/slack/test', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById('cl-slack-channel')?.value?.trim() }) });
+    await api('/api/workspace/integrations/slack/test', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById('cl-slack-channel')?.value?.trim() }) });
     toast('Test sent to Slack.');
   });
   const [saveWebhook, saveWebhookPending] = useAction(async () => {
     const wh = document.getElementById('cl-teams-webhook')?.value?.trim();
     if (!wh) { toast('Webhook URL required.', 'error'); return; }
-    await api('/api/admin/integrations/teams/webhook', { method: 'POST', body: JSON.stringify({ organization_id: orgId, webhook_url: wh }) });
+    await api('/api/workspace/integrations/teams/webhook', { method: 'POST', body: JSON.stringify({ organization_id: orgId, webhook_url: wh }) });
     toast('Teams webhook saved.'); onRefresh();
   });
   const [testTeamsMsg, testTeamsPending] = useAction(async () => {
-    await api('/api/admin/integrations/teams/test', { method: 'POST', body: JSON.stringify({ organization_id: orgId }) });
+    await api('/api/workspace/integrations/teams/test', { method: 'POST', body: JSON.stringify({ organization_id: orgId }) });
     toast('Test sent to Teams.');
   });
 
@@ -77,8 +87,13 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
           label="Gmail"
           status=${gmail.status || (gmail.connected ? 'connected' : 'disconnected')}
           detail=${gmail.connected
-            ? 'Gmail monitoring is connected for this workspace.'
+            ? (gmailReconnectRequired
+              ? 'Reconnect Gmail to restore durable background monitoring for this workspace.'
+              : 'Gmail monitoring is connected for this workspace.')
             : 'Connect Gmail from the thread prompt or the first-run setup flow.'}
+          actionLabel=${gmail.connected ? (gmailReconnectRequired ? 'Reconnect Gmail' : '') : 'Connect Gmail'}
+          onAction=${connectGmail}
+          pending=${gmailPending}
         />
         <${ConnectionRow}
           label="Slack"

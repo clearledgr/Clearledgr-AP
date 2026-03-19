@@ -33,7 +33,13 @@ from clearledgr.core.ap_item_resolution import resolve_ap_item_reference
 from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email
 from clearledgr.core.database import get_db
 from clearledgr.api.ap_items import build_worklist_item
-from clearledgr.services.gmail_api import GmailToken, token_store, GMAIL_PROFILE_URL, GOOGLE_USERINFO_URL
+from clearledgr.services.gmail_api import (
+    GmailAPIClient,
+    GmailToken,
+    token_store,
+    GMAIL_PROFILE_URL,
+    GOOGLE_USERINFO_URL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +76,77 @@ def _authenticated_actor(user: Any, fallback: str = "extension") -> str:
         or getattr(user, "user_id", None)
         or fallback
     ).strip() or fallback
+
+
+async def _recover_ap_item_for_thread(
+    db: Any,
+    *,
+    organization_id: str,
+    thread_id: str,
+    user: Any,
+) -> Optional[Dict[str, Any]]:
+    """Self-heal detected Gmail invoices that never materialized into ap_items."""
+    user_id = str(getattr(user, "user_id", None) or "").strip()
+    if not user_id or not thread_id:
+        return None
+
+    try:
+        gmail_client = GmailAPIClient(user_id)
+        if not await gmail_client.ensure_authenticated():
+            return None
+        messages = await gmail_client.get_thread(thread_id)
+    except Exception:
+        return None
+
+    if not messages:
+        return None
+
+    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+
+    actor = _authenticated_actor(user, fallback="gmail_extension")
+    runtime = FinanceAgentRuntime(
+        organization_id=organization_id,
+        actor_id=user_id or actor,
+        actor_email=actor,
+        db=db,
+    )
+
+    for message in messages:
+        try:
+            existing = db.get_ap_item_by_message_id(organization_id, message.id)
+        except Exception:
+            existing = None
+        if existing:
+            return existing
+
+        finance_email = db.get_finance_email_by_gmail_id(message.id)
+        if not finance_email:
+            continue
+
+        seeded = runtime._seed_ap_item_for_invoice_processing(  # noqa: SLF001 - shared internal recovery path
+            {
+                "gmail_id": thread_id,
+                "thread_id": thread_id,
+                "message_id": message.id,
+                "gmail_thread_id": thread_id,
+                "gmail_message_id": message.id,
+                "subject": getattr(finance_email, "subject", "") or getattr(message, "subject", "") or "Invoice",
+                "sender": getattr(finance_email, "sender", "") or getattr(message, "sender", "") or "",
+                "vendor_name": getattr(finance_email, "vendor", None) or "",
+                "amount": getattr(finance_email, "amount", None) or 0.0,
+                "currency": getattr(finance_email, "currency", None) or "USD",
+                "invoice_number": getattr(finance_email, "invoice_number", None),
+                "confidence": getattr(finance_email, "confidence", 0.0) or 0.0,
+                "organization_id": organization_id,
+                "user_id": getattr(finance_email, "user_id", None) or user_id,
+                "email_type": getattr(finance_email, "email_type", None) or "invoice",
+                "intake_source": "gmail_thread_recovery",
+            },
+            correlation_id=f"gmail-thread-recovery:{thread_id}",
+        )
+        if seeded:
+            return seeded
+    return None
 
 
 # ==================== REQUEST MODELS ====================
@@ -727,6 +804,13 @@ async def get_ap_item_by_thread(
     db = get_db()
     item = db.get_ap_item_by_thread(org_id, thread_id)
     if not item:
+        item = await _recover_ap_item_for_thread(
+            db,
+            organization_id=org_id,
+            thread_id=thread_id,
+            user=user,
+        )
+    if not item:
         return {"found": False, "thread_id": thread_id, "item": None}
     return {"found": True, "thread_id": thread_id, "item": build_worklist_item(db, item)}
 
@@ -801,11 +885,13 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
     expires_in = int(request.expires_in or 3600)
     expires_in = max(60, min(expires_in, 86400))
     user_id = str(getattr(user, "id", "") or "").strip() or profile_email
+    existing_token = token_store.get(user_id)
+    preserved_refresh_token = existing_token.refresh_token if existing_token else ""
     token_store.store(
         GmailToken(
             user_id=user_id,
             access_token=access_token,
-            refresh_token="",
+            refresh_token=preserved_refresh_token,
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
             email=profile_email,
         )
@@ -894,6 +980,9 @@ async def exchange_gmail_code(request: ExchangeCodeRequest):
 
     user_id = str(getattr(user, "id", "") or "").strip() or profile_email
     resolved_org_id = str(getattr(user, "organization_id", None) or "default").strip()
+    existing_token = token_store.get(user_id)
+    if not refresh_token and existing_token and existing_token.refresh_token:
+        refresh_token = existing_token.refresh_token
 
     # Store token WITH refresh token — this is what enables 24/7 server-side scanning
     token_store.store(

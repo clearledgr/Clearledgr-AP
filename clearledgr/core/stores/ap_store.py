@@ -78,8 +78,8 @@ class APStore:
              approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
              supersedes_ap_item_id, supersedes_invoice_key, superseded_by_ap_item_id, resubmission_reason, erp_reference,
              erp_posted_at, workflow_id, run_id, approval_surface, approval_policy_version, post_attempted_at,
-             last_error, organization_id, user_id, created_at, updated_at, metadata, field_confidences)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             last_error, po_number, attachment_url, organization_id, user_id, created_at, updated_at, metadata, field_confidences)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         values = (
             item_id,
@@ -114,6 +114,8 @@ class APStore:
             payload.get("approval_policy_version"),
             payload.get("post_attempted_at"),
             payload.get("last_error"),
+            payload.get("po_number"),
+            payload.get("attachment_url"),
             payload.get("organization_id"),
             payload.get("user_id"),
             now,

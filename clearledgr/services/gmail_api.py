@@ -362,7 +362,25 @@ class GmailAPIClient:
             data = response.json()
         
         return self._parse_message(data)
-    
+
+    async def get_thread(self, thread_id: str, format: str = "full") -> List[GmailMessage]:
+        """Get all messages in a Gmail thread."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{GMAIL_API_BASE}/users/me/threads/{thread_id}",
+                headers=self._headers(),
+                params={"format": format},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        messages = data.get("messages", []) or []
+        return [
+            self._parse_message(message)
+            for message in messages
+            if isinstance(message, dict) and message.get("id")
+        ]
+
     def _parse_message(self, data: Dict[str, Any]) -> GmailMessage:
         """Parse Gmail API response into GmailMessage."""
         headers = {h["name"].lower(): h["value"] for h in data.get("payload", {}).get("headers", [])}

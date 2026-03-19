@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from main import app
-from clearledgr.api import admin_console as admin_console_module
+from clearledgr.api import workspace_shell as workspace_shell_module
 from clearledgr.core import database as db_module
 from clearledgr.core.auth import TokenData
 
@@ -38,16 +38,16 @@ def client(db):
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
 
-    app.dependency_overrides[admin_console_module.get_current_user] = _fake_user
+    app.dependency_overrides[workspace_shell_module.get_current_user] = _fake_user
     try:
         yield TestClient(app)
     finally:
-        app.dependency_overrides.pop(admin_console_module.get_current_user, None)
+        app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
 
 
 def test_admin_rollback_controls_put_get_and_health_projection(client, db):
     put = client.put(
-        "/api/admin/rollback-controls",
+        "/api/workspace/rollback-controls",
         json={
             "organization_id": "default",
             "controls": {
@@ -69,11 +69,11 @@ def test_admin_rollback_controls_put_get_and_health_projection(client, db):
     assert controls["erp_connectors_disabled"] == ["xero", "sap"]
     assert controls["updated_by"] == "admin-user-1"
 
-    get = client.get("/api/admin/rollback-controls?organization_id=default")
+    get = client.get("/api/workspace/rollback-controls?organization_id=default")
     assert get.status_code == 200
     assert get.json()["rollback_controls"]["reason"] == "incident_2026_02_25"
 
-    health = client.get("/api/admin/health?organization_id=default")
+    health = client.get("/api/workspace/health?organization_id=default")
     assert health.status_code == 200
     health_body = health.json()
     assert health_body["launch_controls"]["rollback_controls"]["erp_posting_disabled"] is True
@@ -82,7 +82,7 @@ def test_admin_rollback_controls_put_get_and_health_projection(client, db):
 
 def test_admin_ga_readiness_put_get_summary(client, db):
     put = client.put(
-        "/api/admin/ga-readiness",
+        "/api/workspace/ga-readiness",
         json={
             "organization_id": "default",
             "evidence": {
@@ -119,7 +119,7 @@ def test_admin_ga_readiness_put_get_summary(client, db):
     assert summary["connector_checklists_completed"] == 2
     assert summary["ready_for_ga"] is True
 
-    get = client.get("/api/admin/ga-readiness?organization_id=default")
+    get = client.get("/api/workspace/ga-readiness?organization_id=default")
     assert get.status_code == 200
     get_payload = get.json()
     assert get_payload["ga_readiness"]["updated_by"] == "admin-user-1"
@@ -137,7 +137,7 @@ def test_admin_ops_connector_readiness_endpoint(client, db):
         realm_id="realm-1",
     )
     _ = client.put(
-        "/api/admin/ga-readiness",
+        "/api/workspace/ga-readiness",
         json={
             "organization_id": "default",
             "evidence": {
@@ -148,7 +148,7 @@ def test_admin_ops_connector_readiness_endpoint(client, db):
         },
     )
 
-    response = client.get("/api/admin/ops/connector-readiness?organization_id=default")
+    response = client.get("/api/workspace/ops/connector-readiness?organization_id=default")
     assert response.status_code == 200
     payload = response.json()
     report = payload["connector_readiness"]
@@ -159,28 +159,28 @@ def test_admin_ops_connector_readiness_endpoint(client, db):
 
 def test_admin_erp_connect_start_supports_sap_form(client, db):
     response = client.post(
-        "/api/admin/integrations/erp/connect/start",
+        "/api/workspace/integrations/erp/connect/start",
         json={"organization_id": "default", "erp_type": "sap"},
     )
     assert response.status_code == 200
     payload = response.json()
     assert payload["erp_type"] == "sap"
     assert payload["method"] == "form"
-    assert payload["submit_url"] == "/api/admin/integrations/erp/connect/sap"
+    assert payload["submit_url"] == "/api/workspace/integrations/erp/connect/sap"
     field_names = {field["name"] for field in payload.get("fields", [])}
     assert {"base_url", "username", "password"}.issubset(field_names)
 
 
 def test_admin_erp_connect_start_supports_netsuite_form(client, db):
     response = client.post(
-        "/api/admin/integrations/erp/connect/start",
+        "/api/workspace/integrations/erp/connect/start",
         json={"organization_id": "default", "erp_type": "netsuite"},
     )
     assert response.status_code == 200
     payload = response.json()
     assert payload["erp_type"] == "netsuite"
     assert payload["method"] == "form"
-    assert payload["submit_url"] == "/api/admin/integrations/erp/connect/netsuite"
+    assert payload["submit_url"] == "/api/workspace/integrations/erp/connect/netsuite"
     field_names = {field["name"] for field in payload.get("fields", [])}
     assert {
         "account_id",
@@ -201,7 +201,7 @@ def test_admin_connect_netsuite_persists_connection(client, db, monkeypatch):
     )
 
     connect = client.post(
-        "/api/admin/integrations/erp/connect/netsuite",
+        "/api/workspace/integrations/erp/connect/netsuite",
         json={
             "organization_id": "default",
             "account_id": "123456_SB1",
@@ -217,7 +217,7 @@ def test_admin_connect_netsuite_persists_connection(client, db, monkeypatch):
     assert payload["erp_type"] == "netsuite"
     assert payload["accounts_found"] == 1
 
-    integrations = client.get("/api/admin/integrations?organization_id=default")
+    integrations = client.get("/api/workspace/integrations?organization_id=default")
     assert integrations.status_code == 200
     body = integrations.json()
     erp = next(item for item in body["integrations"] if item["name"] == "erp")
@@ -243,10 +243,10 @@ def test_admin_connect_sap_persists_connection(client, db, monkeypatch):
         async def get(self, url, headers=None):
             return _Resp(200)
 
-    monkeypatch.setattr(admin_console_module.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(workspace_shell_module.httpx, "AsyncClient", _FakeAsyncClient)
 
     connect = client.post(
-        "/api/admin/integrations/erp/connect/sap",
+        "/api/workspace/integrations/erp/connect/sap",
         json={
             "organization_id": "default",
             "base_url": "https://sap.example.com/sap/byd/odata/v1/financials",
@@ -257,7 +257,7 @@ def test_admin_connect_sap_persists_connection(client, db, monkeypatch):
     assert connect.status_code == 200
     assert connect.json()["erp_type"] == "sap"
 
-    integrations = client.get("/api/admin/integrations?organization_id=default")
+    integrations = client.get("/api/workspace/integrations?organization_id=default")
     assert integrations.status_code == 200
     payload = integrations.json()
     erp = next(item for item in payload["integrations"] if item["name"] == "erp")
@@ -267,7 +267,7 @@ def test_admin_connect_sap_persists_connection(client, db, monkeypatch):
 
 def test_admin_teams_webhook_config_and_test(client, db, monkeypatch):
     save = client.post(
-        "/api/admin/integrations/teams/webhook",
+        "/api/workspace/integrations/teams/webhook",
         json={
             "organization_id": "default",
             "webhook_url": "https://example.org/teams/incoming-webhook",
@@ -276,7 +276,7 @@ def test_admin_teams_webhook_config_and_test(client, db, monkeypatch):
     assert save.status_code == 200
     assert save.json()["success"] is True
 
-    integrations = client.get("/api/admin/integrations?organization_id=default")
+    integrations = client.get("/api/workspace/integrations?organization_id=default")
     assert integrations.status_code == 200
     payload = integrations.json()
     teams = next(item for item in payload["integrations"] if item["name"] == "teams")
@@ -287,9 +287,9 @@ def test_admin_teams_webhook_config_and_test(client, db, monkeypatch):
         def _post_json(self, _payload):
             return {"status": "sent", "status_code": 200}
 
-    monkeypatch.setattr(admin_console_module.TeamsAPIClient, "from_env", lambda _org_id=None: _FakeTeamsClient())
+    monkeypatch.setattr(workspace_shell_module.TeamsAPIClient, "from_env", lambda _org_id=None: _FakeTeamsClient())
     test = client.post(
-        "/api/admin/integrations/teams/test",
+        "/api/workspace/integrations/teams/test",
         json={"organization_id": "default", "message": "test"},
     )
     assert test.status_code == 200
@@ -312,7 +312,7 @@ def test_admin_ops_learning_calibration_recompute_and_get(client, db):
         )
 
     recompute = client.post(
-        "/api/admin/ops/learning-calibration/recompute",
+        "/api/workspace/ops/learning-calibration/recompute",
         json={
             "organization_id": "default",
             "window_days": 180,
@@ -326,7 +326,7 @@ def test_admin_ops_learning_calibration_recompute_and_get(client, db):
     assert recompute_payload["snapshot"]["calibration_version"]
     assert recompute_payload["snapshot"]["summary"]["total_feedback"] == 6
 
-    latest = client.get("/api/admin/ops/learning-calibration?organization_id=default")
+    latest = client.get("/api/workspace/ops/learning-calibration?organization_id=default")
     assert latest.status_code == 200
     latest_payload = latest.json()
     assert latest_payload["snapshot"]["calibration_version"] == recompute_payload["snapshot"]["calibration_version"]

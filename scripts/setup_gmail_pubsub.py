@@ -286,7 +286,7 @@ def main():
         print("\nNext steps:")
         print("1. Set environment variables (run with --generate-env)")
         print("2. Deploy backend with webhook endpoint")
-        print("3. Admins connect Gmail via Admin Console integrations")
+        print("3. Admins connect Gmail via Workspace Shell integrations")
         print("4. Gmail will push notifications to your webhook")
     else:
         print("\n❌ Setup incomplete - check errors above")

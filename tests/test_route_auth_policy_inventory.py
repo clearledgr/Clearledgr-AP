@@ -11,7 +11,7 @@ from main import app
 
 
 SENSITIVE_PREFIXES = (
-    "/api/admin",
+    "/api/workspace",
     "/api/ops",
     "/api/ap",
     "/api/agent",
@@ -21,8 +21,9 @@ SENSITIVE_PREFIXES = (
 # Public callbacks/health probes that are intentionally unauthenticated.
 EXPECTED_UNAUTHENTICATED_SENSITIVE_ROUTES = {
     ("POST", "/extension/gmail/register-token"),
+    ("POST", "/extension/gmail/exchange-code"),
     ("GET", "/extension/health"),
-    ("GET", "/api/admin/integrations/slack/install/callback"),
+    ("GET", "/api/workspace/integrations/slack/install/callback"),
 }
 
 
@@ -38,7 +39,10 @@ def test_sensitive_route_inventory_requires_auth_by_default():
             getattr(dep.call, "__name__", "")
             for dep in route.dependant.dependencies
         }
-        has_auth_dependency = bool({"get_current_user", "get_optional_user"} & dependency_names)
+        has_auth_dependency = bool(
+            {"get_current_user", "get_optional_user", "require_ops_user", "require_admin_user"}
+            & dependency_names
+        )
         if has_auth_dependency:
             continue
         for method in sorted(route.methods or []):

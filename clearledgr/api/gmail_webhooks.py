@@ -34,6 +34,47 @@ from clearledgr.core.models import FinanceEmail
 
 logger = logging.getLogger(__name__)
 
+_GENERIC_VENDOR_ALIASES = {
+    "google",
+    "stripe",
+    "paypal",
+    "square",
+    "google workspace",
+}
+
+
+def _attachment_manifest(raw_attachments: Any, *, include_content: bool = False) -> list[dict[str, Any]]:
+    manifest: list[dict[str, Any]] = []
+    if not isinstance(raw_attachments, list):
+        return manifest
+    for raw in raw_attachments:
+        if not isinstance(raw, dict):
+            continue
+        entry = {
+            "name": str(raw.get("filename") or raw.get("name") or "").strip() or None,
+            "content_type": str(
+                raw.get("content_type")
+                or raw.get("mime_type")
+                or raw.get("mimeType")
+                or ""
+            ).strip()
+            or None,
+            "size": raw.get("size"),
+        }
+        if include_content:
+            entry["has_content"] = bool(raw.get("content_base64") or raw.get("content_text"))
+        manifest.append({key: value for key, value in entry.items() if value not in (None, "", [], {})})
+    return manifest
+
+
+def _merge_finance_email_metadata(existing: Optional[FinanceEmail], updates: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = dict(getattr(existing, "metadata", {}) or {})
+    for key, value in (updates or {}).items():
+        if value in (None, "", [], {}):
+            continue
+        metadata[key] = value
+    return metadata
+
 router = APIRouter(prefix="/gmail", tags=["gmail"])
 
 from clearledgr.services.gmail_labels import apply_label as apply_clearledgr_label
@@ -48,6 +89,21 @@ def _is_prod_like_env() -> bool:
 def _allow_unverified_push_in_prod() -> bool:
     raw = str(os.getenv("GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD", "false")).strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def _normalize_vendor_name(value: Any) -> str:
+    vendor = str(value or "").strip()
+    if vendor.lower() in {"unknown", "unknown vendor", "n/a", "na", "none"}:
+        return ""
+    return vendor
+
+
+def _resolve_vendor_name(value: Any, sender: str) -> str:
+    vendor = _normalize_vendor_name(value)
+    sender_vendor = _extract_vendor_from_sender(sender)
+    if sender_vendor and vendor and vendor.lower() in _GENERIC_VENDOR_ALIASES:
+        return sender_vendor
+    return vendor or sender_vendor
 
 
 def _oauth_state_secret() -> str:
@@ -329,10 +385,25 @@ async def process_single_email(
     
     db = get_db()
 
-    # Skip if already processed (check labels)
-    if db.get_finance_email_by_gmail_id(message.id):
+    existing_finance_email = db.get_finance_email_by_gmail_id(message.id)
+    existing_ap_item = None
+    if hasattr(db, "get_ap_item_by_thread"):
+        try:
+            existing_ap_item = db.get_ap_item_by_thread(organization_id, message.thread_id)
+        except Exception:
+            existing_ap_item = None
+    if not existing_ap_item and hasattr(db, "get_ap_item_by_message_id"):
+        try:
+            existing_ap_item = db.get_ap_item_by_message_id(organization_id, message.id)
+        except Exception:
+            existing_ap_item = None
+
+    # Skip only when the finance email is already linked to a canonical AP item.
+    # Historical planner failures left detected finance_emails without ap_items;
+    # those messages must be allowed to re-enter processing.
+    if existing_finance_email and existing_ap_item:
         return
-    if "CLEARLEDGR_PROCESSED" in message.labels:
+    if "CLEARLEDGR_PROCESSED" in message.labels and existing_ap_item:
         return
     
     # Classify the email for AP workflow
@@ -363,17 +434,29 @@ async def process_single_email(
 
     # Store as detected finance email
     received_at = message.date.isoformat() if hasattr(message.date, "isoformat") else str(message.date)
-    db.save_finance_email(FinanceEmail(
-        gmail_id=message.id,
-        subject=message.subject or "",
-        sender=message.sender or "",
-        received_at=received_at,
-        email_type=category,
-        confidence=classification.get("confidence", 0.0),
-        status="detected",
-        organization_id=organization_id,
-        user_id=user_id,
-    ))
+    finance_email_payload = {
+        "gmail_id": message.id,
+        "subject": message.subject or "",
+        "sender": message.sender or "",
+        "received_at": received_at,
+        "email_type": category,
+        "confidence": classification.get("confidence", 0.0),
+        "status": "detected",
+        "organization_id": organization_id,
+        "user_id": user_id,
+        "metadata": _merge_finance_email_metadata(
+            existing_finance_email,
+            {
+                "gmail_thread_id": getattr(message, "thread_id", None) or message.id,
+                "classifier": classification,
+                "attachment_manifest": _attachment_manifest(message.attachments or []),
+            },
+        ),
+    }
+    existing_finance_email_id = str(getattr(existing_finance_email, "id", "") or "").strip()
+    if existing_finance_email_id:
+        finance_email_payload["id"] = existing_finance_email_id
+    db.save_finance_email(FinanceEmail(**finance_email_payload))
     
     # Process invoices through the invoice workflow
     if category == "invoice":
@@ -516,6 +599,64 @@ async def process_invoice_email(
         logger.warning(f"Extraction failed, continuing with sender fallback: {e}")
         extraction = {}
 
+    vendor_name = _resolve_vendor_name(extraction.get("vendor"), message.sender)
+    extracted_currency = str(extraction.get("currency") or "USD").strip().upper() or "USD"
+    try:
+        extracted_amount = float(
+            extraction.get("amount")
+            or extraction.get("total_amount")
+            or 0.0
+        )
+    except (TypeError, ValueError):
+        extracted_amount = 0.0
+    extracted_confidence = extraction.get("confidence", confidence)
+
+    db = get_db()
+    existing_finance_email = db.get_finance_email_by_gmail_id(message.id) if hasattr(db, "get_finance_email_by_gmail_id") else None
+    received_at = message.date.isoformat() if hasattr(message.date, "isoformat") else str(message.date)
+    attachment_manifest = _attachment_manifest(message.attachments or [])
+    extraction_metadata = _merge_finance_email_metadata(
+        existing_finance_email,
+        {
+            "gmail_thread_id": getattr(message, "thread_id", None) or message.id,
+            "attachment_manifest": attachment_manifest,
+            "fetched_attachment_manifest": _attachment_manifest(attachments_with_content, include_content=True),
+            "attachment_count": len(attachment_manifest),
+            "extraction_method": extraction.get("extraction_method"),
+            "extraction_model": extraction.get("extraction_model"),
+            "primary_source": extraction.get("primary_source"),
+            "field_confidences": extraction.get("field_confidences") or {},
+            "raw_parser": extraction.get("raw_parser") or {},
+            "reasoning_summary": extraction.get("reasoning_summary"),
+            "payment_processor": extraction.get("payment_processor"),
+            "invoice_date": extraction.get("invoice_date"),
+            "zero_amount_confirmed_by_attachment": bool(
+                extracted_amount == 0.0 and (extraction.get("raw_parser") or {}).get("has_invoice_attachment")
+            ),
+        },
+    )
+    finance_email_payload = {
+        "gmail_id": message.id,
+        "subject": message.subject or "",
+        "sender": message.sender or "",
+        "received_at": received_at,
+        "email_type": "invoice",
+        "confidence": extracted_confidence,
+        "vendor": vendor_name or None,
+        "amount": extracted_amount,
+        "currency": extracted_currency,
+        "invoice_number": extraction.get("invoice_number"),
+        "status": "processing",
+        "organization_id": organization_id,
+        "user_id": user_id,
+        "processed_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": extraction_metadata,
+    }
+    existing_finance_email_id = str(getattr(existing_finance_email, "id", "") or "").strip()
+    if existing_finance_email_id:
+        finance_email_payload["id"] = existing_finance_email_id
+    db.save_finance_email(FinanceEmail(**finance_email_payload))
+
     def _safe_date(value: Optional[str]) -> Optional[str]:
         if not value:
             return None
@@ -532,12 +673,12 @@ async def process_invoice_email(
         gmail_id=message.id,
         subject=message.subject,
         sender=message.sender,
-        vendor_name=extraction.get("vendor") or _extract_vendor_from_sender(message.sender),
-        amount=extraction.get("amount") or extraction.get("total_amount") or 0,
-        currency=extraction.get("currency") or "USD",
+        vendor_name=vendor_name,
+        amount=extracted_amount,
+        currency=extracted_currency,
         invoice_number=extraction.get("invoice_number"),
         due_date=_safe_date(extraction.get("due_date")),
-        confidence=extraction.get("confidence", confidence),
+        confidence=extracted_confidence,
         user_id=user_id,
         organization_id=organization_id,
         invoice_text=invoice_text,  # For discount detection
@@ -548,7 +689,25 @@ async def process_invoice_email(
         from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
         runtime = get_platform_finance_runtime(invoice.organization_id or organization_id)
         result = await runtime.execute_ap_invoice_processing(
-            invoice_payload=invoice.__dict__,
+            invoice_payload={
+                **invoice.__dict__,
+                "thread_id": getattr(message, "thread_id", None) or message.id,
+                "message_id": message.id,
+                "gmail_thread_id": getattr(message, "thread_id", None) or message.id,
+                "gmail_message_id": message.id,
+                "email_type": "invoice",
+                "intake_source": "gmail_autopilot",
+                "field_confidences": extraction.get("field_confidences") or {},
+                "raw_parser": extraction.get("raw_parser") or {},
+                "extraction_method": extraction.get("extraction_method"),
+                "extraction_model": extraction.get("extraction_model"),
+                "reasoning_summary": extraction.get("reasoning_summary"),
+                "payment_processor": extraction.get("payment_processor"),
+                "invoice_date": extraction.get("invoice_date"),
+                "primary_source": extraction.get("primary_source"),
+                "attachment_manifest": attachment_manifest,
+                "zero_amount_confirmed_by_attachment": extraction_metadata.get("zero_amount_confirmed_by_attachment"),
+            },
             attachments=attachments_with_content,
             correlation_id=invoice.correlation_id,
         )
@@ -556,6 +715,9 @@ async def process_invoice_email(
     except Exception as e:
         logger.error("Finance runtime AP processing failed: %s", e)
         result = {"status": "error", "error": str(e)}
+
+    finance_email_payload["status"] = "processed" if result.get("status") not in {"error", "failed"} else "detected"
+    db.save_finance_email(FinanceEmail(**finance_email_payload))
 
     # Create draft summary on the thread (Fyxer pattern)
     # User opens the thread → sees a draft with the extracted invoice data

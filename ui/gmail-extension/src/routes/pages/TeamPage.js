@@ -27,11 +27,11 @@ export default function TeamPage({ bootstrap, api, toast, orgId, onRefresh }) {
   const [createInvite] = useAction(async () => {
     const email = document.getElementById('cl-invite-email')?.value?.trim();
     const role = document.getElementById('cl-invite-role')?.value;
-    await api('/api/admin/team/invites', { method: 'POST', body: JSON.stringify({ organization_id: orgId, email, role }) });
+    await api('/api/workspace/team/invites', { method: 'POST', body: JSON.stringify({ organization_id: orgId, email, role }) });
     toast(`Invite sent to ${email}.`); onRefresh();
   });
   const [revokeInvite] = useAction(async (id) => {
-    await api(`/api/admin/team/invites/${id}/revoke?organization_id=${encodeURIComponent(orgId)}`, { method: 'POST' });
+    await api(`/api/workspace/team/invites/${id}/revoke?organization_id=${encodeURIComponent(orgId)}`, { method: 'POST' });
     toast('Invite revoked.'); onRefresh();
   });
 

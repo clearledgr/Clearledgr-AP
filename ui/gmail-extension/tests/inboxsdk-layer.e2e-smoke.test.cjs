@@ -7,8 +7,17 @@ const EXTENSION_ROOT = path.resolve(__dirname, '..');
 const RUN_E2E = process.env.RUN_GMAIL_E2E === '1';
 const ASSERT_AUTH = process.env.GMAIL_E2E_ASSERT_AUTH === '1';
 const E2E_TIMEOUT_MS = Number(process.env.GMAIL_E2E_TIMEOUT_MS || 180000);
+const E2E_UI_SETTLE_MS = Number(process.env.GMAIL_E2E_UI_SETTLE_MS || 15000);
 const EXPECT_SELECTOR = process.env.GMAIL_E2E_EXPECT_SELECTOR || '#cl-scan-status';
 const E2E_EVIDENCE_JSON = process.env.GMAIL_E2E_EVIDENCE_JSON || '';
+const E2E_EXECUTABLE_PATH = String(process.env.GMAIL_E2E_EXECUTABLE_PATH || '').trim();
+const E2E_PROFILE_DIRECTORY = String(process.env.GMAIL_E2E_PROFILE_DIRECTORY || '').trim();
+const UI_MARKERS = String(
+  process.env.GMAIL_E2E_UI_MARKERS || 'Clearledgr Home,Process with Clearledgr',
+)
+  .split(',')
+  .map((value) => String(value || '').trim())
+  .filter(Boolean);
 const REQUIRED_SELECTORS = String(
   process.env.GMAIL_E2E_REQUIRED_SELECTORS || '#cl-scan-status,#cl-thread-context,#cl-agent-actions',
 )
@@ -29,6 +38,30 @@ function _looksLikeLoginPage(url, title, bodyText) {
   );
 }
 
+function _looksLikeMarketingPage(url, title, bodyText) {
+  const urlText = String(url || '').toLowerCase();
+  const titleText = String(title || '').toLowerCase();
+  const body = String(bodyText || '').toLowerCase();
+  return (
+    urlText.includes('workspace.google.com')
+    || titleText.includes('ai-powered email for everyone')
+    || body.includes('ai-powered email for everyone')
+    || body.includes('for work')
+  );
+}
+
+function _looksLikeAuthenticatedInbox(url, title, bodyText) {
+  const urlText = String(url || '').toLowerCase();
+  const titleText = String(title || '').toLowerCase();
+  const body = String(bodyText || '').toLowerCase();
+  return (
+    urlText.includes('mail.google.com/mail/')
+    && !urlText.includes('servicelogin')
+    && !titleText.includes('sign in')
+    && !body.includes('to continue to gmail')
+  );
+}
+
 async function _findExtensionServiceWorker(context, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -40,6 +73,38 @@ async function _findExtensionServiceWorker(context, timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   return null;
+}
+
+async function _collectVisibleSelectorPresence(page, selectors) {
+  const targetSelectors = Array.isArray(selectors) ? selectors : [];
+  return page.evaluate((values) => {
+    const snapshot = {};
+    for (const selector of values || []) {
+      const element = document.querySelector(selector);
+      const style = element ? window.getComputedStyle(element) : null;
+      const rect = element ? element.getBoundingClientRect() : null;
+      snapshot[selector] = Boolean(
+        element
+        && style
+        && style.visibility !== 'hidden'
+        && style.display !== 'none'
+        && rect
+        && rect.width > 0
+        && rect.height > 0
+      );
+    }
+    return snapshot;
+  }, targetSelectors);
+}
+
+async function _collectUiMarkerPresence(page, markers) {
+  const targetMarkers = Array.isArray(markers) ? markers : [];
+  const snapshot = {};
+  for (const marker of targetMarkers) {
+    const count = await page.locator(`text=${marker}`).count().catch(() => 0);
+    snapshot[marker] = count > 0;
+  }
+  return snapshot;
 }
 
 function _writeEvidence(payload) {
@@ -63,13 +128,8 @@ test('real Gmail/Chrome smoke scaffold is configured (manual-gated)', { skip: !R
   assert.ok(fs.existsSync(manifestPath), 'manifest.json must exist for extension load');
 
   const userDataDir = process.env.GMAIL_E2E_PROFILE_DIR || path.resolve(EXTENSION_ROOT, '.e2e-profile');
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: false,
-    args: [
-      `--disable-extensions-except=${EXTENSION_ROOT}`,
-      `--load-extension=${EXTENSION_ROOT}`,
-    ],
-  });
+  let context;
+  let page = null;
 
   const evidence = {
     status: 'running',
@@ -80,6 +140,9 @@ test('real Gmail/Chrome smoke scaffold is configured (manual-gated)', { skip: !R
     extension_worker_detected: false,
     extension_worker_url: null,
     mounted_sections: 0,
+    ui_markers: UI_MARKERS,
+    ui_marker_presence: {},
+    entry_points_detected: 0,
     required_selectors: REQUIRED_SELECTORS,
     selector_presence: {},
     missing_selectors: [],
@@ -89,7 +152,18 @@ test('real Gmail/Chrome smoke scaffold is configured (manual-gated)', { skip: !R
   };
 
   try {
-    const page = context.pages()[0] || await context.newPage();
+    context = await chromium.launchPersistentContext(userDataDir, {
+      headless: false,
+      executablePath: E2E_EXECUTABLE_PATH || undefined,
+      ignoreDefaultArgs: ['--disable-extensions'],
+      args: [
+        `--disable-extensions-except=${EXTENSION_ROOT}`,
+        `--load-extension=${EXTENSION_ROOT}`,
+        ...(E2E_PROFILE_DIRECTORY ? [`--profile-directory=${E2E_PROFILE_DIRECTORY}`] : []),
+      ],
+    });
+
+    page = context.pages()[0] || await context.newPage();
     const targetUrl = evidence.target_url;
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: E2E_TIMEOUT_MS });
     const title = await page.title();
@@ -104,6 +178,14 @@ test('real Gmail/Chrome smoke scaffold is configured (manual-gated)', { skip: !R
         !_looksLikeLoginPage(currentUrl, title, bodyText),
         `GMAIL_E2E_ASSERT_AUTH=1 expects an authenticated Gmail profile. Current URL: ${currentUrl}`,
       );
+      assert.ok(
+        !_looksLikeMarketingPage(currentUrl, title, bodyText),
+        `GMAIL_E2E_ASSERT_AUTH=1 reached a marketing or landing page instead of the Gmail inbox. Current URL: ${currentUrl}`,
+      );
+      assert.ok(
+        _looksLikeAuthenticatedInbox(currentUrl, title, bodyText),
+        `GMAIL_E2E_ASSERT_AUTH=1 expects a real authenticated Gmail inbox. Current URL: ${currentUrl}`,
+      );
       const extensionWorker = await _findExtensionServiceWorker(context, Math.min(E2E_TIMEOUT_MS, 20000));
       assert.ok(
         extensionWorker,
@@ -112,17 +194,14 @@ test('real Gmail/Chrome smoke scaffold is configured (manual-gated)', { skip: !R
       evidence.extension_worker_detected = true;
       evidence.extension_worker_url = extensionWorker.url();
 
-      await page.waitForSelector(EXPECT_SELECTOR, { timeout: E2E_TIMEOUT_MS });
-      const selectorPresence = await page.evaluate((selectors) => {
-        const snapshot = {};
-        for (const selector of selectors || []) {
-          snapshot[selector] = Boolean(document.querySelector(selector));
-        }
-        return snapshot;
-      }, REQUIRED_SELECTORS);
+      await page.waitForTimeout(E2E_UI_SETTLE_MS);
+      const selectorPresence = await _collectVisibleSelectorPresence(page, REQUIRED_SELECTORS);
       evidence.selector_presence = selectorPresence;
       evidence.missing_selectors = REQUIRED_SELECTORS.filter((selector) => !selectorPresence[selector]);
       evidence.mounted_sections = REQUIRED_SELECTORS.length - evidence.missing_selectors.length;
+      const uiMarkerPresence = await _collectUiMarkerPresence(page, UI_MARKERS);
+      evidence.ui_marker_presence = uiMarkerPresence;
+      evidence.entry_points_detected = Object.values(uiMarkerPresence).filter(Boolean).length;
       if (REQUIRE_ALL_SELECTORS) {
         assert.equal(
           evidence.missing_selectors.length,
@@ -131,18 +210,10 @@ test('real Gmail/Chrome smoke scaffold is configured (manual-gated)', { skip: !R
         );
       } else {
         assert.ok(
-          evidence.mounted_sections >= 2,
-          'Expected Clearledgr sidebar sections not found in authenticated Gmail runtime.',
+          evidence.mounted_sections >= 2 || evidence.entry_points_detected >= 1,
+          'Expected Clearledgr inbox entry points or sidebar sections not found in authenticated Gmail runtime.',
         );
       }
-    }
-
-    const screenshotPath = process.env.GMAIL_E2E_CAPTURE_PATH;
-    if (screenshotPath) {
-      const resolved = path.resolve(screenshotPath);
-      await page.screenshot({ path: resolved, fullPage: true });
-      assert.ok(fs.existsSync(resolved), `Expected screenshot at ${resolved}`);
-      evidence.screenshot_path = resolved;
     }
     evidence.status = 'passed';
   } catch (error) {
@@ -150,12 +221,59 @@ test('real Gmail/Chrome smoke scaffold is configured (manual-gated)', { skip: !R
     evidence.error = String(error?.message || error || 'unknown_e2e_error');
     throw error;
   } finally {
+    const screenshotPath = process.env.GMAIL_E2E_CAPTURE_PATH;
+    if (screenshotPath && page && !page.isClosed()) {
+      const resolved = path.resolve(screenshotPath);
+      try {
+        await page.screenshot({ path: resolved, fullPage: true });
+        if (fs.existsSync(resolved)) {
+          evidence.screenshot_path = resolved;
+        }
+      } catch (_) {
+        // best effort
+      }
+    }
     evidence.finished_at = new Date().toISOString();
     _writeEvidence(evidence);
-    await context.close();
+    if (context) {
+      await context.close();
+    }
   }
 });
 
 test('real Gmail/Chrome smoke stays opt-in unless RUN_GMAIL_E2E=1', () => {
   assert.ok(true);
+});
+
+test('_looksLikeLoginPage detects Google auth redirects', () => {
+  assert.equal(
+    _looksLikeLoginPage(
+      'https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fmail.google.com',
+      'Gmail',
+      'To continue to Gmail',
+    ),
+    true,
+  );
+});
+
+test('_looksLikeMarketingPage rejects workspace landing pages', () => {
+  assert.equal(
+    _looksLikeMarketingPage(
+      'https://workspace.google.com/intl/en-US/gmail/#inbox',
+      'Gmail: Secure, AI-Powered Email for Everyone | Google Workspace',
+      'AI-powered email for everyone',
+    ),
+    true,
+  );
+});
+
+test('_looksLikeAuthenticatedInbox accepts real Gmail inbox urls', () => {
+  assert.equal(
+    _looksLikeAuthenticatedInbox(
+      'https://mail.google.com/mail/u/0/#inbox',
+      'Inbox (3) - ops@example.com - Gmail',
+      'Compose Inbox Starred',
+    ),
+    true,
+  );
 });

@@ -591,9 +591,9 @@ class ClearledgrQueueManager {
         errors: Array.isArray(validation.errors) ? validation.errors : [],
         warnings: Array.isArray(validation.warnings) ? validation.warnings : [],
         debugManualScan: Boolean(raw.debugManualScan),
-        authEntryMode: String(raw.authEntryMode || 'admin_console').trim().toLowerCase() === 'inline'
+        authEntryMode: String(raw.authEntryMode || 'routed').trim().toLowerCase() === 'inline'
           ? 'inline'
-          : 'admin_console'
+          : 'routed'
       };
     }
 
@@ -617,7 +617,7 @@ class ClearledgrQueueManager {
       .trim()
       .toLowerCase() === 'inline'
       ? 'inline'
-      : 'admin_console';
+      : 'routed';
     return {
       backendUrl,
       organizationId: String(raw.organizationId || 'default').trim(),
@@ -820,6 +820,8 @@ class ClearledgrQueueManager {
       normalized.source_count = 0;
     }
     normalized.has_context_conflict = Boolean(normalized.has_context_conflict);
+    normalized.has_attachment = Boolean(normalized.has_attachment || Number(normalized.attachment_count || 0) > 0);
+    normalized.attachment_count = Math.max(0, Number(normalized.attachment_count || 0) || 0);
     normalized.exception_code = normalized.exception_code || null;
     normalized.exception_severity = normalized.exception_severity || null;
     normalized.budget_status = normalized.budget_status || null;
@@ -1024,7 +1026,7 @@ class ClearledgrQueueManager {
       return { toast: 'Authorization is already in progress.', severity: 'warning' };
     }
     if (code.includes('redirect_uri_mismatch')) {
-      return { toast: 'OAuth redirect URI mismatch. Fix OAuth settings in Admin Console Integrations.', severity: 'error' };
+      return { toast: 'OAuth redirect URI mismatch. Fix OAuth settings in Workspace Shell Integrations.', severity: 'error' };
     }
     if (code.includes('invalid_client')) {
       return { toast: 'OAuth client configuration is invalid. Verify Gmail integration settings.', severity: 'error' };
@@ -1036,7 +1038,7 @@ class ClearledgrQueueManager {
       return { toast: 'Authorization failed because backend is unreachable. Check backend and retry.', severity: 'error' };
     }
     if (code === 'auth_required' || code === 'authorization_failed') {
-      return { toast: 'Authorization failed. Try again or reconnect from Admin Console Integrations.', severity: 'error' };
+      return { toast: 'Authorization failed. Try again or reconnect from Workspace Shell Integrations.', severity: 'error' };
     }
     return { toast: `Authorization failed: ${code}`, severity: 'error' };
   }

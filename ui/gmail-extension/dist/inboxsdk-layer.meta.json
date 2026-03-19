@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-03-19T17:28:31.791Z",
-  "fingerprint": "fe4253da1a16d1cb331d88c9e6c1acfe3e1ac9eed62c7d896688a7a14b47ac84",
+  "generated_at": "2026-03-19T22:29:36.058Z",
+  "fingerprint": "807969962d138d2bd5fd817e3cf5e56bb875255f426ff215c02d0bdb845e8256",
   "inputs": [
     "background.js",
     "manifest.json",
@@ -11,7 +11,6 @@
     "src/components/SidebarApp.js",
     "src/components/ThreadContext.js",
     "src/inboxsdk-layer.js",
-    "src/routes/admin-api.js",
     "src/routes/oauth-bridge.js",
     "src/routes/pages/ActivityPage.js",
     "src/routes/pages/CompanyPage.js",
@@ -34,6 +33,7 @@
     "src/routes/route-helpers.js",
     "src/routes/route-registry.js",
     "src/routes/route-styles.js",
+    "src/routes/workspace-shell-api.js",
     "src/settings-tab.js",
     "src/styles.js",
     "src/utils/formatters.js",

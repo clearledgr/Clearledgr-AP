@@ -80,3 +80,16 @@ test('refreshQueue does not poll ops endpoints in Gmail Work runtime', async () 
   assert.ok(urls.some((url) => url.includes('/extension/worklist?')));
   assert.equal(urls.some((url) => url.includes('/api/ops/')), false);
 });
+
+test('normalizeWorklistItem keeps attachment evidence flags stable', async () => {
+  const ClearledgrQueueManager = await loadQueueManager();
+  const manager = new ClearledgrQueueManager();
+
+  const normalized = manager.normalizeWorklistItem({
+    id: 'ap-1',
+    attachment_count: '2',
+  });
+
+  assert.equal(normalized.has_attachment, true);
+  assert.equal(normalized.attachment_count, 2);
+});

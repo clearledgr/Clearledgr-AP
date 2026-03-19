@@ -68,6 +68,24 @@ class TaskStore:
         if idempotency_key:
             existing = self.get_task_run_by_idempotency_key(idempotency_key)
             if existing:
+                if str(existing.get("status") or "").strip().lower() == "failed":
+                    reset_sql = self._prepare_sql(
+                        "UPDATE task_runs SET status = 'pending', current_step = 0, input_payload = ?, "
+                        "step_results = '{}', correlation_id = ?, updated_at = ?, completed_at = NULL, "
+                        "last_error = NULL, retry_count = COALESCE(retry_count, 0) + 1 WHERE id = ?"
+                    )
+                    try:
+                        with self.connect() as conn:
+                            cur = conn.cursor()
+                            cur.execute(
+                                reset_sql,
+                                (input_payload, correlation_id, now, existing["id"]),
+                            )
+                            conn.commit()
+                    except Exception as exc:
+                        logger.warning("[TaskStore] reset failed task_run failed: %s", exc)
+                        raise
+                    existing = self.get_task_run(existing["id"]) or existing
                 return existing
 
         sql = self._prepare_sql(

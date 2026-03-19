@@ -157,6 +157,62 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _derive_attachment_summary(
+    payload: Dict[str, Any],
+    metadata: Dict[str, Any],
+    sources: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    attachment_url = str(payload.get("attachment_url") or metadata.get("attachment_url") or "").strip()
+    attachment_count = max(
+        _safe_int(payload.get("attachment_count"), 0),
+        _safe_int(metadata.get("attachment_count"), 0),
+    )
+    attachment_names: List[str] = []
+    has_attachment = bool(payload.get("has_attachment") or metadata.get("has_attachment") or attachment_url)
+
+    def _append_name(value: Any) -> None:
+        token = str(value or "").strip()
+        if not token or token in attachment_names:
+            return
+        attachment_names.append(token)
+
+    for source in sources:
+        source_meta = _parse_json(source.get("metadata"))
+        if not source_meta:
+            continue
+        attachment_count = max(attachment_count, _safe_int(source_meta.get("attachment_count"), 0))
+        source_attachment_url = str(source_meta.get("attachment_url") or "").strip()
+        if source_attachment_url and not attachment_url:
+            attachment_url = source_attachment_url
+        if source_meta.get("has_attachment") or source_attachment_url:
+            has_attachment = True
+        raw_names = source_meta.get("attachment_names")
+        if isinstance(raw_names, list):
+            for name in raw_names:
+                _append_name(name)
+
+    if not has_attachment:
+        subject = str(payload.get("subject") or "").strip().lower()
+        sender = str(payload.get("sender") or "").strip().lower()
+        # Historical Gmail intake rows did not persist attachment metadata.
+        # These sender/subject patterns are narrow enough to recover the file
+        # signal for invoice emails that reliably ship with an attached doc.
+        if "payments-noreply@google.com" in sender and "invoice is available" in subject:
+            has_attachment = True
+        elif "invoice+statements+" in sender and "@stripe.com" in sender:
+            has_attachment = True
+
+    if has_attachment and attachment_count <= 0:
+        attachment_count = 1
+
+    return {
+        "has_attachment": has_attachment,
+        "attachment_count": attachment_count,
+        "attachment_url": attachment_url or None,
+        "attachment_names": attachment_names,
+    }
+
+
 def _derive_confidence_gate(payload: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
     raw_gate = metadata.get("confidence_gate")
     if isinstance(raw_gate, dict) and "requires_field_review" in raw_gate:
@@ -491,6 +547,7 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         parsed_meta_source_count = 0
     payload["source_count"] = max(parsed_meta_source_count, len(sources))
     payload["primary_source"] = _build_primary_source(payload, sources)
+    payload.update(_derive_attachment_summary(payload, metadata, sources))
     payload["supersedes_ap_item_id"] = payload.get("supersedes_ap_item_id") or metadata.get("supersedes_ap_item_id")
     payload["supersedes_invoice_key"] = payload.get("supersedes_invoice_key") or metadata.get("supersedes_invoice_key")
     payload["superseded_by_ap_item_id"] = payload.get("superseded_by_ap_item_id") or metadata.get("superseded_by_ap_item_id")

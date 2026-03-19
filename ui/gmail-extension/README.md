@@ -1,6 +1,6 @@
 # Clearledgr Gmail Chrome Extension (Work Surface)
 
-Decision-first Gmail execution surface for AP Skill v1. Setup, account management, Ops, batch controls, and debug tooling live in the Admin Console.
+Decision-first Gmail execution surface for AP Skill v1. Setup, account management, Ops, batch controls, and debug tooling live in the Workspace Shell.
 
 ## Features
 
@@ -8,7 +8,7 @@ Decision-first Gmail execution surface for AP Skill v1. Setup, account managemen
 - **Inline reason sheet** - reject/override reason capture without native prompt dialogs
 - **Embedded action execution** - request approval, nudge, preview/retry ERP posting
 - **Evidence and audit** - compact checklist + plain-language audit timeline
-- **Admin Console link-outs** - integrations and Ops open outside Gmail
+- **Workspace Shell link-outs** - integrations and Ops open outside Gmail
 
 ## Installation
 
@@ -62,7 +62,7 @@ gmail-extension/
 ## Configuration
 
 - Runtime endpoint and org config are resolved from extension storage + backend bootstrap.
-- Integrations and account management are controlled from `/console` (Admin Console).
+- Integrations and account management are controlled from `/console` (Workspace Shell).
 - Legacy popup/options/demo assets were moved to `/Users/mombalam/Desktop/Clearledgr.v1/docs/legacy/gmail-extension-ui/` and are not part of the shipped extension UX.
 
 ## Data Handling

@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 from main import _apply_runtime_surface_profile, app  # noqa: E402
 from clearledgr.core import database as db_module  # noqa: E402
 from clearledgr.core.auth import create_access_token  # noqa: E402
+from clearledgr.api.ap_items import build_worklist_item  # noqa: E402
 
 
 def _item_payload(
@@ -144,6 +145,56 @@ def test_upcoming_and_vendor_directory_endpoints_are_org_scoped(client, db):
     assert northwind["open_count"] == 1
     assert northwind["profile"]["requires_po"] is True
     assert northwind["profile"]["payment_terms"] == "Net 30"
+
+
+def test_build_worklist_item_surfaces_attachment_metadata_from_sources(db):
+    item = db.create_ap_item(
+        _item_payload(
+            "attachment-1",
+            "default",
+            extra={"attachment_url": "https://files.example/invoice.pdf"},
+        )
+    )
+    db.link_ap_item_source(
+        {
+            "ap_item_id": item["id"],
+            "source_type": "gmail_message",
+            "source_ref": "msg-attachment-1",
+            "subject": "Invoice attachment",
+            "sender": "billing@example.com",
+            "metadata": {
+                "has_attachment": True,
+                "attachment_count": 2,
+                "attachment_names": ["invoice.pdf", "backup.pdf"],
+            },
+        }
+    )
+
+    normalized = build_worklist_item(db, item)
+
+    assert normalized["has_attachment"] is True
+    assert normalized["attachment_count"] == 2
+    assert normalized["attachment_url"] == "https://files.example/invoice.pdf"
+    assert normalized["attachment_names"] == ["invoice.pdf", "backup.pdf"]
+
+
+def test_build_worklist_item_recovers_google_invoice_attachment_signal_for_legacy_rows(db):
+    item = db.create_ap_item(
+        _item_payload(
+            "google-attachment-1",
+            "default",
+            vendor_name="Google Payments",
+            extra={
+                "subject": "Google Workspace: Your invoice is available for clearledgr.com",
+                "sender": "Google Payments <payments-noreply@google.com>",
+            },
+        )
+    )
+
+    normalized = build_worklist_item(db, item)
+
+    assert normalized["has_attachment"] is True
+    assert normalized["attachment_count"] == 1
 
 
 def test_vendor_record_endpoint_returns_shared_vendor_context(client, db):

@@ -775,7 +775,7 @@ In NetSuite: Setup > Company > Enable Features > SuiteCloud > Token-Based Authen
 Then create an Integration record and generate a Token.
 
 Once you have the credentials, an admin can enter them at:
-`/api/admin/integrations/erp/connect/start` with `erp_type: netsuite`"""
+`/api/workspace/integrations/erp/connect/start` with `erp_type: netsuite`"""
 
     # OAuth ERPs (QuickBooks, Xero)
     try:

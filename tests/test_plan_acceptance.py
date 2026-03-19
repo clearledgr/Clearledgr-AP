@@ -443,7 +443,7 @@ class TestSecurityHardening:
             ROOT / "clearledgr" / "core" / "database.py",
             ROOT / "clearledgr" / "core" / "auth.py",
             ROOT / "clearledgr" / "api" / "auth.py",
-            ROOT / "clearledgr" / "api" / "admin_console.py",
+            ROOT / "clearledgr" / "api" / "workspace_shell.py",
         ]
         for fpath in ap_path_files:
             if fpath.exists():

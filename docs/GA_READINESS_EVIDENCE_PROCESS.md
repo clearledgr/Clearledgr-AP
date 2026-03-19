@@ -16,7 +16,7 @@ This process covers evidence for:
 - Rollback controls and launch signoff (`PLAN.md` `8.4`, `8.5`, `9.4`, `9.5`)
 
 It does not replace:
-- in-app launch control metadata (`/api/admin/ga-readiness`, `/api/admin/rollback-controls`)
+- in-app launch control metadata (`/api/workspace/ga-readiness`, `/api/workspace/rollback-controls`)
 - code-level tests and CI outputs
 
 In-app metadata is the index; artifacts below are the proof.

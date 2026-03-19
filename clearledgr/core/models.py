@@ -248,6 +248,7 @@ class FinanceEmail:
     # Metadata
     organization_id: Optional[str] = None
     user_id: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     
     def to_dict(self) -> Dict[str, Any]:

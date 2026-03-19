@@ -77,7 +77,7 @@ UI hardening guardrails:
 Clearledgr onboarding and account management still follows an admin-first model, but it remains Gmail-native:
 
 1. Gmail routed pages own onboarding for Gmail, Slack/Teams, and ERP setup.
-2. Team roles/invites are managed through the same authenticated backend APIs (`/api/admin/team/*` + `/auth/invites/*`).
+2. Team roles/invites are managed through the same authenticated backend APIs (`/api/workspace/team/*` + `/auth/invites/*`).
 3. `Home` is a lightweight launch hub for readiness, recent activity, and navigation, not a dashboard-heavy control center.
 4. The thread panel stays execution-focused; setup/config flows live in Gmail-native pages rather than a separate dashboard.
 5. OAuth entry points for setup are launched from authenticated backend endpoints and surfaced inside the Gmail product shell.
@@ -138,7 +138,7 @@ ERP API-first adapter contract is provider-agnostic and shared across NetSuite/Q
 
 - Gmail extension: `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/`
 - Slack app: `/Users/mombalam/Desktop/Clearledgr.v1/ui/slack/`
-- Optional support console surface: served from `/console` (when enabled), but it is not the canonical daily operator shell
+- Optional workspace shell surface: served from `/workspace` (when enabled), but it is not the canonical daily operator shell
 
 ### Launch and Readiness Docs
 
@@ -147,9 +147,9 @@ ERP API-first adapter contract is provider-agnostic and shared across NetSuite/Q
 - Staging drill runbook: `/Users/mombalam/Desktop/Clearledgr.v1/docs/STAGING_DRILL_RUNBOOK.md`
 - GA evidence process: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_READINESS_EVIDENCE_PROCESS.md`
 - Admin Ops APIs:
-  - `GET /api/admin/ops/connector-readiness` (per-connector readiness + blockers for NetSuite/QuickBooks/Xero/SAP)
-  - `GET /api/admin/ops/learning-calibration` (latest tenant calibration snapshot)
-  - `POST /api/admin/ops/learning-calibration/recompute` (recompute + persist calibration snapshot)
+  - `GET /api/workspace/ops/connector-readiness` (per-connector readiness + blockers for NetSuite/QuickBooks/Xero/SAP)
+  - `GET /api/workspace/ops/learning-calibration` (latest tenant calibration snapshot)
+  - `POST /api/workspace/ops/learning-calibration/recompute` (recompute + persist calibration snapshot)
 
 ## Local Development
 
@@ -175,7 +175,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 - API docs: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
-- Optional support console (if enabled): `http://localhost:8000/console`
+- Optional workspace shell (if enabled): `http://localhost:8000/workspace`
 
 ### 5. Run core regression slices
 

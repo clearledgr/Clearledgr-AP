@@ -31,9 +31,9 @@ from clearledgr.core.database import get_db
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-ADMIN_ACCESS_COOKIE_NAME = "clearledgr_admin_access"
-ADMIN_REFRESH_COOKIE_NAME = "clearledgr_admin_refresh"
-ADMIN_CSRF_COOKIE_NAME = "clearledgr_admin_csrf"
+WORKSPACE_ACCESS_COOKIE_NAME = "clearledgr_workspace_access"
+WORKSPACE_REFRESH_COOKIE_NAME = "clearledgr_workspace_refresh"
+WORKSPACE_CSRF_COOKIE_NAME = "clearledgr_workspace_csrf"
 SESSION_TOKEN_PLACEHOLDER = "__cookie_session__"
 
 
@@ -43,11 +43,11 @@ def _session_cookie_secure() -> bool:
 
 
 def _session_cookie_domain() -> Optional[str]:
-    raw = str(os.getenv("ADMIN_SESSION_COOKIE_DOMAIN", "")).strip()
+    raw = str(os.getenv("WORKSPACE_SESSION_COOKIE_DOMAIN", "")).strip()
     return raw or None
 
 
-def _set_admin_session_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+def _set_workspace_session_cookies(response: Response, access_token: str, refresh_token: str) -> None:
     secure = _session_cookie_secure()
     domain = _session_cookie_domain()
     csrf_token = secrets.token_urlsafe(32)
@@ -58,21 +58,21 @@ def _set_admin_session_cookies(response: Response, access_token: str, refresh_to
         "domain": domain,
     }
     response.set_cookie(
-        ADMIN_ACCESS_COOKIE_NAME,
+        WORKSPACE_ACCESS_COOKIE_NAME,
         access_token,
         httponly=True,
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         **cookie_kwargs,
     )
     response.set_cookie(
-        ADMIN_REFRESH_COOKIE_NAME,
+        WORKSPACE_REFRESH_COOKIE_NAME,
         refresh_token,
         httponly=True,
         max_age=7 * 24 * 60 * 60,
         **cookie_kwargs,
     )
     response.set_cookie(
-        ADMIN_CSRF_COOKIE_NAME,
+        WORKSPACE_CSRF_COOKIE_NAME,
         csrf_token,
         httponly=False,
         max_age=7 * 24 * 60 * 60,
@@ -80,9 +80,9 @@ def _set_admin_session_cookies(response: Response, access_token: str, refresh_to
     )
 
 
-def _clear_admin_session_cookies(response: Response) -> None:
+def _clear_workspace_session_cookies(response: Response) -> None:
     domain = _session_cookie_domain()
-    for name in (ADMIN_ACCESS_COOKIE_NAME, ADMIN_REFRESH_COOKIE_NAME, ADMIN_CSRF_COOKIE_NAME):
+    for name in (WORKSPACE_ACCESS_COOKIE_NAME, WORKSPACE_REFRESH_COOKIE_NAME, WORKSPACE_CSRF_COOKIE_NAME):
         response.delete_cookie(name, path="/", domain=domain)
 
 
@@ -302,7 +302,7 @@ async def login(request: LoginRequest, response: Response):
     )
     
     refresh_token = create_refresh_token(user_id=user.id)
-    _set_admin_session_cookies(response, access_token, refresh_token)
+    _set_workspace_session_cookies(response, access_token, refresh_token)
     
     return TokenResponse(
         access_token=SESSION_TOKEN_PLACEHOLDER,
@@ -315,7 +315,7 @@ async def login(request: LoginRequest, response: Response):
 async def refresh_token(
     request: RefreshRequest,
     response: Response,
-    refresh_cookie: Optional[str] = Cookie(default=None, alias=ADMIN_REFRESH_COOKIE_NAME),
+    refresh_cookie: Optional[str] = Cookie(default=None, alias=WORKSPACE_REFRESH_COOKIE_NAME),
 ):
     """
     Get new access token using refresh token.
@@ -345,7 +345,7 @@ async def refresh_token(
     )
     
     new_refresh_token = create_refresh_token(user_id=user.id)
-    _set_admin_session_cookies(response, access_token, new_refresh_token)
+    _set_workspace_session_cookies(response, access_token, new_refresh_token)
     
     return TokenResponse(
         access_token=SESSION_TOKEN_PLACEHOLDER,
@@ -384,7 +384,7 @@ async def logout(
     # - Log the logout event
     # - Invalidate refresh tokens
     
-    _clear_admin_session_cookies(response)
+    _clear_workspace_session_cookies(response)
     return {"message": "Logged out successfully", "user_id": getattr(current_user, "user_id", None)}
 
 
@@ -874,7 +874,7 @@ async def exchange_google_auth_code(request: GoogleAuthCodeExchangeRequest, resp
     refresh_token = str(payload.get("refresh_token") or "").strip()
     if not access_token or not refresh_token:
         raise HTTPException(status_code=400, detail="invalid_auth_code_payload")
-    _set_admin_session_cookies(response, access_token, refresh_token)
+    _set_workspace_session_cookies(response, access_token, refresh_token)
     return TokenResponse(
         access_token=SESSION_TOKEN_PLACEHOLDER,
         refresh_token=SESSION_TOKEN_PLACEHOLDER,
@@ -926,7 +926,7 @@ async def accept_invite(request: InviteAcceptRequest, response: Response):
     db.accept_team_invite(str(invite.get("id")), accepted_by=user.id)
     access = create_access_token(user.id, user.email, user.organization_id, user.role)
     refresh = create_refresh_token(user.id)
-    _set_admin_session_cookies(response, access, refresh)
+    _set_workspace_session_cookies(response, access, refresh)
     return {
         "success": True,
         "user": user,

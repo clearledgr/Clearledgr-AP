@@ -66,8 +66,12 @@ function validateEvidence(evidence, { requireAuth = true } = {}) {
       errors.push('extension_worker_not_detected');
     }
     const mountedSections = Number(payload.mounted_sections || 0);
-    if (!Number.isFinite(mountedSections) || mountedSections < 2) {
-      errors.push(`insufficient_mounted_sections:${payload.mounted_sections}`);
+    const entryPointsDetected = Number(payload.entry_points_detected || 0);
+    if (
+      (!Number.isFinite(mountedSections) || mountedSections < 2)
+      && (!Number.isFinite(entryPointsDetected) || entryPointsDetected < 1)
+    ) {
+      errors.push(`insufficient_runtime_surface:${payload.mounted_sections || 0}:${payload.entry_points_detected || 0}`);
     }
   }
 
@@ -98,6 +102,7 @@ function buildMarkdownReport({
   const assertAuth = Boolean(evidence.assert_auth);
   const workerDetected = Boolean(evidence.extension_worker_detected);
   const mounted = Number(evidence.mounted_sections || 0);
+  const entryPointsDetected = Number(evidence.entry_points_detected || 0);
   const missingSelectors = Array.isArray(evidence.missing_selectors)
     ? evidence.missing_selectors
     : [];
@@ -120,6 +125,7 @@ function buildMarkdownReport({
     `| page_title | \`${String(evidence.page_title || '').replace(/\|/g, '\\|')}\` |`,
     `| extension_worker_detected | \`${workerDetected}\` |`,
     `| mounted_sections | \`${mounted}\` |`,
+    `| entry_points_detected | \`${entryPointsDetected}\` |`,
     `| missing_selectors | \`${missingSelectors.join(', ') || 'none'}\` |`,
     `| started_at | \`${String(evidence.started_at || '')}\` |`,
     `| finished_at | \`${String(evidence.finished_at || '')}\` |`,

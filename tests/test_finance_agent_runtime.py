@@ -55,6 +55,7 @@ class _FakeDB:
             },
         }
         self.audit_rows = []
+        self.source_rows = []
 
     def _all_items(self):
         return list(self.items.values())
@@ -74,6 +75,13 @@ class _FakeDB:
                 continue
             if token == str(item.get("thread_id") or ""):
                 return item
+            if any(
+                str(row.get("ap_item_id") or "") == str(item.get("id") or "")
+                and str(row.get("source_type") or "") == "gmail_thread"
+                and str(row.get("source_ref") or "") == token
+                for row in self.source_rows
+            ):
+                return item
         return None
 
     def get_ap_item_by_message_id(self, organization_id, message_id):
@@ -83,6 +91,13 @@ class _FakeDB:
             if str(item.get("organization_id") or "") != org:
                 continue
             if token == str(item.get("message_id") or ""):
+                return item
+            if any(
+                str(row.get("ap_item_id") or "") == str(item.get("id") or "")
+                and str(row.get("source_type") or "") == "gmail_message"
+                and str(row.get("source_ref") or "") == token
+                for row in self.source_rows
+            ):
                 return item
         return None
 
@@ -99,6 +114,35 @@ class _FakeDB:
         for key, value in (kwargs or {}).items():
             item[key] = value
         return True
+
+    def create_ap_item(self, payload):
+        item_id = str((payload or {}).get("id") or f"ap-created-{len(self.items) + 1}")
+        item = {
+            "id": item_id,
+            "organization_id": (payload or {}).get("organization_id", "default"),
+            "thread_id": (payload or {}).get("thread_id"),
+            "message_id": (payload or {}).get("message_id"),
+            "state": (payload or {}).get("state", "received"),
+            "vendor_name": (payload or {}).get("vendor_name"),
+            "invoice_number": (payload or {}).get("invoice_number"),
+            "amount": (payload or {}).get("amount"),
+            "currency": (payload or {}).get("currency"),
+            "subject": (payload or {}).get("subject"),
+            "sender": (payload or {}).get("sender"),
+            "confidence": (payload or {}).get("confidence", 0.0),
+            "metadata": (payload or {}).get("metadata", {}),
+        }
+        self.items[item_id] = item
+        return item
+
+    def link_ap_item_source(self, payload):
+        row = dict(payload or {})
+        self.source_rows.append(row)
+        return row
+
+    def list_ap_item_sources(self, ap_item_id):
+        token = str(ap_item_id or "")
+        return [row for row in self.source_rows if str(row.get("ap_item_id") or "") == token]
 
     def get_ap_audit_event_by_key(self, idempotency_key):
         key = str(idempotency_key or "").strip()
@@ -556,6 +600,8 @@ def test_execute_ap_invoice_processing_fails_closed_when_planner_unavailable():
 
     invoice_payload = {
         "gmail_id": "gmail-fail-closed-1",
+        "thread_id": "gmail-thread-fail-closed-1",
+        "message_id": "gmail-message-fail-closed-1",
         "organization_id": "default",
         "sender": "billing@example.com",
         "subject": "Invoice INV-FAIL-1",
@@ -582,6 +628,65 @@ def test_execute_ap_invoice_processing_fails_closed_when_planner_unavailable():
     assert result["agent_status"] == "failed"
     assert result["idempotency_key"] == "idem-fail-closed-1"
     assert result["correlation_id"] == "corr-fail-closed-1"
+    seeded = db.get_ap_item_by_thread("default", "gmail-thread-fail-closed-1")
+    assert seeded is not None
+    assert seeded["thread_id"] == "gmail-thread-fail-closed-1"
+    assert seeded["message_id"] == "gmail-message-fail-closed-1"
+    assert seeded["last_error"] == "planner unavailable"
+    assert seeded["metadata"]["exception_code"] == "planner_failed"
+
+
+def test_seed_ap_item_replaces_placeholder_vendor_and_zero_amount():
+    db = _FakeDB()
+    db.items["ap-placeholder-1"] = {
+        "id": "ap-placeholder-1",
+        "organization_id": "default",
+        "thread_id": "gmail-thread-placeholder-1",
+        "message_id": "gmail-message-placeholder-1",
+        "state": "received",
+        "vendor_name": "Unknown vendor",
+        "invoice_number": None,
+        "amount": 0.0,
+        "currency": "USD",
+        "subject": "Invoice",
+        "sender": "billing@placeholder.test",
+        "confidence": 0.1,
+        "metadata": {},
+    }
+    runtime = _runtime(db)
+
+    item = runtime._seed_ap_item_for_invoice_processing(
+        {
+            "organization_id": "default",
+            "thread_id": "gmail-thread-placeholder-1",
+            "message_id": "gmail-message-placeholder-1",
+            "sender": "Google Payments <payments-noreply@google.com>",
+            "subject": "Google Workspace invoice",
+            "vendor_name": "Unknown",
+            "amount": 123.45,
+            "currency": "USD",
+            "invoice_number": "5499678906",
+            "confidence": 0.98,
+        },
+        correlation_id="corr-placeholder-1",
+    )
+
+    assert item is not None
+    assert item["vendor_name"] == "Google Payments"
+    assert item["amount"] == 123.45
+    assert item["invoice_number"] == "5499678906"
+
+
+def test_runtime_prefers_sender_name_over_generic_processor_vendor():
+    db = _FakeDB()
+    runtime = _runtime(db)
+
+    vendor = runtime._resolved_vendor_name(
+        "Stripe",
+        "Replit <invoice+statements+acct_15YpNsJAmnYVOvfn@stripe.com>",
+    )
+
+    assert vendor == "Replit"
 
 
 def test_ap_auto_approve_threshold_reads_org_settings():

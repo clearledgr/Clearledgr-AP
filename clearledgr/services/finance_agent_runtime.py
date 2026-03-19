@@ -30,6 +30,14 @@ from clearledgr.services.finance_skills import (
 
 logger = logging.getLogger(__name__)
 
+_GENERIC_VENDOR_ALIASES = {
+    "google",
+    "stripe",
+    "paypal",
+    "square",
+    "google workspace",
+}
+
 
 class IntentNotSupportedError(ValueError):
     """Raised when an unknown finance agent intent is requested."""
@@ -131,6 +139,38 @@ class FinanceAgentRuntime:
             return default
 
     @staticmethod
+    def _normalize_vendor_name(value: Any) -> str:
+        vendor = str(value or "").strip()
+        if vendor.lower() in {"unknown", "unknown vendor", "n/a", "na", "none"}:
+            return ""
+        return vendor
+
+    @classmethod
+    def _vendor_from_sender(cls, sender: Any) -> str:
+        raw = str(sender or "").strip()
+        if not raw:
+            return ""
+        import re
+
+        name_match = re.match(r"^([^<]+)", raw)
+        if name_match:
+            candidate = cls._normalize_vendor_name(name_match.group(1))
+            if candidate:
+                return candidate
+        if "@" in raw:
+            domain = raw.split("@", 1)[1].split(".", 1)[0]
+            return cls._normalize_vendor_name(domain.title())
+        return cls._normalize_vendor_name(raw)
+
+    @classmethod
+    def _resolved_vendor_name(cls, vendor: Any, sender: Any) -> str:
+        normalized_vendor = cls._normalize_vendor_name(vendor)
+        sender_vendor = cls._vendor_from_sender(sender)
+        if sender_vendor and normalized_vendor and normalized_vendor.lower() in _GENERIC_VENDOR_ALIASES:
+            return sender_vendor
+        return normalized_vendor or sender_vendor
+
+    @staticmethod
     def _approval_sla_minutes() -> int:
         raw = os.getenv("AP_APPROVAL_SLA_MINUTES", "240")
         try:
@@ -198,6 +238,29 @@ class FinanceAgentRuntime:
             return ""
         return str(payload.get("correlation_id") or payload.get("run_id") or "").strip()
 
+    @staticmethod
+    def _invoice_thread_id(invoice: Dict[str, Any]) -> str:
+        if not isinstance(invoice, dict):
+            return ""
+        return str(
+            invoice.get("thread_id")
+            or invoice.get("gmail_thread_id")
+            or invoice.get("gmail_id")
+            or invoice.get("email_id")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _invoice_message_id(invoice: Dict[str, Any]) -> str:
+        if not isinstance(invoice, dict):
+            return ""
+        return str(
+            invoice.get("message_id")
+            or invoice.get("gmail_message_id")
+            or invoice.get("gmail_id")
+            or ""
+        ).strip()
+
     def _ensure_supported(self, intent: str) -> str:
         normalized = str(intent or "").strip().lower()
         if normalized not in self._intent_skill_map:
@@ -262,6 +325,214 @@ class FinanceAgentRuntime:
             or {}
         )
         return self._parse_json_dict(raw_settings)
+
+    def _seed_ap_item_for_invoice_processing(
+        self,
+        invoice: Dict[str, Any],
+        *,
+        correlation_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(invoice, dict) or not hasattr(self.db, "create_ap_item"):
+            return None
+
+        organization_id = (
+            str(invoice.get("organization_id") or self.organization_id or "default").strip()
+            or "default"
+        )
+        thread_id = self._invoice_thread_id(invoice)
+        message_id = self._invoice_message_id(invoice)
+        invoice_number = str(invoice.get("invoice_number") or "").strip() or None
+        subject = str(invoice.get("subject") or "").strip() or "Invoice"
+        sender = str(invoice.get("sender") or "").strip() or "unknown@unknown.local"
+        vendor_name = self._resolved_vendor_name(invoice.get("vendor_name") or invoice.get("vendor"), sender)
+        currency = str(invoice.get("currency") or "USD").strip() or "USD"
+        due_date = str(invoice.get("due_date") or "").strip() or None
+        attachment_url = str(invoice.get("attachment_url") or "").strip() or None
+        attachment_count = max(0, self._safe_int(invoice.get("attachment_count"), 0))
+        raw_attachment_names = invoice.get("attachment_names")
+        attachment_names = (
+            [str(value).strip() for value in raw_attachment_names if str(value or "").strip()]
+            if isinstance(raw_attachment_names, list)
+            else []
+        )
+        has_attachment = bool(invoice.get("has_attachment")) or attachment_count > 0 or bool(attachment_url) or bool(attachment_names)
+        user_id = str(invoice.get("user_id") or self.actor_id or "").strip() or None
+
+        try:
+            amount = float(invoice.get("amount", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            amount = 0.0
+        try:
+            confidence = float(invoice.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        existing = None
+        if thread_id and hasattr(self.db, "get_ap_item_by_thread"):
+            try:
+                existing = self.db.get_ap_item_by_thread(organization_id, thread_id)
+            except Exception:
+                existing = None
+        if not existing and message_id and hasattr(self.db, "get_ap_item_by_message_id"):
+            try:
+                existing = self.db.get_ap_item_by_message_id(organization_id, message_id)
+            except Exception:
+                existing = None
+
+        metadata_updates = {
+            "correlation_id": str(correlation_id or "").strip() or None,
+            "intake_source": invoice.get("intake_source") or "gmail_autopilot",
+            "email_type": invoice.get("email_type") or "invoice",
+            "has_attachment": has_attachment,
+            "attachment_count": attachment_count,
+        }
+        if isinstance(invoice.get("field_confidences"), dict) and invoice.get("field_confidences"):
+            metadata_updates["field_confidences"] = invoice.get("field_confidences")
+        if isinstance(invoice.get("raw_parser"), dict) and invoice.get("raw_parser"):
+            metadata_updates["raw_parser"] = invoice.get("raw_parser")
+        if isinstance(invoice.get("attachment_manifest"), list) and invoice.get("attachment_manifest"):
+            metadata_updates["attachment_manifest"] = invoice.get("attachment_manifest")
+        for key in (
+            "extraction_method",
+            "extraction_model",
+            "reasoning_summary",
+            "payment_processor",
+            "invoice_date",
+            "primary_source",
+        ):
+            value = invoice.get(key)
+            if value:
+                metadata_updates[key] = value
+        if invoice.get("zero_amount_confirmed_by_attachment") is not None:
+            metadata_updates["zero_amount_confirmed_by_attachment"] = bool(
+                invoice.get("zero_amount_confirmed_by_attachment")
+            )
+        if attachment_names:
+            metadata_updates["attachment_names"] = attachment_names
+        if attachment_url:
+            metadata_updates["attachment_url"] = attachment_url
+        metadata_updates = {key: value for key, value in metadata_updates.items() if value}
+
+        item = None
+        if existing:
+            updates: Dict[str, Any] = {}
+            existing_metadata = self._parse_json_dict(existing.get("metadata"))
+            merged_metadata = {**existing_metadata, **metadata_updates}
+            if merged_metadata != existing_metadata:
+                updates["metadata"] = merged_metadata
+            if thread_id and str(existing.get("thread_id") or "").strip() != thread_id:
+                updates["thread_id"] = thread_id
+            if message_id and not str(existing.get("message_id") or "").strip():
+                updates["message_id"] = message_id
+            if subject and not str(existing.get("subject") or "").strip():
+                updates["subject"] = subject
+            if sender and not str(existing.get("sender") or "").strip():
+                updates["sender"] = sender
+            if vendor_name and not self._normalize_vendor_name(existing.get("vendor_name") or existing.get("vendor")):
+                updates["vendor_name"] = vendor_name
+            if invoice_number and not str(existing.get("invoice_number") or "").strip():
+                updates["invoice_number"] = invoice_number
+            if due_date and not str(existing.get("due_date") or "").strip():
+                updates["due_date"] = due_date
+            if attachment_url and not str(existing.get("attachment_url") or "").strip():
+                updates["attachment_url"] = attachment_url
+            if self._safe_float(existing.get("amount"), 0.0) <= 0.0 and amount > 0.0:
+                updates["amount"] = amount
+            if not str(existing.get("currency") or "").strip() and currency:
+                updates["currency"] = currency
+            if confidence > self._safe_float(existing.get("confidence"), 0.0):
+                updates["confidence"] = confidence
+            if updates and hasattr(self.db, "update_ap_item"):
+                try:
+                    self.db.update_ap_item(str(existing.get("id") or "").strip(), **updates)
+                except Exception:
+                    pass
+            if hasattr(self.db, "get_ap_item"):
+                try:
+                    item = self.db.get_ap_item(str(existing.get("id") or "").strip())
+                except Exception:
+                    item = None
+            if not item:
+                item = {**existing, **updates}
+                if "metadata" not in item:
+                    item["metadata"] = merged_metadata
+        else:
+            invoice_key = None
+            if invoice_number and vendor_name:
+                invoice_key = f"{vendor_name}::{invoice_number}"
+            elif thread_id:
+                invoice_key = f"gmail-thread::{thread_id}"
+            elif message_id:
+                invoice_key = f"gmail-message::{message_id}"
+
+            payload = {
+                "invoice_key": invoice_key,
+                "thread_id": thread_id or message_id,
+                "message_id": message_id or None,
+                "subject": subject,
+                "sender": sender,
+                "vendor_name": vendor_name or "Unknown vendor",
+                "amount": amount,
+                "currency": currency,
+                "invoice_number": invoice_number,
+                "due_date": due_date,
+                "attachment_url": attachment_url,
+                "state": "received",
+                "confidence": confidence,
+                "organization_id": organization_id,
+                "user_id": user_id,
+                "metadata": metadata_updates,
+            }
+            try:
+                item = self.db.create_ap_item(payload)
+            except Exception as exc:
+                logger.warning("[FinanceAgentRuntime] failed to seed AP item for invoice: %s", exc)
+                item = None
+
+        if item and hasattr(self.db, "link_ap_item_source"):
+            ap_item_id = str(item.get("id") or "").strip()
+            if thread_id:
+                try:
+                    self.db.link_ap_item_source(
+                        {
+                            "ap_item_id": ap_item_id,
+                            "source_type": "gmail_thread",
+                            "source_ref": thread_id,
+                            "subject": subject,
+                            "sender": sender,
+                            "metadata": {
+                                "linked_by": "finance_agent_runtime",
+                                "has_attachment": has_attachment,
+                                "attachment_count": attachment_count,
+                                "attachment_names": attachment_names,
+                                "attachment_url": attachment_url,
+                            },
+                        }
+                    )
+                except Exception:
+                    pass
+            if message_id:
+                try:
+                    self.db.link_ap_item_source(
+                        {
+                            "ap_item_id": ap_item_id,
+                            "source_type": "gmail_message",
+                            "source_ref": message_id,
+                            "subject": subject,
+                            "sender": sender,
+                            "metadata": {
+                                "linked_by": "finance_agent_runtime",
+                                "has_attachment": has_attachment,
+                                "attachment_count": attachment_count,
+                                "attachment_names": attachment_names,
+                                "attachment_url": attachment_url,
+                            },
+                        }
+                    )
+                except Exception:
+                    pass
+
+        return item
 
     def _merge_item_metadata(self, item: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
         metadata = self._parse_json_dict(item.get("metadata"))
@@ -819,9 +1090,11 @@ class FinanceAgentRuntime:
         from clearledgr.services.invoice_workflow import InvoiceData
 
         invoice = invoice_payload if isinstance(invoice_payload, dict) else {}
-        gmail_id = str(invoice.get("gmail_id") or invoice.get("thread_id") or "").strip()
+        gmail_thread_id = self._invoice_thread_id(invoice)
+        gmail_message_id = self._invoice_message_id(invoice)
+        runtime_reference = gmail_thread_id or gmail_message_id
         resolved_idempotency_key = str(idempotency_key or "").strip() or (
-            f"invoice:{gmail_id}" if gmail_id else None
+            f"invoice:{runtime_reference}" if runtime_reference else None
         )
         resolved_correlation_id = (
             str(correlation_id or "").strip()
@@ -831,6 +1104,7 @@ class FinanceAgentRuntime:
         invoice_org = str(invoice.get("organization_id") or self.organization_id or "default").strip() or "default"
         attachment_list = attachments if isinstance(attachments, list) else []
         attachment_url = ""
+        attachment_names: List[str] = []
         if attachment_list:
             first_attachment = attachment_list[0] if isinstance(attachment_list[0], dict) else {}
             attachment_url = str(
@@ -838,6 +1112,25 @@ class FinanceAgentRuntime:
                 or first_attachment.get("attachment_url")
                 or ""
             ).strip()
+            for attachment in attachment_list:
+                if not isinstance(attachment, dict):
+                    continue
+                name = str(attachment.get("filename") or attachment.get("name") or "").strip()
+                if name:
+                    attachment_names.append(name)
+        seeded_item = self._seed_ap_item_for_invoice_processing(
+            {
+                **invoice,
+                "organization_id": invoice_org,
+                "thread_id": gmail_thread_id or invoice.get("thread_id"),
+                "message_id": gmail_message_id or invoice.get("message_id"),
+                "attachment_url": attachment_url or invoice.get("attachment_url"),
+                "attachment_count": len(attachment_list),
+                "attachment_names": attachment_names,
+                "has_attachment": bool(attachment_list),
+            },
+            correlation_id=resolved_correlation_id,
+        )
 
         amount_raw = invoice.get("amount", 0.0)
         try:
@@ -852,10 +1145,13 @@ class FinanceAgentRuntime:
             confidence_value = 0.0
 
         invoice_data = InvoiceData(
-            gmail_id=gmail_id or str(invoice.get("message_id") or "").strip() or f"invoice-{uuid.uuid4().hex[:10]}",
+            gmail_id=runtime_reference or f"invoice-{uuid.uuid4().hex[:10]}",
             subject=str(invoice.get("subject") or "").strip() or "Invoice",
             sender=str(invoice.get("sender") or "").strip() or "unknown@unknown.local",
-            vendor_name=str(invoice.get("vendor_name") or invoice.get("vendor") or "").strip() or "Unknown vendor",
+            vendor_name=self._resolved_vendor_name(
+                invoice.get("vendor_name") or invoice.get("vendor"),
+                invoice.get("sender"),
+            ) or "Unknown vendor",
             amount=amount_value,
             currency=str(invoice.get("currency") or "USD").strip() or "USD",
             invoice_number=str(invoice.get("invoice_number") or "").strip() or None,
@@ -908,6 +1204,23 @@ class FinanceAgentRuntime:
                 "[FinanceAgentRuntime] planning engine unavailable; AP processing failed closed: %s",
                 planner_exc,
             )
+            if seeded_item and hasattr(self.db, "update_ap_item"):
+                ap_item_id = str(seeded_item.get("id") or "").strip()
+                merged_metadata = {
+                    **self._parse_json_dict(seeded_item.get("metadata")),
+                    "exception_code": "planner_failed",
+                    "exception_severity": "high",
+                    "processing_status": "planner_failed",
+                    "planner_error": str(planner_exc),
+                }
+                try:
+                    self.db.update_ap_item(
+                        ap_item_id,
+                        last_error=str(planner_exc),
+                        metadata=merged_metadata,
+                    )
+                except Exception:
+                    pass
             response = {
                 "status": "error",
                 "reason": "planning_engine_unavailable",
@@ -916,6 +1229,9 @@ class FinanceAgentRuntime:
                 "agent_status": "failed",
             }
 
+        if seeded_item:
+            response.setdefault("ap_item_id", seeded_item.get("id"))
+            response.setdefault("email_id", runtime_reference or seeded_item.get("thread_id"))
         if resolved_idempotency_key:
             response.setdefault("idempotency_key", resolved_idempotency_key)
         if resolved_correlation_id:

@@ -186,7 +186,7 @@ def _token_data_from_payload(payload: Dict[str, Any]) -> TokenData:
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    admin_access_cookie: Optional[str] = Cookie(default=None, alias="clearledgr_admin_access"),
+    workspace_access_cookie: Optional[str] = Cookie(default=None, alias="clearledgr_workspace_access"),
 ) -> TokenData:
     """
     Get current authenticated user from JWT token or API key.
@@ -214,15 +214,15 @@ def get_current_user(
             )
         raise HTTPException(status_code=401, detail="Invalid API key")
 
-    if admin_access_cookie:
-        payload = decode_token(admin_access_cookie)
+    if workspace_access_cookie:
+        payload = decode_token(workspace_access_cookie)
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Invalid token type")
         return _token_data_from_payload(payload)
 
     raise HTTPException(
         status_code=401,
-        detail="Not authenticated. Provide Bearer token, X-API-Key header, or valid admin session cookie.",
+        detail="Not authenticated. Provide Bearer token, X-API-Key header, or valid workspace session cookie.",
     )
 
 
@@ -253,11 +253,11 @@ def require_admin_user(user: TokenData = Depends(get_current_user)) -> TokenData
 def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    admin_access_cookie: Optional[str] = Cookie(default=None, alias="clearledgr_admin_access"),
+    workspace_access_cookie: Optional[str] = Cookie(default=None, alias="clearledgr_workspace_access"),
 ) -> Optional[TokenData]:
     """Get current user if authenticated, None otherwise."""
     try:
-        return get_current_user(credentials, x_api_key, admin_access_cookie)
+        return get_current_user(credentials, x_api_key, workspace_access_cookie)
     except HTTPException:
         return None
 

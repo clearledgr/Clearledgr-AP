@@ -1,8 +1,8 @@
 /**
- * Admin API adapter — wraps queueManager.backendFetch() with the same
- * api(path, options) interface as the standalone console.
+ * Workspace shell API adapter — wraps queueManager.backendFetch() with the same
+ * api(path, options) interface as the standalone support shell.
  *
- * Page components ported from static/console/app.js use props.api() for
+ * Page components ported from static/workspace/app.js use props.api() for
  * all backend calls. This adapter provides Bearer token auth (no cookies/CSRF).
  */
 
@@ -10,7 +10,7 @@ let _toastFn = null;
 
 export function setToastFn(fn) { _toastFn = fn; }
 
-export function createAdminApi(queueManager) {
+export function createWorkspaceShellApi(queueManager) {
   const orgId = () => String(queueManager?.runtimeConfig?.organizationId || 'default').trim();
   const backendUrl = () => String(queueManager?.runtimeConfig?.backendUrl || 'http://127.0.0.1:8010').replace(/\/+$/, '');
 
@@ -38,12 +38,12 @@ export function createAdminApi(queueManager) {
     _toastFn?.(msg, type);
   }
 
-  async function bootstrapAdminData() {
+  async function bootstrapWorkspaceShellData() {
     const id = orgId();
     const [bootstrap, policies, team] = await Promise.allSettled([
-      api(`/api/admin/bootstrap?organization_id=${id}`, { silent: true }).catch(() => ({})),
-      api(`/api/admin/policies/ap?organization_id=${id}`, { silent: true }).catch(() => ({})),
-      api(`/api/admin/team/invites?organization_id=${id}`, { silent: true }).catch(() => []),
+      api(`/api/workspace/bootstrap?organization_id=${id}`, { silent: true }).catch(() => ({})),
+      api(`/api/workspace/policies/ap?organization_id=${id}`, { silent: true }).catch(() => ({})),
+      api(`/api/workspace/team/invites?organization_id=${id}`, { silent: true }).catch(() => []),
     ]);
 
     const bootstrapPayload = bootstrap.value || {};
@@ -68,5 +68,5 @@ export function createAdminApi(queueManager) {
     };
   }
 
-  return { api, toast, orgId, bootstrapAdminData };
+  return { api, toast, orgId, bootstrapWorkspaceShellData };
 }

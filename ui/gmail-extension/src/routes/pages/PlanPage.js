@@ -10,7 +10,7 @@ export default function PlanPage({ bootstrap, api, toast, orgId, onRefresh }) {
   const usageKeys = Object.keys(usage);
   const planName = (sub.plan || 'free').charAt(0).toUpperCase() + (sub.plan || 'free').slice(1);
   const [changePlan] = useAction(async (plan) => {
-    await api('/api/admin/subscription/plan', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, plan }) });
+    await api('/api/workspace/subscription/plan', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, plan }) });
     toast(`Plan updated to ${plan}.`); onRefresh();
   });
 

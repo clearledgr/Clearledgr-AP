@@ -105,7 +105,7 @@ class EmailParser:
     ]
     
     INVOICE_PATTERNS = [
-        r'Invoice\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
+        r'Invoice\s*(?:Number|No\.?|#)\s*[:#-]?\s*([A-Z0-9][\w\-/]+)',
         r'INV[:\-\s#]*([A-Z0-9][\w\-]+)',
         r'Bill\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
         r'Reference\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
@@ -208,15 +208,21 @@ class EmailParser:
         
         # Parse attachments
         parsed_attachments = []
+        attachment_extractions = []
+        primary_source = "email"
         for attachment in attachments:
             parsed = self._parse_attachment(attachment)
             if parsed:
                 parsed_attachments.append(parsed)
+                extraction = parsed.get("extraction")
+                if isinstance(extraction, dict) and extraction:
+                    attachment_extractions.append(extraction)
 
             attachment_text = attachment.get("content_text")
             if attachment_text:
                 parsed_text = self.parse_invoice_text(attachment_text)
                 if parsed_text:
+                    attachment_extractions.append(parsed_text)
                     attachment_name = attachment.get("name") or attachment.get("filename")
                     attachment_type = attachment.get("content_type") or attachment.get("mime_type")
                     parsed_attachments.append({
@@ -227,23 +233,39 @@ class EmailParser:
                         "extraction": parsed_text
                     })
 
-                    if parsed_text.get("amount"):
-                        parsed_amount = parsed_text.get("amount")
-                        if isinstance(parsed_amount, dict):
-                            amounts = [parsed_amount]
-                        else:
-                            amounts = [{
-                                "value": parsed_amount,
-                                "raw": str(parsed_amount),
-                                "currency": parsed_text.get("currency") or self._detect_currency(attachment_text),
-                            }]
-                    if parsed_text.get("invoice_number"):
-                        invoice_numbers = [parsed_text.get("invoice_number")]
-                    if parsed_text.get("date"):
-                        dates = [parsed_text.get("date")]
-                    if not vendor and parsed_text.get("vendor"):
-                        vendor = parsed_text.get("vendor")
-        
+        if attachment_extractions:
+            primary_source = "attachment"
+            preferred_extraction = next(
+                (
+                    extraction for extraction in attachment_extractions
+                    if str(extraction.get("type") or "").strip().lower() == "invoice"
+                ),
+                attachment_extractions[0],
+            )
+            parsed_amount = preferred_extraction.get("amount")
+            if parsed_amount:
+                if isinstance(parsed_amount, dict):
+                    amounts = [parsed_amount]
+                else:
+                    amount_value = self._parse_amount_value(
+                        str(parsed_amount),
+                        source_fragment=str(parsed_amount),
+                    )
+                    if amount_value is not None:
+                        amounts = [{
+                            "value": amount_value,
+                            "raw": str(parsed_amount),
+                            "currency": preferred_extraction.get("currency") or self._detect_currency(str(parsed_amount)),
+                        }]
+            if preferred_extraction.get("invoice_number"):
+                invoice_numbers = [preferred_extraction.get("invoice_number")]
+            if preferred_extraction.get("date"):
+                dates = [preferred_extraction.get("date")]
+            if preferred_extraction.get("due_date"):
+                dates = [preferred_extraction.get("due_date"), *dates]
+            if preferred_extraction.get("vendor"):
+                vendor = preferred_extraction.get("vendor")
+
         # Merge attachment data with email data
         if parsed_attachments:
             # Use attachment data if more complete
@@ -287,6 +309,7 @@ class EmailParser:
             "has_statement_attachment": any(a.get('type') == 'statement' for a in parsed_attachments),
             "confidence": self._calculate_confidence(email_type, amounts, invoice_numbers),
             "currency": primary_currency,
+            "primary_source": primary_source,
             "parsed_at": datetime.now(timezone.utc).isoformat()
         }
     
@@ -499,23 +522,32 @@ class EmailParser:
         candidates = []
         
         # Look for company name patterns at start of text
-        lines = text.split('\n')[:15]  # First 15 lines
+        lines = text.split('\n')[:40]  # Early document lines carry vendor identity
         
         for line in lines:
-            line = line.strip()
-            # Skip short lines or lines with numbers
-            if len(line) < 3 or len(line) > 60:
+            line = re.sub(r"\.(?=\w)", "", line)
+            line = re.sub(r"\s+", " ", line).strip(" .,:;|-")
+            if line.startswith("--- Page"):
                 continue
-            if re.search(r'\d{4}', line):  # Skip lines with years/dates
+            if self._is_vendor_noise_candidate(line):
                 continue
-            if any(kw in line.lower() for kw in ['invoice', 'bill', 'date', 'to:', 'from:', 'page', 'total']):
-                continue
-            # Likely a company name
             if line and line[0].isupper():
                 candidates.append(line)
         
         if not candidates:
             return None
+
+        legal_entity_pattern = re.compile(
+            r"\b(?:limited|ltd|llc|inc|corp|corporation|gmbh|plc|pte|pty|bv|sarl|sa)\b",
+            re.IGNORECASE,
+        )
+        for candidate in candidates:
+            if legal_entity_pattern.search(candidate):
+                return candidate
+
+        for candidate in candidates:
+            if len(candidate.split()) >= 2 and len(candidate) >= 8:
+                return candidate
         
         # Try fuzzy match against known vendors
         if FUZZY_AVAILABLE and self.known_vendors:
@@ -528,9 +560,56 @@ class EmailParser:
                 )
                 if match:
                     return match[0]  # Return standardized vendor name
-        
+
         # Return first candidate if no fuzzy match
         return candidates[0] if candidates else None
+
+    def _is_vendor_noise_candidate(self, candidate: Optional[str]) -> bool:
+        cleaned = re.sub(r"\s+", " ", str(candidate or "")).strip(" .,:;|-")
+        if len(cleaned) < 3 or len(cleaned) > 80:
+            return True
+        lowered = cleaned.lower()
+        normalized_letters = re.sub(r"[^a-z]", "", lowered)
+        if re.search(r"\d{4}", cleaned):
+            return True
+        if any(
+            token in lowered or token.replace(" ", "") in normalized_letters
+            for token in (
+                "invoice",
+                "bill to",
+                "details",
+                "summary",
+                "subtotal",
+                "total",
+                "vat",
+                "billing id",
+                "account id",
+                "description",
+                "amount",
+                "due",
+                "page ",
+            )
+        ):
+            return True
+        if cleaned.count(".") >= 3:
+            return True
+        if re.search(r"\b(?:usd|eur|gbp|cad|aud|inr|ngn|kes|jpy|cny|vat)\b", lowered):
+            return True
+        if any(symbol in cleaned for symbol in ("$", "€", "£", "¥", "₹", "₦")):
+            return True
+        if lowered in {"pay online", "united states"}:
+            return True
+        if any(ch.isdigit() for ch in cleaned):
+            return True
+        alnum_chars = [ch for ch in cleaned if ch.isalnum()]
+        if alnum_chars:
+            alpha_ratio = sum(ch.isalpha() for ch in alnum_chars) / len(alnum_chars)
+            if alpha_ratio < 0.75:
+                return True
+        compact = re.sub(r"[^A-Za-z]", "", cleaned)
+        if compact and len(compact) <= 4:
+            return True
+        return False
     
     def add_known_vendor(self, vendor_name: str):
         """Add a vendor to the known vendors list for fuzzy matching."""
@@ -1166,10 +1245,15 @@ class EmailParser:
             parsed_invoice = None
             if parsed_text:
                 parsed_invoice = self.parse_invoice_text(parsed_text)
+            parsed_type = (
+                str(parsed_invoice.get("type") or "").strip().lower()
+                if isinstance(parsed_invoice, dict)
+                else ""
+            )
 
             return {
                 "name": attachment.get('name') or attachment.get('filename'),
-                "type": "invoice" if 'invoice' in name else "document",
+                "type": parsed_type or ("invoice" if 'invoice' in name else "document"),
                 "content_type": "application/pdf",
                 "requires_ocr": False if parsed_text else True,
                 "parsed": bool(parsed_text),
@@ -1186,10 +1270,15 @@ class EmailParser:
             parsed_invoice = None
             if parsed_text:
                 parsed_invoice = self.parse_invoice_text(parsed_text)
+            parsed_type = (
+                str(parsed_invoice.get("type") or "").strip().lower()
+                if isinstance(parsed_invoice, dict)
+                else ""
+            )
 
             return {
                 "name": attachment.get('name') or attachment.get('filename'),
-                "type": "invoice" if 'invoice' in name else "document",
+                "type": parsed_type or ("invoice" if 'invoice' in name else "document"),
                 "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 "requires_ocr": False,
                 "parsed": bool(parsed_text),

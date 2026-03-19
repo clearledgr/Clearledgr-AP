@@ -47,7 +47,7 @@ Ongoing work log for Clearledgr v1. Each session appends completed + open items.
 ### Extraction Accuracy Follow-up
 - [ ] Per-field confidence thresholds (vendor at 0.95, amount at 0.99, invoice_number at 0.90, due_date at 0.85)
 - [ ] Correction → confidence boost feedback loop (re-evaluate gate after correction)
-- [ ] Extraction quality dashboard view in admin console
+- [ ] Extraction quality dashboard view in the workspace shell
 
 ### E2E Staging Drill (completed 2026-02-26)
 - [x] `tests/test_admin_launch_controls.py` — 2 API-level tests for rollback controls + GA readiness (verified passing)

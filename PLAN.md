@@ -733,12 +733,12 @@ Runtime and API requirements:
 
 ### C.3 Admin Ops readiness + calibration interfaces
 Admin/operator ops surfaces must expose connector and learning readiness through authenticated APIs:
-1. `GET /api/admin/ops/connector-readiness`
+1. `GET /api/workspace/ops/connector-readiness`
    - Returns per-connector readiness rows for NetSuite/QuickBooks/Xero/SAP.
    - Must include checklist status, connector configuration status, rollback blocks, and readiness blocker reasons.
-2. `GET /api/admin/ops/learning-calibration`
+2. `GET /api/workspace/ops/learning-calibration`
    - Returns latest persisted tenant calibration snapshot derived from operator outcomes.
-3. `POST /api/admin/ops/learning-calibration/recompute`
+3. `POST /api/workspace/ops/learning-calibration/recompute`
    - Recomputes and persists calibration snapshot with version/timestamp metadata.
 4. Ops endpoints above are role-gated (`owner`/`admin`/`operator`) and are not rendered in Gmail Work UX.
 

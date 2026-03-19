@@ -42,9 +42,9 @@ def test_login_sets_http_only_admin_session_and_csrf_cookies(db):
         response = client.post("/auth/login", json={"email": email, "password": password})
 
     assert response.status_code == 200
-    assert response.cookies.get("clearledgr_admin_access")
-    assert response.cookies.get("clearledgr_admin_refresh")
-    assert response.cookies.get("clearledgr_admin_csrf")
+    assert response.cookies.get("clearledgr_workspace_access")
+    assert response.cookies.get("clearledgr_workspace_refresh")
+    assert response.cookies.get("clearledgr_workspace_csrf")
     payload = response.json()
     assert payload.get("access_token") == "__cookie_session__"
     assert payload.get("refresh_token") == "__cookie_session__"
@@ -69,15 +69,15 @@ def test_cookie_session_mutations_require_csrf_header(db):
         assert login.status_code == 200
 
         without_csrf = client.post(
-            "/api/admin/onboarding/step",
+            "/api/workspace/onboarding/step",
             json={"organization_id": "default", "step": 1},
         )
         assert without_csrf.status_code == 403
         assert without_csrf.json().get("detail") == "csrf_validation_failed"
 
-        csrf = client.cookies.get("clearledgr_admin_csrf")
+        csrf = client.cookies.get("clearledgr_workspace_csrf")
         with_csrf = client.post(
-            "/api/admin/onboarding/step",
+            "/api/workspace/onboarding/step",
             json={"organization_id": "default", "step": 1},
             headers={"X-CSRF-Token": csrf},
         )

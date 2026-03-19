@@ -19,7 +19,7 @@ import store from './utils/store.js';
 import SidebarApp, { showToast } from './components/SidebarApp.js';
 import { STATE_LABELS, STATE_COLORS, getStateLabel, readLocalStorage, writeLocalStorage, getAssetUrl } from './utils/formatters.js';
 
-// Route imports (Gmail-native admin pages — Streak pattern)
+// Route imports (Gmail-native support pages — Streak pattern)
 import {
   ROUTES,
   DEFAULT_ROUTE,
@@ -28,7 +28,7 @@ import {
   readRoutePreferences,
   writeRoutePreferences,
 } from './routes/route-registry.js';
-import { createAdminApi, setToastFn } from './routes/admin-api.js';
+import { createWorkspaceShellApi, setToastFn } from './routes/workspace-shell-api.js';
 import { createOAuthBridge } from './routes/oauth-bridge.js';
 import { ROUTE_CSS } from './routes/route-styles.js';
 import HomePage from './routes/pages/HomePage.js';
@@ -180,8 +180,12 @@ function registerThreadHandler() {
         if (item?.id) {
           store.update({ selectedItemId: item.id });
           writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, item.id);
-        } else if (threadId && queueManager) {
-          // Streak pattern: fetch from backend if not in local queue
+        }
+
+        if (threadId && queueManager) {
+          // Always refresh the canonical item for the open thread so new
+          // backend-derived fields (for example attachment evidence) replace
+          // stale queue rows already in memory.
           try {
             const result = await queueManager.backendFetch(
               `/extension/by-thread/${encodeURIComponent(threadId)}`
@@ -190,10 +194,8 @@ function registerThreadHandler() {
               const data = await result.json();
               if (data?.found && data?.item) {
                 item = data.item;
-                const currentQueue = store.queueState || [];
-                if (!currentQueue.find(i => i.id === item.id)) {
-                  store.update({ queueState: [...currentQueue, item] });
-                }
+                queueManager.upsertQueueItem(item);
+                queueManager.emitQueueUpdated();
                 store.update({ selectedItemId: item.id });
                 writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, item.id);
               }
@@ -696,7 +698,7 @@ function registerAppMenuAndRoutes() {
     showToast(msg, type);
   });
 
-  const adminApi = createAdminApi(queueManager);
+  const workspaceShellApi = createWorkspaceShellApi(queueManager);
   const oauthBridge = createOAuthBridge(() => {
     bootstrapCache = null;
     queueManager?.scanNow?.();
@@ -712,10 +714,16 @@ function registerAppMenuAndRoutes() {
   async function getBootstrap() {
     if (bootstrapCache) return bootstrapCache;
     if (bootstrapPromise) return bootstrapPromise;
-    bootstrapPromise = adminApi.bootstrapAdminData().then((data) => {
+    bootstrapPromise = workspaceShellApi.bootstrapWorkspaceShellData().then((data) => {
       bootstrapCache = data;
       queueManager.currentUserRole = data?.current_user?.role || null;
-      store.update({ currentUserRole: queueManager.currentUserRole });
+      const gmailIntegration = Array.isArray(data?.integrations)
+        ? data.integrations.find((integration) => integration?.name === 'gmail') || null
+        : null;
+      store.update({
+        currentUserRole: queueManager.currentUserRole,
+        gmailIntegration,
+      });
       const pipelineScope = {
         orgId: queueManager?.runtimeConfig?.organizationId || 'default',
         userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
@@ -801,15 +809,15 @@ function registerAppMenuAndRoutes() {
 
     const params = customRouteView.getParams?.() || {};
     const rawId = params.id || window.location.hash.split('clearledgr/invoice/')[1]?.split('?')[0] || '';
-    const orgId = adminApi.orgId();
+    const orgId = workspaceShellApi.orgId();
     const navigate = (routeId) => sdk.Router.goto(routeId);
     const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
     const bootstrap = await getBootstrap();
 
     render(html`<${InvoiceDetailPage}
-      api=${adminApi.api}
+      api=${workspaceShellApi.api}
       bootstrap=${bootstrap}
-      toast=${adminApi.toast}
+      toast=${workspaceShellApi.toast}
       orgId=${orgId}
       userEmail=${userEmail}
       navigate=${navigate}
@@ -834,15 +842,15 @@ function registerAppMenuAndRoutes() {
 
     const params = customRouteView.getParams?.() || {};
     const rawName = params.name || window.location.hash.split('clearledgr/vendor/')[1]?.split('?')[0] || '';
-    const orgId = adminApi.orgId();
+    const orgId = workspaceShellApi.orgId();
     const navigate = (routeId) => sdk.Router.goto(routeId);
     const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
     const bootstrap = await getBootstrap();
 
     render(html`<${VendorDetailPage}
-      api=${adminApi.api}
+      api=${workspaceShellApi.api}
       bootstrap=${bootstrap}
-      toast=${adminApi.toast}
+      toast=${workspaceShellApi.toast}
       orgId=${orgId}
       userEmail=${userEmail}
       navigate=${navigate}
@@ -872,7 +880,7 @@ function registerAppMenuAndRoutes() {
       const routeEl = customRouteView.getElement();
       routeEl.appendChild(container);
 
-      const orgId = adminApi.orgId();
+      const orgId = workspaceShellApi.orgId();
       const navigate = (routeId) => sdk.Router.goto(routeId);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
 
@@ -911,8 +919,8 @@ function registerAppMenuAndRoutes() {
         const routePreferences = readRoutePreferences(routeOptions);
         render(html`<${PageComponent}
           bootstrap=${bootstrap}
-          api=${adminApi.api}
-          toast=${adminApi.toast}
+          api=${workspaceShellApi.api}
+          toast=${workspaceShellApi.toast}
           orgId=${orgId}
           userEmail=${userEmail}
           onRefresh=${async () => { onRefresh(); await renderCurrentPage(); }}

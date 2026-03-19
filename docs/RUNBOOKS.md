@@ -28,7 +28,7 @@ Operational procedures for common failure scenarios and maintenance tasks.
 - Logs: `QuickBooksAPIError: invalid_grant`
 
 **Steps:**
-1. Log in to Admin Console → Integrations → QuickBooks → "Reconnect"
+1. Log in to Workspace Shell → Integrations → QuickBooks → "Reconnect"
 2. Complete the OAuth2 flow — a new access + refresh token pair will be stored
 3. Trigger retry for stuck items: `POST /api/ap/items/{id}/retry-post` for each `failed_post` item, or bulk via the worklist "Retry Failed" action
 4. Confirm `erp_post_success` audit events appear
@@ -36,13 +36,13 @@ Operational procedures for common failure scenarios and maintenance tasks.
 
 **Prevention:**
 - Set `QB_TOKEN_REFRESH_BUFFER_HOURS=48` env var (default) so tokens are refreshed 48 h before expiry
-- Monitor `GET /api/admin/health` for `required_actions` containing `reconnect_erp`
+- Monitor `GET /api/workspace/health` for `required_actions` containing `reconnect_erp`
 
 ### Xero
 
 **Symptoms:** Same pattern — `401` from Xero, `xero_auth_expired` error code
 
-**Steps:** Same as QBO — Admin Console → Integrations → Xero → "Reconnect"
+**Steps:** Same as QBO — Workspace Shell → Integrations → Xero → "Reconnect"
 
 ### NetSuite
 
@@ -139,20 +139,20 @@ POST /api/ap/items/{ap_item_id}/retry-post
 Requires `admin` or `owner` role. The state machine transitions `failed_post → ready_to_post` before re-attempting.
 
 **Bulk retry (all failed items for an org):**
-- Use the Admin Console Worklist → filter by state `failed_post` → "Retry All"
+- Use the Workspace Shell worklist → filter by state `failed_post` → "Retry All"
 - Or call the endpoint in a loop over items from `GET /api/ap/items?state=failed_post&organization_id=<org>`
 
 **If ERP is unavailable:**
 - Set `AP_ERP_POSTING_ENABLED=false` env var to pause automatic posting
 - Items stay in `ready_to_post`; re-enable when ERP recovers
-- Alternatively use per-tenant rollback controls: `PUT /api/admin/rollback-controls`
+- Alternatively use per-tenant rollback controls: `PUT /api/workspace/rollback-controls`
 
 ---
 
 ## 5. Gmail Watch Renewal
 
 ### Background
-Gmail push notifications use a watch that must be renewed every 7 days (Google's maximum). The `GET /api/admin/health` endpoint surfaces `renew_gmail_watch` in `required_actions` when the watch is expiring within 24 hours.
+Gmail push notifications use a watch that must be renewed every 7 days (Google's maximum). The `GET /api/workspace/health` endpoint surfaces `renew_gmail_watch` in `required_actions` when the watch is expiring within 24 hours.
 
 ### Renewing the watch
 
@@ -166,13 +166,13 @@ Content-Type: application/json
 ```
 
 **Manual verification (if auto-renew fails):**
-1. Call `GET /api/admin/health` — check `integrations.gmail.watch_status` and `watch_expiration`
-2. If `watch_status` is not `active`, trigger re-auth: Admin Console → Integrations → Gmail → "Reconnect"
+1. Call `GET /api/workspace/health` — check `integrations.gmail.watch_status` and `watch_expiration`
+2. If `watch_status` is not `active`, trigger re-auth: Workspace Shell → Integrations → Gmail → "Reconnect"
 3. After reconnect, `POST /api/gmail/watch/register` to re-register the push subscription
 
 **Prevention:**
 - Set `GMAIL_WATCH_RENEW_BUFFER_HOURS=24` (default) so the background task renews before expiry
-- Monitor the `renew_gmail_watch` required_action in `GET /api/admin/health` via your alerting system
+- Monitor the `renew_gmail_watch` required_action in `GET /api/workspace/health` via your alerting system
 
 ---
 
@@ -183,7 +183,7 @@ Content-Type: application/json
 Used when a bug is discovered or a tenant needs to be paused.
 
 ```
-PUT /api/admin/rollback-controls
+PUT /api/workspace/rollback-controls
 Authorization: Bearer <admin-token>
 
 {
@@ -200,7 +200,7 @@ Authorization: Bearer <admin-token>
 
 **Verify the block is active:**
 ```
-GET /api/admin/rollback-controls?organization_id=<org>
+GET /api/workspace/rollback-controls?organization_id=<org>
 ```
 
 **Effect:** All channel action endpoints return `{"status": "blocked"}` with `reason` set to the control name. No state transitions occur while blocked.

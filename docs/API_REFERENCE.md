@@ -50,22 +50,22 @@ Purpose:
 Purpose:
 - backend metrics and operational statistics (exact contents may vary by environment/build)
 
-### Admin Console UI
+### Workspace Shell UI
 
-`GET /console`
+`GET /workspace`
 
 Purpose:
-- customer-facing Admin Center UI (feature-gated)
+- customer-facing Workspace Shell UI (feature-gated)
 
 Notes:
-- may return `404` when `ADMIN_CONSOLE_ENABLED` is disabled
+- may return `404` when `WORKSPACE_SHELL_ENABLED` is disabled
 
 ### Internal Admin Page (dev/test)
 
 `GET /admin`
 
 Purpose:
-- internal QA/testing page (dev-oriented; not the customer Admin Center)
+- internal QA/testing page (dev-oriented; not the customer Workspace Shell)
 
 ---
 
@@ -80,33 +80,33 @@ Examples:
 - `POST /auth/register`
 
 Use cases:
-- Admin Console access
+- Workspace Shell access
 - API access for admin/operator workflows
 
 ### Google-based Identity / Login (Gmail-linked flows)
 
 Google auth and identity routes are used for:
 1. Gmail-linked auth flows
-2. Admin console Google login (where configured)
+2. Workspace Shell Google login (where configured)
 3. Gmail integration setup
 
 Note:
 - Legacy `GET /gmail/authorize` has been removed.
-- Canonical setup path is `POST /api/admin/integrations/gmail/connect/start`.
+- Canonical setup path is `POST /api/workspace/integrations/gmail/connect/start`.
 
 Use runtime OpenAPI (`/docs`) for the exact enabled route set in your build.
 
 ---
 
-## 3. Admin Center APIs (`/api/admin/*`)
+## 3. Workspace Shell APIs (`/api/workspace/*`)
 
-These endpoints support the customer-facing Admin Center (`/console`) and first-time setup.
+These endpoints support the customer-facing Workspace Shell (`/workspace`) and first-time setup.
 
 ### Bootstrap / Health / Status
 
-- `GET /api/admin/bootstrap`
-- `GET /api/admin/health`
-- `GET /api/admin/onboarding/status`
+- `GET /api/workspace/bootstrap`
+- `GET /api/workspace/health`
+- `GET /api/workspace/onboarding/status`
 
 Purpose:
 1. load org/user/integration/health state for the console
@@ -116,8 +116,8 @@ Purpose:
 ### Integrations (Gmail / Slack / ERP)
 
 Examples:
-- `GET /api/admin/integrations`
-- `POST /api/admin/integrations/gmail/connect/start`
+- `GET /api/workspace/integrations`
+- `POST /api/workspace/integrations/gmail/connect/start`
 - Slack install/start/callback endpoints
 - Slack channel configuration/test endpoints
 
@@ -129,10 +129,10 @@ Purpose:
 ### AP Policy and Org Settings
 
 Examples:
-- `GET /api/admin/policies/ap`
-- `PUT /api/admin/policies/ap`
-- `GET /api/admin/org/settings`
-- `PATCH /api/admin/org/settings`
+- `GET /api/workspace/policies/ap`
+- `PUT /api/workspace/policies/ap`
+- `GET /api/workspace/org/settings`
+- `PATCH /api/workspace/org/settings`
 
 Purpose:
 1. configure AP policy defaults and org-level settings
@@ -141,11 +141,11 @@ Purpose:
 ### Team and Subscription
 
 Examples:
-- `GET /api/admin/team/invites`
-- `POST /api/admin/team/invites`
-- `POST /api/admin/team/invites/{invite_id}/revoke`
-- `GET /api/admin/subscription`
-- `PATCH /api/admin/subscription/plan`
+- `GET /api/workspace/team/invites`
+- `POST /api/workspace/team/invites`
+- `POST /api/workspace/team/invites/{invite_id}/revoke`
+- `GET /api/workspace/subscription`
+- `PATCH /api/workspace/subscription/plan`
 
 Purpose:
 1. invite-based team onboarding

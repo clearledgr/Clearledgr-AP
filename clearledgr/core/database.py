@@ -1035,6 +1035,7 @@ class ClearledgrDB(
             for table_sql in AP_RUNTIME_COMPAT_TABLES:
                 cur.execute(table_sql)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_org_status ON transactions(organization_id, status)")
+            self._ensure_column(cur, "finance_emails", "metadata", "TEXT DEFAULT '{}'")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_finance_emails_org ON finance_emails(organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_finance_emails_gmail_id ON finance_emails(gmail_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_gl_corrections_org ON gl_corrections(organization_id, corrected_at)")

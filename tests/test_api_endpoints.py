@@ -17,7 +17,7 @@ from main import app
 from clearledgr.api import gmail_extension as gmail_extension_module
 from clearledgr.api import agent_intents as agent_intents_module
 from clearledgr.api import gmail_webhooks as gmail_webhooks_module
-from clearledgr.api import admin_console as admin_console_module
+from clearledgr.api import workspace_shell as workspace_shell_module
 from clearledgr.api import ap_items as ap_items_module
 from clearledgr.api import auth as auth_module
 from clearledgr.core.auth import TokenData
@@ -120,7 +120,7 @@ class TestAuthEndpoints:
         state = auth_module._sign_google_state(
             {
                 "organization_id": "default",
-                "redirect_path": "/console",
+                "redirect_path": "/workspace",
                 "iat": int(datetime.now(timezone.utc).timestamp()),
                 "nonce": "nonce-1",
             }
@@ -393,11 +393,11 @@ class TestGmailWebhooks:
 
     def test_gmail_callback_redirect_appends_success_with_existing_query(self, monkeypatch):
         monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
-        state = admin_console_module._sign_state(
+        state = workspace_shell_module._sign_state(
             {
                 "organization_id": "default",
                 "user_id": "gmail-user-1",
-                "redirect_url": "/console?org=default&page=integrations",
+                "redirect_url": "/workspace?org=default&page=integrations",
                 "iat": int(datetime.now(timezone.utc).timestamp()),
                 "nonce": "test-nonce",
             }
@@ -423,7 +423,7 @@ class TestGmailWebhooks:
 
         assert response.status_code in {302, 307}
         location = str(response.headers.get("location") or "")
-        assert "/console" in location
+        assert "/workspace" in location
         assert "org=default" in location
         assert "page=integrations" in location
         assert "success=true" in location
@@ -494,6 +494,323 @@ class TestGmailWebhooks:
 
         assert seen.get("organization_id") == "tenant-42"
 
+    def test_process_single_email_reprocesses_detected_email_without_ap_item(self):
+        class _FakeClient:
+            async def get_message(self, _message_id):
+                return SimpleNamespace(
+                    id="msg-retry-1",
+                    thread_id="thread-retry-1",
+                    subject="Invoice INV-RETRY-1",
+                    sender="billing@acme.test",
+                    recipient="ap@company.test",
+                    date=datetime.now(timezone.utc),
+                    snippet="Invoice attached",
+                    body_text="Please pay invoice INV-RETRY-1 for $125.00",
+                    body_html="",
+                    labels=["CLEARLEDGR_PROCESSED"],
+                    attachments=[],
+                )
+
+            async def list_labels(self):
+                return [{"id": "label-1", "name": "Clearledgr/Processed"}]
+
+            async def create_label(self, _name):
+                return {"id": "label-1", "name": "Clearledgr/Processed"}
+
+            async def add_label(self, _message_id, _label_ids):
+                return None
+
+        class _FakeDB:
+            def __init__(self):
+                self.saved = None
+
+            def get_finance_email_by_gmail_id(self, _gmail_id):
+                return SimpleNamespace(id="finance-email-1")
+
+            def get_ap_item_by_thread(self, _organization_id, _thread_id):
+                return None
+
+            def get_ap_item_by_message_id(self, _organization_id, _message_id):
+                return None
+
+            def save_finance_email(self, email):
+                self.saved = email
+                return email
+
+        fake_db = _FakeDB()
+        seen = {}
+
+        async def _fake_process_invoice_email(*, message, organization_id: str, **_kwargs):
+            seen["organization_id"] = organization_id
+            seen["message_id"] = message.id
+            return {"status": "ok"}
+
+        with patch.object(
+            gmail_webhooks_module,
+            "classify_email_with_llm",
+            AsyncMock(return_value={"type": "invoice", "confidence": 0.95}),
+        ):
+            with patch.object(
+                gmail_webhooks_module,
+                "process_invoice_email",
+                AsyncMock(side_effect=_fake_process_invoice_email),
+            ):
+                with patch.object(
+                    gmail_webhooks_module,
+                    "process_payment_request_email",
+                    AsyncMock(return_value={"status": "skipped"}),
+                ):
+                    with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
+                        asyncio.run(
+                            gmail_webhooks_module.process_single_email(
+                                client=_FakeClient(),
+                                message_id="msg-retry-1",
+                                user_id="gmail-user-1",
+                                organization_id="tenant-42",
+                            )
+                        )
+
+        assert seen["organization_id"] == "tenant-42"
+        assert seen["message_id"] == "msg-retry-1"
+        assert fake_db.saved.id == "finance-email-1"
+
+    def test_process_invoice_email_persists_extracted_fields_and_sender_fallback(self):
+        class _FakeDB:
+            def __init__(self):
+                self.saved = []
+
+            def get_finance_email_by_gmail_id(self, _gmail_id):
+                return SimpleNamespace(id="finance-email-1")
+
+            def save_finance_email(self, email):
+                self.saved.append(email)
+                return email
+
+        fake_db = _FakeDB()
+        fake_runtime = MagicMock()
+        fake_runtime.execute_ap_invoice_processing = AsyncMock(return_value={"status": "pending_approval"})
+        message = SimpleNamespace(
+            id="msg-invoice-1",
+            thread_id="thread-invoice-1",
+            subject="Google Workspace invoice",
+            sender="Google Payments <payments-noreply@google.com>",
+            snippet="Your invoice is available",
+            body_text="Please find attached invoice.",
+            attachments=[],
+            date=datetime.now(timezone.utc),
+        )
+
+        with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
+            with patch(
+                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                AsyncMock(
+                    return_value={
+                        "vendor": "Unknown",
+                        "amount": 125.0,
+                        "currency": "usd",
+                        "invoice_number": "INV-123",
+                        "confidence": 0.97,
+                    }
+                ),
+            ):
+                with patch(
+                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    return_value=fake_runtime,
+                ):
+                    with patch.object(
+                        gmail_webhooks_module,
+                        "_create_invoice_draft_summary",
+                        AsyncMock(return_value=None),
+                    ):
+                        asyncio.run(
+                            gmail_webhooks_module.process_invoice_email(
+                                client=MagicMock(),
+                                message=message,
+                                user_id="gmail-user-1",
+                                organization_id="default",
+                                confidence=0.91,
+                            )
+                        )
+
+        assert len(fake_db.saved) == 2
+        assert fake_db.saved[0].id == "finance-email-1"
+        assert fake_db.saved[0].vendor == "Google Payments"
+        assert fake_db.saved[0].amount == 125.0
+        assert fake_db.saved[0].currency == "USD"
+        assert fake_db.saved[0].invoice_number == "INV-123"
+        assert fake_db.saved[-1].status == "processed"
+        runtime_payload = fake_runtime.execute_ap_invoice_processing.await_args.kwargs["invoice_payload"]
+        assert runtime_payload["vendor_name"] == "Google Payments"
+        assert runtime_payload["amount"] == 125.0
+
+    def test_extension_by_thread_recovers_detected_finance_email(self):
+        class _FakeDB:
+            def __init__(self):
+                self.items = {}
+                self.sources = []
+
+            def get_ap_item_by_thread(self, organization_id, thread_id):
+                for item in self.items.values():
+                    if item.get("organization_id") != organization_id:
+                        continue
+                    if item.get("thread_id") == thread_id:
+                        return item
+                    for source in self.sources:
+                        if (
+                            source.get("ap_item_id") == item.get("id")
+                            and source.get("source_type") == "gmail_thread"
+                            and source.get("source_ref") == thread_id
+                        ):
+                            return item
+                return None
+
+            def get_ap_item_by_message_id(self, organization_id, message_id):
+                for item in self.items.values():
+                    if item.get("organization_id") != organization_id:
+                        continue
+                    if item.get("message_id") == message_id:
+                        return item
+                    for source in self.sources:
+                        if (
+                            source.get("ap_item_id") == item.get("id")
+                            and source.get("source_type") == "gmail_message"
+                            and source.get("source_ref") == message_id
+                        ):
+                            return item
+                return None
+
+            def get_finance_email_by_gmail_id(self, gmail_id):
+                if gmail_id != "msg-thread-1":
+                    return None
+                return SimpleNamespace(
+                    id="finance-thread-1",
+                    subject="Invoice INV-THREAD-1",
+                    sender="billing@acme.test",
+                    vendor="Acme Corp",
+                    amount=125.0,
+                    currency="USD",
+                    invoice_number="INV-THREAD-1",
+                    confidence=0.95,
+                    user_id="extension-user-1",
+                    email_type="invoice",
+                )
+
+            def create_ap_item(self, payload):
+                item = {
+                    "id": "ap-thread-1",
+                    "organization_id": payload.get("organization_id"),
+                    "thread_id": payload.get("thread_id"),
+                    "message_id": payload.get("message_id"),
+                    "state": payload.get("state"),
+                    "vendor_name": payload.get("vendor_name"),
+                    "invoice_number": payload.get("invoice_number"),
+                    "amount": payload.get("amount"),
+                    "currency": payload.get("currency"),
+                    "subject": payload.get("subject"),
+                    "sender": payload.get("sender"),
+                    "confidence": payload.get("confidence"),
+                    "metadata": payload.get("metadata") or {},
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.items[item["id"]] = item
+                return item
+
+            def get_ap_item(self, ap_item_id):
+                return self.items.get(ap_item_id)
+
+            def update_ap_item(self, ap_item_id, **kwargs):
+                if ap_item_id not in self.items:
+                    return False
+                self.items[ap_item_id].update(kwargs)
+                return True
+
+            def link_ap_item_source(self, payload):
+                self.sources.append(dict(payload or {}))
+                return payload
+
+            def list_ap_item_sources(self, ap_item_id):
+                return [row for row in self.sources if row.get("ap_item_id") == ap_item_id]
+
+        class _FakeGmailAPIClient:
+            def __init__(self, _user_id):
+                pass
+
+            async def ensure_authenticated(self):
+                return True
+
+            async def get_thread(self, thread_id):
+                assert thread_id == "thread-1"
+                return [
+                    SimpleNamespace(
+                        id="msg-thread-1",
+                        thread_id="thread-1",
+                        subject="Invoice INV-THREAD-1",
+                        sender="billing@acme.test",
+                    )
+                ]
+
+        fake_db = _FakeDB()
+        app.dependency_overrides[gmail_extension_module.get_current_user] = lambda: TokenData(
+            user_id="extension-user-1",
+            email="extension@example.com",
+            organization_id="default",
+            role="user",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                with patch.object(gmail_extension_module, "GmailAPIClient", _FakeGmailAPIClient):
+                    response = client.get("/extension/by-thread/thread-1", params={"organization_id": "default"})
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["found"] is True
+        assert payload["item"]["thread_id"] == "thread-1"
+        assert payload["item"]["message_id"] == "msg-thread-1"
+        assert payload["item"]["vendor_name"] == "Acme Corp"
+        assert payload["item"]["primary_source"]["thread_id"] == "thread-1"
+        assert payload["item"]["primary_source"]["message_id"] == "msg-thread-1"
+
+    def test_exchange_gmail_code_preserves_existing_refresh_token_when_google_omits_one(self):
+        fake_user = SimpleNamespace(
+            id="gmail-user-1",
+            email="ops@example.com",
+            organization_id="default",
+            role="user",
+        )
+        fake_token = SimpleNamespace(
+            access_token="new-access-token",
+            refresh_token="",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            email="ops@example.com",
+        )
+        stored = {}
+
+        class _TokenStore:
+            def get(self, _user_id):
+                return SimpleNamespace(refresh_token="preserved-refresh-token")
+
+            def store(self, token):
+                stored["token"] = token
+
+        with patch("clearledgr.services.gmail_api.exchange_code_for_tokens", AsyncMock(return_value=fake_token)):
+            with patch.object(gmail_extension_module, "get_user_by_email", return_value=fake_user):
+                with patch.object(gmail_extension_module, "token_store", _TokenStore()):
+                    with patch.object(gmail_extension_module, "create_access_token", return_value="backend-access-token"):
+                        with patch.object(gmail_extension_module, "get_db", return_value=MagicMock(save_gmail_autopilot_state=MagicMock())):
+                            response = client.post(
+                                "/extension/gmail/exchange-code",
+                                json={"code": "gmail-code-1", "redirect_uri": "https://example.test/callback"},
+                            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["has_refresh_token"] is True
+        assert stored["token"].refresh_token == "preserved-refresh-token"
+
 
 class TestAdminConsoleIntegrations:
     @staticmethod
@@ -507,14 +824,14 @@ class TestAdminConsoleIntegrations:
         )
 
     def test_start_gmail_connect_requires_admin(self):
-        app.dependency_overrides[admin_console_module.get_current_user] = lambda: self._fake_user("viewer")
+        app.dependency_overrides[workspace_shell_module.get_current_user] = lambda: self._fake_user("viewer")
         try:
             response = client.post(
-                "/api/admin/integrations/gmail/connect/start",
-                json={"organization_id": "default", "redirect_path": "/console?page=integrations"},
+                "/api/workspace/integrations/gmail/connect/start",
+                json={"organization_id": "default", "redirect_path": "/workspace?page=integrations"},
             )
         finally:
-            app.dependency_overrides.pop(admin_console_module.get_current_user, None)
+            app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
         assert response.status_code == 403
 
     def test_start_gmail_connect_returns_google_auth_url(self, monkeypatch):
@@ -525,34 +842,56 @@ class TestAdminConsoleIntegrations:
             captured["state"] = state
             return f"https://accounts.google.com/o/oauth2/v2/auth?state={state}"
 
-        app.dependency_overrides[admin_console_module.get_current_user] = lambda: self._fake_user("admin")
+        app.dependency_overrides[workspace_shell_module.get_current_user] = lambda: self._fake_user("admin")
         try:
-            with patch.object(admin_console_module, "generate_auth_url", side_effect=_fake_auth_url):
+            with patch.object(workspace_shell_module, "generate_auth_url", side_effect=_fake_auth_url):
                 response = client.post(
-                    "/api/admin/integrations/gmail/connect/start",
-                    json={"organization_id": "default", "redirect_path": "/console?org=default&page=integrations"},
+                    "/api/workspace/integrations/gmail/connect/start",
+                    json={"organization_id": "default", "redirect_path": "/workspace?org=default&page=integrations"},
                 )
         finally:
-            app.dependency_overrides.pop(admin_console_module.get_current_user, None)
+            app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
 
         assert response.status_code == 200
         payload = response.json()
         assert payload["organization_id"] == "default"
-        assert payload["redirect_path"] == "/console?org=default&page=integrations"
+        assert payload["redirect_path"] == "/workspace?org=default&page=integrations"
         assert payload["auth_url"].startswith("https://accounts.google.com/o/oauth2/v2/auth")
         signed_state = captured.get("state")
         assert isinstance(signed_state, str) and "." in signed_state
         decoded = gmail_webhooks_module._unsign_oauth_state(signed_state)
         assert decoded.get("user_id") == "admin-user-1"
         assert decoded.get("organization_id") == "default"
-        assert decoded.get("redirect_url") == "/console?org=default&page=integrations"
+        assert decoded.get("redirect_url") == "/workspace?org=default&page=integrations"
+
+    def test_gmail_status_requires_reconnect_without_refresh_token(self):
+        fake_db = MagicMock()
+        fake_db.get_oauth_token.return_value = {
+            "user_id": "admin-user-1",
+            "provider": "gmail",
+            "email": "admin@example.com",
+            "access_token": "encrypted-access",
+            "refresh_token": "",
+        }
+        fake_db.get_gmail_autopilot_state.return_value = {"last_scan_at": "2026-03-19T21:10:47+00:00"}
+
+        user = self._fake_user("admin")
+        with patch.object(workspace_shell_module, "get_db", return_value=fake_db):
+            status = workspace_shell_module._gmail_status_for_org("default", user)
+
+        assert status["connected"] is True
+        assert status["durable"] is False
+        assert status["has_refresh_token"] is False
+        assert status["requires_reconnect"] is True
+        assert status["status"] == "reconnect_required"
+        assert status["watch_status"] == "reconnect_required"
 
 
 class TestERPEndpoints:
     """Test canonical ERP integration surfaces."""
     
     def test_admin_integrations_includes_erp_status(self):
-        app.dependency_overrides[admin_console_module.get_current_user] = lambda: TokenData(
+        app.dependency_overrides[workspace_shell_module.get_current_user] = lambda: TokenData(
             user_id="erp-user-1",
             email="erp-user@example.com",
             organization_id="default",
@@ -560,15 +899,15 @@ class TestERPEndpoints:
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
         try:
-            response = client.get("/api/admin/integrations?organization_id=default")
+            response = client.get("/api/workspace/integrations?organization_id=default")
         finally:
-            app.dependency_overrides.pop(admin_console_module.get_current_user, None)
+            app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
         assert response.status_code == 200
         payload = response.json()
         assert any(row.get("name") == "erp" for row in payload.get("integrations", []))
 
     def test_admin_integrations_blocks_cross_org_for_non_admin(self):
-        app.dependency_overrides[admin_console_module.get_current_user] = lambda: TokenData(
+        app.dependency_overrides[workspace_shell_module.get_current_user] = lambda: TokenData(
             user_id="erp-user-2",
             email="erp-user-2@example.com",
             organization_id="default",
@@ -576,9 +915,9 @@ class TestERPEndpoints:
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
         try:
-            response = client.get("/api/admin/integrations?organization_id=other-org")
+            response = client.get("/api/workspace/integrations?organization_id=other-org")
         finally:
-            app.dependency_overrides.pop(admin_console_module.get_current_user, None)
+            app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
         assert response.status_code == 403
         assert response.json().get("detail") == "org_access_denied"
     

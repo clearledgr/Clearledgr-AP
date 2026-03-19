@@ -17,7 +17,7 @@ Clearledgr is not a standalone AP dashboard for daily work. The day-to-day opera
 
 ## Step-by-Step (AP v1)
 
-### 1. Set up Clearledgr (Admin Console)
+### 1. Set up Clearledgr (Workspace Shell)
 
 An admin connects:
 
@@ -27,7 +27,7 @@ An admin connects:
 4. Approval routing configuration
 5. AP policies
 
-The Admin Console is for setup, configuration, and health checks, not daily AP processing.
+The Workspace Shell is for setup, configuration, and health checks, not daily AP processing.
 
 ### 2. Invoice arrives in Gmail
 

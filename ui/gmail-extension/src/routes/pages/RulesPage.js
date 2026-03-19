@@ -38,7 +38,7 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
       require_po: nextRequirePO,
     };
 
-    await api('/api/admin/policies/ap', {
+    await api('/api/workspace/policies/ap', {
       method: 'PUT',
       body: JSON.stringify({
         organization_id: orgId,

@@ -1,7 +1,7 @@
 """Gmail Label Management for AP Status Pipeline.
 
 Fyxer-inspired: use native Gmail labels so users see invoice status
-in their inbox without opening any extension or admin console.
+in their inbox without opening any extension or workspace shell.
 
 Label hierarchy:
   Clearledgr/Invoice         — detected as an invoice

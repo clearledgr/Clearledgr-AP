@@ -6,6 +6,7 @@ const store = {
   queueState: [],
   scanStatus: {},
   currentUserRole: null,
+  gmailIntegration: null,
   selectedItemId: null,
   currentThreadId: null,
   agentSessionsState: new Map(),

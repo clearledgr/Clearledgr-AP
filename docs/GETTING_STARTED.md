@@ -19,7 +19,7 @@ Daily AP operations happen in:
 1. Gmail (primary operator surface)
 2. Slack/Teams (approval surfaces)
 
-The Admin Console is used for setup, configuration, and health checks.
+The Workspace Shell is used for setup, configuration, and health checks.
 
 ## Quick Start (Admin Setup)
 
@@ -29,15 +29,15 @@ The Admin Console is used for setup, configuration, and health checks.
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-If using the Admin Console, ensure the admin console flag is enabled in your environment.
+If using the Workspace Shell, ensure `WORKSPACE_SHELL_ENABLED` is enabled in your environment.
 
-### Step 2: Open the Admin Console
+### Step 2: Open the Workspace Shell
 
 Open:
 
-- `http://127.0.0.1:8000/console`
+- `http://127.0.0.1:8000/workspace`
 
-Use the Admin Console for:
+Use the Workspace Shell for:
 1. organization setup
 2. integration connections
 3. policy configuration
@@ -119,10 +119,10 @@ It should not behave like a full dashboard embedded in Gmail.
 
 ## Troubleshooting (AP v1)
 
-### Admin Console returns 404
+### Workspace Shell returns 404
 Check:
 1. backend is running on the expected port
-2. `ADMIN_CONSOLE_ENABLED` is enabled in the environment
+2. `WORKSPACE_SHELL_ENABLED` is enabled in the environment
 
 ### Gmail sidebar cannot reach backend
 Check:
@@ -134,8 +134,8 @@ Check:
 Check:
 1. integration credentials installed correctly
 2. callback routes reachable
-3. channel/team configuration set in Admin Console
-4. per-org integration health in `/console` and `/api/admin/health`
+3. channel/team configuration set in the Workspace Shell
+4. per-org integration health in `/workspace` and `/api/workspace/health`
 
 ### Invoice detected but cannot post
 Common causes:

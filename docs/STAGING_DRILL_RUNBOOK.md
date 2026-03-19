@@ -17,7 +17,7 @@ Before starting, confirm all of the following:
 | Item | Check |
 |---|---|
 | Staging backend running or deployed | `GET /health` returns `{"status": "ok"}` |
-| `ADMIN_CONSOLE_ENABLED=true` | Admin endpoints reachable |
+| `WORKSPACE_SHELL_ENABLED=true` | Workspace shell endpoints reachable |
 | Slack workspace + bot token configured | `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` set |
 | Slack test channel created | e.g. `#ap-staging-test` |
 | ERP sandbox access | NetSuite/Xero/QuickBooks sandbox, or `MOCK_ERP_ENABLED=true` |
@@ -48,7 +48,7 @@ If this command fails, do not mark L01 complete; capture failure cause and rerun
 ### 2a. Bootstrap check
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/admin/bootstrap?organization_id=default"
+curl -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/workspace/bootstrap?organization_id=default"
 ```
 
 Expected: all integrations show `"status": "connected"` or `"status": "configured"`. Note any `"status": "missing"` entries — those must be resolved before drill.
@@ -59,7 +59,7 @@ Expected: all integrations show `"status": "connected"` or `"status": "configure
 curl -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"channel": "#ap-staging-test", "organization_id": "default"}' \
-  "$BASE_URL/api/admin/integrations/slack/channel"
+  "$BASE_URL/api/workspace/integrations/slack/channel"
 ```
 
 ### 2c. Send test Slack message
@@ -68,7 +68,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 curl -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"channel": "#ap-staging-test", "organization_id": "default"}' \
-  "$BASE_URL/api/admin/integrations/slack/test"
+  "$BASE_URL/api/workspace/integrations/slack/test"
 ```
 
 Verify: message appears in `#ap-staging-test`. If not, fix `SLACK_BOT_TOKEN` and retry.
@@ -102,14 +102,14 @@ Verify: message appears in `#ap-staging-test`. If not, fix `SLACK_BOT_TOKEN` and
 
 6. **Check AP item state:**
    ```bash
-   curl -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/admin/health?organization_id=default"
+   curl -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/workspace/health?organization_id=default"
    ```
    Expected: `pending_approval_count` decremented, `posted_today` incremented.
 
 7. **Verify ERP reference:**
    ```bash
    curl -H "Authorization: Bearer $TOKEN" \
-     "$BASE_URL/api/admin/health?organization_id=default"
+     "$BASE_URL/api/workspace/health?organization_id=default"
    ```
    Or check the worklist — item state = `posted_to_erp`, `erp_reference` populated.
 
@@ -161,7 +161,7 @@ Verify: message appears in `#ap-staging-test`. If not, fix `SLACK_BOT_TOKEN` and
          "erp_posting_disabled": true,
          "reason": "staging_drill_kill_switch_test"
        }
-     }' "$BASE_URL/api/admin/rollback-controls"
+     }' "$BASE_URL/api/workspace/rollback-controls"
    ```
 
 2. **Try to approve an invoice** via the Gmail sidebar (or Slack button).
@@ -169,7 +169,7 @@ Verify: message appears in `#ap-staging-test`. If not, fix `SLACK_BOT_TOKEN` and
 
 3. **Verify health endpoint reflects the block:**
    ```bash
-   curl -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/admin/health?organization_id=default"
+   curl -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/workspace/health?organization_id=default"
    ```
    Confirm `launch_controls.rollback_controls.erp_posting_disabled = true`.
 
@@ -180,7 +180,7 @@ Verify: message appears in `#ap-staging-test`. If not, fix `SLACK_BOT_TOKEN` and
      -d '{
        "organization_id": "default",
        "controls": {"erp_posting_disabled": false}
-     }' "$BASE_URL/api/admin/rollback-controls"
+     }' "$BASE_URL/api/workspace/rollback-controls"
    ```
 
 5. **Retry approval** → should succeed → `posted_to_erp`.
@@ -208,7 +208,7 @@ Verify: message appears in `#ap-staging-test`. If not, fix `SLACK_BOT_TOKEN` and
    ```
    Confirm a session exists for the failed item.
 
-4. **Execute browser macro** via the admin console or session API.
+4. **Execute browser macro** via the workspace shell or session API.
 
 5. **Submit fallback result** with `erp_reference`.
 
@@ -229,7 +229,7 @@ Verify: message appears in `#ap-staging-test`. If not, fix `SLACK_BOT_TOKEN` and
    curl -X POST -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"organization_id": "staging-org-b", "name": "Staging Org B"}' \
-     "$BASE_URL/api/admin/org/settings"
+     "$BASE_URL/api/workspace/org/settings"
    ```
 
 2. **Get the worklist for org-B:**
@@ -298,7 +298,7 @@ curl -X PUT -H "Authorization: Bearer $TOKEN" \
       ],
       "notes": ["Staging drill completed. All 5 drills passed. Monitoring thresholds green."]
     }
-  }' "$BASE_URL/api/admin/ga-readiness"
+  }' "$BASE_URL/api/workspace/ga-readiness"
 ```
 
 Verify response: `"summary": {"ready_for_ga": true}`.
@@ -322,6 +322,6 @@ Drill is complete when ALL of these are checked:
 - [ ] **Drill 3** — Rollback kill-switch blocked ERP post; re-enable restored flow
 - [ ] **Drill 5** — No cross-tenant item leakage observed
 - [ ] **Monitoring** — `GET /api/ops/monitoring-thresholds` returned `alert_count = 0`
-- [ ] **GA Readiness** — `GET /api/admin/ga-readiness` returns `summary.ready_for_ga = true`
+- [ ] **GA Readiness** — `GET /api/workspace/ga-readiness` returns `summary.ready_for_ga = true`
 
 When all boxes are checked, the system is cleared for GA launch.

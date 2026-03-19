@@ -25,7 +25,7 @@ Note: The current codebase already contains agent runtime, browser-agent tooling
 - **Gmail** = context + status + exceptions + next action (primary operator surface)
 - **Slack / Teams** = approvals and escalation decisions
 - **ERP** = system of record
-- **Admin Console** = setup/ops only (not daily AP processing)
+- **Workspace Shell** = setup/ops only (not daily AP processing)
 
 ## Core UX Principles
 
@@ -156,16 +156,16 @@ To preserve trust, the UI should reveal agent behavior without overwhelming user
 4. Inconsistent Slack vs Teams decision semantics
 5. Hidden failure states ("looks successful" but actually blocked)
 
-## Admin Console Boundary (Explicit)
+## Workspace Shell Boundary (Explicit)
 
-Admin Console responsibilities:
+Workspace Shell responsibilities:
 1. integration setup
 2. policy configuration
 3. org/team settings
 4. health and diagnostics
 5. subscription/plan management
 
-Admin Console is **not** the daily AP operator workflow UI for AP v1.
+The Workspace Shell is **not** the daily AP operator workflow UI for AP v1.
 
 ## UX Acceptance Checklist (AP v1)
 

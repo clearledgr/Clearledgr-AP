@@ -1,4 +1,4 @@
-"""Admin Center API: bootstrap, integrations, onboarding, policy, team, subscription, health."""
+"""Workspace shell support API for Gmail-routed pages and setup surfaces."""
 from __future__ import annotations
 
 import base64
@@ -34,7 +34,7 @@ from clearledgr.services.teams_api import TeamsAPIClient
 from clearledgr.services.subscription import PlanTier, get_subscription_service
 
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+router = APIRouter(prefix="/api/workspace", tags=["workspace"])
 
 
 def _utcnow() -> datetime:
@@ -146,6 +146,8 @@ def _gmail_status_for_org(organization_id: str, user: TokenData) -> Dict[str, An
                 token = candidate
                 break
     connected = bool(token)
+    has_refresh_token = bool(token and str(token.get("refresh_token") or "").strip())
+    durable = connected and has_refresh_token
     ap_state = db.get_gmail_autopilot_state(user.user_id) or {}
     watch_exp = ap_state.get("watch_expiration")
     watch_active = False
@@ -155,7 +157,14 @@ def _gmail_status_for_org(organization_id: str, user: TokenData) -> Dict[str, An
             watch_active = exp_ts > int(_utcnow().timestamp() * 1000)
         except (ValueError, TypeError):
             pass
-    watch_status = "active" if watch_active else ("polling" if connected else "disconnected")
+    if watch_active:
+        watch_status = "active"
+    elif durable:
+        watch_status = "polling"
+    elif connected:
+        watch_status = "reconnect_required"
+    else:
+        watch_status = "disconnected"
     # Gap #17: surface expiry warning when watch expires within 24 hours
     watch_expires_soon = False
     if watch_active and watch_exp:
@@ -165,12 +174,16 @@ def _gmail_status_for_org(organization_id: str, user: TokenData) -> Dict[str, An
             watch_expires_soon = 0 < exp_ts_ms < cutoff_ms
         except (ValueError, TypeError):
             pass
+    status = "connected" if durable else ("reconnect_required" if connected else "disconnected")
     return {
         "name": "gmail",
         "connected": connected,
-        "status": "connected" if connected else "disconnected",
+        "status": status,
         "mode": "oauth",
         "email": token.get("email") if token else None,
+        "durable": durable,
+        "has_refresh_token": has_refresh_token,
+        "requires_reconnect": connected and not durable,
         "last_sync_at": ap_state.get("last_scan_at"),
         "watch_expiration": watch_exp,
         "watch_status": watch_status,
@@ -257,6 +270,12 @@ def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
 
     if not integrations["gmail"]["connected"]:
         required_actions.append({"code": "connect_gmail", "message": "Connect Gmail account"})
+    elif integrations["gmail"].get("requires_reconnect"):
+        required_actions.append({
+            "code": "reconnect_gmail",
+            "message": "Reconnect Gmail to restore durable background monitoring.",
+            "severity": "warning",
+        })
     elif integrations["gmail"].get("watch_expires_soon"):
         required_actions.append({
             "code": "renew_gmail_watch",
@@ -290,7 +309,7 @@ def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
 
     slack_redirect_uri = os.getenv(
         "SLACK_REDIRECT_URI",
-        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/admin/integrations/slack/install/callback",
+        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/workspace/integrations/slack/install/callback",
     ).strip()
 
     return {
@@ -300,7 +319,7 @@ def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
         "diagnostics": {
             "slack_oauth_ready": slack_oauth_ready,
             "slack_redirect_uri": slack_redirect_uri,
-            "admin_console_enabled": str(os.getenv("ADMIN_CONSOLE_ENABLED", "true")).strip().lower()
+            "workspace_shell_enabled": str(os.getenv("WORKSPACE_SHELL_ENABLED", "true")).strip().lower()
             not in {"0", "false", "no", "off"},
         },
         "required_actions": required_actions,
@@ -436,7 +455,7 @@ class NetSuiteConnectSubmitRequest(BaseModel):
 
 class GmailConnectStartRequest(BaseModel):
     organization_id: Optional[str] = None
-    redirect_path: str = Field(default="/console?page=integrations", max_length=512)
+    redirect_path: str = Field(default="/workspace?page=integrations", max_length=512)
 
 
 class SubscriptionPlanPatchRequest(BaseModel):
@@ -574,7 +593,7 @@ def start_gmail_connect(
 ):
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
-    redirect_path = str(request.redirect_path or "/console?page=integrations").strip()
+    redirect_path = str(request.redirect_path or "/workspace?page=integrations").strip()
     if not redirect_path.startswith("/"):
         raise HTTPException(status_code=400, detail="invalid_redirect_path")
 
@@ -613,7 +632,7 @@ def start_slack_install(
 
     redirect_uri = os.getenv(
         "SLACK_REDIRECT_URI",
-        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/admin/integrations/slack/install/callback",
+        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/workspace/integrations/slack/install/callback",
     ).strip()
     scopes = os.getenv(
         "SLACK_OAUTH_SCOPES",
@@ -660,7 +679,7 @@ async def slack_install_callback(
     client_secret = os.getenv("SLACK_CLIENT_SECRET", "").strip()
     redirect_uri = os.getenv(
         "SLACK_REDIRECT_URI",
-        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/admin/integrations/slack/install/callback",
+        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/workspace/integrations/slack/install/callback",
     ).strip()
     if not client_id or not client_secret:
         raise HTTPException(status_code=503, detail="slack_oauth_not_configured")
@@ -820,7 +839,7 @@ def slack_manifest_template(
     org_id = _resolve_org_id(user, organization_id)
     redirect_uri = os.getenv(
         "SLACK_REDIRECT_URI",
-        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/admin/integrations/slack/install/callback",
+        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/workspace/integrations/slack/install/callback",
     ).strip()
     app_base = os.getenv("API_BASE_URL", "http://127.0.0.1:8010").rstrip("/")
     return {
@@ -869,7 +888,7 @@ def erp_connect_start(
                 {"name": "token_id", "label": "Token ID", "type": "text", "required": True},
                 {"name": "token_secret", "label": "Token Secret", "type": "password", "required": True},
             ],
-            "submit_url": "/api/admin/integrations/erp/connect/netsuite",
+            "submit_url": "/api/workspace/integrations/erp/connect/netsuite",
             "help_text": "In NetSuite: Setup > Company > Enable Features > SuiteCloud > Token-Based Authentication. Then create an Integration record and generate a Token.",
         }
 
@@ -888,7 +907,7 @@ def erp_connect_start(
                 {"name": "username", "label": "Username", "type": "text", "required": True},
                 {"name": "password", "label": "Password", "type": "password", "required": True},
             ],
-            "submit_url": "/api/admin/integrations/erp/connect/sap",
+            "submit_url": "/api/workspace/integrations/erp/connect/sap",
             "help_text": "Use a least-privilege integration account with API access to the SAP OData base URL.",
         }
 

@@ -1,6 +1,6 @@
 /**
  * Shared CSS for InboxSDK route pages.
- * Extracted from static/console/styles.css — component styles only.
+ * Extracted from static/workspace/styles.css — component styles only.
  * Layout-specific CSS (shell grid, sidebar nav) is dropped.
  * Everything scoped under .cl-route to avoid Gmail CSS collisions.
  */

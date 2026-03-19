@@ -117,6 +117,7 @@ function Toast() {
 function ScanStatus() {
   const s = useStore();
   const status = s.scanStatus;
+  const gmail = s.gmailIntegration || {};
   const state = status?.state || 'idle';
 
   let text = '';
@@ -141,9 +142,14 @@ function ScanStatus() {
     tone = 'error';
   } else {
     const lastScan = status?.lastScanAt ? new Date(status.lastScanAt) : null;
-    text = lastScan
+      text = lastScan
       ? `Monitoring active · ${lastScan.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
       : 'Monitoring active';
+  }
+
+  if (state !== 'auth_required' && gmail?.requires_reconnect) {
+    text = 'Reconnect Gmail to keep background monitoring durable.';
+    tone = 'warning';
   }
 
   return html`<div id="cl-scan-status" class="cl-scan-status" data-tone=${tone}>${text}</div>`;
@@ -331,6 +337,8 @@ function AuditDisclosure({ events, loading }) {
 }
 
 function AuthPrompt({ queueManager }) {
+  const s = useStore();
+  const gmail = s.gmailIntegration || {};
   const goConnections = useCallback(() => store.sdk?.Router?.goto?.('clearledgr/connections'), []);
   const [authorize, pending] = useAction(async () => {
     const result = await queueManager?.authorizeGmailNow?.();
@@ -344,10 +352,14 @@ function AuthPrompt({ queueManager }) {
   return html`
     <div class="cl-section cl-auth-panel">
       <div class="cl-section-title">Action required</div>
-      <div class="cl-auth-copy">Connect Gmail once so Clearledgr can keep monitoring invoices in this mailbox.</div>
+      <div class="cl-auth-copy">
+        ${gmail?.requires_reconnect
+          ? 'Reconnect Gmail so Clearledgr can keep monitoring this mailbox after the current session expires.'
+          : 'Connect Gmail once so Clearledgr can keep monitoring invoices in this mailbox.'}
+      </div>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-primary-cta" onClick=${authorize} disabled=${pending}>
-          ${pending ? 'Connecting…' : 'Connect Gmail'}
+          ${pending ? 'Connecting…' : (gmail?.requires_reconnect ? 'Reconnect Gmail' : 'Connect Gmail')}
         </button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${goConnections}>Connections</button>
       </div>

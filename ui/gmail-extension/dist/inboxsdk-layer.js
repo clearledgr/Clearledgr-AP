@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:fe4253da1a16d1cb331d88c9e6c1acfe3e1ac9eed62c7d896688a7a14b47ac84 */
+/* clearledgr-source-fingerprint:807969962d138d2bd5fd817e3cf5e56bb875255f426ff215c02d0bdb845e8256 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -53871,7 +53871,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           errors: Array.isArray(validation.errors) ? validation.errors : [],
           warnings: Array.isArray(validation.warnings) ? validation.warnings : [],
           debugManualScan: Boolean(raw.debugManualScan),
-          authEntryMode: String(raw.authEntryMode || "admin_console").trim().toLowerCase() === "inline" ? "inline" : "admin_console"
+          authEntryMode: String(raw.authEntryMode || "routed").trim().toLowerCase() === "inline" ? "inline" : "routed"
         };
       }
       const extensionConfig = typeof window !== "undefined" && (window.CLEARLEDGR_CONFIG || window.CONFIG) || typeof globalThis !== "undefined" && (globalThis.CLEARLEDGR_CONFIG || globalThis.CONFIG) || {};
@@ -53879,7 +53879,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const configuredApiKey = String(extensionConfig.BACKEND_API_KEY || extensionConfig.API_KEY || "").trim();
       const configuredAuthEntryMode = String(extensionConfig.AUTH_ENTRY_MODE || extensionConfig.SIDEBAR_AUTH_ENTRY_MODE || "").trim().toLowerCase();
       const backendUrl = String(raw.backendUrl || configuredBackendUrl || "http://127.0.0.1:8010").trim().replace(/\/+$/, "");
-      const authEntryMode = String(raw.authEntryMode || configuredAuthEntryMode || "inline").trim().toLowerCase() === "inline" ? "inline" : "admin_console";
+      const authEntryMode = String(raw.authEntryMode || configuredAuthEntryMode || "inline").trim().toLowerCase() === "inline" ? "inline" : "routed";
       return {
         backendUrl,
         organizationId: String(raw.organizationId || "default").trim(),
@@ -54073,6 +54073,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         normalized.source_count = 0;
       }
       normalized.has_context_conflict = Boolean(normalized.has_context_conflict);
+      normalized.has_attachment = Boolean(normalized.has_attachment || Number(normalized.attachment_count || 0) > 0);
+      normalized.attachment_count = Math.max(0, Number(normalized.attachment_count || 0) || 0);
       normalized.exception_code = normalized.exception_code || null;
       normalized.exception_severity = normalized.exception_severity || null;
       normalized.budget_status = normalized.budget_status || null;
@@ -54257,7 +54259,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return { toast: "Authorization is already in progress.", severity: "warning" };
       }
       if (code.includes("redirect_uri_mismatch")) {
-        return { toast: "OAuth redirect URI mismatch. Fix OAuth settings in Admin Console Integrations.", severity: "error" };
+        return { toast: "OAuth redirect URI mismatch. Fix OAuth settings in Workspace Shell Integrations.", severity: "error" };
       }
       if (code.includes("invalid_client")) {
         return { toast: "OAuth client configuration is invalid. Verify Gmail integration settings.", severity: "error" };
@@ -54269,7 +54271,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return { toast: "Authorization failed because backend is unreachable. Check backend and retry.", severity: "error" };
       }
       if (code === "auth_required" || code === "authorization_failed") {
-        return { toast: "Authorization failed. Try again or reconnect from Admin Console Integrations.", severity: "error" };
+        return { toast: "Authorization failed. Try again or reconnect from Workspace Shell Integrations.", severity: "error" };
       }
       return { toast: `Authorization failed: ${code}`, severity: "error" };
     }
@@ -55132,6 +55134,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     queueState: [],
     scanStatus: {},
     currentUserRole: null,
+    gmailIntegration: null,
     selectedItemId: null,
     currentThreadId: null,
     agentSessionsState: new Map,
@@ -58656,6 +58659,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function ScanStatus() {
     const s3 = useStore();
     const status = s3.scanStatus;
+    const gmail = s3.gmailIntegration || {};
     const state = status?.state || "idle";
     let text = "";
     let tone = "";
@@ -58685,7 +58689,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const lastScan = status?.lastScanAt ? new Date(status.lastScanAt) : null;
       text = lastScan ? `Monitoring active · ${lastScan.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Monitoring active";
     }
-    return html2`<div class="cl-scan-status" data-tone=${tone}>${text}</div>`;
+    if (state !== "auth_required" && gmail?.requires_reconnect) {
+      text = "Reconnect Gmail to keep background monitoring durable.";
+      tone = "warning";
+    }
+    return html2`<div id="cl-scan-status" class="cl-scan-status" data-tone=${tone}>${text}</div>`;
   }
   function StatePill({ state }) {
     const cls = `cl-pill cl-pill-${String(state || "received").replace(/_/g, "-")}`;
@@ -58842,6 +58850,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
   function AuthPrompt({ queueManager }) {
+    const s3 = useStore();
+    const gmail = s3.gmailIntegration || {};
     const goConnections = q2(() => store_default.sdk?.Router?.goto?.("clearledgr/connections"), []);
     const [authorize, pending] = useAction(async () => {
       const result = await queueManager?.authorizeGmailNow?.();
@@ -58854,10 +58864,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return html2`
     <div class="cl-section cl-auth-panel">
       <div class="cl-section-title">Action required</div>
-      <div class="cl-auth-copy">Connect Gmail once so Clearledgr can keep monitoring invoices in this mailbox.</div>
+      <div class="cl-auth-copy">
+        ${gmail?.requires_reconnect ? "Reconnect Gmail so Clearledgr can keep monitoring this mailbox after the current session expires." : "Connect Gmail once so Clearledgr can keep monitoring invoices in this mailbox."}
+      </div>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-primary-cta" onClick=${authorize} disabled=${pending}>
-          ${pending ? "Connecting…" : "Connect Gmail"}
+          ${pending ? "Connecting…" : gmail?.requires_reconnect ? "Reconnect Gmail" : "Connect Gmail"}
         </button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${goConnections}>Connections</button>
       </div>
@@ -59011,7 +59023,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       primaryPending = retryPending;
     }
     return html2`
-    <div class="cl-thread-card cl-work-surface">
+    <div id="cl-thread-context" class="cl-thread-card cl-work-surface">
       ${totalItems > 1 && html2`
         <div class="cl-navigator">
           <div class="cl-nav-label">Invoice ${humanIndex} of ${totalItems}</div>
@@ -59052,7 +59064,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </button>
       `}
 
-      <div class="cl-thread-actions">
+      <div id="cl-agent-actions" class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open in pipeline</button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource} disabled=${!canOpenSource}>Open email</button>
         ${(item?.vendor_name || item?.vendor) && html2`
@@ -59428,12 +59440,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }, options);
   }
 
-  // src/routes/admin-api.js
+  // src/routes/workspace-shell-api.js
   var _toastFn = null;
   function setToastFn(fn) {
     _toastFn = fn;
   }
-  function createAdminApi(queueManager) {
+  function createWorkspaceShellApi(queueManager) {
     const orgId = () => String(queueManager?.runtimeConfig?.organizationId || "default").trim();
     const backendUrl = () => String(queueManager?.runtimeConfig?.backendUrl || "http://127.0.0.1:8010").replace(/\/+$/, "");
     async function api(path, options = {}) {
@@ -59458,12 +59470,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     function toast(msg, type = "info") {
       _toastFn?.(msg, type);
     }
-    async function bootstrapAdminData() {
+    async function bootstrapWorkspaceShellData() {
       const id = orgId();
       const [bootstrap, policies, team] = await Promise.allSettled([
-        api(`/api/admin/bootstrap?organization_id=${id}`, { silent: true }).catch(() => ({})),
-        api(`/api/admin/policies/ap?organization_id=${id}`, { silent: true }).catch(() => ({})),
-        api(`/api/admin/team/invites?organization_id=${id}`, { silent: true }).catch(() => [])
+        api(`/api/workspace/bootstrap?organization_id=${id}`, { silent: true }).catch(() => ({})),
+        api(`/api/workspace/policies/ap?organization_id=${id}`, { silent: true }).catch(() => ({})),
+        api(`/api/workspace/team/invites?organization_id=${id}`, { silent: true }).catch(() => [])
       ]);
       const bootstrapPayload = bootstrap.value || {};
       const dashboard = bootstrapPayload.dashboard || {};
@@ -59485,7 +59497,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         current_user: currentUser
       };
     }
-    return { api, toast, orgId, bootstrapAdminData };
+    return { api, toast, orgId, bootstrapWorkspaceShellData };
   }
 
   // src/routes/oauth-bridge.js
@@ -59985,7 +59997,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const pinnedPipelineViews = getPinnedPipelineViews(pipelinePrefs).slice(0, 4);
     const starterSavedViews = getStarterPipelineViews(pipelinePrefs).filter((view) => !pinnedPipelineViews.some((pinnedView) => pinnedView.id === view.id && pinnedView.scope === view.scope)).slice(0, 3);
     const starterPipelineSlices = HOME_PIPELINE_SHORTCUTS.map((sliceId) => PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === sliceId)).filter(Boolean);
-    const gmailOk = Boolean(gmail.connected);
+    const gmailReconnectRequired = Boolean(gmail.connected && (gmail.requires_reconnect || gmail.durable === false));
+    const gmailOk = Boolean(gmail.connected && !gmailReconnectRequired);
     const slackOk = Boolean(slack.connected);
     const teamsOk = Boolean(teams.connected);
     const approvalSurfaceOk = slackOk || teamsOk;
@@ -60208,8 +60221,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <${StatusRow}
               label="Gmail"
               ready=${gmailOk}
-              detail=${gmailOk ? "Gmail monitoring is connected." : "Connect Gmail so Clearledgr can detect invoice threads."}
-              actionLabel=${gmailOk ? "" : "Connect"}
+              detail=${gmailOk ? "Gmail monitoring is connected." : gmailReconnectRequired ? "Reconnect Gmail so Clearledgr can keep scanning invoices after the current session expires." : "Connect Gmail so Clearledgr can detect invoice threads."}
+              actionLabel=${gmailOk ? "" : gmailReconnectRequired ? "Reconnect" : "Connect"}
               onAction=${connectGmail}
               pending=${gmailPending}
             />
@@ -60544,17 +60557,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const erp = integrationByName(bootstrap, "erp");
     const slack = integrationByName(bootstrap, "slack");
     const teams = integrationByName(bootstrap, "teams");
+    const gmailReconnectRequired = Boolean(gmail.connected && (gmail.requires_reconnect || gmail.durable === false));
+    const [connectGmail, gmailPending] = useAction2(async () => {
+      const authUrl = bootstrap?.gmail_auth_url || bootstrap?.integrations?.find?.((it) => it.type === "gmail")?.auth_url;
+      if (authUrl) {
+        oauthBridge.startOAuth(authUrl, "gmail");
+        return;
+      }
+      navigate?.("clearledgr/home");
+    });
     const [connectSlack, slackPending] = useAction2(async () => {
-      const p3 = await api("/api/admin/integrations/slack/install/start", { method: "POST", body: JSON.stringify({ organization_id: orgId, mode: "per_org", redirect_path: "/console" }) });
+      const p3 = await api("/api/workspace/integrations/slack/install/start", { method: "POST", body: JSON.stringify({ organization_id: orgId, mode: "per_org", redirect_path: "/workspace" }) });
       oauthBridge.startOAuth(p3.auth_url, "slack");
     });
     const [saveChannel, saveChannelPending] = useAction2(async () => {
-      await api("/api/admin/integrations/slack/channel", { method: "POST", body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById("cl-slack-channel")?.value?.trim() }) });
+      await api("/api/workspace/integrations/slack/channel", { method: "POST", body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById("cl-slack-channel")?.value?.trim() }) });
       toast("Channel saved.");
       onRefresh();
     });
     const [testSlackMsg, testSlackPending] = useAction2(async () => {
-      await api("/api/admin/integrations/slack/test", { method: "POST", body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById("cl-slack-channel")?.value?.trim() }) });
+      await api("/api/workspace/integrations/slack/test", { method: "POST", body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById("cl-slack-channel")?.value?.trim() }) });
       toast("Test sent to Slack.");
     });
     const [saveWebhook, saveWebhookPending] = useAction2(async () => {
@@ -60563,12 +60585,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         toast("Webhook URL required.", "error");
         return;
       }
-      await api("/api/admin/integrations/teams/webhook", { method: "POST", body: JSON.stringify({ organization_id: orgId, webhook_url: wh }) });
+      await api("/api/workspace/integrations/teams/webhook", { method: "POST", body: JSON.stringify({ organization_id: orgId, webhook_url: wh }) });
       toast("Teams webhook saved.");
       onRefresh();
     });
     const [testTeamsMsg, testTeamsPending] = useAction2(async () => {
-      await api("/api/admin/integrations/teams/test", { method: "POST", body: JSON.stringify({ organization_id: orgId }) });
+      await api("/api/workspace/integrations/teams/test", { method: "POST", body: JSON.stringify({ organization_id: orgId }) });
       toast("Test sent to Teams.");
     });
     return html7`
@@ -60579,7 +60601,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <${ConnectionRow}
           label="Gmail"
           status=${gmail.status || (gmail.connected ? "connected" : "disconnected")}
-          detail=${gmail.connected ? "Gmail monitoring is connected for this workspace." : "Connect Gmail from the thread prompt or the first-run setup flow."}
+          detail=${gmail.connected ? gmailReconnectRequired ? "Reconnect Gmail to restore durable background monitoring for this workspace." : "Gmail monitoring is connected for this workspace." : "Connect Gmail from the thread prompt or the first-run setup flow."}
+          actionLabel=${gmail.connected ? gmailReconnectRequired ? "Reconnect Gmail" : "" : "Connect Gmail"}
+          onAction=${connectGmail}
+          pending=${gmailPending}
         />
         <${ConnectionRow}
           label="Slack"
@@ -60659,7 +60684,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         auto_approve_max_amount: nextMaxAmount,
         require_po: nextRequirePO
       };
-      await api("/api/admin/policies/ap", {
+      await api("/api/workspace/policies/ap", {
         method: "PUT",
         body: JSON.stringify({
           organization_id: orgId,
@@ -60730,12 +60755,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [createInvite] = useAction2(async () => {
       const email = document.getElementById("cl-invite-email")?.value?.trim();
       const role = document.getElementById("cl-invite-role")?.value;
-      await api("/api/admin/team/invites", { method: "POST", body: JSON.stringify({ organization_id: orgId, email, role }) });
+      await api("/api/workspace/team/invites", { method: "POST", body: JSON.stringify({ organization_id: orgId, email, role }) });
       toast(`Invite sent to ${email}.`);
       onRefresh();
     });
     const [revokeInvite] = useAction2(async (id) => {
-      await api(`/api/admin/team/invites/${id}/revoke?organization_id=${encodeURIComponent(orgId)}`, { method: "POST" });
+      await api(`/api/workspace/team/invites/${id}/revoke?organization_id=${encodeURIComponent(orgId)}`, { method: "POST" });
       toast("Invite revoked.");
       onRefresh();
     });
@@ -60778,7 +60803,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function CompanyPage({ bootstrap, api, toast, orgId, onRefresh }) {
     const org = bootstrap?.organization || {};
     const [saveOrg, saving] = useAction2(async () => {
-      await api("/api/admin/org/settings", {
+      await api("/api/workspace/org/settings", {
         method: "PATCH",
         body: JSON.stringify({
           organization_id: orgId,
@@ -60829,7 +60854,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const usageKeys = Object.keys(usage);
     const planName = (sub.plan || "free").charAt(0).toUpperCase() + (sub.plan || "free").slice(1);
     const [changePlan] = useAction2(async (plan) => {
-      await api("/api/admin/subscription/plan", { method: "PATCH", body: JSON.stringify({ organization_id: orgId, plan }) });
+      await api("/api/workspace/subscription/plan", { method: "PATCH", body: JSON.stringify({ organization_id: orgId, plan }) });
       toast(`Plan updated to ${plan}.`);
       onRefresh();
     });
@@ -61142,7 +61167,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }, [pipelineScope]);
     const syncServerPreferences = async (prefs, { silent = true } = {}) => {
       const normalized = normalizePipelinePreferences(prefs);
-      await api("/api/admin/user/preferences", {
+      await api("/api/workspace/user/preferences", {
         method: "PATCH",
         body: JSON.stringify({
           organization_id: orgId,
@@ -63014,7 +63039,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (syncTimerRef.current)
         clearTimeout(syncTimerRef.current);
       syncTimerRef.current = setTimeout(() => {
-        api("/api/admin/user/preferences", {
+        api("/api/workspace/user/preferences", {
           method: "PATCH",
           body: JSON.stringify({
             organization_id: orgId,
@@ -63729,17 +63754,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         if (item?.id) {
           store_default.update({ selectedItemId: item.id });
           writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, item.id);
-        } else if (threadId && queueManager) {
+        }
+        if (threadId && queueManager) {
           try {
             const result = await queueManager.backendFetch(`/extension/by-thread/${encodeURIComponent(threadId)}`);
             if (result?.ok) {
               const data = await result.json();
               if (data?.found && data?.item) {
                 item = data.item;
-                const currentQueue = store_default.queueState || [];
-                if (!currentQueue.find((i3) => i3.id === item.id)) {
-                  store_default.update({ queueState: [...currentQueue, item] });
-                }
+                queueManager.upsertQueueItem(item);
+                queueManager.emitQueueUpdated();
                 store_default.update({ selectedItemId: item.id });
                 writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, item.id);
               }
@@ -64173,7 +64197,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     setToastFn((msg, type) => {
       showToast(msg, type);
     });
-    const adminApi = createAdminApi(queueManager);
+    const workspaceShellApi = createWorkspaceShellApi(queueManager);
     const oauthBridge = createOAuthBridge(() => {
       bootstrapCache = null;
       queueManager?.scanNow?.();
@@ -64188,10 +64212,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return bootstrapCache;
       if (bootstrapPromise)
         return bootstrapPromise;
-      bootstrapPromise = adminApi.bootstrapAdminData().then((data) => {
+      bootstrapPromise = workspaceShellApi.bootstrapWorkspaceShellData().then((data) => {
         bootstrapCache = data;
         queueManager.currentUserRole = data?.current_user?.role || null;
-        store_default.update({ currentUserRole: queueManager.currentUserRole });
+        const gmailIntegration = Array.isArray(data?.integrations) ? data.integrations.find((integration) => integration?.name === "gmail") || null : null;
+        store_default.update({
+          currentUserRole: queueManager.currentUserRole,
+          gmailIntegration
+        });
         const pipelineScope = {
           orgId: queueManager?.runtimeConfig?.organizationId || "default",
           userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || ""
@@ -64268,14 +64296,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       routeEl.appendChild(container);
       const params = customRouteView.getParams?.() || {};
       const rawId = params.id || window.location.hash.split("clearledgr/invoice/")[1]?.split("?")[0] || "";
-      const orgId = adminApi.orgId();
+      const orgId = workspaceShellApi.orgId();
       const navigate = (routeId) => sdk.Router.goto(routeId);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
       const bootstrap2 = await getBootstrap();
       J(html20`<${InvoiceDetailPage}
-      api=${adminApi.api}
+      api=${workspaceShellApi.api}
       bootstrap=${bootstrap2}
-      toast=${adminApi.toast}
+      toast=${workspaceShellApi.toast}
       orgId=${orgId}
       userEmail=${userEmail}
       navigate=${navigate}
@@ -64298,14 +64326,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       routeEl.appendChild(container);
       const params = customRouteView.getParams?.() || {};
       const rawName = params.name || window.location.hash.split("clearledgr/vendor/")[1]?.split("?")[0] || "";
-      const orgId = adminApi.orgId();
+      const orgId = workspaceShellApi.orgId();
       const navigate = (routeId) => sdk.Router.goto(routeId);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
       const bootstrap2 = await getBootstrap();
       J(html20`<${VendorDetailPage}
-      api=${adminApi.api}
+      api=${workspaceShellApi.api}
       bootstrap=${bootstrap2}
-      toast=${adminApi.toast}
+      toast=${workspaceShellApi.toast}
       orgId=${orgId}
       userEmail=${userEmail}
       navigate=${navigate}
@@ -64330,7 +64358,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         container.appendChild(pageMount);
         const routeEl = customRouteView.getElement();
         routeEl.appendChild(container);
-        const orgId = adminApi.orgId();
+        const orgId = workspaceShellApi.orgId();
         const navigate = (routeId) => sdk.Router.goto(routeId);
         const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
         let renderCurrentPage = async () => {};
@@ -64365,8 +64393,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const routePreferences = readRoutePreferences(routeOptions);
           J(html20`<${PageComponent}
           bootstrap=${bootstrap2}
-          api=${adminApi.api}
-          toast=${adminApi.toast}
+          api=${workspaceShellApi.api}
+          toast=${workspaceShellApi.toast}
           orgId=${orgId}
           userEmail=${userEmail}
           onRefresh=${async () => {

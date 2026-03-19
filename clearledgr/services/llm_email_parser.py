@@ -306,6 +306,7 @@ def _llm_result_to_parse_email_dict(
         "has_statement_attachment": email_type == "statement",
         "confidence": overall_confidence,
         "currency": currency if amount is not None else None,
+        "primary_source": "attachment" if attachments else "email",
         "parsed_at": datetime.now(timezone.utc).isoformat(),
         # LLM-enriched fields not in the regex parser
         "field_confidences": field_confidences,

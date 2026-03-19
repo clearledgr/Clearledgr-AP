@@ -114,7 +114,7 @@ test('route registry stays Gmail-native and does not define an in-Gmail Ops rout
 });
 
 test('admin bootstrap adapter preserves backend current user role instead of hardcoding admin', async () => {
-  const { createAdminApi } = await importModule('src/routes/admin-api.js');
+  const { createWorkspaceShellApi } = await importModule('src/routes/workspace-shell-api.js');
   const calls = [];
   const queueManager = {
     runtimeConfig: {
@@ -123,7 +123,7 @@ test('admin bootstrap adapter preserves backend current user role instead of har
     },
     async backendFetch(url) {
       calls.push(url);
-      if (url.endsWith('/api/admin/bootstrap?organization_id=org-eu-1')) {
+      if (url.endsWith('/api/workspace/bootstrap?organization_id=org-eu-1')) {
         return {
           ok: true,
           status: 200,
@@ -150,7 +150,7 @@ test('admin bootstrap adapter preserves backend current user role instead of har
           },
         };
       }
-      if (url.endsWith('/api/admin/policies/ap?organization_id=org-eu-1')) {
+      if (url.endsWith('/api/workspace/policies/ap?organization_id=org-eu-1')) {
         return {
           ok: true,
           status: 200,
@@ -159,7 +159,7 @@ test('admin bootstrap adapter preserves backend current user role instead of har
           },
         };
       }
-      if (url.endsWith('/api/admin/team/invites?organization_id=org-eu-1')) {
+      if (url.endsWith('/api/workspace/team/invites?organization_id=org-eu-1')) {
         return {
           ok: true,
           status: 200,
@@ -172,13 +172,13 @@ test('admin bootstrap adapter preserves backend current user role instead of har
     },
   };
 
-  const api = createAdminApi(queueManager);
-  const bootstrap = await api.bootstrapAdminData();
+  const api = createWorkspaceShellApi(queueManager);
+  const bootstrap = await api.bootstrapWorkspaceShellData();
 
   assert.deepEqual(calls, [
-    'https://api.clearledgr.test/api/admin/bootstrap?organization_id=org-eu-1',
-    'https://api.clearledgr.test/api/admin/policies/ap?organization_id=org-eu-1',
-    'https://api.clearledgr.test/api/admin/team/invites?organization_id=org-eu-1',
+    'https://api.clearledgr.test/api/workspace/bootstrap?organization_id=org-eu-1',
+    'https://api.clearledgr.test/api/workspace/policies/ap?organization_id=org-eu-1',
+    'https://api.clearledgr.test/api/workspace/team/invites?organization_id=org-eu-1',
   ]);
   assert.equal(bootstrap.current_user.role, 'operator');
   assert.equal(bootstrap.current_user.email, 'ops@clearledgr.com');
@@ -232,7 +232,7 @@ test('pipeline page syncs saved views through the authenticated user preferences
     'utf8',
   );
 
-  assert.equal(source.includes("api('/api/admin/user/preferences'"), true);
+  assert.equal(source.includes("api('/api/workspace/user/preferences'"), true);
   assert.equal(source.includes('buildPipelinePreferencePatch(normalized)'), true);
   assert.equal(source.includes('getBootstrappedPipelinePreferences(bootstrap)'), true);
   assert.equal(source.includes('getStarterPipelineViews(viewPrefs)'), true);
@@ -257,6 +257,18 @@ test('thread card stays compact, capped, and free of dashboard/debug clutter', (
   assert.equal(source.includes('prompt('), false);
   assert.equal(source.includes('confirm('), false);
   assert.equal(source.includes('window.open('), false);
+});
+
+test('thread handler refreshes the canonical thread item so new evidence fields replace stale queue rows', () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '..', 'src/inboxsdk-layer.js'),
+    'utf8',
+  );
+
+  assert.equal(source.includes('Always refresh the canonical item for the open thread'), true);
+  assert.equal(source.includes('queueManager.upsertQueueItem(item);'), true);
+  assert.equal(source.includes('queueManager.emitQueueUpdated();'), true);
+  assert.equal(source.includes('if (threadId && queueManager) {'), true);
 });
 
 test('gmail auth stays explicit and never opens OAuth during startup bootstrap', () => {

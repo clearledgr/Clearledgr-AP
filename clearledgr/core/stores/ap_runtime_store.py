@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS finance_emails (
     processed_at TEXT,
     transaction_id TEXT,
     user_id TEXT,
+    metadata TEXT DEFAULT '{}',
     created_at TEXT
 )
 """
@@ -108,6 +109,17 @@ AP_RUNTIME_COMPAT_TABLES = [
 
 class APRuntimeStore:
     """DB mixin for AP-runtime-compatible helper methods."""
+
+    @staticmethod
+    def _decode_json_value(raw: Any, default: Any) -> Any:
+        if raw in (None, ""):
+            return default
+        if isinstance(raw, (dict, list)):
+            return raw
+        try:
+            return json.loads(raw)
+        except Exception:
+            return default
 
     def save_transaction(self, tx: Any) -> Any:
         from datetime import datetime, timezone
@@ -230,14 +242,28 @@ class APRuntimeStore:
                     (id, organization_id, gmail_id, subject, sender,
                      received_at, email_type, confidence, vendor, amount,
                      currency, invoice_number, status, processed_at,
-                     transaction_id, user_id, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     transaction_id, user_id, metadata, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
+                    organization_id=excluded.organization_id,
+                    gmail_id=excluded.gmail_id,
+                    subject=excluded.subject,
+                    sender=excluded.sender,
+                    received_at=excluded.received_at,
+                    email_type=excluded.email_type,
+                    confidence=excluded.confidence,
+                    vendor=excluded.vendor,
+                    amount=excluded.amount,
+                    currency=excluded.currency,
+                    invoice_number=excluded.invoice_number,
                     status=excluded.status,
                     processed_at=excluded.processed_at,
-                    transaction_id=excluded.transaction_id
+                    transaction_id=excluded.transaction_id,
+                    user_id=excluded.user_id,
+                    metadata=excluded.metadata
                 """
             )
+            metadata_json = json.dumps(getattr(email, "metadata", {}) or {})
             cur.execute(
                 sql,
                 (
@@ -257,6 +283,7 @@ class APRuntimeStore:
                     email.processed_at,
                     email.transaction_id,
                     email.user_id,
+                    metadata_json,
                     getattr(email, "created_at", now),
                 ),
             )
@@ -308,6 +335,7 @@ class APRuntimeStore:
                     transaction_id=r.get("transaction_id"),
                     organization_id=r.get("organization_id"),
                     user_id=r.get("user_id"),
+                    metadata=self._decode_json_value(r.get("metadata"), {}),
                     created_at=r.get("created_at", ""),
                 )
             )
@@ -341,6 +369,7 @@ class APRuntimeStore:
             transaction_id=r.get("transaction_id"),
             organization_id=r.get("organization_id"),
             user_id=r.get("user_id"),
+            metadata=self._decode_json_value(r.get("metadata"), {}),
             created_at=r.get("created_at", ""),
         )
 

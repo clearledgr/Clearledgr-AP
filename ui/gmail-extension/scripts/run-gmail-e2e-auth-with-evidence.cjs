@@ -11,6 +11,8 @@ function parseArgs(argv = process.argv.slice(2)) {
     releaseId: process.env.GMAIL_E2E_RELEASE_ID || '',
     outputDir: '',
     profileDir: process.env.GMAIL_E2E_PROFILE_DIR || '',
+    executablePath: process.env.GMAIL_E2E_EXECUTABLE_PATH || '',
+    profileDirectory: process.env.GMAIL_E2E_PROFILE_DIRECTORY || '',
   };
   for (let i = 0; i < argv.length; i += 1) {
     const token = String(argv[i] || '');
@@ -27,6 +29,16 @@ function parseArgs(argv = process.argv.slice(2)) {
     }
     if (token === '--profile-dir') {
       options.profileDir = String(next || '').trim();
+      i += 1;
+      continue;
+    }
+    if (token === '--executable-path') {
+      options.executablePath = String(next || '').trim();
+      i += 1;
+      continue;
+    }
+    if (token === '--profile-directory') {
+      options.profileDirectory = String(next || '').trim();
       i += 1;
       continue;
     }
@@ -62,10 +74,22 @@ function run() {
   env.GMAIL_E2E_EVIDENCE_JSON = evidencePath;
   env.GMAIL_E2E_CAPTURE_PATH = screenshotPath;
   env.GMAIL_E2E_PROFILE_DIR = profileDir;
+  if (options.executablePath) {
+    env.GMAIL_E2E_EXECUTABLE_PATH = path.resolve(options.executablePath);
+  }
+  if (options.profileDirectory) {
+    env.GMAIL_E2E_PROFILE_DIRECTORY = options.profileDirectory;
+  }
 
   process.stdout.write(`Running authenticated Gmail E2E for release ${options.releaseId}\n`);
   process.stdout.write(`Evidence JSON: ${evidencePath}\n`);
   process.stdout.write(`Screenshot: ${screenshotPath}\n`);
+  if (env.GMAIL_E2E_EXECUTABLE_PATH) {
+    process.stdout.write(`Browser executable: ${env.GMAIL_E2E_EXECUTABLE_PATH}\n`);
+  }
+  if (env.GMAIL_E2E_PROFILE_DIRECTORY) {
+    process.stdout.write(`Browser profile directory: ${env.GMAIL_E2E_PROFILE_DIRECTORY}\n`);
+  }
 
   const testResult = spawnSync(
     process.execPath,

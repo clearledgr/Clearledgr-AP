@@ -7,7 +7,7 @@ const html = htm.bind(h);
 export default function CompanyPage({ bootstrap, api, toast, orgId, onRefresh }) {
   const org = bootstrap?.organization || {};
   const [saveOrg, saving] = useAction(async () => {
-    await api('/api/admin/org/settings', {
+    await api('/api/workspace/org/settings', {
       method: 'PATCH',
       body: JSON.stringify({
         organization_id: orgId,

@@ -19,6 +19,31 @@ from clearledgr.services.slack_notifications import send_with_retry
 logger = logging.getLogger(__name__)
 
 
+def _compact_attachment_evidence(raw_attachments: Any) -> List[Dict[str, Any]]:
+    evidence: List[Dict[str, Any]] = []
+    if not isinstance(raw_attachments, list):
+        return evidence
+    for raw in raw_attachments:
+        if not isinstance(raw, dict):
+            continue
+        text_excerpt = str(raw.get("content_text") or "").strip()
+        if len(text_excerpt) > 1200:
+            text_excerpt = f"{text_excerpt[:1200]}..."
+        extraction = raw.get("extraction") if isinstance(raw.get("extraction"), dict) else None
+        entry = {
+            "name": raw.get("name"),
+            "type": raw.get("type"),
+            "content_type": raw.get("content_type"),
+            "parsed": bool(raw.get("parsed")),
+            "requires_ocr": bool(raw.get("requires_ocr")),
+            "has_text": bool(text_excerpt),
+            "text_excerpt": text_excerpt or None,
+            "extraction": extraction,
+        }
+        evidence.append({key: value for key, value in entry.items() if value not in (None, "", [], {})})
+    return evidence
+
+
 def _org_id(payload: Dict[str, Any]) -> str:
     return str(payload.get("organization_id") or "default")
 
@@ -169,7 +194,9 @@ async def extract_email_data_activity(payload: Dict[str, Any]) -> Dict[str, Any]
         invoice_number = str(parsed.get("invoice_number") or "").strip()
 
     due_date = _normalize_date(parsed.get("due_date") or parsed.get("primary_date"))
-    vendor = str(parsed.get("vendor") or "").strip() or "Unknown"
+    vendor = str(parsed.get("vendor") or "").strip()
+    if vendor.lower() in {"unknown", "unknown vendor", "n/a", "na", "none"}:
+        vendor = ""
 
     confidence = _safe_float(parsed.get("confidence"), 0.0)
     field_confidences = parsed.get("field_confidences")
@@ -177,7 +204,7 @@ async def extract_email_data_activity(payload: Dict[str, Any]) -> Dict[str, Any]
         field_confidences = {}
 
     return {
-        "vendor": vendor,
+        "vendor": vendor or None,
         "amount": amount,
         "total_amount": amount,
         "currency": currency,
@@ -185,12 +212,27 @@ async def extract_email_data_activity(payload: Dict[str, Any]) -> Dict[str, Any]
         "due_date": due_date,
         "confidence": confidence,
         "email_type": parsed.get("email_type"),
+        "invoice_date": _normalize_date(parsed.get("invoice_date")),
         "field_confidences": field_confidences,
+        "reasoning_summary": str(parsed.get("reasoning_summary") or "").strip() or None,
+        "payment_processor": str(parsed.get("payment_processor") or "").strip() or None,
+        "extraction_method": str(parsed.get("extraction_method") or "").strip() or None,
+        "extraction_model": str(parsed.get("extraction_model") or "").strip() or None,
+        "primary_source": str(parsed.get("primary_source") or "email").strip() or "email",
+        "attachment_count": len(payload.get("attachments") or []),
+        "attachment_names": [
+            str(att.get("filename") or att.get("name") or "").strip()
+            for att in (payload.get("attachments") or [])
+            if isinstance(att, dict) and str(att.get("filename") or att.get("name") or "").strip()
+        ],
         "raw_parser": {
             "invoice_numbers": parsed.get("invoice_numbers") or [],
             "dates": parsed.get("dates") or [],
             "has_invoice_attachment": bool(parsed.get("has_invoice_attachment")),
+            "has_statement_attachment": bool(parsed.get("has_statement_attachment")),
             "extraction_method": parsed.get("extraction_method"),
+            "primary_source": parsed.get("primary_source"),
+            "parsed_attachments": _compact_attachment_evidence(parsed.get("attachments") or []),
         },
     }
 

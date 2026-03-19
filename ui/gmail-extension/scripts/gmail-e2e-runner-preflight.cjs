@@ -7,6 +7,8 @@ function parseArgs(argv = process.argv.slice(2)) {
   const options = {
     profileDir: process.env.GMAIL_E2E_PROFILE_DIR || '',
     skipBrowserLaunch: process.env.GMAIL_E2E_PREFLIGHT_SKIP_BROWSER_LAUNCH === '1',
+    executablePath: process.env.GMAIL_E2E_EXECUTABLE_PATH || '',
+    profileDirectory: process.env.GMAIL_E2E_PROFILE_DIRECTORY || '',
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -19,6 +21,16 @@ function parseArgs(argv = process.argv.slice(2)) {
     }
     if (token === '--skip-browser-launch') {
       options.skipBrowserLaunch = true;
+      continue;
+    }
+    if (token === '--executable-path') {
+      options.executablePath = String(next || '').trim();
+      i += 1;
+      continue;
+    }
+    if (token === '--profile-directory') {
+      options.profileDirectory = String(next || '').trim();
+      i += 1;
       continue;
     }
   }
@@ -53,7 +65,21 @@ function ensureProfileHasState(profileDir) {
   }
 }
 
-async function ensurePlaywrightLaunchable(skipLaunch = false) {
+function ensureExecutablePath(executablePath) {
+  if (!executablePath) return '';
+  const resolved = path.resolve(executablePath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`executable_path_not_found:${resolved}`);
+  }
+  const stat = fs.statSync(resolved);
+  if (!stat.isFile()) {
+    throw new Error(`executable_path_not_file:${resolved}`);
+  }
+  fs.accessSync(resolved, fs.constants.R_OK | fs.constants.X_OK);
+  return resolved;
+}
+
+async function ensurePlaywrightLaunchable({ skipLaunch = false, executablePath = '' } = {}) {
   let playwright;
   try {
     playwright = require('playwright');
@@ -73,7 +99,10 @@ async function ensurePlaywrightLaunchable(skipLaunch = false) {
 
   let browser;
   try {
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({
+      headless: true,
+      executablePath: executablePath || undefined,
+    });
     return { launchTested: true };
   } catch (error) {
     const message = String(error && error.message ? error.message : error).split('\n')[0];
@@ -97,13 +126,19 @@ async function run() {
 
   const profileDir = ensureReadableDirectory(options.profileDir);
   ensureProfileHasState(profileDir);
-  const playwright = await ensurePlaywrightLaunchable(options.skipBrowserLaunch);
+  const executablePath = ensureExecutablePath(options.executablePath);
+  const playwright = await ensurePlaywrightLaunchable({
+    skipLaunch: options.skipBrowserLaunch,
+    executablePath,
+  });
 
   const summary = {
     status: 'ok',
     profile_dir: profileDir,
+    profile_directory: options.profileDirectory || null,
     skip_browser_launch: options.skipBrowserLaunch,
     browser_launch_tested: playwright.launchTested,
+    executable_path: executablePath || null,
     checked_at: new Date().toISOString(),
   };
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
@@ -121,6 +156,7 @@ module.exports = {
   parseArgs,
   ensureReadableDirectory,
   ensureProfileHasState,
+  ensureExecutablePath,
   ensurePlaywrightLaunchable,
   run,
 };

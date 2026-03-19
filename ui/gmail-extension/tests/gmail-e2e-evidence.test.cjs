@@ -27,6 +27,23 @@ test('validateEvidence accepts a passing authenticated Gmail runtime payload', (
   assert.deepEqual(result.warnings, []);
 });
 
+test('validateEvidence accepts authenticated inbox entry surfaces even when sidebar is not open', () => {
+  const payload = {
+    status: 'passed',
+    started_at: '2026-02-28T10:00:00.000Z',
+    finished_at: '2026-02-28T10:02:00.000Z',
+    current_url: 'https://mail.google.com/mail/u/0/#inbox',
+    page_title: 'Inbox - me@example.com - Gmail',
+    assert_auth: true,
+    extension_worker_detected: true,
+    mounted_sections: 0,
+    entry_points_detected: 2,
+    missing_selectors: ['#cl-scan-status', '#cl-thread-context'],
+  };
+  const result = validateEvidence(payload, { requireAuth: true });
+  assert.deepEqual(result.errors, []);
+});
+
 test('validateEvidence rejects failed/non-authenticated runtime payload', () => {
   const payload = {
     status: 'failed',
@@ -37,12 +54,13 @@ test('validateEvidence rejects failed/non-authenticated runtime payload', () => 
     assert_auth: true,
     extension_worker_detected: false,
     mounted_sections: 0,
+    entry_points_detected: 0,
     missing_selectors: ['#cl-thread-context'],
   };
   const result = validateEvidence(payload, { requireAuth: true });
   assert.ok(result.errors.includes('status_not_passed:failed'));
   assert.ok(result.errors.includes('extension_worker_not_detected'));
-  assert.ok(result.errors.some((entry) => entry.startsWith('insufficient_mounted_sections:')));
+  assert.ok(result.errors.some((entry) => entry.startsWith('insufficient_runtime_surface:')));
 });
 
 test('generateEvidenceReport writes markdown summary in release folder shape', () => {
@@ -58,6 +76,7 @@ test('generateEvidenceReport writes markdown summary in release folder shape', (
     assert_auth: true,
     extension_worker_detected: true,
     mounted_sections: 3,
+    entry_points_detected: 1,
     missing_selectors: [],
   };
   fs.writeFileSync(evidencePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');

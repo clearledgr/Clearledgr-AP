@@ -110,7 +110,7 @@ GET /api/ops/monitoring-thresholds?organization_id=<org>&window_hours=168
 ### Critical alerts (`post_failure_rate`, `duplicate_post`)
 1. Engineering on-call paged immediately.
 2. Within 15 minutes: assess whether to disable `erp_posting` via launch controls:
-   - `POST /api/admin/controls/erp_posting` with `{"enabled": false}`
+   - `POST /api/workspace/controls/erp_posting` with `{"enabled": false}`
 3. Root cause identified within 2 hours.
 4. Fix deployed and posting re-enabled after 1h clean run.
 5. Incident post-mortem required within 48h.

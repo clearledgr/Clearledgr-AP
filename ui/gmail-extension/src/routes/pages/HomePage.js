@@ -268,7 +268,8 @@ export default function HomePage({
   const starterPipelineSlices = HOME_PIPELINE_SHORTCUTS
     .map((sliceId) => PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === sliceId))
     .filter(Boolean);
-  const gmailOk = Boolean(gmail.connected);
+  const gmailReconnectRequired = Boolean(gmail.connected && (gmail.requires_reconnect || gmail.durable === false));
+  const gmailOk = Boolean(gmail.connected && !gmailReconnectRequired);
   const slackOk = Boolean(slack.connected);
   const teamsOk = Boolean(teams.connected);
   const approvalSurfaceOk = slackOk || teamsOk;
@@ -511,8 +512,12 @@ export default function HomePage({
             <${StatusRow}
               label="Gmail"
               ready=${gmailOk}
-              detail=${gmailOk ? 'Gmail monitoring is connected.' : 'Connect Gmail so Clearledgr can detect invoice threads.'}
-              actionLabel=${gmailOk ? '' : 'Connect'}
+              detail=${gmailOk
+                ? 'Gmail monitoring is connected.'
+                : (gmailReconnectRequired
+                  ? 'Reconnect Gmail so Clearledgr can keep scanning invoices after the current session expires.'
+                  : 'Connect Gmail so Clearledgr can detect invoice threads.')}
+              actionLabel=${gmailOk ? '' : (gmailReconnectRequired ? 'Reconnect' : 'Connect')}
               onAction=${connectGmail}
               pending=${gmailPending}
             />

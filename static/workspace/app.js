@@ -41,9 +41,9 @@ const LOCALE = 'en-GB';
 // ==================== AUTH / API ====================
 
 function clearSession() {
-  document.cookie = 'clearledgr_admin_access=; Max-Age=0; path=/';
-  document.cookie = 'clearledgr_admin_refresh=; Max-Age=0; path=/';
-  document.cookie = 'clearledgr_admin_csrf=; Max-Age=0; path=/';
+  document.cookie = 'clearledgr_workspace_access=; Max-Age=0; path=/';
+  document.cookie = 'clearledgr_workspace_refresh=; Max-Age=0; path=/';
+  document.cookie = 'clearledgr_workspace_csrf=; Max-Age=0; path=/';
 }
 
 function readCookie(name) {
@@ -55,13 +55,13 @@ function readCookie(name) {
 let _refreshInFlight = false;
 let _refreshFailed = false;
 
-async function refreshAdminSession() {
+async function refreshWorkspaceSession() {
   if (_refreshFailed || _refreshInFlight) return false;
   _refreshInFlight = true;
   try {
     const resp = await fetch('/auth/refresh', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-      body: JSON.stringify({ refresh_token: readCookie('clearledgr_admin_refresh') || '' }),
+      body: JSON.stringify({ refresh_token: readCookie('clearledgr_workspace_refresh') || '' }),
     });
     if (!resp.ok) { _refreshFailed = true; return false; }
     return true;
@@ -76,12 +76,12 @@ async function api(path, options = {}) {
   const method = String(options.method || 'GET').trim().toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
-    const csrf = readCookie('clearledgr_admin_csrf');
+    const csrf = readCookie('clearledgr_workspace_csrf');
     if (csrf) headers['X-CSRF-Token'] = csrf;
   }
   const response = await fetch(path, { ...options, headers, credentials: 'include' });
   if (response.status === 401 && !options.__skipRefresh) {
-    const ok = await refreshAdminSession();
+    const ok = await refreshWorkspaceSession();
     if (ok) return api(path, { ...options, __skipRefresh: true });
     clearSession();
     throw new Error('Session expired');
@@ -168,7 +168,7 @@ function humanizeMode(raw) {
 }
 
 function resolveRef(item) { return String(item?.thread_id || item?.message_id || item?.id || '').trim(); }
-function currentEmail(bootstrap) { return String(bootstrap?.current_user?.email || '').trim() || 'admin_console'; }
+function currentEmail(bootstrap) { return String(bootstrap?.current_user?.email || '').trim() || 'workspace_shell'; }
 
 // ==================== HOOKS ====================
 
@@ -219,7 +219,7 @@ function AuthShell({ onLogin, inviteToken }) {
   const [googleAction, googlePending] = useAction(async () => {
     const orgId = new URLSearchParams(window.location.search).get('org') || localStorage.getItem('cl_admin_org') || 'default';
     const invitePart = inviteToken ? `&invite_token=${encodeURIComponent(inviteToken)}` : '';
-    const p = await api(`/auth/google/start?organization_id=${encodeURIComponent(orgId)}&redirect_path=${encodeURIComponent('/console')}${invitePart}`, { headers: {}, silent: true });
+    const p = await api(`/auth/google/start?organization_id=${encodeURIComponent(orgId)}&redirect_path=${encodeURIComponent('/workspace')}${invitePart}`, { headers: {}, silent: true });
     window.location.href = p.auth_url;
   });
   const [inviteAction, invitePending] = useAction(async (e) => {
@@ -232,7 +232,7 @@ function AuthShell({ onLogin, inviteToken }) {
 
   return html`<div class="auth-shell">
     <div class="auth-card">
-      <h1>Clearledgr Admin Center</h1>
+      <h1>Clearledgr Workspace Shell</h1>
       <p>Sign in to manage setup, integrations, policies, and plan controls.</p>
       ${msg && html`<div class="muted">${msg}</div>`}
       <form onSubmit=${loginAction}>
@@ -295,39 +295,39 @@ function SetupPage({ bootstrap, orgId, onNav, onRefresh }) {
   const [sapVisible, setSapVisible] = useState(false);
 
   const [connectGmail, gmailPending] = useAction(async () => {
-    const p = await api('/api/admin/integrations/gmail/connect/start', { method: 'POST', body: JSON.stringify({ organization_id: orgId, redirect_path: `/console?org=${encodeURIComponent(orgId)}&page=integrations` }) });
+    const p = await api('/api/workspace/integrations/gmail/connect/start', { method: 'POST', body: JSON.stringify({ organization_id: orgId, redirect_path: `/workspace?org=${encodeURIComponent(orgId)}&page=integrations` }) });
     if (p?.auth_url) window.location.href = p.auth_url;
   });
   const [connectSlack] = useAction(async () => {
-    const p = await api('/api/admin/integrations/slack/install/start', { method: 'POST', body: JSON.stringify({ organization_id: orgId, mode: 'per_org', redirect_path: '/console' }) });
+    const p = await api('/api/workspace/integrations/slack/install/start', { method: 'POST', body: JSON.stringify({ organization_id: orgId, mode: 'per_org', redirect_path: '/workspace' }) });
     window.location.href = p.auth_url;
   });
   const [connectErp] = useAction(async (erpType) => {
-    const p = await api('/api/admin/integrations/erp/connect/start', { method: 'POST', body: JSON.stringify({ organization_id: orgId, erp_type: erpType }) });
+    const p = await api('/api/workspace/integrations/erp/connect/start', { method: 'POST', body: JSON.stringify({ organization_id: orgId, erp_type: erpType }) });
     if (p.method === 'oauth') window.location.href = p.auth_url;
   });
   const [saveChannel, channelPending] = useAction(async () => {
     const ch = document.getElementById('slack-channel-input')?.value?.trim();
-    await api('/api/admin/integrations/slack/channel', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: ch }) });
+    await api('/api/workspace/integrations/slack/channel', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: ch }) });
     toast('Approval channel saved.'); onRefresh();
   });
   const [testSlack] = useAction(async () => {
     const ch = document.getElementById('slack-channel-input')?.value?.trim();
-    await api('/api/admin/integrations/slack/test', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: ch }) });
+    await api('/api/workspace/integrations/slack/test', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: ch }) });
     toast('Test message sent to Slack.');
   });
   const [connectNs, nsPending] = useAction(async () => {
     const g = id => document.getElementById(id)?.value?.trim() || '';
-    await api('/api/admin/integrations/erp/connect/netsuite', { method: 'POST', body: JSON.stringify({ organization_id: orgId, account_id: g('ns-account-id'), consumer_key: g('ns-consumer-key'), consumer_secret: g('ns-consumer-secret'), token_id: g('ns-token-id'), token_secret: g('ns-token-secret') }) });
+    await api('/api/workspace/integrations/erp/connect/netsuite', { method: 'POST', body: JSON.stringify({ organization_id: orgId, account_id: g('ns-account-id'), consumer_key: g('ns-consumer-key'), consumer_secret: g('ns-consumer-secret'), token_id: g('ns-token-id'), token_secret: g('ns-token-secret') }) });
     toast('NetSuite connected!'); setNsVisible(false); onRefresh();
   });
   const [connectSap, sapPending] = useAction(async () => {
     const g = id => document.getElementById(id)?.value?.trim() || '';
-    await api('/api/admin/integrations/erp/connect/sap', { method: 'POST', body: JSON.stringify({ organization_id: orgId, base_url: g('sap-base-url'), username: g('sap-username'), password: g('sap-password') }) });
+    await api('/api/workspace/integrations/erp/connect/sap', { method: 'POST', body: JSON.stringify({ organization_id: orgId, base_url: g('sap-base-url'), username: g('sap-username'), password: g('sap-password') }) });
     toast('SAP connected!'); setSapVisible(false); onRefresh();
   });
   const [launch, launchPending] = useAction(async () => {
-    await api('/api/admin/onboarding/step', { method: 'POST', body: JSON.stringify({ organization_id: orgId, step: 5 }) });
+    await api('/api/workspace/onboarding/step', { method: 'POST', body: JSON.stringify({ organization_id: orgId, step: 5 }) });
     toast('Clearledgr is live! Your finance agents are now running.', 'success'); onRefresh();
   });
 
@@ -544,7 +544,7 @@ function OpsPage({ bootstrap, orgId, onRefresh }) {
   });
 
   const [recomputeCalib, calibPending] = useAction(async () => {
-    await api('/api/admin/ops/learning-calibration/recompute', { method: 'POST', body: JSON.stringify({ organization_id: orgId, window_days: 180, min_feedback: 20, limit: 5000 }) });
+    await api('/api/workspace/ops/learning-calibration/recompute', { method: 'POST', body: JSON.stringify({ organization_id: orgId, window_days: 180, min_feedback: 20, limit: 5000 }) });
     toast('Learning calibration recomputed.'); onRefresh();
   });
 
@@ -599,25 +599,25 @@ function IntegrationsPage({ bootstrap, orgId, onRefresh }) {
   const slack = integrationByName(bootstrap, 'slack');
   const teams = integrationByName(bootstrap, 'teams');
   const [connectSlack] = useAction(async () => {
-    const p = await api('/api/admin/integrations/slack/install/start', { method: 'POST', body: JSON.stringify({ organization_id: orgId, mode: 'per_org', redirect_path: '/console' }) });
+    const p = await api('/api/workspace/integrations/slack/install/start', { method: 'POST', body: JSON.stringify({ organization_id: orgId, mode: 'per_org', redirect_path: '/workspace' }) });
     window.location.href = p.auth_url;
   });
   const [saveChannel] = useAction(async () => {
-    await api('/api/admin/integrations/slack/channel', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById('slack-channel-input')?.value?.trim() }) });
+    await api('/api/workspace/integrations/slack/channel', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById('slack-channel-input')?.value?.trim() }) });
     toast('Channel saved.'); onRefresh();
   });
   const [testSlackMsg] = useAction(async () => {
-    await api('/api/admin/integrations/slack/test', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById('slack-channel-input')?.value?.trim() }) });
+    await api('/api/workspace/integrations/slack/test', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById('slack-channel-input')?.value?.trim() }) });
     toast('Test sent to Slack.');
   });
   const [saveWebhook] = useAction(async () => {
     const wh = document.getElementById('teams-webhook-input')?.value?.trim();
     if (!wh) { toast('Webhook URL required.', 'error'); return; }
-    await api('/api/admin/integrations/teams/webhook', { method: 'POST', body: JSON.stringify({ organization_id: orgId, webhook_url: wh }) });
+    await api('/api/workspace/integrations/teams/webhook', { method: 'POST', body: JSON.stringify({ organization_id: orgId, webhook_url: wh }) });
     toast('Teams webhook saved.'); onRefresh();
   });
   const [testTeamsMsg] = useAction(async () => {
-    await api('/api/admin/integrations/teams/test', { method: 'POST', body: JSON.stringify({ organization_id: orgId }) });
+    await api('/api/workspace/integrations/teams/test', { method: 'POST', body: JSON.stringify({ organization_id: orgId }) });
     toast('Test sent to Teams.');
   });
 
@@ -646,12 +646,12 @@ function OrganizationPage({ bootstrap, orgId, onRefresh }) {
   const org = bootstrap?.organization || {};
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [saveOrg] = useAction(async () => {
-    await api('/api/admin/org/settings', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, patch: { organization_name: document.getElementById('org-name-input')?.value?.trim(), domain: document.getElementById('org-domain-input')?.value?.trim(), integration_mode: document.getElementById('org-mode-input')?.value } }) });
+    await api('/api/workspace/org/settings', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, patch: { organization_name: document.getElementById('org-name-input')?.value?.trim(), domain: document.getElementById('org-domain-input')?.value?.trim(), integration_mode: document.getElementById('org-mode-input')?.value } }) });
     toast('Company details saved.'); onRefresh();
   });
   const [saveJson] = useAction(async () => {
     const patch = JSON.parse(document.getElementById('org-settings-json')?.value);
-    await api('/api/admin/org/settings', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, patch }) });
+    await api('/api/workspace/org/settings', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, patch }) });
     toast('Settings saved.'); onRefresh();
   });
 
@@ -689,7 +689,7 @@ function PoliciesPage({ bootstrap, orgId, onRefresh }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [savePolicy] = useAction(async () => {
     const config = JSON.parse(document.getElementById('policy-json')?.value);
-    await api('/api/admin/policies/ap', { method: 'PUT', body: JSON.stringify({ organization_id: orgId, config, enabled: true }) });
+    await api('/api/workspace/policies/ap', { method: 'PUT', body: JSON.stringify({ organization_id: orgId, config, enabled: true }) });
     toast('Approval rules updated.'); onRefresh();
   });
 
@@ -727,11 +727,11 @@ function TeamPage({ bootstrap, orgId, onRefresh }) {
   const [createInvite] = useAction(async () => {
     const email = document.getElementById('invite-email')?.value?.trim();
     const role = document.getElementById('invite-role')?.value;
-    await api('/api/admin/team/invites', { method: 'POST', body: JSON.stringify({ organization_id: orgId, email, role }) });
+    await api('/api/workspace/team/invites', { method: 'POST', body: JSON.stringify({ organization_id: orgId, email, role }) });
     toast(`Invite sent to ${email}.`); onRefresh();
   });
   const [revokeInvite] = useAction(async (id) => {
-    await api(`/api/admin/team/invites/${id}/revoke?organization_id=${encodeURIComponent(orgId)}`, { method: 'POST' });
+    await api(`/api/workspace/team/invites/${id}/revoke?organization_id=${encodeURIComponent(orgId)}`, { method: 'POST' });
     toast('Invite revoked.'); onRefresh();
   });
 
@@ -759,7 +759,7 @@ function PlanPage({ bootstrap, orgId, onRefresh }) {
   const usageKeys = Object.keys(usage);
   const planName = (sub.plan || 'free').charAt(0).toUpperCase() + (sub.plan || 'free').slice(1);
   const [changePlan] = useAction(async (plan) => {
-    await api('/api/admin/subscription/plan', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, plan }) });
+    await api('/api/workspace/subscription/plan', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, plan }) });
     toast(`Plan updated to ${plan}.`); onRefresh();
   });
 
@@ -917,10 +917,10 @@ function AdminApp() {
   const refreshAll = useCallback(async () => {
     const orgId = orgIdRef.current;
     const org = encodeURIComponent(orgId);
-    const data = await api(`/api/admin/bootstrap?organization_id=${org}`);
+    const data = await api(`/api/workspace/bootstrap?organization_id=${org}`);
     const [policyR, invitesR, auditR] = await Promise.allSettled([
-      api(`/api/admin/policies/ap?organization_id=${org}`),
-      api(`/api/admin/team/invites?organization_id=${org}`),
+      api(`/api/workspace/policies/ap?organization_id=${org}`),
+      api(`/api/workspace/team/invites?organization_id=${org}`),
       api(`/api/ap/audit/recent?organization_id=${org}&limit=30`),
     ]);
     data.policyPayload = policyR.status === 'fulfilled' ? policyR.value : {};
@@ -933,8 +933,8 @@ function AdminApp() {
         api(`/api/ops/ap-kpis?organization_id=${org}`),
         api(`/api/ops/retry-queue?organization_id=${org}&status=all&limit=200`),
         api(`/extension/worklist?organization_id=${org}`),
-        api(`/api/admin/ops/connector-readiness?organization_id=${org}`),
-        api(`/api/admin/ops/learning-calibration?organization_id=${org}`),
+        api(`/api/workspace/ops/connector-readiness?organization_id=${org}`),
+        api(`/api/workspace/ops/learning-calibration?organization_id=${org}`),
       ]);
       data.ops = {
         health: hR.status === 'fulfilled' ? (hR.value?.health || {}) : {},

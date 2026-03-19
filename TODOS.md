@@ -2,7 +2,7 @@
 
 ## P1 — Security & Reliability
 
-### ~~Auth refresh circuit breaker (admin console)~~ ✓
+### ~~Auth refresh circuit breaker (workspace shell)~~ ✓
 - **Status:** Done (2026-03-13) — circuit breaker flags in `refreshAdminSession()`, 401 interceptor in `api()`
 
 ### ~~Claude API retry with backoff (agent runtime)~~ ✓
@@ -21,22 +21,22 @@
 
 ## P1 — Design & UX
 
-### Admin console visual redesign
-- **What:** Full visual redesign of admin console to match Fyxer/Mixmax quality bar — warm palette, generous whitespace, card-based layout, setup wizard with progress bar, dense data tables with avatars and status pills, professional typography
+### Workspace shell visual redesign
+- **What:** Full visual redesign of the workspace shell to match Fyxer/Mixmax quality bar — warm palette, generous whitespace, card-based layout, setup wizard with progress bar, dense data tables with avatars and status pills, professional typography
 - **Why:** Current UI is functional MVP-level; not production-quality for customer-facing use
 - **Effort:** L
 - **Depends on:** Preact component architecture (DONE), design tokens (DONE)
 - **References:** app.fyxer.com (warm minimal), app.mixmax.com (dense productivity)
 
 ### Gmail extension sidebar visual polish
-- **What:** Apply same visual redesign to extension sidebar — match the admin console quality bar
+- **What:** Apply same visual redesign to extension sidebar — match the workspace shell quality bar
 - **Effort:** M
-- **Depends on:** Admin console redesign (establish patterns first)
+- **Depends on:** Workspace shell redesign (establish patterns first)
 
 ## P2 — Operational
 
 ### Operational health dashboard
-- **What:** `/ops/health` page in admin console — AP pipeline latency p50/p95, agent task success rate, Claude API error rate, notification delivery rate
+- **What:** `/ops/health` page in the workspace shell — AP pipeline latency p50/p95, agent task success rate, Claude API error rate, notification delivery rate
 - **Why:** No real-time visibility into system health; operators rely on logs to detect degradation
 - **Effort:** M
 - **Depends on:** Metrics already collected via `_ap_ops_metrics` table; needs frontend rendering

@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 
 from main import app
 from clearledgr.api import agent_sessions as agent_sessions_module
-from clearledgr.api import admin_console as admin_console_module
+from clearledgr.api import workspace_shell as workspace_shell_module
 from clearledgr.api import ops as ops_module
 from clearledgr.api import ap_items as ap_items_module
 from clearledgr.core import database as db_module
@@ -44,14 +44,14 @@ def client(db):
 
     app.dependency_overrides[agent_sessions_module.get_current_user] = _fake_user
     app.dependency_overrides[ops_module.get_current_user] = _fake_user
-    app.dependency_overrides[admin_console_module.get_current_user] = _fake_user
+    app.dependency_overrides[workspace_shell_module.get_current_user] = _fake_user
     app.dependency_overrides[ap_items_module.get_current_user] = _fake_user
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
         app.dependency_overrides.pop(ops_module.get_current_user, None)
-        app.dependency_overrides.pop(admin_console_module.get_current_user, None)
+        app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
         app.dependency_overrides.pop(ap_items_module.get_current_user, None)
 
 
@@ -59,7 +59,7 @@ def client(db):
 def unauth_client(db):
     app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
     app.dependency_overrides.pop(ops_module.get_current_user, None)
-    app.dependency_overrides.pop(admin_console_module.get_current_user, None)
+    app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
     app.dependency_overrides.pop(ap_items_module.get_current_user, None)
     return TestClient(app)
 
@@ -1143,7 +1143,7 @@ def test_ap_kpis_exposes_agentic_telemetry_bundle(client, db):
 
 def test_admin_bootstrap_dashboard_includes_agentic_snapshot(client, db):
     _seed_agentic_kpi_signal(db)
-    response = client.get("/api/admin/bootstrap?organization_id=default")
+    response = client.get("/api/workspace/bootstrap?organization_id=default")
     assert response.status_code == 200
     payload = response.json()
 

@@ -14,10 +14,16 @@ test('parseArgs resolves release/output/profile flags', () => {
     '/tmp/evidence',
     '--profile-dir',
     '/tmp/gmail-profile',
+    '--executable-path',
+    '/Applications/Comet.app/Contents/MacOS/Comet',
+    '--profile-directory',
+    'Default',
   ]);
   assert.equal(parsed.releaseId, 'ap-v1-2026-03-04-pilot-rc1');
   assert.equal(parsed.outputDir, '/tmp/evidence');
   assert.equal(parsed.profileDir, '/tmp/gmail-profile');
+  assert.equal(parsed.executablePath, '/Applications/Comet.app/Contents/MacOS/Comet');
+  assert.equal(parsed.profileDirectory, 'Default');
 });
 
 test('defaultReleaseOutputDir points to release artifacts path', () => {

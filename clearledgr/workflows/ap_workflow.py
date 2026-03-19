@@ -81,7 +81,7 @@ AP_WORKFLOW_STEPS: List[WorkflowStep] = [
         execute="_await_human_decision",
         on_success=APState.APPROVED,
         on_failure=APState.REJECTED,
-        description="Wait for human approve/reject via Slack or admin console.",
+        description="Wait for human approve/reject via Slack or the workspace shell.",
     ),
     WorkflowStep(
         state=APState.APPROVED,

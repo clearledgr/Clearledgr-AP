@@ -363,16 +363,16 @@ async function installConsoleMocks(page) {
     },
   };
 
-  await page.route('**/api/admin/bootstrap**', (route) => json(route, bootstrapPayload));
-  await page.route('**/api/admin/policies/ap**', (route) => json(route, policyPayload));
-  await page.route('**/api/admin/team/invites**', (route) => json(route, { invites: [] }));
+  await page.route('**/api/workspace/bootstrap**', (route) => json(route, bootstrapPayload));
+  await page.route('**/api/workspace/policies/ap**', (route) => json(route, policyPayload));
+  await page.route('**/api/workspace/team/invites**', (route) => json(route, { invites: [] }));
   await page.route('**/api/ap/audit/recent**', (route) => json(route, recentAudit));
   await page.route('**/api/ops/tenant-health**', (route) => json(route, tenantHealth));
   await page.route('**/api/ops/ap-kpis**', (route) => json(route, kpis));
   await page.route('**/api/ops/retry-queue**', (route) => json(route, retryQueue));
   await page.route('**/extension/worklist**', (route) => json(route, worklist));
-  await page.route('**/api/admin/ops/connector-readiness**', (route) => json(route, connectorReadiness));
-  await page.route('**/api/admin/ops/learning-calibration**', (route) => json(route, learningCalibration));
+  await page.route('**/api/workspace/ops/connector-readiness**', (route) => json(route, connectorReadiness));
+  await page.route('**/api/workspace/ops/learning-calibration**', (route) => json(route, learningCalibration));
 }
 
 async function captureAdminConsolePages(browser, backendUrl, setupPath, opsPath) {

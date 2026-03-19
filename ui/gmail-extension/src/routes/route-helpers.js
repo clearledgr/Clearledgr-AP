@@ -1,6 +1,6 @@
 /**
  * Shared helpers for routed Gmail support pages.
- * Extracted from static/console/app.js to stay reusable across
+ * Extracted from static/workspace/app.js to stay reusable across
  * InboxSDK routes and future finance surfaces.
  */
 import { h } from 'preact';

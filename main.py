@@ -220,7 +220,7 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
     "/redoc",
     "/health",
     "/metrics",
-    "/console",
+    "/workspace",
     # OAuth callbacks required for ERP admin connect flows.
     "/erp/quickbooks/callback",
     "/erp/xero/callback",
@@ -275,37 +275,37 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
     "/extension/suggestions/amount-validation",
 }
 
-STRICT_PROFILE_ALLOWED_ADMIN_PATHS = {
-    "/api/admin/bootstrap",
-    "/api/admin/dashboard",
-    "/api/admin/ga-readiness",
-    "/api/admin/health",
-    "/api/admin/integrations",
-    "/api/admin/org",
-    "/api/admin/org/settings",
-    "/api/admin/subscription",
-    "/api/admin/subscription/plan",
-    "/api/admin/integrations/erp/connect/netsuite",
-    "/api/admin/integrations/erp/connect/sap",
-    "/api/admin/integrations/erp/connect/start",
-    "/api/admin/integrations/gmail/connect/start",
-    "/api/admin/integrations/slack/channel",
-    "/api/admin/integrations/slack/install/callback",
-    "/api/admin/integrations/slack/install/start",
-    "/api/admin/integrations/slack/test",
-    "/api/admin/integrations/teams/test",
-    "/api/admin/integrations/teams/webhook",
-    "/api/admin/onboarding/status",
-    "/api/admin/onboarding/step",
-    "/api/admin/ops/connector-readiness",
-    "/api/admin/ops/learning-calibration",
-    "/api/admin/ops/learning-calibration/recompute",
-    "/api/admin/org/settings",
-    "/api/admin/policies/ap",
-    "/api/admin/rollback-controls",
-    "/api/admin/subscription",
-    "/api/admin/subscription/plan",
-    "/api/admin/team/invites",
+STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
+    "/api/workspace/bootstrap",
+    "/api/workspace/dashboard",
+    "/api/workspace/ga-readiness",
+    "/api/workspace/health",
+    "/api/workspace/integrations",
+    "/api/workspace/org",
+    "/api/workspace/org/settings",
+    "/api/workspace/subscription",
+    "/api/workspace/subscription/plan",
+    "/api/workspace/integrations/erp/connect/netsuite",
+    "/api/workspace/integrations/erp/connect/sap",
+    "/api/workspace/integrations/erp/connect/start",
+    "/api/workspace/integrations/gmail/connect/start",
+    "/api/workspace/integrations/slack/channel",
+    "/api/workspace/integrations/slack/install/callback",
+    "/api/workspace/integrations/slack/install/start",
+    "/api/workspace/integrations/slack/test",
+    "/api/workspace/integrations/teams/test",
+    "/api/workspace/integrations/teams/webhook",
+    "/api/workspace/onboarding/status",
+    "/api/workspace/onboarding/step",
+    "/api/workspace/ops/connector-readiness",
+    "/api/workspace/ops/learning-calibration",
+    "/api/workspace/ops/learning-calibration/recompute",
+    "/api/workspace/org/settings",
+    "/api/workspace/policies/ap",
+    "/api/workspace/rollback-controls",
+    "/api/workspace/subscription",
+    "/api/workspace/subscription/plan",
+    "/api/workspace/team/invites",
 }
 
 STRICT_PROFILE_ALLOWED_AUTH_PATHS = {
@@ -355,7 +355,7 @@ STRICT_PROFILE_ALLOWED_INTERACTIVE_CALLBACK_PATHS = {
 STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
-        r"^/api/admin/team/invites/[^/]+/revoke$",
+        r"^/api/workspace/team/invites/[^/]+/revoke$",
         r"^/api/agent/intents/skills/[^/]+/readiness$",
         r"^/api/agent/sessions/[^/]+$",
         r"^/api/agent/sessions/[^/]+/commands$",
@@ -398,7 +398,7 @@ def _is_strict_profile_allowed_path(path: str) -> bool:
         return True
     if normalized in STRICT_PROFILE_ALLOWED_EXTENSION_PATHS:
         return True
-    if normalized in STRICT_PROFILE_ALLOWED_ADMIN_PATHS:
+    if normalized in STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS:
         return True
     if normalized in STRICT_PROFILE_ALLOWED_AUTH_PATHS:
         return True
@@ -523,7 +523,7 @@ class LegacySurfaceGuardMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-class AdminSessionCSRFMiddleware(BaseHTTPMiddleware):
+class WorkspaceSessionCSRFMiddleware(BaseHTTPMiddleware):
     """Enforce CSRF header validation for cookie-authenticated mutating requests."""
 
     SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -543,15 +543,15 @@ class AdminSessionCSRFMiddleware(BaseHTTPMiddleware):
         if request.url.path in self.EXEMPT_PATHS:
             return await call_next(request)
 
-        # CSRF only applies to browser-cookie authenticated admin sessions.
+        # CSRF only applies to browser-cookie authenticated workspace sessions.
         if request.headers.get("authorization"):
             return await call_next(request)
 
-        access_cookie = request.cookies.get("clearledgr_admin_access")
+        access_cookie = request.cookies.get("clearledgr_workspace_access")
         if not access_cookie:
             return await call_next(request)
 
-        csrf_cookie = str(request.cookies.get("clearledgr_admin_csrf") or "").strip()
+        csrf_cookie = str(request.cookies.get("clearledgr_workspace_csrf") or "").strip()
         csrf_header = str(request.headers.get("X-CSRF-Token") or "").strip()
         if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_cookie, csrf_header):
             return JSONResponse(
@@ -564,7 +564,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Inject standard security headers into every response."""
 
     # Import maps are inline JSON blocks that require script-src allowance.
-    # The admin console uses an import map for Preact bare-specifier resolution.
+    # The legacy workspace shell uses an import map for Preact bare-specifier resolution.
     _CONSOLE_CSP = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
@@ -590,7 +590,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
         )
         # Console pages need unsafe-inline for import maps; API routes stay strict
-        is_console = request.url.path.startswith("/console") or request.url.path.startswith("/static/console")
+        is_console = request.url.path.startswith("/workspace") or request.url.path.startswith("/static/workspace")
         response.headers.setdefault(
             "Content-Security-Policy",
             self._CONSOLE_CSP if is_console else self._API_CSP,
@@ -604,7 +604,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(LegacySurfaceGuardMiddleware)
-app.add_middleware(AdminSessionCSRFMiddleware)
+app.add_middleware(WorkspaceSessionCSRFMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
 
 
@@ -848,35 +848,35 @@ try:
 except ImportError:
     pass
 
-# Admin Center APIs (single contract for console + onboarding)
+# Workspace shell support APIs (single contract for Gmail-routed support surfaces)
 try:
-    from clearledgr.api.admin_console import router as admin_console_router
-    admin_console_enabled = str(os.getenv("ADMIN_CONSOLE_ENABLED", "true")).strip().lower() not in {
+    from clearledgr.api.workspace_shell import router as workspace_shell_router
+    workspace_shell_enabled = str(os.getenv("WORKSPACE_SHELL_ENABLED", "true")).strip().lower() not in {
         "0",
         "false",
         "no",
         "off",
     }
-    if admin_console_enabled:
-        app.include_router(admin_console_router)
+    if workspace_shell_enabled:
+        app.include_router(workspace_shell_router)
 except ImportError:
     pass
 
-# Serve static files (admin page)
+# Serve static files (standalone workspace shell)
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-@app.get("/console", tags=["Admin"], include_in_schema=False)
-async def console_page():
-    """Customer-facing Admin Center UI."""
-    enabled = str(os.getenv("ADMIN_CONSOLE_ENABLED", "true")).strip().lower() not in {"0", "false", "no", "off"}
+@app.get("/workspace", tags=["Workspace"], include_in_schema=False)
+async def workspace_page():
+    """Standalone workspace shell UI."""
+    enabled = str(os.getenv("WORKSPACE_SHELL_ENABLED", "true")).strip().lower() not in {"0", "false", "no", "off"}
     if not enabled:
-        raise HTTPException(status_code=404, detail="Admin console disabled")
-    console_file = os.path.join(os.path.dirname(__file__), "static", "console", "index.html")
-    if os.path.exists(console_file):
-        return FileResponse(console_file)
-    raise HTTPException(status_code=404, detail="Console page not found")
+        raise HTTPException(status_code=404, detail="Workspace shell disabled")
+    workspace_file = os.path.join(os.path.dirname(__file__), "static", "workspace", "index.html")
+    if os.path.exists(workspace_file):
+        return FileResponse(workspace_file)
+    raise HTTPException(status_code=404, detail="Workspace page not found")
 
 
 @app.get(
