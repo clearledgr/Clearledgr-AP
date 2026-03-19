@@ -455,6 +455,7 @@ class ClearledgrDB(
                     role TEXT DEFAULT 'user',
                     password_hash TEXT,
                     google_id TEXT,
+                    preferences_json TEXT,
                     is_active INTEGER DEFAULT 1,
                     created_at TEXT,
                     updated_at TEXT
@@ -826,6 +827,7 @@ class ClearledgrDB(
             self._ensure_column(cur, "users", "role", "TEXT DEFAULT 'user'")
             self._ensure_column(cur, "users", "password_hash", "TEXT")
             self._ensure_column(cur, "users", "google_id", "TEXT")
+            self._ensure_column(cur, "users", "preferences_json", "TEXT")
             self._ensure_column(cur, "users", "is_active", "INTEGER DEFAULT 1")
             self._ensure_column(cur, "users", "created_at", "TEXT")
             self._ensure_column(cur, "users", "updated_at", "TEXT")

@@ -11,6 +11,7 @@ from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
 class _FakeDB:
     def __init__(self) -> None:
+        self.organization = {"id": "default", "settings": {"auto_approve_threshold": 0.91}}
         self.items = {
             "ap-route-1": {
                 "id": "ap-route-1",
@@ -84,6 +85,11 @@ class _FakeDB:
             if token == str(item.get("message_id") or ""):
                 return item
         return None
+
+    def get_organization(self, organization_id):
+        if str(organization_id or "") != "default":
+            return None
+        return dict(self.organization)
 
     def update_ap_item(self, ap_item_id, **kwargs):
         token = str(ap_item_id or "")
@@ -576,3 +582,90 @@ def test_execute_ap_invoice_processing_fails_closed_when_planner_unavailable():
     assert result["agent_status"] == "failed"
     assert result["idempotency_key"] == "idem-fail-closed-1"
     assert result["correlation_id"] == "corr-fail-closed-1"
+
+
+def test_ap_auto_approve_threshold_reads_org_settings():
+    db = _FakeDB()
+    runtime = _runtime(db)
+
+    assert runtime.ap_auto_approve_threshold() == 0.91
+
+
+def test_escalate_invoice_review_appends_runtime_audit():
+    db = _FakeDB()
+    runtime = _runtime(db)
+
+    async def _fake_send(payload):
+        return {
+            "status": "sent",
+            "delivered": True,
+            "channel": payload.get("channel"),
+            "email_id": payload.get("email_id"),
+        }
+
+    with patch(
+        "clearledgr.workflows.gmail_activities.send_slack_notification_activity",
+        _fake_send,
+    ):
+        result = asyncio.run(
+            runtime.escalate_invoice_review(
+                email_id="gmail-thread-route-1",
+                vendor="Runtime Co",
+                amount=123.45,
+                currency="USD",
+                confidence=82.0,
+                mismatches=[{"message": "Amount mismatch"}],
+                channel="#finance-escalations",
+            )
+        )
+
+    assert result["status"] == "escalated"
+    assert result["audit_event_id"]
+    assert db.audit_rows[-1]["event_type"] == "invoice_escalated"
+    assert db.audit_rows[-1]["metadata"]["delivery"]["status"] == "sent"
+
+
+def test_record_field_correction_appends_runtime_audit():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    captured = {}
+
+    class _FakeLearningService:
+        def __init__(self, organization_id):
+            captured["organization_id"] = organization_id
+
+        def record_correction(self, **kwargs):
+            captured["record_kwargs"] = dict(kwargs or {})
+            return {"stored": True}
+
+    class _FakeAuditTrail:
+        def __init__(self):
+            self.events = []
+
+        def record_event(self, **kwargs):
+            self.events.append(dict(kwargs or {}))
+
+    fake_audit = _FakeAuditTrail()
+
+    with patch(
+        "clearledgr.services.correction_learning.CorrectionLearningService",
+        _FakeLearningService,
+    ):
+        with patch(
+            "clearledgr.services.audit_trail.get_audit_trail",
+            return_value=fake_audit,
+        ):
+            result = runtime.record_field_correction(
+                ap_item_id="ap-route-1",
+                field="invoice_number",
+                original_value="INV-OLD",
+                corrected_value="INV-NEW",
+                feedback="Corrected from source email",
+            )
+
+    assert result["status"] == "recorded"
+    assert result["audit_event_id"]
+    assert captured["organization_id"] == "default"
+    assert captured["record_kwargs"]["correction_type"] == "invoice_number"
+    assert fake_audit.events[-1]["event_type"] == "field_correction"
+    assert db.audit_rows[-1]["event_type"] == "field_correction"

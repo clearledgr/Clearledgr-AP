@@ -226,6 +226,30 @@ def get_current_user(
     )
 
 
+def normalize_user_role(role: Optional[str]) -> str:
+    return str(role or "").strip().lower()
+
+
+def has_ops_access(role: Optional[str]) -> bool:
+    return normalize_user_role(role) in {"owner", "admin", "operator", "api"}
+
+
+def has_admin_access(role: Optional[str]) -> bool:
+    return normalize_user_role(role) in {"owner", "admin", "api"}
+
+
+def require_ops_user(user: TokenData = Depends(get_current_user)) -> TokenData:
+    if not has_ops_access(getattr(user, "role", None)):
+        raise HTTPException(status_code=403, detail="ops_role_required")
+    return user
+
+
+def require_admin_user(user: TokenData = Depends(get_current_user)) -> TokenData:
+    if not has_admin_access(getattr(user, "role", None)):
+        raise HTTPException(status_code=403, detail="admin_role_required")
+    return user
+
+
 def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),

@@ -3,21 +3,42 @@
  * Streak-style doctrine: queue slices first, detail second, no dashboard sprawl.
  */
 import { h } from 'preact';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDate, fmtDateTime, useAction } from '../route-helpers.js';
 import { openSourceEmail } from '../../utils/formatters.js';
-import store from '../../utils/store.js';
 import {
   PIPELINE_BUILTIN_SLICES,
+  PIPELINE_STARTER_VIEWS,
   activatePipelineSlice,
+  buildPipelinePreferencePatch,
   buildPipelineSliceCounts,
+  clearPipelineNavigation,
   createSavedPipelineView,
   filterPipelineItems,
+  focusPipelineItem,
+  getAllPipelineViews,
+  getBootstrappedPipelinePreferences,
+  getApprovalWaitMinutes,
+  getErpStatus,
+  getPersonalPipelineViews,
+  getPinnedPipelineViews,
   getPipelineBlockerKinds,
+  getPipelineViewRef,
+  getQueueAgeMinutes,
+  getStarterPipelineViews,
+  getSuggestedPipelineSlice,
+  hasMeaningfulPipelinePreferences,
   normalizePipelineState,
+  normalizePipelinePreferences,
+  pinPipelineView,
+  pipelineSnapshotsEqual,
+  pipelinePreferencesEqual,
+  readPipelineNavigation,
   readPipelinePreferences,
   removeSavedPipelineView,
+  unpinPipelineView,
+  updateSavedPipelineView,
   writePipelinePreferences,
 } from '../pipeline-views.js';
 
@@ -44,8 +65,28 @@ const BLOCKER_LABELS = {
   exception: 'Policy block',
   confidence: 'Field review',
   budget: 'Budget review',
-  po: 'PO/GR issue',
+  po: 'PO / GR issue',
 };
+
+const ERP_STATUS_LABELS = {
+  ready: 'Ready',
+  failed: 'Failed',
+  connected: 'Connected',
+  posted: 'Posted',
+  not_connected: 'Not connected',
+};
+
+function getPipelineScope(orgId, userEmail) {
+  return { orgId, userEmail };
+}
+
+function formatDurationMinutes(value) {
+  const minutes = Number(value || 0);
+  if (!Number.isFinite(minutes) || minutes <= 0) return '0m';
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)}h`;
+  return `${Math.round(minutes / 1440)}d`;
+}
 
 function StatePill({ state }) {
   const normalized = normalizePipelineState(state);
@@ -64,7 +105,7 @@ function SliceChip({ slice, count, active, onClick }) {
       border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};
       background:${active ? 'var(--accent-soft)' : 'var(--surface)'};
       color:${active ? 'var(--accent-ink)' : 'var(--ink)'};
-      cursor:pointer;font-family:inherit;text-align:left;min-width:170px;
+      cursor:pointer;font-family:inherit;text-align:left;min-width:182px;
     "
   >
     <span style="font-size:13px;font-weight:700">${slice.label}</span>
@@ -79,6 +120,32 @@ function BlockerChip({ kind }) {
   ">${BLOCKER_LABELS[kind] || kind}</span>`;
 }
 
+function SavedViewChip({ view, active, onOpen, onTogglePin, onDelete }) {
+  const scopeLabel = view.scope === 'starter' ? 'Starter' : 'Personal';
+  return html`
+    <div style="
+      display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:999px;
+      border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};
+      background:${active ? 'var(--accent-soft)' : 'var(--bg)'};
+    ">
+      <button class="alt" onClick=${onOpen} style="padding:6px 10px;font-size:12px">${view.name}</button>
+      <span class="muted" style="font-size:11px;font-weight:700">${scopeLabel}</span>
+      <button
+        aria-label=${view.pinned ? 'Unpin saved view' : 'Pin saved view'}
+        onClick=${onTogglePin}
+        style="border:none;background:transparent;color:${view.pinned ? 'var(--accent-ink)' : 'var(--ink-muted)'};cursor:pointer;padding:0 2px;font-size:12px;font-weight:700"
+      >${view.pinned ? 'Pinned' : 'Pin'}</button>
+      ${typeof onDelete === 'function'
+        ? html`<button
+            aria-label="Delete saved view"
+            onClick=${onDelete}
+            style="border:none;background:transparent;color:var(--ink-muted);cursor:pointer;padding:0 2px"
+          >×</button>`
+        : null}
+    </div>
+  `;
+}
+
 function saveActiveItemId(itemId) {
   if (typeof window === 'undefined' || !window?.localStorage) return;
   try {
@@ -86,20 +153,19 @@ function saveActiveItemId(itemId) {
   } catch {
     /* best effort */
   }
-  if (itemId) {
-    store.setSelectedItem(String(itemId));
-  }
 }
 
-function openItemDetail(navigate, item) {
+function openItemDetail(navigate, pipelineScope, item) {
   if (!item?.id) return;
   saveActiveItemId(item.id);
+  focusPipelineItem(pipelineScope, item, 'pipeline');
   navigate(`clearledgr/invoice/${item.id}`);
 }
 
-function openItemEmail(item) {
+function openItemEmail(pipelineScope, item) {
   if (!item?.id) return false;
   saveActiveItemId(item.id);
+  focusPipelineItem(pipelineScope, item, 'pipeline');
   return openSourceEmail(item);
 }
 
@@ -117,16 +183,87 @@ function getSavedViewLabel(view) {
   return String(view?.name || '').trim() || 'Saved view';
 }
 
-export default function PipelinePage({ api, toast, orgId, navigate }) {
+function getActiveSavedView(viewPrefs = {}) {
+  return getAllPipelineViews(viewPrefs).find((view) => pipelineSnapshotsEqual(view.snapshot, viewPrefs)) || null;
+}
+
+function buildResetFilters() {
+  return {
+    state: 'all',
+    vendor: '',
+    due: 'all',
+    blocker: 'all',
+    amount: 'all',
+    approvalAge: 'all',
+    erpStatus: 'all',
+  };
+}
+
+export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, navigate }) {
+  const pipelineScope = useMemo(() => getPipelineScope(orgId, userEmail), [orgId, userEmail]);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewPrefs, setViewPrefs] = useState(() => readPipelinePreferences(orgId));
+  const [viewPrefs, setViewPrefs] = useState(() => readPipelinePreferences(pipelineScope));
+  const [navState, setNavState] = useState(() => readPipelineNavigation(pipelineScope));
   const [savedViewName, setSavedViewName] = useState('');
+  const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
+  const syncReadyRef = useRef(false);
+  const syncTimerRef = useRef(null);
+  const lastSyncedPrefsRef = useRef('');
 
   useEffect(() => {
-    setViewPrefs(readPipelinePreferences(orgId));
-  }, [orgId]);
+    setViewPrefs(readPipelinePreferences(pipelineScope));
+    setNavState(readPipelineNavigation(pipelineScope));
+  }, [pipelineScope]);
+
+  const syncServerPreferences = async (prefs, { silent = true } = {}) => {
+    const normalized = normalizePipelinePreferences(prefs);
+    await api('/api/admin/user/preferences', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        organization_id: orgId,
+        patch: buildPipelinePreferencePatch(normalized),
+      }),
+      silent,
+    });
+    lastSyncedPrefsRef.current = JSON.stringify(normalized);
+  };
+
+  useEffect(() => {
+    const local = readPipelinePreferences(pipelineScope);
+    const remote = bootstrapPipelinePrefs ? normalizePipelinePreferences(bootstrapPipelinePrefs) : null;
+    let next = local;
+    let syncedBaseline = '';
+
+    if (remote && hasMeaningfulPipelinePreferences(remote)) {
+      if (!pipelinePreferencesEqual(local, remote)) {
+        next = writePipelinePreferences(pipelineScope, remote);
+      } else {
+        next = remote;
+      }
+      syncedBaseline = JSON.stringify(normalizePipelinePreferences(next));
+    } else if (!hasMeaningfulPipelinePreferences(local)) {
+      syncedBaseline = JSON.stringify(normalizePipelinePreferences(next));
+    }
+
+    setViewPrefs(next);
+    lastSyncedPrefsRef.current = syncedBaseline;
+    syncReadyRef.current = true;
+  }, [bootstrapPipelinePrefs, pipelineScope]);
+
+  useEffect(() => {
+    if (!syncReadyRef.current) return undefined;
+    const serialized = JSON.stringify(normalizePipelinePreferences(viewPrefs));
+    if (serialized === lastSyncedPrefsRef.current) return undefined;
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      void syncServerPreferences(viewPrefs).catch(() => {});
+    }, 500);
+    return () => {
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    };
+  }, [viewPrefs, pipelineScope]);
 
   useEffect(() => {
     setLoading(true);
@@ -137,9 +274,20 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
   }, [api, orgId]);
 
   const persistPrefs = (nextValue) => {
-    const normalized = writePipelinePreferences(orgId, nextValue);
+    const normalized = writePipelinePreferences(pipelineScope, nextValue);
     setViewPrefs(normalized);
     return normalized;
+  };
+
+  const resetFiltersAndSearch = () => {
+    setSearchQuery('');
+    setViewPrefs(persistPrefs({
+      ...viewPrefs,
+      activeSliceId: 'all_open',
+      sortCol: 'queue_age',
+      sortDir: 'desc',
+      filters: buildResetFilters(),
+    }));
   };
 
   const [doRefresh, refreshing] = useAction(async () => {
@@ -147,6 +295,7 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
     try {
       const data = await api(`/extension/worklist?organization_id=${encodeURIComponent(orgId)}&limit=500`);
       setItems(Array.isArray(data?.items) ? data.items : []);
+      setNavState(readPipelineNavigation(pipelineScope));
       toast('Pipeline refreshed.', 'success');
     } catch {
       toast('Could not refresh the pipeline.', 'error');
@@ -158,10 +307,10 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
   const [saveView, savingView] = useAction(async () => {
     const name = String(savedViewName || '').trim();
     if (!name) {
-      toast('Name the saved view first.', 'warning');
+      toast('Name the personal view first.', 'warning');
       return;
     }
-    const next = createSavedPipelineView(orgId, {
+    const next = createSavedPipelineView(pipelineScope, {
       name,
       snapshot: {
         ...viewPrefs,
@@ -170,7 +319,29 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
     });
     setViewPrefs(next);
     setSavedViewName('');
-    toast(`Saved view "${name}" added.`, 'success');
+    toast(`Personal view "${name}" added.`, 'success');
+  });
+
+  const [updateView, updatingView] = useAction(async () => {
+    if (!activeSavedView || activeSavedView.scope !== 'user') {
+      toast('Only personal views can be updated.', 'warning');
+      return;
+    }
+    const nextName = String(savedViewName || activeSavedView.name || '').trim();
+    if (!nextName) {
+      toast('Name the personal view first.', 'warning');
+      return;
+    }
+    const next = updateSavedPipelineView(pipelineScope, activeSavedView.id, {
+      name: nextName,
+      snapshot: {
+        ...viewPrefs,
+        filters: viewPrefs.filters,
+      },
+    });
+    setViewPrefs(next);
+    setSavedViewName(nextName);
+    toast(`Personal view "${nextName}" updated.`, 'success');
   });
 
   const displayed = useMemo(() => filterPipelineItems(items, {
@@ -182,22 +353,45 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
   }), [items, searchQuery, viewPrefs]);
 
   const sliceCounts = useMemo(() => buildPipelineSliceCounts(items), [items]);
+  const starterViews = useMemo(() => getStarterPipelineViews(viewPrefs), [viewPrefs]);
+  const personalViews = useMemo(() => getPersonalPipelineViews(viewPrefs), [viewPrefs]);
+  const pinnedViews = useMemo(() => getPinnedPipelineViews(viewPrefs), [viewPrefs]);
+  const activeSavedView = useMemo(() => getActiveSavedView(viewPrefs), [viewPrefs]);
+  const focusedItem = useMemo(() => {
+    const focusItemId = String(navState?.focusItemId || '').trim();
+    if (!focusItemId) return null;
+    return items.find((item) => String(item.id || '') === focusItemId) || null;
+  }, [items, navState]);
+  const focusedItemVisible = Boolean(
+    focusedItem && displayed.some((item) => String(item.id || '') === String(focusedItem.id || ''))
+  );
 
   const stats = useMemo(() => ({
     total: items.length,
     open: items.filter((item) => !['posted_to_erp', 'closed', 'rejected'].includes(normalizePipelineState(item.state))).length,
-    waitingApproval: sliceCounts.approval_backlog || 0,
+    waitingApproval: sliceCounts.waiting_on_approval || 0,
     readyToPost: sliceCounts.ready_to_post || 0,
+    overdue: sliceCounts.overdue || 0,
   }), [items, sliceCounts]);
 
+  useEffect(() => {
+    if (activeSavedView?.scope === 'user' && !String(savedViewName || '').trim()) {
+      setSavedViewName(getSavedViewLabel(activeSavedView));
+    }
+  }, [activeSavedView, savedViewName]);
+
   const applySlice = (sliceId) => {
-    const next = activatePipelineSlice(orgId, sliceId);
-    setViewPrefs(next);
+    clearPipelineNavigation(pipelineScope);
+    setNavState(readPipelineNavigation(pipelineScope));
+    setViewPrefs(activatePipelineSlice(pipelineScope, sliceId));
   };
 
   const applySavedView = (view) => {
+    clearPipelineNavigation(pipelineScope);
+    setNavState(readPipelineNavigation(pipelineScope));
     const next = persistPrefs(view.snapshot);
     setViewPrefs(next);
+    setSavedViewName(view.scope === 'user' ? getSavedViewLabel(view) : '');
     toast(`Loaded "${getSavedViewLabel(view)}".`, 'success');
   };
 
@@ -210,7 +404,9 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
   });
 
   const updateSort = (nextSortCol) => {
-    const nextSortDir = viewPrefs.sortCol === nextSortCol && viewPrefs.sortDir === 'desc' ? 'asc' : 'desc';
+    const nextSortDir = viewPrefs.sortCol === nextSortCol
+      ? (viewPrefs.sortDir === 'desc' ? 'asc' : 'desc')
+      : (nextSortCol === 'due_date' ? 'asc' : 'desc');
     persistPrefs({
       ...viewPrefs,
       sortCol: nextSortCol,
@@ -218,10 +414,36 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
     });
   };
 
-  const removeSavedView = (viewId) => {
-    const next = removeSavedPipelineView(orgId, viewId);
+  const toggleSavedViewPin = (view) => {
+    const next = view?.pinned
+      ? unpinPipelineView(pipelineScope, getPipelineViewRef(view))
+      : pinPipelineView(pipelineScope, getPipelineViewRef(view));
+    setViewPrefs(next);
+    toast(view?.pinned ? 'Saved view unpinned.' : 'Saved view pinned.', 'success');
+  };
+
+  const removeView = (viewId) => {
+    const next = removeSavedPipelineView(pipelineScope, viewId);
     setViewPrefs(next);
     toast('Saved view removed.', 'success');
+  };
+
+  const revealFocusedItem = () => {
+    if (!focusedItem) return;
+    setSearchQuery('');
+    const next = persistPrefs({
+      ...viewPrefs,
+      activeSliceId: getSuggestedPipelineSlice(focusedItem),
+      sortCol: 'queue_age',
+      sortDir: 'desc',
+      filters: buildResetFilters(),
+    });
+    setViewPrefs(next);
+  };
+
+  const clearFocus = () => {
+    clearPipelineNavigation(pipelineScope);
+    setNavState(readPipelineNavigation(pipelineScope));
   };
 
   if (loading) {
@@ -246,13 +468,47 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
         <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--brand-muted)">${stats.readyToPost}</strong>
         <span>Ready to post</span>
       </div>
+      <div class="kpi-card" style="border-color:#FCA5A5">
+        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:#B91C1C">${stats.overdue}</strong>
+        <span>Overdue</span>
+      </div>
     </div>
+
+    ${focusedItem
+      ? html`
+          <div class="panel" style="padding:14px 16px;border-color:${focusedItemVisible ? '#A7F3D0' : '#FCD34D'}">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+              <div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+                  <strong>Current thread item</strong>
+                  <${StatePill} state=${focusedItem.state} />
+                </div>
+                <div class="muted" style="font-size:13px">
+                  ${focusedItem.vendor_name || focusedItem.vendor || 'Unknown vendor'} · ${focusedItem.invoice_number || 'No invoice #'} · ${getAmountLabel(focusedItem)}
+                </div>
+                <div class="muted" style="font-size:12px;margin-top:4px">
+                  ${focusedItemVisible
+                    ? 'The current item is visible in this pipeline view.'
+                    : 'The current item is outside the active slice or filters. Open its AP slice to keep queue context intact.'}
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                ${!focusedItemVisible
+                  ? html`<button class="alt" onClick=${revealFocusedItem}>Show in pipeline</button>`
+                  : null}
+                <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open detail</button>
+                <button class="alt" onClick=${clearFocus}>Clear focus</button>
+              </div>
+            </div>
+          </div>
+        `
+      : null}
 
     <div class="panel" style="padding:16px 18px">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px">
         <div>
           <h3 style="margin:0 0 4px">Pipeline views</h3>
-          <p class="muted" style="margin:0">Work AP by queue slice, then save the views you use repeatedly.</p>
+          <p class="muted" style="margin:0">Work AP by queue slice, then save and pin the views you reopen every day.</p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="alt" onClick=${() => navigate('clearledgr/home')}>Back to Home</button>
@@ -270,26 +526,51 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
           />
         `)}
       </div>
-      ${viewPrefs.customViews?.length
-        ? html`
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-              ${viewPrefs.customViews.map((view) => html`
-                <div key=${view.id} style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:999px;border:1px solid var(--border);background:var(--bg)">
-                  <button class="alt" onClick=${() => applySavedView(view)} style="padding:6px 10px;font-size:12px">${getSavedViewLabel(view)}</button>
-                  <button
-                    aria-label="Delete saved view"
-                    onClick=${() => removeSavedView(view.id)}
-                    style="border:none;background:transparent;color:var(--ink-muted);cursor:pointer;padding:0 2px"
-                  >×</button>
+      <div style="display:flex;flex-direction:column;gap:14px;margin-top:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <strong style="font-size:13px">Starter views</strong>
+            <div class="muted" style="font-size:12px">Finance-native defaults you can pin to Home.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${starterViews.map((view) => html`
+              <${SavedViewChip}
+                key=${view.id}
+                view=${view}
+                active=${activeSavedView?.scope === view.scope && activeSavedView?.id === view.id}
+                onOpen=${() => applySavedView(view)}
+                onTogglePin=${() => toggleSavedViewPin(view)}
+              />
+            `)}
+          </div>
+        </div>
+        ${(personalViews.length || 0) > 0
+          ? html`
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                <div>
+                  <strong style="font-size:13px">Personal views</strong>
+                  <div class="muted" style="font-size:12px">${pinnedViews.length} pinned for quick access from Home.</div>
                 </div>
-              `)}
-            </div>
-          `
-        : null}
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  ${personalViews.map((view) => html`
+                    <${SavedViewChip}
+                      key=${view.id}
+                      view=${view}
+                      active=${activeSavedView?.scope === view.scope && activeSavedView?.id === view.id}
+                      onOpen=${() => applySavedView(view)}
+                      onTogglePin=${() => toggleSavedViewPin(view)}
+                      onDelete=${() => removeView(view.id)}
+                    />
+                  `)}
+                </div>
+              </div>
+            `
+          : null}
+      </div>
     </div>
 
     <div class="panel" style="padding:16px 18px">
-      <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr auto;gap:10px;align-items:end">
+      <div style="display:grid;grid-template-columns:2fr 1.25fr 1fr 1fr;gap:10px;align-items:end">
         <label style="display:flex;flex-direction:column;gap:6px">
           <span class="muted" style="font-size:12px">Search</span>
           <input
@@ -300,19 +581,16 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
           />
         </label>
         <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">State</span>
-          <select value=${viewPrefs.filters.state} onChange=${(event) => updateFilters({ state: event.target.value })}>
-            <option value="all">All</option>
-            <option value="received">Received</option>
-            <option value="validated">Validated</option>
-            <option value="needs_info">Needs info</option>
-            <option value="needs_approval">Needs approval</option>
-            <option value="ready_to_post">Ready to post</option>
-            <option value="failed_post">Failed post</option>
-          </select>
+          <span class="muted" style="font-size:12px">Vendor</span>
+          <input
+            placeholder="Filter vendor…"
+            value=${viewPrefs.filters.vendor}
+            onInput=${(event) => updateFilters({ vendor: event.target.value })}
+            style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
+          />
         </label>
         <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Due</span>
+          <span class="muted" style="font-size:12px">Due date</span>
           <select value=${viewPrefs.filters.due} onChange=${(event) => updateFilters({ due: event.target.value })}>
             <option value="all">All</option>
             <option value="overdue">Overdue</option>
@@ -321,7 +599,28 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
           </select>
         </label>
         <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Blocker</span>
+          <span class="muted" style="font-size:12px">Amount band</span>
+          <select value=${viewPrefs.filters.amount} onChange=${(event) => updateFilters({ amount: event.target.value })}>
+            <option value="all">All</option>
+            <option value="under_1k">Under 1k</option>
+            <option value="1k_10k">1k - 10k</option>
+            <option value="over_10k">Over 10k</option>
+          </select>
+        </label>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:10px;align-items:end;margin-top:12px">
+        <label style="display:flex;flex-direction:column;gap:6px">
+          <span class="muted" style="font-size:12px">Approval age</span>
+          <select value=${viewPrefs.filters.approvalAge} onChange=${(event) => updateFilters({ approvalAge: event.target.value })}>
+            <option value="all">All</option>
+            <option value="under_24h">Under 24h</option>
+            <option value="1d_3d">1-3 days</option>
+            <option value="over_3d">Over 3 days</option>
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px">
+          <span class="muted" style="font-size:12px">Blocker type</span>
           <select value=${viewPrefs.filters.blocker} onChange=${(event) => updateFilters({ blocker: event.target.value })}>
             <option value="all">All</option>
             <option value="approval">Approval</option>
@@ -330,16 +629,28 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
             <option value="exception">Policy</option>
             <option value="confidence">Field review</option>
             <option value="budget">Budget</option>
-            <option value="po">PO/GR</option>
+            <option value="po">PO / GR</option>
           </select>
         </label>
         <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Amount</span>
-          <select value=${viewPrefs.filters.amount} onChange=${(event) => updateFilters({ amount: event.target.value })}>
+          <span class="muted" style="font-size:12px">ERP status</span>
+          <select value=${viewPrefs.filters.erpStatus} onChange=${(event) => updateFilters({ erpStatus: event.target.value })}>
             <option value="all">All</option>
-            <option value="under_1k">Under 1k</option>
-            <option value="1k_10k">1k - 10k</option>
-            <option value="over_10k">Over 10k</option>
+            <option value="ready">Ready</option>
+            <option value="failed">Failed</option>
+            <option value="connected">Connected</option>
+            <option value="posted">Posted</option>
+            <option value="not_connected">Not connected</option>
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px">
+          <span class="muted" style="font-size:12px">Sort</span>
+          <select value=${viewPrefs.sortCol} onChange=${(event) => updateSort(event.target.value)}>
+            <option value="queue_age">Queue age</option>
+            <option value="due_date">Due date</option>
+            <option value="amount">Amount</option>
+            <option value="updated_at">Last update</option>
+            <option value="approval_wait">Approval waiting time</option>
           </select>
         </label>
         <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
@@ -349,44 +660,42 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
           >${viewPrefs.viewMode === 'table' ? 'Cards' : 'Table'}</button>
         </div>
       </div>
+
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
-        <select value=${viewPrefs.sortCol} onChange=${(event) => updateSort(event.target.value)}>
-          <option value="priority">Priority</option>
-          <option value="due_date">Due date</option>
-          <option value="amount">Amount</option>
-          <option value="vendor">Vendor</option>
-          <option value="updated_at">Last update</option>
-          <option value="state">State</option>
-        </select>
         <input
           value=${savedViewName}
           onInput=${(event) => setSavedViewName(event.target.value)}
-          placeholder="Save current view as…"
+          placeholder="Save current view as a personal view…"
           style="min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
         />
-        <button class="alt" onClick=${saveView} disabled=${savingView}>${savingView ? 'Saving…' : 'Save view'}</button>
-        <button class="alt" onClick=${() => {
-          setSearchQuery('');
-          setViewPrefs(writePipelinePreferences(orgId, {
-            ...viewPrefs,
-            activeSliceId: 'all_open',
-            sortCol: 'priority',
-            sortDir: 'desc',
-            filters: { state: 'all', due: 'all', blocker: 'all', amount: 'all' },
-          }));
-        }}>Reset filters</button>
+        <button class="alt" onClick=${saveView} disabled=${savingView}>${savingView ? 'Saving…' : 'Save personal view'}</button>
+        ${activeSavedView?.scope === 'user'
+          ? html`<button class="alt" onClick=${updateView} disabled=${updatingView}>${updatingView ? 'Updating…' : 'Update active view'}</button>`
+          : null}
+        <button class="alt" onClick=${resetFiltersAndSearch}>Reset filters</button>
+        <span class="muted" style="font-size:12px">
+          Sort ${viewPrefs.sortDir === 'desc' ? 'descending' : 'ascending'} by ${viewPrefs.sortCol.replace(/_/g, ' ')}.
+        </span>
       </div>
     </div>
 
     ${viewPrefs.viewMode === 'cards'
       ? html`
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px">
             ${displayed.length === 0
               ? html`<div class="panel" style="grid-column:1/-1;text-align:center;padding:32px"><p class="muted">No invoices match this view.</p></div>`
               : displayed.map((item) => {
                   const blockers = getPipelineBlockerKinds(item);
+                  const focused = String(navState.focusItemId || '') === String(item.id || '');
+                  const approvalWait = getApprovalWaitMinutes(item);
+                  const queueAge = getQueueAgeMinutes(item);
+                  const erpStatus = getErpStatus(item);
                   return html`
-                    <div key=${item.id} class="panel" style="padding:16px;margin-bottom:0">
+                    <div
+                      key=${item.id}
+                      class="panel"
+                      style="padding:16px;margin-bottom:0;border-color:${focused ? 'var(--accent)' : 'var(--border)'};box-shadow:${focused ? '0 0 0 1px var(--accent-soft)' : 'none'}"
+                    >
                       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px">
                         <div>
                           <div style="font-size:15px;font-weight:700">${item.vendor_name || item.vendor || 'Unknown vendor'}</div>
@@ -394,17 +703,27 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
                         </div>
                         <${StatePill} state=${item.state} />
                       </div>
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+                        <div style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg)">
+                          <div class="muted" style="font-size:11px">Queue age</div>
+                          <strong style="font-size:13px">${formatDurationMinutes(queueAge)}</strong>
+                        </div>
+                        <div style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg)">
+                          <div class="muted" style="font-size:11px">Approval wait</div>
+                          <strong style="font-size:13px">${approvalWait ? formatDurationMinutes(approvalWait) : '—'}</strong>
+                        </div>
+                      </div>
                       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
                         ${blockers.length
                           ? blockers.slice(0, 3).map((kind) => html`<${BlockerChip} key=${kind} kind=${kind} />`)
                           : html`<span class="muted" style="font-size:12px">No blocking signals</span>`}
                       </div>
                       <div class="muted" style="font-size:12px;line-height:1.5;margin-bottom:12px">
-                        Due ${item.due_date ? fmtDate(item.due_date) : '—'} · Updated ${fmtDateTime(item.updated_at || item.created_at)}
+                        Due ${item.due_date ? fmtDate(item.due_date) : '—'} · ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus} · Updated ${fmtDateTime(item.updated_at || item.created_at)}
                       </div>
                       <div style="display:flex;gap:8px;flex-wrap:wrap">
-                        <button class="alt" onClick=${() => openItemDetail(navigate, item)}>Open detail</button>
-                        <button class="alt" onClick=${() => openItemEmail(item)} disabled=${!item.thread_id && !item.message_id}>Open email</button>
+                        <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>Open detail</button>
+                        <button class="alt" onClick=${() => openItemEmail(pipelineScope, item)} disabled=${!item.thread_id && !item.message_id}>Open thread</button>
                       </div>
                     </div>
                   `;
@@ -413,7 +732,7 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
         `
       : html`
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);overflow-x:auto">
-            <table class="table" style="min-width:980px">
+            <table class="table" style="min-width:1320px">
               <thead>
                 <tr>
                   <th>Vendor</th>
@@ -421,6 +740,9 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
                   <th style="text-align:right">Amount</th>
                   <th>Due</th>
                   <th>Status</th>
+                  <th>Queue age</th>
+                  <th>Approval wait</th>
+                  <th>ERP</th>
                   <th>Blockers</th>
                   <th>Updated</th>
                   <th style="text-align:right">Actions</th>
@@ -428,16 +750,23 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
               </thead>
               <tbody>
                 ${displayed.length === 0
-                  ? html`<tr><td colspan="8" class="muted" style="text-align:center;padding:32px">No invoices match this view.</td></tr>`
+                  ? html`<tr><td colspan="11" class="muted" style="text-align:center;padding:32px">No invoices match this view.</td></tr>`
                   : displayed.map((item) => {
                       const blockers = getPipelineBlockerKinds(item);
+                      const focused = String(navState.focusItemId || '') === String(item.id || '');
+                      const approvalWait = getApprovalWaitMinutes(item);
+                      const queueAge = getQueueAgeMinutes(item);
+                      const erpStatus = getErpStatus(item);
                       return html`
-                        <tr key=${item.id}>
-                          <td style="font-weight:600;cursor:pointer" onClick=${() => openItemDetail(navigate, item)}>${item.vendor_name || item.vendor || 'Unknown vendor'}</td>
+                        <tr key=${item.id} style=${focused ? 'background:rgba(14,165,233,0.07)' : ''}>
+                          <td style="font-weight:600;cursor:pointer" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>${item.vendor_name || item.vendor || 'Unknown vendor'}</td>
                           <td style="font-family:var(--font-mono);font-size:12px">${item.invoice_number || '—'}</td>
                           <td style="text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums">${getAmountLabel(item)}</td>
                           <td>${item.due_date ? fmtDate(item.due_date) : '—'}</td>
                           <td><${StatePill} state=${item.state} /></td>
+                          <td>${formatDurationMinutes(queueAge)}</td>
+                          <td>${approvalWait ? formatDurationMinutes(approvalWait) : '—'}</td>
+                          <td>${ERP_STATUS_LABELS[erpStatus] || erpStatus}</td>
                           <td>
                             <div style="display:flex;gap:6px;flex-wrap:wrap">
                               ${blockers.length
@@ -448,8 +777,8 @@ export default function PipelinePage({ api, toast, orgId, navigate }) {
                           <td class="muted" style="font-size:12px">${fmtDateTime(item.updated_at || item.created_at)}</td>
                           <td style="text-align:right">
                             <div style="display:flex;gap:8px;justify-content:flex-end">
-                              <button class="alt" onClick=${() => openItemDetail(navigate, item)}>Detail</button>
-                              <button class="alt" onClick=${() => openItemEmail(item)} disabled=${!item.thread_id && !item.message_id}>Email</button>
+                              <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>Detail</button>
+                              <button class="alt" onClick=${() => openItemEmail(pipelineScope, item)} disabled=${!item.thread_id && !item.message_id}>Thread</button>
                             </div>
                           </td>
                         </tr>

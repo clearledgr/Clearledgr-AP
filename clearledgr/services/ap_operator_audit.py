@@ -37,6 +37,65 @@ _REASON_LABELS = {
     "approval_nudge_auto_24h": "Agent escalated approval reminder after 24 hours pending.",
     "illegal_transition": "Requested action is not allowed from the current invoice status.",
     "browser_session_created": "Prepared secure ERP browser fallback session.",
+    "state_not_ready_for_approval": "Invoice is not ready to request approval.",
+    "state_not_waiting_for_approval": "Invoice is no longer waiting for approval.",
+    "state_not_request_info_allowed": "Invoice cannot be sent back for more information from its current status.",
+    "state_not_rejectable": "Invoice cannot be rejected from its current status.",
+    "rejection_reason_required": "A rejection reason is required before this invoice can be rejected.",
+    "state_not_ready_to_post": "Invoice is not ready to post yet.",
+    "policy_precheck_failed": "Policy and workflow checks blocked this action.",
+    "followup_attempt_limit_reached": "Clearledgr reached the vendor follow-up attempt limit.",
+    "waiting_for_sla_window": "Clearledgr is waiting for the next vendor follow-up window.",
+    "gmail_auth_unavailable": "Gmail authorization is required before Clearledgr can prepare the follow-up draft.",
+    "draft_not_created": "Clearledgr could not prepare the vendor follow-up draft.",
+    "retry_not_recoverable": "This posting failure is not safe to retry automatically.",
+    "finance_summary_email_draft": "Prepared a finance summary email draft.",
+    "fallback_preview_confirmed_and_dispatched": "ERP fallback session was confirmed and dispatched.",
+    "runtime_request_approval": "Clearledgr routed this invoice into the approval queue.",
+    "runtime_approve_invoice": "Approval was recorded and the workflow moved forward.",
+    "runtime_request_info": "Clearledgr moved this invoice back to needs info.",
+    "runtime_reject_invoice": "Clearledgr recorded the rejection decision.",
+    "runtime_post_to_erp": "Clearledgr completed the ERP posting action.",
+    "agent_runtime_route_low_risk_for_approval": "Clearledgr routed this low-risk invoice for approval.",
+    "batch_retry_recoverable_failures": "Clearledgr retried the posting step for this invoice.",
+    "runtime_escalate_invoice_review": "Clearledgr escalated this invoice for review.",
+    "runtime_record_field_correction": "Recorded an operator correction on this invoice.",
+}
+
+
+_HIGH_IMPORTANCE_EVENT_TYPES = {
+    "approval_request_blocked",
+    "approval_request_failed",
+    "approval_routed_from_extension",
+    "approval_request_routed",
+    "route_for_approval",
+    "route_low_risk_for_approval",
+    "invoice_approved",
+    "invoice_approval_failed",
+    "invoice_approval_blocked",
+    "invoice_rejected",
+    "invoice_reject_failed",
+    "invoice_reject_blocked",
+    "erp_post_completed",
+    "erp_api_success",
+    "erp_browser_fallback_completed",
+    "erp_post_failed",
+    "erp_api_failed",
+    "erp_browser_fallback_failed",
+    "erp_post_blocked",
+    "invoice_escalated",
+    "state_transition_rejected",
+}
+
+_LOW_IMPORTANCE_EVENT_TYPES = {
+    "browser_session_created",
+    "erp_api_fallback_preview_created",
+    "erp_api_fallback_confirmation_captured",
+    "erp_api_fallback_requested",
+    "finance_summary_share_previewed",
+    "finance_summary_share_prepared",
+    "finance_summary_shared",
+    "finance_summary_share_failed",
 }
 
 
@@ -81,8 +140,14 @@ def _reason_message(reason_raw: Any) -> str:
     text = str(reason_raw or "").strip()
     if not text:
         return ""
+    direct = _REASON_LABELS.get(text.lower())
+    if direct:
+        return direct
     codes = _parse_reason_codes(text)
     if not codes:
+        lowered = text.lower()
+        if _is_reason_code(lowered):
+            return _REASON_LABELS.get(lowered, f"{_humanize_snake_text(lowered)}.")
         return text
     lines: List[str] = []
     for code in codes:
@@ -101,14 +166,233 @@ def _event_reason(event: Dict[str, Any], payload: Dict[str, Any]) -> str:
     ).strip()
 
 
-def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
-    payload = event.get("payload_json") if isinstance(event.get("payload_json"), dict) else {}
+def _first_text(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _dict_value(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _channel_label(value: Any) -> str:
+    token = str(value or "").strip().lower()
+    if token == "slack":
+        return "Slack"
+    if token == "teams":
+        return "Teams"
+    if token in {"gmail", "gmail_extension", "gmail_route"}:
+        return "Gmail"
+    if token in {"approval_surface", "channel"}:
+        return "Approval surface"
+    return ""
+
+
+def _extract_event_context(event: Dict[str, Any]) -> Dict[str, Any]:
+    payload = _dict_value(event.get("payload_json"))
+    response = _dict_value(payload.get("response"))
+    result = _dict_value(payload.get("result"))
+    erp_result = _dict_value(result.get("erp_result"))
+    metadata = _dict_value(event.get("metadata"))
+    canonical = _dict_value(payload.get("canonical_audit_event"))
     event_type = _normalize_event_type(event.get("event_type") or event.get("eventType"))
     from_state = str(event.get("from_state") or payload.get("from_state") or payload.get("fromState") or "").strip()
     to_state = str(event.get("to_state") or payload.get("to_state") or payload.get("toState") or "").strip()
     reason_raw = _event_reason(event, payload)
-    reason = _reason_message(reason_raw)
     reason_codes = _parse_reason_codes(reason_raw)
+    channel = _channel_label(
+        _first_text(
+            payload.get("source_channel"),
+            response.get("source_channel"),
+            result.get("source_channel"),
+            metadata.get("source_channel"),
+            event.get("source"),
+        )
+    )
+    return {
+        "payload": payload,
+        "response": response,
+        "result": result,
+        "erp_result": erp_result,
+        "metadata": metadata,
+        "canonical": canonical,
+        "event_type": event_type,
+        "from_state": from_state,
+        "to_state": to_state,
+        "reason_raw": reason_raw,
+        "reason": _reason_message(reason_raw),
+        "reason_codes": reason_codes,
+        "channel": channel,
+    }
+
+
+def _operator_importance(event_type: str, to_state: str) -> str:
+    if event_type in _HIGH_IMPORTANCE_EVENT_TYPES:
+        return "high"
+    if event_type in _LOW_IMPORTANCE_EVENT_TYPES:
+        return "low"
+    if event_type == "state_transition":
+        target = str(to_state or "").strip().lower()
+        if target in {"needs_approval", "approved", "rejected", "failed_post", "posted_to_erp"}:
+            return "high"
+        if target in {"validated", "ready_to_post", "needs_info", "closed"}:
+            return "medium"
+    return "medium"
+
+
+def _operator_category(event_type: str, to_state: str) -> str:
+    token = str(event_type or "").strip().lower()
+    target = str(to_state or "").strip().lower()
+    if "approval" in token or token in {"invoice_approved", "invoice_rejected"} or target in {"needs_approval", "approved", "rejected"}:
+        return "approval"
+    if "erp" in token or "post" in token or target in {"ready_to_post", "posted_to_erp", "failed_post", "closed"}:
+        return "posting"
+    if "followup" in token or "summary" in token or "escalated" in token:
+        return "collaboration"
+    if "field_correction" in token:
+        return "correction"
+    if "blocked" in token or "validation" in token or token == "state_transition_rejected":
+        return "policy"
+    if token.startswith("browser_"):
+        return "system"
+    return "record"
+
+
+def _operator_evidence(event: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, str]:
+    payload = context["payload"]
+    response = context["response"]
+    result = context["result"]
+    erp_result = context["erp_result"]
+    metadata = context["metadata"]
+    canonical = context["canonical"]
+    event_type = context["event_type"]
+    channel = context["channel"]
+
+    field_name = _humanize_snake_text(payload.get("field") or metadata.get("field") or "")
+    erp_reference = _first_text(
+        payload.get("erp_reference"),
+        response.get("erp_reference"),
+        result.get("erp_reference"),
+        erp_result.get("doc_num"),
+        erp_result.get("document_number"),
+        erp_result.get("erp_document"),
+        erp_result.get("bill_id"),
+    )
+    evidence_refs = canonical.get("evidence_refs") if isinstance(canonical.get("evidence_refs"), list) else []
+    source_ref = _first_text(
+        payload.get("email_id"),
+        response.get("email_id"),
+        result.get("email_id"),
+        event.get("source_message_ref"),
+        evidence_refs[0] if evidence_refs else "",
+    )
+
+    if event_type in {
+        "approval_routed_from_extension",
+        "approval_request_routed",
+        "route_for_approval",
+        "route_low_risk_for_approval",
+        "approval_request_blocked",
+        "approval_request_failed",
+        "invoice_approved",
+        "invoice_approval_failed",
+        "invoice_approval_blocked",
+        "invoice_rejected",
+        "invoice_reject_failed",
+        "invoice_reject_blocked",
+        "approval_nudge_sent",
+        "approval_nudge_failed",
+        "approval_nudge_blocked",
+    }:
+        label = f"{channel} approval action" if channel else "Approval action"
+        detail = (
+            f"Recorded from {channel} approval workflow."
+            if channel
+            else "Recorded from the approval workflow."
+        )
+        return {"label": label, "detail": detail}
+
+    if event_type in {"erp_post_completed", "erp_api_success", "erp_browser_fallback_completed", "erp_post_failed", "erp_api_failed", "erp_browser_fallback_failed"}:
+        detail = "Recorded from the ERP connector response."
+        if erp_reference:
+            detail = f"Recorded from the ERP connector response ({erp_reference})."
+        return {"label": "ERP result", "detail": detail}
+
+    if event_type in {"deterministic_validation_failed", "state_transition_rejected", "approval_request_blocked", "erp_post_blocked", "route_low_risk_for_approval_blocked"}:
+        return {"label": "Policy check", "detail": "Recorded from workflow and policy guardrails."}
+
+    if event_type in {"vendor_followup_waiting_sla", "vendor_followup_blocked", "vendor_followup_failed", "vendor_followup_draft_prepared"}:
+        return {"label": "Vendor follow-up", "detail": "Recorded from the vendor information request workflow."}
+
+    if event_type in {"finance_summary_share_previewed", "finance_summary_share_prepared", "finance_summary_shared", "finance_summary_share_failed"}:
+        return {"label": "Record summary", "detail": "Prepared from the current invoice record and audit history."}
+
+    if event_type == "field_correction":
+        detail = f"Recorded from operator correction to {field_name.lower()}." if field_name else "Recorded from an operator field correction."
+        return {"label": "Field correction", "detail": detail}
+
+    if event_type in {"ap_item_resubmitted", "ap_item_resubmission_created", "ap_item_merged", "ap_item_merged_into", "ap_item_split_created"}:
+        return {"label": "Record change", "detail": "Recorded from a shared AP record update."}
+
+    if event_type == "invoice_escalated":
+        return {"label": "Review escalation", "detail": "Recorded from the finance review escalation flow."}
+
+    if event_type == "state_transition":
+        target = str(context["to_state"] or "").strip().lower()
+        if target in {"posted_to_erp", "failed_post"}:
+            detail = "Recorded from the ERP connector response."
+            if erp_reference:
+                detail = f"Recorded from the ERP connector response ({erp_reference})."
+            return {"label": "ERP result", "detail": detail}
+        if target in {"ready_to_post", "closed"}:
+            return {"label": "ERP workflow", "detail": "Recorded from the AP posting workflow state change."}
+        if target in {"needs_approval", "approved", "rejected"}:
+            label = f"{channel} approval action" if channel else "Approval action"
+            detail = (
+                f"Recorded from {channel} approval workflow state."
+                if channel
+                else "Recorded from the approval workflow state."
+            )
+            return {"label": label, "detail": detail}
+        if target == "needs_info":
+            return {"label": "Missing information workflow", "detail": "Recorded from the AP information request state change."}
+
+    if source_ref:
+        return {"label": "Source email", "detail": "Recorded from the source email and extracted invoice fields."}
+    return {"label": "Workflow record", "detail": "Recorded from the shared AP workflow record."}
+
+
+def _finalize_operator_view(event: Dict[str, Any], operator: Dict[str, Any]) -> Dict[str, Any]:
+    context = _extract_event_context(event)
+    event_type = context["event_type"]
+    to_state = context["to_state"]
+    enriched = dict(operator or {})
+    enriched["importance"] = str(
+        enriched.get("importance")
+        or _operator_importance(event_type, to_state)
+    )
+    enriched["category"] = str(
+        enriched.get("category")
+        or _operator_category(event_type, to_state)
+    )
+    evidence = enriched.get("evidence") if isinstance(enriched.get("evidence"), dict) else {}
+    if not evidence:
+        evidence = _operator_evidence(event, context)
+    enriched["evidence"] = evidence
+    return enriched
+
+
+def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    context = _extract_event_context(event)
+    payload = context["payload"]
+    event_type = context["event_type"]
+    from_state = context["from_state"]
+    to_state = context["to_state"]
+    reason = context["reason"]
+    reason_codes = context["reason_codes"]
 
     operator: Dict[str, Any] = {
         "code": event_type or "audit_event",
@@ -134,7 +418,7 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         operator.update(
             {
                 "code": "approval_request_sent",
-                "title": "Approval request sent",
+                "title": "Approval requested",
                 "message": reason or "Sent to approver in Slack or Teams.",
                 "severity": "info",
                 "next_action": "Wait for approval callback or send a reminder.",
@@ -146,7 +430,7 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         operator.update(
             {
                 "code": "approval_request_sent",
-                "title": "Approval request sent",
+                "title": "Approval requested",
                 "message": reason or "Clearledgr routed this invoice to the approver.",
                 "severity": "info",
                 "next_action": "Wait for approval callback or send a reminder.",
@@ -182,10 +466,22 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         operator.update(
             {
                 "code": "invoice_approved",
-                "title": "Approval recorded",
+                "title": "Approval received",
                 "message": reason or "Approver decision was recorded and posting continued.",
                 "severity": "success",
                 "next_action": "Wait for ERP posting result if this invoice is still processing.",
+            }
+        )
+        return operator
+
+    if event_type == "invoice_rejected":
+        operator.update(
+            {
+                "code": "invoice_rejected",
+                "title": "Rejected",
+                "message": reason or "Rejection was recorded and the invoice was stopped.",
+                "severity": "warning",
+                "next_action": "No action required unless the invoice is reopened or resubmitted.",
             }
         )
         return operator
@@ -374,6 +670,62 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         return operator
 
     if event_type == "state_transition":
+        target_state = str(to_state).strip().lower()
+        if target_state == "needs_approval":
+            operator.update(
+                {
+                    "code": "approval_request_sent",
+                    "title": "Approval requested",
+                    "message": reason or "Invoice moved into the approval queue.",
+                    "severity": "info",
+                    "next_action": "Wait for approval callback or send a reminder.",
+                }
+            )
+            return operator
+        if target_state == "approved":
+            operator.update(
+                {
+                    "code": "invoice_approved",
+                    "title": "Approval received",
+                    "message": reason or "Approval was recorded for this invoice.",
+                    "severity": "success",
+                    "next_action": "Wait for the posting step or continue to ERP posting.",
+                }
+            )
+            return operator
+        if target_state == "rejected":
+            operator.update(
+                {
+                    "code": "invoice_rejected",
+                    "title": "Rejected",
+                    "message": reason or "Invoice was moved to rejected.",
+                    "severity": "warning",
+                    "next_action": "No action required unless the invoice is reopened or resubmitted.",
+                }
+            )
+            return operator
+        if target_state in {"failed_post"}:
+            operator.update(
+                {
+                    "code": "erp_post_failed",
+                    "title": "Posting failed",
+                    "message": reason or "Clearledgr could not complete ERP posting.",
+                    "severity": "error",
+                    "next_action": "Retry ERP posting or review the connector result.",
+                }
+            )
+            return operator
+        if target_state in {"posted_to_erp", "closed"}:
+            operator.update(
+                {
+                    "code": "erp_posted",
+                    "title": "Posted to ERP" if target_state == "posted_to_erp" else "Record closed",
+                    "message": reason or ("Invoice posting completed successfully." if target_state == "posted_to_erp" else "Invoice record was closed."),
+                    "severity": "success",
+                    "next_action": "No action required.",
+                }
+            )
+            return operator
         target_label = _state_label(to_state) if to_state else "Updated"
         detail = reason
         if from_state and to_state:
@@ -423,7 +775,7 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         operator.update(
             {
                 "code": "erp_post_failed",
-                "title": "ERP posting failed",
+                "title": "Posting failed",
                 "message": reason or "Posting did not complete.",
                 "severity": "error",
                 "next_action": "Retry ERP post or escalate for review.",
@@ -435,7 +787,7 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         operator.update(
             {
                 "code": "erp_post_failed",
-                "title": "ERP posting failed",
+                "title": "Posting failed",
                 "message": reason or "Posting did not complete.",
                 "severity": "error",
                 "next_action": "Retry ERP post or escalate for review.",
@@ -447,7 +799,7 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         operator.update(
             {
                 "code": "approval_request_sent",
-                "title": "Approval request sent",
+                "title": "Approval requested",
                 "message": reason or "Clearledgr routed this low-risk invoice for approval.",
                 "severity": "info",
                 "next_action": "Wait for approval callback.",
@@ -563,13 +915,149 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         )
         return operator
 
+    if event_type == "invoice_escalated":
+        operator.update(
+            {
+                "code": "invoice_escalated",
+                "title": "Escalated for review",
+                "message": reason or "Clearledgr escalated this invoice for finance review.",
+                "severity": "warning",
+                "next_action": "Review the exception details and decide the next step.",
+            }
+        )
+        return operator
+
+    if event_type == "field_correction":
+        field_name = _humanize_snake_text(payload.get("field") or context["metadata"].get("field") or "")
+        operator.update(
+            {
+                "code": "field_correction",
+                "title": "Field corrected",
+                "message": (
+                    reason
+                    or (f"{field_name} was corrected on this shared invoice record." if field_name else "An operator corrected invoice data on this shared record.")
+                ),
+                "severity": "info",
+                "next_action": "Continue the next AP step with the corrected data.",
+            }
+        )
+        return operator
+
+    if event_type == "finance_summary_share_previewed":
+        operator.update(
+            {
+                "code": "finance_summary_previewed",
+                "title": "Finance summary previewed",
+                "message": reason or "Prepared a preview of the finance summary for this invoice.",
+                "severity": "info",
+                "next_action": "Share the summary if finance review is needed.",
+            }
+        )
+        return operator
+
+    if event_type == "finance_summary_share_prepared":
+        operator.update(
+            {
+                "code": "finance_summary_prepared",
+                "title": "Finance summary prepared",
+                "message": reason or "Prepared a finance summary draft for this invoice.",
+                "severity": "info",
+                "next_action": "Review the draft and share it when needed.",
+            }
+        )
+        return operator
+
+    if event_type == "finance_summary_shared":
+        operator.update(
+            {
+                "code": "finance_summary_shared",
+                "title": "Finance summary shared",
+                "message": reason or "Shared the finance summary for this invoice.",
+                "severity": "info",
+                "next_action": "No action required unless follow-up is needed.",
+            }
+        )
+        return operator
+
+    if event_type == "finance_summary_share_failed":
+        operator.update(
+            {
+                "code": "finance_summary_share_failed",
+                "title": "Finance summary share failed",
+                "message": reason or "Clearledgr could not share the finance summary.",
+                "severity": "warning",
+                "next_action": "Retry the share action or review the delivery surface.",
+            }
+        )
+        return operator
+
+    if event_type == "ap_item_resubmitted":
+        operator.update(
+            {
+                "code": "ap_item_resubmitted",
+                "title": "Invoice resubmitted",
+                "message": reason or "Clearledgr marked this invoice as superseded by a corrected resubmission.",
+                "severity": "info",
+                "next_action": "Open the new AP item to continue review.",
+            }
+        )
+        return operator
+
+    if event_type == "ap_item_resubmission_created":
+        operator.update(
+            {
+                "code": "ap_item_resubmission_created",
+                "title": "Corrected invoice created",
+                "message": reason or "Created a new AP item for the corrected resubmission.",
+                "severity": "info",
+                "next_action": "Continue review on the corrected invoice record.",
+            }
+        )
+        return operator
+
+    if event_type == "ap_item_merged":
+        operator.update(
+            {
+                "code": "ap_item_merged",
+                "title": "Records merged",
+                "message": reason or "Clearledgr merged another invoice record into this AP item.",
+                "severity": "info",
+                "next_action": "Review the merged sources if needed.",
+            }
+        )
+        return operator
+
+    if event_type == "ap_item_merged_into":
+        operator.update(
+            {
+                "code": "ap_item_merged_into",
+                "title": "Merged into another record",
+                "message": reason or "This AP item was merged into another shared record.",
+                "severity": "info",
+                "next_action": "Open the surviving AP item if further review is needed.",
+            }
+        )
+        return operator
+
+    if event_type == "ap_item_split_created":
+        operator.update(
+            {
+                "code": "ap_item_split_created",
+                "title": "Split record created",
+                "message": reason or "Clearledgr created a new AP item from selected invoice sources.",
+                "severity": "info",
+                "next_action": "Review the new split item if further action is needed.",
+            }
+        )
+        return operator
+
     return operator
 
 
 def normalize_operator_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
     row = dict(event or {})
     existing_operator = row.get("operator") if isinstance(row.get("operator"), dict) else {}
-    operator = _operator_view_for_event(row)
+    operator = _finalize_operator_view(row, _operator_view_for_event(row))
     if existing_operator:
         merged = dict(existing_operator)
         # Canonical operator mapping wins over stale/legacy operator payloads.
@@ -585,6 +1073,16 @@ def normalize_operator_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
     row["operator_severity"] = operator.get("severity")
     row["operator_next_action"] = operator.get("next_action")
     row["operator_action_hint"] = operator.get("next_action")
+    row["operator_importance"] = operator.get("importance")
+    row["operator_category"] = operator.get("category")
+    row["operator_evidence_label"] = _first_text(
+        _dict_value(operator.get("evidence")).get("label"),
+        operator.get("evidence_label"),
+    )
+    row["operator_evidence_detail"] = _first_text(
+        _dict_value(operator.get("evidence")).get("detail"),
+        operator.get("evidence_detail"),
+    )
     return row
 
 

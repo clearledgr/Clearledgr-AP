@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import Counter
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -10,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
-from clearledgr.core.auth import get_current_user
+from clearledgr.core.auth import get_current_user, require_ops_user
 from clearledgr.core.database import ClearledgrDB, get_db
 from clearledgr.core.ap_states import APState
 from clearledgr.core.errors import safe_error
@@ -586,6 +587,36 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         metadata=metadata,
     )
     payload["next_action"] = _derive_next_action(payload)
+    payload["queue_entered_at"] = (
+        payload.get("queue_entered_at")
+        or payload.get("received_at")
+        or payload.get("created_at")
+        or payload.get("updated_at")
+    )
+    state_token = str(payload.get("state") or "").strip().lower()
+    payload["approval_requested_at"] = (
+        payload.get("approval_requested_at")
+        or metadata.get("approval_requested_at")
+        or (payload.get("updated_at") if state_token in {"needs_approval", "pending_approval"} else None)
+    )
+    erp_status = str(payload.get("erp_status") or "").strip().lower()
+    if not erp_status:
+        if state_token in {"posted", "posted_to_erp", "closed"} or payload.get("erp_reference") or payload.get("erp_bill_id"):
+            erp_status = "posted"
+        elif state_token == "failed_post":
+            erp_status = "failed"
+        elif state_token in {"approved", "ready_to_post"}:
+            erp_status = "ready"
+        elif metadata.get("erp_connector_available") or metadata.get("erp"):
+            erp_status = "connected"
+        else:
+            erp_status = "not_connected"
+    payload["erp_status"] = erp_status
+    payload["erp_connector_available"] = bool(
+        payload.get("erp_connector_available")
+        or metadata.get("erp_connector_available")
+        or metadata.get("erp")
+    )
 
     # Correction learning: surface GL suggestion + previously-corrected fields.
     # suggest() is in-memory after rule load — fast per call.
@@ -606,6 +637,413 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         payload["vendor_suggestion"] = None
 
     return payload
+
+
+OPEN_AP_STATES = {
+    "received",
+    "validated",
+    "needs_info",
+    "needs_approval",
+    "pending_approval",
+    "approved",
+    "ready_to_post",
+    "failed_post",
+}
+
+
+def _safe_sort_timestamp(value: Any) -> float:
+    parsed = _parse_iso(value)
+    return parsed.timestamp() if parsed else 0.0
+
+
+def _is_open_ap_state(state: Any) -> bool:
+    return str(state or "").strip().lower() in OPEN_AP_STATES
+
+
+def _summarize_related_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    state = str(item.get("state") or "").strip().lower()
+    return {
+        "id": item.get("id"),
+        "vendor_name": item.get("vendor_name"),
+        "invoice_number": item.get("invoice_number"),
+        "amount": _safe_float(item.get("amount")),
+        "currency": item.get("currency") or "USD",
+        "state": state,
+        "due_date": item.get("due_date"),
+        "updated_at": item.get("updated_at") or item.get("created_at"),
+        "thread_id": item.get("thread_id"),
+        "message_id": item.get("message_id"),
+        "erp_reference": item.get("erp_reference"),
+        "exception_code": item.get("exception_code"),
+        "is_open": _is_open_ap_state(state),
+    }
+
+
+def _group_sources_by_type(sources: List[Dict[str, Any]]) -> Dict[str, Any]:
+    rows: Dict[str, Dict[str, Any]] = {}
+    for source in sources:
+        source_type = str(source.get("source_type") or "unknown").strip().lower() or "unknown"
+        bucket = rows.setdefault(
+            source_type,
+            {
+                "source_type": source_type,
+                "count": 0,
+                "items": [],
+            },
+        )
+        bucket["count"] += 1
+        if len(bucket["items"]) < 5:
+            bucket["items"].append(
+                {
+                    "source_ref": source.get("source_ref"),
+                    "subject": source.get("subject"),
+                    "sender": source.get("sender"),
+                    "detected_at": source.get("detected_at"),
+                    "metadata": _parse_json(source.get("metadata")),
+                }
+            )
+    return {
+        "groups": sorted(rows.values(), key=lambda row: (-int(row.get("count") or 0), str(row.get("source_type") or ""))),
+        "count": len(sources),
+    }
+
+
+def _build_related_records_payload(
+    current_item: Dict[str, Any],
+    all_items: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    current_id = str(current_item.get("id") or "").strip()
+    current_metadata = _parse_json(current_item.get("metadata"))
+    vendor_key = str(current_item.get("vendor_name") or "").strip().lower()
+    invoice_number = str(current_item.get("invoice_number") or "").strip().lower()
+
+    vendor_recent = [
+        _summarize_related_item(item)
+        for item in sorted(
+            (
+                candidate
+                for candidate in all_items
+                if str(candidate.get("id") or "").strip() != current_id
+                and str(candidate.get("vendor_name") or "").strip().lower() == vendor_key
+            ),
+            key=lambda row: _safe_sort_timestamp(row.get("updated_at") or row.get("created_at")),
+            reverse=True,
+        )[:6]
+    ]
+    duplicate_invoice_items = [
+        _summarize_related_item(item)
+        for item in sorted(
+            (
+                candidate
+                for candidate in all_items
+                if invoice_number
+                and str(candidate.get("id") or "").strip() != current_id
+                and str(candidate.get("invoice_number") or "").strip().lower() == invoice_number
+            ),
+            key=lambda row: _safe_sort_timestamp(row.get("updated_at") or row.get("created_at")),
+            reverse=True,
+        )[:4]
+    ]
+    previous_item = next(
+        (
+            _summarize_related_item(candidate)
+            for candidate in all_items
+            if str(candidate.get("id") or "").strip()
+            == str(current_item.get("supersedes_ap_item_id") or current_metadata.get("supersedes_ap_item_id") or "").strip()
+        ),
+        None,
+    )
+    next_item = next(
+        (
+            _summarize_related_item(candidate)
+            for candidate in all_items
+            if str(candidate.get("id") or "").strip()
+            == str(current_item.get("superseded_by_ap_item_id") or current_metadata.get("superseded_by_ap_item_id") or "").strip()
+        ),
+        None,
+    )
+    return {
+        "vendor_recent_items": vendor_recent,
+        "same_invoice_number_items": duplicate_invoice_items,
+        "supersession": {
+            "previous_item": previous_item,
+            "next_item": next_item,
+        },
+    }
+
+
+def _build_vendor_summary_rows(
+    db: ClearledgrDB,
+    organization_id: str,
+    *,
+    search: str = "",
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    items = [build_worklist_item(db, row) for row in db.list_ap_items(organization_id, limit=5000)]
+    vendor_rows: Dict[str, Dict[str, Any]] = {}
+
+    for item in items:
+        vendor_name = str(item.get("vendor_name") or item.get("vendor") or "Unknown").strip() or "Unknown"
+        key = vendor_name.lower()
+        row = vendor_rows.setdefault(
+            key,
+            {
+                "vendor_name": vendor_name,
+                "invoice_count": 0,
+                "open_count": 0,
+                "posted_count": 0,
+                "failed_count": 0,
+                "approval_count": 0,
+                "needs_info_count": 0,
+                "total_amount": 0.0,
+                "last_activity_at": "",
+                "sender_emails": set(),
+                "top_states": Counter(),
+            },
+        )
+        row["invoice_count"] += 1
+        row["total_amount"] += _safe_float(item.get("amount"))
+        state = str(item.get("state") or "").strip().lower()
+        row["top_states"][state] += 1
+        if _is_open_ap_state(state):
+            row["open_count"] += 1
+        if state in {"posted_to_erp", "closed"}:
+            row["posted_count"] += 1
+        if state == "failed_post":
+            row["failed_count"] += 1
+        if state in {"needs_approval", "pending_approval"}:
+            row["approval_count"] += 1
+        if state == "needs_info":
+            row["needs_info_count"] += 1
+        updated_at = str(item.get("updated_at") or item.get("created_at") or "")
+        if updated_at > str(row.get("last_activity_at") or ""):
+            row["last_activity_at"] = updated_at
+        sender = str(item.get("sender") or "").strip()
+        if sender:
+            row["sender_emails"].add(sender)
+
+    search_lc = str(search or "").strip().lower()
+    rows: List[Dict[str, Any]] = []
+    for row in vendor_rows.values():
+        if search_lc and search_lc not in str(row.get("vendor_name") or "").lower():
+            continue
+        vendor_name = str(row.get("vendor_name") or "")
+        profile = db.get_vendor_profile(organization_id, vendor_name) if vendor_name else None
+        rows.append(
+            {
+                "vendor_name": vendor_name,
+                "invoice_count": int(row.get("invoice_count") or 0),
+                "open_count": int(row.get("open_count") or 0),
+                "posted_count": int(row.get("posted_count") or 0),
+                "failed_count": int(row.get("failed_count") or 0),
+                "approval_count": int(row.get("approval_count") or 0),
+                "needs_info_count": int(row.get("needs_info_count") or 0),
+                "total_amount": round(_safe_float(row.get("total_amount")), 2),
+                "last_activity_at": row.get("last_activity_at") or None,
+                "primary_email": sorted(row.get("sender_emails") or [""])[0] if row.get("sender_emails") else None,
+                "sender_emails": sorted(row.get("sender_emails") or [])[:5],
+                "top_states": [
+                    {"state": state, "count": count}
+                    for state, count in Counter(row.get("top_states") or {}).most_common(4)
+                ],
+                "profile": {
+                    "requires_po": bool((profile or {}).get("requires_po")),
+                    "payment_terms": (profile or {}).get("payment_terms"),
+                    "always_approved": bool((profile or {}).get("always_approved")),
+                    "approval_override_rate": _safe_float((profile or {}).get("approval_override_rate")),
+                    "anomaly_flags": list((profile or {}).get("anomaly_flags") or [])[:4],
+                },
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            int(row.get("open_count") or 0),
+            _safe_float(row.get("total_amount")),
+            _safe_sort_timestamp(row.get("last_activity_at")),
+        ),
+        reverse=True,
+    )
+    return rows[: max(1, min(limit, 200))]
+
+
+def _build_vendor_detail_payload(
+    db: ClearledgrDB,
+    organization_id: str,
+    vendor_name: str,
+    *,
+    days: int = 180,
+    invoice_limit: int = 20,
+) -> Dict[str, Any]:
+    summary_rows = _build_vendor_summary_rows(db, organization_id, search=vendor_name, limit=200)
+    summary = next(
+        (
+            row
+            for row in summary_rows
+            if str(row.get("vendor_name") or "").strip().lower() == str(vendor_name or "").strip().lower()
+        ),
+        None,
+    )
+    if not summary:
+        raise HTTPException(status_code=404, detail="vendor_not_found")
+
+    canonical_vendor_name = str(summary.get("vendor_name") or vendor_name).strip()
+    profile = db.get_vendor_profile(organization_id, canonical_vendor_name) or {}
+    history = db.get_vendor_invoice_history(organization_id, canonical_vendor_name, limit=max(6, min(invoice_limit, 30)))
+    items = [
+        build_worklist_item(db, row)
+        for row in db.get_ap_items_by_vendor(
+            organization_id,
+            canonical_vendor_name,
+            days=max(30, min(days, 365)),
+            limit=max(6, min(invoice_limit, 30)),
+        )
+    ]
+    exception_counts = Counter(
+        str(item.get("exception_code") or "").strip().lower()
+        for item in items
+        if str(item.get("exception_code") or "").strip()
+    )
+    linked_item_rows = [_summarize_related_item(item) for item in items[:12]]
+
+    return {
+        "vendor_name": canonical_vendor_name,
+        "summary": summary,
+        "profile": {
+            **profile,
+            "vendor_aliases": list(profile.get("vendor_aliases") or [])[:8],
+            "sender_domains": list(profile.get("sender_domains") or [])[:8],
+            "anomaly_flags": list(profile.get("anomaly_flags") or [])[:8],
+            "metadata": _parse_json(profile.get("metadata")),
+        },
+        "recent_items": linked_item_rows,
+        "history": history,
+        "top_exception_codes": [
+            {"exception_code": code, "count": count}
+            for code, count in exception_counts.most_common(6)
+        ],
+    }
+
+
+def _classify_upcoming_status(due_at: Optional[datetime], now: datetime) -> str:
+    if due_at is None:
+        return "queued"
+    if due_at <= now:
+        return "overdue"
+    if due_at.date() == now.date():
+        return "today"
+    if due_at <= now + timedelta(days=7):
+        return "this_week"
+    return "later"
+
+
+def _build_upcoming_task(item: Dict[str, Any], now: datetime) -> Optional[Dict[str, Any]]:
+    state = str(item.get("state") or "").strip().lower()
+    kind = ""
+    title = ""
+    detail = ""
+    due_at: Optional[datetime] = None
+    recommended_slice = "all_open"
+
+    if state in {"needs_approval", "pending_approval"}:
+        kind = "approval_follow_up"
+        title = "Follow up on approval"
+        recommended_slice = "waiting_on_approval"
+        requested_at = _parse_iso(item.get("approval_requested_at")) or _parse_iso(item.get("updated_at")) or _parse_iso(item.get("created_at"))
+        due_at = requested_at + timedelta(hours=24) if requested_at else None
+        detail = "Approval is still outstanding and should be chased if it has gone quiet."
+    elif state == "needs_info":
+        kind = "vendor_follow_up"
+        title = "Vendor follow-up"
+        recommended_slice = "needs_info"
+        due_at = _parse_iso(item.get("followup_sla_due_at")) or _parse_iso(item.get("updated_at")) or _parse_iso(item.get("created_at"))
+        followup_next = str(item.get("followup_next_action") or "").strip().lower()
+        if followup_next == "prepare_vendor_followup_draft":
+            detail = "Prepare the first vendor reply so the invoice can continue."
+        elif followup_next == "manual_vendor_escalation":
+            detail = "Vendor follow-up has reached the attempt limit and needs manual escalation."
+        else:
+            detail = "Check whether the vendor needs another nudge or if the reply already arrived."
+    elif state == "failed_post":
+        kind = "erp_retry"
+        title = "Retry ERP posting"
+        recommended_slice = "failed_post"
+        due_at = (_parse_iso(item.get("updated_at")) or _parse_iso(item.get("created_at")) or now) + timedelta(hours=4)
+        detail = "ERP posting failed and should be retried or investigated."
+    elif state in {"approved", "ready_to_post"}:
+        kind = "post_invoice"
+        title = "Post approved invoice"
+        recommended_slice = "ready_to_post"
+        due_at = _parse_iso(item.get("due_date")) or (_parse_iso(item.get("updated_at")) or now) + timedelta(hours=8)
+        detail = "The invoice is approved and ready to move into ERP."
+    elif state in {"received", "validated"} and (
+        item.get("exception_code") or item.get("requires_field_review") or item.get("budget_requires_decision")
+    ):
+        kind = "review_blocker"
+        title = "Resolve blocker"
+        recommended_slice = "blocked_exception"
+        due_at = _parse_iso(item.get("updated_at")) or _parse_iso(item.get("created_at"))
+        detail = "Review the blocking signal before the invoice can move forward."
+    else:
+        return None
+
+    status = _classify_upcoming_status(due_at, now)
+    overdue_invoice = _parse_iso(item.get("due_date"))
+    if overdue_invoice and overdue_invoice <= now and status not in {"overdue"}:
+        detail = f"{detail} The invoice due date has already passed."
+
+    return {
+        "id": f"{kind}:{item.get('id')}",
+        "kind": kind,
+        "status": status,
+        "title": title,
+        "detail": detail,
+        "due_at": due_at.isoformat() if due_at else None,
+        "recommended_slice": recommended_slice,
+        "ap_item_id": item.get("id"),
+        "vendor_name": item.get("vendor_name") or item.get("vendor"),
+        "invoice_number": item.get("invoice_number"),
+        "amount": _safe_float(item.get("amount")),
+        "currency": item.get("currency") or "USD",
+        "state": state,
+        "thread_id": item.get("thread_id"),
+        "message_id": item.get("message_id"),
+        "erp_status": item.get("erp_status"),
+        "followup_next_action": item.get("followup_next_action"),
+        "followup_draft_id": item.get("needs_info_draft_id"),
+        "sender": item.get("sender"),
+    }
+
+
+def _build_upcoming_tasks_payload(db: ClearledgrDB, organization_id: str, *, limit: int = 50) -> Dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    items = [build_worklist_item(db, row) for row in db.list_ap_items(organization_id, limit=5000)]
+    tasks = [
+        task
+        for task in (_build_upcoming_task(item, now) for item in items)
+        if task
+    ]
+    tasks.sort(
+        key=lambda row: (
+            {"overdue": 0, "today": 1, "this_week": 2, "later": 3, "queued": 4}.get(str(row.get("status") or ""), 5),
+            _safe_sort_timestamp(row.get("due_at")),
+            -_safe_float(row.get("amount")),
+        )
+    )
+    limited = tasks[: max(1, min(limit, 200))]
+    by_status = Counter(str(task.get("status") or "") for task in limited)
+    by_kind = Counter(str(task.get("kind") or "") for task in limited)
+    return {
+        "generated_at": now.isoformat(),
+        "summary": {
+            "total": len(limited),
+            "overdue": int(by_status.get("overdue", 0)),
+            "today": int(by_status.get("today", 0)),
+            "this_week": int(by_status.get("this_week", 0)),
+            "by_kind": dict(by_kind),
+        },
+        "tasks": limited,
+    }
 
 
 def _require_item(db: ClearledgrDB, ap_item_id: str) -> Dict[str, Any]:
@@ -645,11 +1083,12 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
     distribution = ", ".join(f"{k}:{v}" for k, v in sorted(source_types.items()))
 
     organization_id = str(item.get("organization_id") or "default")
+    all_items = db.list_ap_items(organization_id, limit=5000)
     vendor_name = str(item.get("vendor_name") or "").strip()
     vendor_key = vendor_name.lower()
     vendor_items = []
     if vendor_key:
-        for candidate in db.list_ap_items(organization_id, limit=5000):
+        for candidate in all_items:
             candidate_vendor = str(candidate.get("vendor_name") or "").strip().lower()
             if candidate_vendor == vendor_key:
                 vendor_items.append(candidate)
@@ -762,6 +1201,8 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
     if not summary_lines:
         summary_lines.append("Context is available. Review linked sources and proceed with approval controls.")
     summary_text = " ".join(summary_lines)
+    related_records = _build_related_records_payload({**item, "metadata": metadata}, all_items)
+    source_groups = _group_sources_by_type(sources)
 
     context = {
         "schema_version": "2.0",
@@ -778,6 +1219,7 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
         "email": {
             "source_count": len(sources),
             "sources": sources,
+            "source_groups": source_groups,
         },
         "web": {
             "browser_event_count": len(browser_events),
@@ -835,6 +1277,7 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
             "superseded_by_ap_item_id": item.get("superseded_by_ap_item_id") or metadata.get("superseded_by_ap_item_id"),
             "resubmission_reason": item.get("resubmission_reason") or metadata.get("resubmission_reason"),
         },
+        "related_records": related_records,
         "po_match": metadata.get("po_match") or metadata.get("po_match_result") or {},
         "budget": budget_summary,
         "risk_signals": metadata.get("risk_signals") or {},
@@ -858,6 +1301,53 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
         },
     }
     return context
+
+
+@router.get("/upcoming")
+def get_upcoming_ap_tasks(
+    organization_id: str = Query(default="default"),
+    limit: int = Query(default=50, ge=1, le=200),
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    verify_org_access(organization_id, _user)
+    db = get_db()
+    return _build_upcoming_tasks_payload(db, organization_id, limit=limit)
+
+
+@router.get("/vendors")
+def get_vendor_directory(
+    organization_id: str = Query(default="default"),
+    search: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=200),
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    verify_org_access(organization_id, _user)
+    db = get_db()
+    rows = _build_vendor_summary_rows(db, organization_id, search=search, limit=limit)
+    return {
+        "organization_id": organization_id,
+        "vendors": rows,
+        "count": len(rows),
+    }
+
+
+@router.get("/vendors/{vendor_name}")
+def get_vendor_record(
+    vendor_name: str,
+    organization_id: str = Query(default="default"),
+    days: int = Query(default=180, ge=30, le=365),
+    invoice_limit: int = Query(default=20, ge=6, le=30),
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    verify_org_access(organization_id, _user)
+    db = get_db()
+    return _build_vendor_detail_payload(
+        db,
+        organization_id,
+        vendor_name,
+        days=days,
+        invoice_limit=invoice_limit,
+    )
 
 
 @router.get("/metrics/aggregation")
@@ -909,7 +1399,7 @@ def get_ap_item_sources(
 def link_ap_item_source(
     ap_item_id: str,
     request: LinkSourceRequest,
-    _user=Depends(get_current_user),
+    _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     db = get_db()
     item = _require_item(db, ap_item_id)
@@ -964,7 +1454,7 @@ def get_ap_item_context(
 def resubmit_rejected_item(
     ap_item_id: str,
     request: ResubmitRejectedItemRequest,
-    _user=Depends(get_current_user),
+    _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     db = get_db()
     actor_id = _authenticated_actor(_user)
@@ -1128,7 +1618,7 @@ def resubmit_rejected_item(
 
 
 @router.post("/{ap_item_id}/merge")
-def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(get_current_user)) -> Dict[str, Any]:
+def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(require_ops_user)) -> Dict[str, Any]:
     db = get_db()
     actor_id = _authenticated_actor(_user)
     target = _require_item(db, ap_item_id)
@@ -1253,7 +1743,7 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(ge
 
 
 @router.post("/{ap_item_id}/split")
-def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(get_current_user)) -> Dict[str, Any]:
+def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(require_ops_user)) -> Dict[str, Any]:
     db = get_db()
     actor_id = _authenticated_actor(_user)
     parent = _require_item(db, ap_item_id)
@@ -1345,7 +1835,7 @@ def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(get_
 async def retry_erp_post(
     ap_item_id: str,
     organization_id: str = "default",
-    _user=Depends(get_current_user),
+    _user=Depends(require_ops_user),
 ):
     """Retry posting an AP item through the canonical finance runtime."""
     verify_org_access(organization_id, _user)

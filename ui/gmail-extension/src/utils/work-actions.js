@@ -1,3 +1,5 @@
+import { hasOpsAccessRole } from './roles.js';
+
 export function normalizeWorkState(state) {
   const normalized = String(state || '').trim().toLowerCase();
   if (!normalized) return 'received';
@@ -6,7 +8,8 @@ export function normalizeWorkState(state) {
   return normalized;
 }
 
-export function getPrimaryActionConfig(state) {
+export function getPrimaryActionConfig(state, actorRole = 'operator') {
+  if (!hasOpsAccessRole(actorRole)) return null;
   const normalized = normalizeWorkState(state);
   if (normalized === 'received' || normalized === 'validated') {
     return { id: 'request_approval', label: 'Request approval' };
@@ -40,11 +43,13 @@ export function getWorkStateNotice(state) {
   return '';
 }
 
-export function canRejectWorkItem(state) {
+export function canRejectWorkItem(state, actorRole = 'operator') {
+  if (!hasOpsAccessRole(actorRole)) return false;
   const normalized = normalizeWorkState(state);
   return ['received', 'validated', 'needs_approval', 'needs_info'].includes(normalized);
 }
 
-export function canNudgeApprover(state) {
+export function canNudgeApprover(state, actorRole = 'operator') {
+  if (!hasOpsAccessRole(actorRole)) return false;
   return normalizeWorkState(state) === 'needs_approval';
 }

@@ -1,11 +1,12 @@
 /**
- * Shared helpers for admin route pages.
- * Extracted from static/console/app.js to be reusable across
- * InboxSDK routes and (future) Outlook/Sheets surfaces.
+ * Shared helpers for routed Gmail support pages.
+ * Extracted from static/console/app.js to stay reusable across
+ * InboxSDK routes and future finance surfaces.
  */
 import { h } from 'preact';
 import { useState, useCallback } from 'preact/hooks';
 import htm from 'htm';
+import { hasAdminAccessRole, hasOpsAccessRole } from '../utils/roles.js';
 
 const html = htm.bind(h);
 
@@ -40,7 +41,11 @@ export function fmtRate(v) { const n = Number(v); return isFinite(n) ? `${n.toFi
 export function fmtDollar(v) { return '$' + Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }); }
 
 export function hasOpsAccess(bootstrap) {
-  return ['admin', 'owner', 'operator'].includes(String(bootstrap?.current_user?.role || '').trim().toLowerCase());
+  return hasOpsAccessRole(bootstrap?.current_user?.role);
+}
+
+export function hasAdminAccess(bootstrap) {
+  return hasAdminAccessRole(bootstrap?.current_user?.role);
 }
 
 export function integrationByName(bootstrap, name) {

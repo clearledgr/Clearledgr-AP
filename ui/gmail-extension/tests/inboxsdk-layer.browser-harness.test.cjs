@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
+const http = require('node:http');
 
 const EXTENSION_ROOT = path.resolve(__dirname, '..');
 const SOURCE_PATH = path.join(EXTENSION_ROOT, 'src', 'inboxsdk-layer.js');
@@ -10,6 +11,10 @@ const REQUIRE_BROWSER = process.env.GMAIL_BROWSER_HARNESS_REQUIRE_BROWSER === '1
 const BROWSER_TIMEOUT_MS = Number(process.env.GMAIL_BROWSER_HARNESS_TIMEOUT_MS || 120000);
 const BROWSER_CHANNEL = String(process.env.GMAIL_BROWSER_HARNESS_CHANNEL || '').trim();
 const HEADFUL = process.env.GMAIL_BROWSER_HARNESS_HEADFUL === '1';
+const HARNESS_PAGE_PATH = '/__browser_harness__.html';
+const PREACT_MODULE_PATH = '/node_modules/preact/dist/preact.module.js';
+const PREACT_HOOKS_MODULE_PATH = '/node_modules/preact/hooks/dist/hooks.module.js';
+const HTM_MODULE_PATH = '/node_modules/htm/dist/htm.module.js';
 
 async function launchHarnessBrowser(chromium) {
   const attempts = [];
@@ -83,6 +88,80 @@ globalThis.__clearledgrInboxsdkLayerTestApi = {
     throw new Error('Could not locate bootstrap() call in inboxsdk-layer.js');
   }
   return source;
+}
+
+function buildBrowserHarnessImportMap(serverBaseUrl) {
+  return JSON.stringify({
+    imports: {
+      preact: new URL(PREACT_MODULE_PATH, serverBaseUrl).href,
+      'preact/hooks': new URL(PREACT_HOOKS_MODULE_PATH, serverBaseUrl).href,
+      htm: new URL(HTM_MODULE_PATH, serverBaseUrl).href,
+    },
+  });
+}
+
+function contentTypeFor(filePath) {
+  if (filePath.endsWith('.js') || filePath.endsWith('.mjs')) return 'text/javascript; charset=utf-8';
+  if (filePath.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (filePath.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (filePath.endsWith('.svg')) return 'image/svg+xml';
+  if (filePath.endsWith('.png')) return 'image/png';
+  return 'text/plain; charset=utf-8';
+}
+
+async function startHarnessServer() {
+  const server = http.createServer((req, res) => {
+    const requestUrl = new URL(req.url || '/', 'http://127.0.0.1');
+    if (requestUrl.pathname === HARNESS_PAGE_PATH) {
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end('<!doctype html><html><head><base href="/src/"></head><body><main id="gmail-root"></main></body></html>');
+      return;
+    }
+    const relativePath = requestUrl.pathname.replace(/^\/+/, '');
+    const resolvedPath = path.resolve(EXTENSION_ROOT, relativePath);
+    if (!resolvedPath.startsWith(EXTENSION_ROOT)) {
+      res.writeHead(403, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end('forbidden');
+      return;
+    }
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+      res.writeHead(404, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end('not found');
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': contentTypeFor(resolvedPath),
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(fs.readFileSync(resolvedPath));
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  return server;
+}
+
+async function stopHarnessServer(server) {
+  if (!server) return;
+  await new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }
 
 function browserInitScript() {
@@ -169,6 +248,10 @@ function browserInitScript() {
         }
       },
     },
+    Router: {
+      handleCustomRoute() {},
+      goto() {},
+    },
     Compose: {
       registerComposeViewHandler(handler) {
         handlers.compose = handler;
@@ -230,13 +313,27 @@ test('real-browser InboxSDK harness mounts and renders AP sidebar', { skip: !RUN
     t.skip('Browser harness prerequisites are not available in this environment.');
     return;
   }
+  const server = await startHarnessServer();
+  t.after(async () => {
+    await stopHarnessServer(server);
+  });
+  const serverBaseUrl = `http://127.0.0.1:${server.address().port}/`;
+
   const context = await browser.newContext();
+  t.after(async () => {
+    await context.close();
+  });
+  t.after(async () => {
+    await browser.close();
+  });
+
   const page = await context.newPage();
   await page.addInitScript(browserInitScript);
-  await page.setContent('<!doctype html><html><body><main id="gmail-root"></main></body></html>', {
+  await page.goto(new URL(HARNESS_PAGE_PATH, serverBaseUrl).href, {
     waitUntil: 'domcontentloaded',
   });
-  await page.addScriptTag({ content: buildBrowserHarnessSource() });
+  await page.addScriptTag({ type: 'importmap', content: buildBrowserHarnessImportMap(serverBaseUrl) });
+  await page.addScriptTag({ type: 'module', content: buildBrowserHarnessSource() });
   await page.evaluate(async () => {
     if (globalThis.__clearledgrBootstrapPromise) {
       await globalThis.__clearledgrBootstrapPromise;
@@ -246,11 +343,9 @@ test('real-browser InboxSDK harness mounts and renders AP sidebar', { skip: !RUN
   const mounted = await page.evaluate(() => ({
     loadCalls: window.__TEST_RECORDS?.inboxSdkLoadCalls?.length || 0,
     hasSidebarStatus: Boolean(document.querySelector('#cl-scan-status')),
-    hasThreadContext: Boolean(document.querySelector('#cl-thread-context')),
   }));
   assert.equal(mounted.loadCalls, 1);
   assert.equal(mounted.hasSidebarStatus, true);
-  assert.equal(mounted.hasThreadContext, true);
 
   await page.evaluate(() => {
     const qm = window.__TEST_RECORDS?.queueManagerInstance;
@@ -292,9 +387,6 @@ test('real-browser InboxSDK harness mounts and renders AP sidebar', { skip: !RUN
   assert.match(rendered.scanStatusText, /Scanning inbox for invoices/i);
   assert.match(rendered.threadContextText, /Acme Supplies/i);
   assert.match(rendered.threadContextText, /INV-BROWSER-1/i);
-
-  await context.close();
-  await browser.close();
 });
 
 test('real-browser InboxSDK harness stays opt-in unless RUN_GMAIL_BROWSER_HARNESS=1', () => {

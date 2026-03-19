@@ -38,6 +38,7 @@ beforeEach(() => {
   store.queueState = [];
   store.selectedItemId = null;
   store.currentThreadId = null;
+  store.currentUserRole = 'operator';
   store.scanStatus = {};
   store.auditState = { itemId: null, loading: false, events: [] };
   store.contextUiState = { itemId: null, loading: false, error: '' };
@@ -111,6 +112,16 @@ describe('SidebarApp', () => {
     expect(screen.getByText('Nudge approver')).toBeTruthy();
   });
 
+  it('hides mutation actions for read-only roles', () => {
+    store.currentUserRole = 'viewer';
+    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'needs_approval', amount: 100 }];
+    store.selectedItemId = 'inv-1';
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+    expect(screen.queryByText('Nudge approver')).toBeNull();
+    expect(screen.queryByText('Reject')).toBeNull();
+    expect(screen.getByText(/Read-only view/)).toBeTruthy();
+  });
+
   it('does not render Approve & Post for approved state', () => {
     store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'approved', amount: 100 }];
     store.selectedItemId = 'inv-1';
@@ -174,6 +185,56 @@ describe('SidebarApp', () => {
     expect(screen.getByText('Attachment')).toBeTruthy();
     expect(screen.queryByText('Context fields')).toBeNull();
     expect(screen.queryByText(/Agent timeline/i)).toBeNull();
+  });
+
+  it('groups audit history into key history and background activity', () => {
+    store.queueState = [{
+      id: 'inv-1',
+      vendor_name: 'Test',
+      state: 'failed_post',
+      amount: 100,
+    }];
+    store.selectedItemId = 'inv-1';
+    store.auditState = {
+      itemId: 'inv-1',
+      loading: false,
+      events: [
+        {
+          id: 'evt-high',
+          event_type: 'erp_post_failed',
+          operator_title: 'Posting failed',
+          operator_message: 'Posting did not complete.',
+          operator_severity: 'error',
+          operator_importance: 'high',
+          operator_category: 'posting',
+          operator_evidence_label: 'ERP result',
+          operator_evidence_detail: 'Recorded from the ERP connector response (DOC-77).',
+          operator_action_hint: 'Retry ERP post or escalate for review.',
+          ts: '2026-03-01T10:00:00Z',
+        },
+        {
+          id: 'evt-low',
+          event_type: 'browser_session_created',
+          operator_title: 'ERP fallback prepared',
+          operator_message: 'Prepared secure ERP browser fallback session.',
+          operator_severity: 'info',
+          operator_importance: 'low',
+          operator_category: 'system',
+          operator_evidence_label: 'ERP result',
+          operator_evidence_detail: 'Recorded from the ERP connector response.',
+          ts: '2026-03-01T09:00:00Z',
+        },
+      ],
+    };
+
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+    fireEvent.click(screen.getByText(/View audit \(2\)/));
+
+    expect(screen.getByText('Key history')).toBeTruthy();
+    expect(screen.getByText('Background activity (1)')).toBeTruthy();
+    expect(screen.getByText('Posting failed')).toBeTruthy();
+    expect(screen.getByText(/Recorded from the ERP connector response \(DOC-77\)/)).toBeTruthy();
+    expect(screen.getByText(/Next: Retry ERP post or escalate for review\./)).toBeTruthy();
   });
 
   it('hides navigator for single-item queue', () => {

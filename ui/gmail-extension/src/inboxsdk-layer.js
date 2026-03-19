@@ -32,6 +32,7 @@ import { createAdminApi, setToastFn } from './routes/admin-api.js';
 import { createOAuthBridge } from './routes/oauth-bridge.js';
 import { ROUTE_CSS } from './routes/route-styles.js';
 import HomePage from './routes/pages/HomePage.js';
+import UpcomingPage from './routes/pages/UpcomingPage.js';
 import ActivityPage from './routes/pages/ActivityPage.js';
 import ConnectionsPage from './routes/pages/ConnectionsPage.js';
 import RulesPage from './routes/pages/RulesPage.js';
@@ -43,7 +44,22 @@ import HealthPage from './routes/pages/HealthPage.js';
 import PipelinePage from './routes/pages/PipelinePage.js';
 import InvoiceDetailPage from './routes/pages/InvoiceDetailPage.js';
 import VendorsPage from './routes/pages/VendorsPage.js';
-import { hasOpsAccess } from './routes/route-helpers.js';
+import VendorDetailPage from './routes/pages/VendorDetailPage.js';
+import TemplatesPage from './routes/pages/TemplatesPage.js';
+import ReportsPage from './routes/pages/ReportsPage.js';
+import { hasAdminAccess, hasOpsAccess } from './routes/route-helpers.js';
+import {
+  clearPipelineNavigation,
+  focusPipelineItem,
+  getBootstrappedPipelinePreferences,
+  getPinnedPipelineViews,
+  getPipelineViewRef,
+  normalizePipelinePreferences,
+  pipelinePreferencesEqual,
+  readPipelinePreferences,
+  resolvePipelineViewByRef,
+  writePipelinePreferences,
+} from './routes/pipeline-views.js';
 import { watchForSettingsPage } from './settings-tab.js';
 
 const html = htm.bind(h);
@@ -101,6 +117,23 @@ function injectFonts() {
 function mountSidebar() {
   if (!sidebarContainer) return;
   render(html`<${SidebarApp} queueManager=${queueManager} />`, sidebarContainer);
+}
+
+async function openComposeWithPrefill(prefill = {}) {
+  if (!sdk?.Compose || typeof sdk.Compose.openNewComposeView !== 'function') {
+    throw new Error('compose_unavailable');
+  }
+  _pendingComposePrefill = {
+    to: prefill?.to || '',
+    subject: prefill?.subject || '',
+    body: prefill?.body || '',
+  };
+  try {
+    await sdk.Compose.openNewComposeView();
+  } catch (error) {
+    _pendingComposePrefill = null;
+    throw error;
+  }
 }
 
 // ==================== SIDEBAR INIT ====================
@@ -183,6 +216,17 @@ function registerThreadHandler() {
   });
 }
 
+function openItemInPipeline(item, source = 'thread') {
+  if (!item?.id) return;
+  const pipelineScope = {
+    orgId: queueManager?.runtimeConfig?.organizationId || 'default',
+    userEmail: queueManager?.runtimeConfig?.userEmail || '',
+  };
+  store.setSelectedItem(String(item.id));
+  focusPipelineItem(pipelineScope, item, source);
+  sdk?.Router?.goto?.('clearledgr/pipeline');
+}
+
 function injectInvoiceBanner(threadView, item) {
   const state = String(item.state || '').toLowerCase();
   const vendor = item.vendor_name || item.vendor || 'Unknown vendor';
@@ -227,47 +271,19 @@ function injectInvoiceBanner(threadView, item) {
   pill.textContent = cfg.label;
   el.appendChild(pill);
 
-  // Actions — approve directly (if user has authority) or route to Slack/Teams
-  if (['needs_approval', 'pending_approval', 'needs_info'].includes(state)) {
+  if (item?.id) {
     const btnStyle = (bg, color, border) => `
       border:${border || 'none'}; border-radius:6px; padding:5px 14px; font-size:12px; font-weight:600;
       cursor:pointer; background:${bg}; color:${color}; font-family:inherit;
     `;
 
-    // Direct approve — the person in Gmail may be the approver
-    const approveBtn = document.createElement('button');
-    approveBtn.textContent = 'Approve';
-    approveBtn.style.cssText = btnStyle('#10B981', '#fff');
-    approveBtn.addEventListener('click', () => {
-      approveBtn.textContent = 'Approving\u2026';
-      approveBtn.disabled = true;
-      if (queueManager?.submitForApproval) {
-        queueManager.submitForApproval(item).then(() => {
-          pill.textContent = 'Approved';
-          approveBtn.textContent = 'Approved';
-          sendBtn.remove();
-        }).catch(() => { approveBtn.textContent = 'Approve'; approveBtn.disabled = false; });
-      }
+    const openBtn = document.createElement('button');
+    openBtn.textContent = 'Open in pipeline';
+    openBtn.style.cssText = btnStyle('transparent', cfg.text, `1px solid ${cfg.border}`);
+    openBtn.addEventListener('click', () => {
+      openItemInPipeline(item, 'thread_banner');
     });
-
-    // Route to Slack/Teams for someone else to approve
-    const sendBtn = document.createElement('button');
-    sendBtn.textContent = 'Send for approval';
-    sendBtn.style.cssText = btnStyle('transparent', cfg.text, `1px solid ${cfg.border}`);
-    sendBtn.addEventListener('click', () => {
-      sendBtn.textContent = 'Sending\u2026';
-      sendBtn.disabled = true;
-      if (queueManager?.submitForApproval) {
-        queueManager.submitForApproval(item).then(() => {
-          pill.textContent = 'Sent to approver';
-          sendBtn.textContent = 'Sent';
-          approveBtn.remove();
-        }).catch(() => { sendBtn.textContent = 'Send for approval'; sendBtn.disabled = false; });
-      }
-    });
-
-    el.appendChild(approveBtn);
-    el.appendChild(sendBtn);
+    el.appendChild(openBtn);
   }
 
   threadView.addNoticeBar({ el });
@@ -322,12 +338,10 @@ function registerThreadRowLabels() {
             if (typeof threadRowView.addActionButton === 'function') {
               threadRowView.addActionButton({
                 type: 'ICON_ONLY',
-                title: 'Send for approval',
+                title: 'Open in pipeline',
                 iconUrl: getAssetUrl(LOGO_PATH) || undefined,
                 onClick: () => {
-                  if (queueManager?.submitForApproval) {
-                    queueManager.submitForApproval(item);
-                  }
+                  openItemInPipeline(item, 'thread_row');
                 },
               });
             }
@@ -598,9 +612,12 @@ async function bootstrap() {
 function registerAppMenuAndRoutes() {
   const PAGE_MAP = {
     'clearledgr/home': HomePage,
+    'clearledgr/upcoming': UpcomingPage,
     'clearledgr/pipeline': PipelinePage,
     'clearledgr/activity': ActivityPage,
     'clearledgr/vendors': VendorsPage,
+    'clearledgr/templates': TemplatesPage,
+    'clearledgr/reports': ReportsPage,
     'clearledgr/connections': ConnectionsPage,
     'clearledgr/rules': RulesPage,
     'clearledgr/team': TeamPage,
@@ -618,8 +635,18 @@ function registerAppMenuAndRoutes() {
   }
 
   function rebuildMenuNavigation() {
-    const routeOptions = { includeAdmin: includeAdminRoutes };
+    const routeOptions = currentRouteAccess;
     const visibleRoutes = getVisibleNavRoutes(readRoutePreferences(routeOptions), routeOptions);
+    const pipelineScope = {
+      orgId: queueManager?.runtimeConfig?.organizationId || 'default',
+      userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
+    };
+    const pinnedViewRoutes = getPinnedPipelineViews(readPipelinePreferences(pipelineScope))
+      .slice(0, 3)
+      .map((view) => ({
+        title: `View: ${view.name}`,
+        id: `clearledgr/pipeline-view/${encodeURIComponent(getPipelineViewRef(view))}`,
+      }));
     clearNavItemViews(appMenuNavItemViews);
     clearNavItemViews(fallbackNavItemViews);
 
@@ -631,11 +658,26 @@ function registerAppMenuAndRoutes() {
         });
         appMenuNavItemViews.push(navHandle);
       });
+      pinnedViewRoutes.forEach((route) => {
+        const navHandle = appMenuPanelView.addNavItem({
+          name: route.title,
+          routeID: route.id,
+        });
+        appMenuNavItemViews.push(navHandle);
+      });
       return;
     }
 
     if (sdk.NavMenu && typeof sdk.NavMenu.addNavItem === 'function') {
       visibleRoutes.forEach((route) => {
+        const navHandle = sdk.NavMenu.addNavItem({
+          name: route.title,
+          routeID: route.id,
+          type: 'NAVIGATION',
+        });
+        fallbackNavItemViews.push(navHandle);
+      });
+      pinnedViewRoutes.forEach((route) => {
         const navHandle = sdk.NavMenu.addNavItem({
           name: route.title,
           routeID: route.id,
@@ -661,19 +703,40 @@ function registerAppMenuAndRoutes() {
   });
 
   store.sdk = sdk;
+  store.openComposeWithPrefill = openComposeWithPrefill;
 
   let bootstrapCache = null;
   let bootstrapPromise = null;
-  let includeAdminRoutes = false;
+  let currentRouteAccess = { includeAdmin: false, includeOps: false };
 
   async function getBootstrap() {
     if (bootstrapCache) return bootstrapCache;
     if (bootstrapPromise) return bootstrapPromise;
     bootstrapPromise = adminApi.bootstrapAdminData().then((data) => {
       bootstrapCache = data;
-      const nextIncludeAdmin = hasOpsAccess(data);
-      if (nextIncludeAdmin !== includeAdminRoutes) {
-        includeAdminRoutes = nextIncludeAdmin;
+      queueManager.currentUserRole = data?.current_user?.role || null;
+      store.update({ currentUserRole: queueManager.currentUserRole });
+      const pipelineScope = {
+        orgId: queueManager?.runtimeConfig?.organizationId || 'default',
+        userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
+      };
+      const remotePipelinePrefs = getBootstrappedPipelinePreferences(data);
+      if (remotePipelinePrefs) {
+        const localPipelinePrefs = readPipelinePreferences(pipelineScope);
+        const normalizedRemotePipelinePrefs = normalizePipelinePreferences(remotePipelinePrefs);
+        if (!pipelinePreferencesEqual(localPipelinePrefs, normalizedRemotePipelinePrefs)) {
+          writePipelinePreferences(pipelineScope, normalizedRemotePipelinePrefs);
+        }
+      }
+      const nextRouteAccess = {
+        includeAdmin: hasAdminAccess(data),
+        includeOps: hasOpsAccess(data),
+      };
+      if (
+        nextRouteAccess.includeAdmin !== currentRouteAccess.includeAdmin
+        || nextRouteAccess.includeOps !== currentRouteAccess.includeOps
+      ) {
+        currentRouteAccess = nextRouteAccess;
         rebuildMenuNavigation();
       }
       bootstrapPromise = null;
@@ -688,6 +751,37 @@ function registerAppMenuAndRoutes() {
   function onRefresh() {
     bootstrapCache = null;
   }
+
+  void getBootstrap();
+
+  sdk.Router.handleCustomRoute('clearledgr/pipeline-view', async (customRouteView) => {
+    const params = customRouteView.getParams?.() || {};
+    const rawRef = params.ref || window.location.hash.split('clearledgr/pipeline-view/')[1]?.split('?')[0] || '';
+    const pipelineScope = {
+      orgId: queueManager?.runtimeConfig?.organizationId || 'default',
+      userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
+    };
+    const bootstrap = await getBootstrap();
+    const remotePipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
+    let prefs = readPipelinePreferences(pipelineScope);
+    if (remotePipelinePrefs) {
+      const normalizedRemotePrefs = normalizePipelinePreferences(remotePipelinePrefs);
+      if (!pipelinePreferencesEqual(prefs, normalizedRemotePrefs)) {
+        prefs = writePipelinePreferences(pipelineScope, normalizedRemotePrefs);
+      } else {
+        prefs = normalizedRemotePrefs;
+      }
+    }
+    const targetView = resolvePipelineViewByRef(prefs, decodeURIComponent(rawRef));
+    if (targetView?.snapshot) {
+      clearPipelineNavigation(pipelineScope);
+      writePipelinePreferences(pipelineScope, targetView.snapshot);
+    }
+    sdk.Router.goto('clearledgr/pipeline');
+    try {
+      customRouteView.destroy?.();
+    } catch (_) { /* best effort */ }
+  });
 
   // Dynamic route: invoice detail (clearledgr/invoice/:id)
   sdk.Router.handleCustomRoute('clearledgr/invoice', async (customRouteView) => {
@@ -709,13 +803,50 @@ function registerAppMenuAndRoutes() {
     const rawId = params.id || window.location.hash.split('clearledgr/invoice/')[1]?.split('?')[0] || '';
     const orgId = adminApi.orgId();
     const navigate = (routeId) => sdk.Router.goto(routeId);
+    const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
+    const bootstrap = await getBootstrap();
 
     render(html`<${InvoiceDetailPage}
       api=${adminApi.api}
+      bootstrap=${bootstrap}
       toast=${adminApi.toast}
       orgId=${orgId}
+      userEmail=${userEmail}
       navigate=${navigate}
       routeParams=${{ id: decodeURIComponent(rawId) }}
+    />`, pageMount);
+  });
+
+  sdk.Router.handleCustomRoute('clearledgr/vendor', async (customRouteView) => {
+    const container = document.createElement('div');
+    container.className = 'cl-route';
+    const style = document.createElement('style');
+    style.textContent = ROUTE_CSS;
+    container.appendChild(style);
+    const topbar = document.createElement('div');
+    topbar.className = 'topbar';
+    topbar.innerHTML = '<h2>Vendor Detail</h2>';
+    container.appendChild(topbar);
+    const pageMount = document.createElement('div');
+    container.appendChild(pageMount);
+    const routeEl = customRouteView.getElement();
+    routeEl.appendChild(container);
+
+    const params = customRouteView.getParams?.() || {};
+    const rawName = params.name || window.location.hash.split('clearledgr/vendor/')[1]?.split('?')[0] || '';
+    const orgId = adminApi.orgId();
+    const navigate = (routeId) => sdk.Router.goto(routeId);
+    const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
+    const bootstrap = await getBootstrap();
+
+    render(html`<${VendorDetailPage}
+      api=${adminApi.api}
+      bootstrap=${bootstrap}
+      toast=${adminApi.toast}
+      orgId=${orgId}
+      userEmail=${userEmail}
+      navigate=${navigate}
+      routeParams=${{ name: decodeURIComponent(rawName) }}
     />`, pageMount);
   });
 
@@ -748,7 +879,10 @@ function registerAppMenuAndRoutes() {
       let renderCurrentPage = async () => {};
       const updateRoutePreferences = async (nextPreferences) => {
         const bootstrap = await getBootstrap();
-        const routeOptions = { includeAdmin: hasOpsAccess(bootstrap) };
+        const routeOptions = {
+          includeAdmin: hasAdminAccess(bootstrap),
+          includeOps: hasOpsAccess(bootstrap),
+        };
         const normalized = writeRoutePreferences(nextPreferences, routeOptions);
         rebuildMenuNavigation();
         await renderCurrentPage();
@@ -757,12 +891,18 @@ function registerAppMenuAndRoutes() {
 
       renderCurrentPage = async () => {
         const bootstrap = await getBootstrap();
-        const routeOptions = { includeAdmin: hasOpsAccess(bootstrap) };
-        if (route.adminOnly && !routeOptions.includeAdmin) {
+        const routeOptions = {
+          includeAdmin: hasAdminAccess(bootstrap),
+          includeOps: hasOpsAccess(bootstrap),
+        };
+        if ((route.opsOnly && !routeOptions.includeOps) || (route.adminOnly && !routeOptions.includeAdmin)) {
+          const restrictionCopy = route.adminOnly
+            ? 'This page is only available to operators with admin access.'
+            : 'This page is only available to AP operators.';
           render(html`
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
-              <p class="muted" style="margin:0 0 12px">This page is only available to operators with admin access.</p>
+              <p class="muted" style="margin:0 0 12px">${restrictionCopy}</p>
               <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Home</button>
             </div>
           `, pageMount);

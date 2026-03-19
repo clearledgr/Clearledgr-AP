@@ -1,15 +1,14 @@
-"""Declarative + executable AP workflow definition.
+"""Declarative AP workflow map used by runtime/orchestration internals.
 
-This module provides a readable, top-level map of the AP invoice pipeline.
-Each step names an ``APState``, the executor method that handles it, and the
-success/failure target states.
+This module provides a readable map of the AP invoice pipeline. Each step names
+an ``APState``, the executor method that handles it, and the success/failure
+target states.
 
 The workflow is declarative *and executable*: ``APWorkflowExecutor``,
 ``dispatch_step()``, and ``run_invoice_entry_workflow()`` bind the declared
 ``AP_WORKFLOW_STEPS`` map to ``InvoiceWorkflowService`` runtime methods. The
-service remains the implementation substrate, while this module is the
-canonical workflow contract and dispatch layer used by the local durable
-runtime/orchestration entrypoints.
+finance runtime remains the user-facing contract owner; this module is internal
+workflow machinery used by that runtime and other durable orchestration code.
 
 Primary path:
     received -> validated -> needs_approval -> approved -> ready_to_post

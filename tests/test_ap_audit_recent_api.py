@@ -119,6 +119,14 @@ def test_recent_ap_audit_is_org_scoped_and_normalized(client, db):
     assert isinstance(events[0].get("operator_title"), str)
     assert isinstance(events[0].get("operator_message"), str)
     assert isinstance(events[0].get("operator_severity"), str)
+    assert isinstance(events[0].get("operator_importance"), str)
+    assert isinstance(events[0].get("operator_category"), str)
+    assert isinstance(events[0].get("operator_evidence_label"), str)
+    assert isinstance(events[0].get("operator_evidence_detail"), str)
+    assert events[0]["operator_title"] == "Approval reminder failed"
+    assert events[0]["operator_evidence_label"] == "Approval action"
+    assert events[1]["operator_title"] == "Validation checks failed"
+    assert events[1]["operator_evidence_label"] == "Policy check"
 
 
 def test_recent_ap_audit_rejects_cross_org_access(client, db):

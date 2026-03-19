@@ -179,6 +179,102 @@ export function normalizeAuditEventType(value) {
   return String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
 }
 
+const AUDIT_IMPORTANCE_RANK = { high: 0, medium: 1, low: 2 };
+const AUDIT_SEVERITY_RANK = { error: 0, warning: 1, success: 2, info: 3 };
+
+export function normalizeAuditImportance(value) {
+  const token = String(value || '').trim().toLowerCase();
+  if (token === 'high' || token === 'medium' || token === 'low') return token;
+  return 'medium';
+}
+
+export function getAuditImportanceLabel(value) {
+  const importance = normalizeAuditImportance(value);
+  if (importance === 'high') return 'Key';
+  if (importance === 'low') return 'Background';
+  return 'Notable';
+}
+
+export function buildAuditRow(event) {
+  const payload = getAuditEventPayload(event);
+  const eventType = normalizeAuditEventType(
+    event?.event_type || event?.eventType || payload?.event_type || event?.action || 'action_recorded',
+  );
+  const safeTitle = eventType === 'state_transition' ? 'Status updated' : 'Action recorded';
+  let safeDetail = 'Action recorded for this invoice.';
+  if (eventType === 'state_transition') safeDetail = 'Invoice status changed.';
+  else if (eventType === 'erp_post_completed') safeDetail = 'Invoice posting completed successfully.';
+  else if (eventType === 'erp_post_failed') safeDetail = 'Clearledgr could not complete ERP posting.';
+  const importance = normalizeAuditImportance(event?.operator_importance || event?.operator?.importance);
+  const severity = String(event?.operator_severity || event?.operator?.severity || 'info').trim().toLowerCase() || 'info';
+  const evidenceLabel = trimText(String(
+    event?.operator_evidence_label
+      || event?.operator?.evidence_label
+      || event?.operator?.evidence?.label
+      || '',
+  ).trim(), 48);
+  const evidenceDetail = trimText(String(
+    event?.operator_evidence_detail
+      || event?.operator?.evidence_detail
+      || event?.operator?.evidence?.detail
+      || '',
+  ).trim(), 180);
+  const actionHint = trimText(String(
+    event?.operator_action_hint
+      || event?.operator_next_action
+      || event?.operator?.next_action
+      || event?.operator?.action_hint
+      || '',
+  ).trim(), 160);
+  const timestampRaw = getAuditEventTimestamp(event);
+
+  return {
+    event,
+    eventType,
+    title: trimText(String(event?.operator_title || safeTitle), 72),
+    detail: trimText(String(event?.operator_message || safeDetail).trim(), 160),
+    timestampRaw,
+    timestamp: formatDateTime(event?.ts || event?.created_at || event?.createdAt || event?.updated_at || event?.updatedAt || event?.timestamp),
+    severity,
+    importance,
+    importanceLabel: getAuditImportanceLabel(importance),
+    category: String(event?.operator_category || event?.operator?.category || '').trim().toLowerCase(),
+    evidenceLabel,
+    evidenceDetail,
+    actionHint,
+    isBackground: importance === 'low',
+  };
+}
+
+export function partitionAuditEvents(events, options = {}) {
+  const primaryLimit = Number.isFinite(Number(options.primaryLimit)) ? Math.max(0, Number(options.primaryLimit)) : Number.POSITIVE_INFINITY;
+  const secondaryLimit = Number.isFinite(Number(options.secondaryLimit)) ? Math.max(0, Number(options.secondaryLimit)) : Number.POSITIVE_INFINITY;
+  const rows = (Array.isArray(events) ? events : [])
+    .map((event) => buildAuditRow(event))
+    .sort((left, right) => {
+      const importanceDelta = (AUDIT_IMPORTANCE_RANK[left.importance] ?? 1) - (AUDIT_IMPORTANCE_RANK[right.importance] ?? 1);
+      if (importanceDelta !== 0) return importanceDelta;
+      const severityDelta = (AUDIT_SEVERITY_RANK[left.severity] ?? 3) - (AUDIT_SEVERITY_RANK[right.severity] ?? 3);
+      if (severityDelta !== 0) return severityDelta;
+      return right.timestampRaw - left.timestampRaw;
+    });
+
+  const primaryRows = [];
+  const secondaryRows = [];
+  rows.forEach((row) => {
+    if (row.isBackground) secondaryRows.push(row);
+    else primaryRows.push(row);
+  });
+
+  return {
+    rows,
+    primaryRows: primaryRows.slice(0, primaryLimit),
+    secondaryRows: secondaryRows.slice(0, secondaryLimit),
+    primaryHiddenCount: Math.max(0, primaryRows.length - Math.min(primaryRows.length, primaryLimit)),
+    secondaryHiddenCount: Math.max(0, secondaryRows.length - Math.min(secondaryRows.length, secondaryLimit)),
+  };
+}
+
 export function getReasonSheetDefaults(actionType = 'generic') {
   const n = String(actionType || '').trim().toLowerCase();
   if (n === 'reject' || n === 'budget_reject') return { chips: ['Duplicate invoice', 'Incorrect amount', 'Missing required docs', 'Out of policy'], required: true };

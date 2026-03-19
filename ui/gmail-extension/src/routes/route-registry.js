@@ -30,76 +30,109 @@ export const ROUTES = [
     canHide: false,
   },
   {
+    id: 'clearledgr/upcoming',
+    title: 'Upcoming',
+    subtitle: 'Due follow-ups across approvals, vendor replies, and posting.',
+    icon: 'activity',
+    navOrder: 25,
+    defaultPinned: false,
+    canHide: true,
+    opsOnly: true,
+  },
+  {
     id: 'clearledgr/connections',
     title: 'Connections',
-    subtitle: 'Set up Gmail, approvals, and ERP.',
+    subtitle: 'Fix Gmail, approval, or ERP setup when AP work is blocked.',
     icon: 'connections',
     navOrder: 30,
     defaultPinned: true,
     canHide: true,
+    opsOnly: true,
+    adminOnly: true,
   },
   {
     id: 'clearledgr/activity',
     title: 'Activity',
-    subtitle: 'Recent invoice activity.',
+    subtitle: 'Recent AP record movement.',
     icon: 'activity',
     navOrder: 40,
     defaultPinned: false,
     canHide: true,
+    opsOnly: true,
   },
   {
     id: 'clearledgr/vendors',
     title: 'Vendors',
-    subtitle: 'Vendor records and spend history.',
+    subtitle: 'Vendor context for AP follow-up.',
     icon: 'vendors',
     navOrder: 50,
     defaultPinned: false,
     canHide: true,
+    opsOnly: true,
+  },
+  {
+    id: 'clearledgr/templates',
+    title: 'Templates',
+    subtitle: 'Reusable AP reply templates for vendors and approvers.',
+    icon: 'activity',
+    navOrder: 55,
+    defaultPinned: false,
+    canHide: true,
+    opsOnly: true,
   },
   {
     id: 'clearledgr/rules',
     title: 'Approval Rules',
-    subtitle: 'Control how invoices are reviewed and approved.',
+    subtitle: 'Admin controls for approval routing.',
     icon: 'rules',
     navOrder: 60,
     defaultPinned: false,
     canHide: true,
+    opsOnly: true,
+    adminOnly: true,
   },
   {
     id: 'clearledgr/team',
     title: 'Team',
-    subtitle: 'Manage AP operators and approvers.',
+    subtitle: 'Invite and manage Gmail workspace access.',
     icon: 'team',
     navOrder: 70,
     defaultPinned: false,
     canHide: true,
+    opsOnly: true,
+    adminOnly: true,
   },
   {
     id: 'clearledgr/company',
     title: 'Company',
-    subtitle: 'Your organization profile and preferences.',
+    subtitle: 'Workspace identity and AP defaults.',
     icon: 'company',
     navOrder: 80,
     defaultPinned: false,
     canHide: true,
+    opsOnly: true,
+    adminOnly: true,
   },
   {
     id: 'clearledgr/plan',
     title: 'Plan',
-    subtitle: 'Usage and subscription settings.',
+    subtitle: 'Workspace plan summary.',
     icon: 'plan',
     navOrder: 90,
     defaultPinned: false,
     canHide: true,
+    opsOnly: true,
+    adminOnly: true,
   },
   {
     id: 'clearledgr/reconciliation',
     title: 'Reconciliation',
-    subtitle: 'Match bank transactions to invoices.',
+    subtitle: 'Future reconciliation groundwork.',
     icon: 'recon',
     navOrder: 100,
     defaultPinned: false,
     canHide: true,
+    opsOnly: true,
   },
   {
     id: 'clearledgr/health',
@@ -109,6 +142,18 @@ export const ROUTES = [
     navOrder: 110,
     defaultPinned: false,
     canHide: true,
+    opsOnly: true,
+    adminOnly: true,
+  },
+  {
+    id: 'clearledgr/reports',
+    title: 'Reports',
+    subtitle: 'Lightweight AP reporting tied to queue views.',
+    icon: 'activity',
+    navOrder: 115,
+    defaultPinned: false,
+    canHide: true,
+    opsOnly: true,
     adminOnly: true,
   },
 ];
@@ -116,6 +161,8 @@ export const ROUTES = [
 // Dynamic routes (not in AppMenu nav, accessed via navigation)
 export const DYNAMIC_ROUTES = [
   { id: 'clearledgr/invoice/:id', title: 'Invoice Detail', subtitle: '' },
+  { id: 'clearledgr/vendor/:name', title: 'Vendor Detail', subtitle: '' },
+  { id: 'clearledgr/pipeline-view/:ref', title: 'Pipeline View', subtitle: '' },
 ];
 
 export const DEFAULT_ROUTE = 'clearledgr/home';
@@ -124,9 +171,9 @@ export function getRouteById(id) {
   return ROUTES.find((route) => route.id === id) || null;
 }
 
-export function getNavEligibleRoutes({ includeAdmin = false } = {}) {
+export function getNavEligibleRoutes({ includeAdmin = false, includeOps = true } = {}) {
   return ROUTES
-    .filter((route) => includeAdmin || !route.adminOnly)
+    .filter((route) => (includeOps || !route.opsOnly) && (includeAdmin || !route.adminOnly))
     .sort((left, right) => Number(left.navOrder || 0) - Number(right.navOrder || 0));
 }
 
@@ -193,6 +240,7 @@ export function getRoutePreferenceState(routeId, preferences = {}, options = {})
       defaultPinned: false,
       canHide: false,
       adminOnly: false,
+      opsOnly: false,
     };
   }
 
@@ -209,6 +257,7 @@ export function getRoutePreferenceState(routeId, preferences = {}, options = {})
     defaultPinned,
     canHide: route.canHide !== false,
     adminOnly: Boolean(route.adminOnly),
+    opsOnly: Boolean(route.opsOnly),
   };
 }
 

@@ -372,6 +372,9 @@ class AuthStore:
             return None
         data = dict(row)
         data["is_active"] = bool(data.get("is_active"))
+        preferences = self._decode_json_value(data.get("preferences_json"), {})
+        data["preferences"] = preferences
+        data["preferences_json"] = preferences
         return data
 
     def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
@@ -385,6 +388,9 @@ class AuthStore:
             return None
         data = dict(row)
         data["is_active"] = bool(data.get("is_active"))
+        preferences = self._decode_json_value(data.get("preferences_json"), {})
+        data["preferences"] = preferences
+        data["preferences_json"] = preferences
         return data
 
     def get_user_by_google_id(self, google_id: str) -> Optional[Dict[str, Any]]:
@@ -398,6 +404,9 @@ class AuthStore:
             return None
         data = dict(row)
         data["is_active"] = bool(data.get("is_active"))
+        preferences = self._decode_json_value(data.get("preferences_json"), {})
+        data["preferences"] = preferences
+        data["preferences_json"] = preferences
         return data
 
     def validate_api_key(self, raw_key: str) -> Optional[Dict[str, Any]]:
@@ -484,12 +493,15 @@ class AuthStore:
         for row in rows:
             data = dict(row)
             data["is_active"] = bool(data.get("is_active"))
+            preferences = self._decode_json_value(data.get("preferences_json"), {})
+            data["preferences"] = preferences
+            data["preferences_json"] = preferences
             result.append(data)
         return result
 
     _USER_ALLOWED_COLUMNS = frozenset({
         "name", "email", "password_hash", "role", "is_active",
-        "organization_id", "google_id", "updated_at",
+        "organization_id", "google_id", "preferences_json", "preferences", "updated_at",
     })
 
     def update_user(self, user_id: str, **kwargs) -> bool:
@@ -502,6 +514,10 @@ class AuthStore:
         payload = dict(kwargs)
         if "is_active" in payload:
             payload["is_active"] = 1 if bool(payload["is_active"]) else 0
+        if "preferences" in payload and "preferences_json" not in payload:
+            payload["preferences_json"] = payload.pop("preferences")
+        if "preferences_json" in payload and isinstance(payload["preferences_json"], dict):
+            payload["preferences_json"] = json.dumps(payload["preferences_json"])
         payload["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clause = ", ".join(f"{k} = ?" for k in payload.keys())
         sql = self._prepare_sql(f"UPDATE users SET {set_clause} WHERE id = ?")
@@ -510,6 +526,15 @@ class AuthStore:
             cur.execute(sql, (*payload.values(), user_id))
             conn.commit()
             return cur.rowcount > 0
+
+    def get_user_preferences(self, user_id: str) -> Dict[str, Any]:
+        user = self.get_user(user_id)
+        if not user:
+            return {}
+        return dict(user.get("preferences") or {})
+
+    def update_user_preferences(self, user_id: str, preferences: Dict[str, Any]) -> bool:
+        return self.update_user(user_id, preferences=preferences or {})
 
     def upsert_google_user(
         self,

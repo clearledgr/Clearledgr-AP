@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:3bb80a080276558ab9ca783e4f5de57036e5c75f30d1c037c98c07ea9ca5d7c4 */
+/* clearledgr-source-fingerprint:fe4253da1a16d1cb331d88c9e6c1acfe3e1ac9eed62c7d896688a7a14b47ac84 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -53354,6 +53354,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     constructor() {
       this.queue = [];
       this.listeners = [];
+      this.currentUserRole = null;
       this.scanStatus = {
         state: "initializing",
         mode: "dom",
@@ -55130,6 +55131,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var store = {
     queueState: [],
     scanStatus: {},
+    currentUserRole: null,
     selectedItemId: null,
     currentThreadId: null,
     agentSessionsState: new Map,
@@ -55145,6 +55147,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     batchOpsPolicyState: { maxItems: 5, amountThreshold: "", selectionPreset: "queue_order" },
     auditState: { itemId: null, loading: false, events: [] },
     rowDecorated: new Set,
+    openComposeWithPrefill: null,
     update(patch) {
       Object.assign(this, patch);
       _listeners.forEach((fn) => fn());
@@ -55170,6 +55173,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         auditState: { itemId: null, loading: false, events: [] },
         contextUiState: { itemId: null, loading: false, error: "" }
       });
+    },
+    async composeWithPrefill(prefill = {}) {
+      if (typeof this.openComposeWithPrefill !== "function") {
+        throw new Error("compose_launcher_unavailable");
+      }
+      return this.openComposeWithPrefill(prefill);
     },
     getPrimaryItem() {
       const selected = this.findItemById(this.selectedItemId);
@@ -56844,6 +56853,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         flex-direction: column;
         gap: 6px;
       }
+      .cl-audit-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .cl-audit-section-title {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--cl-muted);
+      }
       .cl-audit-row {
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
@@ -56854,6 +56875,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         gap: 4px;
         overflow: hidden;
       }
+      .cl-audit-row[data-importance="high"] {
+        border-color: rgba(181, 95, 0, 0.28);
+        background: linear-gradient(180deg, rgba(255, 251, 235, 0.92), var(--cl-card));
+      }
+      .cl-audit-row[data-severity="error"],
+      .cl-audit-row[data-severity="warning"] {
+        box-shadow: inset 3px 0 0 rgba(180, 83, 9, 0.22);
+      }
       .cl-audit-main {
         display: flex;
         align-items: flex-start;
@@ -56861,12 +56890,49 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         gap: 8px;
         flex-wrap: wrap;
       }
+      .cl-audit-main-copy {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        flex: 1;
+        min-width: 0;
+      }
       .cl-audit-type {
         font-size: 12px;
         font-weight: 600;
         color: var(--cl-primary);
         flex: 1;
         min-width: 0;
+      }
+      .cl-audit-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .cl-audit-badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 2px 7px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        background: rgba(15, 23, 42, 0.05);
+        color: var(--cl-secondary);
+      }
+      .cl-audit-badge[data-importance="high"] {
+        background: rgba(234, 179, 8, 0.18);
+        color: #854d0e;
+      }
+      .cl-audit-badge[data-importance="medium"] {
+        background: rgba(37, 99, 235, 0.10);
+        color: #1d4ed8;
+      }
+      .cl-audit-badge[data-importance="low"],
+      .cl-audit-badge[data-kind="category"] {
+        background: rgba(15, 23, 42, 0.05);
+        color: var(--cl-muted);
       }
       .cl-audit-time {
         font-size: 11px;
@@ -56881,6 +56947,39 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         white-space: normal;
         overflow-wrap: anywhere;
         word-break: break-word;
+      }
+      .cl-audit-evidence,
+      .cl-audit-hint,
+      .cl-audit-more {
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--cl-muted);
+      }
+      .cl-audit-evidence {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .cl-audit-evidence-label {
+        font-weight: 700;
+        color: var(--cl-secondary);
+      }
+      .cl-audit-hint {
+        color: var(--cl-secondary);
+      }
+      .cl-audit-secondary {
+        border-top: 1px dashed var(--cl-border);
+        padding-top: 6px;
+      }
+      .cl-audit-secondary-summary {
+        cursor: pointer;
+        color: var(--cl-secondary);
+        font-size: 12px;
+        font-weight: 600;
+        list-style: none;
+      }
+      .cl-audit-secondary-summary::-webkit-details-marker {
+        display: none;
       }
       .cl-audit-detail-wrap {
         display: flex;
@@ -57414,8 +57513,93 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function getAuditEventPayload(event) {
     return parseJsonObject(event?.payload_json || event?.payloadJson || event?.payload) || {};
   }
+  function getAuditEventTimestamp(event) {
+    const raw = event?.ts || event?.created_at || event?.createdAt || event?.updated_at || event?.updatedAt || null;
+    if (!raw)
+      return 0;
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
   function normalizeAuditEventType(value) {
     return String(value || "").trim().toLowerCase().replace(/[-\s]+/g, "_");
+  }
+  var AUDIT_IMPORTANCE_RANK = { high: 0, medium: 1, low: 2 };
+  var AUDIT_SEVERITY_RANK = { error: 0, warning: 1, success: 2, info: 3 };
+  function normalizeAuditImportance(value) {
+    const token = String(value || "").trim().toLowerCase();
+    if (token === "high" || token === "medium" || token === "low")
+      return token;
+    return "medium";
+  }
+  function getAuditImportanceLabel(value) {
+    const importance = normalizeAuditImportance(value);
+    if (importance === "high")
+      return "Key";
+    if (importance === "low")
+      return "Background";
+    return "Notable";
+  }
+  function buildAuditRow(event) {
+    const payload = getAuditEventPayload(event);
+    const eventType = normalizeAuditEventType(event?.event_type || event?.eventType || payload?.event_type || event?.action || "action_recorded");
+    const safeTitle = eventType === "state_transition" ? "Status updated" : "Action recorded";
+    let safeDetail = "Action recorded for this invoice.";
+    if (eventType === "state_transition")
+      safeDetail = "Invoice status changed.";
+    else if (eventType === "erp_post_completed")
+      safeDetail = "Invoice posting completed successfully.";
+    else if (eventType === "erp_post_failed")
+      safeDetail = "Clearledgr could not complete ERP posting.";
+    const importance = normalizeAuditImportance(event?.operator_importance || event?.operator?.importance);
+    const severity = String(event?.operator_severity || event?.operator?.severity || "info").trim().toLowerCase() || "info";
+    const evidenceLabel = trimText(String(event?.operator_evidence_label || event?.operator?.evidence_label || event?.operator?.evidence?.label || "").trim(), 48);
+    const evidenceDetail = trimText(String(event?.operator_evidence_detail || event?.operator?.evidence_detail || event?.operator?.evidence?.detail || "").trim(), 180);
+    const actionHint = trimText(String(event?.operator_action_hint || event?.operator_next_action || event?.operator?.next_action || event?.operator?.action_hint || "").trim(), 160);
+    const timestampRaw = getAuditEventTimestamp(event);
+    return {
+      event,
+      eventType,
+      title: trimText(String(event?.operator_title || safeTitle), 72),
+      detail: trimText(String(event?.operator_message || safeDetail).trim(), 160),
+      timestampRaw,
+      timestamp: formatDateTime(event?.ts || event?.created_at || event?.createdAt || event?.updated_at || event?.updatedAt || event?.timestamp),
+      severity,
+      importance,
+      importanceLabel: getAuditImportanceLabel(importance),
+      category: String(event?.operator_category || event?.operator?.category || "").trim().toLowerCase(),
+      evidenceLabel,
+      evidenceDetail,
+      actionHint,
+      isBackground: importance === "low"
+    };
+  }
+  function partitionAuditEvents(events, options = {}) {
+    const primaryLimit = Number.isFinite(Number(options.primaryLimit)) ? Math.max(0, Number(options.primaryLimit)) : Number.POSITIVE_INFINITY;
+    const secondaryLimit = Number.isFinite(Number(options.secondaryLimit)) ? Math.max(0, Number(options.secondaryLimit)) : Number.POSITIVE_INFINITY;
+    const rows = (Array.isArray(events) ? events : []).map((event) => buildAuditRow(event)).sort((left, right) => {
+      const importanceDelta = (AUDIT_IMPORTANCE_RANK[left.importance] ?? 1) - (AUDIT_IMPORTANCE_RANK[right.importance] ?? 1);
+      if (importanceDelta !== 0)
+        return importanceDelta;
+      const severityDelta = (AUDIT_SEVERITY_RANK[left.severity] ?? 3) - (AUDIT_SEVERITY_RANK[right.severity] ?? 3);
+      if (severityDelta !== 0)
+        return severityDelta;
+      return right.timestampRaw - left.timestampRaw;
+    });
+    const primaryRows = [];
+    const secondaryRows = [];
+    rows.forEach((row) => {
+      if (row.isBackground)
+        secondaryRows.push(row);
+      else
+        primaryRows.push(row);
+    });
+    return {
+      rows,
+      primaryRows: primaryRows.slice(0, primaryLimit),
+      secondaryRows: secondaryRows.slice(0, secondaryLimit),
+      primaryHiddenCount: Math.max(0, primaryRows.length - Math.min(primaryRows.length, primaryLimit)),
+      secondaryHiddenCount: Math.max(0, secondaryRows.length - Math.min(secondaryRows.length, secondaryLimit))
+    };
   }
   function getReasonSheetDefaults(actionType = "generic") {
     const n3 = String(actionType || "").trim().toLowerCase();
@@ -57568,6 +57752,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
 
+  // src/utils/roles.js
+  function normalizeUserRole(role) {
+    return String(role || "").trim().toLowerCase();
+  }
+  function hasOpsAccessRole(role) {
+    return ["owner", "admin", "operator"].includes(normalizeUserRole(role));
+  }
+  function hasAdminAccessRole(role) {
+    return ["owner", "admin"].includes(normalizeUserRole(role));
+  }
+
   // src/utils/work-actions.js
   function normalizeWorkState(state) {
     const normalized = String(state || "").trim().toLowerCase();
@@ -57579,7 +57774,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "posted_to_erp";
     return normalized;
   }
-  function getPrimaryActionConfig(state) {
+  function getPrimaryActionConfig(state, actorRole = "operator") {
+    if (!hasOpsAccessRole(actorRole))
+      return null;
     const normalized = normalizeWorkState(state);
     if (normalized === "received" || normalized === "validated") {
       return { id: "request_approval", label: "Request approval" };
@@ -57611,12 +57808,769 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     return "";
   }
-  function canRejectWorkItem(state) {
+  function canRejectWorkItem(state, actorRole = "operator") {
+    if (!hasOpsAccessRole(actorRole))
+      return false;
     const normalized = normalizeWorkState(state);
     return ["received", "validated", "needs_approval", "needs_info"].includes(normalized);
   }
-  function canNudgeApprover(state) {
+  function canNudgeApprover(state, actorRole = "operator") {
+    if (!hasOpsAccessRole(actorRole))
+      return false;
     return normalizeWorkState(state) === "needs_approval";
+  }
+
+  // src/routes/pipeline-views.js
+  var LEGACY_STORAGE_PREFIX = "clearledgr_pipeline_view_preferences_v1";
+  var STORAGE_PREFIX = "clearledgr_pipeline_view_preferences_v2";
+  var NAVIGATION_PREFIX = "clearledgr_pipeline_navigation_v1";
+  var MAX_CUSTOM_VIEWS = 8;
+  var MAX_PINNED_VIEW_REFS = 6;
+  var SLICE_ALIASES = {
+    approval_backlog: "waiting_on_approval",
+    exceptions: "blocked_exception"
+  };
+  var SORT_COLUMNS = new Set([
+    "queue_age",
+    "due_date",
+    "amount",
+    "updated_at",
+    "approval_wait",
+    "priority",
+    "vendor",
+    "state",
+    "invoice"
+  ]);
+  var PIPELINE_BUILTIN_SLICES = [
+    { id: "all_open", label: "All open", description: "Every invoice still moving through AP." },
+    { id: "waiting_on_approval", label: "Waiting on approval", description: "Invoices routed to approvers and still waiting." },
+    { id: "ready_to_post", label: "Ready to post", description: "Approved invoices ready for ERP posting." },
+    { id: "needs_info", label: "Needs info", description: "Invoices blocked on vendor or field follow-up." },
+    { id: "failed_post", label: "Failed post", description: "Invoices that need ERP retry or posting recovery." },
+    { id: "blocked_exception", label: "Blocked / exception", description: "Policy, budget, confidence, or PO blockers." },
+    { id: "due_soon", label: "Due soon", description: "Open invoices due within the next 7 days." },
+    { id: "overdue", label: "Overdue", description: "Open invoices already past due." }
+  ];
+  function buildDefaultFilters() {
+    return {
+      state: "all",
+      vendor: "",
+      due: "all",
+      blocker: "all",
+      amount: "all",
+      approvalAge: "all",
+      erpStatus: "all"
+    };
+  }
+  var PIPELINE_STARTER_VIEWS = [
+    {
+      id: "approval_chase",
+      name: "Approval chase",
+      description: "Longest-waiting approvals first.",
+      snapshot: {
+        activeSliceId: "waiting_on_approval",
+        viewMode: "table",
+        sortCol: "approval_wait",
+        sortDir: "desc",
+        filters: buildDefaultFilters()
+      }
+    },
+    {
+      id: "urgent_due",
+      name: "Urgent due",
+      description: "Invoices due soon with nearest due dates first.",
+      snapshot: {
+        activeSliceId: "due_soon",
+        viewMode: "table",
+        sortCol: "due_date",
+        sortDir: "asc",
+        filters: buildDefaultFilters()
+      }
+    },
+    {
+      id: "posting_watch",
+      name: "Posting watch",
+      description: "Highest-value approved invoices ready for ERP posting.",
+      snapshot: {
+        activeSliceId: "ready_to_post",
+        viewMode: "table",
+        sortCol: "amount",
+        sortDir: "desc",
+        filters: buildDefaultFilters()
+      }
+    },
+    {
+      id: "exception_triage",
+      name: "Exception triage",
+      description: "Blocked invoices ordered by queue age.",
+      snapshot: {
+        activeSliceId: "blocked_exception",
+        viewMode: "table",
+        sortCol: "queue_age",
+        sortDir: "desc",
+        filters: {
+          ...buildDefaultFilters(),
+          blocker: "all"
+        }
+      }
+    }
+  ];
+  function normalizeText(value, fallback = "") {
+    return String(value || "").trim() || fallback;
+  }
+  function normalizeUserEmail(value) {
+    return normalizeText(value).toLowerCase();
+  }
+  function resolvePipelineScope(scopeOrOrgId, maybeUserEmail = "") {
+    if (scopeOrOrgId && typeof scopeOrOrgId === "object") {
+      return {
+        orgId: normalizeText(scopeOrOrgId.orgId || scopeOrOrgId.organizationId, "default"),
+        userEmail: normalizeUserEmail(scopeOrOrgId.userEmail || scopeOrOrgId.email || maybeUserEmail)
+      };
+    }
+    return {
+      orgId: normalizeText(scopeOrOrgId, "default"),
+      userEmail: normalizeUserEmail(maybeUserEmail)
+    };
+  }
+  function getLegacyPipelinePreferenceKey(orgId) {
+    return `${LEGACY_STORAGE_PREFIX}:${normalizeText(orgId, "default")}`;
+  }
+  function getNavigationKey(scopeOrOrgId, maybeUserEmail = "") {
+    const scope = resolvePipelineScope(scopeOrOrgId, maybeUserEmail);
+    return `${NAVIGATION_PREFIX}:${scope.orgId}:${scope.userEmail || "anonymous"}`;
+  }
+  function normalizePipelineSliceId(sliceId) {
+    const normalized = normalizeText(sliceId, "all_open");
+    return SLICE_ALIASES[normalized] || normalized;
+  }
+  function normalizeSortColumn(sortCol, fallback = "queue_age") {
+    const normalized = normalizeText(sortCol, fallback);
+    return SORT_COLUMNS.has(normalized) ? normalized : fallback;
+  }
+  function normalizeViewName(value) {
+    return normalizeText(value).slice(0, 48);
+  }
+  function normalizeViewDescription(value) {
+    return normalizeText(value).slice(0, 120);
+  }
+  function normalizeVendorFilter(value) {
+    return normalizeText(value).slice(0, 80);
+  }
+  function normalizeSearchQuery(value) {
+    return normalizeText(value).slice(0, 120);
+  }
+  function normalizeFilters(filters = {}) {
+    return {
+      state: normalizeText(filters?.state, "all"),
+      vendor: normalizeVendorFilter(filters?.vendor),
+      due: normalizeText(filters?.due, "all"),
+      blocker: normalizeText(filters?.blocker, "all"),
+      amount: normalizeText(filters?.amount, "all"),
+      approvalAge: normalizeText(filters?.approvalAge, "all"),
+      erpStatus: normalizeText(filters?.erpStatus, "all")
+    };
+  }
+  function normalizeSnapshot(snapshot = {}) {
+    return {
+      activeSliceId: normalizePipelineSliceId(snapshot?.activeSliceId),
+      viewMode: normalizeText(snapshot?.viewMode, "table") === "cards" ? "cards" : "table",
+      sortCol: normalizeSortColumn(snapshot?.sortCol, "queue_age"),
+      sortDir: normalizeText(snapshot?.sortDir, "desc") === "asc" ? "asc" : "desc",
+      filters: normalizeFilters(snapshot?.filters)
+    };
+  }
+  function normalizePipelineViewRef(value) {
+    const raw = normalizeText(value).toLowerCase();
+    if (!raw)
+      return "";
+    if (raw.startsWith("starter:") || raw.startsWith("user:"))
+      return raw;
+    return `user:${raw}`;
+  }
+  function defaultPinnedViewRefs() {
+    return ["starter:approval_chase", "starter:urgent_due"];
+  }
+  function sanitizeCustomViews(customViews = []) {
+    return (Array.isArray(customViews) ? customViews : []).map((view) => ({
+      id: normalizeText(view?.id),
+      name: normalizeViewName(view?.name),
+      description: normalizeViewDescription(view?.description),
+      pinned: Boolean(view?.pinned),
+      snapshot: normalizeSnapshot(view?.snapshot)
+    })).filter((view) => view.id && view.name).slice(0, MAX_CUSTOM_VIEWS);
+  }
+  function normalizePinnedViewRefs(refs = [], customViews = []) {
+    const explicitRefs = [...new Set((Array.isArray(refs) ? refs : []).map((ref) => normalizePipelineViewRef(ref)).filter(Boolean))];
+    if (explicitRefs.length > 0)
+      return explicitRefs.slice(0, MAX_PINNED_VIEW_REFS);
+    const legacyPinnedRefs = sanitizeCustomViews(customViews).filter((view) => view.pinned).map((view) => `user:${view.id}`);
+    if (legacyPinnedRefs.length > 0)
+      return legacyPinnedRefs.slice(0, MAX_PINNED_VIEW_REFS);
+    return defaultPinnedViewRefs().slice(0, MAX_PINNED_VIEW_REFS);
+  }
+  function sanitizeStarterViews() {
+    return (Array.isArray(PIPELINE_STARTER_VIEWS) ? PIPELINE_STARTER_VIEWS : []).map((view) => ({
+      id: normalizeText(view?.id),
+      name: normalizeViewName(view?.name),
+      description: normalizeViewDescription(view?.description),
+      scope: "starter",
+      snapshot: normalizeSnapshot(view?.snapshot)
+    })).filter((view) => view.id && view.name);
+  }
+  function mergeCustomView(currentViews = [], incomingView = {}) {
+    const existingViews = Array.isArray(currentViews) ? currentViews.filter((view) => view.id !== incomingView.id) : [];
+    return sanitizeCustomViews([...existingViews, incomingView]);
+  }
+  function readStorageValue(key) {
+    if (typeof window === "undefined" || !window?.localStorage) {
+      return null;
+    }
+    try {
+      return window.localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+  function writeStorageValue(key, value) {
+    if (typeof window === "undefined" || !window?.localStorage) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(key, value);
+    } catch {}
+  }
+  function normalizePipelineState(state) {
+    const normalized = normalizeText(state).toLowerCase();
+    if (!normalized)
+      return "received";
+    if (normalized === "pending_approval")
+      return "needs_approval";
+    if (normalized === "posted")
+      return "posted_to_erp";
+    return normalized;
+  }
+  function isClosedPipelineState(state) {
+    return ["posted_to_erp", "closed", "rejected"].includes(normalizePipelineState(state));
+  }
+  function getPipelinePreferenceKey(scopeOrOrgId, maybeUserEmail = "") {
+    const scope = resolvePipelineScope(scopeOrOrgId, maybeUserEmail);
+    return `${STORAGE_PREFIX}:${scope.orgId}:${scope.userEmail || "anonymous"}`;
+  }
+  function defaultPipelinePreferences() {
+    return {
+      activeSliceId: "all_open",
+      viewMode: "table",
+      sortCol: "queue_age",
+      sortDir: "desc",
+      filters: buildDefaultFilters(),
+      customViews: [],
+      pinnedViewRefs: defaultPinnedViewRefs()
+    };
+  }
+  function defaultPipelineNavigation() {
+    return {
+      focusItemId: "",
+      focusThreadId: "",
+      focusMessageId: "",
+      preferredSliceId: "",
+      source: "",
+      requestedAt: ""
+    };
+  }
+  function normalizePipelinePreferences(value = {}) {
+    const customViews = sanitizeCustomViews(value?.customViews);
+    const defaults = defaultPipelinePreferences();
+    return {
+      activeSliceId: normalizePipelineSliceId(value?.activeSliceId || defaults.activeSliceId),
+      viewMode: normalizeSnapshot(value).viewMode,
+      sortCol: normalizeSortColumn(value?.sortCol || defaults.sortCol, defaults.sortCol),
+      sortDir: normalizeText(value?.sortDir || defaults.sortDir, defaults.sortDir) === "asc" ? "asc" : "desc",
+      filters: normalizeFilters(value?.filters),
+      customViews,
+      pinnedViewRefs: normalizePinnedViewRefs(value?.pinnedViewRefs, customViews)
+    };
+  }
+  function pipelinePreferencesEqual(left = {}, right = {}) {
+    return JSON.stringify(normalizePipelinePreferences(left)) === JSON.stringify(normalizePipelinePreferences(right));
+  }
+  function hasMeaningfulPipelinePreferences(value = {}) {
+    const normalized = normalizePipelinePreferences(value);
+    const defaults = defaultPipelinePreferences();
+    return normalized.activeSliceId !== defaults.activeSliceId || normalized.viewMode !== defaults.viewMode || normalized.sortCol !== defaults.sortCol || normalized.sortDir !== defaults.sortDir || JSON.stringify(normalized.filters) !== JSON.stringify(defaults.filters) || normalized.customViews.length > 0 || JSON.stringify(normalized.pinnedViewRefs || []) !== JSON.stringify(defaults.pinnedViewRefs || []);
+  }
+  function getBootstrappedPipelinePreferences(bootstrap = {}) {
+    return bootstrap?.current_user?.preferences?.gmail_extension?.pipeline_views || bootstrap?.current_user?.preferences?.pipeline_views || null;
+  }
+  function buildPipelinePreferencePatch(preferences = {}) {
+    return {
+      gmail_extension: {
+        pipeline_views: normalizePipelinePreferences(preferences)
+      }
+    };
+  }
+  function getPipelineViewRef(view = {}) {
+    const scope = normalizeText(view?.scope, "user").toLowerCase() === "starter" ? "starter" : "user";
+    const id = normalizeText(view?.id);
+    if (!id)
+      return "";
+    return `${scope}:${id.toLowerCase()}`;
+  }
+  function pipelineSnapshotsEqual(left = {}, right = {}) {
+    return JSON.stringify(normalizeSnapshot(left)) === JSON.stringify(normalizeSnapshot(right));
+  }
+  function getStarterPipelineViews(preferences = {}) {
+    const normalized = normalizePipelinePreferences(preferences);
+    const pinnedRefs = new Set(normalized.pinnedViewRefs || []);
+    return sanitizeStarterViews().map((view) => ({
+      ...view,
+      pinned: pinnedRefs.has(getPipelineViewRef(view))
+    }));
+  }
+  function getPersonalPipelineViews(preferences = {}) {
+    const normalized = normalizePipelinePreferences(preferences);
+    const pinnedRefs = new Set(normalized.pinnedViewRefs || []);
+    return sanitizeCustomViews(normalized.customViews).map((view) => ({
+      ...view,
+      scope: "user",
+      pinned: pinnedRefs.has(getPipelineViewRef({ ...view, scope: "user" }))
+    }));
+  }
+  function getAllPipelineViews(preferences = {}, { includeStarter = true } = {}) {
+    const views = [];
+    if (includeStarter)
+      views.push(...getStarterPipelineViews(preferences));
+    views.push(...getPersonalPipelineViews(preferences));
+    return views;
+  }
+  function resolvePipelineViewByRef(preferences = {}, viewRef = "", options = {}) {
+    const normalizedRef = normalizePipelineViewRef(viewRef);
+    if (!normalizedRef)
+      return null;
+    return getAllPipelineViews(preferences, options).find((view) => getPipelineViewRef(view) === normalizedRef) || null;
+  }
+  function normalizePipelineNavigation(value = {}) {
+    return {
+      focusItemId: normalizeText(value?.focusItemId),
+      focusThreadId: normalizeText(value?.focusThreadId),
+      focusMessageId: normalizeText(value?.focusMessageId),
+      preferredSliceId: normalizePipelineSliceId(value?.preferredSliceId || ""),
+      source: normalizeText(value?.source),
+      requestedAt: normalizeText(value?.requestedAt)
+    };
+  }
+  function readPipelinePreferences(scopeOrOrgId, maybeUserEmail = "") {
+    const key = getPipelinePreferenceKey(scopeOrOrgId, maybeUserEmail);
+    const raw = readStorageValue(key);
+    if (raw) {
+      try {
+        return normalizePipelinePreferences(JSON.parse(raw));
+      } catch {
+        return defaultPipelinePreferences();
+      }
+    }
+    const scope = resolvePipelineScope(scopeOrOrgId, maybeUserEmail);
+    const legacyRaw = readStorageValue(getLegacyPipelinePreferenceKey(scope.orgId));
+    if (!legacyRaw)
+      return defaultPipelinePreferences();
+    try {
+      return normalizePipelinePreferences(JSON.parse(legacyRaw));
+    } catch {
+      return defaultPipelinePreferences();
+    }
+  }
+  function writePipelinePreferences(scopeOrOrgId, maybeUserEmailOrValue = "", maybeValue = null) {
+    const hasExplicitUserEmail = typeof maybeUserEmailOrValue === "string" || maybeUserEmailOrValue == null;
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrValue : "";
+    const value = hasExplicitUserEmail ? maybeValue : maybeUserEmailOrValue;
+    const normalized = normalizePipelinePreferences(value || {});
+    writeStorageValue(getPipelinePreferenceKey(scopeOrOrgId, userEmail), JSON.stringify(normalized));
+    return normalized;
+  }
+  function readPipelineNavigation(scopeOrOrgId, maybeUserEmail = "") {
+    const raw = readStorageValue(getNavigationKey(scopeOrOrgId, maybeUserEmail));
+    if (!raw)
+      return defaultPipelineNavigation();
+    try {
+      return normalizePipelineNavigation(JSON.parse(raw));
+    } catch {
+      return defaultPipelineNavigation();
+    }
+  }
+  function writePipelineNavigation(scopeOrOrgId, maybeUserEmailOrValue = "", maybeValue = null) {
+    const hasExplicitUserEmail = typeof maybeUserEmailOrValue === "string" || maybeUserEmailOrValue == null;
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrValue : "";
+    const value = hasExplicitUserEmail ? maybeValue : maybeUserEmailOrValue;
+    const normalized = normalizePipelineNavigation(value || {});
+    writeStorageValue(getNavigationKey(scopeOrOrgId, userEmail), JSON.stringify(normalized));
+    return normalized;
+  }
+  function clearPipelineNavigation(scopeOrOrgId, maybeUserEmail = "") {
+    return writePipelineNavigation(scopeOrOrgId, maybeUserEmail, defaultPipelineNavigation());
+  }
+  function getSuggestedPipelineSlice(item = {}) {
+    const state = normalizePipelineState(item.state);
+    const dueDate = parseDate(item?.due_date);
+    const blockers = getPipelineBlockerKinds(item);
+    const now = new Date;
+    if (state === "needs_approval")
+      return "waiting_on_approval";
+    if (state === "ready_to_post")
+      return "ready_to_post";
+    if (state === "needs_info")
+      return "needs_info";
+    if (state === "failed_post")
+      return "failed_post";
+    if (dueDate && !isClosedPipelineState(state) && diffInDays(dueDate, now) < 0)
+      return "overdue";
+    if (blockers.some((kind) => ["exception", "confidence", "budget", "po", "erp"].includes(kind))) {
+      return "blocked_exception";
+    }
+    if (dueDate && !isClosedPipelineState(state) && diffInDays(dueDate, now) <= 7)
+      return "due_soon";
+    return "all_open";
+  }
+  function focusPipelineItem(scopeOrOrgId, maybeUserEmailOrItem = "", maybeItem = null, maybeSource = "") {
+    const hasExplicitUserEmail = typeof maybeUserEmailOrItem === "string" || maybeUserEmailOrItem == null;
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrItem : "";
+    const item = hasExplicitUserEmail ? maybeItem : maybeUserEmailOrItem;
+    const source = hasExplicitUserEmail ? maybeSource : maybeItem;
+    const normalizedItem = item && typeof item === "object" ? item : {};
+    return writePipelineNavigation(scopeOrOrgId, userEmail, {
+      focusItemId: normalizeText(normalizedItem?.id),
+      focusThreadId: normalizeText(normalizedItem?.thread_id || normalizedItem?.threadId),
+      focusMessageId: normalizeText(normalizedItem?.message_id || normalizedItem?.messageId),
+      preferredSliceId: getSuggestedPipelineSlice(normalizedItem),
+      source: normalizeText(source),
+      requestedAt: new Date().toISOString()
+    });
+  }
+  function activatePipelineSlice(scopeOrOrgId, maybeUserEmailOrSliceId = "", maybeSliceId = null) {
+    const hasExplicitUserEmail = typeof maybeSliceId === "string";
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrSliceId : "";
+    const sliceId = hasExplicitUserEmail ? maybeSliceId : maybeUserEmailOrSliceId;
+    const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+    return writePipelinePreferences(scopeOrOrgId, userEmail, {
+      ...current,
+      activeSliceId: normalizePipelineSliceId(sliceId)
+    });
+  }
+  function createSavedPipelineView(scopeOrOrgId, maybeUserEmailOrValue = "", maybeValue = null) {
+    const hasExplicitUserEmail = typeof maybeUserEmailOrValue === "string" || maybeUserEmailOrValue == null;
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrValue : "";
+    const value = hasExplicitUserEmail ? maybeValue : maybeUserEmailOrValue;
+    const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+    const trimmedName = normalizeViewName(value?.name);
+    if (!trimmedName)
+      return current;
+    const id = `view_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const customViews = mergeCustomView(current.customViews, {
+      id,
+      name: trimmedName,
+      description: normalizeViewDescription(value?.description),
+      pinned: Boolean(value?.pinned),
+      snapshot: normalizeSnapshot(value?.snapshot || current)
+    });
+    const pinnedViewRefs = Boolean(value?.pinned) ? [`user:${id}`, ...(current.pinnedViewRefs || []).filter((ref) => ref !== `user:${id}`)].slice(0, MAX_PINNED_VIEW_REFS) : current.pinnedViewRefs;
+    return writePipelinePreferences(scopeOrOrgId, userEmail, {
+      ...current,
+      customViews,
+      pinnedViewRefs
+    });
+  }
+  function updateSavedPipelineView(scopeOrOrgId, maybeUserEmailOrViewId = "", maybeViewIdOrPatch = null, maybePatch = null) {
+    const hasExplicitUserEmail = typeof maybeUserEmailOrViewId === "string" && typeof maybeViewIdOrPatch === "string";
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrViewId : "";
+    const viewId = hasExplicitUserEmail ? maybeViewIdOrPatch : maybeUserEmailOrViewId;
+    const patch = hasExplicitUserEmail ? maybePatch : maybeViewIdOrPatch;
+    const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+    const customViews = sanitizeCustomViews(current.customViews.map((view) => view.id === viewId ? {
+      ...view,
+      name: normalizeViewName(patch?.name || view.name),
+      description: normalizeViewDescription(patch?.description ?? view.description),
+      snapshot: normalizeSnapshot(patch?.snapshot || view.snapshot)
+    } : view));
+    return writePipelinePreferences(scopeOrOrgId, userEmail, {
+      ...current,
+      customViews
+    });
+  }
+  function pinPipelineView(scopeOrOrgId, maybeUserEmailOrViewRef = "", maybeViewRef = null) {
+    const hasExplicitUserEmail = typeof maybeViewRef === "string";
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrViewRef : "";
+    const viewRef = hasExplicitUserEmail ? maybeViewRef : maybeUserEmailOrViewRef;
+    const normalizedRef = normalizePipelineViewRef(viewRef);
+    if (!normalizedRef)
+      return readPipelinePreferences(scopeOrOrgId, userEmail);
+    const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+    return writePipelinePreferences(scopeOrOrgId, userEmail, {
+      ...current,
+      pinnedViewRefs: [normalizedRef, ...(current.pinnedViewRefs || []).filter((ref) => ref !== normalizedRef)].slice(0, MAX_PINNED_VIEW_REFS)
+    });
+  }
+  function unpinPipelineView(scopeOrOrgId, maybeUserEmailOrViewRef = "", maybeViewRef = null) {
+    const hasExplicitUserEmail = typeof maybeViewRef === "string";
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrViewRef : "";
+    const viewRef = hasExplicitUserEmail ? maybeViewRef : maybeUserEmailOrViewRef;
+    const normalizedRef = normalizePipelineViewRef(viewRef);
+    const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+    return writePipelinePreferences(scopeOrOrgId, userEmail, {
+      ...current,
+      pinnedViewRefs: (current.pinnedViewRefs || []).filter((ref) => ref !== normalizedRef)
+    });
+  }
+  function removeSavedPipelineView(scopeOrOrgId, maybeUserEmailOrViewId = "", maybeViewId = null) {
+    const hasExplicitUserEmail = typeof maybeViewId === "string";
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrViewId : "";
+    const viewId = hasExplicitUserEmail ? maybeViewId : maybeUserEmailOrViewId;
+    const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+    const viewRef = `user:${normalizeText(viewId).toLowerCase()}`;
+    return writePipelinePreferences(scopeOrOrgId, userEmail, {
+      ...current,
+      customViews: current.customViews.filter((view) => view.id !== viewId),
+      pinnedViewRefs: (current.pinnedViewRefs || []).filter((ref) => ref !== viewRef)
+    });
+  }
+  function getPinnedPipelineViews(preferences = {}) {
+    const normalized = normalizePipelinePreferences(preferences);
+    return (normalized.pinnedViewRefs || []).map((viewRef) => resolvePipelineViewByRef(normalized, viewRef)).filter(Boolean);
+  }
+  function parseDate(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  function diffInDays(left, right) {
+    const diffMs = left.getTime() - right.getTime();
+    return Math.floor(diffMs / 86400000);
+  }
+  function diffInMinutes(left, right) {
+    const diffMs = right.getTime() - left.getTime();
+    return Math.max(0, Math.floor(diffMs / 60000));
+  }
+  function getQueueEnteredAt(item = {}) {
+    return parseDate(item?.queue_entered_at || item?.received_at || item?.created_at || item?.updated_at);
+  }
+  function getQueueAgeMinutes(item = {}, now = new Date) {
+    const startedAt = getQueueEnteredAt(item);
+    if (!startedAt)
+      return 0;
+    return diffInMinutes(startedAt, now);
+  }
+  function getApprovalRequestedAt(item = {}) {
+    const state = normalizePipelineState(item.state);
+    if (state !== "needs_approval")
+      return null;
+    return parseDate(item?.approval_requested_at || item?.updated_at || item?.created_at);
+  }
+  function getApprovalWaitMinutes(item = {}, now = new Date) {
+    const startedAt = getApprovalRequestedAt(item);
+    if (!startedAt)
+      return 0;
+    return diffInMinutes(startedAt, now);
+  }
+  function getErpStatus(item = {}) {
+    const state = normalizePipelineState(item.state);
+    const normalizedStatus = normalizeText(item?.erp_status).toLowerCase();
+    if (normalizedStatus)
+      return normalizedStatus;
+    if (state === "posted_to_erp" || state === "closed" || item?.erp_reference || item?.erp_bill_id)
+      return "posted";
+    if (state === "failed_post")
+      return "failed";
+    if (state === "ready_to_post" || state === "approved")
+      return "ready";
+    if (item?.erp_connector_available || item?.connector_available)
+      return "connected";
+    return "not_connected";
+  }
+  function getPipelineBlockerKinds(item = {}) {
+    const blockers = new Set;
+    const state = normalizePipelineState(item.state);
+    const exceptionCode = normalizeText(item?.exception_code).toLowerCase();
+    const budgetStatus = normalizeText(item?.budget_status).toLowerCase();
+    const confidence = Number(item?.confidence);
+    if (state === "needs_approval")
+      blockers.add("approval");
+    if (state === "needs_info")
+      blockers.add("info");
+    if (state === "failed_post")
+      blockers.add("erp");
+    if (exceptionCode)
+      blockers.add("exception");
+    if (item?.requires_field_review || Number.isFinite(confidence) && confidence < 0.95)
+      blockers.add("confidence");
+    if (item?.budget_requires_decision || ["critical", "exceeded"].includes(budgetStatus))
+      blockers.add("budget");
+    if (exceptionCode.includes("po") || !item?.po_number && exceptionCode)
+      blockers.add("po");
+    return Array.from(blockers);
+  }
+  function matchesPipelineSlice(item = {}, sliceId = "all_open", now = new Date) {
+    const state = normalizePipelineState(item.state);
+    const dueDate = parseDate(item?.due_date);
+    const blockers = getPipelineBlockerKinds(item);
+    const normalizedSlice = normalizePipelineSliceId(sliceId);
+    switch (normalizedSlice) {
+      case "all":
+        return true;
+      case "all_open":
+        return !isClosedPipelineState(state);
+      case "waiting_on_approval":
+        return state === "needs_approval";
+      case "ready_to_post":
+        return state === "ready_to_post";
+      case "needs_info":
+        return state === "needs_info";
+      case "failed_post":
+        return state === "failed_post";
+      case "blocked_exception":
+        return blockers.some((kind) => ["exception", "confidence", "budget", "po", "erp"].includes(kind));
+      case "due_soon":
+        if (!dueDate || isClosedPipelineState(state))
+          return false;
+        return diffInDays(dueDate, now) >= 0 && diffInDays(dueDate, now) <= 7;
+      case "overdue":
+        if (!dueDate || isClosedPipelineState(state))
+          return false;
+        return diffInDays(dueDate, now) < 0;
+      default:
+        return true;
+    }
+  }
+  function matchesPipelineFilters(item = {}, filters = {}, now = new Date) {
+    const state = normalizePipelineState(item.state);
+    const dueDate = parseDate(item?.due_date);
+    const blockers = getPipelineBlockerKinds(item);
+    const amount = Number(item?.amount || 0);
+    const vendor = normalizeText(item?.vendor_name || item?.vendor || "").toLowerCase();
+    const approvalWaitMinutes = getApprovalWaitMinutes(item, now);
+    const erpStatus = getErpStatus(item);
+    const normalizedFilters = normalizeFilters(filters);
+    if (normalizedFilters.state !== "all" && state !== normalizePipelineState(normalizedFilters.state))
+      return false;
+    if (normalizedFilters.vendor && !vendor.includes(normalizedFilters.vendor.toLowerCase()))
+      return false;
+    if (normalizedFilters.due === "overdue") {
+      if (!dueDate || diffInDays(dueDate, now) >= 0)
+        return false;
+    } else if (normalizedFilters.due === "due_7d") {
+      if (!dueDate)
+        return false;
+      const days = diffInDays(dueDate, now);
+      if (days < 0 || days > 7)
+        return false;
+    } else if (normalizedFilters.due === "no_due" && dueDate) {
+      return false;
+    }
+    if (normalizedFilters.blocker !== "all" && !blockers.includes(normalizedFilters.blocker))
+      return false;
+    if (normalizedFilters.amount === "under_1k" && amount >= 1000)
+      return false;
+    if (normalizedFilters.amount === "1k_10k" && (amount < 1000 || amount > 1e4))
+      return false;
+    if (normalizedFilters.amount === "over_10k" && amount <= 1e4)
+      return false;
+    if (normalizedFilters.approvalAge !== "all") {
+      if (state !== "needs_approval")
+        return false;
+      if (normalizedFilters.approvalAge === "under_24h" && approvalWaitMinutes >= 1440)
+        return false;
+      if (normalizedFilters.approvalAge === "1d_3d" && (approvalWaitMinutes < 1440 || approvalWaitMinutes > 4320))
+        return false;
+      if (normalizedFilters.approvalAge === "over_3d" && approvalWaitMinutes <= 4320)
+        return false;
+    }
+    if (normalizedFilters.erpStatus !== "all" && erpStatus !== normalizedFilters.erpStatus)
+      return false;
+    return true;
+  }
+  function itemMatchesSearch(item = {}, searchQuery = "") {
+    const q3 = normalizeSearchQuery(searchQuery).toLowerCase();
+    if (!q3)
+      return true;
+    return [
+      item.vendor_name,
+      item.vendor,
+      item.invoice_number,
+      item.subject,
+      item.po_number,
+      item.sender
+    ].some((value) => String(value || "").toLowerCase().includes(q3));
+  }
+  function sortPipelineItems(items = [], sortCol = "queue_age", sortDir = "desc", now = new Date) {
+    const direction = sortDir === "asc" ? 1 : -1;
+    const normalizedSortCol = normalizeSortColumn(sortCol, "queue_age");
+    return [...items].sort((left, right) => {
+      let leftValue;
+      let rightValue;
+      switch (normalizedSortCol) {
+        case "vendor":
+          leftValue = String(left.vendor_name || left.vendor || "").toLowerCase();
+          rightValue = String(right.vendor_name || right.vendor || "").toLowerCase();
+          break;
+        case "amount":
+          leftValue = Number(left.amount || 0);
+          rightValue = Number(right.amount || 0);
+          break;
+        case "invoice":
+          leftValue = String(left.invoice_number || "").toLowerCase();
+          rightValue = String(right.invoice_number || "").toLowerCase();
+          break;
+        case "due_date":
+          leftValue = parseDate(left.due_date || left.created_at)?.getTime() || 0;
+          rightValue = parseDate(right.due_date || right.created_at)?.getTime() || 0;
+          break;
+        case "updated_at":
+          leftValue = parseDate(left.updated_at || left.created_at)?.getTime() || 0;
+          rightValue = parseDate(right.updated_at || right.created_at)?.getTime() || 0;
+          break;
+        case "approval_wait":
+          leftValue = getApprovalWaitMinutes(left, now);
+          rightValue = getApprovalWaitMinutes(right, now);
+          break;
+        case "state":
+          leftValue = normalizePipelineState(left.state);
+          rightValue = normalizePipelineState(right.state);
+          break;
+        case "priority":
+          leftValue = Number(left.priority_score || 0);
+          rightValue = Number(right.priority_score || 0);
+          break;
+        case "queue_age":
+        default:
+          leftValue = getQueueAgeMinutes(left, now);
+          rightValue = getQueueAgeMinutes(right, now);
+          break;
+      }
+      if (leftValue < rightValue)
+        return -1 * direction;
+      if (leftValue > rightValue)
+        return 1 * direction;
+      const leftUpdatedAt = parseDate(left.updated_at || left.created_at)?.getTime() || 0;
+      const rightUpdatedAt = parseDate(right.updated_at || right.created_at)?.getTime() || 0;
+      if (leftUpdatedAt < rightUpdatedAt)
+        return 1;
+      if (leftUpdatedAt > rightUpdatedAt)
+        return -1;
+      return 0;
+    });
+  }
+  function filterPipelineItems(items = [], options = {}) {
+    const {
+      activeSliceId = "all_open",
+      filters = {},
+      searchQuery = "",
+      sortCol = "queue_age",
+      sortDir = "desc",
+      now = new Date
+    } = options;
+    return sortPipelineItems(items.filter((item) => matchesPipelineSlice(item, activeSliceId, now)).filter((item) => matchesPipelineFilters(item, filters, now)).filter((item) => itemMatchesSearch(item, searchQuery)), sortCol, sortDir, now);
+  }
+  function countItemsForSlice(items = [], sliceId = "all_open", now = new Date) {
+    return items.filter((item) => matchesPipelineSlice(item, sliceId, now)).length;
+  }
+  function buildPipelineSliceCounts(items = [], now = new Date) {
+    return Object.fromEntries(PIPELINE_BUILTIN_SLICES.map((slice) => [slice.id, countItemsForSlice(items, slice.id, now)]));
   }
 
   // src/components/SidebarApp.js
@@ -57812,24 +58766,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
     ];
   }
-  function getAuditRow(event) {
-    const payload = getAuditEventPayload(event);
-    const eventType = normalizeAuditEventType(event?.event_type || event?.eventType || payload?.event_type || event?.action || "action_recorded");
-    const safeTitle = eventType === "state_transition" ? "Status updated" : "Action recorded";
-    let safeDetail = "Action recorded for this invoice.";
-    if (eventType === "state_transition")
-      safeDetail = "Invoice status changed.";
-    else if (eventType === "erp_post_completed")
-      safeDetail = "Invoice posting completed successfully.";
-    else if (eventType === "erp_post_failed")
-      safeDetail = "Clearledgr could not complete ERP posting.";
-    const title = trimText(String(event?.operator_title || safeTitle), 72);
-    return {
-      title,
-      detail: trimText(String(event?.operator_message || safeDetail).trim(), 160),
-      timestamp: formatDateTime(event?.ts || event?.created_at || event?.createdAt || event?.updated_at || event?.updatedAt)
-    };
-  }
   function EvidenceChecklist({ entries }) {
     return html2`
     <div class="cl-evidence-section" aria-label="Evidence checklist">
@@ -57845,26 +58781,62 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
+  function AuditRowCard({ row }) {
+    if (!row)
+      return null;
+    return html2`
+    <div class="cl-audit-row" data-importance=${row.importance} data-severity=${row.severity}>
+      <div class="cl-audit-main">
+        <div class="cl-audit-main-copy">
+          <div class="cl-audit-type">${row.title}</div>
+          <div class="cl-audit-badges">
+            <span class="cl-audit-badge" data-importance=${row.importance}>${row.importanceLabel}</span>
+            ${row.category && html2`<span class="cl-audit-badge" data-kind="category">${row.category.replace(/_/g, " ")}</span>`}
+          </div>
+        </div>
+        ${row.timestamp && html2`<div class="cl-audit-time">${row.timestamp}</div>`}
+      </div>
+      <div class="cl-audit-detail">${row.detail}</div>
+      ${(row.evidenceLabel || row.evidenceDetail) && html2`
+        <div class="cl-audit-evidence">
+          ${row.evidenceLabel && html2`<span class="cl-audit-evidence-label">${row.evidenceLabel}</span>`}
+          <span>${row.evidenceDetail || "Recorded on the shared AP record."}</span>
+        </div>
+      `}
+      ${row.actionHint && !row.isBackground && html2`<div class="cl-audit-hint">Next: ${row.actionHint}</div>`}
+    </div>
+  `;
+  }
   function AuditDisclosure({ events, loading }) {
-    const visibleEvents = Array.isArray(events) ? events.slice(0, 6) : [];
+    const totalEvents = Array.isArray(events) ? events.length : 0;
+    const { primaryRows, secondaryRows, primaryHiddenCount, secondaryHiddenCount } = partitionAuditEvents(events, {
+      primaryLimit: 4,
+      secondaryLimit: 2
+    });
     return html2`
     <details class="cl-details">
-      <summary>View audit${visibleEvents.length ? ` (${visibleEvents.length})` : ""}</summary>
+      <summary>View audit${totalEvents ? ` (${totalEvents})` : ""}</summary>
       <div class="cl-audit-list">
         ${loading && html2`<div class="cl-empty">Loading audit…</div>`}
-        ${!loading && visibleEvents.length === 0 && html2`<div class="cl-empty">No audit events yet.</div>`}
-        ${!loading && visibleEvents.map((event, index) => {
-      const row = getAuditRow(event);
-      return html2`
-            <div key=${event?.id || index} class="cl-audit-row">
-              <div class="cl-audit-main">
-                <div class="cl-audit-type">${row.title}</div>
-                ${row.timestamp && html2`<div class="cl-audit-time">${row.timestamp}</div>`}
-              </div>
-              <div class="cl-audit-detail">${row.detail}</div>
+        ${!loading && totalEvents === 0 && html2`<div class="cl-empty">No audit events yet.</div>`}
+        ${!loading && primaryRows.length > 0 && html2`
+          <div class="cl-audit-group">
+            <div class="cl-audit-section-title">Key history</div>
+            ${primaryRows.map((row, index) => html2`<${AuditRowCard} key=${row.event?.id || index} row=${row} />`)}
+            ${primaryHiddenCount > 0 && html2`<div class="cl-audit-more">+${primaryHiddenCount} more key events in the full record.</div>`}
+          </div>
+        `}
+        ${!loading && secondaryRows.length > 0 && html2`
+          <details class="cl-audit-secondary">
+            <summary class="cl-audit-secondary-summary">
+              Background activity (${secondaryRows.length + secondaryHiddenCount})
+            </summary>
+            <div class="cl-audit-group">
+              ${secondaryRows.map((row, index) => html2`<${AuditRowCard} key=${row.event?.id || `secondary-${index}`} row=${row} />`)}
+              ${secondaryHiddenCount > 0 && html2`<div class="cl-audit-more">+${secondaryHiddenCount} more background events in the full record.</div>`}
             </div>
-          `;
-    })}
+          </details>
+        `}
       </div>
     </details>
   `;
@@ -57894,6 +58866,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     const s3 = useStore();
+    const actorRole = s3.currentUserRole || queueManager?.currentUserRole || "operator";
     const humanIndex = itemIndex >= 0 ? itemIndex + 1 : 1;
     const state = normalizeWorkState(item?.state || "received");
     const vendor = item.vendor_name || item.vendor || item.sender || "Unknown vendor";
@@ -57911,7 +58884,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
     const [optimisticState, setOptimisticState] = d2(null);
     const displayState = normalizeWorkState(optimisticState || state);
+    const readOnlyMode = !hasOpsAccessRole(actorRole);
     const [dialog, openDialog] = useActionDialog();
+    const pipelineScope = {
+      orgId: queueManager?.runtimeConfig?.organizationId || "default",
+      userEmail: queueManager?.runtimeConfig?.userEmail || ""
+    };
     const [doApproval, approvalPending] = useAction(async () => {
       setOptimisticState("needs_approval");
       const result = await queueManager.requestApproval(item);
@@ -57994,11 +58972,24 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     });
     const goPrev = q2(() => store_default.selectItemByOffset(-1), []);
     const goNext = q2(() => store_default.selectItemByOffset(1), []);
+    const openPipeline = q2(() => {
+      if (!item?.id)
+        return;
+      store_default.setSelectedItem(String(item.id));
+      focusPipelineItem(pipelineScope, item, "thread");
+      store_default.sdk?.Router?.goto?.("clearledgr/pipeline");
+    }, [item, pipelineScope]);
     const openSource = q2(() => {
       if (!openSourceEmail(item))
         showToast("Unable to open source email", "error");
     }, [item]);
-    const primaryAction = getPrimaryActionConfig(displayState);
+    const openVendorRecord = q2(() => {
+      const vendorName = String(item?.vendor_name || item?.vendor || "").trim();
+      if (!vendorName)
+        return;
+      store_default.sdk?.Router?.goto?.(`clearledgr/vendor/${encodeURIComponent(vendorName)}`);
+    }, [item]);
+    const primaryAction = getPrimaryActionConfig(displayState, actorRole);
     let primaryHandler = null;
     let primaryPending = false;
     let primaryClass = "";
@@ -58051,6 +59042,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       `}
 
       ${stateNotice && html2`<div class="cl-state-note">${stateNotice}</div>`}
+      ${readOnlyMode && html2`
+        <div class="cl-state-note">Read-only view. Queue actions are reserved for AP operators.</div>
+      `}
 
       ${primaryAction?.label && primaryHandler && html2`
         <button class="cl-btn cl-primary-cta ${primaryClass}" onClick=${primaryHandler} disabled=${primaryPending}>
@@ -58059,11 +59053,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       `}
 
       <div class="cl-thread-actions">
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open in pipeline</button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource} disabled=${!canOpenSource}>Open email</button>
-        ${canRejectWorkItem(displayState) && html2`
+        ${(item?.vendor_name || item?.vendor) && html2`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openVendorRecord}>Vendor record</button>
+        `}
+        ${canRejectWorkItem(displayState, actorRole) && html2`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
         `}
-        ${canNudgeApprover(displayState) && primaryAction?.id !== "nudge_approver" && html2`
+        ${canNudgeApprover(displayState, actorRole) && primaryAction?.id !== "nudge_approver" && html2`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Nudge approver</button>
         `}
       </div>
@@ -58190,76 +59188,109 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       canHide: false
     },
     {
+      id: "clearledgr/upcoming",
+      title: "Upcoming",
+      subtitle: "Due follow-ups across approvals, vendor replies, and posting.",
+      icon: "activity",
+      navOrder: 25,
+      defaultPinned: false,
+      canHide: true,
+      opsOnly: true
+    },
+    {
       id: "clearledgr/connections",
       title: "Connections",
-      subtitle: "Set up Gmail, approvals, and ERP.",
+      subtitle: "Fix Gmail, approval, or ERP setup when AP work is blocked.",
       icon: "connections",
       navOrder: 30,
       defaultPinned: true,
-      canHide: true
+      canHide: true,
+      opsOnly: true,
+      adminOnly: true
     },
     {
       id: "clearledgr/activity",
       title: "Activity",
-      subtitle: "Recent invoice activity.",
+      subtitle: "Recent AP record movement.",
       icon: "activity",
       navOrder: 40,
       defaultPinned: false,
-      canHide: true
+      canHide: true,
+      opsOnly: true
     },
     {
       id: "clearledgr/vendors",
       title: "Vendors",
-      subtitle: "Vendor records and spend history.",
+      subtitle: "Vendor context for AP follow-up.",
       icon: "vendors",
       navOrder: 50,
       defaultPinned: false,
-      canHide: true
+      canHide: true,
+      opsOnly: true
+    },
+    {
+      id: "clearledgr/templates",
+      title: "Templates",
+      subtitle: "Reusable AP reply templates for vendors and approvers.",
+      icon: "activity",
+      navOrder: 55,
+      defaultPinned: false,
+      canHide: true,
+      opsOnly: true
     },
     {
       id: "clearledgr/rules",
       title: "Approval Rules",
-      subtitle: "Control how invoices are reviewed and approved.",
+      subtitle: "Admin controls for approval routing.",
       icon: "rules",
       navOrder: 60,
       defaultPinned: false,
-      canHide: true
+      canHide: true,
+      opsOnly: true,
+      adminOnly: true
     },
     {
       id: "clearledgr/team",
       title: "Team",
-      subtitle: "Manage AP operators and approvers.",
+      subtitle: "Invite and manage Gmail workspace access.",
       icon: "team",
       navOrder: 70,
       defaultPinned: false,
-      canHide: true
+      canHide: true,
+      opsOnly: true,
+      adminOnly: true
     },
     {
       id: "clearledgr/company",
       title: "Company",
-      subtitle: "Your organization profile and preferences.",
+      subtitle: "Workspace identity and AP defaults.",
       icon: "company",
       navOrder: 80,
       defaultPinned: false,
-      canHide: true
+      canHide: true,
+      opsOnly: true,
+      adminOnly: true
     },
     {
       id: "clearledgr/plan",
       title: "Plan",
-      subtitle: "Usage and subscription settings.",
+      subtitle: "Workspace plan summary.",
       icon: "plan",
       navOrder: 90,
       defaultPinned: false,
-      canHide: true
+      canHide: true,
+      opsOnly: true,
+      adminOnly: true
     },
     {
       id: "clearledgr/reconciliation",
       title: "Reconciliation",
-      subtitle: "Match bank transactions to invoices.",
+      subtitle: "Future reconciliation groundwork.",
       icon: "recon",
       navOrder: 100,
       defaultPinned: false,
-      canHide: true
+      canHide: true,
+      opsOnly: true
     },
     {
       id: "clearledgr/health",
@@ -58269,6 +59300,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       navOrder: 110,
       defaultPinned: false,
       canHide: true,
+      opsOnly: true,
+      adminOnly: true
+    },
+    {
+      id: "clearledgr/reports",
+      title: "Reports",
+      subtitle: "Lightweight AP reporting tied to queue views.",
+      icon: "activity",
+      navOrder: 115,
+      defaultPinned: false,
+      canHide: true,
+      opsOnly: true,
       adminOnly: true
     }
   ];
@@ -58276,8 +59319,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function getRouteById(id) {
     return ROUTES.find((route) => route.id === id) || null;
   }
-  function getNavEligibleRoutes({ includeAdmin = false } = {}) {
-    return ROUTES.filter((route) => includeAdmin || !route.adminOnly).sort((left, right) => Number(left.navOrder || 0) - Number(right.navOrder || 0));
+  function getNavEligibleRoutes({ includeAdmin = false, includeOps = true } = {}) {
+    return ROUTES.filter((route) => (includeOps || !route.opsOnly) && (includeAdmin || !route.adminOnly)).sort((left, right) => Number(left.navOrder || 0) - Number(right.navOrder || 0));
   }
   function normalizeRoutePreferences(value = {}, { includeAdmin = false } = {}) {
     const allowedRouteIds = new Set(getNavEligibleRoutes({ includeAdmin }).map((route) => route.id));
@@ -58321,7 +59364,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         hidden: false,
         defaultPinned: false,
         canHide: false,
-        adminOnly: false
+        adminOnly: false,
+        opsOnly: false
       };
     }
     const prefs = normalizeRoutePreferences(preferences, options);
@@ -58335,7 +59379,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       hidden,
       defaultPinned,
       canHide: route.canHide !== false,
-      adminOnly: Boolean(route.adminOnly)
+      adminOnly: Boolean(route.adminOnly),
+      opsOnly: Boolean(route.opsOnly)
     };
   }
   function getVisibleNavRoutes(preferences = {}, options = {}) {
@@ -58686,11 +59731,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return d3.toLocaleDateString([], { month: "short", day: "numeric" });
     }
   }
-  function fmtDollar2(v3) {
+  function fmtDollar(v3) {
     return "$" + Number(v3 || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
   }
   function hasOpsAccess(bootstrap) {
-    return ["admin", "owner", "operator"].includes(String(bootstrap?.current_user?.role || "").trim().toLowerCase());
+    return hasOpsAccessRole(bootstrap?.current_user?.role);
+  }
+  function hasAdminAccess(bootstrap) {
+    return hasAdminAccessRole(bootstrap?.current_user?.role);
   }
   function integrationByName(bootstrap, name) {
     return (bootstrap?.integrations || []).find((i3) => i3.name === name) || {};
@@ -58744,333 +59792,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return [exec, pending];
   }
 
-  // src/routes/pipeline-views.js
-  var STORAGE_PREFIX = "clearledgr_pipeline_view_preferences_v1";
-  var PIPELINE_BUILTIN_SLICES = [
-    { id: "all_open", label: "All open", description: "Every invoice still moving through AP." },
-    { id: "approval_backlog", label: "Approval backlog", description: "Invoices waiting on approvers." },
-    { id: "ready_to_post", label: "Ready to post", description: "Approved invoices ready for ERP posting." },
-    { id: "needs_info", label: "Needs info", description: "Invoices missing required fields or vendor follow-up." },
-    { id: "exceptions", label: "Exceptions", description: "Invoices blocked by policy, confidence, or posting issues." },
-    { id: "due_soon", label: "Due soon", description: "Open invoices due within the next 7 days." }
-  ];
-  function normalizePipelineState(state) {
-    const normalized = String(state || "").trim().toLowerCase();
-    if (!normalized)
-      return "received";
-    if (normalized === "pending_approval")
-      return "needs_approval";
-    if (normalized === "posted")
-      return "posted_to_erp";
-    return normalized;
-  }
-  function isClosedPipelineState(state) {
-    return ["posted_to_erp", "closed", "rejected"].includes(normalizePipelineState(state));
-  }
-  function getPipelinePreferenceKey(orgId) {
-    return `${STORAGE_PREFIX}:${String(orgId || "default").trim() || "default"}`;
-  }
-  function defaultPipelinePreferences() {
-    return {
-      activeSliceId: "all_open",
-      viewMode: "table",
-      sortCol: "priority",
-      sortDir: "desc",
-      filters: {
-        state: "all",
-        due: "all",
-        blocker: "all",
-        amount: "all"
-      },
-      customViews: []
-    };
-  }
-  function sanitizeCustomViews(customViews = []) {
-    return (Array.isArray(customViews) ? customViews : []).map((view) => ({
-      id: String(view?.id || "").trim(),
-      name: String(view?.name || "").trim(),
-      snapshot: {
-        activeSliceId: String(view?.snapshot?.activeSliceId || "all_open").trim() || "all_open",
-        viewMode: String(view?.snapshot?.viewMode || "table").trim() || "table",
-        sortCol: String(view?.snapshot?.sortCol || "priority").trim() || "priority",
-        sortDir: String(view?.snapshot?.sortDir || "desc").trim() === "asc" ? "asc" : "desc",
-        filters: {
-          state: String(view?.snapshot?.filters?.state || "all").trim() || "all",
-          due: String(view?.snapshot?.filters?.due || "all").trim() || "all",
-          blocker: String(view?.snapshot?.filters?.blocker || "all").trim() || "all",
-          amount: String(view?.snapshot?.filters?.amount || "all").trim() || "all"
-        }
-      }
-    })).filter((view) => view.id && view.name).slice(0, 8);
-  }
-  function normalizePipelinePreferences(value = {}) {
-    const defaults = defaultPipelinePreferences();
-    return {
-      activeSliceId: String(value?.activeSliceId || defaults.activeSliceId).trim() || defaults.activeSliceId,
-      viewMode: String(value?.viewMode || defaults.viewMode).trim() === "cards" ? "cards" : "table",
-      sortCol: String(value?.sortCol || defaults.sortCol).trim() || defaults.sortCol,
-      sortDir: String(value?.sortDir || defaults.sortDir).trim() === "asc" ? "asc" : "desc",
-      filters: {
-        state: String(value?.filters?.state || defaults.filters.state).trim() || defaults.filters.state,
-        due: String(value?.filters?.due || defaults.filters.due).trim() || defaults.filters.due,
-        blocker: String(value?.filters?.blocker || defaults.filters.blocker).trim() || defaults.filters.blocker,
-        amount: String(value?.filters?.amount || defaults.filters.amount).trim() || defaults.filters.amount
-      },
-      customViews: sanitizeCustomViews(value?.customViews)
-    };
-  }
-  function readPipelinePreferences(orgId) {
-    if (typeof window === "undefined" || !window?.localStorage) {
-      return defaultPipelinePreferences();
-    }
-    try {
-      const raw = window.localStorage.getItem(getPipelinePreferenceKey(orgId));
-      if (!raw)
-        return defaultPipelinePreferences();
-      return normalizePipelinePreferences(JSON.parse(raw));
-    } catch {
-      return defaultPipelinePreferences();
-    }
-  }
-  function writePipelinePreferences(orgId, value = {}) {
-    const normalized = normalizePipelinePreferences(value);
-    if (typeof window !== "undefined" && window?.localStorage) {
-      try {
-        window.localStorage.setItem(getPipelinePreferenceKey(orgId), JSON.stringify(normalized));
-      } catch {}
-    }
-    return normalized;
-  }
-  function activatePipelineSlice(orgId, sliceId) {
-    const current = readPipelinePreferences(orgId);
-    return writePipelinePreferences(orgId, {
-      ...current,
-      activeSliceId: sliceId
-    });
-  }
-  function createSavedPipelineView(orgId, { name, snapshot }) {
-    const current = readPipelinePreferences(orgId);
-    const trimmedName = String(name || "").trim();
-    if (!trimmedName)
-      return current;
-    const id = `view_${Date.now().toString(36)}`;
-    const customViews = sanitizeCustomViews([
-      ...current.customViews,
-      {
-        id,
-        name: trimmedName,
-        snapshot: normalizePipelinePreferences(snapshot || current)
-      }
-    ]);
-    return writePipelinePreferences(orgId, {
-      ...current,
-      customViews
-    });
-  }
-  function removeSavedPipelineView(orgId, viewId) {
-    const current = readPipelinePreferences(orgId);
-    return writePipelinePreferences(orgId, {
-      ...current,
-      customViews: current.customViews.filter((view) => view.id !== viewId)
-    });
-  }
-  function parseDate(value) {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
-  function diffInDays(left, right) {
-    const diffMs = left.getTime() - right.getTime();
-    return Math.floor(diffMs / 86400000);
-  }
-  function getPipelineBlockerKinds(item = {}) {
-    const blockers = new Set;
-    const state = normalizePipelineState(item.state);
-    const exceptionCode = String(item?.exception_code || "").trim().toLowerCase();
-    const budgetStatus = String(item?.budget_status || "").trim().toLowerCase();
-    const confidence = Number(item?.confidence);
-    if (state === "needs_approval")
-      blockers.add("approval");
-    if (state === "needs_info")
-      blockers.add("info");
-    if (state === "failed_post")
-      blockers.add("erp");
-    if (exceptionCode)
-      blockers.add("exception");
-    if (item?.requires_field_review || Number.isFinite(confidence) && confidence < 0.95)
-      blockers.add("confidence");
-    if (item?.budget_requires_decision || ["critical", "exceeded"].includes(budgetStatus))
-      blockers.add("budget");
-    if (exceptionCode.includes("po") || !item?.po_number && exceptionCode)
-      blockers.add("po");
-    return Array.from(blockers);
-  }
-  function matchesPipelineSlice(item = {}, sliceId = "all_open", now = new Date) {
-    const state = normalizePipelineState(item.state);
-    const dueDate = parseDate(item?.due_date);
-    const blockers = getPipelineBlockerKinds(item);
-    switch (sliceId) {
-      case "all":
-        return true;
-      case "all_open":
-        return !isClosedPipelineState(state);
-      case "approval_backlog":
-        return state === "needs_approval";
-      case "ready_to_post":
-        return state === "ready_to_post";
-      case "needs_info":
-        return state === "needs_info";
-      case "exceptions":
-        return state === "failed_post" || blockers.some((kind) => ["exception", "confidence", "budget", "po", "erp"].includes(kind));
-      case "due_soon":
-        if (!dueDate || isClosedPipelineState(state))
-          return false;
-        return diffInDays(dueDate, now) <= 7;
-      default:
-        return true;
-    }
-  }
-  function matchesPipelineFilters(item = {}, filters = {}, now = new Date) {
-    const state = normalizePipelineState(item.state);
-    const dueDate = parseDate(item?.due_date);
-    const blockers = getPipelineBlockerKinds(item);
-    const amount = Number(item?.amount || 0);
-    const normalizedFilters = normalizePipelinePreferences({ filters }).filters;
-    if (normalizedFilters.state !== "all" && state !== normalizedFilters.state)
-      return false;
-    if (normalizedFilters.due === "overdue") {
-      if (!dueDate || diffInDays(dueDate, now) >= 0)
-        return false;
-    } else if (normalizedFilters.due === "due_7d") {
-      if (!dueDate)
-        return false;
-      const days = diffInDays(dueDate, now);
-      if (days < 0 || days > 7)
-        return false;
-    } else if (normalizedFilters.due === "no_due" && dueDate) {
-      return false;
-    }
-    if (normalizedFilters.blocker !== "all" && !blockers.includes(normalizedFilters.blocker))
-      return false;
-    if (normalizedFilters.amount === "under_1k" && amount >= 1000)
-      return false;
-    if (normalizedFilters.amount === "1k_10k" && (amount < 1000 || amount > 1e4))
-      return false;
-    if (normalizedFilters.amount === "over_10k" && amount <= 1e4)
-      return false;
-    return true;
-  }
-  function itemMatchesSearch(item = {}, searchQuery = "") {
-    const q3 = String(searchQuery || "").trim().toLowerCase();
-    if (!q3)
-      return true;
-    return [
-      item.vendor_name,
-      item.vendor,
-      item.invoice_number,
-      item.subject,
-      item.po_number,
-      item.sender
-    ].some((value) => String(value || "").toLowerCase().includes(q3));
-  }
-  function sortPipelineItems(items = [], sortCol = "priority", sortDir = "desc") {
-    const direction = sortDir === "asc" ? 1 : -1;
-    return [...items].sort((left, right) => {
-      let leftValue;
-      let rightValue;
-      switch (sortCol) {
-        case "vendor":
-          leftValue = String(left.vendor_name || left.vendor || "").toLowerCase();
-          rightValue = String(right.vendor_name || right.vendor || "").toLowerCase();
-          break;
-        case "amount":
-          leftValue = Number(left.amount || 0);
-          rightValue = Number(right.amount || 0);
-          break;
-        case "invoice":
-          leftValue = String(left.invoice_number || "").toLowerCase();
-          rightValue = String(right.invoice_number || "").toLowerCase();
-          break;
-        case "due_date":
-          leftValue = parseDate(left.due_date || left.created_at)?.getTime() || 0;
-          rightValue = parseDate(right.due_date || right.created_at)?.getTime() || 0;
-          break;
-        case "updated_at":
-          leftValue = parseDate(left.updated_at || left.created_at)?.getTime() || 0;
-          rightValue = parseDate(right.updated_at || right.created_at)?.getTime() || 0;
-          break;
-        case "state":
-          leftValue = normalizePipelineState(left.state);
-          rightValue = normalizePipelineState(right.state);
-          break;
-        case "priority":
-        default:
-          leftValue = Number(left.priority_score || 0);
-          rightValue = Number(right.priority_score || 0);
-          break;
-      }
-      if (leftValue < rightValue)
-        return -1 * direction;
-      if (leftValue > rightValue)
-        return 1 * direction;
-      return 0;
-    });
-  }
-  function filterPipelineItems(items = [], options = {}) {
-    const {
-      activeSliceId = "all_open",
-      filters = {},
-      searchQuery = "",
-      sortCol = "priority",
-      sortDir = "desc",
-      now = new Date
-    } = options;
-    return sortPipelineItems(items.filter((item) => matchesPipelineSlice(item, activeSliceId, now)).filter((item) => matchesPipelineFilters(item, filters, now)).filter((item) => itemMatchesSearch(item, searchQuery)), sortCol, sortDir);
-  }
-  function countItemsForSlice(items = [], sliceId = "all_open", now = new Date) {
-    return items.filter((item) => matchesPipelineSlice(item, sliceId, now)).length;
-  }
-  function buildPipelineSliceCounts(items = [], now = new Date) {
-    return Object.fromEntries(PIPELINE_BUILTIN_SLICES.map((slice) => [slice.id, countItemsForSlice(items, slice.id, now)]));
-  }
-
   // src/routes/pages/HomePage.js
   var html4 = htm_module_default.bind(_);
-  var ICONS = {
-    home: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10.5V20h14v-9.5"/><path d="M9 20v-5h6v5"/></svg>`,
-    pipeline: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>`,
-    activity: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>`,
-    vendors: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
-    recon: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/></svg>`,
-    settings: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`,
-    rules: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
-    team: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
-    company: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01"/></svg>`,
-    plan: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.86L12 17.77 5.82 21l1.18-6.86-5-4.87 6.91-1.01z"/></svg>`,
-    health: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`,
-    connections: html4`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`
-  };
-  function getRouteIcon(iconKey) {
-    return ICONS[iconKey] || ICONS.settings;
-  }
-  function QuickAccessCard({ icon, label, detail, onClick }) {
-    return html4`<button onClick=${onClick} style="
-    display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;gap:8px;
-    padding:14px 14px;min-width:120px;min-height:108px;text-align:left;
-    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);
-    cursor:pointer;transition:all 0.15s;color:var(--ink);font-family:inherit;
-  " onMouseOver=${(e3) => {
-      e3.currentTarget.style.borderColor = "var(--accent)";
-    }}
-     onMouseOut=${(e3) => {
-      e3.currentTarget.style.borderColor = "var(--border)";
-    }}>
-    <div style="color:var(--ink-secondary)">${icon}</div>
-    <div>
-      <div style="font-size:13px;font-weight:600;margin-bottom:2px">${label}</div>
-      <div style="font-size:12px;color:var(--ink-muted);line-height:1.4">${detail}</div>
-    </div>
-  </button>`;
-  }
+  var HOME_PIPELINE_SHORTCUTS = [
+    "waiting_on_approval",
+    "ready_to_post",
+    "needs_info",
+    "blocked_exception",
+    "failed_post",
+    "due_soon",
+    "overdue"
+  ];
+  var WORKFLOW_SURFACE_ROUTE_IDS = [
+    "clearledgr/upcoming",
+    "clearledgr/vendors",
+    "clearledgr/templates",
+    "clearledgr/reports"
+  ];
   function StatusRow({ label, ready, detail, actionLabel, onAction, pending = false }) {
     return html4`<div style="
     display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;
@@ -59111,7 +59849,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   </div>`;
   }
-  function LaunchSummary({ allReady, approvalsReady, erpReady, lastScanAt, navigate }) {
+  function LaunchSummary({ allReady, approvalsReady, erpReady, lastScanAt, navigate, adminAccess }) {
     const summary = allReady ? "Clearledgr is ready to work invoices from Gmail through approval and ERP posting." : "Finish the missing AP setup steps so operators can stay in Gmail and work invoices end-to-end.";
     return html4`<div class="panel" style="padding:18px 20px">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
@@ -59129,7 +59867,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button onClick=${() => navigate("clearledgr/pipeline")}>Open pipeline</button>
-        <button class="alt" onClick=${() => navigate("clearledgr/connections")}>Review connections</button>
+        ${adminAccess && html4`<button class="alt" onClick=${() => navigate("clearledgr/connections")}>Review connections</button>`}
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
@@ -59142,7 +59880,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   </div>`;
   }
-  function RecentActivity({ entries = [], navigate }) {
+  function RecentActivity({ entries = [], navigate, canOpenActivity = false }) {
     const rows = Array.isArray(entries) ? entries.slice(0, 5) : [];
     return html4`<div class="panel">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px">
@@ -59150,7 +59888,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <h3 style="margin:0 0 4px">Recent activity</h3>
         <p class="muted" style="margin:0">What changed recently in AP.</p>
       </div>
-      <button class="alt" onClick=${() => navigate("clearledgr/activity")} style="padding:8px 12px;font-size:12px">Open activity</button>
+      ${canOpenActivity && html4`<button class="alt" onClick=${() => navigate("clearledgr/activity")} style="padding:8px 12px;font-size:12px">Open activity</button>`}
     </div>
     ${rows.length ? html4`<div style="display:grid;gap:8px">
           ${rows.map((entry, index) => html4`<div key=${index} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
@@ -59179,7 +59917,41 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <span class="muted" style="font-size:12px;font-weight:700">Open</span>
   </button>`;
   }
+  function SupportPageRow({ label, detail, onClick }) {
+    return html4`<div style="
+    display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;
+    padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);
+  ">
+    <div>
+      <strong style="display:block;font-size:13px;margin-bottom:2px">${label}</strong>
+      <span class="muted" style="font-size:12px">${detail}</span>
+    </div>
+    <button class="alt" onClick=${onClick} style="padding:8px 12px;font-size:12px">Open</button>
+  </div>`;
+  }
+  function UpcomingTaskRow({ task, onClick }) {
+    const amount = Number(task?.amount);
+    const amountLabel = Number.isFinite(amount) ? `${task?.currency || "USD"} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Amount unavailable";
+    return html4`<button
+    onClick=${onClick}
+    style="
+      display:flex;align-items:flex-start;justify-content:space-between;gap:14px;
+      width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);
+      background:var(--surface);cursor:pointer;font-family:inherit;text-align:left;
+    "
+  >
+    <span style="min-width:0;flex:1">
+      <strong style="display:block;font-size:13px;margin-bottom:2px">${task?.title || "AP follow-up"}</strong>
+      <span class="muted" style="display:block;font-size:12px;line-height:1.45">
+        ${task?.vendor_name || "Unknown vendor"} · ${task?.invoice_number || "No invoice #"} · ${amountLabel}
+      </span>
+      <span class="muted" style="display:block;font-size:12px;line-height:1.45;margin-top:4px">${task?.detail || "Open this follow-up in Upcoming."}</span>
+    </span>
+    <span class="muted" style="font-size:12px;font-weight:700;white-space:nowrap">${task?.status === "overdue" ? "Overdue" : "Open"}</span>
+  </button>`;
+  }
   function HomePage({
+    api,
     bootstrap,
     toast,
     orgId,
@@ -59201,9 +59973,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const hour = new Date().getHours();
     const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
     const policyConfig = bootstrap?.policyPayload?.policy?.config_json || {};
-    const routeOptions = { includeAdmin: hasOpsAccess(bootstrap) };
-    const pipelinePrefs = readPipelinePreferences(orgId);
-    const savedPipelineViews = Array.isArray(pipelinePrefs?.customViews) ? pipelinePrefs.customViews.slice(0, 3) : [];
+    const adminAccess = hasAdminAccess(bootstrap);
+    const routeOptions = {
+      includeAdmin: adminAccess,
+      includeOps: hasOpsAccess(bootstrap)
+    };
+    const pipelineScope = { orgId, userEmail };
+    const [pipelinePrefs, setPipelinePrefs] = d2(() => readPipelinePreferences(pipelineScope));
+    const [upcomingPayload, setUpcomingPayload] = d2({ summary: {}, tasks: [] });
+    const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
+    const pinnedPipelineViews = getPinnedPipelineViews(pipelinePrefs).slice(0, 4);
+    const starterSavedViews = getStarterPipelineViews(pipelinePrefs).filter((view) => !pinnedPipelineViews.some((pinnedView) => pinnedView.id === view.id && pinnedView.scope === view.scope)).slice(0, 3);
+    const starterPipelineSlices = HOME_PIPELINE_SHORTCUTS.map((sliceId) => PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === sliceId)).filter(Boolean);
     const gmailOk = Boolean(gmail.connected);
     const slackOk = Boolean(slack.connected);
     const teamsOk = Boolean(teams.connected);
@@ -59212,8 +59993,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const policyOk = Boolean(policyConfig && Object.keys(policyConfig).length > 0);
     const allReady = gmailOk && approvalSurfaceOk && erpOk && policyOk;
     const lastScanAt = dashboard?.last_scan_at || dashboard?.lastScanAt || bootstrap?.health?.last_scan_at || "";
-    const quickAccessRoutes = getVisibleNavRoutes(routePreferences, routeOptions).filter((route) => route.id !== "clearledgr/home").slice(0, 4);
-    const customizableRoutes = availableRoutes.filter((route) => !route.adminOnly);
+    const supportRoutes = getVisibleNavRoutes(routePreferences, routeOptions).filter((route) => !["clearledgr/home", "clearledgr/pipeline"].includes(route.id)).slice(0, 4);
+    const workflowSupportRoutes = availableRoutes.filter((route) => WORKFLOW_SURFACE_ROUTE_IDS.includes(route.id)).filter((route) => !route.adminOnly || adminAccess);
+    const customizableRoutes = availableRoutes;
     const [connectGmail, gmailPending] = useAction2(async () => {
       const authUrl = bootstrap?.gmail_auth_url || bootstrap?.integrations?.find?.((it) => it.type === "gmail")?.auth_url;
       if (authUrl) {
@@ -59230,6 +60012,33 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       navigate("clearledgr/connections");
     });
+    y2(() => {
+      setPipelinePrefs(readPipelinePreferences(pipelineScope));
+    }, [pipelineScope]);
+    y2(() => {
+      const local = readPipelinePreferences(pipelineScope);
+      const remote = bootstrapPipelinePrefs ? normalizePipelinePreferences(bootstrapPipelinePrefs) : null;
+      if (remote && hasMeaningfulPipelinePreferences(remote) && !pipelinePreferencesEqual(local, remote)) {
+        const next = writePipelinePreferences(pipelineScope, remote);
+        setPipelinePrefs(next);
+        return;
+      }
+      setPipelinePrefs(local);
+    }, [bootstrapPipelinePrefs, pipelineScope]);
+    y2(() => {
+      if (!routeOptions.includeOps) {
+        setUpcomingPayload({ summary: {}, tasks: [] });
+        return;
+      }
+      api(`/api/ap/items/upcoming?organization_id=${encodeURIComponent(orgId)}&limit=4`, { silent: true }).then((data) => {
+        setUpcomingPayload({
+          summary: data?.summary || {},
+          tasks: Array.isArray(data?.tasks) ? data.tasks.slice(0, 4) : []
+        });
+      }).catch(() => {
+        setUpcomingPayload({ summary: {}, tasks: [] });
+      });
+    }, [api, orgId, routeOptions.includeOps]);
     async function applyRoutePreferences(nextPreferences, message) {
       if (typeof updateRoutePreferences !== "function")
         return;
@@ -59238,14 +60047,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         toast(message);
     }
     const openPipelineSlice = (sliceId) => {
-      activatePipelineSlice(orgId, sliceId);
+      clearPipelineNavigation(pipelineScope);
+      activatePipelineSlice(pipelineScope, sliceId);
+      setPipelinePrefs(readPipelinePreferences(pipelineScope));
       navigate("clearledgr/pipeline");
     };
     const openSavedPipelineView = (view) => {
       if (!view?.snapshot)
         return;
-      writePipelinePreferences(orgId, view.snapshot);
+      clearPipelineNavigation(pipelineScope);
+      writePipelinePreferences(pipelineScope, view.snapshot);
+      setPipelinePrefs(readPipelinePreferences(pipelineScope));
       navigate("clearledgr/pipeline");
+    };
+    const openUpcoming = () => {
+      navigate("clearledgr/upcoming");
     };
     return html4`
     <div style="margin-bottom:22px">
@@ -59261,27 +60077,74 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       erpReady=${erpOk}
       lastScanAt=${lastScanAt}
       navigate=${navigate}
+      adminAccess=${adminAccess}
     />
 
-    <div style="
-      display:flex;gap:10px;overflow-x:auto;padding:4px 0 8px;
-      border-bottom:1px solid var(--border);margin-bottom:20px;
-    ">
-      ${quickAccessRoutes.map((route) => html4`
-        <${QuickAccessCard}
-          icon=${getRouteIcon(route.icon)}
-          label=${route.title}
-          detail=${route.subtitle}
-          onClick=${() => navigate(route.id)}
-        />
-      `)}
-      <${QuickAccessCard}
-        icon=${ICONS.settings}
-        label="Customize"
-        detail="Pin or hide Gmail pages."
-        onClick=${() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })}
-      />
-    </div>
+    ${routeOptions.includeOps && html4`
+      <div class="panel">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
+          <div>
+            <h3 style="margin:0 0 4px">Upcoming follow-ups</h3>
+            <p class="muted" style="margin:0">
+              ${Number(upcomingPayload?.summary?.total || 0) > 0 ? `${Number(upcomingPayload.summary.total || 0).toLocaleString()} follow-ups are due across approvals, vendor replies, posting, and blockers.` : "No AP follow-ups are due right now."}
+            </p>
+          </div>
+          <button class="alt" onClick=${openUpcoming} style="padding:8px 12px;font-size:12px">Open Upcoming</button>
+        </div>
+        ${Array.isArray(upcomingPayload?.tasks) && upcomingPayload.tasks.length > 0 ? html4`<div style="display:grid;gap:10px">
+              ${upcomingPayload.tasks.map((task) => html4`
+                <${UpcomingTaskRow}
+                  key=${task.id}
+                  task=${task}
+                  onClick=${openUpcoming}
+                />
+              `)}
+            </div>` : html4`<div class="muted" style="font-size:13px">Clearledgr will surface due follow-ups here when approvals, vendor replies, or posting retries need attention.</div>`}
+      </div>
+    `}
+
+    ${supportRoutes.length > 0 && html4`
+      <div class="panel">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
+          <div>
+            <h3 style="margin:0 0 4px">Support surfaces</h3>
+            <p class="muted" style="margin:0">Secondary pages stay available without taking attention from Pipeline or the thread card.</p>
+          </div>
+          ${adminAccess && html4`<button class="alt" onClick=${() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })} style="padding:8px 12px;font-size:12px">Customize</button>`}
+        </div>
+        <div style="display:grid;gap:10px">
+          ${supportRoutes.map((route) => html4`
+            <${SupportPageRow}
+              key=${route.id}
+              label=${route.title}
+              detail=${route.subtitle}
+              onClick=${() => navigate(route.id)}
+            />
+          `)}
+        </div>
+      </div>
+    `}
+
+    ${workflowSupportRoutes.length > 0 && html4`
+      <div class="panel">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
+          <div>
+            <h3 style="margin:0 0 4px">Workflow tools</h3>
+            <p class="muted" style="margin:0">Deeper AP support surfaces stay reachable from Home without inflating the default Gmail nav.</p>
+          </div>
+        </div>
+        <div style="display:grid;gap:10px">
+          ${workflowSupportRoutes.map((route) => html4`
+            <${SupportPageRow}
+              key=${route.id}
+              label=${route.title}
+              detail=${route.subtitle}
+              onClick=${() => navigate(route.id)}
+            />
+          `)}
+        </div>
+      </div>
+    `}
 
     <div class="panel">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
@@ -59292,27 +60155,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <button class="alt" onClick=${() => navigate("clearledgr/pipeline")} style="padding:8px 12px;font-size:12px">Open pipeline</button>
       </div>
       <div style="display:grid;gap:10px">
-        <${QueueShortcutRow}
-          label="Approval backlog"
-          detail="Open invoices waiting on approvers."
-          onClick=${() => openPipelineSlice("approval_backlog")}
-        />
-        <${QueueShortcutRow}
-          label="Ready to post"
-          detail="Go straight to invoices that can move to ERP."
-          onClick=${() => openPipelineSlice("ready_to_post")}
-        />
-        <${QueueShortcutRow}
-          label="Exceptions"
-          detail="Review policy, confidence, and posting blockers."
-          onClick=${() => openPipelineSlice("exceptions")}
-        />
-        ${savedPipelineViews.map((view) => html4`
+        ${starterPipelineSlices.map((slice) => html4`
           <${QueueShortcutRow}
-            key=${view.id}
-            label=${view.name || "Saved view"}
-            detail="Open a saved AP queue view."
-            onClick=${() => openSavedPipelineView(view)}
+            key=${slice.id}
+            label=${slice.label}
+            detail=${slice.description}
+            onClick=${() => openPipelineSlice(slice.id)}
           />
         `)}
       </div>
@@ -59321,117 +60169,322 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <div class="panel">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
         <div>
-          <h3 style="margin:0 0 4px">What still needs setup</h3>
-          <p class="muted" style="margin:0">Only the steps that matter for AP launch.</p>
+          <h3 style="margin:0 0 4px">Saved views</h3>
+          <p class="muted" style="margin:0">
+            ${pinnedPipelineViews.length ? "Your pinned pipeline views are ready from Home." : "Finance-native starter views are ready until you pin your own favorites."}
+          </p>
         </div>
-        <button class="alt" onClick=${() => navigate("clearledgr/connections")} style="padding:8px 12px;font-size:12px">Open connections</button>
+        <button class="alt" onClick=${() => navigate("clearledgr/pipeline")} style="padding:8px 12px;font-size:12px">Manage views</button>
       </div>
       <div style="display:grid;gap:10px">
-        <${StatusRow}
-          label="Gmail"
-          ready=${gmailOk}
-          detail=${gmailOk ? "Gmail monitoring is connected." : "Connect Gmail so Clearledgr can detect invoice threads."}
-          actionLabel=${gmailOk ? "" : "Connect"}
-          onAction=${connectGmail}
-          pending=${gmailPending}
-        />
-        <${StatusRow}
-          label="Approvals"
-          ready=${approvalSurfaceOk}
-          detail=${approvalSurfaceOk ? slackOk ? `Slack ready${slack?.approval_channel ? ` · ${slack.approval_channel}` : ""}` : "Teams ready" : "Connect Slack or Teams so Clearledgr can route approval requests."}
-          actionLabel=${approvalSurfaceOk ? "" : "Connect"}
-          onAction=${slackOk || teamsOk ? null : connectSlack}
-          pending=${slackPending}
-        />
-        <${StatusRow}
-          label="ERP"
-          ready=${erpOk}
-          detail=${erpOk ? `${erp.erp_type || "ERP"} is connected.` : "Connect an ERP before posting approved invoices."}
-          actionLabel=${erpOk ? "" : "Connect"}
-          onAction=${() => navigate("clearledgr/connections")}
-        />
-        <${StatusRow}
-          label="Approval rules"
-          ready=${policyOk}
-          detail=${policyOk ? "Approval rules are configured." : "Review the approval policy before going live."}
-          actionLabel=${policyOk ? "" : "Review rules"}
-          onAction=${() => navigate("clearledgr/rules")}
-        />
+        ${pinnedPipelineViews.map((view) => html4`
+          <${QueueShortcutRow}
+            key=${`${view.scope || "user"}:${view.id}`}
+            label=${view.name || "Saved view"}
+            detail=${view.description || "Open a pinned AP queue view."}
+            onClick=${() => openSavedPipelineView(view)}
+          />
+        `)}
+        ${pinnedPipelineViews.length === 0 && starterSavedViews.map((view) => html4`
+          <${QueueShortcutRow}
+            key=${`${view.scope || "starter"}:${view.id}`}
+            label=${view.name || "Starter view"}
+            detail=${view.description || "Open a finance-native starter view."}
+            onClick=${() => openSavedPipelineView(view)}
+          />
+        `)}
       </div>
     </div>
 
-    <${RecentActivity} entries=${recentActivity} navigate=${navigate} />
+    ${adminAccess ? html4`<div class="panel">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
+            <div>
+              <h3 style="margin:0 0 4px">What still needs setup</h3>
+              <p class="muted" style="margin:0">Only the few setup steps that can block AP work in Gmail.</p>
+            </div>
+            <button class="alt" onClick=${() => navigate("clearledgr/connections")} style="padding:8px 12px;font-size:12px">Open connections</button>
+          </div>
+          <div style="display:grid;gap:10px">
+            <${StatusRow}
+              label="Gmail"
+              ready=${gmailOk}
+              detail=${gmailOk ? "Gmail monitoring is connected." : "Connect Gmail so Clearledgr can detect invoice threads."}
+              actionLabel=${gmailOk ? "" : "Connect"}
+              onAction=${connectGmail}
+              pending=${gmailPending}
+            />
+            <${StatusRow}
+              label="Approvals"
+              ready=${approvalSurfaceOk}
+              detail=${approvalSurfaceOk ? slackOk ? `Slack ready${slack?.approval_channel ? ` · ${slack.approval_channel}` : ""}` : "Teams ready" : "Connect Slack or Teams so Clearledgr can route approval requests."}
+              actionLabel=${approvalSurfaceOk ? "" : "Connect"}
+              onAction=${slackOk || teamsOk ? null : connectSlack}
+              pending=${slackPending}
+            />
+            <${StatusRow}
+              label="ERP"
+              ready=${erpOk}
+              detail=${erpOk ? `${erp.erp_type || "ERP"} is connected.` : "Connect an ERP before posting approved invoices."}
+              actionLabel=${erpOk ? "" : "Connect"}
+              onAction=${() => navigate("clearledgr/connections")}
+            />
+            <${StatusRow}
+              label="Approval rules"
+              ready=${policyOk}
+              detail=${policyOk ? "Approval rules are configured." : "Review the approval policy before going live."}
+              actionLabel=${policyOk ? "" : "Review rules"}
+              onAction=${() => navigate("clearledgr/rules")}
+            />
+          </div>
+        </div>` : html4`<div class="panel">
+          <h3 style="margin:0 0 6px">Workspace readiness</h3>
+          <p class="muted" style="margin:0">Setup pages are reserved for admins. If Gmail, approvals, or ERP are not ready, ask an admin to review Connections and Approval Rules.</p>
+        </div>`}
 
-    <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
-        <div>
-          <h3 style="margin:0 0 4px">Customize your left sidebar</h3>
-          <p class="muted" style="margin:0">Keep daily pages pinned. Leave the rest available without clutter.</p>
+    <${RecentActivity} entries=${recentActivity} navigate=${navigate} canOpenActivity=${routeOptions.includeOps} />
+
+    ${adminAccess && html4`
+      <div class="panel">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
+          <div>
+            <h3 style="margin:0 0 4px">Customize your left sidebar</h3>
+            <p class="muted" style="margin:0">Keep daily pages pinned. Leave the rest available without turning Gmail into a dashboard.</p>
+          </div>
+          <button class="alt" onClick=${() => applyRoutePreferences(resetRoutePreferences(routeOptions), "Navigation reset to defaults.")} style="padding:8px 12px;font-size:12px">Reset</button>
         </div>
-        <button class="alt" onClick=${() => applyRoutePreferences(resetRoutePreferences(routeOptions), "Navigation reset to defaults.")} style="padding:8px 12px;font-size:12px">Reset</button>
-      </div>
-      <div style="display:grid;gap:10px">
-        ${customizableRoutes.map((route) => {
+        <div style="display:grid;gap:10px">
+          ${customizableRoutes.map((route) => {
       const preferenceState = getRoutePreferenceState(route.id, routePreferences, routeOptions);
       return html4`<${RoutePreferenceRow}
-            route=${route}
-            preferenceState=${preferenceState}
-            onPin=${() => applyRoutePreferences(pinRoute(route.id, routePreferences, routeOptions), `${route.title} pinned to the sidebar.`)}
-            onUnpin=${() => applyRoutePreferences(unpinRoute(route.id, routePreferences, routeOptions), `${route.title} removed from pinned pages.`)}
-            onHide=${() => applyRoutePreferences(hideRoute(route.id, routePreferences, routeOptions), `${route.title} hidden from the sidebar.`)}
-            onShow=${() => applyRoutePreferences(showRoute(route.id, routePreferences, routeOptions), `${route.title} restored to the sidebar.`)}
-          />`;
+              route=${route}
+              preferenceState=${preferenceState}
+              onPin=${() => applyRoutePreferences(pinRoute(route.id, routePreferences, routeOptions), `${route.title} pinned to the sidebar.`)}
+              onUnpin=${() => applyRoutePreferences(unpinRoute(route.id, routePreferences, routeOptions), `${route.title} removed from pinned pages.`)}
+              onHide=${() => applyRoutePreferences(hideRoute(route.id, routePreferences, routeOptions), `${route.title} hidden from the sidebar.`)}
+              onShow=${() => applyRoutePreferences(showRoute(route.id, routePreferences, routeOptions), `${route.title} restored to the sidebar.`)}
+            />`;
     })}
+        </div>
       </div>
+    `}
+  `;
+  }
+
+  // src/routes/pages/UpcomingPage.js
+  var html5 = htm_module_default.bind(_);
+  var STATUS_STYLES = {
+    overdue: { bg: "#FEF2F2", text: "#B91C1C", label: "Overdue" },
+    today: { bg: "#FEF3C7", text: "#92400E", label: "Today" },
+    this_week: { bg: "#EFF6FF", text: "#1D4ED8", label: "This week" },
+    later: { bg: "#F8FAFC", text: "#475569", label: "Later" },
+    queued: { bg: "#F8FAFC", text: "#475569", label: "Queued" }
+  };
+  var KIND_LABELS = {
+    approval_follow_up: "Approval",
+    vendor_follow_up: "Vendor reply",
+    erp_retry: "ERP retry",
+    post_invoice: "Posting",
+    review_blocker: "Blocker review"
+  };
+  function formatMoney(amount, currency = "USD") {
+    const value = Number(amount);
+    if (!Number.isFinite(value))
+      return "Amount unavailable";
+    return `${currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  function buildTaskLocator(task = {}) {
+    return {
+      id: task.ap_item_id,
+      thread_id: task.thread_id,
+      message_id: task.message_id,
+      state: task.state
+    };
+  }
+  function StatusPill({ status }) {
+    const tone = STATUS_STYLES[String(status || "").trim().toLowerCase()] || STATUS_STYLES.queued;
+    return html5`<span style="
+    display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;
+    background:${tone.bg};color:${tone.text};font-size:11px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;
+  ">${tone.label}</span>`;
+  }
+  function SummaryCard({ label, value, tone = "default" }) {
+    const accent = tone === "danger" ? "#B91C1C" : tone === "warning" ? "#92400E" : tone === "success" ? "#047857" : "var(--ink)";
+    return html5`<div style="padding:18px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+    <div style="font-size:28px;font-weight:700;letter-spacing:-0.02em;color:${accent}">${Number(value || 0).toLocaleString()}</div>
+    <div class="muted" style="font-size:12px;margin-top:4px">${label}</div>
+  </div>`;
+  }
+  function UpcomingPage({ api, toast, orgId, userEmail, navigate }) {
+    const pipelineScope = T2(() => ({ orgId, userEmail }), [orgId, userEmail]);
+    const [payload, setPayload] = d2({ summary: {}, tasks: [] });
+    const [loading, setLoading] = d2(true);
+    const loadTasks = async ({ silent = false } = {}) => {
+      setLoading(true);
+      try {
+        const data = await api(`/api/ap/items/upcoming?organization_id=${encodeURIComponent(orgId)}&limit=60`, { silent });
+        setPayload({
+          summary: data?.summary || {},
+          tasks: Array.isArray(data?.tasks) ? data.tasks : []
+        });
+      } catch {
+        setPayload({ summary: {}, tasks: [] });
+        if (!silent)
+          toast?.("Could not load upcoming follow-ups.", "error");
+      } finally {
+        setLoading(false);
+      }
+    };
+    y2(() => {
+      loadTasks({ silent: true });
+    }, [api, orgId]);
+    const [refresh, refreshing] = useAction2(async () => {
+      await loadTasks();
+      toast?.("Upcoming follow-ups refreshed.", "success");
+    });
+    const openPipelineTask = (task) => {
+      const sliceId = task?.recommended_slice || "all_open";
+      clearPipelineNavigation(pipelineScope);
+      activatePipelineSlice(pipelineScope, sliceId);
+      if (task?.ap_item_id) {
+        focusPipelineItem(pipelineScope, buildTaskLocator(task), "upcoming");
+      }
+      navigate("clearledgr/pipeline");
+    };
+    const openRecord = (task) => {
+      if (!task?.ap_item_id)
+        return;
+      focusPipelineItem(pipelineScope, buildTaskLocator(task), "upcoming");
+      navigate(`clearledgr/invoice/${encodeURIComponent(task.ap_item_id)}`);
+    };
+    const openEmail = (task) => {
+      const ok = openSourceEmail({
+        thread_id: task?.thread_id,
+        message_id: task?.message_id,
+        subject: task?.title || task?.invoice_number || "Invoice follow-up"
+      });
+      if (!ok) {
+        toast?.("Unable to open the source email thread.", "error");
+      }
+    };
+    const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
+    const summary = payload?.summary || {};
+    const groupedCounts = Object.entries(summary.by_kind || {}).sort((left, right) => right[1] - left[1]);
+    if (loading) {
+      return html5`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading upcoming follow-ups…</p></div>`;
+    }
+    return html5`
+    <div class="panel">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0 0 6px">Upcoming follow-ups</h3>
+          <p class="muted" style="margin:0;max-width:620px">
+            Work due approvals, vendor replies, posting retries, and blocker reviews from one AP follow-up list, then jump straight back into Pipeline or the record.
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
+          <button onClick=${() => navigate("clearledgr/pipeline")}>Open pipeline</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
+      <${SummaryCard} label="Total follow-ups" value=${summary.total || 0} />
+      <${SummaryCard} label="Overdue" value=${summary.overdue || 0} tone="danger" />
+      <${SummaryCard} label="Today" value=${summary.today || 0} tone="warning" />
+      <${SummaryCard} label="This week" value=${summary.this_week || 0} tone="success" />
+    </div>
+
+    <div class="panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        <div>
+          <h3 style="margin:0 0 4px">What is due</h3>
+          <p class="muted" style="margin:0">Clearledgr only shows follow-ups that can move AP work forward.</p>
+        </div>
+        ${groupedCounts.length > 0 && html5`
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${groupedCounts.map(([kind, count]) => html5`
+              <span key=${kind} style="display:inline-flex;gap:6px;align-items:center;padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px;font-weight:600;color:var(--ink-secondary)">
+                ${KIND_LABELS[kind] || kind.replace(/_/g, " ")}
+                <strong style="color:var(--ink)">${count}</strong>
+              </span>
+            `)}
+          </div>
+        `}
+      </div>
+
+      ${tasks.length === 0 ? html5`<p class="muted" style="margin:0">No upcoming AP follow-ups are due right now.</p>` : html5`<div style="display:flex;flex-direction:column;gap:12px">
+            ${tasks.map((task) => html5`
+              <div key=${task.id} style="padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                  <div style="min-width:0;flex:1">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+                      <strong style="font-size:14px">${task.title || "AP follow-up"}</strong>
+                      <${StatusPill} status=${task.status} />
+                      <span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.02em">
+                        ${KIND_LABELS[task.kind] || task.kind?.replace(/_/g, " ") || "Follow-up"}
+                      </span>
+                    </div>
+                    <div style="font-size:13px;font-weight:600;color:var(--ink-secondary)">
+                      ${task.vendor_name || "Unknown vendor"} · ${task.invoice_number || "No invoice #"} · ${formatMoney(task.amount, task.currency || "USD")}
+                    </div>
+                    <div class="muted" style="font-size:12px;line-height:1.55;margin-top:6px">${task.detail}</div>
+                    <div class="muted" style="font-size:12px;margin-top:8px">
+                      ${task.due_at ? `Due ${fmtDateTime(task.due_at)}` : "No explicit follow-up time"}
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+                    <button class="alt" onClick=${() => openPipelineTask(task)}>Open slice</button>
+                    <button class="alt" onClick=${() => openRecord(task)}>Open record</button>
+                    <button class="alt" onClick=${() => openEmail(task)} disabled=${!task.thread_id && !task.message_id}>Open email</button>
+                  </div>
+                </div>
+              </div>
+            `)}
+          </div>`}
     </div>
   `;
   }
 
   // src/routes/pages/ActivityPage.js
-  var html5 = htm_module_default.bind(_);
-  function SnapshotCard({ label, value, tone = "neutral" }) {
-    const styles = {
-      neutral: "background:var(--surface);border:1px solid var(--border);color:var(--ink);",
-      warning: "background:#FFFBEB;border:1px solid #FCD34D;color:#92400E;",
-      success: "background:#ECFDF5;border:1px solid #A7F3D0;color:#065F46;",
-      danger: "background:#FEF2F2;border:1px solid #FECACA;color:#991B1B;"
-    };
-    return html5`<div style="padding:14px 16px;border-radius:var(--radius-md);${styles[tone] || styles.neutral}">
-    <div style="font-size:12px;font-weight:600;opacity:0.8">${label}</div>
-    <div style="margin-top:4px;font-size:24px;font-weight:700;letter-spacing:-0.02em">${value}</div>
-  </div>`;
-  }
-  function ActivityPage({ bootstrap, onRefresh }) {
+  var html6 = htm_module_default.bind(_);
+  function ActivityPage({ bootstrap, onRefresh, navigate }) {
     const dash = bootstrap?.dashboard || {};
     const events = Array.isArray(bootstrap?.recentActivity) ? bootstrap.recentActivity.slice(0, 12) : [];
     const [refresh, refreshing] = useAction2(onRefresh);
-    return html5`
+    return html6`
     <div class="panel">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div>
           <h3 style="margin:0 0 6px">AP activity</h3>
-          <p class="muted" style="margin:0">Use this page to check recent movement and return to work quickly. Pipeline remains the main queue surface.</p>
+          <p class="muted" style="margin:0">Use this page to check recent movement, then go back to Pipeline. It should not feel like a separate dashboard.</p>
         </div>
-        <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
+          <button onClick=${() => navigate?.("clearledgr/pipeline")}>Open pipeline</button>
+        </div>
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px">
-      <${SnapshotCard} label="Processed" value=${Number(dash.total_invoices || 0).toLocaleString()} />
-      <${SnapshotCard} label="Awaiting approval" value=${Number(dash.pending_approval || 0).toLocaleString()} tone="warning" />
-      <${SnapshotCard} label="Posted today" value=${Number(dash.posted_today || 0).toLocaleString()} tone="success" />
-      <${SnapshotCard} label="Rejected today" value=${Number(dash.rejected_today || 0).toLocaleString()} tone="danger" />
+    <div class="panel">
+      <h3 style="margin-top:0">What matters now</h3>
+      <div class="readiness-list" style="margin-top:12px">
+        <div class="readiness-item"><strong>Awaiting approval:</strong> ${Number(dash.pending_approval || 0).toLocaleString()}</div>
+        <div class="readiness-item"><strong>Posted today:</strong> ${Number(dash.posted_today || 0).toLocaleString()}</div>
+        <div class="readiness-item"><strong>Rejected today:</strong> ${Number(dash.rejected_today || 0).toLocaleString()}</div>
+        <div class="readiness-item"><strong>Total processed:</strong> ${Number(dash.total_invoices || 0).toLocaleString()}</div>
+      </div>
     </div>
 
     <div class="panel">
       <h3 style="margin-top:0">Recent finance activity</h3>
       <p class="muted" style="margin-top:0">Recent events across approval, posting, and exception handling.</p>
-      ${events.length === 0 ? html5`<p class="muted" style="margin:0">No recent activity yet.</p>` : html5`<div style="display:flex;flex-direction:column;gap:10px">
+      ${events.length === 0 ? html6`<p class="muted" style="margin:0">No recent activity yet.</p>` : html6`<div style="display:flex;flex-direction:column;gap:10px">
             ${events.map((event, index) => {
       const badge = eventBadge(event.event_type || event.new_state || "activity");
       const title = String(event.title || event.summary || badge.label || "Activity recorded").trim() || "Activity recorded";
       const subtitle = String(event.detail || event.message || "").trim();
-      return html5`
+      return html6`
                 <div key=${event.id || index} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
                   <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
                     <div style="min-width:0">
@@ -59439,7 +60492,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                         <span class=${`status-badge ${badge.cls || ""}`}>${badge.label}</span>
                         <strong style="font-size:13px">${title}</strong>
                       </div>
-                      ${subtitle && html5`<div class="muted" style="margin-top:6px;font-size:12px;line-height:1.5">${subtitle}</div>`}
+                      ${subtitle && html6`<div class="muted" style="margin-top:6px;font-size:12px;line-height:1.5">${subtitle}</div>`}
                     </div>
                     <span class="muted" style="font-size:12px;white-space:nowrap">${fmtDateTime(event.ts || event.timestamp || event.created_at)}</span>
                   </div>
@@ -59450,42 +60503,61 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
 
     <div class="panel">
-      <h3 style="margin-top:0">Attention now</h3>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div class="readiness-item">Invoices awaiting approval: <strong>${Number(dash.pending_approval || 0).toLocaleString()}</strong></div>
-        <div class="readiness-item">Posted value today: <strong>${fmtDollar(dash.total_amount_posted_today)}</strong></div>
-        <div class="readiness-item">Pending value: <strong>${fmtDollar(dash.total_amount_pending)}</strong></div>
-      </div>
+      <h3 style="margin-top:0">Use this page sparingly</h3>
+      <p class="muted" style="margin:0">Recent activity is useful for orientation, but queue decisions still belong in Pipeline and on the shared AP record.</p>
     </div>
   `;
   }
 
   // src/routes/pages/ConnectionsPage.js
-  var html6 = htm_module_default.bind(_);
-  function StatusDot({ connected }) {
-    return html6`<div style="
-    width:8px;height:8px;border-radius:50%;
-    background:${connected ? "#10B981" : "#94A3B8"};
-  "></div>`;
+  var html7 = htm_module_default.bind(_);
+  function ConnectionRow({ label, status, detail, actionLabel = "", onAction, pending = false }) {
+    const connected = String(status || "").trim().toLowerCase() === "connected";
+    return html7`<div style="
+    display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;
+    padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);
+  ">
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+        <strong style="font-size:14px">${label}</strong>
+        <span class=${`status-badge ${connected ? "connected" : ""}`}>${humanizeStatus(status || "unknown")}</span>
+      </div>
+      <div class="muted" style="font-size:12px">${detail}</div>
+    </div>
+    ${actionLabel ? html7`<button class="alt" onClick=${onAction} disabled=${pending} style="padding:8px 12px;font-size:12px">${pending ? "Working…" : actionLabel}</button>` : null}
+  </div>`;
   }
-  function ConnectionsPage({ bootstrap, api, toast, orgId, onRefresh, oauthBridge }) {
-    const integrations = bootstrap?.integrations || [];
+  function ApprovalSurfaceCard({ title, status, detail, children }) {
+    return html7`<div class="panel" style="margin-bottom:0">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+      <div>
+        <h3 style="margin:0 0 4px">${title}</h3>
+        <p class="muted" style="margin:0">${detail}</p>
+      </div>
+      <span class=${`status-badge ${status === "connected" ? "connected" : ""}`}>${humanizeStatus(status || "unknown")}</span>
+    </div>
+    ${children}
+  </div>`;
+  }
+  function ConnectionsPage({ bootstrap, api, toast, orgId, onRefresh, oauthBridge, navigate }) {
+    const gmail = integrationByName(bootstrap, "gmail");
+    const erp = integrationByName(bootstrap, "erp");
     const slack = integrationByName(bootstrap, "slack");
     const teams = integrationByName(bootstrap, "teams");
-    const [connectSlack] = useAction2(async () => {
+    const [connectSlack, slackPending] = useAction2(async () => {
       const p3 = await api("/api/admin/integrations/slack/install/start", { method: "POST", body: JSON.stringify({ organization_id: orgId, mode: "per_org", redirect_path: "/console" }) });
       oauthBridge.startOAuth(p3.auth_url, "slack");
     });
-    const [saveChannel] = useAction2(async () => {
+    const [saveChannel, saveChannelPending] = useAction2(async () => {
       await api("/api/admin/integrations/slack/channel", { method: "POST", body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById("cl-slack-channel")?.value?.trim() }) });
       toast("Channel saved.");
       onRefresh();
     });
-    const [testSlackMsg] = useAction2(async () => {
+    const [testSlackMsg, testSlackPending] = useAction2(async () => {
       await api("/api/admin/integrations/slack/test", { method: "POST", body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById("cl-slack-channel")?.value?.trim() }) });
       toast("Test sent to Slack.");
     });
-    const [saveWebhook] = useAction2(async () => {
+    const [saveWebhook, saveWebhookPending] = useAction2(async () => {
       const wh = document.getElementById("cl-teams-webhook")?.value?.trim();
       if (!wh) {
         toast("Webhook URL required.", "error");
@@ -59495,69 +60567,76 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       toast("Teams webhook saved.");
       onRefresh();
     });
-    const [testTeamsMsg] = useAction2(async () => {
+    const [testTeamsMsg, testTeamsPending] = useAction2(async () => {
       await api("/api/admin/integrations/teams/test", { method: "POST", body: JSON.stringify({ organization_id: orgId }) });
       toast("Test sent to Teams.");
     });
-    return html6`
-    ${""}
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:20px">
-      <table class="table">
-        <thead><tr>
-          <th style="width:30px"></th>
-          <th>Integration</th>
-          <th>Status</th>
-          <th>Mode</th>
-          <th>Last sync</th>
-        </tr></thead>
-        <tbody>
-          ${integrations.length === 0 ? html6`<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">No integrations configured yet.</td></tr>` : integrations.map((i3) => html6`<tr key=${i3.name}>
-              <td><${StatusDot} connected=${i3.status === "connected"} /></td>
-              <td style="font-weight:500;text-transform:capitalize">${i3.name}</td>
-              <td>
-                <span style="
-                  font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;
-                  ${i3.status === "connected" ? "background:#ECFDF5;color:#059669" : "background:#F1F5F9;color:#64748B"}
-                ">${humanizeStatus(i3.status || "unknown")}</span>
-              </td>
-              <td style="color:var(--ink-secondary)">${humanizeMode(i3.mode || "-")}</td>
-              <td style="color:var(--ink-muted);font-size:13px">${i3.last_sync_at || "—"}</td>
-            </tr>`)}
-        </tbody>
-      </table>
-    </div>
-
-    ${""}
+    return html7`
     <div class="panel">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="1.5"><path d="M14.5 2c-1.1 0-2 .9-2 2v4c0 1.1.9 2 2 2h4c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2h-4Z"/></svg>
-        <h3 style="margin:0">Slack Setup</h3>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button onClick=${connectSlack} style="padding:8px 18px;font-size:13px">Install to Slack</button>
-        <input id="cl-slack-channel" placeholder="#finance-approvals" value=${slack.approval_channel || ""} style="flex:1;min-width:160px" />
-        <button class="alt" onClick=${saveChannel} style="padding:8px 14px;font-size:13px">Save Channel</button>
-        <button class="alt" onClick=${testSlackMsg} style="padding:8px 14px;font-size:13px">Send Test</button>
+      <h3 style="margin:0 0 6px">Use this page only when setup is blocking AP work</h3>
+      <p class="muted" style="margin:0 0 16px">Connections are occasional admin tasks. Operators should spend their time in Pipeline and the thread card, not here.</p>
+      <div style="display:grid;gap:10px">
+        <${ConnectionRow}
+          label="Gmail"
+          status=${gmail.status || (gmail.connected ? "connected" : "disconnected")}
+          detail=${gmail.connected ? "Gmail monitoring is connected for this workspace." : "Connect Gmail from the thread prompt or the first-run setup flow."}
+        />
+        <${ConnectionRow}
+          label="Slack"
+          status=${slack.status || (slack.connected ? "connected" : "disconnected")}
+          detail=${slack.connected ? `Approval routing is ready${slack.approval_channel ? ` in ${slack.approval_channel}` : ""}.` : "Install Slack if approvals should be handled in a Slack channel."}
+          actionLabel=${slack.connected ? "" : "Install Slack"}
+          onAction=${connectSlack}
+          pending=${slackPending}
+        />
+        <${ConnectionRow}
+          label="Teams"
+          status=${teams.status || (teams.connected ? "connected" : "disconnected")}
+          detail=${teams.connected ? "Teams approval routing is connected." : "Save a Teams webhook if approvals should be handled in Teams."}
+        />
+        <${ConnectionRow}
+          label="ERP"
+          status=${erp.status || (erp.connected ? "connected" : "disconnected")}
+          detail=${erp.connected ? `${erp.erp_type || "ERP"} posting is available.` : "Posting stays blocked until an ERP connector is configured."}
+          actionLabel=${erp.connected ? "" : "Review status"}
+          onAction=${() => navigate?.("clearledgr/health")}
+        />
       </div>
     </div>
 
-    ${""}
-    <div class="panel">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        <h3 style="margin:0">Teams Setup</h3>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <input id="cl-teams-webhook" placeholder="https://.../incomingwebhook/..." value=${teams.webhook_url || ""} style="flex:1;min-width:200px" />
-        <button class="alt" onClick=${saveWebhook} style="padding:8px 14px;font-size:13px">Save Webhook</button>
-        <button class="alt" onClick=${testTeamsMsg} disabled=${!teams.connected} style="padding:8px 14px;font-size:13px">Send Test</button>
-      </div>
+    <div style="display:grid;gap:16px">
+      <${ApprovalSurfaceCard}
+        title="Slack approval routing"
+        status=${slack.status || (slack.connected ? "connected" : "disconnected")}
+        detail="Point invoice approvals at the Slack channel operators actually use."
+      >
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button onClick=${connectSlack} disabled=${slackPending} style="padding:8px 18px;font-size:13px">${slackPending ? "Working…" : "Install to Slack"}</button>
+          <input id="cl-slack-channel" placeholder="#finance-approvals" value=${slack.approval_channel || ""} style="flex:1;min-width:160px" />
+          <button class="alt" onClick=${saveChannel} disabled=${saveChannelPending} style="padding:8px 14px;font-size:13px">${saveChannelPending ? "Saving…" : "Save channel"}</button>
+          <button class="alt" onClick=${testSlackMsg} disabled=${testSlackPending || !slack.connected} style="padding:8px 14px;font-size:13px">${testSlackPending ? "Sending…" : "Send test"}</button>
+        </div>
+        <div class="muted" style="margin-top:10px">Mode: ${humanizeMode(slack.mode || "-")}</div>
+      </${ApprovalSurfaceCard}>
+
+      <${ApprovalSurfaceCard}
+        title="Teams approval routing"
+        status=${teams.status || (teams.connected ? "connected" : "disconnected")}
+        detail="Use Teams only if the finance approval path lives there."
+      >
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input id="cl-teams-webhook" placeholder="https://.../incomingwebhook/..." value=${teams.webhook_url || ""} style="flex:1;min-width:220px" />
+          <button class="alt" onClick=${saveWebhook} disabled=${saveWebhookPending} style="padding:8px 14px;font-size:13px">${saveWebhookPending ? "Saving…" : "Save webhook"}</button>
+          <button class="alt" onClick=${testTeamsMsg} disabled=${testTeamsPending || !teams.connected} style="padding:8px 14px;font-size:13px">${testTeamsPending ? "Sending…" : "Send test"}</button>
+        </div>
+        <div class="muted" style="margin-top:10px">Mode: ${humanizeMode(teams.mode || "-")}</div>
+      </${ApprovalSurfaceCard}>
     </div>
   `;
   }
 
   // src/routes/pages/RulesPage.js
-  var html7 = htm_module_default.bind(_);
+  var html8 = htm_module_default.bind(_);
   function parseThreshold(value, fallback) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : fallback;
@@ -59591,18 +60670,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       toast("Approval rules updated.");
       onRefresh();
     });
-    return html7`
+    return html8`
     <div class="panel">
-      <h3>How invoices are handled</h3>
-      <p class="muted" style="margin-top:0">Keep the core AP controls simple here. Detailed policy authoring stays outside the daily Gmail workflow.</p>
+      <h3>Only keep daily AP controls here</h3>
+      <p class="muted" style="margin-top:0">This page should answer one question: when does an invoice stay in Gmail, route for approval, or stop for PO review? Detailed policy authoring stays outside Gmail.</p>
       <div style="display:flex;flex-direction:column;gap:16px;margin-top:8px">
         <div>
           <label>Auto-approval confidence threshold</label>
           <input id="cl-policy-confidence" type="number" min="0" max="1" step="0.01" value=${String(confidenceThreshold)} />
+          <div class="muted" style="margin-top:6px">Invoices below this confidence stay with an operator before approval or posting.</div>
         </div>
         <div>
           <label>Maximum auto-approve amount</label>
           <input id="cl-policy-max-amount" type="number" min="0" step="1" value=${String(maxAutoAmount)} />
+          <div class="muted" style="margin-top:6px">Invoices above this amount always wait for human approval.</div>
         </div>
         <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500">
           <input id="cl-policy-require-po" type="checkbox" checked=${requirePO} />
@@ -59615,7 +60696,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
 
     <div class="panel">
-      <h3 style="margin-top:0">Current policy</h3>
+      <h3 style="margin-top:0">Current approval behavior</h3>
+      <p class="muted" style="margin-top:0">A compact summary of the rules operators will feel in the queue.</p>
       <div class="readiness-list" style="margin-top:12px">
         <div class="readiness-item"><strong>Policy name:</strong> ${policy.policy_name || "Default AP policy"}</div>
         <div class="readiness-item"><strong>Confidence threshold:</strong> ${confidenceThreshold}</div>
@@ -59627,7 +60709,22 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/TeamPage.js
-  var html8 = htm_module_default.bind(_);
+  var html9 = htm_module_default.bind(_);
+  function InviteRow({ invite, onRevoke }) {
+    return html9`<div style="
+    display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;
+    padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);
+  ">
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+        <strong style="font-size:14px">${invite.email}</strong>
+        <span class="status-badge ${invite.status === "pending" ? "" : "connected"}">${invite.status || "pending"}</span>
+      </div>
+      <div class="muted" style="font-size:12px">Role: ${(invite.role || "member") === "member" ? "Operator" : invite.role === "viewer" ? "Read-only" : "Admin"}</div>
+    </div>
+    ${invite.status === "pending" ? html9`<button class="alt" onClick=${() => onRevoke(invite.id)} style="padding:8px 12px;font-size:12px">Revoke</button>` : null}
+  </div>`;
+  }
   function TeamPage({ bootstrap, api, toast, orgId, onRefresh }) {
     const invites = bootstrap?.teamInvites || [];
     const [createInvite] = useAction2(async () => {
@@ -59642,46 +60739,42 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       toast("Invite revoked.");
       onRefresh();
     });
-    return html8`
+    return html9`
     <div class="panel">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        <h3 style="margin:0">Invite teammate</h3>
-      </div>
+      <h3 style="margin:0 0 6px">Team access belongs here, not in the daily queue</h3>
+      <p class="muted" style="margin:0 0 14px">Use this page for workspace access only. Approvers can still act from Slack or Teams without living in Gmail every day.</p>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input id="cl-invite-email" placeholder="teammate@company.com" style="flex:1;min-width:200px" />
         <select id="cl-invite-role" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;cursor:pointer">
-          <option value="member">Member</option><option value="admin">Admin</option><option value="viewer">Viewer</option>
+          <option value="member">Operator</option>
+          <option value="admin">Admin</option>
+          <option value="viewer">Read-only</option>
         </select>
-        <button onClick=${createInvite} style="padding:8px 18px;font-size:13px">Create Invite</button>
+        <button onClick=${createInvite} style="padding:8px 18px;font-size:13px">Send invite</button>
       </div>
     </div>
 
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
-      <div style="padding:16px 20px;border-bottom:1px solid var(--border)">
-        <h3 style="margin:0;font-size:15px">Active invites</h3>
+    <div class="panel">
+      <h3 style="margin-top:0">Role guide</h3>
+      <div style="display:grid;gap:10px">
+        <div class="readiness-item"><strong>Operator:</strong> works the Pipeline and Gmail thread surface.</div>
+        <div class="readiness-item"><strong>Admin:</strong> manages setup, rules, and workspace settings.</div>
+        <div class="readiness-item"><strong>Read-only:</strong> can review records without mutating AP workflow state.</div>
       </div>
-      <table class="table">
-        <thead><tr><th>Email</th><th>Role</th><th>Status</th><th style="width:80px"></th></tr></thead>
-        <tbody>${invites.length ? invites.map((inv) => html8`<tr key=${inv.id}>
-          <td style="font-weight:500">${inv.email}</td>
-          <td style="text-transform:capitalize">${inv.role}</td>
-          <td><span style="
-            font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;
-            ${inv.status === "pending" ? "background:#FEFCE8;color:#A16207" : "background:#F1F5F9;color:#64748B"}
-          ">${inv.status}</span></td>
-          <td>${inv.status === "pending" ? html8`<button class="alt" onClick=${() => revokeInvite(inv.id)} style="padding:4px 10px;font-size:12px">Revoke</button>` : null}</td>
-        </tr>`) : html8`<tr><td colspan="4" style="text-align:center;padding:32px">
-          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="1" style="margin-bottom:8px;opacity:0.4"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
-          <div class="muted">No invites yet. Send an invite to get started.</div>
-        </td></tr>`}</tbody>
-      </table>
+    </div>
+
+    <div class="panel">
+      <h3 style="margin-top:0">Pending invites</h3>
+      <p class="muted" style="margin-top:0">Keep this list short and current so ownership stays clear.</p>
+      ${invites.length ? html9`<div style="display:grid;gap:10px">
+            ${invites.map((invite) => html9`<${InviteRow} key=${invite.id} invite=${invite} onRevoke=${revokeInvite} />`)}
+          </div>` : html9`<div class="muted">No invites yet. Send an invite when someone needs Gmail access to the shared AP record.</div>`}
     </div>
   `;
   }
 
   // src/routes/pages/CompanyPage.js
-  var html9 = htm_module_default.bind(_);
+  var html10 = htm_module_default.bind(_);
   function CompanyPage({ bootstrap, api, toast, orgId, onRefresh }) {
     const org = bootstrap?.organization || {};
     const [saveOrg, saving] = useAction2(async () => {
@@ -59699,10 +60792,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       toast("Company details saved.");
       onRefresh();
     });
-    return html9`
+    return html10`
     <div class="panel">
-      <h3>Company details</h3>
-      <p class="muted" style="margin-top:0">Keep the workspace identity current. Deep org configuration stays behind internal admin tooling.</p>
+      <h3>Workspace identity only</h3>
+      <p class="muted" style="margin-top:0">Keep the company record current here, but leave deeper organization administration outside Gmail.</p>
       <div style="display:flex;flex-direction:column;gap:16px;margin-top:8px">
         <div><label>Company name</label><input id="cl-org-name" value=${org.name || ""} placeholder="Your company name" /></div>
         <div><label>Domain</label><input id="cl-org-domain" value=${org.domain || ""} placeholder="company.com" /></div>
@@ -59717,7 +60810,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
 
     <div class="panel">
-      <h3 style="margin-top:0">Current workspace</h3>
+      <h3 style="margin-top:0">Current workspace record</h3>
+      <p class="muted" style="margin-top:0">The fields below shape how Clearledgr identifies this AP workspace across Gmail, approvals, and ERP.</p>
       <div class="readiness-list" style="margin-top:12px">
         <div class="readiness-item"><strong>Organization ID:</strong> ${org.id || orgId || "—"}</div>
         <div class="readiness-item"><strong>Domain:</strong> ${org.domain || "Not set"}</div>
@@ -59728,7 +60822,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/PlanPage.js
-  var html10 = htm_module_default.bind(_);
+  var html11 = htm_module_default.bind(_);
   function PlanPage({ bootstrap, api, toast, orgId, onRefresh }) {
     const sub = bootstrap?.subscription || {};
     const usage = sub.usage || {};
@@ -59739,28 +60833,33 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       toast(`Plan updated to ${plan}.`);
       onRefresh();
     });
-    return html10`
+    return html11`
     <div class="panel">
-      <h3>Your plan</h3>
+      <h3>Workspace plan</h3>
       <div style="display:flex;align-items:center;gap:12px;margin:12px 0 16px">
         <span style="font-size:28px;font-weight:700;letter-spacing:-0.02em">${planName}</span>
         <span class="status-badge connected">${sub.status || "Active"}</span>
       </div>
-      <p class="muted">Use this page to review the current workspace plan. Commercial billing changes are handled with your Clearledgr admin contact.</p>
+      <p class="muted">Use this page as a compact reference. Commercial billing changes still stay with your Clearledgr admin contact.</p>
       <div class="row" style="margin-top:12px">
-        ${["free", "trial", "pro", "enterprise"].map((p3) => html10`<button class=${sub.plan === p3 ? "" : "alt"} onClick=${() => changePlan(p3)} disabled=${sub.plan === p3}>${p3.charAt(0).toUpperCase() + p3.slice(1)}</button>`)}
+        ${["free", "trial", "pro", "enterprise"].map((p3) => html11`<button class=${sub.plan === p3 ? "" : "alt"} onClick=${() => changePlan(p3)} disabled=${sub.plan === p3}>${p3.charAt(0).toUpperCase() + p3.slice(1)}</button>`)}
       </div>
     </div>
-    <div class="panel"><h3>Usage this period</h3>
-      ${usageKeys.length ? html10`<div class="kpi-row">${usageKeys.map((k3) => html10`<div class="kpi-card"><strong>${typeof usage[k3] === "number" ? usage[k3].toLocaleString() : usage[k3]}</strong><span>${k3.replace(/_/g, " ")}</span></div>`)}</div>` : html10`<p class="muted">Usage data will appear here once invoices are processed.</p>`}
+
+    <div class="panel">
+      <h3 style="margin-top:0">Usage this period</h3>
+      <p class="muted" style="margin-top:0">A compact view of current workspace usage. Full billing analysis does not belong in Gmail.</p>
+      ${usageKeys.length ? html11`<div style="display:grid;gap:10px">
+            ${usageKeys.map((key) => html11`<div class="readiness-item"><strong>${key.replace(/_/g, " ")}:</strong> ${typeof usage[key] === "number" ? usage[key].toLocaleString() : usage[key]}</div>`)}
+          </div>` : html11`<p class="muted">Usage data will appear here once invoices are processed.</p>`}
     </div>
   `;
   }
 
   // src/routes/pages/ReconciliationPage.js
-  var html11 = htm_module_default.bind(_);
+  var html12 = htm_module_default.bind(_);
   function Step({ number, text }) {
-    return html11`<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0">
+    return html12`<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0">
     <div style="
       width:24px;height:24px;border-radius:50%;flex-shrink:0;
       display:flex;align-items:center;justify-content:center;
@@ -59799,16 +60898,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         setStarting(false);
       }
     }, [sheetUrl, range, orgId, api, toast, onRefresh]);
-    return html11`
-    <div style="display:grid;grid-template-columns:1fr 340px;gap:24px;align-items:start">
+    return html12`
+    <div style="display:grid;grid-template-columns:1fr;gap:16px;align-items:start">
 
-      ${""}
       <div class="panel">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/></svg>
-          <h3 style="margin:0">Reconciliation groundwork</h3>
-        </div>
-        <p class="muted" style="margin-bottom:20px">This surface is early groundwork for future reconciliation workflows. AP remains the primary production workflow today.</p>
+        <h3 style="margin:0 0 6px">Reconciliation groundwork only</h3>
+        <p class="muted" style="margin-bottom:20px">This surface is intentionally secondary. AP remains the primary production workflow today, so use this page only when testing reconciliation groundwork.</p>
 
         <div style="display:flex;flex-direction:column;gap:14px">
           <div>
@@ -59824,7 +60919,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </button>
         </div>
 
-        ${result && html11`
+        ${result && html12`
           <div style="margin-top:16px;padding:14px;background:#ECFDF5;border:1px solid #A7F3D0;border-radius:var(--radius-sm)">
             <div style="font-weight:600;font-size:13px;color:#059669;margin-bottom:4px">Session started</div>
             <div style="font-family:var(--font-mono);font-size:12px;color:var(--ink-secondary)">${result.details?.session_id || "Created"}</div>
@@ -59833,9 +60928,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         `}
       </div>
 
-      ${""}
       <div class="panel" style="background:var(--bg)">
-        <h3 style="font-size:14px;margin-bottom:12px">What this does</h3>
+        <h3 style="font-size:14px;margin-bottom:12px">What this groundwork run does</h3>
         <${Step} number="1" text="Import transactions from your Google Sheet" />
         <${Step} number="2" text="Match each transaction against posted invoices by amount, date, vendor, and reference" />
         <${Step} number="3" text="Flag exceptions for human review" />
@@ -59852,18 +60946,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/HealthPage.js
-  var html12 = htm_module_default.bind(_);
+  var html13 = htm_module_default.bind(_);
   function HealthPage({ bootstrap }) {
     const health = bootstrap?.health || {};
     const integrations = health.integrations || {};
     const actions = health.required_actions || [];
-    return html12`
+    return html13`
     <div class="panel">
-      <h3>${actions.length ? "Action required" : "All systems go"}</h3>
-      <p class="muted">${actions.length ? "Complete these items before going live." : "Everything looks good. Your system is ready."}</p>
-      ${actions.length > 0 && html12`
+      <h3>${actions.length ? "Admin follow-up required" : "No active workspace issues"}</h3>
+      <p class="muted">${actions.length ? "Use this page to resolve blockers, then leave it. Pipeline and the thread card remain the daily work surfaces." : "Everything looks healthy enough to keep AP work inside Gmail."}</p>
+      ${actions.length > 0 && html13`
         <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
-          ${actions.map((a3, i3) => html12`
+          ${actions.map((a3, i3) => html13`
             <div key=${i3} class="readiness-item" style="border-left:3px solid var(--amber)">
               ${a3.message}
             </div>
@@ -59873,25 +60967,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
     <div class="panel">
       <h3>Connection status</h3>
-      <table class="table">
-        <thead><tr><th>Service</th><th>Status</th></tr></thead>
-        <tbody>
-          ${Object.entries(integrations).map(([name, status]) => {
+      ${Object.keys(integrations).length ? html13`<div style="display:grid;gap:10px">
+            ${Object.entries(integrations).map(([name, status]) => {
       const isOk = status === true || status === "connected" || status?.connected === true;
-      return html12`<tr>
-              <td style="font-weight:500">${name.charAt(0).toUpperCase() + name.slice(1)}</td>
-              <td>${html12`<span class="status-badge ${isOk ? "connected" : ""}">${isOk ? "Connected" : "Not connected"}</span>`}</td>
-            </tr>`;
+      return html13`<div class="readiness-item" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+                <strong>${name.charAt(0).toUpperCase() + name.slice(1)}</strong>
+                <span class="status-badge ${isOk ? "connected" : ""}">${isOk ? "Connected" : "Not connected"}</span>
+              </div>`;
     })}
-          ${!Object.keys(integrations).length && html12`<tr><td colspan="2" class="muted">No integration data yet.</td></tr>`}
-        </tbody>
-      </table>
+          </div>` : html13`<div class="muted">No integration data yet.</div>`}
     </div>
   `;
   }
 
   // src/routes/pages/PipelinePage.js
-  var html13 = htm_module_default.bind(_);
+  var html14 = htm_module_default.bind(_);
   var ACTIVE_AP_ITEM_STORAGE_KEY = "clearledgr_active_ap_item_id";
   var STATE_STYLES = {
     needs_approval: { bg: "#FEFCE8", text: "#A16207", label: "Needs approval" },
@@ -59912,25 +61002,45 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     exception: "Policy block",
     confidence: "Field review",
     budget: "Budget review",
-    po: "PO/GR issue"
+    po: "PO / GR issue"
   };
+  var ERP_STATUS_LABELS = {
+    ready: "Ready",
+    failed: "Failed",
+    connected: "Connected",
+    posted: "Posted",
+    not_connected: "Not connected"
+  };
+  function getPipelineScope(orgId, userEmail) {
+    return { orgId, userEmail };
+  }
+  function formatDurationMinutes(value) {
+    const minutes = Number(value || 0);
+    if (!Number.isFinite(minutes) || minutes <= 0)
+      return "0m";
+    if (minutes < 60)
+      return `${minutes}m`;
+    if (minutes < 1440)
+      return `${Math.round(minutes / 60)}h`;
+    return `${Math.round(minutes / 1440)}d`;
+  }
   function StatePill2({ state }) {
     const normalized = normalizePipelineState(state);
     const tone = STATE_STYLES[normalized] || { bg: "#F1F5F9", text: "#64748B", label: normalized.replace(/_/g, " ") };
-    return html13`<span style="
+    return html14`<span style="
     font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;
     background:${tone.bg};color:${tone.text};letter-spacing:0.02em;text-transform:uppercase;
   ">${tone.label}</span>`;
   }
   function SliceChip({ slice, count, active, onClick }) {
-    return html13`<button
+    return html14`<button
     onClick=${onClick}
     style="
       display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;
       border:1px solid ${active ? "var(--accent)" : "var(--border)"};
       background:${active ? "var(--accent-soft)" : "var(--surface)"};
       color:${active ? "var(--accent-ink)" : "var(--ink)"};
-      cursor:pointer;font-family:inherit;text-align:left;min-width:170px;
+      cursor:pointer;font-family:inherit;text-align:left;min-width:182px;
     "
   >
     <span style="font-size:13px;font-weight:700">${slice.label}</span>
@@ -59938,10 +61048,33 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   </button>`;
   }
   function BlockerChip({ kind }) {
-    return html13`<span style="
+    return html14`<span style="
     font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;
     background:#FFF7ED;border:1px solid #FED7AA;color:#9A3412;
   ">${BLOCKER_LABELS[kind] || kind}</span>`;
+  }
+  function SavedViewChip({ view, active, onOpen, onTogglePin, onDelete }) {
+    const scopeLabel = view.scope === "starter" ? "Starter" : "Personal";
+    return html14`
+    <div style="
+      display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:999px;
+      border:1px solid ${active ? "var(--accent)" : "var(--border)"};
+      background:${active ? "var(--accent-soft)" : "var(--bg)"};
+    ">
+      <button class="alt" onClick=${onOpen} style="padding:6px 10px;font-size:12px">${view.name}</button>
+      <span class="muted" style="font-size:11px;font-weight:700">${scopeLabel}</span>
+      <button
+        aria-label=${view.pinned ? "Unpin saved view" : "Pin saved view"}
+        onClick=${onTogglePin}
+        style="border:none;background:transparent;color:${view.pinned ? "var(--accent-ink)" : "var(--ink-muted)"};cursor:pointer;padding:0 2px;font-size:12px;font-weight:700"
+      >${view.pinned ? "Pinned" : "Pin"}</button>
+      ${typeof onDelete === "function" ? html14`<button
+            aria-label="Delete saved view"
+            onClick=${onDelete}
+            style="border:none;background:transparent;color:var(--ink-muted);cursor:pointer;padding:0 2px"
+          >×</button>` : null}
+    </div>
+  `;
   }
   function saveActiveItemId(itemId) {
     if (typeof window === "undefined" || !window?.localStorage)
@@ -59949,20 +61082,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     try {
       window.localStorage.setItem(ACTIVE_AP_ITEM_STORAGE_KEY, String(itemId || ""));
     } catch {}
-    if (itemId) {
-      store_default.setSelectedItem(String(itemId));
-    }
   }
-  function openItemDetail(navigate, item) {
+  function openItemDetail(navigate, pipelineScope, item) {
     if (!item?.id)
       return;
     saveActiveItemId(item.id);
+    focusPipelineItem(pipelineScope, item, "pipeline");
     navigate(`clearledgr/invoice/${item.id}`);
   }
-  function openItemEmail(item) {
+  function openItemEmail(pipelineScope, item) {
     if (!item?.id)
       return false;
     saveActiveItemId(item.id);
+    focusPipelineItem(pipelineScope, item, "pipeline");
     return openSourceEmail(item);
   }
   function getAmountLabel(item) {
@@ -59978,29 +61110,108 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function getSavedViewLabel(view) {
     return String(view?.name || "").trim() || "Saved view";
   }
-  function PipelinePage({ api, toast, orgId, navigate }) {
+  function getActiveSavedView(viewPrefs = {}) {
+    return getAllPipelineViews(viewPrefs).find((view) => pipelineSnapshotsEqual(view.snapshot, viewPrefs)) || null;
+  }
+  function buildResetFilters() {
+    return {
+      state: "all",
+      vendor: "",
+      due: "all",
+      blocker: "all",
+      amount: "all",
+      approvalAge: "all",
+      erpStatus: "all"
+    };
+  }
+  function PipelinePage({ api, bootstrap, toast, orgId, userEmail, navigate }) {
+    const pipelineScope = T2(() => getPipelineScope(orgId, userEmail), [orgId, userEmail]);
     const [items, setItems] = d2([]);
     const [loading, setLoading] = d2(true);
     const [searchQuery, setSearchQuery] = d2("");
-    const [viewPrefs, setViewPrefs] = d2(() => readPipelinePreferences(orgId));
+    const [viewPrefs, setViewPrefs] = d2(() => readPipelinePreferences(pipelineScope));
+    const [navState, setNavState] = d2(() => readPipelineNavigation(pipelineScope));
     const [savedViewName, setSavedViewName] = d2("");
+    const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
+    const syncReadyRef = A2(false);
+    const syncTimerRef = A2(null);
+    const lastSyncedPrefsRef = A2("");
     y2(() => {
-      setViewPrefs(readPipelinePreferences(orgId));
-    }, [orgId]);
+      setViewPrefs(readPipelinePreferences(pipelineScope));
+      setNavState(readPipelineNavigation(pipelineScope));
+    }, [pipelineScope]);
+    const syncServerPreferences = async (prefs, { silent = true } = {}) => {
+      const normalized = normalizePipelinePreferences(prefs);
+      await api("/api/admin/user/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({
+          organization_id: orgId,
+          patch: buildPipelinePreferencePatch(normalized)
+        }),
+        silent
+      });
+      lastSyncedPrefsRef.current = JSON.stringify(normalized);
+    };
+    y2(() => {
+      const local = readPipelinePreferences(pipelineScope);
+      const remote = bootstrapPipelinePrefs ? normalizePipelinePreferences(bootstrapPipelinePrefs) : null;
+      let next = local;
+      let syncedBaseline = "";
+      if (remote && hasMeaningfulPipelinePreferences(remote)) {
+        if (!pipelinePreferencesEqual(local, remote)) {
+          next = writePipelinePreferences(pipelineScope, remote);
+        } else {
+          next = remote;
+        }
+        syncedBaseline = JSON.stringify(normalizePipelinePreferences(next));
+      } else if (!hasMeaningfulPipelinePreferences(local)) {
+        syncedBaseline = JSON.stringify(normalizePipelinePreferences(next));
+      }
+      setViewPrefs(next);
+      lastSyncedPrefsRef.current = syncedBaseline;
+      syncReadyRef.current = true;
+    }, [bootstrapPipelinePrefs, pipelineScope]);
+    y2(() => {
+      if (!syncReadyRef.current)
+        return;
+      const serialized = JSON.stringify(normalizePipelinePreferences(viewPrefs));
+      if (serialized === lastSyncedPrefsRef.current)
+        return;
+      if (syncTimerRef.current)
+        clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = setTimeout(() => {
+        syncServerPreferences(viewPrefs).catch(() => {});
+      }, 500);
+      return () => {
+        if (syncTimerRef.current)
+          clearTimeout(syncTimerRef.current);
+      };
+    }, [viewPrefs, pipelineScope]);
     y2(() => {
       setLoading(true);
       api(`/extension/worklist?organization_id=${encodeURIComponent(orgId)}&limit=500`).then((data) => setItems(Array.isArray(data?.items) ? data.items : [])).catch(() => setItems([])).finally(() => setLoading(false));
     }, [api, orgId]);
     const persistPrefs = (nextValue) => {
-      const normalized = writePipelinePreferences(orgId, nextValue);
+      const normalized = writePipelinePreferences(pipelineScope, nextValue);
       setViewPrefs(normalized);
       return normalized;
+    };
+    const resetFiltersAndSearch = () => {
+      setSearchQuery("");
+      setViewPrefs(persistPrefs({
+        ...viewPrefs,
+        activeSliceId: "all_open",
+        sortCol: "queue_age",
+        sortDir: "desc",
+        filters: buildResetFilters()
+      }));
     };
     const [doRefresh, refreshing] = useAction2(async () => {
       setLoading(true);
       try {
         const data = await api(`/extension/worklist?organization_id=${encodeURIComponent(orgId)}&limit=500`);
         setItems(Array.isArray(data?.items) ? data.items : []);
+        setNavState(readPipelineNavigation(pipelineScope));
         toast("Pipeline refreshed.", "success");
       } catch {
         toast("Could not refresh the pipeline.", "error");
@@ -60011,10 +61222,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [saveView, savingView] = useAction2(async () => {
       const name = String(savedViewName || "").trim();
       if (!name) {
-        toast("Name the saved view first.", "warning");
+        toast("Name the personal view first.", "warning");
         return;
       }
-      const next = createSavedPipelineView(orgId, {
+      const next = createSavedPipelineView(pipelineScope, {
         name,
         snapshot: {
           ...viewPrefs,
@@ -60023,7 +61234,28 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       });
       setViewPrefs(next);
       setSavedViewName("");
-      toast(`Saved view "${name}" added.`, "success");
+      toast(`Personal view "${name}" added.`, "success");
+    });
+    const [updateView, updatingView] = useAction2(async () => {
+      if (!activeSavedView || activeSavedView.scope !== "user") {
+        toast("Only personal views can be updated.", "warning");
+        return;
+      }
+      const nextName = String(savedViewName || activeSavedView.name || "").trim();
+      if (!nextName) {
+        toast("Name the personal view first.", "warning");
+        return;
+      }
+      const next = updateSavedPipelineView(pipelineScope, activeSavedView.id, {
+        name: nextName,
+        snapshot: {
+          ...viewPrefs,
+          filters: viewPrefs.filters
+        }
+      });
+      setViewPrefs(next);
+      setSavedViewName(nextName);
+      toast(`Personal view "${nextName}" updated.`, "success");
     });
     const displayed = T2(() => filterPipelineItems(items, {
       activeSliceId: viewPrefs.activeSliceId,
@@ -60033,19 +61265,40 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       sortDir: viewPrefs.sortDir
     }), [items, searchQuery, viewPrefs]);
     const sliceCounts = T2(() => buildPipelineSliceCounts(items), [items]);
+    const starterViews = T2(() => getStarterPipelineViews(viewPrefs), [viewPrefs]);
+    const personalViews = T2(() => getPersonalPipelineViews(viewPrefs), [viewPrefs]);
+    const pinnedViews = T2(() => getPinnedPipelineViews(viewPrefs), [viewPrefs]);
+    const activeSavedView = T2(() => getActiveSavedView(viewPrefs), [viewPrefs]);
+    const focusedItem = T2(() => {
+      const focusItemId = String(navState?.focusItemId || "").trim();
+      if (!focusItemId)
+        return null;
+      return items.find((item) => String(item.id || "") === focusItemId) || null;
+    }, [items, navState]);
+    const focusedItemVisible = Boolean(focusedItem && displayed.some((item) => String(item.id || "") === String(focusedItem.id || "")));
     const stats = T2(() => ({
       total: items.length,
       open: items.filter((item) => !["posted_to_erp", "closed", "rejected"].includes(normalizePipelineState(item.state))).length,
-      waitingApproval: sliceCounts.approval_backlog || 0,
-      readyToPost: sliceCounts.ready_to_post || 0
+      waitingApproval: sliceCounts.waiting_on_approval || 0,
+      readyToPost: sliceCounts.ready_to_post || 0,
+      overdue: sliceCounts.overdue || 0
     }), [items, sliceCounts]);
+    y2(() => {
+      if (activeSavedView?.scope === "user" && !String(savedViewName || "").trim()) {
+        setSavedViewName(getSavedViewLabel(activeSavedView));
+      }
+    }, [activeSavedView, savedViewName]);
     const applySlice = (sliceId) => {
-      const next = activatePipelineSlice(orgId, sliceId);
-      setViewPrefs(next);
+      clearPipelineNavigation(pipelineScope);
+      setNavState(readPipelineNavigation(pipelineScope));
+      setViewPrefs(activatePipelineSlice(pipelineScope, sliceId));
     };
     const applySavedView = (view) => {
+      clearPipelineNavigation(pipelineScope);
+      setNavState(readPipelineNavigation(pipelineScope));
       const next = persistPrefs(view.snapshot);
       setViewPrefs(next);
+      setSavedViewName(view.scope === "user" ? getSavedViewLabel(view) : "");
       toast(`Loaded "${getSavedViewLabel(view)}".`, "success");
     };
     const updateFilters = (patch) => persistPrefs({
@@ -60056,22 +61309,44 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
     });
     const updateSort = (nextSortCol) => {
-      const nextSortDir = viewPrefs.sortCol === nextSortCol && viewPrefs.sortDir === "desc" ? "asc" : "desc";
+      const nextSortDir = viewPrefs.sortCol === nextSortCol ? viewPrefs.sortDir === "desc" ? "asc" : "desc" : nextSortCol === "due_date" ? "asc" : "desc";
       persistPrefs({
         ...viewPrefs,
         sortCol: nextSortCol,
         sortDir: nextSortDir
       });
     };
-    const removeSavedView = (viewId) => {
-      const next = removeSavedPipelineView(orgId, viewId);
+    const toggleSavedViewPin = (view) => {
+      const next = view?.pinned ? unpinPipelineView(pipelineScope, getPipelineViewRef(view)) : pinPipelineView(pipelineScope, getPipelineViewRef(view));
+      setViewPrefs(next);
+      toast(view?.pinned ? "Saved view unpinned." : "Saved view pinned.", "success");
+    };
+    const removeView = (viewId) => {
+      const next = removeSavedPipelineView(pipelineScope, viewId);
       setViewPrefs(next);
       toast("Saved view removed.", "success");
     };
+    const revealFocusedItem = () => {
+      if (!focusedItem)
+        return;
+      setSearchQuery("");
+      const next = persistPrefs({
+        ...viewPrefs,
+        activeSliceId: getSuggestedPipelineSlice(focusedItem),
+        sortCol: "queue_age",
+        sortDir: "desc",
+        filters: buildResetFilters()
+      });
+      setViewPrefs(next);
+    };
+    const clearFocus = () => {
+      clearPipelineNavigation(pipelineScope);
+      setNavState(readPipelineNavigation(pipelineScope));
+    };
     if (loading) {
-      return html13`<div class="panel" style="padding:48px;text-align:center"><p class="muted">Loading AP pipeline…</p></div>`;
+      return html14`<div class="panel" style="padding:48px;text-align:center"><p class="muted">Loading AP pipeline…</p></div>`;
     }
-    return html13`
+    return html14`
     <div class="kpi-row">
       <div class="kpi-card">
         <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.total}</strong>
@@ -60089,13 +61364,41 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--brand-muted)">${stats.readyToPost}</strong>
         <span>Ready to post</span>
       </div>
+      <div class="kpi-card" style="border-color:#FCA5A5">
+        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:#B91C1C">${stats.overdue}</strong>
+        <span>Overdue</span>
+      </div>
     </div>
+
+    ${focusedItem ? html14`
+          <div class="panel" style="padding:14px 16px;border-color:${focusedItemVisible ? "#A7F3D0" : "#FCD34D"}">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+              <div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+                  <strong>Current thread item</strong>
+                  <${StatePill2} state=${focusedItem.state} />
+                </div>
+                <div class="muted" style="font-size:13px">
+                  ${focusedItem.vendor_name || focusedItem.vendor || "Unknown vendor"} · ${focusedItem.invoice_number || "No invoice #"} · ${getAmountLabel(focusedItem)}
+                </div>
+                <div class="muted" style="font-size:12px;margin-top:4px">
+                  ${focusedItemVisible ? "The current item is visible in this pipeline view." : "The current item is outside the active slice or filters. Open its AP slice to keep queue context intact."}
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                ${!focusedItemVisible ? html14`<button class="alt" onClick=${revealFocusedItem}>Show in pipeline</button>` : null}
+                <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open detail</button>
+                <button class="alt" onClick=${clearFocus}>Clear focus</button>
+              </div>
+            </div>
+          </div>
+        ` : null}
 
     <div class="panel" style="padding:16px 18px">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px">
         <div>
           <h3 style="margin:0 0 4px">Pipeline views</h3>
-          <p class="muted" style="margin:0">Work AP by queue slice, then save the views you use repeatedly.</p>
+          <p class="muted" style="margin:0">Work AP by queue slice, then save and pin the views you reopen every day.</p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="alt" onClick=${() => navigate("clearledgr/home")}>Back to Home</button>
@@ -60103,7 +61406,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       </div>
       <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:4px">
-        ${PIPELINE_BUILTIN_SLICES.map((slice) => html13`
+        ${PIPELINE_BUILTIN_SLICES.map((slice) => html14`
           <${SliceChip}
             key=${slice.id}
             slice=${slice}
@@ -60113,24 +61416,49 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           />
         `)}
       </div>
-      ${viewPrefs.customViews?.length ? html13`
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-              ${viewPrefs.customViews.map((view) => html13`
-                <div key=${view.id} style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:999px;border:1px solid var(--border);background:var(--bg)">
-                  <button class="alt" onClick=${() => applySavedView(view)} style="padding:6px 10px;font-size:12px">${getSavedViewLabel(view)}</button>
-                  <button
-                    aria-label="Delete saved view"
-                    onClick=${() => removeSavedView(view.id)}
-                    style="border:none;background:transparent;color:var(--ink-muted);cursor:pointer;padding:0 2px"
-                  >×</button>
+      <div style="display:flex;flex-direction:column;gap:14px;margin-top:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <strong style="font-size:13px">Starter views</strong>
+            <div class="muted" style="font-size:12px">Finance-native defaults you can pin to Home.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${starterViews.map((view) => html14`
+              <${SavedViewChip}
+                key=${view.id}
+                view=${view}
+                active=${activeSavedView?.scope === view.scope && activeSavedView?.id === view.id}
+                onOpen=${() => applySavedView(view)}
+                onTogglePin=${() => toggleSavedViewPin(view)}
+              />
+            `)}
+          </div>
+        </div>
+        ${(personalViews.length || 0) > 0 ? html14`
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                <div>
+                  <strong style="font-size:13px">Personal views</strong>
+                  <div class="muted" style="font-size:12px">${pinnedViews.length} pinned for quick access from Home.</div>
                 </div>
-              `)}
-            </div>
-          ` : null}
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  ${personalViews.map((view) => html14`
+                    <${SavedViewChip}
+                      key=${view.id}
+                      view=${view}
+                      active=${activeSavedView?.scope === view.scope && activeSavedView?.id === view.id}
+                      onOpen=${() => applySavedView(view)}
+                      onTogglePin=${() => toggleSavedViewPin(view)}
+                      onDelete=${() => removeView(view.id)}
+                    />
+                  `)}
+                </div>
+              </div>
+            ` : null}
+      </div>
     </div>
 
     <div class="panel" style="padding:16px 18px">
-      <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr auto;gap:10px;align-items:end">
+      <div style="display:grid;grid-template-columns:2fr 1.25fr 1fr 1fr;gap:10px;align-items:end">
         <label style="display:flex;flex-direction:column;gap:6px">
           <span class="muted" style="font-size:12px">Search</span>
           <input
@@ -60141,19 +61469,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           />
         </label>
         <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">State</span>
-          <select value=${viewPrefs.filters.state} onChange=${(event) => updateFilters({ state: event.target.value })}>
-            <option value="all">All</option>
-            <option value="received">Received</option>
-            <option value="validated">Validated</option>
-            <option value="needs_info">Needs info</option>
-            <option value="needs_approval">Needs approval</option>
-            <option value="ready_to_post">Ready to post</option>
-            <option value="failed_post">Failed post</option>
-          </select>
+          <span class="muted" style="font-size:12px">Vendor</span>
+          <input
+            placeholder="Filter vendor…"
+            value=${viewPrefs.filters.vendor}
+            onInput=${(event) => updateFilters({ vendor: event.target.value })}
+            style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
+          />
         </label>
         <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Due</span>
+          <span class="muted" style="font-size:12px">Due date</span>
           <select value=${viewPrefs.filters.due} onChange=${(event) => updateFilters({ due: event.target.value })}>
             <option value="all">All</option>
             <option value="overdue">Overdue</option>
@@ -60162,7 +61487,28 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </select>
         </label>
         <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Blocker</span>
+          <span class="muted" style="font-size:12px">Amount band</span>
+          <select value=${viewPrefs.filters.amount} onChange=${(event) => updateFilters({ amount: event.target.value })}>
+            <option value="all">All</option>
+            <option value="under_1k">Under 1k</option>
+            <option value="1k_10k">1k - 10k</option>
+            <option value="over_10k">Over 10k</option>
+          </select>
+        </label>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:10px;align-items:end;margin-top:12px">
+        <label style="display:flex;flex-direction:column;gap:6px">
+          <span class="muted" style="font-size:12px">Approval age</span>
+          <select value=${viewPrefs.filters.approvalAge} onChange=${(event) => updateFilters({ approvalAge: event.target.value })}>
+            <option value="all">All</option>
+            <option value="under_24h">Under 24h</option>
+            <option value="1d_3d">1-3 days</option>
+            <option value="over_3d">Over 3 days</option>
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px">
+          <span class="muted" style="font-size:12px">Blocker type</span>
           <select value=${viewPrefs.filters.blocker} onChange=${(event) => updateFilters({ blocker: event.target.value })}>
             <option value="all">All</option>
             <option value="approval">Approval</option>
@@ -60171,16 +61517,28 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <option value="exception">Policy</option>
             <option value="confidence">Field review</option>
             <option value="budget">Budget</option>
-            <option value="po">PO/GR</option>
+            <option value="po">PO / GR</option>
           </select>
         </label>
         <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Amount</span>
-          <select value=${viewPrefs.filters.amount} onChange=${(event) => updateFilters({ amount: event.target.value })}>
+          <span class="muted" style="font-size:12px">ERP status</span>
+          <select value=${viewPrefs.filters.erpStatus} onChange=${(event) => updateFilters({ erpStatus: event.target.value })}>
             <option value="all">All</option>
-            <option value="under_1k">Under 1k</option>
-            <option value="1k_10k">1k - 10k</option>
-            <option value="over_10k">Over 10k</option>
+            <option value="ready">Ready</option>
+            <option value="failed">Failed</option>
+            <option value="connected">Connected</option>
+            <option value="posted">Posted</option>
+            <option value="not_connected">Not connected</option>
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px">
+          <span class="muted" style="font-size:12px">Sort</span>
+          <select value=${viewPrefs.sortCol} onChange=${(event) => updateSort(event.target.value)}>
+            <option value="queue_age">Queue age</option>
+            <option value="due_date">Due date</option>
+            <option value="amount">Amount</option>
+            <option value="updated_at">Last update</option>
+            <option value="approval_wait">Approval waiting time</option>
           </select>
         </label>
         <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
@@ -60190,41 +61548,37 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           >${viewPrefs.viewMode === "table" ? "Cards" : "Table"}</button>
         </div>
       </div>
+
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
-        <select value=${viewPrefs.sortCol} onChange=${(event) => updateSort(event.target.value)}>
-          <option value="priority">Priority</option>
-          <option value="due_date">Due date</option>
-          <option value="amount">Amount</option>
-          <option value="vendor">Vendor</option>
-          <option value="updated_at">Last update</option>
-          <option value="state">State</option>
-        </select>
         <input
           value=${savedViewName}
           onInput=${(event) => setSavedViewName(event.target.value)}
-          placeholder="Save current view as…"
+          placeholder="Save current view as a personal view…"
           style="min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
         />
-        <button class="alt" onClick=${saveView} disabled=${savingView}>${savingView ? "Saving…" : "Save view"}</button>
-        <button class="alt" onClick=${() => {
-      setSearchQuery("");
-      setViewPrefs(writePipelinePreferences(orgId, {
-        ...viewPrefs,
-        activeSliceId: "all_open",
-        sortCol: "priority",
-        sortDir: "desc",
-        filters: { state: "all", due: "all", blocker: "all", amount: "all" }
-      }));
-    }}>Reset filters</button>
+        <button class="alt" onClick=${saveView} disabled=${savingView}>${savingView ? "Saving…" : "Save personal view"}</button>
+        ${activeSavedView?.scope === "user" ? html14`<button class="alt" onClick=${updateView} disabled=${updatingView}>${updatingView ? "Updating…" : "Update active view"}</button>` : null}
+        <button class="alt" onClick=${resetFiltersAndSearch}>Reset filters</button>
+        <span class="muted" style="font-size:12px">
+          Sort ${viewPrefs.sortDir === "desc" ? "descending" : "ascending"} by ${viewPrefs.sortCol.replace(/_/g, " ")}.
+        </span>
       </div>
     </div>
 
-    ${viewPrefs.viewMode === "cards" ? html13`
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">
-            ${displayed.length === 0 ? html13`<div class="panel" style="grid-column:1/-1;text-align:center;padding:32px"><p class="muted">No invoices match this view.</p></div>` : displayed.map((item) => {
+    ${viewPrefs.viewMode === "cards" ? html14`
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px">
+            ${displayed.length === 0 ? html14`<div class="panel" style="grid-column:1/-1;text-align:center;padding:32px"><p class="muted">No invoices match this view.</p></div>` : displayed.map((item) => {
       const blockers = getPipelineBlockerKinds(item);
-      return html13`
-                    <div key=${item.id} class="panel" style="padding:16px;margin-bottom:0">
+      const focused = String(navState.focusItemId || "") === String(item.id || "");
+      const approvalWait = getApprovalWaitMinutes(item);
+      const queueAge = getQueueAgeMinutes(item);
+      const erpStatus = getErpStatus(item);
+      return html14`
+                    <div
+                      key=${item.id}
+                      class="panel"
+                      style="padding:16px;margin-bottom:0;border-color:${focused ? "var(--accent)" : "var(--border)"};box-shadow:${focused ? "0 0 0 1px var(--accent-soft)" : "none"}"
+                    >
                       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px">
                         <div>
                           <div style="font-size:15px;font-weight:700">${item.vendor_name || item.vendor || "Unknown vendor"}</div>
@@ -60232,23 +61586,33 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                         </div>
                         <${StatePill2} state=${item.state} />
                       </div>
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+                        <div style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg)">
+                          <div class="muted" style="font-size:11px">Queue age</div>
+                          <strong style="font-size:13px">${formatDurationMinutes(queueAge)}</strong>
+                        </div>
+                        <div style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg)">
+                          <div class="muted" style="font-size:11px">Approval wait</div>
+                          <strong style="font-size:13px">${approvalWait ? formatDurationMinutes(approvalWait) : "—"}</strong>
+                        </div>
+                      </div>
                       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-                        ${blockers.length ? blockers.slice(0, 3).map((kind) => html13`<${BlockerChip} key=${kind} kind=${kind} />`) : html13`<span class="muted" style="font-size:12px">No blocking signals</span>`}
+                        ${blockers.length ? blockers.slice(0, 3).map((kind) => html14`<${BlockerChip} key=${kind} kind=${kind} />`) : html14`<span class="muted" style="font-size:12px">No blocking signals</span>`}
                       </div>
                       <div class="muted" style="font-size:12px;line-height:1.5;margin-bottom:12px">
-                        Due ${item.due_date ? fmtDate(item.due_date) : "—"} · Updated ${fmtDateTime(item.updated_at || item.created_at)}
+                        Due ${item.due_date ? fmtDate(item.due_date) : "—"} · ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus} · Updated ${fmtDateTime(item.updated_at || item.created_at)}
                       </div>
                       <div style="display:flex;gap:8px;flex-wrap:wrap">
-                        <button class="alt" onClick=${() => openItemDetail(navigate, item)}>Open detail</button>
-                        <button class="alt" onClick=${() => openItemEmail(item)} disabled=${!item.thread_id && !item.message_id}>Open email</button>
+                        <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>Open detail</button>
+                        <button class="alt" onClick=${() => openItemEmail(pipelineScope, item)} disabled=${!item.thread_id && !item.message_id}>Open thread</button>
                       </div>
                     </div>
                   `;
     })}
           </div>
-        ` : html13`
+        ` : html14`
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);overflow-x:auto">
-            <table class="table" style="min-width:980px">
+            <table class="table" style="min-width:1320px">
               <thead>
                 <tr>
                   <th>Vendor</th>
@@ -60256,31 +61620,41 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   <th style="text-align:right">Amount</th>
                   <th>Due</th>
                   <th>Status</th>
+                  <th>Queue age</th>
+                  <th>Approval wait</th>
+                  <th>ERP</th>
                   <th>Blockers</th>
                   <th>Updated</th>
                   <th style="text-align:right">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                ${displayed.length === 0 ? html13`<tr><td colspan="8" class="muted" style="text-align:center;padding:32px">No invoices match this view.</td></tr>` : displayed.map((item) => {
+                ${displayed.length === 0 ? html14`<tr><td colspan="11" class="muted" style="text-align:center;padding:32px">No invoices match this view.</td></tr>` : displayed.map((item) => {
       const blockers = getPipelineBlockerKinds(item);
-      return html13`
-                        <tr key=${item.id}>
-                          <td style="font-weight:600;cursor:pointer" onClick=${() => openItemDetail(navigate, item)}>${item.vendor_name || item.vendor || "Unknown vendor"}</td>
+      const focused = String(navState.focusItemId || "") === String(item.id || "");
+      const approvalWait = getApprovalWaitMinutes(item);
+      const queueAge = getQueueAgeMinutes(item);
+      const erpStatus = getErpStatus(item);
+      return html14`
+                        <tr key=${item.id} style=${focused ? "background:rgba(14,165,233,0.07)" : ""}>
+                          <td style="font-weight:600;cursor:pointer" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>${item.vendor_name || item.vendor || "Unknown vendor"}</td>
                           <td style="font-family:var(--font-mono);font-size:12px">${item.invoice_number || "—"}</td>
                           <td style="text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums">${getAmountLabel(item)}</td>
                           <td>${item.due_date ? fmtDate(item.due_date) : "—"}</td>
                           <td><${StatePill2} state=${item.state} /></td>
+                          <td>${formatDurationMinutes(queueAge)}</td>
+                          <td>${approvalWait ? formatDurationMinutes(approvalWait) : "—"}</td>
+                          <td>${ERP_STATUS_LABELS[erpStatus] || erpStatus}</td>
                           <td>
                             <div style="display:flex;gap:6px;flex-wrap:wrap">
-                              ${blockers.length ? blockers.slice(0, 2).map((kind) => html13`<${BlockerChip} key=${kind} kind=${kind} />`) : html13`<span class="muted" style="font-size:12px">Clear</span>`}
+                              ${blockers.length ? blockers.slice(0, 2).map((kind) => html14`<${BlockerChip} key=${kind} kind=${kind} />`) : html14`<span class="muted" style="font-size:12px">Clear</span>`}
                             </div>
                           </td>
                           <td class="muted" style="font-size:12px">${fmtDateTime(item.updated_at || item.created_at)}</td>
                           <td style="text-align:right">
                             <div style="display:flex;gap:8px;justify-content:flex-end">
-                              <button class="alt" onClick=${() => openItemDetail(navigate, item)}>Detail</button>
-                              <button class="alt" onClick=${() => openItemEmail(item)} disabled=${!item.thread_id && !item.message_id}>Email</button>
+                              <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>Detail</button>
+                              <button class="alt" onClick=${() => openItemEmail(pipelineScope, item)} disabled=${!item.thread_id && !item.message_id}>Thread</button>
                             </div>
                           </td>
                         </tr>
@@ -60297,8 +61671,275 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
 
+  // src/routes/reply-templates.js
+  var STORAGE_PREFIX2 = "clearledgr_reply_templates_v1";
+  var MAX_CUSTOM_TEMPLATES = 12;
+  var DEFAULT_REPLY_TEMPLATES = [
+    {
+      id: "vendor_missing_info",
+      name: "Vendor missing info",
+      description: "Ask the supplier for the missing invoice details.",
+      audience: "vendor",
+      subjectTemplate: "Re: {{subject}}",
+      bodyTemplate: [
+        "Hi {{vendor_name}},",
+        "",
+        "We are reviewing invoice {{invoice_number}} for {{amount}} and still need the following before we can complete processing:",
+        "",
+        "{{issue_summary}}",
+        "",
+        "Please reply in this thread when you can.",
+        "",
+        "Best,",
+        "Accounts Payable"
+      ].join(`
+`)
+    },
+    {
+      id: "approval_nudge",
+      name: "Approval nudge",
+      description: "Send a concise internal follow-up on an outstanding approval.",
+      audience: "internal",
+      subjectTemplate: "Approval follow-up: {{vendor_name}} invoice {{invoice_number}}",
+      bodyTemplate: [
+        "Hi,",
+        "",
+        "A decision is still needed on {{vendor_name}} invoice {{invoice_number}} for {{amount}}.",
+        "",
+        "Current blocker: {{issue_summary}}",
+        "Due date: {{due_date}}",
+        "",
+        "Please take a look when you can.",
+        "",
+        "Best,",
+        "Clearledgr AP"
+      ].join(`
+`)
+    },
+    {
+      id: "payment_status",
+      name: "Payment status",
+      description: "Reply to a supplier about invoice status.",
+      audience: "vendor",
+      subjectTemplate: "Re: {{subject}}",
+      bodyTemplate: [
+        "Hi {{vendor_name}},",
+        "",
+        "Status update for invoice {{invoice_number}} ({{amount}}): {{state_label}}.",
+        "",
+        "Current next step: {{next_action}}",
+        "",
+        "We will update you again if anything changes.",
+        "",
+        "Best,",
+        "Accounts Payable"
+      ].join(`
+`)
+    },
+    {
+      id: "rejection_note",
+      name: "Rejection note",
+      description: "Explain why an invoice cannot proceed.",
+      audience: "vendor",
+      subjectTemplate: "Re: {{subject}}",
+      bodyTemplate: [
+        "Hi {{vendor_name}},",
+        "",
+        "We cannot continue invoice {{invoice_number}} for {{amount}} yet.",
+        "",
+        "Reason: {{issue_summary}}",
+        "",
+        "Please reply with the corrected information or updated invoice.",
+        "",
+        "Best,",
+        "Accounts Payable"
+      ].join(`
+`)
+    }
+  ];
+  function normalizeText2(value, fallback = "") {
+    return String(value || "").trim() || fallback;
+  }
+  function normalizeUserEmail2(value) {
+    return normalizeText2(value).toLowerCase();
+  }
+  function resolveScope(scopeOrOrgId, maybeUserEmail = "") {
+    if (scopeOrOrgId && typeof scopeOrOrgId === "object") {
+      return {
+        orgId: normalizeText2(scopeOrOrgId.orgId || scopeOrOrgId.organizationId, "default"),
+        userEmail: normalizeUserEmail2(scopeOrOrgId.userEmail || scopeOrOrgId.email || maybeUserEmail)
+      };
+    }
+    return {
+      orgId: normalizeText2(scopeOrOrgId, "default"),
+      userEmail: normalizeUserEmail2(maybeUserEmail)
+    };
+  }
+  function readStorageValue2(key) {
+    if (typeof window === "undefined" || !window?.localStorage)
+      return null;
+    try {
+      return window.localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+  function writeStorageValue2(key, value) {
+    if (typeof window === "undefined" || !window?.localStorage)
+      return;
+    try {
+      window.localStorage.setItem(key, value);
+    } catch {}
+  }
+  function normalizeTemplate(value = {}, scope = "user") {
+    return {
+      id: normalizeText2(value?.id),
+      scope,
+      name: normalizeText2(value?.name).slice(0, 48),
+      description: normalizeText2(value?.description).slice(0, 140),
+      audience: normalizeText2(value?.audience, "vendor").toLowerCase() === "internal" ? "internal" : "vendor",
+      subjectTemplate: normalizeText2(value?.subjectTemplate || value?.subject_template).slice(0, 180),
+      bodyTemplate: normalizeText2(value?.bodyTemplate || value?.body_template).slice(0, 2400)
+    };
+  }
+  function sanitizeCustomTemplates(values = []) {
+    return (Array.isArray(values) ? values : []).map((entry) => normalizeTemplate(entry, "user")).filter((entry) => entry.id && entry.name && entry.bodyTemplate).slice(0, MAX_CUSTOM_TEMPLATES);
+  }
+  function sanitizeStarterTemplates() {
+    return DEFAULT_REPLY_TEMPLATES.map((entry) => normalizeTemplate(entry, "starter")).filter((entry) => entry.id && entry.name && entry.bodyTemplate);
+  }
+  function getReplyTemplatePreferenceKey(scopeOrOrgId, maybeUserEmail = "") {
+    const scope = resolveScope(scopeOrOrgId, maybeUserEmail);
+    return `${STORAGE_PREFIX2}:${scope.orgId}:${scope.userEmail || "anonymous"}`;
+  }
+  function defaultReplyTemplatePreferences() {
+    return {
+      customTemplates: []
+    };
+  }
+  function normalizeReplyTemplatePreferences(value = {}) {
+    return {
+      customTemplates: sanitizeCustomTemplates(value?.customTemplates)
+    };
+  }
+  function getBootstrappedReplyTemplatePreferences(bootstrap = {}) {
+    return bootstrap?.current_user?.preferences?.gmail_extension?.reply_templates || bootstrap?.current_user?.preferences?.reply_templates || null;
+  }
+  function buildReplyTemplatePreferencePatch(preferences = {}) {
+    return {
+      gmail_extension: {
+        reply_templates: normalizeReplyTemplatePreferences(preferences)
+      }
+    };
+  }
+  function readReplyTemplatePreferences(scopeOrOrgId, maybeUserEmail = "") {
+    const key = getReplyTemplatePreferenceKey(scopeOrOrgId, maybeUserEmail);
+    const raw = readStorageValue2(key);
+    if (!raw)
+      return defaultReplyTemplatePreferences();
+    try {
+      return normalizeReplyTemplatePreferences(JSON.parse(raw));
+    } catch {
+      return defaultReplyTemplatePreferences();
+    }
+  }
+  function writeReplyTemplatePreferences(scopeOrOrgId, maybeUserEmailOrValue = "", maybeValue = null) {
+    const hasExplicitUserEmail = typeof maybeUserEmailOrValue === "string" || maybeUserEmailOrValue == null;
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrValue : "";
+    const value = hasExplicitUserEmail ? maybeValue : maybeUserEmailOrValue;
+    const key = getReplyTemplatePreferenceKey(scopeOrOrgId, userEmail);
+    const normalized = normalizeReplyTemplatePreferences(value || {});
+    writeStorageValue2(key, JSON.stringify(normalized));
+    return normalized;
+  }
+  function getStarterReplyTemplates() {
+    return sanitizeStarterTemplates();
+  }
+  function getPersonalReplyTemplates(preferences = {}) {
+    return sanitizeCustomTemplates(normalizeReplyTemplatePreferences(preferences).customTemplates);
+  }
+  function getAllReplyTemplates(preferences = {}) {
+    return [
+      ...getStarterReplyTemplates(),
+      ...getPersonalReplyTemplates(preferences)
+    ];
+  }
+  function createReplyTemplate(scopeOrOrgId, maybeUserEmailOrTemplate = "", maybeTemplate = null) {
+    const hasExplicitUserEmail = typeof maybeUserEmailOrTemplate === "string" || maybeUserEmailOrTemplate == null;
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrTemplate : "";
+    const template = hasExplicitUserEmail ? maybeTemplate : maybeUserEmailOrTemplate;
+    const current = readReplyTemplatePreferences(scopeOrOrgId, userEmail);
+    const nextTemplate = normalizeTemplate({
+      ...template,
+      id: normalizeText2(template?.id, `tmpl-${Date.now().toString(36)}`)
+    }, "user");
+    return writeReplyTemplatePreferences(scopeOrOrgId, userEmail, {
+      ...current,
+      customTemplates: [...current.customTemplates, nextTemplate]
+    });
+  }
+  function updateReplyTemplate(scopeOrOrgId, maybeUserEmailOrTemplateId = "", maybeTemplateIdOrPatch = null, maybePatch = null) {
+    const hasExplicitUserEmail = typeof maybeUserEmailOrTemplateId === "string" && typeof maybeTemplateIdOrPatch === "string";
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrTemplateId : "";
+    const templateId = hasExplicitUserEmail ? maybeTemplateIdOrPatch : maybeUserEmailOrTemplateId;
+    const patch = hasExplicitUserEmail ? maybePatch : maybeTemplateIdOrPatch;
+    const current = readReplyTemplatePreferences(scopeOrOrgId, userEmail);
+    const nextTemplates = current.customTemplates.map((template) => template.id === templateId ? normalizeTemplate({ ...template, ...patch || {}, id: template.id }, "user") : template);
+    return writeReplyTemplatePreferences(scopeOrOrgId, userEmail, {
+      ...current,
+      customTemplates: nextTemplates
+    });
+  }
+  function removeReplyTemplate(scopeOrOrgId, maybeUserEmailOrTemplateId = "", maybeTemplateId = null) {
+    const hasExplicitUserEmail = typeof maybeTemplateId === "string";
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrTemplateId : "";
+    const templateId = hasExplicitUserEmail ? maybeTemplateId : maybeUserEmailOrTemplateId;
+    const current = readReplyTemplatePreferences(scopeOrOrgId, userEmail);
+    return writeReplyTemplatePreferences(scopeOrOrgId, userEmail, {
+      ...current,
+      customTemplates: current.customTemplates.filter((template) => template.id !== templateId)
+    });
+  }
+  function resolveReplyTemplate(preferences = {}, templateId = "") {
+    const normalizedId = normalizeText2(templateId);
+    return getAllReplyTemplates(preferences).find((template) => template.id === normalizedId) || null;
+  }
+  function interpolateReplyTemplate(text = "", values = {}) {
+    return String(text || "").replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => {
+      const value = values?.[key];
+      return value == null ? "" : String(value);
+    });
+  }
+  function buildReplyTemplateContext(item = {}, extra = {}) {
+    const amount = Number(item?.amount);
+    const amountText = Number.isFinite(amount) ? `${String(item?.currency || "USD")} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Amount unavailable";
+    return {
+      vendor_name: item?.vendor_name || item?.vendor || "there",
+      invoice_number: item?.invoice_number || "N/A",
+      amount: amountText,
+      due_date: item?.due_date || "No due date",
+      po_number: item?.po_number || "No PO",
+      state_label: String(item?.state || "received").replace(/_/g, " "),
+      next_action: item?.next_action || "Review in Clearledgr",
+      issue_summary: extra?.issue_summary || item?.exception_code || "additional information is required",
+      subject: item?.subject || `Invoice ${item?.invoice_number || ""}`.trim() || "Invoice follow-up",
+      sender_email: item?.sender || "",
+      ...extra
+    };
+  }
+  function buildReplyTemplatePrefill(template = {}, item = {}, extra = {}) {
+    const context = buildReplyTemplateContext(item, extra);
+    const audience = normalizeText2(template?.audience, "vendor").toLowerCase() === "internal" ? "internal" : "vendor";
+    return {
+      to: audience === "vendor" ? extra?.to || context.sender_email || "" : extra?.to || "",
+      subject: interpolateReplyTemplate(template?.subjectTemplate, context),
+      body: interpolateReplyTemplate(template?.bodyTemplate, context).trim(),
+      audience
+    };
+  }
+
   // src/routes/pages/InvoiceDetailPage.js
-  var html14 = htm_module_default.bind(_);
+  var html15 = htm_module_default.bind(_);
   var ACTIVE_AP_ITEM_STORAGE_KEY2 = "clearledgr_active_ap_item_id";
   var STATE_STYLES2 = {
     needs_approval: { bg: "#FEFCE8", text: "#A16207", label: "Needs approval" },
@@ -60318,7 +61959,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       text: "#64748B",
       label: String(state || "received").replace(/_/g, " ")
     };
-    return html14`<span style="
+    return html15`<span style="
     font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;
     background:${tone.bg};color:${tone.text};text-transform:uppercase;letter-spacing:0.02em;
   ">${tone.label}</span>`;
@@ -60376,25 +62017,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       { key: "erp", label: "ERP", text: hasErpLink ? item?.erp_reference || erp.erp_reference ? "Linked" : "Connected" : "Not connected", ok: hasErpLink }
     ];
   }
-  function getAuditRow2(event) {
-    const payload = getAuditEventPayload(event);
-    const eventType = normalizeAuditEventType(event?.event_type || event?.eventType || payload?.event_type || event?.action || "action_recorded");
-    const safeTitle = eventType === "state_transition" ? "Status updated" : "Action recorded";
-    let safeDetail = "Action recorded for this invoice.";
-    if (eventType === "state_transition")
-      safeDetail = "Invoice status changed.";
-    else if (eventType === "erp_post_completed")
-      safeDetail = "Invoice posting completed successfully.";
-    else if (eventType === "erp_post_failed")
-      safeDetail = "Clearledgr could not complete ERP posting.";
-    const title = trimText(String(event?.operator_title || safeTitle), 72);
-    const detail = trimText(String(event?.operator_message || safeDetail), 160);
-    return {
-      title,
-      detail,
-      timestamp: formatDateTime(event?.ts || event?.created_at || event?.timestamp || event?.updated_at)
-    };
-  }
   async function executeIntent(api, orgId, intent, input) {
     return api("/api/agent/intents/execute", {
       method: "POST",
@@ -60415,13 +62037,89 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       } catch {}
     }
   }
-  function InvoiceDetailPage({ api, toast, orgId, navigate, routeParams }) {
+  function AuditCard({ row }) {
+    if (!row)
+      return null;
+    return html15`
+    <div class="cl-audit-row" data-importance=${row.importance} data-severity=${row.severity}>
+      <div class="cl-audit-main">
+        <div class="cl-audit-main-copy">
+          <div class="cl-audit-type">${row.title}</div>
+          <div class="cl-audit-badges">
+            <span class="cl-audit-badge" data-importance=${row.importance}>${row.importanceLabel}</span>
+            ${row.category && html15`<span class="cl-audit-badge" data-kind="category">${row.category.replace(/_/g, " ")}</span>`}
+          </div>
+        </div>
+        ${row.timestamp && html15`<div class="cl-audit-time">${row.timestamp}</div>`}
+      </div>
+      <div class="cl-audit-detail">${row.detail}</div>
+      ${(row.evidenceLabel || row.evidenceDetail) && html15`
+        <div class="cl-audit-evidence">
+          ${row.evidenceLabel && html15`<span class="cl-audit-evidence-label">${row.evidenceLabel}</span>`}
+          <span>${row.evidenceDetail || "Recorded on the shared AP record."}</span>
+        </div>
+      `}
+      ${row.actionHint && !row.isBackground && html15`<div class="cl-audit-hint">Next: ${row.actionHint}</div>`}
+    </div>
+  `;
+  }
+  function RelatedRecordRow({ label, item, onOpen }) {
+    if (!item?.id)
+      return null;
+    return html15`
+    <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <div class="muted" style="font-size:11px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase">${label}</div>
+          <div style="font-size:13px;font-weight:700;margin-top:4px">${item.vendor_name || "Unknown vendor"} · ${item.invoice_number || "No invoice #"}</div>
+          <div class="muted" style="font-size:12px;margin-top:4px">
+            ${formatAmount(item.amount, item.currency || "USD")} · ${String(item.state || "received").replace(/_/g, " ")}
+          </div>
+        </div>
+        <button class="alt" onClick=${onOpen} style="padding:8px 12px;font-size:12px">Open</button>
+      </div>
+    </div>
+  `;
+  }
+  function SourceGroupRow({ group }) {
+    if (!group)
+      return null;
+    return html15`
+    <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px">
+        <strong style="font-size:13px">${String(group.source_type || "unknown").replace(/_/g, " ")}</strong>
+        <span class="muted" style="font-size:12px;font-weight:700">${Number(group.count || 0).toLocaleString()}</span>
+      </div>
+      ${(group.items || []).slice(0, 2).map((entry, index) => html15`
+        <div key=${`${group.source_type}-${entry?.source_ref || index}`} class="muted" style="font-size:12px;line-height:1.5;padding-top:${index > 0 ? "8px" : "0"}">
+          <div>${entry?.subject || entry?.source_ref || "Linked evidence"}</div>
+          <div>${entry?.sender || "Unknown sender"}${entry?.detected_at ? ` · ${fmtDateTime(entry.detected_at)}` : ""}</div>
+        </div>
+      `)}
+    </div>
+  `;
+  }
+  function TemplateActionRow({ template, onDraft }) {
+    return html15`
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+      <div>
+        <strong style="display:block;font-size:13px">${template.name}</strong>
+        <span class="muted" style="font-size:12px">${template.description || "Reusable reply template."}</span>
+      </div>
+      <button class="alt" onClick=${onDraft} style="padding:8px 12px;font-size:12px">Draft</button>
+    </div>
+  `;
+  }
+  function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEmail, navigate, routeParams }) {
     const [item, setItem] = d2(null);
     const [auditEvents, setAuditEvents] = d2([]);
     const [context, setContext] = d2(null);
     const [loading, setLoading] = d2(true);
     const [dialog, openDialog] = useActionDialog();
     const itemId = routeParams?.id || "";
+    const templateScope = { orgId, userEmail };
+    const [templatePrefs, setTemplatePrefs] = d2(() => readReplyTemplatePreferences(templateScope));
+    const bootstrapTemplatePrefs = getBootstrappedReplyTemplatePreferences(bootstrap);
     const refresh = q2(async () => {
       if (!itemId)
         return;
@@ -60448,14 +62146,36 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (itemId)
         selectActiveItem(itemId);
     }, [itemId]);
+    y2(() => {
+      const local = readReplyTemplatePreferences(templateScope);
+      const remote = bootstrapTemplatePrefs ? normalizeReplyTemplatePreferences(bootstrapTemplatePrefs) : null;
+      if (remote && JSON.stringify(remote) !== JSON.stringify(local)) {
+        setTemplatePrefs(writeReplyTemplatePreferences(templateScope, remote));
+        return;
+      }
+      setTemplatePrefs(local);
+    }, [bootstrapTemplatePrefs, orgId, userEmail]);
     const state = normalizeWorkState(item?.state || "received");
+    const actorRole = bootstrap?.current_user?.role || "operator";
+    const readOnlyMode = !hasOpsAccessRole(actorRole);
+    const pipelineScope = { orgId, userEmail };
     const budgetContext = normalizeBudgetContext(context || {}, item);
     const blockers = T2(() => getBlockers2(item, state, budgetContext), [item, state, budgetContext]);
     const evidence = T2(() => getEvidenceChecklist2(item, state, context), [item, state, context]);
+    const auditSections = T2(() => partitionAuditEvents(auditEvents), [auditEvents]);
     const stateNotice = getWorkStateNotice(state);
-    const primaryAction = getPrimaryActionConfig(state);
+    const primaryAction = getPrimaryActionConfig(state, actorRole);
     const canOpenEmail = Boolean(item && (getSourceThreadId(item) || getSourceMessageId(item) || item.subject));
     const smartRejectDefault = item?.exception_code ? getExceptionReason(item.exception_code) : "";
+    const relatedRecords = context?.related_records || {};
+    const sourceGroups = Array.isArray(context?.email?.source_groups?.groups) ? context.email.source_groups.groups : [];
+    const replyTemplates = T2(() => getAllReplyTemplates(templatePrefs), [templatePrefs]);
+    const quickReplyTemplates = T2(() => {
+      const ordered = ["vendor_missing_info", "payment_status", "rejection_note", "approval_nudge"].map((templateId) => resolveReplyTemplate(templatePrefs, templateId)).filter(Boolean);
+      if (ordered.length > 0)
+        return ordered;
+      return replyTemplates.slice(0, 4);
+    }, [replyTemplates, templatePrefs]);
     const [doRequestApproval, requestingApproval] = useAction2(async () => {
       const result = await executeIntent(api, orgId, "request_approval", {
         ap_item_id: item.id,
@@ -60553,11 +62273,48 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         toast("Unable to open source email.", "error");
       }
     }, [item, toast]);
+    const openInPipeline = q2(() => {
+      if (!item?.id)
+        return;
+      selectActiveItem(item.id);
+      focusPipelineItem(pipelineScope, item, "detail");
+      navigate("clearledgr/pipeline");
+    }, [item, navigate, pipelineScope]);
+    const openVendorRecord = q2(() => {
+      const vendorName = String(item?.vendor_name || item?.vendor || "").trim();
+      if (!vendorName)
+        return;
+      navigate(`clearledgr/vendor/${encodeURIComponent(vendorName)}`);
+    }, [item, navigate]);
+    const openRelatedRecord = q2((relatedItem) => {
+      if (!relatedItem?.id)
+        return;
+      focusPipelineItem(pipelineScope, relatedItem, "related_record");
+      navigate(`clearledgr/invoice/${encodeURIComponent(relatedItem.id)}`);
+    }, [navigate, pipelineScope]);
+    const [draftReply, draftingReply] = useAction2(async (templateId) => {
+      const template = resolveReplyTemplate(templatePrefs, templateId);
+      if (!template || !item) {
+        toast("Template unavailable for this record.", "warning");
+        return;
+      }
+      const issueSummary = getIssueSummary(item) || context?.summary?.text || "additional information is required";
+      const prefill = buildReplyTemplatePrefill(template, item, {
+        issue_summary: issueSummary,
+        next_action: item?.next_action || context?.summary?.text || "Review in Clearledgr"
+      });
+      try {
+        await store_default.composeWithPrefill(prefill);
+        toast("Draft opened in Gmail compose.", "success");
+      } catch {
+        toast("Could not open Gmail compose for this template.", "error");
+      }
+    });
     if (loading) {
-      return html14`<div class="panel"><p class="muted">Loading invoice…</p></div>`;
+      return html15`<div class="panel"><p class="muted">Loading invoice…</p></div>`;
     }
     if (!item) {
-      return html14`
+      return html15`
       <div class="panel">
         <p class="muted">Invoice not found.</p>
         <button class="alt" onClick=${() => navigate("clearledgr/pipeline")}>Back to pipeline</button>
@@ -60582,10 +62339,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       primaryHandler = doRetry;
       primaryPending = retrying;
     }
-    return html14`
+    return html15`
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
-      <button class="alt" style="padding:6px 14px;font-size:13px" onClick=${() => navigate("clearledgr/pipeline")}>← Back to pipeline</button>
-      ${canOpenEmail && html14`<button class="alt" onClick=${openEmail}>Open email</button>`}
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="alt" style="padding:6px 14px;font-size:13px" onClick=${openInPipeline}>← Back to pipeline</button>
+        ${canOpenEmail && html15`<button class="alt" onClick=${openEmail}>Open email</button>`}
+        ${(item?.vendor_name || item?.vendor) && html15`<button class="alt" onClick=${openVendorRecord}>Open vendor record</button>`}
+      </div>
     </div>
 
     <div class="panel">
@@ -60600,18 +62360,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <${StatePill3} state=${state} />
       </div>
 
-      ${stateNotice && html14`<div class="muted" style="margin-top:12px">${stateNotice}</div>`}
+      ${stateNotice && html15`<div class="muted" style="margin-top:12px">${stateNotice}</div>`}
 
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">
-        ${primaryAction?.label && primaryHandler && html14`
+        ${primaryAction?.label && primaryHandler && html15`
           <button onClick=${primaryHandler} disabled=${primaryPending}>
             ${primaryPending ? "Processing…" : primaryAction.label}
           </button>
         `}
-        ${canRejectWorkItem(state) && html14`
+        ${readOnlyMode && html15`
+          <div class="muted" style="width:100%">Read-only view. Queue actions are reserved for AP operators.</div>
+        `}
+        ${canRejectWorkItem(state, actorRole) && html15`
           <button class="alt" onClick=${doReject} disabled=${rejecting}>Reject</button>
         `}
-        ${canNudgeApprover(state) && primaryAction?.id !== "nudge_approver" && html14`
+        ${canNudgeApprover(state, actorRole) && primaryAction?.id !== "nudge_approver" && html15`
           <button class="alt" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
         `}
       </div>
@@ -60621,20 +62384,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div style="display:flex;flex-direction:column;gap:16px">
         <div class="panel">
           <h3 style="margin-top:0">Blocked because</h3>
-          ${blockers.length ? html14`<div style="display:flex;flex-direction:column;gap:10px">
-                ${blockers.map((blocker) => html14`
+          ${blockers.length ? html15`<div style="display:flex;flex-direction:column;gap:10px">
+                ${blockers.map((blocker) => html15`
                   <div key=${blocker.key} style="padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
                     <div style="font-weight:700;font-size:13px">${blocker.label}</div>
-                    ${blocker.detail && html14`<div class="muted" style="margin-top:4px;font-size:13px">${blocker.detail}</div>`}
+                    ${blocker.detail && html15`<div class="muted" style="margin-top:4px;font-size:13px">${blocker.detail}</div>`}
                   </div>
                 `)}
-              </div>` : html14`<p class="muted">No active blockers.</p>`}
+              </div>` : html15`<p class="muted">No active blockers.</p>`}
         </div>
 
         <div class="panel">
           <h3 style="margin-top:0">Evidence checklist</h3>
           <div style="display:flex;flex-direction:column;gap:10px">
-            ${evidence.map((entry) => html14`
+            ${evidence.map((entry) => html15`
               <div key=${entry.key} style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border)">
                 <span>${entry.label}</span>
                 <span style="font-size:12px;font-weight:700;color:${entry.ok ? "var(--brand-muted)" : "var(--ink-muted)"}">${entry.text}</span>
@@ -60655,33 +62418,106 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             ${detailRow("Last update", fmtDateTime(item.updated_at || item.created_at))}
           </div>
         </div>
+
+        <div class="panel">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+            <div>
+              <h3 style="margin:0 0 4px">Linked records</h3>
+              <p class="muted" style="margin:0">Related invoices and superseded records linked to this AP item.</p>
+            </div>
+            ${(item?.vendor_name || item?.vendor) && html15`<button class="alt" onClick=${openVendorRecord} style="padding:8px 12px;font-size:12px">Vendor record</button>`}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${relatedRecords?.supersession?.previous_item || relatedRecords?.supersession?.next_item || (relatedRecords?.same_invoice_number_items || []).length || (relatedRecords?.vendor_recent_items || []).length ? html15`
+                  ${relatedRecords?.supersession?.previous_item ? html15`<${RelatedRecordRow}
+                        label="Supersedes"
+                        item=${relatedRecords.supersession.previous_item}
+                        onOpen=${() => openRelatedRecord(relatedRecords.supersession.previous_item)}
+                      />` : null}
+                  ${relatedRecords?.supersession?.next_item ? html15`<${RelatedRecordRow}
+                        label="Superseded by"
+                        item=${relatedRecords.supersession.next_item}
+                        onOpen=${() => openRelatedRecord(relatedRecords.supersession.next_item)}
+                      />` : null}
+                  ${(relatedRecords?.same_invoice_number_items || []).slice(0, 2).map((relatedItem) => html15`
+                    <${RelatedRecordRow}
+                      key=${relatedItem.id}
+                      label="Same invoice number"
+                      item=${relatedItem}
+                      onOpen=${() => openRelatedRecord(relatedItem)}
+                    />
+                  `)}
+                  ${(relatedRecords?.vendor_recent_items || []).slice(0, 2).map((relatedItem) => html15`
+                    <${RelatedRecordRow}
+                      key=${relatedItem.id}
+                      label="Recent vendor item"
+                      item=${relatedItem}
+                      onOpen=${() => openRelatedRecord(relatedItem)}
+                    />
+                  `)}
+                ` : html15`<p class="muted" style="margin:0">No linked AP records yet.</p>`}
+          </div>
+        </div>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:16px">
         <div class="panel">
-          <h3 style="margin-top:0">What happened</h3>
-          ${auditEvents.length === 0 ? html14`<p class="muted">No audit events yet.</p>` : html14`<div style="display:flex;flex-direction:column;gap:12px">
-                ${auditEvents.map((event, index) => {
-      const row = getAuditRow2(event);
-      return html14`
-                    <div key=${event?.id || index} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
-                      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-                        <div style="font-weight:700;font-size:13px">${row.title}</div>
-                        ${row.timestamp && html14`<div class="muted" style="font-size:12px;white-space:nowrap">${row.timestamp}</div>`}
-                      </div>
-                      <div class="muted" style="margin-top:6px;font-size:13px;line-height:1.5">${row.detail}</div>
-                    </div>
-                  `;
-    })}
+          <h3 style="margin-top:0">Reply templates</h3>
+          <p class="muted" style="margin:0 0 12px">Draft consistent vendor or approver messages from this record without leaving Gmail.</p>
+          ${quickReplyTemplates.length === 0 ? html15`<p class="muted" style="margin:0">No reply templates are available yet.</p>` : html15`<div style="display:flex;flex-direction:column;gap:10px">
+                ${quickReplyTemplates.map((template) => html15`
+                  <${TemplateActionRow}
+                    key=${template.id}
+                    template=${template}
+                    onDraft=${() => draftReply(template.id)}
+                  />
+                `)}
               </div>`}
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+            <button class="alt" onClick=${() => navigate("clearledgr/templates")} style="padding:8px 12px;font-size:12px">Manage templates</button>
+            ${draftingReply && html15`<span class="muted" style="font-size:12px;align-self:center">Opening compose…</span>`}
+          </div>
         </div>
 
-        ${context && html14`
+        <div class="panel">
+          <h3 style="margin-top:0">Record history</h3>
+          ${auditSections.rows.length === 0 ? html15`<p class="muted">No audit events yet.</p>` : html15`
+              <div style="display:flex;flex-direction:column;gap:14px">
+                ${auditSections.primaryRows.length > 0 && html15`
+                  <div style="display:flex;flex-direction:column;gap:10px">
+                    <div style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;color:var(--ink-muted)">Key history</div>
+                    <div class="cl-audit-list">
+                      ${auditSections.primaryRows.map((row, index) => html15`<${AuditCard} key=${row.event?.id || index} row=${row} />`)}
+                    </div>
+                  </div>
+                `}
+                ${auditSections.secondaryRows.length > 0 && html15`
+                  <div style="display:flex;flex-direction:column;gap:10px">
+                    <div style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;color:var(--ink-muted)">Background activity</div>
+                    <div class="cl-audit-list">
+                      ${auditSections.secondaryRows.map((row, index) => html15`<${AuditCard} key=${row.event?.id || `secondary-${index}`} row=${row} />`)}
+                    </div>
+                  </div>
+                `}
+              </div>
+            `}
+        </div>
+
+        ${context && html15`
           <div class="panel">
             <h3 style="margin-top:0">Context</h3>
-            ${context.reasoning_summary && html14`<p style="font-size:13px;color:var(--ink-secondary);line-height:1.6">${context.reasoning_summary}</p>`}
-            ${context.reasoning_risks && html14`<p style="font-size:13px;color:var(--amber);line-height:1.6">${context.reasoning_risks}</p>`}
-            ${context.next_action && html14`<p class="muted" style="margin:0"><strong>Best next step:</strong> ${context.next_action}</p>`}
+            ${context.reasoning_summary && html15`<p style="font-size:13px;color:var(--ink-secondary);line-height:1.6">${context.reasoning_summary}</p>`}
+            ${context.reasoning_risks && html15`<p style="font-size:13px;color:var(--amber);line-height:1.6">${context.reasoning_risks}</p>`}
+            ${context.next_action && html15`<p class="muted" style="margin:0"><strong>Best next step:</strong> ${context.next_action}</p>`}
+          </div>
+        `}
+
+        ${context && html15`
+          <div class="panel">
+            <h3 style="margin-top:0">Evidence sources</h3>
+            ${sourceGroups.length === 0 ? html15`<p class="muted" style="margin:0">No linked evidence sources yet.</p>` : html15`<div style="display:flex;flex-direction:column;gap:10px">
+                  ${sourceGroups.slice(0, 5).map((group) => html15`<${SourceGroupRow} key=${group.source_type} group=${group} />`)}
+                </div>`}
           </div>
         `}
       </div>
@@ -60691,7 +62527,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
   function detailRow(label, value) {
-    return html14`
+    return html15`
     <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
       <span class="muted">${label}</span>
       <span style="font-weight:500;text-align:right;max-width:65%">${value}</span>
@@ -60700,101 +62536,845 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/VendorsPage.js
-  var html15 = htm_module_default.bind(_);
-  function VendorsPage({ api, toast, orgId, navigate }) {
-    const [items, setItems] = d2([]);
+  var html16 = htm_module_default.bind(_);
+  function VendorsPage({ api, orgId, userEmail, navigate, toast }) {
+    const pipelineScope = T2(() => ({ orgId, userEmail }), [orgId, userEmail]);
+    const [vendors, setVendors] = d2([]);
     const [loading, setLoading] = d2(true);
     const [search, setSearch] = d2("");
-    y2(() => {
+    const loadVendors = async ({ silent = false } = {}) => {
       setLoading(true);
-      api(`/extension/worklist?organization_id=${encodeURIComponent(orgId)}&limit=1000`).then((data) => setItems(data?.items || [])).catch(() => setItems([])).finally(() => setLoading(false));
-    }, [api, orgId]);
-    const vendors = T2(() => {
-      const map = {};
-      for (const item of items) {
-        const name = (item.vendor_name || item.vendor || "Unknown").trim();
-        if (!map[name])
-          map[name] = { name, invoices: 0, totalAmount: 0, lastDate: "", states: {}, emails: new Set };
-        const v3 = map[name];
-        v3.invoices += 1;
-        v3.totalAmount += Number(item.amount) || 0;
-        const date = item.due_date || item.created_at || "";
-        if (date > v3.lastDate)
-          v3.lastDate = date;
-        v3.states[item.state] = (v3.states[item.state] || 0) + 1;
-        if (item.sender)
-          v3.emails.add(item.sender);
+      try {
+        const data = await api(`/api/ap/items/vendors?organization_id=${encodeURIComponent(orgId)}&limit=200`, { silent });
+        setVendors(Array.isArray(data?.vendors) ? data.vendors : []);
+      } catch {
+        setVendors([]);
+        if (!silent)
+          toast?.("Could not load vendors.", "error");
+      } finally {
+        setLoading(false);
       }
-      return Object.values(map).sort((a3, b) => b.totalAmount - a3.totalAmount);
-    }, [items]);
+    };
+    y2(() => {
+      loadVendors({ silent: true });
+    }, [api, orgId]);
+    const [refresh, refreshing] = useAction2(async () => {
+      await loadVendors();
+      toast?.("Vendor directory refreshed.", "success");
+    });
     const filtered = T2(() => {
-      if (!search.trim())
+      if (!String(search || "").trim())
         return vendors;
-      const q3 = search.trim().toLowerCase();
-      return vendors.filter((v3) => v3.name.toLowerCase().includes(q3));
+      const query = String(search || "").trim().toLowerCase();
+      return vendors.filter((vendor) => String(vendor.vendor_name || "").toLowerCase().includes(query));
     }, [vendors, search]);
-    if (loading)
-      return html15`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendors\u2026</p></div>`;
-    return html15`
-    <div class="kpi-row" style="grid-template-columns:1fr 1fr 1fr">
-      <div class="kpi-card">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${vendors.length}</strong>
-        <span>Vendors</span>
-      </div>
-      <div class="kpi-card">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${items.length}</strong>
-        <span>Total invoices</span>
-      </div>
-      <div class="kpi-card">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${fmtDollar2(vendors.reduce((s3, v3) => s3 + v3.totalAmount, 0))}</strong>
-        <span>Total spend</span>
+    const openVendorRecord = (vendor) => {
+      const vendorName = String(vendor?.vendor_name || "").trim();
+      if (!vendorName)
+        return;
+      navigate(`clearledgr/vendor/${encodeURIComponent(vendorName)}`);
+    };
+    const openVendorPipeline = (vendor) => {
+      const vendorName = String(vendor?.vendor_name || "").trim();
+      if (!vendorName)
+        return;
+      const current = readPipelinePreferences(pipelineScope);
+      clearPipelineNavigation(pipelineScope);
+      writePipelinePreferences(pipelineScope, {
+        ...current,
+        activeSliceId: "all_open",
+        sortCol: "updated_at",
+        sortDir: "desc",
+        filters: {
+          ...current.filters,
+          vendor: vendorName
+        }
+      });
+      navigate("clearledgr/pipeline");
+    };
+    if (loading) {
+      return html16`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor directory…</p></div>`;
+    }
+    return html16`
+    <div class="panel">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0 0 6px">Vendor directory</h3>
+          <p class="muted" style="margin:0;max-width:620px">
+            Use vendor records for shared supplier memory, then jump back into Pipeline for the actual queue work.
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
+          <button onClick=${() => navigate("clearledgr/pipeline")}>Open pipeline</button>
+        </div>
       </div>
     </div>
 
-    <div style="
-      padding:12px 16px;background:var(--surface);border:1px solid var(--border);
-      border-radius:var(--radius-md) var(--radius-md) 0 0;border-bottom:none;
-    ">
+    <div class="panel">
+      <div class="readiness-list" style="margin:0 0 14px">
+        <div class="readiness-item"><strong>Vendors tracked:</strong> ${vendors.length}</div>
+        <div class="readiness-item"><strong>Open invoices:</strong> ${vendors.reduce((sum, vendor) => sum + Number(vendor.open_count || 0), 0).toLocaleString()}</div>
+        <div class="readiness-item"><strong>Total spend:</strong> ${fmtDollar(vendors.reduce((sum, vendor) => sum + Number(vendor.total_amount || 0), 0))}</div>
+        <div class="readiness-item"><strong>Needs info:</strong> ${vendors.reduce((sum, vendor) => sum + Number(vendor.needs_info_count || 0), 0).toLocaleString()}</div>
+      </div>
+
       <div style="position:relative">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%)"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input placeholder="Search vendors\u2026" value=${search} onInput=${(e3) => setSearch(e3.target.value)}
-          style="width:100%;padding:8px 8px 8px 34px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;background:var(--bg)" />
+        <input
+          placeholder="Search vendors…"
+          value=${search}
+          onInput=${(event) => setSearch(event.target.value)}
+          style="width:100%;padding:8px 8px 8px 34px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;background:var(--bg)"
+        />
+      </div>
+
+      <div style="display:grid;gap:10px;margin-top:14px">
+        ${filtered.length === 0 ? html16`<div class="muted">${search ? "No vendors match your search." : "No vendors yet. Vendor records appear once invoices are processed."}</div>` : filtered.map((vendor) => html16`
+              <div key=${vendor.vendor_name} style="padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                  <div style="min-width:0;flex:1">
+                    <strong style="display:block;font-size:14px">${vendor.vendor_name}</strong>
+                    <div class="muted" style="font-size:12px;margin-top:4px">
+                      ${vendor.primary_email || "No primary sender"} · Last activity ${vendor.last_activity_at ? fmtDateTime(vendor.last_activity_at) : "—"}
+                    </div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+                      ${(vendor.top_states || []).map((row) => html16`
+                        <span key=${row.state} style="font-size:10px;font-weight:600;padding:3px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--ink-secondary)">
+                          ${String(row.state || "").replace(/_/g, " ")} ${row.count}
+                        </span>
+                      `)}
+                      ${vendor.profile?.requires_po ? html16`<span style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FEF3C7;color:#92400E">Requires PO</span>` : null}
+                      ${(vendor.profile?.anomaly_flags || []).slice(0, 2).map((flag) => html16`
+                        <span key=${flag} style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FEF2F2;color:#B91C1C">${String(flag).replace(/_/g, " ")}</span>
+                      `)}
+                    </div>
+                  </div>
+                  <div style="text-align:right;min-width:140px">
+                    <div style="font-weight:700">${fmtDollar(vendor.total_amount || 0)}</div>
+                    <div class="muted" style="font-size:12px;margin-top:2px">${Number(vendor.invoice_count || 0).toLocaleString()} invoices</div>
+                    <div class="muted" style="font-size:12px;margin-top:4px">${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</div>
+                  </div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+                  <button class="alt" onClick=${() => openVendorRecord(vendor)} style="padding:8px 12px;font-size:12px">Open vendor record</button>
+                  <button class="alt" onClick=${() => openVendorPipeline(vendor)} style="padding:8px 12px;font-size:12px">Open in pipeline</button>
+                </div>
+              </div>
+            `)}
+      </div>
+    </div>
+  `;
+  }
+
+  // src/routes/pages/VendorDetailPage.js
+  var html17 = htm_module_default.bind(_);
+  var STATE_STYLES3 = {
+    needs_approval: { bg: "#FEFCE8", text: "#A16207", label: "Needs approval" },
+    needs_info: { bg: "#FEFCE8", text: "#A16207", label: "Needs info" },
+    validated: { bg: "#EFF6FF", text: "#1D4ED8", label: "Validated" },
+    received: { bg: "#F1F5F9", text: "#64748B", label: "Received" },
+    approved: { bg: "#ECFDF5", text: "#059669", label: "Approved" },
+    ready_to_post: { bg: "#DCFCE7", text: "#166534", label: "Ready to post" },
+    posted_to_erp: { bg: "#ECFDF5", text: "#10B981", label: "Posted" },
+    closed: { bg: "#F1F5F9", text: "#64748B", label: "Closed" },
+    rejected: { bg: "#FEF2F2", text: "#DC2626", label: "Rejected" },
+    failed_post: { bg: "#FEF2F2", text: "#DC2626", label: "Failed post" }
+  };
+  function StatePill4({ state }) {
+    const tone = STATE_STYLES3[String(state || "").trim().toLowerCase()] || {
+      bg: "#F8FAFC",
+      text: "#475569",
+      label: String(state || "Unknown").replace(/_/g, " ")
+    };
+    return html17`<span style="
+    display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;
+    background:${tone.bg};color:${tone.text};font-size:11px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;
+  ">${tone.label}</span>`;
+  }
+  function MetricCard({ label, value, detail }) {
+    return html17`<div style="padding:18px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+    <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em">${value}</div>
+    <div style="font-size:13px;font-weight:600;margin-top:2px">${label}</div>
+    ${detail ? html17`<div class="muted" style="margin-top:6px;font-size:12px">${detail}</div>` : null}
+  </div>`;
+  }
+  function formatMoney2(amount, currency = "USD") {
+    const value = Number(amount);
+    if (!Number.isFinite(value))
+      return "—";
+    return `${currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  function VendorDetailPage({ api, orgId, userEmail, navigate, routeParams, toast }) {
+    const vendorName = String(routeParams?.name || "").trim();
+    const pipelineScope = T2(() => ({ orgId, userEmail }), [orgId, userEmail]);
+    const [payload, setPayload] = d2(null);
+    const [loading, setLoading] = d2(true);
+    const loadVendor = async ({ silent = false } = {}) => {
+      if (!vendorName) {
+        setPayload(null);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      try {
+        const data = await api(`/api/ap/items/vendors/${encodeURIComponent(vendorName)}?organization_id=${encodeURIComponent(orgId)}`, { silent });
+        setPayload(data || null);
+      } catch {
+        setPayload(null);
+        if (!silent)
+          toast?.("Could not load the vendor record.", "error");
+      } finally {
+        setLoading(false);
+      }
+    };
+    y2(() => {
+      loadVendor({ silent: true });
+    }, [api, orgId, vendorName]);
+    const [refresh, refreshing] = useAction2(async () => {
+      await loadVendor();
+      toast?.("Vendor record refreshed.", "success");
+    });
+    const summary = payload?.summary || {};
+    const profile = payload?.profile || {};
+    const recentItems = Array.isArray(payload?.recent_items) ? payload.recent_items : [];
+    const history = Array.isArray(payload?.history) ? payload.history : [];
+    const topExceptionCodes = Array.isArray(payload?.top_exception_codes) ? payload.top_exception_codes : [];
+    const openVendorInPipeline = () => {
+      const current = readPipelinePreferences(pipelineScope);
+      clearPipelineNavigation(pipelineScope);
+      writePipelinePreferences(pipelineScope, {
+        ...current,
+        activeSliceId: "all_open",
+        sortCol: "updated_at",
+        sortDir: "desc",
+        filters: {
+          ...current.filters,
+          vendor: vendorName
+        }
+      });
+      navigate("clearledgr/pipeline");
+    };
+    const openItemDetail2 = (item) => {
+      if (!item?.id)
+        return;
+      focusPipelineItem(pipelineScope, item, "vendor_record");
+      navigate(`clearledgr/invoice/${encodeURIComponent(item.id)}`);
+    };
+    if (loading) {
+      return html17`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor record…</p></div>`;
+    }
+    if (!payload) {
+      return html17`
+      <div class="panel">
+        <h3 style="margin-top:0">Vendor not found</h3>
+        <p class="muted" style="margin:0 0 12px">This vendor does not have a shared AP record yet.</p>
+        <button class="alt" onClick=${() => navigate("clearledgr/vendors")}>Back to vendors</button>
+      </div>
+    `;
+    }
+    return html17`
+    <div class="panel">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+        <div>
+          <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Vendor record</div>
+          <h3 style="margin:0 0 6px">${payload.vendor_name || vendorName}</h3>
+          <p class="muted" style="margin:0;max-width:620px">
+            Shared AP memory for this supplier: open invoices, recent outcomes, anomaly flags, and posting context.
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="alt" onClick=${() => navigate("clearledgr/vendors")}>Back to vendors</button>
+          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
+          <button onClick=${openVendorInPipeline}>Open vendor in pipeline</button>
+        </div>
       </div>
     </div>
 
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:0 0 var(--radius-md) var(--radius-md);overflow-x:auto">
-      <table class="table">
-        <thead><tr>
-          <th>Vendor</th>
-          <th style="text-align:right">Total Spend</th>
-          <th style="text-align:right">Invoices</th>
-          <th>Status</th>
-          <th>Last Activity</th>
-        </tr></thead>
-        <tbody>
-          ${filtered.length === 0 ? html15`<tr><td colspan="5" class="muted" style="text-align:center;padding:32px">
-                ${search ? "No vendors match your search." : html15`
-                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="1" style="margin-bottom:8px;opacity:0.4"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
-                  <div>No vendors yet. Vendors appear when invoices are processed.</div>
-                `}
-              </td></tr>` : filtered.map((v3) => html15`<tr key=${v3.name}>
-              <td>
-                <div style="font-weight:500">${v3.name}</div>
-                ${v3.emails.size > 0 ? html15`<div style="font-size:11px;color:var(--ink-muted);margin-top:1px">${[...v3.emails][0]}</div>` : null}
-              </td>
-              <td style="text-align:right;font-family:var(--font-mono);font-weight:600;font-variant-numeric:tabular-nums">${fmtDollar2(v3.totalAmount)}</td>
-              <td style="text-align:right;font-family:var(--font-mono)">${v3.invoices}</td>
-              <td>
-                <div style="display:flex;gap:4px;flex-wrap:wrap">
-                  ${Object.entries(v3.states).map(([st, count]) => html15`
-                    <span style="font-size:10px;font-weight:500;padding:2px 7px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--ink-secondary)">${st.replace(/_/g, " ")} ${count}</span>
-                  `)}
+    <div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
+      <${MetricCard} label="Tracked invoices" value=${Number(summary.invoice_count || 0).toLocaleString()} />
+      <${MetricCard} label="Open now" value=${Number(summary.open_count || 0).toLocaleString()} detail=${`${Number(summary.approval_count || 0)} waiting approval`} />
+      <${MetricCard} label="Posted" value=${Number(summary.posted_count || 0).toLocaleString()} detail=${`${Number(summary.failed_count || 0)} failed post`} />
+      <${MetricCard} label="Tracked spend" value=${fmtDollar(summary.total_amount || 0)} detail=${summary.last_activity_at ? `Last activity ${fmtDateTime(summary.last_activity_at)}` : "No recent activity"} />
+    </div>
+
+    <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,0.8fr);gap:20px">
+      <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="panel">
+          <h3 style="margin-top:0">Open and recent invoices</h3>
+          ${recentItems.length === 0 ? html17`<p class="muted" style="margin:0">No recent invoices for this vendor yet.</p>` : html17`<div style="display:flex;flex-direction:column;gap:10px">
+                ${recentItems.map((item) => html17`
+                  <div key=${item.id} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                      <div>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                          <strong style="font-size:14px">${item.invoice_number || "No invoice #"}</strong>
+                          <${StatePill4} state=${item.state} />
+                        </div>
+                        <div class="muted" style="font-size:12px;margin-top:4px">
+                          ${formatMoney2(item.amount, item.currency || "USD")} · Due ${item.due_date ? fmtDate(item.due_date) : "—"} · Updated ${fmtDateTime(item.updated_at)}
+                        </div>
+                        ${item.erp_reference ? html17`<div class="muted" style="font-size:12px;margin-top:4px">ERP ${item.erp_reference}</div>` : null}
+                        ${item.exception_code ? html17`<div class="muted" style="font-size:12px;margin-top:4px">Exception ${String(item.exception_code).replace(/_/g, " ")}</div>` : null}
+                      </div>
+                      <button class="alt" onClick=${() => openItemDetail2(item)} style="padding:8px 12px;font-size:12px">Open record</button>
+                    </div>
+                  </div>
+                `)}
+              </div>`}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Outcome history</h3>
+          ${history.length === 0 ? html17`<p class="muted" style="margin:0">No vendor outcome history yet.</p>` : html17`<div style="display:flex;flex-direction:column;gap:10px">
+                ${history.map((entry) => html17`
+                  <div key=${entry.id || `${entry.ap_item_id}-${entry.created_at}`} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                      <div>
+                        <strong style="font-size:13px">${entry.invoice_number || entry.ap_item_id || "Invoice outcome"}</strong>
+                        <div class="muted" style="font-size:12px;margin-top:4px">
+                          ${formatMoney2(entry.amount, entry.currency || "USD")} · ${String(entry.final_state || "unknown").replace(/_/g, " ")}
+                        </div>
+                      </div>
+                      <span class="muted" style="font-size:12px">${fmtDateTime(entry.created_at)}</span>
+                    </div>
+                  </div>
+                `)}
+              </div>`}
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="panel">
+          <h3 style="margin-top:0">Vendor profile</h3>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Primary email</span>
+              <span style="font-weight:600;text-align:right">${summary.primary_email || "—"}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Payment terms</span>
+              <span style="font-weight:600;text-align:right">${profile.payment_terms || "—"}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Requires PO</span>
+              <span style="font-weight:600">${profile.requires_po ? "Yes" : "No"}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Always approved</span>
+              <span style="font-weight:600">${profile.always_approved ? "Yes" : "No"}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px">
+              <span class="muted">Approval override rate</span>
+              <span style="font-weight:600">${Number(profile.approval_override_rate || 0).toFixed(2)}</span>
+            </div>
+          </div>
+
+          ${(summary.sender_emails || []).length > 0 && html17`
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Known sender emails</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                ${(summary.sender_emails || []).map((email) => html17`<span key=${email} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px">${email}</span>`)}
+              </div>
+            </div>
+          `}
+
+          ${(profile.anomaly_flags || []).length > 0 && html17`
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Anomaly flags</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                ${(profile.anomaly_flags || []).map((flag) => html17`<span key=${flag} style="padding:5px 10px;border-radius:999px;background:#FEF2F2;color:#B91C1C;font-size:12px;font-weight:600">${String(flag).replace(/_/g, " ")}</span>`)}
+              </div>
+            </div>
+          `}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Common states</h3>
+          ${(summary.top_states || []).length === 0 ? html17`<p class="muted" style="margin:0">No state history yet.</p>` : html17`<div style="display:flex;flex-direction:column;gap:8px">
+                ${(summary.top_states || []).map((row) => html17`
+                  <div key=${row.state} style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+                    <span>${String(row.state || "").replace(/_/g, " ")}</span>
+                    <strong>${Number(row.count || 0).toLocaleString()}</strong>
+                  </div>
+                `)}
+              </div>`}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Recurring exception codes</h3>
+          ${topExceptionCodes.length === 0 ? html17`<p class="muted" style="margin:0">No recurring exception patterns yet.</p>` : html17`<div style="display:flex;flex-direction:column;gap:8px">
+                ${topExceptionCodes.map((row) => html17`
+                  <div key=${row.exception_code} style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+                    <span>${String(row.exception_code || "").replace(/_/g, " ")}</span>
+                    <strong>${Number(row.count || 0).toLocaleString()}</strong>
+                  </div>
+                `)}
+              </div>`}
+        </div>
+      </div>
+    </div>
+  `;
+  }
+
+  // src/routes/pages/TemplatesPage.js
+  var html18 = htm_module_default.bind(_);
+  var SAMPLE_ITEM = {
+    vendor_name: "Northwind Office Supply",
+    invoice_number: "INV-1042",
+    amount: 1280.45,
+    currency: "USD",
+    due_date: "2026-03-24",
+    po_number: "PO-2841",
+    state: "needs_info",
+    next_action: "Reply with the missing PO and corrected invoice date.",
+    exception_code: "po_missing_reference",
+    subject: "Invoice INV-1042",
+    sender: "ap@northwind.test"
+  };
+  function templateRef(template = {}) {
+    return `${template.scope || "user"}:${template.id || ""}`;
+  }
+  function blankEditor() {
+    return {
+      name: "",
+      description: "",
+      audience: "vendor",
+      subjectTemplate: "",
+      bodyTemplate: ""
+    };
+  }
+  function buildEditorFromTemplate(template = {}) {
+    return {
+      name: String(template?.name || ""),
+      description: String(template?.description || ""),
+      audience: String(template?.audience || "vendor") === "internal" ? "internal" : "vendor",
+      subjectTemplate: String(template?.subjectTemplate || ""),
+      bodyTemplate: String(template?.bodyTemplate || "")
+    };
+  }
+  function buildDraft(editor = {}) {
+    return {
+      name: String(editor?.name || "").trim(),
+      description: String(editor?.description || "").trim(),
+      audience: String(editor?.audience || "vendor") === "internal" ? "internal" : "vendor",
+      subjectTemplate: String(editor?.subjectTemplate || ""),
+      bodyTemplate: String(editor?.bodyTemplate || "")
+    };
+  }
+  function TemplateRow({ template, selected, onSelect }) {
+    return html18`<button
+    class="alt"
+    onClick=${onSelect}
+    style="
+      display:block;width:100%;padding:12px 14px;text-align:left;
+      border-radius:var(--radius-md);
+      border:1px solid ${selected ? "var(--accent)" : "var(--border)"};
+      background:${selected ? "var(--accent-soft)" : "var(--surface)"};
+    "
+  >
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+      <strong style="font-size:13px">${template.name}</strong>
+      <span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.02em">
+        ${template.scope === "starter" ? "Starter" : "Personal"}
+      </span>
+      <span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.02em">
+        ${template.audience === "internal" ? "Internal" : "Vendor"}
+      </span>
+    </div>
+    <div class="muted" style="font-size:12px;line-height:1.45">${template.description || "No description"}</div>
+  </button>`;
+  }
+  function TemplatesPage({ api, bootstrap, toast, orgId, userEmail, navigate }) {
+    const templateScope = T2(() => ({ orgId, userEmail }), [orgId, userEmail]);
+    const [templatePrefs, setTemplatePrefs] = d2(() => readReplyTemplatePreferences(templateScope));
+    const [selectedRef, setSelectedRef] = d2("");
+    const [editor, setEditor] = d2(blankEditor);
+    const bootstrapTemplatePrefs = getBootstrappedReplyTemplatePreferences(bootstrap);
+    const syncReadyRef = A2(false);
+    const syncTimerRef = A2(null);
+    const lastSyncedPrefsRef = A2("");
+    y2(() => {
+      setTemplatePrefs(readReplyTemplatePreferences(templateScope));
+    }, [templateScope]);
+    y2(() => {
+      const local = readReplyTemplatePreferences(templateScope);
+      const remote = bootstrapTemplatePrefs ? normalizeReplyTemplatePreferences(bootstrapTemplatePrefs) : null;
+      const next = remote ? writeReplyTemplatePreferences(templateScope, remote) : local;
+      setTemplatePrefs(next);
+      lastSyncedPrefsRef.current = JSON.stringify(normalizeReplyTemplatePreferences(next));
+      syncReadyRef.current = true;
+    }, [bootstrapTemplatePrefs, templateScope]);
+    y2(() => {
+      if (!syncReadyRef.current)
+        return;
+      const serialized = JSON.stringify(normalizeReplyTemplatePreferences(templatePrefs));
+      if (serialized === lastSyncedPrefsRef.current)
+        return;
+      if (syncTimerRef.current)
+        clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = setTimeout(() => {
+        api("/api/admin/user/preferences", {
+          method: "PATCH",
+          body: JSON.stringify({
+            organization_id: orgId,
+            patch: buildReplyTemplatePreferencePatch(templatePrefs)
+          }),
+          silent: true
+        }).then(() => {
+          lastSyncedPrefsRef.current = serialized;
+        }).catch(() => {});
+      }, 500);
+      return () => {
+        if (syncTimerRef.current)
+          clearTimeout(syncTimerRef.current);
+      };
+    }, [api, orgId, templatePrefs]);
+    const starterTemplates = T2(() => getStarterReplyTemplates(), []);
+    const personalTemplates = T2(() => getPersonalReplyTemplates(templatePrefs), [templatePrefs]);
+    const allTemplates = T2(() => getAllReplyTemplates(templatePrefs), [templatePrefs]);
+    const currentTemplate = T2(() => allTemplates.find((template) => templateRef(template) === selectedRef) || null, [allTemplates, selectedRef]);
+    y2(() => {
+      if (!allTemplates.length)
+        return;
+      if (currentTemplate)
+        return;
+      const preferred = personalTemplates[0] || starterTemplates[0] || allTemplates[0];
+      if (preferred)
+        setSelectedRef(templateRef(preferred));
+    }, [allTemplates, currentTemplate, personalTemplates, starterTemplates]);
+    y2(() => {
+      if (!currentTemplate) {
+        setEditor(blankEditor());
+        return;
+      }
+      setEditor(buildEditorFromTemplate(currentTemplate));
+    }, [selectedRef]);
+    const preview = T2(() => buildReplyTemplatePrefill(buildDraft(editor), SAMPLE_ITEM, { issue_summary: "PO reference is still missing." }), [editor]);
+    const [saveTemplate, savingTemplate] = useAction2(async () => {
+      const draft = buildDraft(editor);
+      if (!draft.name || !draft.bodyTemplate) {
+        toast?.("Add a template name and body first.", "warning");
+        return;
+      }
+      let nextPrefs;
+      if (currentTemplate?.scope === "user") {
+        nextPrefs = updateReplyTemplate(templateScope, currentTemplate.id, draft);
+        toast?.(`Template "${draft.name}" updated.`, "success");
+      } else {
+        nextPrefs = createReplyTemplate(templateScope, draft);
+        const created = getPersonalReplyTemplates(nextPrefs).slice(-1)[0];
+        if (created)
+          setSelectedRef(templateRef(created));
+        toast?.(`Template "${draft.name}" saved as personal.`, "success");
+      }
+      setTemplatePrefs(nextPrefs);
+    });
+    const [deleteTemplate, deletingTemplate] = useAction2(async () => {
+      if (!currentTemplate || currentTemplate.scope !== "user") {
+        toast?.("Only personal templates can be deleted.", "warning");
+        return;
+      }
+      const nextPrefs = removeReplyTemplate(templateScope, currentTemplate.id);
+      setTemplatePrefs(nextPrefs);
+      setSelectedRef("");
+      toast?.("Template removed.", "success");
+    });
+    const [openComposePreview, previewingCompose] = useAction2(async () => {
+      try {
+        await store_default.composeWithPrefill(preview);
+        toast?.("Draft opened in Gmail compose.", "success");
+      } catch {
+        toast?.("Could not open Gmail compose preview.", "error");
+      }
+    });
+    return html18`
+    <div class="panel">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0 0 6px">AP reply templates</h3>
+          <p class="muted" style="margin:0;max-width:620px">
+            Keep vendor info requests, approval nudges, rejection notes, and payment-status replies consistent without leaving Gmail.
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="alt" onClick=${() => {
+      setSelectedRef("");
+      setEditor(blankEditor());
+    }}>New personal template</button>
+          <button class="alt" onClick=${() => navigate("clearledgr/home")}>Back to Home</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:minmax(260px,0.75fr) minmax(0,1.25fr);gap:20px">
+      <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="panel">
+          <h3 style="margin-top:0">Starter templates</h3>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            ${starterTemplates.map((template) => html18`
+              <${TemplateRow}
+                key=${templateRef(template)}
+                template=${template}
+                selected=${selectedRef === templateRef(template)}
+                onSelect=${() => setSelectedRef(templateRef(template))}
+              />
+            `)}
+          </div>
+        </div>
+
+        <div class="panel">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px">
+            <h3 style="margin:0">Personal templates</h3>
+            <span class="muted" style="font-size:12px">${personalTemplates.length} saved</span>
+          </div>
+          ${personalTemplates.length === 0 ? html18`<p class="muted" style="margin:0">No personal templates yet. Start from a starter template or create one from scratch.</p>` : html18`<div style="display:flex;flex-direction:column;gap:8px">
+                ${personalTemplates.map((template) => html18`
+                  <${TemplateRow}
+                    key=${templateRef(template)}
+                    template=${template}
+                    selected=${selectedRef === templateRef(template)}
+                    onSelect=${() => setSelectedRef(templateRef(template))}
+                  />
+                `)}
+              </div>`}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Available fields</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${["vendor_name", "invoice_number", "amount", "due_date", "po_number", "state_label", "next_action", "issue_summary", "subject"].map((token) => html18`
+              <span key=${token} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px;font-family:var(--font-mono)">{{${token}}}</span>
+            `)}
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="panel">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+            <div>
+              <h3 style="margin:0 0 4px">${currentTemplate?.scope === "user" ? "Edit personal template" : currentTemplate ? "Save starter as personal" : "Create personal template"}</h3>
+              <p class="muted" style="margin:0">
+                ${currentTemplate?.scope === "user" ? "Changes sync to your user preferences and stay available across Gmail sessions." : "Starter templates are read-only defaults. Save a personal copy before editing."}
+              </p>
+            </div>
+            ${currentTemplate?.scope === "user" ? html18`<button class="alt" onClick=${deleteTemplate} disabled=${deletingTemplate}>${deletingTemplate ? "Deleting…" : "Delete"}</button>` : null}
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+            <label style="display:flex;flex-direction:column;gap:6px">
+              <span class="muted" style="font-size:12px">Template name</span>
+              <input value=${editor.name} onInput=${(event) => setEditor((current) => ({ ...current, name: event.target.value }))} placeholder="Vendor PO request" />
+            </label>
+            <label style="display:flex;flex-direction:column;gap:6px">
+              <span class="muted" style="font-size:12px">Audience</span>
+              <select value=${editor.audience} onChange=${(event) => setEditor((current) => ({ ...current, audience: event.target.value }))}>
+                <option value="vendor">Vendor</option>
+                <option value="internal">Internal</option>
+              </select>
+            </label>
+          </div>
+
+          <label style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+            <span class="muted" style="font-size:12px">Description</span>
+            <input value=${editor.description} onInput=${(event) => setEditor((current) => ({ ...current, description: event.target.value }))} placeholder="When to use this template" />
+          </label>
+
+          <label style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+            <span class="muted" style="font-size:12px">Subject template</span>
+            <input value=${editor.subjectTemplate} onInput=${(event) => setEditor((current) => ({ ...current, subjectTemplate: event.target.value }))} placeholder="Re: {{subject}}" />
+          </label>
+
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">Body template</span>
+            <textarea value=${editor.bodyTemplate} onInput=${(event) => setEditor((current) => ({ ...current, bodyTemplate: event.target.value }))} placeholder="Hi {{vendor_name}},&#10;&#10;..." />
+          </label>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+            <button onClick=${saveTemplate} disabled=${savingTemplate}>${savingTemplate ? "Saving…" : currentTemplate?.scope === "user" ? "Update template" : "Save as personal"}</button>
+            <button class="alt" onClick=${openComposePreview} disabled=${previewingCompose}>${previewingCompose ? "Opening…" : "Open compose preview"}</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Preview</h3>
+          <p class="muted" style="margin:0 0 12px">Preview uses sample invoice context so you can check wording before using the template from a real record.</p>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg)">
+              <div class="muted" style="font-size:12px;margin-bottom:4px">To</div>
+              <div style="font-weight:600">${preview.to || "(set recipient when used)"}</div>
+            </div>
+            <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg)">
+              <div class="muted" style="font-size:12px;margin-bottom:4px">Subject</div>
+              <div style="font-weight:600">${preview.subject || "—"}</div>
+            </div>
+            <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg)">
+              <div class="muted" style="font-size:12px;margin-bottom:6px">Body</div>
+              <pre style="margin:0;white-space:pre-wrap;font-family:var(--font);font-size:13px;line-height:1.6;color:var(--ink)">${preview.body || "—"}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  }
+
+  // src/routes/pages/ReportsPage.js
+  var html19 = htm_module_default.bind(_);
+  function MetricCard2({ label, value, detail }) {
+    return html19`<div style="padding:18px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+    <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em">${value}</div>
+    <div style="font-size:13px;font-weight:600;margin-top:2px">${label}</div>
+    ${detail ? html19`<div class="muted" style="margin-top:6px;font-size:12px">${detail}</div>` : null}
+  </div>`;
+  }
+  function ReportRow({ label, value, detail }) {
+    return html19`<div style="display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid var(--border)">
+    <div>
+      <div style="font-weight:600">${label}</div>
+      ${detail ? html19`<div class="muted" style="font-size:12px;margin-top:3px">${detail}</div>` : null}
+    </div>
+    <div style="font-weight:700;text-align:right">${value}</div>
+  </div>`;
+  }
+  function ReportsPage({ api, bootstrap, orgId, userEmail, navigate, toast }) {
+    const pipelineScope = T2(() => ({ orgId, userEmail }), [orgId, userEmail]);
+    const [metrics, setMetrics] = d2(null);
+    const [loading, setLoading] = d2(true);
+    const starterViews = T2(() => getStarterPipelineViews({}), []);
+    const loadMetrics = async ({ silent = false } = {}) => {
+      setLoading(true);
+      try {
+        const data = await api(`/api/ap/items/metrics/aggregation?organization_id=${encodeURIComponent(orgId)}`, { silent });
+        setMetrics(data?.metrics || null);
+      } catch {
+        setMetrics(null);
+        if (!silent)
+          toast?.("Could not load AP reporting.", "error");
+      } finally {
+        setLoading(false);
+      }
+    };
+    y2(() => {
+      loadMetrics({ silent: true });
+    }, [api, orgId]);
+    const [refresh, refreshing] = useAction2(async () => {
+      await loadMetrics();
+      toast?.("AP reporting refreshed.", "success");
+    });
+    const openStarterView = (view) => {
+      if (!view?.snapshot)
+        return;
+      clearPipelineNavigation(pipelineScope);
+      writePipelinePreferences(pipelineScope, view.snapshot);
+      navigate("clearledgr/pipeline");
+    };
+    const dashboard = bootstrap?.dashboard || {};
+    const totals = metrics?.totals || {};
+    const sources = metrics?.sources || {};
+    const duplicates = metrics?.duplicates || {};
+    const topVendors = Array.isArray(metrics?.spend_by_vendor) ? metrics.spend_by_vendor.slice(0, 6) : [];
+    const sourceTypes = Object.entries(sources.link_count_by_type || {}).sort((left, right) => right[1] - left[1]).slice(0, 6);
+    if (loading) {
+      return html19`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading AP reporting…</p></div>`;
+    }
+    return html19`
+    <div class="panel">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0 0 6px">AP reporting</h3>
+          <p class="muted" style="margin:0;max-width:620px">
+            Keep reporting narrow: queue health, spend concentration, source coverage, and duplicate risk. Pipeline remains the operational surface.
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
+          <button onClick=${() => navigate("clearledgr/pipeline")}>Open pipeline</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <${MetricCard2} label="Tracked invoices" value=${Number(totals.items || dashboard.total_invoices || 0).toLocaleString()} />
+      <${MetricCard2} label="Open items" value=${Number(totals.open_items || 0).toLocaleString()} detail=${`${Number(dashboard.pending_approval || 0).toLocaleString()} waiting approval`} />
+      <${MetricCard2} label="Tracked spend" value=${fmtDollar(totals.total_amount || 0)} detail=${`${Number(totals.amount_unavailable_count || 0).toLocaleString()} without amount`} />
+      <${MetricCard2} label="Duplicate clusters" value=${Number(duplicates.cluster_count || 0).toLocaleString()} detail=${`${Number(duplicates.duplicate_invoice_count || 0).toLocaleString()} duplicate invoices`} />
+    </div>
+
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px">
+      <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="panel">
+          <h3 style="margin-top:0">Top vendors by tracked spend</h3>
+          ${topVendors.length === 0 ? html19`<p class="muted" style="margin:0">No vendor spend data yet.</p>` : html19`${topVendors.map((row) => html19`
+                <${ReportRow}
+                  key=${row.vendor_name}
+                  label=${row.vendor_name || "Unknown vendor"}
+                  value=${fmtDollar(row.total_amount || 0)}
+                  detail=${`${Number(row.open_count || 0).toLocaleString()} open · ${Number(row.invoice_count || 0).toLocaleString()} tracked invoices`}
+                />
+              `)}`}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Source coverage</h3>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <${ReportRow}
+              label="Total linked sources"
+              value=${Number(sources.total_links || 0).toLocaleString()}
+              detail=${`${Number(sources.items_with_sources || 0).toLocaleString()} invoices have linked evidence`}
+            />
+            <${ReportRow}
+              label="Average links per invoice"
+              value=${Number(sources.avg_links_per_item || 0).toFixed(2)}
+              detail="Across all tracked AP items"
+            />
+            <${ReportRow}
+              label="Average links per linked invoice"
+              value=${Number(sources.avg_links_per_linked_item || 0).toFixed(2)}
+              detail="Only invoices with at least one linked source"
+            />
+          </div>
+
+          ${sourceTypes.length > 0 && html19`
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Connected source types</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                ${sourceTypes.map(([sourceType, count]) => html19`
+                  <span key=${sourceType} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px;font-weight:600">
+                    ${sourceType} ${count}
+                  </span>
+                `)}
+              </div>
+            </div>
+          `}
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="panel">
+          <h3 style="margin-top:0">Start from the right queue view</h3>
+          <p class="muted" style="margin:0 0 12px">Reports should send you back into queue work, not trap you in a dashboard.</p>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${starterViews.slice(0, 4).map((view) => html19`
+              <div key=${view.id} style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+                <div>
+                  <strong style="display:block;font-size:13px">${view.name}</strong>
+                  <span class="muted" style="font-size:12px">${view.description}</span>
                 </div>
-              </td>
-              <td style="color:var(--ink-muted);font-size:13px">${v3.lastDate ? v3.lastDate.slice(0, 10) : "—"}</td>
-            </tr>`)}
-        </tbody>
-      </table>
+                <button class="alt" onClick=${() => openStarterView(view)} style="padding:8px 12px;font-size:12px">Open view</button>
+              </div>
+            `)}
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Keep this page secondary</h3>
+          <p class="muted" style="margin:0">
+            Use this page to orient spend, evidence coverage, and duplicate risk. Operators should still work approvals, vendor replies, and posting from Pipeline and the shared AP record.
+          </p>
+        </div>
+      </div>
     </div>
   `;
   }
@@ -61057,7 +63637,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/inboxsdk-layer.js
-  var html16 = htm_module_default.bind(_);
+  var html20 = htm_module_default.bind(_);
   var APP_ID = "sdk_Clearledgr2026_dc12c60472";
   var INIT_KEY = "__clearledgr_ap_v1_inboxsdk_initialized";
   var LOGO_PATH2 = "icons/icon48.png";
@@ -61100,7 +63680,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function mountSidebar() {
     if (!sidebarContainer)
       return;
-    J(html16`<${SidebarApp} queueManager=${queueManager} />`, sidebarContainer);
+    J(html20`<${SidebarApp} queueManager=${queueManager} />`, sidebarContainer);
+  }
+  async function openComposeWithPrefill(prefill = {}) {
+    if (!sdk?.Compose || typeof sdk.Compose.openNewComposeView !== "function") {
+      throw new Error("compose_unavailable");
+    }
+    _pendingComposePrefill = {
+      to: prefill?.to || "",
+      subject: prefill?.subject || "",
+      body: prefill?.body || ""
+    };
+    try {
+      await sdk.Compose.openNewComposeView();
+    } catch (error) {
+      _pendingComposePrefill = null;
+      throw error;
+    }
   }
   function initializeSidebar() {
     const container = document.createElement("div");
@@ -61161,6 +63757,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }).catch(() => {});
     });
   }
+  function openItemInPipeline(item, source = "thread") {
+    if (!item?.id)
+      return;
+    const pipelineScope = {
+      orgId: queueManager?.runtimeConfig?.organizationId || "default",
+      userEmail: queueManager?.runtimeConfig?.userEmail || ""
+    };
+    store_default.setSelectedItem(String(item.id));
+    focusPipelineItem(pipelineScope, item, source);
+    sdk?.Router?.goto?.("clearledgr/pipeline");
+  }
   function injectInvoiceBanner(threadView, item) {
     const state = String(item.state || "").toLowerCase();
     const vendor = item.vendor_name || item.vendor || "Unknown vendor";
@@ -61195,47 +63802,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
     pill.textContent = cfg.label;
     el.appendChild(pill);
-    if (["needs_approval", "pending_approval", "needs_info"].includes(state)) {
+    if (item?.id) {
       const btnStyle = (bg, color, border) => `
       border:${border || "none"}; border-radius:6px; padding:5px 14px; font-size:12px; font-weight:600;
       cursor:pointer; background:${bg}; color:${color}; font-family:inherit;
     `;
-      const approveBtn = document.createElement("button");
-      approveBtn.textContent = "Approve";
-      approveBtn.style.cssText = btnStyle("#10B981", "#fff");
-      approveBtn.addEventListener("click", () => {
-        approveBtn.textContent = "Approving…";
-        approveBtn.disabled = true;
-        if (queueManager?.submitForApproval) {
-          queueManager.submitForApproval(item).then(() => {
-            pill.textContent = "Approved";
-            approveBtn.textContent = "Approved";
-            sendBtn.remove();
-          }).catch(() => {
-            approveBtn.textContent = "Approve";
-            approveBtn.disabled = false;
-          });
-        }
+      const openBtn = document.createElement("button");
+      openBtn.textContent = "Open in pipeline";
+      openBtn.style.cssText = btnStyle("transparent", cfg.text, `1px solid ${cfg.border}`);
+      openBtn.addEventListener("click", () => {
+        openItemInPipeline(item, "thread_banner");
       });
-      const sendBtn = document.createElement("button");
-      sendBtn.textContent = "Send for approval";
-      sendBtn.style.cssText = btnStyle("transparent", cfg.text, `1px solid ${cfg.border}`);
-      sendBtn.addEventListener("click", () => {
-        sendBtn.textContent = "Sending…";
-        sendBtn.disabled = true;
-        if (queueManager?.submitForApproval) {
-          queueManager.submitForApproval(item).then(() => {
-            pill.textContent = "Sent to approver";
-            sendBtn.textContent = "Sent";
-            approveBtn.remove();
-          }).catch(() => {
-            sendBtn.textContent = "Send for approval";
-            sendBtn.disabled = false;
-          });
-        }
-      });
-      el.appendChild(approveBtn);
-      el.appendChild(sendBtn);
+      el.appendChild(openBtn);
     }
     threadView.addNoticeBar({ el });
   }
@@ -61282,12 +63860,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             if (typeof threadRowView.addActionButton === "function") {
               threadRowView.addActionButton({
                 type: "ICON_ONLY",
-                title: "Send for approval",
+                title: "Open in pipeline",
                 iconUrl: getAssetUrl(LOGO_PATH2) || undefined,
                 onClick: () => {
-                  if (queueManager?.submitForApproval) {
-                    queueManager.submitForApproval(item);
-                  }
+                  openItemInPipeline(item, "thread_row");
                 }
               });
             }
@@ -61520,9 +64096,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function registerAppMenuAndRoutes() {
     const PAGE_MAP = {
       "clearledgr/home": HomePage,
+      "clearledgr/upcoming": UpcomingPage,
       "clearledgr/pipeline": PipelinePage,
       "clearledgr/activity": ActivityPage,
       "clearledgr/vendors": VendorsPage,
+      "clearledgr/templates": TemplatesPage,
+      "clearledgr/reports": ReportsPage,
       "clearledgr/connections": ConnectionsPage,
       "clearledgr/rules": RulesPage,
       "clearledgr/team": TeamPage,
@@ -61540,8 +64119,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       handles.length = 0;
     }
     function rebuildMenuNavigation() {
-      const routeOptions = { includeAdmin: includeAdminRoutes };
+      const routeOptions = currentRouteAccess;
       const visibleRoutes = getVisibleNavRoutes(readRoutePreferences(routeOptions), routeOptions);
+      const pipelineScope = {
+        orgId: queueManager?.runtimeConfig?.organizationId || "default",
+        userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || ""
+      };
+      const pinnedViewRoutes = getPinnedPipelineViews(readPipelinePreferences(pipelineScope)).slice(0, 3).map((view) => ({
+        title: `View: ${view.name}`,
+        id: `clearledgr/pipeline-view/${encodeURIComponent(getPipelineViewRef(view))}`
+      }));
       clearNavItemViews(appMenuNavItemViews);
       clearNavItemViews(fallbackNavItemViews);
       if (appMenuPanelView && typeof appMenuPanelView.addNavItem === "function") {
@@ -61552,10 +64139,25 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           });
           appMenuNavItemViews.push(navHandle);
         });
+        pinnedViewRoutes.forEach((route) => {
+          const navHandle = appMenuPanelView.addNavItem({
+            name: route.title,
+            routeID: route.id
+          });
+          appMenuNavItemViews.push(navHandle);
+        });
         return;
       }
       if (sdk.NavMenu && typeof sdk.NavMenu.addNavItem === "function") {
         visibleRoutes.forEach((route) => {
+          const navHandle = sdk.NavMenu.addNavItem({
+            name: route.title,
+            routeID: route.id,
+            type: "NAVIGATION"
+          });
+          fallbackNavItemViews.push(navHandle);
+        });
+        pinnedViewRoutes.forEach((route) => {
           const navHandle = sdk.NavMenu.addNavItem({
             name: route.title,
             routeID: route.id,
@@ -61577,9 +64179,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       queueManager?.scanNow?.();
     });
     store_default.sdk = sdk;
+    store_default.openComposeWithPrefill = openComposeWithPrefill;
     let bootstrapCache = null;
     let bootstrapPromise = null;
-    let includeAdminRoutes = false;
+    let currentRouteAccess = { includeAdmin: false, includeOps: false };
     async function getBootstrap() {
       if (bootstrapCache)
         return bootstrapCache;
@@ -61587,9 +64190,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return bootstrapPromise;
       bootstrapPromise = adminApi.bootstrapAdminData().then((data) => {
         bootstrapCache = data;
-        const nextIncludeAdmin = hasOpsAccess(data);
-        if (nextIncludeAdmin !== includeAdminRoutes) {
-          includeAdminRoutes = nextIncludeAdmin;
+        queueManager.currentUserRole = data?.current_user?.role || null;
+        store_default.update({ currentUserRole: queueManager.currentUserRole });
+        const pipelineScope = {
+          orgId: queueManager?.runtimeConfig?.organizationId || "default",
+          userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || ""
+        };
+        const remotePipelinePrefs = getBootstrappedPipelinePreferences(data);
+        if (remotePipelinePrefs) {
+          const localPipelinePrefs = readPipelinePreferences(pipelineScope);
+          const normalizedRemotePipelinePrefs = normalizePipelinePreferences(remotePipelinePrefs);
+          if (!pipelinePreferencesEqual(localPipelinePrefs, normalizedRemotePipelinePrefs)) {
+            writePipelinePreferences(pipelineScope, normalizedRemotePipelinePrefs);
+          }
+        }
+        const nextRouteAccess = {
+          includeAdmin: hasAdminAccess(data),
+          includeOps: hasOpsAccess(data)
+        };
+        if (nextRouteAccess.includeAdmin !== currentRouteAccess.includeAdmin || nextRouteAccess.includeOps !== currentRouteAccess.includeOps) {
+          currentRouteAccess = nextRouteAccess;
           rebuildMenuNavigation();
         }
         bootstrapPromise = null;
@@ -61603,6 +64223,35 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     function onRefresh() {
       bootstrapCache = null;
     }
+    getBootstrap();
+    sdk.Router.handleCustomRoute("clearledgr/pipeline-view", async (customRouteView) => {
+      const params = customRouteView.getParams?.() || {};
+      const rawRef = params.ref || window.location.hash.split("clearledgr/pipeline-view/")[1]?.split("?")[0] || "";
+      const pipelineScope = {
+        orgId: queueManager?.runtimeConfig?.organizationId || "default",
+        userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || ""
+      };
+      const bootstrap2 = await getBootstrap();
+      const remotePipelinePrefs = getBootstrappedPipelinePreferences(bootstrap2);
+      let prefs = readPipelinePreferences(pipelineScope);
+      if (remotePipelinePrefs) {
+        const normalizedRemotePrefs = normalizePipelinePreferences(remotePipelinePrefs);
+        if (!pipelinePreferencesEqual(prefs, normalizedRemotePrefs)) {
+          prefs = writePipelinePreferences(pipelineScope, normalizedRemotePrefs);
+        } else {
+          prefs = normalizedRemotePrefs;
+        }
+      }
+      const targetView = resolvePipelineViewByRef(prefs, decodeURIComponent(rawRef));
+      if (targetView?.snapshot) {
+        clearPipelineNavigation(pipelineScope);
+        writePipelinePreferences(pipelineScope, targetView.snapshot);
+      }
+      sdk.Router.goto("clearledgr/pipeline");
+      try {
+        customRouteView.destroy?.();
+      } catch (_2) {}
+    });
     sdk.Router.handleCustomRoute("clearledgr/invoice", async (customRouteView) => {
       const container = document.createElement("div");
       container.className = "cl-route";
@@ -61621,12 +64270,46 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const rawId = params.id || window.location.hash.split("clearledgr/invoice/")[1]?.split("?")[0] || "";
       const orgId = adminApi.orgId();
       const navigate = (routeId) => sdk.Router.goto(routeId);
-      J(html16`<${InvoiceDetailPage}
+      const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
+      const bootstrap2 = await getBootstrap();
+      J(html20`<${InvoiceDetailPage}
       api=${adminApi.api}
+      bootstrap=${bootstrap2}
       toast=${adminApi.toast}
       orgId=${orgId}
+      userEmail=${userEmail}
       navigate=${navigate}
       routeParams=${{ id: decodeURIComponent(rawId) }}
+    />`, pageMount);
+    });
+    sdk.Router.handleCustomRoute("clearledgr/vendor", async (customRouteView) => {
+      const container = document.createElement("div");
+      container.className = "cl-route";
+      const style = document.createElement("style");
+      style.textContent = ROUTE_CSS;
+      container.appendChild(style);
+      const topbar = document.createElement("div");
+      topbar.className = "topbar";
+      topbar.innerHTML = "<h2>Vendor Detail</h2>";
+      container.appendChild(topbar);
+      const pageMount = document.createElement("div");
+      container.appendChild(pageMount);
+      const routeEl = customRouteView.getElement();
+      routeEl.appendChild(container);
+      const params = customRouteView.getParams?.() || {};
+      const rawName = params.name || window.location.hash.split("clearledgr/vendor/")[1]?.split("?")[0] || "";
+      const orgId = adminApi.orgId();
+      const navigate = (routeId) => sdk.Router.goto(routeId);
+      const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
+      const bootstrap2 = await getBootstrap();
+      J(html20`<${VendorDetailPage}
+      api=${adminApi.api}
+      bootstrap=${bootstrap2}
+      toast=${adminApi.toast}
+      orgId=${orgId}
+      userEmail=${userEmail}
+      navigate=${navigate}
+      routeParams=${{ name: decodeURIComponent(rawName) }}
     />`, pageMount);
     });
     for (const route of ROUTES) {
@@ -61653,7 +64336,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         let renderCurrentPage = async () => {};
         const updateRoutePreferences = async (nextPreferences) => {
           const bootstrap2 = await getBootstrap();
-          const routeOptions = { includeAdmin: hasOpsAccess(bootstrap2) };
+          const routeOptions = {
+            includeAdmin: hasAdminAccess(bootstrap2),
+            includeOps: hasOpsAccess(bootstrap2)
+          };
           const normalized = writeRoutePreferences(nextPreferences, routeOptions);
           rebuildMenuNavigation();
           await renderCurrentPage();
@@ -61661,19 +64347,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         };
         renderCurrentPage = async () => {
           const bootstrap2 = await getBootstrap();
-          const routeOptions = { includeAdmin: hasOpsAccess(bootstrap2) };
-          if (route.adminOnly && !routeOptions.includeAdmin) {
-            J(html16`
+          const routeOptions = {
+            includeAdmin: hasAdminAccess(bootstrap2),
+            includeOps: hasOpsAccess(bootstrap2)
+          };
+          if (route.opsOnly && !routeOptions.includeOps || route.adminOnly && !routeOptions.includeAdmin) {
+            const restrictionCopy = route.adminOnly ? "This page is only available to operators with admin access." : "This page is only available to AP operators.";
+            J(html20`
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
-              <p class="muted" style="margin:0 0 12px">This page is only available to operators with admin access.</p>
+              <p class="muted" style="margin:0 0 12px">${restrictionCopy}</p>
               <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Home</button>
             </div>
           `, pageMount);
             return;
           }
           const routePreferences = readRoutePreferences(routeOptions);
-          J(html16`<${PageComponent}
+          J(html20`<${PageComponent}
           bootstrap=${bootstrap2}
           api=${adminApi.api}
           toast=${adminApi.toast}

@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from clearledgr.core.auth import get_current_user
+from clearledgr.core.auth import get_current_user, require_ops_user
 from clearledgr.core.database import get_db
 from clearledgr.core.finance_contracts import ActionExecution, SkillRequest
 from clearledgr.services.finance_agent_runtime import (
@@ -132,7 +132,7 @@ async def preview_intent(
 @router.post("/execute")
 async def execute_intent(
     request: AgentIntentExecuteRequest,
-    user=Depends(get_current_user),
+    user=Depends(require_ops_user),
 ):
     runtime = _runtime_for_request(user, request.organization_id)
     try:
@@ -168,7 +168,7 @@ async def preview_skill_request(
 @router.post("/execute-request")
 async def execute_skill_request(
     body: AgentSkillExecuteRequest,
-    user=Depends(get_current_user),
+    user=Depends(require_ops_user),
 ):
     runtime = _runtime_for_request(user, body.organization_id or body.request.org_id)
     req = SkillRequest(

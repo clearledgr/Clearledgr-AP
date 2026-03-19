@@ -24,8 +24,8 @@ export default function CompanyPage({ bootstrap, api, toast, orgId, onRefresh })
 
   return html`
     <div class="panel">
-      <h3>Company details</h3>
-      <p class="muted" style="margin-top:0">Keep the workspace identity current. Deep org configuration stays behind internal admin tooling.</p>
+      <h3>Workspace identity only</h3>
+      <p class="muted" style="margin-top:0">Keep the company record current here, but leave deeper organization administration outside Gmail.</p>
       <div style="display:flex;flex-direction:column;gap:16px;margin-top:8px">
         <div><label>Company name</label><input id="cl-org-name" value=${org.name || ''} placeholder="Your company name" /></div>
         <div><label>Domain</label><input id="cl-org-domain" value=${org.domain || ''} placeholder="company.com" /></div>
@@ -40,7 +40,8 @@ export default function CompanyPage({ bootstrap, api, toast, orgId, onRefresh })
     </div>
 
     <div class="panel">
-      <h3 style="margin-top:0">Current workspace</h3>
+      <h3 style="margin-top:0">Current workspace record</h3>
+      <p class="muted" style="margin-top:0">The fields below shape how Clearledgr identifies this AP workspace across Gmail, approvals, and ERP.</p>
       <div class="readiness-list" style="margin-top:12px">
         <div class="readiness-item"><strong>Organization ID:</strong> ${org.id || orgId || '—'}</div>
         <div class="readiness-item"><strong>Domain:</strong> ${org.domain || 'Not set'}</div>

@@ -268,6 +268,7 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
     "/extension/route-low-risk-approval",
     "/extension/retry-recoverable-failure",
     "/extension/finance-summary-share",
+    "/extension/record-field-correction",
     "/extension/health",
     "/extension/suggestions/gl-code",
     "/extension/suggestions/vendor",
@@ -341,6 +342,8 @@ STRICT_PROFILE_ALLOWED_AGENT_PATHS = {
 STRICT_PROFILE_ALLOWED_AP_PATHS = {
     "/api/ap/audit/recent",
     "/api/ap/items/metrics/aggregation",
+    "/api/ap/items/upcoming",
+    "/api/ap/items/vendors",
     "/api/ap/policies",
 }
 
@@ -368,6 +371,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/ap/items/[^/]+/sources$",
         r"^/api/ap/items/[^/]+/sources/link$",
         r"^/api/ap/items/[^/]+/split$",
+        r"^/api/ap/items/vendors/[^/]+$",
         r"^/api/ap/policies/[^/]+$",
         r"^/api/ap/policies/[^/]+/audit$",
         r"^/api/ap/policies/[^/]+/versions$",

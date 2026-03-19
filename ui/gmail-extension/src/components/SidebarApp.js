@@ -5,10 +5,10 @@ import htm from 'htm';
 import store from '../utils/store.js';
 import { SIDEBAR_CSS, STATE_PILL_CSS } from '../styles.js';
 import ActionDialog, { useActionDialog } from './ActionDialog.js';
+import { hasOpsAccessRole } from '../utils/roles.js';
 import {
   getStateLabel,
   formatAmount,
-  trimText,
   getAssetUrl,
   normalizeBudgetContext,
   getIssueSummary,
@@ -16,9 +16,7 @@ import {
   getSourceThreadId,
   getSourceMessageId,
   openSourceEmail,
-  formatDateTime,
-  getAuditEventPayload,
-  normalizeAuditEventType,
+  partitionAuditEvents,
 } from '../utils/formatters.js';
 import {
   normalizeWorkState,
@@ -27,6 +25,7 @@ import {
   canRejectWorkItem,
   canNudgeApprover,
 } from '../utils/work-actions.js';
+import { focusPipelineItem } from '../routes/pipeline-views.js';
 
 const html = htm.bind(h);
 const LOGO_PATH = 'icons/icon48.png';
@@ -147,7 +146,7 @@ function ScanStatus() {
       : 'Monitoring active';
   }
 
-  return html`<div class="cl-scan-status" data-tone=${tone}>${text}</div>`;
+  return html`<div id="cl-scan-status" class="cl-scan-status" data-tone=${tone}>${text}</div>`;
 }
 
 function StatePill({ state }) {
@@ -254,27 +253,6 @@ function getEvidenceChecklist(item, state, contextPayload) {
   ];
 }
 
-function getAuditRow(event) {
-  const payload = getAuditEventPayload(event);
-  const eventType = normalizeAuditEventType(
-    event?.event_type || event?.eventType || payload?.event_type || event?.action || 'action_recorded',
-  );
-  const safeTitle = eventType === 'state_transition' ? 'Status updated' : 'Action recorded';
-  let safeDetail = 'Action recorded for this invoice.';
-  if (eventType === 'state_transition') safeDetail = 'Invoice status changed.';
-  else if (eventType === 'erp_post_completed') safeDetail = 'Invoice posting completed successfully.';
-  else if (eventType === 'erp_post_failed') safeDetail = 'Clearledgr could not complete ERP posting.';
-  const title = trimText(
-    String(event?.operator_title || safeTitle),
-    72,
-  );
-  return {
-    title,
-    detail: trimText(String(event?.operator_message || safeDetail).trim(), 160),
-    timestamp: formatDateTime(event?.ts || event?.created_at || event?.createdAt || event?.updated_at || event?.updatedAt),
-  };
-}
-
 function EvidenceChecklist({ entries }) {
   return html`
     <div class="cl-evidence-section" aria-label="Evidence checklist">
@@ -291,26 +269,62 @@ function EvidenceChecklist({ entries }) {
   `;
 }
 
+function AuditRowCard({ row }) {
+  if (!row) return null;
+  return html`
+    <div class="cl-audit-row" data-importance=${row.importance} data-severity=${row.severity}>
+      <div class="cl-audit-main">
+        <div class="cl-audit-main-copy">
+          <div class="cl-audit-type">${row.title}</div>
+          <div class="cl-audit-badges">
+            <span class="cl-audit-badge" data-importance=${row.importance}>${row.importanceLabel}</span>
+            ${row.category && html`<span class="cl-audit-badge" data-kind="category">${row.category.replace(/_/g, ' ')}</span>`}
+          </div>
+        </div>
+        ${row.timestamp && html`<div class="cl-audit-time">${row.timestamp}</div>`}
+      </div>
+      <div class="cl-audit-detail">${row.detail}</div>
+      ${(row.evidenceLabel || row.evidenceDetail) && html`
+        <div class="cl-audit-evidence">
+          ${row.evidenceLabel && html`<span class="cl-audit-evidence-label">${row.evidenceLabel}</span>`}
+          <span>${row.evidenceDetail || 'Recorded on the shared AP record.'}</span>
+        </div>
+      `}
+      ${row.actionHint && !row.isBackground && html`<div class="cl-audit-hint">Next: ${row.actionHint}</div>`}
+    </div>
+  `;
+}
+
 function AuditDisclosure({ events, loading }) {
-  const visibleEvents = Array.isArray(events) ? events.slice(0, 6) : [];
+  const totalEvents = Array.isArray(events) ? events.length : 0;
+  const { primaryRows, secondaryRows, primaryHiddenCount, secondaryHiddenCount } = partitionAuditEvents(events, {
+    primaryLimit: 4,
+    secondaryLimit: 2,
+  });
   return html`
     <details class="cl-details">
-      <summary>View audit${visibleEvents.length ? ` (${visibleEvents.length})` : ''}</summary>
+      <summary>View audit${totalEvents ? ` (${totalEvents})` : ''}</summary>
       <div class="cl-audit-list">
         ${loading && html`<div class="cl-empty">Loading audit…</div>`}
-        ${!loading && visibleEvents.length === 0 && html`<div class="cl-empty">No audit events yet.</div>`}
-        ${!loading && visibleEvents.map((event, index) => {
-          const row = getAuditRow(event);
-          return html`
-            <div key=${event?.id || index} class="cl-audit-row">
-              <div class="cl-audit-main">
-                <div class="cl-audit-type">${row.title}</div>
-                ${row.timestamp && html`<div class="cl-audit-time">${row.timestamp}</div>`}
-              </div>
-              <div class="cl-audit-detail">${row.detail}</div>
+        ${!loading && totalEvents === 0 && html`<div class="cl-empty">No audit events yet.</div>`}
+        ${!loading && primaryRows.length > 0 && html`
+          <div class="cl-audit-group">
+            <div class="cl-audit-section-title">Key history</div>
+            ${primaryRows.map((row, index) => html`<${AuditRowCard} key=${row.event?.id || index} row=${row} />`)}
+            ${primaryHiddenCount > 0 && html`<div class="cl-audit-more">+${primaryHiddenCount} more key events in the full record.</div>`}
+          </div>
+        `}
+        ${!loading && secondaryRows.length > 0 && html`
+          <details class="cl-audit-secondary">
+            <summary class="cl-audit-secondary-summary">
+              Background activity (${secondaryRows.length + secondaryHiddenCount})
+            </summary>
+            <div class="cl-audit-group">
+              ${secondaryRows.map((row, index) => html`<${AuditRowCard} key=${row.event?.id || `secondary-${index}`} row=${row} />`)}
+              ${secondaryHiddenCount > 0 && html`<div class="cl-audit-more">+${secondaryHiddenCount} more background events in the full record.</div>`}
             </div>
-          `;
-        })}
+          </details>
+        `}
       </div>
     </details>
   `;
@@ -343,6 +357,7 @@ function AuthPrompt({ queueManager }) {
 
 function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   const s = useStore();
+  const actorRole = s.currentUserRole || queueManager?.currentUserRole || 'operator';
   const humanIndex = itemIndex >= 0 ? itemIndex + 1 : 1;
   const state = normalizeWorkState(item?.state || 'received');
   const vendor = item.vendor_name || item.vendor || item.sender || 'Unknown vendor';
@@ -361,7 +376,12 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
 
   const [optimisticState, setOptimisticState] = useState(null);
   const displayState = normalizeWorkState(optimisticState || state);
+  const readOnlyMode = !hasOpsAccessRole(actorRole);
   const [dialog, openDialog] = useActionDialog();
+  const pipelineScope = {
+    orgId: queueManager?.runtimeConfig?.organizationId || 'default',
+    userEmail: queueManager?.runtimeConfig?.userEmail || '',
+  };
 
   const [doApproval, approvalPending] = useAction(async () => {
     setOptimisticState('needs_approval');
@@ -446,11 +466,22 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
 
   const goPrev = useCallback(() => store.selectItemByOffset(-1), []);
   const goNext = useCallback(() => store.selectItemByOffset(1), []);
+  const openPipeline = useCallback(() => {
+    if (!item?.id) return;
+    store.setSelectedItem(String(item.id));
+    focusPipelineItem(pipelineScope, item, 'thread');
+    store.sdk?.Router?.goto?.('clearledgr/pipeline');
+  }, [item, pipelineScope]);
   const openSource = useCallback(() => {
     if (!openSourceEmail(item)) showToast('Unable to open source email', 'error');
   }, [item]);
+  const openVendorRecord = useCallback(() => {
+    const vendorName = String(item?.vendor_name || item?.vendor || '').trim();
+    if (!vendorName) return;
+    store.sdk?.Router?.goto?.(`clearledgr/vendor/${encodeURIComponent(vendorName)}`);
+  }, [item]);
 
-  const primaryAction = getPrimaryActionConfig(displayState);
+  const primaryAction = getPrimaryActionConfig(displayState, actorRole);
   let primaryHandler = null;
   let primaryPending = false;
   let primaryClass = '';
@@ -473,7 +504,7 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   }
 
   return html`
-    <div class="cl-thread-card cl-work-surface">
+    <div id="cl-thread-context" class="cl-thread-card cl-work-surface">
       ${totalItems > 1 && html`
         <div class="cl-navigator">
           <div class="cl-nav-label">Invoice ${humanIndex} of ${totalItems}</div>
@@ -504,6 +535,9 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
       `}
 
       ${stateNotice && html`<div class="cl-state-note">${stateNotice}</div>`}
+      ${readOnlyMode && html`
+        <div class="cl-state-note">Read-only view. Queue actions are reserved for AP operators.</div>
+      `}
 
       ${primaryAction?.label && primaryHandler && html`
         <button class="cl-btn cl-primary-cta ${primaryClass}" onClick=${primaryHandler} disabled=${primaryPending}>
@@ -511,12 +545,16 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
         </button>
       `}
 
-      <div class="cl-thread-actions">
+      <div id="cl-agent-actions" class="cl-thread-actions">
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open in pipeline</button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource} disabled=${!canOpenSource}>Open email</button>
-        ${canRejectWorkItem(displayState) && html`
+        ${(item?.vendor_name || item?.vendor) && html`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openVendorRecord}>Vendor record</button>
+        `}
+        ${canRejectWorkItem(displayState, actorRole) && html`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
         `}
-        ${canNudgeApprover(displayState) && primaryAction?.id !== 'nudge_approver' && html`
+        ${canNudgeApprover(displayState, actorRole) && primaryAction?.id !== 'nudge_approver' && html`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Nudge approver</button>
         `}
       </div>

@@ -10,8 +10,8 @@ export default function HealthPage({ bootstrap }) {
 
   return html`
     <div class="panel">
-      <h3>${actions.length ? 'Action required' : 'All systems go'}</h3>
-      <p class="muted">${actions.length ? 'Complete these items before going live.' : 'Everything looks good. Your system is ready.'}</p>
+      <h3>${actions.length ? 'Admin follow-up required' : 'No active workspace issues'}</h3>
+      <p class="muted">${actions.length ? 'Use this page to resolve blockers, then leave it. Pipeline and the thread card remain the daily work surfaces.' : 'Everything looks healthy enough to keep AP work inside Gmail.'}</p>
       ${actions.length > 0 && html`
         <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
           ${actions.map((a, i) => html`
@@ -24,19 +24,17 @@ export default function HealthPage({ bootstrap }) {
     </div>
     <div class="panel">
       <h3>Connection status</h3>
-      <table class="table">
-        <thead><tr><th>Service</th><th>Status</th></tr></thead>
-        <tbody>
-          ${Object.entries(integrations).map(([name, status]) => {
-            const isOk = status === true || status === 'connected' || status?.connected === true;
-            return html`<tr>
-              <td style="font-weight:500">${name.charAt(0).toUpperCase() + name.slice(1)}</td>
-              <td>${html`<span class="status-badge ${isOk ? 'connected' : ''}">${isOk ? 'Connected' : 'Not connected'}</span>`}</td>
-            </tr>`;
-          })}
-          ${!Object.keys(integrations).length && html`<tr><td colspan="2" class="muted">No integration data yet.</td></tr>`}
-        </tbody>
-      </table>
+      ${Object.keys(integrations).length
+        ? html`<div style="display:grid;gap:10px">
+            ${Object.entries(integrations).map(([name, status]) => {
+              const isOk = status === true || status === 'connected' || status?.connected === true;
+              return html`<div class="readiness-item" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+                <strong>${name.charAt(0).toUpperCase() + name.slice(1)}</strong>
+                <span class="status-badge ${isOk ? 'connected' : ''}">${isOk ? 'Connected' : 'Not connected'}</span>
+              </div>`;
+            })}
+          </div>`
+        : html`<div class="muted">No integration data yet.</div>`}
     </div>
   `;
 }

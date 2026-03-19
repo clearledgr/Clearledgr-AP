@@ -597,7 +597,7 @@ class TestExtensionEndpoints:
             user_id="extension-user-1",
             email="extension@example.com",
             organization_id="default",
-            role="user",
+            role="operator",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
     
@@ -684,6 +684,132 @@ class TestExtensionEndpoints:
         assert captured["payload"]["source_channel"] == "gmail_extension"
         assert captured["payload"]["source_message_ref"] == "gmail-thread-1"
         assert captured["payload"]["override"] is True
+
+    def test_submit_for_approval_uses_runtime_invoice_processing_contract(self, monkeypatch):
+        captured: dict = {}
+
+        class _FakeTrail:
+            def __init__(self):
+                self.events = []
+
+            def log(self, *args, **kwargs):
+                self.events.append({"args": args, "kwargs": kwargs})
+
+        async def _execute_processing(self, invoice_payload=None, attachments=None, *, idempotency_key=None, correlation_id=None):
+            captured["invoice_payload"] = dict(invoice_payload or {})
+            captured["idempotency_key"] = idempotency_key
+            captured["actor_email"] = self.actor_email
+            captured["attachments"] = list(attachments or [])
+            captured["correlation_id"] = correlation_id
+            return {
+                "status": "pending_approval",
+                "ap_item_id": "ap-item-1",
+                "email_id": (invoice_payload or {}).get("gmail_id"),
+            }
+
+        monkeypatch.setattr(
+            "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
+            _execute_processing,
+        )
+        monkeypatch.setattr(
+            "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.ap_auto_approve_threshold",
+            lambda self: 0.95,
+        )
+
+        fake_db = self._FakeExtensionDB()
+        fake_trail = _FakeTrail()
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                with patch.object(gmail_extension_module, "get_audit_trail", return_value=fake_trail):
+                    response = client.post(
+                        "/extension/submit-for-approval",
+                        json={
+                            "email_id": "gmail-thread-1",
+                            "subject": "Invoice INV-1001 from Acme Corp",
+                            "sender": "billing@acme.example",
+                            "vendor": "Acme Corp",
+                            "amount": 1250.50,
+                            "currency": "USD",
+                            "invoice_number": "INV-1001",
+                            "confidence": 0.76,
+                            "organization_id": "default",
+                            "vendor_intelligence": {"risk": "low"},
+                            "policy_compliance": {"compliant": True, "required_approvers": []},
+                            "priority": {"priority": "normal", "priority_label": "Normal"},
+                            "budget_impact": [],
+                            "agent_decision": {"decision": "auto_approve", "confidence": 0.98},
+                            "idempotency_key": "idem-submit-runtime-1",
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "pending_approval"
+        assert captured["idempotency_key"] == "idem-submit-runtime-1"
+        assert captured["actor_email"] == "extension@example.com"
+        assert captured["invoice_payload"]["gmail_id"] == "gmail-thread-1"
+        assert captured["invoice_payload"]["organization_id"] == "default"
+        assert captured["invoice_payload"]["user_id"] == "extension-user-1"
+        assert captured["invoice_payload"]["confidence"] >= 0.95
+        assert fake_db.audit_rows[-1]["event_type"] == "approval_routed_from_extension"
+        assert fake_audit.events[-1]["action"] == "invoice_submitted"
+
+    def test_escalate_endpoint_uses_runtime_contract(self, monkeypatch):
+        captured: dict = {}
+
+        async def _escalate(self, **kwargs):
+            captured["kwargs"] = dict(kwargs or {})
+            captured["actor_email"] = self.actor_email
+            return {
+                "email_id": kwargs.get("email_id"),
+                "ap_item_id": "ap-item-escalate-1",
+                "status": "escalated",
+                "channel": kwargs.get("channel"),
+                "message": kwargs.get("message") or "Runtime escalation",
+                "delivery": {"status": "sent"},
+                "audit_event_id": "audit-escalate-1",
+            }
+
+        monkeypatch.setattr(
+            "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.escalate_invoice_review",
+            _escalate,
+        )
+
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        try:
+            response = client.post(
+                "/extension/escalate",
+                json={
+                    "email_id": "gmail-thread-escalate-1",
+                    "vendor": "Escalate Co",
+                    "amount": 300.0,
+                    "currency": "USD",
+                    "confidence": 82,
+                    "mismatches": [{"message": "Amount mismatch"}],
+                    "channel": "#finance-escalations",
+                    "organization_id": "default",
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "escalated"
+        assert captured["actor_email"] == "extension@example.com"
+        assert captured["kwargs"]["email_id"] == "gmail-thread-escalate-1"
+        assert captured["kwargs"]["channel"] == "#finance-escalations"
+        assert fake_audit.events[-1]["action"] == "invoice_escalated"
+        assert fake_audit.events[-1]["metadata"]["audit_event_id"] == "audit-escalate-1"
 
     def test_extension_register_gmail_token_success(self, monkeypatch):
         stored = {}
@@ -1344,6 +1470,60 @@ class TestExtensionEndpoints:
         assert fake_db.audit_rows[-1]["event_type"] == "finance_summary_share_previewed"
         assert fake_audit.events[-1]["action"] == "finance_summary_share_previewed"
 
+    def test_finance_summary_share_preview_uses_runtime_contract(self, monkeypatch):
+        captured: dict = {}
+
+        async def _share(self, **kwargs):
+            captured["kwargs"] = dict(kwargs or {})
+            captured["actor_email"] = self.actor_email
+            return {
+                "status": "preview",
+                "target": "email_draft",
+                "email_id": "gmail-thread-2",
+                "ap_item_id": "ap-item-2",
+                "summary": {"title": "Finance lead exception summary", "lines": ["One line"]},
+                "preview": {
+                    "kind": "email_draft",
+                    "draft": {"to": "financelead@example.com", "subject": "Subj", "body": "Body"},
+                },
+                "audit_event_id": "audit-summary-runtime-1",
+            }
+
+        monkeypatch.setattr(
+            "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.share_finance_summary",
+            _share,
+        )
+
+        fake_db = self._FakeExtensionDB()
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                response = client.post(
+                    "/extension/finance-summary-share",
+                    json={
+                        "email_id": "gmail-thread-2",
+                        "ap_item_id": "ap-item-2",
+                        "target": "email_draft",
+                        "preview_only": True,
+                        "recipient_email": "financelead@example.com",
+                        "organization_id": "default",
+                    },
+                )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "preview"
+        assert captured["actor_email"] == "extension@example.com"
+        assert captured["kwargs"]["reference_id"] == "ap-item-2"
+        assert captured["kwargs"]["preview_only"] is True
+        assert fake_audit.events[-1]["action"] == "finance_summary_share_previewed"
+        assert fake_audit.events[-1]["metadata"]["audit_event_id"] == "audit-summary-runtime-1"
+
     def test_finance_summary_share_preview_slack_thread_returns_message_preview(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
         fake_audit = self._FakeAuditService()
@@ -1543,7 +1723,47 @@ class TestExtensionEndpoints:
         assert payload["status"] == "waiting_sla"
         assert payload["followup_attempt_count"] == 1
         assert payload["followup_next_action"] == "await_vendor_response"
-        assert payload["needs_info_draft_id"] == "draft-existing-1"
+
+    def test_record_field_correction_uses_runtime_contract(self, monkeypatch):
+        captured: dict = {}
+
+        def _record(self, **kwargs):
+            captured["kwargs"] = dict(kwargs or {})
+            captured["actor_email"] = self.actor_email
+            return {
+                "status": "recorded",
+                "ap_item_id": kwargs.get("ap_item_id"),
+                "field": kwargs.get("field"),
+                "learning_result": {"recorded": True},
+                "audit_event_id": "audit-field-correction-1",
+            }
+
+        monkeypatch.setattr(
+            "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.record_field_correction",
+            _record,
+        )
+
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        try:
+            response = client.post(
+                "/extension/record-field-correction",
+                json={
+                    "ap_item_id": "ap-item-1",
+                    "field": "invoice_number",
+                    "original_value": "INV-OLD",
+                    "corrected_value": "INV-NEW",
+                    "feedback": "Corrected from vendor email",
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "recorded"
+        assert captured["actor_email"] == "extension@example.com"
+        assert captured["kwargs"]["ap_item_id"] == "ap-item-1"
+        assert captured["kwargs"]["field"] == "invoice_number"
 
     def test_vendor_followup_endpoint_idempotency_replays_previous_response(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user

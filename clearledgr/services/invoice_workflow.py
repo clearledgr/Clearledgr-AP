@@ -1,11 +1,9 @@
-"""
-Invoice Workflow Service
+"""Internal AP workflow machinery used behind the finance runtime contract.
 
-Orchestrates the complete invoice lifecycle:
-Gmail Detection → Data Extraction → Approval Routing → ERP Posting
-
-Core AP execution workflow — agents detect invoices, validate, route approvals,
-and post to ERP inside the tools finance teams already use.
+This module contains the implementation substrate for invoice lifecycle work
+such as validation, approval routing, and ERP posting. User-facing API
+surfaces should enter through ``FinanceAgentRuntime``; this workflow service is
+an internal execution detail behind that contract boundary.
 """
 
 import json
@@ -58,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
     """
-    Manages the complete invoice workflow.
+    Internal implementation for AP workflow execution.
     
     Usage:
         service = InvoiceWorkflowService(organization_id="acme")
@@ -1167,7 +1165,7 @@ def get_invoice_workflow(
     organization_id: str,
     slack_channel: Optional[str] = None,
 ) -> InvoiceWorkflowService:
-    """Get an invoice workflow service instance."""
+    """Get the internal workflow service used by runtime-owned AP actions."""
     return InvoiceWorkflowService(
         organization_id=organization_id,
         slack_channel=slack_channel,

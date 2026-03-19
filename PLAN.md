@@ -2,7 +2,7 @@
 
 ## Document Metadata
 - **Status:** Canonical doctrine + contracts + launch-gates spec for Clearledgr AP v1
-- **Last updated:** 2026-02-28
+- **Last updated:** 2026-03-19
 - **Owner:** Product + Engineering
 - **Scope:** Accounts Payable (AP) v1 only
 - **Supersedes:** prior AP-first execution-layer plan variants that used ambiguous "launch" terminology
@@ -134,7 +134,9 @@ Onboarding spine decision (locked):
 3. Gmail thread work UI must not become a cluttered onboarding/configuration surface.
 4. Gmail shell default pinned nav remains intentionally sparse: `Home`, `Pipeline`, `Connections`.
 5. `Activity` and other secondary pages remain available from Home or pinning, not as default clutter.
-6. Gmail authorization is explicit from inline CTAs; the extension must not auto-launch Gmail OAuth at startup.
+6. `Pipeline` is the default AP queue/process surface with AP-first slices, finance-native filters/sorts, and direct thread <-> pipeline reopening.
+7. Saved pipeline views are persisted per authenticated user and organization; `Home` may surface pinned views and finance-native starter views.
+8. Gmail authorization is explicit from inline CTAs; the extension must not auto-launch Gmail OAuth at startup.
 
 ---
 
@@ -149,6 +151,7 @@ The Gmail thread is the AP workflow control surface. Each invoice thread (or gro
 5. **Compact secondary actions**
 6. **Evidence checklist**
 7. **Collapsed audit disclosure**
+8. Inline history stays capped in-thread: surface the most important key events first and keep background/system activity collapsed by default.
 
 ### 3.2 Progressive disclosure rules (required)
 To avoid a "cluttered plugin" outcome:
@@ -192,7 +195,8 @@ Operational shell rules:
 1. `Home`, `Pipeline`, and `Connections` are the default pinned pages.
 2. `Activity` is secondary and available from Home or user pinning.
 3. Health/debug/admin pages are role-gated and never default pinned.
-4. Routed pages may support future-skill groundwork, but AP remains the only production-grade workflow in launch doctrine.
+4. `Pipeline` must ship finance-native saved views: starter views by default, personal pinned views persisted per authenticated user/org, and Home shortcuts into those views.
+5. Routed pages may support future-skill groundwork, but AP remains the only production-grade workflow in launch doctrine.
 
 ### 3.6 Gmail thread work doctrine
 AP v1 Gmail UX is a single operator workspace and must not regress to mixed diagnostic surfaces:
@@ -534,6 +538,8 @@ AP v1 GA launch requires all of the following:
 5. Idempotent posting and duplicate action handling validated
 6. Runbooks and on-call/operator procedures documented
 7. Rollback controls validated
+8. Gmail doctrine tests prove sparse nav, thread-card limits, explicit auth initiation, role-gated routes, runtime-backed AP actions, and pipeline slice/view persistence
+9. Manual product review checklist is completed for thread card, pipeline slices, Home lightness, route gating, Gmail auth flow, Slack/Teams -> Gmail roundtrip, and ERP post roundtrip
 
 ### 8.5 Post-GA monitoring and rollback triggers
 Post-GA launch operations must define thresholds for:

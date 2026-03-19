@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.ap_item_resolution import resolve_ap_item_reference
 from clearledgr.core.database import get_db
 from clearledgr.core.finance_contracts import (
     ActionExecution,
@@ -230,15 +231,12 @@ class FinanceAgentRuntime:
         if not ref:
             raise ValueError("missing_item_reference")
 
-        item: Optional[Dict[str, Any]] = None
-        if hasattr(self.db, "get_ap_item"):
-            item = self.db.get_ap_item(ref)
-            if item and str(item.get("organization_id") or self.organization_id) != self.organization_id:
-                item = None
-        if not item and hasattr(self.db, "get_ap_item_by_thread"):
-            item = self.db.get_ap_item_by_thread(self.organization_id, ref)
-        if not item and hasattr(self.db, "get_ap_item_by_message_id"):
-            item = self.db.get_ap_item_by_message_id(self.organization_id, ref)
+        item = resolve_ap_item_reference(
+            self.db,
+            self.organization_id,
+            ref,
+            allow_foreign_id=True,
+        )
 
         if not item:
             raise LookupError("ap_item_not_found")
@@ -250,6 +248,20 @@ class FinanceAgentRuntime:
         metadata = self._parse_json_dict(item.get("metadata"))
         correlation_id = str(item.get("correlation_id") or metadata.get("correlation_id") or "").strip()
         return correlation_id or None
+
+    def _organization_settings(self) -> Dict[str, Any]:
+        if not hasattr(self.db, "get_organization"):
+            return {}
+        try:
+            organization = self.db.get_organization(self.organization_id) or {}
+        except Exception:
+            return {}
+        raw_settings = (
+            organization.get("settings_json")
+            or organization.get("settings")
+            or {}
+        )
+        return self._parse_json_dict(raw_settings)
 
     def _merge_item_metadata(self, item: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
         metadata = self._parse_json_dict(item.get("metadata"))
@@ -908,6 +920,517 @@ class FinanceAgentRuntime:
             response.setdefault("idempotency_key", resolved_idempotency_key)
         if resolved_correlation_id:
             response.setdefault("correlation_id", resolved_correlation_id)
+        return response
+
+    def ap_auto_approve_threshold(self) -> float:
+        settings = self._organization_settings()
+        threshold = self._safe_float(settings.get("auto_approve_threshold"), 0.95)
+        return max(0.0, min(threshold, 1.0))
+
+    def _build_finance_lead_summary_payload(
+        self,
+        ap_item: Dict[str, Any],
+        *,
+        audit_events: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        state = str(ap_item.get("state") or "received").strip().lower()
+        next_action = str(ap_item.get("next_action") or "").strip().replace("_", " ")
+        vendor = str(ap_item.get("vendor_name") or ap_item.get("vendor") or "Unknown vendor").strip()
+        invoice_number = str(ap_item.get("invoice_number") or "N/A").strip()
+        amount = ap_item.get("amount")
+        currency = str(ap_item.get("currency") or "USD").strip().upper()
+        due_date = str(ap_item.get("due_date") or "").strip()
+        exception_code = str(ap_item.get("exception_code") or "").strip()
+        exception_severity = str(ap_item.get("exception_severity") or "").strip()
+        requires_field_review = bool(ap_item.get("requires_field_review"))
+        confidence_blockers = (
+            ap_item.get("confidence_blockers")
+            if isinstance(ap_item.get("confidence_blockers"), list)
+            else []
+        )
+        metadata = self._parse_json_dict(ap_item.get("metadata"))
+        context_summary = str(metadata.get("context_summary") or "").strip()
+
+        amount_text = (
+            f"{currency} {float(amount):,.2f}"
+            if isinstance(amount, (int, float))
+            else f"{currency} amount unavailable"
+        )
+        lines: List[str] = [
+            f"{vendor} · Invoice {invoice_number} · {amount_text}",
+            f"Current state: {state.replace('_', ' ')}"
+            + (f" · Next action: {next_action}" if next_action else ""),
+        ]
+
+        if exception_code:
+            exception_line = f"Exception: {exception_code.replace('_', ' ')}"
+            if exception_severity:
+                exception_line += f" ({exception_severity})"
+            lines.append(exception_line)
+        if due_date:
+            lines.append(f"Due date: {due_date}")
+        if requires_field_review:
+            fields: List[str] = []
+            for entry in confidence_blockers[:4]:
+                if isinstance(entry, str):
+                    fields.append(entry)
+                elif isinstance(entry, dict):
+                    fields.append(str(entry.get("field") or entry.get("code") or "").strip())
+            fields = [field for field in fields if field]
+            lines.append(
+                f"Field review blockers: {', '.join(fields)}"
+                if fields
+                else "Field review blockers require review before posting."
+            )
+        if bool(ap_item.get("budget_requires_decision")):
+            budget_status = str(ap_item.get("budget_status") or "review").replace("_", " ")
+            lines.append(f"Budget decision required ({budget_status}).")
+        if context_summary:
+            lines.append(f"Context: {context_summary[:180]}")
+
+        recent: List[str] = []
+        for event in (audit_events or [])[:4]:
+            event_type = str(event.get("event_type") or event.get("eventType") or "").strip()
+            if event_type:
+                recent.append(event_type.replace("_", " "))
+        if recent:
+            lines.append(f"Recent activity: {' -> '.join(recent)}")
+
+        deduped: List[str] = []
+        seen: set[str] = set()
+        for line in lines:
+            text = str(line or "").strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(text)
+
+        return {
+            "title": "Finance lead exception summary",
+            "lines": deduped[:8],
+            "state": state,
+            "next_action": str(ap_item.get("next_action") or ""),
+        }
+
+    async def escalate_invoice_review(
+        self,
+        *,
+        email_id: str,
+        vendor: Optional[str] = None,
+        amount: Optional[float] = None,
+        currency: str = "USD",
+        confidence: Optional[float] = None,
+        mismatches: Optional[List[Dict[str, Any]]] = None,
+        message: Optional[str] = None,
+        channel: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from clearledgr.workflows.gmail_activities import send_slack_notification_activity
+
+        gmail_ref = str(email_id or "").strip()
+        if not gmail_ref:
+            raise ValueError("missing_email_id")
+
+        try:
+            ap_item = self._resolve_ap_item(gmail_ref)
+        except Exception:
+            ap_item = {}
+        ap_item_id = str(ap_item.get("id") or gmail_ref).strip() or gmail_ref
+        correlation_id = self._correlation_id_for_item(ap_item)
+
+        mismatch_rows = mismatches if isinstance(mismatches, list) else []
+        mismatch_text = "\n".join(
+            [f"• {entry.get('message', str(entry))}" for entry in mismatch_rows[:5]]
+        )
+        amount_text = (
+            f"{currency} {float(amount):,.2f}"
+            if isinstance(amount, (int, float))
+            else "Unknown"
+        )
+        escalation_message = str(message or "").strip() or (
+            f"*Invoice Review Required*\n\n"
+            f"*Vendor:* {vendor or 'Unknown'}\n"
+            f"*Amount:* {amount_text}\n"
+            f"*Confidence:* {confidence or 0}%\n\n"
+            f"*Issues:*\n{mismatch_text or '• Manual review requested'}"
+        )
+
+        delivery = await send_slack_notification_activity(
+            {
+                "type": "escalation",
+                "channel": str(channel or "#finance-escalations").strip() or "#finance-escalations",
+                "email_id": gmail_ref,
+                "ap_item_id": ap_item_id,
+                "classification": {"type": "INVOICE"},
+                "extraction": {
+                    "vendor": vendor,
+                    "amount": amount,
+                    "currency": currency,
+                },
+                "confidence_result": {
+                    "confidence_pct": confidence,
+                    "mismatches": mismatch_rows,
+                    "requires_review": True,
+                },
+                "organization_id": self.organization_id,
+            }
+        )
+
+        audit_row = self._append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type="invoice_escalated",
+            reason="runtime_escalate_invoice_review",
+            metadata={
+                "email_id": gmail_ref,
+                "vendor": vendor,
+                "amount": amount,
+                "currency": currency,
+                "confidence": confidence,
+                "mismatches": mismatch_rows,
+                "channel": channel,
+                "message": escalation_message[:500],
+                "delivery": delivery,
+            },
+            correlation_id=correlation_id,
+            skill_id="ap_v1",
+        )
+
+        return {
+            "email_id": gmail_ref,
+            "ap_item_id": ap_item_id,
+            "status": "escalated",
+            "channel": str(channel or "#finance-escalations").strip() or "#finance-escalations",
+            "message": escalation_message,
+            "delivery": delivery,
+            "audit_event_id": (audit_row or {}).get("id"),
+        }
+
+    async def share_finance_summary(
+        self,
+        *,
+        reference_id: str,
+        target: str = "email_draft",
+        preview_only: bool = False,
+        recipient_email: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from clearledgr.services.invoice_workflow import get_invoice_workflow
+        from clearledgr.services.teams_notifications import (
+            build_finance_summary_reply_activity,
+            send_finance_summary_reply,
+        )
+
+        ap_item = self._resolve_ap_item(reference_id)
+        ap_item_id = str(ap_item.get("id") or reference_id).strip() or str(reference_id)
+        gmail_ref = str(ap_item.get("thread_id") or reference_id).strip() or str(reference_id)
+        correlation_id = self._correlation_id_for_item(ap_item)
+        resolved_target = str(target or "email_draft").strip().lower()
+        if resolved_target not in {"email_draft", "slack_thread", "teams_reply"}:
+            raise ValueError("unsupported_share_target")
+
+        audit_events = []
+        if hasattr(self.db, "list_ap_audit_events"):
+            try:
+                rows = self.db.list_ap_audit_events(ap_item_id)
+                audit_events = rows if isinstance(rows, list) else []
+            except Exception:
+                audit_events = []
+        summary = self._build_finance_lead_summary_payload(ap_item, audit_events=audit_events)
+
+        resolved_recipient = (
+            str(recipient_email or "").strip()
+            or os.getenv("CLEARLEDGR_FINANCE_LEAD_EMAIL", "").strip()
+            or os.getenv("FINANCE_LEAD_EMAIL", "").strip()
+            or ""
+        )
+        operator_note = str(note or "").strip()
+        vendor = str(ap_item.get("vendor_name") or ap_item.get("vendor") or "Unknown vendor").strip()
+        invoice_number = str(ap_item.get("invoice_number") or "N/A").strip()
+        subject = f"[Clearledgr] Exception summary: {vendor} · Invoice {invoice_number}"
+        body_lines = [
+            "Hi,",
+            "",
+            "Clearledgr prepared the following AP exception summary for review:",
+            "",
+            *[f"- {line}" for line in (summary.get("lines") or [])],
+        ]
+        if operator_note:
+            body_lines.extend(["", "Operator note:", operator_note])
+        body_lines.extend(["", "Sent from Clearledgr Gmail Agent Actions."])
+        draft = {
+            "to": resolved_recipient,
+            "subject": subject,
+            "body": "\n".join(body_lines),
+        }
+
+        if preview_only:
+            preview_payload: Dict[str, Any]
+            if resolved_target == "email_draft":
+                preview_payload = {
+                    "kind": "email_draft",
+                    "draft": draft,
+                    "recipient_email": resolved_recipient,
+                }
+            elif resolved_target == "slack_thread":
+                slack_thread = (
+                    self.db.get_slack_thread(gmail_ref)
+                    if hasattr(self.db, "get_slack_thread")
+                    else None
+                )
+                if not slack_thread:
+                    raise ValueError("slack_thread_not_found")
+                text_lines = [f"*{summary.get('title') or 'Finance exception summary'}*"]
+                text_lines.extend([f"• {line}" for line in (summary.get("lines") or [])[:8]])
+                if operator_note:
+                    text_lines.extend(["", f"_Operator note:_ {operator_note}"])
+                preview_payload = {
+                    "kind": "slack_thread",
+                    "channel_id": str(slack_thread.get("channel_id") or ""),
+                    "thread_ts": str(slack_thread.get("thread_ts") or slack_thread.get("thread_id") or ""),
+                    "text": "\n".join(text_lines),
+                }
+            else:
+                metadata = self._parse_json_dict(ap_item.get("metadata"))
+                teams_meta = metadata.get("teams") if isinstance(metadata.get("teams"), dict) else {}
+                channel_id = str((teams_meta or {}).get("channel") or "").strip()
+                reply_to_id = str((teams_meta or {}).get("message_id") or "").strip()
+                if not channel_id:
+                    raise ValueError("teams_channel_not_found")
+                item_payload = {
+                    "id": ap_item_id,
+                    "vendor": vendor,
+                    "amount": ap_item.get("amount") or 0,
+                    "currency": ap_item.get("currency") or "USD",
+                    "invoice_number": invoice_number,
+                }
+                preview_payload = {
+                    "kind": "teams_reply",
+                    "channel_id": channel_id,
+                    "reply_to_id": reply_to_id or None,
+                    "activity": build_finance_summary_reply_activity(
+                        item_payload,
+                        list(summary.get("lines") or []),
+                        summary_title=str(summary.get("title") or "Finance exception summary"),
+                        reply_to_id=reply_to_id or None,
+                    ),
+                }
+
+            response = {
+                "status": "preview",
+                "target": resolved_target,
+                "email_id": gmail_ref,
+                "ap_item_id": ap_item_id,
+                "summary": summary,
+                "preview": preview_payload,
+            }
+            audit_row = self._append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="finance_summary_share_previewed",
+                reason=f"finance_summary_preview_{resolved_target}",
+                metadata={
+                    "target": resolved_target,
+                    "summary_title": summary.get("title"),
+                    "summary_lines": summary.get("lines"),
+                    "preview_kind": preview_payload.get("kind"),
+                    "recipient_email": resolved_recipient if resolved_target == "email_draft" else None,
+                    "slack_channel_id": preview_payload.get("channel_id") if resolved_target == "slack_thread" else None,
+                    "teams_channel_id": preview_payload.get("channel_id") if resolved_target == "teams_reply" else None,
+                    "response": response,
+                },
+                correlation_id=correlation_id,
+                skill_id="ap_v1",
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        if resolved_target == "email_draft":
+            response = {
+                "status": "prepared",
+                "target": resolved_target,
+                "email_id": gmail_ref,
+                "ap_item_id": ap_item_id,
+                "summary": summary,
+                "draft": draft,
+            }
+            audit_row = self._append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="finance_summary_share_prepared",
+                reason="finance_summary_email_draft",
+                metadata={
+                    "target": resolved_target,
+                    "recipient_email": resolved_recipient,
+                    "summary_title": summary.get("title"),
+                    "summary_lines": summary.get("lines"),
+                    "response": response,
+                },
+                correlation_id=correlation_id,
+                skill_id="ap_v1",
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        workflow = get_invoice_workflow(self.organization_id)
+        delivery: Dict[str, Any]
+        delivered = False
+        if resolved_target == "slack_thread":
+            slack_thread = (
+                self.db.get_slack_thread(gmail_ref)
+                if hasattr(self.db, "get_slack_thread")
+                else None
+            )
+            if not slack_thread:
+                raise ValueError("slack_thread_not_found")
+            if not getattr(workflow, "slack_client", None):
+                raise ValueError("slack_client_unavailable")
+            text_lines = [f"*{summary.get('title') or 'Finance exception summary'}*"]
+            text_lines.extend([f"• {line}" for line in (summary.get("lines") or [])[:8]])
+            if operator_note:
+                text_lines.extend(["", f"_Operator note:_ {operator_note}"])
+            try:
+                sent = await workflow.slack_client.send_message(
+                    channel=str(slack_thread.get("channel_id") or ""),
+                    thread_ts=str(slack_thread.get("thread_ts") or slack_thread.get("thread_id") or ""),
+                    text="\n".join(text_lines),
+                )
+                delivery = {
+                    "channel_id": sent.channel,
+                    "thread_ts": sent.thread_ts or sent.ts,
+                    "message_ts": sent.ts,
+                    "status": "sent",
+                }
+                delivered = True
+            except Exception as exc:
+                delivery = {"status": "error", "reason": str(exc)}
+        else:
+            metadata = self._parse_json_dict(ap_item.get("metadata"))
+            teams_meta = metadata.get("teams") if isinstance(metadata.get("teams"), dict) else {}
+            channel_id = str((teams_meta or {}).get("channel") or "").strip()
+            reply_to_id = str((teams_meta or {}).get("message_id") or "").strip()
+            if not channel_id:
+                raise ValueError("teams_channel_not_found")
+            item_payload = {
+                "id": ap_item_id,
+                "vendor": vendor,
+                "amount": ap_item.get("amount") or 0,
+                "currency": ap_item.get("currency") or "USD",
+                "invoice_number": invoice_number,
+            }
+            ok = await send_finance_summary_reply(
+                item_payload,
+                channel_id,
+                list(summary.get("lines") or []),
+                summary_title=str(summary.get("title") or "Finance exception summary"),
+                reply_to_id=reply_to_id or None,
+            )
+            delivery = {
+                "channel_id": channel_id,
+                "reply_to_id": reply_to_id or None,
+                "status": "sent" if ok else "error",
+            }
+            delivered = bool(ok)
+
+        response = {
+            "status": "shared" if delivered else "error",
+            "target": resolved_target,
+            "email_id": gmail_ref,
+            "ap_item_id": ap_item_id,
+            "summary": summary,
+            "delivery": delivery,
+        }
+        audit_row = self._append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type="finance_summary_shared" if delivered else "finance_summary_share_failed",
+            reason=f"finance_summary_{resolved_target}",
+            metadata={
+                "target": resolved_target,
+                "summary_title": summary.get("title"),
+                "summary_lines": summary.get("lines"),
+                "delivery": delivery,
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            skill_id="ap_v1",
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
+        return response
+
+    def record_field_correction(
+        self,
+        *,
+        ap_item_id: str,
+        field: str,
+        original_value: Any = None,
+        corrected_value: Any = None,
+        feedback: Optional[str] = None,
+        actor_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from clearledgr.services.audit_trail import get_audit_trail
+        from clearledgr.services.correction_learning import CorrectionLearningService
+
+        ap_item = self._resolve_ap_item(ap_item_id)
+        resolved_ap_item_id = str(ap_item.get("id") or ap_item_id).strip() or str(ap_item_id)
+        correlation_id = self._correlation_id_for_item(ap_item)
+        resolved_actor = str(actor_id or self.actor_email or self.actor_id or "operator").strip() or "operator"
+
+        learning_svc = CorrectionLearningService(self.organization_id)
+        try:
+            learning_result = learning_svc.record_correction(
+                correction_type=field,
+                original_value=original_value,
+                corrected_value=corrected_value,
+                context={
+                    "ap_item_id": resolved_ap_item_id,
+                    "field": field,
+                    "vendor": ap_item.get("vendor_name"),
+                },
+                user_id=resolved_actor,
+                invoice_id=ap_item.get("thread_id"),
+                feedback=feedback,
+            )
+        except Exception as exc:
+            logger.warning("correction_learning.record_correction failed: %s", exc)
+            learning_result = {}
+
+        audit_meta = {
+            "field": field,
+            "original_value": str(original_value) if original_value is not None else None,
+            "corrected_value": str(corrected_value) if corrected_value is not None else None,
+            "actor_id": resolved_actor,
+            "feedback": feedback,
+            "learning_result": learning_result,
+        }
+        try:
+            audit_svc = get_audit_trail(self.organization_id)
+            audit_svc.record_event(
+                event_type="field_correction",
+                invoice_id=ap_item.get("thread_id") or resolved_ap_item_id,
+                actor_type="operator",
+                actor_id=resolved_actor,
+                metadata=audit_meta,
+            )
+        except Exception as exc:
+            logger.warning("audit field_correction event failed: %s", exc)
+
+        response = {
+            "status": "recorded",
+            "ap_item_id": resolved_ap_item_id,
+            "field": field,
+            "learning_result": learning_result,
+        }
+        audit_row = self._append_runtime_audit(
+            ap_item_id=resolved_ap_item_id,
+            event_type="field_correction",
+            reason="runtime_record_field_correction",
+            metadata={
+                **audit_meta,
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            skill_id="ap_v1",
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
         return response
 
     async def resume_pending_agent_tasks(self) -> int:

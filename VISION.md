@@ -62,12 +62,13 @@ Clearledgr runs one core agent runtime with reusable skill contracts:
 2. Gmail thread sidebar is the daily AP execution surface: action-first, decision-first, compact.
 3. Gmail-native routed pages handle onboarding, integrations, monitoring, policy management, team access, plan, and health.
 4. Default pinned Gmail nav stays intentionally sparse: `Home`, `Pipeline`, `Connections`.
-5. `Activity` and other secondary pages remain available through Home or user pinning, not as default clutter.
-6. Slack/Teams are approval and escalation decision surfaces.
-7. Ops/telemetry/batch/raw debug content does not live in the Gmail thread work card; it is role-gated in Gmail-native routed pages.
-8. Onboarding/account management is admin-first, but it remains inside the Gmail product shell rather than forcing a separate operating console.
-9. Gmail authorization is explicit from inline product CTAs, not automatic startup popups.
-10. Gmail extension release integrity is CI-enforced: shipped `dist` must match source doctrine and cannot include legacy popup/options/demo surfaces.
+5. `Pipeline` is the AP queue/process surface, with finance-native slices, saved starter views, pinned personal views, and direct thread <-> queue reopening.
+6. `Activity` and other secondary pages remain available through Home or user pinning, not as default clutter.
+7. Slack/Teams are approval and escalation decision surfaces.
+8. Ops/telemetry/batch/raw debug content does not live in the Gmail thread work card; it is role-gated in Gmail-native routed pages.
+9. Onboarding/account management is admin-first, but it remains inside the Gmail product shell rather than forcing a separate operating console.
+10. Gmail authorization is explicit from inline product CTAs, not automatic startup popups.
+11. Gmail extension release integrity is CI-enforced: shipped `dist` must match source doctrine and cannot include legacy popup/options/demo surfaces.
 
 ## Positioning
 
@@ -86,6 +87,7 @@ When invoices/AP requests arrive:
 4. Posts to ERP when approved and eligible.
 5. Surfaces exceptions with explicit next action.
 6. Records complete audit breadcrumbs and evidence references.
+7. Preserves the same AP record context across Gmail, approvals, ERP results, and pipeline views.
 
 ## Current Runtime Skills
 

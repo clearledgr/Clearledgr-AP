@@ -8,20 +8,7 @@ import { eventBadge, fmtDateTime, useAction } from '../route-helpers.js';
 
 const html = htm.bind(h);
 
-function SnapshotCard({ label, value, tone = 'neutral' }) {
-  const styles = {
-    neutral: 'background:var(--surface);border:1px solid var(--border);color:var(--ink);',
-    warning: 'background:#FFFBEB;border:1px solid #FCD34D;color:#92400E;',
-    success: 'background:#ECFDF5;border:1px solid #A7F3D0;color:#065F46;',
-    danger: 'background:#FEF2F2;border:1px solid #FECACA;color:#991B1B;',
-  };
-  return html`<div style="padding:14px 16px;border-radius:var(--radius-md);${styles[tone] || styles.neutral}">
-    <div style="font-size:12px;font-weight:600;opacity:0.8">${label}</div>
-    <div style="margin-top:4px;font-size:24px;font-weight:700;letter-spacing:-0.02em">${value}</div>
-  </div>`;
-}
-
-export default function ActivityPage({ bootstrap, onRefresh }) {
+export default function ActivityPage({ bootstrap, onRefresh, navigate }) {
   const dash = bootstrap?.dashboard || {};
   const events = Array.isArray(bootstrap?.recentActivity) ? bootstrap.recentActivity.slice(0, 12) : [];
   const [refresh, refreshing] = useAction(onRefresh);
@@ -31,17 +18,23 @@ export default function ActivityPage({ bootstrap, onRefresh }) {
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div>
           <h3 style="margin:0 0 6px">AP activity</h3>
-          <p class="muted" style="margin:0">Use this page to check recent movement and return to work quickly. Pipeline remains the main queue surface.</p>
+          <p class="muted" style="margin:0">Use this page to check recent movement, then go back to Pipeline. It should not feel like a separate dashboard.</p>
         </div>
-        <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
+          <button onClick=${() => navigate?.('clearledgr/pipeline')}>Open pipeline</button>
+        </div>
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px">
-      <${SnapshotCard} label="Processed" value=${Number(dash.total_invoices || 0).toLocaleString()} />
-      <${SnapshotCard} label="Awaiting approval" value=${Number(dash.pending_approval || 0).toLocaleString()} tone="warning" />
-      <${SnapshotCard} label="Posted today" value=${Number(dash.posted_today || 0).toLocaleString()} tone="success" />
-      <${SnapshotCard} label="Rejected today" value=${Number(dash.rejected_today || 0).toLocaleString()} tone="danger" />
+    <div class="panel">
+      <h3 style="margin-top:0">What matters now</h3>
+      <div class="readiness-list" style="margin-top:12px">
+        <div class="readiness-item"><strong>Awaiting approval:</strong> ${Number(dash.pending_approval || 0).toLocaleString()}</div>
+        <div class="readiness-item"><strong>Posted today:</strong> ${Number(dash.posted_today || 0).toLocaleString()}</div>
+        <div class="readiness-item"><strong>Rejected today:</strong> ${Number(dash.rejected_today || 0).toLocaleString()}</div>
+        <div class="readiness-item"><strong>Total processed:</strong> ${Number(dash.total_invoices || 0).toLocaleString()}</div>
+      </div>
     </div>
 
     <div class="panel">
@@ -73,12 +66,8 @@ export default function ActivityPage({ bootstrap, onRefresh }) {
     </div>
 
     <div class="panel">
-      <h3 style="margin-top:0">Attention now</h3>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div class="readiness-item">Invoices awaiting approval: <strong>${Number(dash.pending_approval || 0).toLocaleString()}</strong></div>
-        <div class="readiness-item">Posted value today: <strong>${fmtDollar(dash.total_amount_posted_today)}</strong></div>
-        <div class="readiness-item">Pending value: <strong>${fmtDollar(dash.total_amount_pending)}</strong></div>
-      </div>
+      <h3 style="margin-top:0">Use this page sparingly</h3>
+      <p class="muted" style="margin:0">Recent activity is useful for orientation, but queue decisions still belong in Pipeline and on the shared AP record.</p>
     </div>
   `;
 }

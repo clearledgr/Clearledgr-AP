@@ -15,6 +15,10 @@ from clearledgr.core.approval_action_contract import (
     normalize_teams_action,
     validate_action_state_preflight,
 )
+from clearledgr.core.ap_item_resolution import (
+    resolve_ap_context as resolve_shared_ap_context,
+    resolve_ap_correlation_id,
+)
 from clearledgr.core.database import get_db
 from clearledgr.core.launch_controls import get_channel_action_block_reason
 from clearledgr.core.teams_verify import verify_teams_token
@@ -37,17 +41,6 @@ def _parse_payload(raw: Any) -> Dict[str, Any]:
     return {}
 
 
-def _lookup_ap_item_id(organization_id: str, email_id: str, invoice_number: Optional[str] = None) -> Optional[str]:
-    db = get_db()
-    row = db.get_ap_item_by_thread(organization_id, email_id) if hasattr(db, "get_ap_item_by_thread") else None
-    if row and row.get("id"):
-        return str(row.get("id"))
-    if invoice_number and hasattr(db, "get_ap_item_by_vendor_invoice"):
-        # Vendor is optional here; teams callbacks often only carry email_id.
-        return None
-    return None
-
-
 def _upsert_teams_metadata(
     organization_id: str,
     email_id: str,
@@ -68,7 +61,7 @@ def _upsert_teams_metadata(
     idempotent writes so repeated callbacks are safe.
     """
     db = get_db()
-    row = db.get_ap_item_by_thread(organization_id, email_id) if hasattr(db, "get_ap_item_by_thread") else None
+    _, row = resolve_shared_ap_context(db, organization_id, email_id)
     if not row:
         return
     ap_item_id = str(row.get("id") or "")
@@ -127,41 +120,18 @@ def _audit_callback_event(
 
 
 def _resolve_ap_context(db, organization_id: str, email_id: str) -> tuple[str, Optional[str]]:
-    org_id = str(organization_id or "default")
-    row = None
-    if email_id and hasattr(db, "get_invoice_status"):
-        row = db.get_invoice_status(email_id)
-    if row and row.get("organization_id"):
-        org_id = str(row.get("organization_id"))
-    ap_item_id = None
-    if email_id and hasattr(db, "get_ap_item_by_thread"):
-        try:
-            ap_row = db.get_ap_item_by_thread(org_id, email_id)
-            if ap_row and ap_row.get("id"):
-                ap_item_id = str(ap_row["id"])
-        except Exception:
-            ap_item_id = None
+    org_id, ap_item = resolve_shared_ap_context(db, organization_id, email_id)
+    ap_item_id = str((ap_item or {}).get("id") or "").strip() or None
     return org_id, ap_item_id
 
 
-def _resolve_correlation_id(db, ap_item_id: Optional[str], email_id: str) -> Optional[str]:
-    try:
-        row = None
-        if ap_item_id and hasattr(db, "get_ap_item"):
-            row = db.get_ap_item(ap_item_id)
-        if row is None and email_id and hasattr(db, "get_invoice_status"):
-            row = db.get_invoice_status(email_id)
-        raw_meta = (row or {}).get("metadata")
-        if isinstance(raw_meta, dict):
-            metadata = raw_meta
-        elif isinstance(raw_meta, str) and raw_meta.strip():
-            metadata = json.loads(raw_meta)
-        else:
-            metadata = {}
-        corr = str(metadata.get("correlation_id") or "").strip()
-        return corr or None
-    except Exception:
-        return None
+def _resolve_correlation_id(db, organization_id: str, ap_item_id: Optional[str], email_id: str) -> Optional[str]:
+    return resolve_ap_correlation_id(
+        db,
+        organization_id,
+        ap_item_id=ap_item_id,
+        reference_id=email_id,
+    )
 
 
 async def _dispatch_teams_action(action: NormalizedApprovalAction) -> Dict[str, Any]:
@@ -288,8 +258,16 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
         )
         raise HTTPException(status_code=exc.status_code, detail=exc.code)
 
+    if not ap_item_id and normalized.gmail_id:
+        organization_id, ap_item_id = _resolve_ap_context(db, organization_id, normalized.gmail_id)
+    normalized.organization_id = organization_id
     normalized.ap_item_id = ap_item_id
-    normalized.correlation_id = _resolve_correlation_id(db, ap_item_id, normalized.gmail_id)
+    normalized.correlation_id = _resolve_correlation_id(
+        db,
+        organization_id,
+        ap_item_id,
+        normalized.gmail_id,
+    )
 
     blocked_reason = get_channel_action_block_reason(
         normalized.organization_id,

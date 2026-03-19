@@ -1,16 +1,258 @@
-const STORAGE_PREFIX = 'clearledgr_pipeline_view_preferences_v1';
+const LEGACY_STORAGE_PREFIX = 'clearledgr_pipeline_view_preferences_v1';
+const STORAGE_PREFIX = 'clearledgr_pipeline_view_preferences_v2';
+const NAVIGATION_PREFIX = 'clearledgr_pipeline_navigation_v1';
+const MAX_CUSTOM_VIEWS = 8;
+const MAX_PINNED_VIEW_REFS = 6;
+
+const SLICE_ALIASES = {
+  approval_backlog: 'waiting_on_approval',
+  exceptions: 'blocked_exception',
+};
+
+const SORT_COLUMNS = new Set([
+  'queue_age',
+  'due_date',
+  'amount',
+  'updated_at',
+  'approval_wait',
+  'priority',
+  'vendor',
+  'state',
+  'invoice',
+]);
 
 export const PIPELINE_BUILTIN_SLICES = [
   { id: 'all_open', label: 'All open', description: 'Every invoice still moving through AP.' },
-  { id: 'approval_backlog', label: 'Approval backlog', description: 'Invoices waiting on approvers.' },
+  { id: 'waiting_on_approval', label: 'Waiting on approval', description: 'Invoices routed to approvers and still waiting.' },
   { id: 'ready_to_post', label: 'Ready to post', description: 'Approved invoices ready for ERP posting.' },
-  { id: 'needs_info', label: 'Needs info', description: 'Invoices missing required fields or vendor follow-up.' },
-  { id: 'exceptions', label: 'Exceptions', description: 'Invoices blocked by policy, confidence, or posting issues.' },
+  { id: 'needs_info', label: 'Needs info', description: 'Invoices blocked on vendor or field follow-up.' },
+  { id: 'failed_post', label: 'Failed post', description: 'Invoices that need ERP retry or posting recovery.' },
+  { id: 'blocked_exception', label: 'Blocked / exception', description: 'Policy, budget, confidence, or PO blockers.' },
   { id: 'due_soon', label: 'Due soon', description: 'Open invoices due within the next 7 days.' },
+  { id: 'overdue', label: 'Overdue', description: 'Open invoices already past due.' },
 ];
 
+function buildDefaultFilters() {
+  return {
+    state: 'all',
+    vendor: '',
+    due: 'all',
+    blocker: 'all',
+    amount: 'all',
+    approvalAge: 'all',
+    erpStatus: 'all',
+  };
+}
+
+export const PIPELINE_STARTER_VIEWS = [
+  {
+    id: 'approval_chase',
+    name: 'Approval chase',
+    description: 'Longest-waiting approvals first.',
+    snapshot: {
+      activeSliceId: 'waiting_on_approval',
+      viewMode: 'table',
+      sortCol: 'approval_wait',
+      sortDir: 'desc',
+      filters: buildDefaultFilters(),
+    },
+  },
+  {
+    id: 'urgent_due',
+    name: 'Urgent due',
+    description: 'Invoices due soon with nearest due dates first.',
+    snapshot: {
+      activeSliceId: 'due_soon',
+      viewMode: 'table',
+      sortCol: 'due_date',
+      sortDir: 'asc',
+      filters: buildDefaultFilters(),
+    },
+  },
+  {
+    id: 'posting_watch',
+    name: 'Posting watch',
+    description: 'Highest-value approved invoices ready for ERP posting.',
+    snapshot: {
+      activeSliceId: 'ready_to_post',
+      viewMode: 'table',
+      sortCol: 'amount',
+      sortDir: 'desc',
+      filters: buildDefaultFilters(),
+    },
+  },
+  {
+    id: 'exception_triage',
+    name: 'Exception triage',
+    description: 'Blocked invoices ordered by queue age.',
+    snapshot: {
+      activeSliceId: 'blocked_exception',
+      viewMode: 'table',
+      sortCol: 'queue_age',
+      sortDir: 'desc',
+      filters: {
+        ...buildDefaultFilters(),
+        blocker: 'all',
+      },
+    },
+  },
+];
+
+function normalizeText(value, fallback = '') {
+  return String(value || '').trim() || fallback;
+}
+
+function normalizeUserEmail(value) {
+  return normalizeText(value).toLowerCase();
+}
+
+function resolvePipelineScope(scopeOrOrgId, maybeUserEmail = '') {
+  if (scopeOrOrgId && typeof scopeOrOrgId === 'object') {
+    return {
+      orgId: normalizeText(scopeOrOrgId.orgId || scopeOrOrgId.organizationId, 'default'),
+      userEmail: normalizeUserEmail(scopeOrOrgId.userEmail || scopeOrOrgId.email || maybeUserEmail),
+    };
+  }
+  return {
+    orgId: normalizeText(scopeOrOrgId, 'default'),
+    userEmail: normalizeUserEmail(maybeUserEmail),
+  };
+}
+
+function getLegacyPipelinePreferenceKey(orgId) {
+  return `${LEGACY_STORAGE_PREFIX}:${normalizeText(orgId, 'default')}`;
+}
+
+function getNavigationKey(scopeOrOrgId, maybeUserEmail = '') {
+  const scope = resolvePipelineScope(scopeOrOrgId, maybeUserEmail);
+  return `${NAVIGATION_PREFIX}:${scope.orgId}:${scope.userEmail || 'anonymous'}`;
+}
+
+function normalizePipelineSliceId(sliceId) {
+  const normalized = normalizeText(sliceId, 'all_open');
+  return SLICE_ALIASES[normalized] || normalized;
+}
+
+function normalizeSortColumn(sortCol, fallback = 'queue_age') {
+  const normalized = normalizeText(sortCol, fallback);
+  return SORT_COLUMNS.has(normalized) ? normalized : fallback;
+}
+
+function normalizeViewName(value) {
+  return normalizeText(value).slice(0, 48);
+}
+
+function normalizeViewDescription(value) {
+  return normalizeText(value).slice(0, 120);
+}
+
+function normalizeVendorFilter(value) {
+  return normalizeText(value).slice(0, 80);
+}
+
+function normalizeSearchQuery(value) {
+  return normalizeText(value).slice(0, 120);
+}
+
+function normalizeFilters(filters = {}) {
+  return {
+    state: normalizeText(filters?.state, 'all'),
+    vendor: normalizeVendorFilter(filters?.vendor),
+    due: normalizeText(filters?.due, 'all'),
+    blocker: normalizeText(filters?.blocker, 'all'),
+    amount: normalizeText(filters?.amount, 'all'),
+    approvalAge: normalizeText(filters?.approvalAge, 'all'),
+    erpStatus: normalizeText(filters?.erpStatus, 'all'),
+  };
+}
+
+function normalizeSnapshot(snapshot = {}) {
+  return {
+    activeSliceId: normalizePipelineSliceId(snapshot?.activeSliceId),
+    viewMode: normalizeText(snapshot?.viewMode, 'table') === 'cards' ? 'cards' : 'table',
+    sortCol: normalizeSortColumn(snapshot?.sortCol, 'queue_age'),
+    sortDir: normalizeText(snapshot?.sortDir, 'desc') === 'asc' ? 'asc' : 'desc',
+    filters: normalizeFilters(snapshot?.filters),
+  };
+}
+
+function normalizePipelineViewRef(value) {
+  const raw = normalizeText(value).toLowerCase();
+  if (!raw) return '';
+  if (raw.startsWith('starter:') || raw.startsWith('user:')) return raw;
+  return `user:${raw}`;
+}
+
+function defaultPinnedViewRefs() {
+  return ['starter:approval_chase', 'starter:urgent_due'];
+}
+
+function sanitizeCustomViews(customViews = []) {
+  return (Array.isArray(customViews) ? customViews : [])
+    .map((view) => ({
+      id: normalizeText(view?.id),
+      name: normalizeViewName(view?.name),
+      description: normalizeViewDescription(view?.description),
+      pinned: Boolean(view?.pinned),
+      snapshot: normalizeSnapshot(view?.snapshot),
+    }))
+    .filter((view) => view.id && view.name)
+    .slice(0, MAX_CUSTOM_VIEWS);
+}
+
+function normalizePinnedViewRefs(refs = [], customViews = []) {
+  const explicitRefs = [...new Set((Array.isArray(refs) ? refs : [])
+    .map((ref) => normalizePipelineViewRef(ref))
+    .filter(Boolean))];
+  if (explicitRefs.length > 0) return explicitRefs.slice(0, MAX_PINNED_VIEW_REFS);
+
+  const legacyPinnedRefs = sanitizeCustomViews(customViews)
+    .filter((view) => view.pinned)
+    .map((view) => `user:${view.id}`);
+  if (legacyPinnedRefs.length > 0) return legacyPinnedRefs.slice(0, MAX_PINNED_VIEW_REFS);
+
+  return defaultPinnedViewRefs().slice(0, MAX_PINNED_VIEW_REFS);
+}
+
+function sanitizeStarterViews() {
+  return (Array.isArray(PIPELINE_STARTER_VIEWS) ? PIPELINE_STARTER_VIEWS : []).map((view) => ({
+    id: normalizeText(view?.id),
+    name: normalizeViewName(view?.name),
+    description: normalizeViewDescription(view?.description),
+    scope: 'starter',
+    snapshot: normalizeSnapshot(view?.snapshot),
+  })).filter((view) => view.id && view.name);
+}
+
+function mergeCustomView(currentViews = [], incomingView = {}) {
+  const existingViews = Array.isArray(currentViews) ? currentViews.filter((view) => view.id !== incomingView.id) : [];
+  return sanitizeCustomViews([...existingViews, incomingView]);
+}
+
+function readStorageValue(key) {
+  if (typeof window === 'undefined' || !window?.localStorage) {
+    return null;
+  }
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorageValue(key, value) {
+  if (typeof window === 'undefined' || !window?.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* best effort */
+  }
+}
+
 export function normalizePipelineState(state) {
-  const normalized = String(state || '').trim().toLowerCase();
+  const normalized = normalizeText(state).toLowerCase();
   if (!normalized) return 'received';
   if (normalized === 'pending_approval') return 'needs_approval';
   if (normalized === 'posted') return 'posted_to_erp';
@@ -21,123 +263,346 @@ export function isClosedPipelineState(state) {
   return ['posted_to_erp', 'closed', 'rejected'].includes(normalizePipelineState(state));
 }
 
-export function getPipelinePreferenceKey(orgId) {
-  return `${STORAGE_PREFIX}:${String(orgId || 'default').trim() || 'default'}`;
+export function getPipelinePreferenceKey(scopeOrOrgId, maybeUserEmail = '') {
+  const scope = resolvePipelineScope(scopeOrOrgId, maybeUserEmail);
+  return `${STORAGE_PREFIX}:${scope.orgId}:${scope.userEmail || 'anonymous'}`;
 }
 
 export function defaultPipelinePreferences() {
   return {
     activeSliceId: 'all_open',
     viewMode: 'table',
-    sortCol: 'priority',
+    sortCol: 'queue_age',
     sortDir: 'desc',
-    filters: {
-      state: 'all',
-      due: 'all',
-      blocker: 'all',
-      amount: 'all',
-    },
+    filters: buildDefaultFilters(),
     customViews: [],
+    pinnedViewRefs: defaultPinnedViewRefs(),
   };
 }
 
-function sanitizeCustomViews(customViews = []) {
-  return (Array.isArray(customViews) ? customViews : [])
-    .map((view) => ({
-      id: String(view?.id || '').trim(),
-      name: String(view?.name || '').trim(),
-      snapshot: {
-        activeSliceId: String(view?.snapshot?.activeSliceId || 'all_open').trim() || 'all_open',
-        viewMode: String(view?.snapshot?.viewMode || 'table').trim() || 'table',
-        sortCol: String(view?.snapshot?.sortCol || 'priority').trim() || 'priority',
-        sortDir: String(view?.snapshot?.sortDir || 'desc').trim() === 'asc' ? 'asc' : 'desc',
-        filters: {
-          state: String(view?.snapshot?.filters?.state || 'all').trim() || 'all',
-          due: String(view?.snapshot?.filters?.due || 'all').trim() || 'all',
-          blocker: String(view?.snapshot?.filters?.blocker || 'all').trim() || 'all',
-          amount: String(view?.snapshot?.filters?.amount || 'all').trim() || 'all',
-        },
-      },
-    }))
-    .filter((view) => view.id && view.name)
-    .slice(0, 8);
+export function defaultPipelineNavigation() {
+  return {
+    focusItemId: '',
+    focusThreadId: '',
+    focusMessageId: '',
+    preferredSliceId: '',
+    source: '',
+    requestedAt: '',
+  };
 }
 
 export function normalizePipelinePreferences(value = {}) {
+  const customViews = sanitizeCustomViews(value?.customViews);
   const defaults = defaultPipelinePreferences();
   return {
-    activeSliceId: String(value?.activeSliceId || defaults.activeSliceId).trim() || defaults.activeSliceId,
-    viewMode: String(value?.viewMode || defaults.viewMode).trim() === 'cards' ? 'cards' : 'table',
-    sortCol: String(value?.sortCol || defaults.sortCol).trim() || defaults.sortCol,
-    sortDir: String(value?.sortDir || defaults.sortDir).trim() === 'asc' ? 'asc' : 'desc',
-    filters: {
-      state: String(value?.filters?.state || defaults.filters.state).trim() || defaults.filters.state,
-      due: String(value?.filters?.due || defaults.filters.due).trim() || defaults.filters.due,
-      blocker: String(value?.filters?.blocker || defaults.filters.blocker).trim() || defaults.filters.blocker,
-      amount: String(value?.filters?.amount || defaults.filters.amount).trim() || defaults.filters.amount,
-    },
-    customViews: sanitizeCustomViews(value?.customViews),
+    activeSliceId: normalizePipelineSliceId(value?.activeSliceId || defaults.activeSliceId),
+    viewMode: normalizeSnapshot(value).viewMode,
+    sortCol: normalizeSortColumn(value?.sortCol || defaults.sortCol, defaults.sortCol),
+    sortDir: normalizeText(value?.sortDir || defaults.sortDir, defaults.sortDir) === 'asc' ? 'asc' : 'desc',
+    filters: normalizeFilters(value?.filters),
+    customViews,
+    pinnedViewRefs: normalizePinnedViewRefs(value?.pinnedViewRefs, customViews),
   };
 }
 
-export function readPipelinePreferences(orgId) {
-  if (typeof window === 'undefined' || !window?.localStorage) {
-    return defaultPipelinePreferences();
+export function pipelinePreferencesEqual(left = {}, right = {}) {
+  return JSON.stringify(normalizePipelinePreferences(left)) === JSON.stringify(normalizePipelinePreferences(right));
+}
+
+export function hasMeaningfulPipelinePreferences(value = {}) {
+  const normalized = normalizePipelinePreferences(value);
+  const defaults = defaultPipelinePreferences();
+  return (
+    normalized.activeSliceId !== defaults.activeSliceId
+    || normalized.viewMode !== defaults.viewMode
+    || normalized.sortCol !== defaults.sortCol
+    || normalized.sortDir !== defaults.sortDir
+    || JSON.stringify(normalized.filters) !== JSON.stringify(defaults.filters)
+    || normalized.customViews.length > 0
+    || JSON.stringify(normalized.pinnedViewRefs || []) !== JSON.stringify(defaults.pinnedViewRefs || [])
+  );
+}
+
+export function getBootstrappedPipelinePreferences(bootstrap = {}) {
+  return (
+    bootstrap?.current_user?.preferences?.gmail_extension?.pipeline_views
+    || bootstrap?.current_user?.preferences?.pipeline_views
+    || null
+  );
+}
+
+export function buildPipelinePreferencePatch(preferences = {}) {
+  return {
+    gmail_extension: {
+      pipeline_views: normalizePipelinePreferences(preferences),
+    },
+  };
+}
+
+export function getPipelineViewRef(view = {}) {
+  const scope = normalizeText(view?.scope, 'user').toLowerCase() === 'starter' ? 'starter' : 'user';
+  const id = normalizeText(view?.id);
+  if (!id) return '';
+  return `${scope}:${id.toLowerCase()}`;
+}
+
+export function pipelineSnapshotsEqual(left = {}, right = {}) {
+  return JSON.stringify(normalizeSnapshot(left)) === JSON.stringify(normalizeSnapshot(right));
+}
+
+export function getStarterPipelineViews(preferences = {}) {
+  const normalized = normalizePipelinePreferences(preferences);
+  const pinnedRefs = new Set(normalized.pinnedViewRefs || []);
+  return sanitizeStarterViews().map((view) => ({
+    ...view,
+    pinned: pinnedRefs.has(getPipelineViewRef(view)),
+  }));
+}
+
+export function getPersonalPipelineViews(preferences = {}) {
+  const normalized = normalizePipelinePreferences(preferences);
+  const pinnedRefs = new Set(normalized.pinnedViewRefs || []);
+  return sanitizeCustomViews(normalized.customViews).map((view) => ({
+    ...view,
+    scope: 'user',
+    pinned: pinnedRefs.has(getPipelineViewRef({ ...view, scope: 'user' })),
+  }));
+}
+
+export function getAllPipelineViews(preferences = {}, { includeStarter = true } = {}) {
+  const views = [];
+  if (includeStarter) views.push(...getStarterPipelineViews(preferences));
+  views.push(...getPersonalPipelineViews(preferences));
+  return views;
+}
+
+export function resolvePipelineViewByRef(preferences = {}, viewRef = '', options = {}) {
+  const normalizedRef = normalizePipelineViewRef(viewRef);
+  if (!normalizedRef) return null;
+  return getAllPipelineViews(preferences, options).find((view) => getPipelineViewRef(view) === normalizedRef) || null;
+}
+
+export function normalizePipelineNavigation(value = {}) {
+  return {
+    focusItemId: normalizeText(value?.focusItemId),
+    focusThreadId: normalizeText(value?.focusThreadId),
+    focusMessageId: normalizeText(value?.focusMessageId),
+    preferredSliceId: normalizePipelineSliceId(value?.preferredSliceId || ''),
+    source: normalizeText(value?.source),
+    requestedAt: normalizeText(value?.requestedAt),
+  };
+}
+
+export function readPipelinePreferences(scopeOrOrgId, maybeUserEmail = '') {
+  const key = getPipelinePreferenceKey(scopeOrOrgId, maybeUserEmail);
+  const raw = readStorageValue(key);
+  if (raw) {
+    try {
+      return normalizePipelinePreferences(JSON.parse(raw));
+    } catch {
+      return defaultPipelinePreferences();
+    }
   }
+
+  const scope = resolvePipelineScope(scopeOrOrgId, maybeUserEmail);
+  const legacyRaw = readStorageValue(getLegacyPipelinePreferenceKey(scope.orgId));
+  if (!legacyRaw) return defaultPipelinePreferences();
   try {
-    const raw = window.localStorage.getItem(getPipelinePreferenceKey(orgId));
-    if (!raw) return defaultPipelinePreferences();
-    return normalizePipelinePreferences(JSON.parse(raw));
+    return normalizePipelinePreferences(JSON.parse(legacyRaw));
   } catch {
     return defaultPipelinePreferences();
   }
 }
 
-export function writePipelinePreferences(orgId, value = {}) {
-  const normalized = normalizePipelinePreferences(value);
-  if (typeof window !== 'undefined' && window?.localStorage) {
-    try {
-      window.localStorage.setItem(getPipelinePreferenceKey(orgId), JSON.stringify(normalized));
-    } catch {
-      /* best effort */
-    }
-  }
+export function writePipelinePreferences(scopeOrOrgId, maybeUserEmailOrValue = '', maybeValue = null) {
+  const hasExplicitUserEmail = typeof maybeUserEmailOrValue === 'string' || maybeUserEmailOrValue == null;
+  const userEmail = hasExplicitUserEmail ? maybeUserEmailOrValue : '';
+  const value = hasExplicitUserEmail ? maybeValue : maybeUserEmailOrValue;
+  const normalized = normalizePipelinePreferences(value || {});
+  writeStorageValue(
+    getPipelinePreferenceKey(scopeOrOrgId, userEmail),
+    JSON.stringify(normalized),
+  );
   return normalized;
 }
 
-export function activatePipelineSlice(orgId, sliceId) {
-  const current = readPipelinePreferences(orgId);
-  return writePipelinePreferences(orgId, {
-    ...current,
-    activeSliceId: sliceId,
+export function readPipelineNavigation(scopeOrOrgId, maybeUserEmail = '') {
+  const raw = readStorageValue(getNavigationKey(scopeOrOrgId, maybeUserEmail));
+  if (!raw) return defaultPipelineNavigation();
+  try {
+    return normalizePipelineNavigation(JSON.parse(raw));
+  } catch {
+    return defaultPipelineNavigation();
+  }
+}
+
+export function writePipelineNavigation(scopeOrOrgId, maybeUserEmailOrValue = '', maybeValue = null) {
+  const hasExplicitUserEmail = typeof maybeUserEmailOrValue === 'string' || maybeUserEmailOrValue == null;
+  const userEmail = hasExplicitUserEmail ? maybeUserEmailOrValue : '';
+  const value = hasExplicitUserEmail ? maybeValue : maybeUserEmailOrValue;
+  const normalized = normalizePipelineNavigation(value || {});
+  writeStorageValue(
+    getNavigationKey(scopeOrOrgId, userEmail),
+    JSON.stringify(normalized),
+  );
+  return normalized;
+}
+
+export function clearPipelineNavigation(scopeOrOrgId, maybeUserEmail = '') {
+  return writePipelineNavigation(scopeOrOrgId, maybeUserEmail, defaultPipelineNavigation());
+}
+
+export function getSuggestedPipelineSlice(item = {}) {
+  const state = normalizePipelineState(item.state);
+  const dueDate = parseDate(item?.due_date);
+  const blockers = getPipelineBlockerKinds(item);
+  const now = new Date();
+
+  if (state === 'needs_approval') return 'waiting_on_approval';
+  if (state === 'ready_to_post') return 'ready_to_post';
+  if (state === 'needs_info') return 'needs_info';
+  if (state === 'failed_post') return 'failed_post';
+  if (dueDate && !isClosedPipelineState(state) && diffInDays(dueDate, now) < 0) return 'overdue';
+  if (blockers.some((kind) => ['exception', 'confidence', 'budget', 'po', 'erp'].includes(kind))) {
+    return 'blocked_exception';
+  }
+  if (dueDate && !isClosedPipelineState(state) && diffInDays(dueDate, now) <= 7) return 'due_soon';
+  return 'all_open';
+}
+
+export function focusPipelineItem(scopeOrOrgId, maybeUserEmailOrItem = '', maybeItem = null, maybeSource = '') {
+  const hasExplicitUserEmail = typeof maybeUserEmailOrItem === 'string' || maybeUserEmailOrItem == null;
+  const userEmail = hasExplicitUserEmail ? maybeUserEmailOrItem : '';
+  const item = hasExplicitUserEmail ? maybeItem : maybeUserEmailOrItem;
+  const source = hasExplicitUserEmail ? maybeSource : maybeItem;
+  const normalizedItem = item && typeof item === 'object' ? item : {};
+  return writePipelineNavigation(scopeOrOrgId, userEmail, {
+    focusItemId: normalizeText(normalizedItem?.id),
+    focusThreadId: normalizeText(normalizedItem?.thread_id || normalizedItem?.threadId),
+    focusMessageId: normalizeText(normalizedItem?.message_id || normalizedItem?.messageId),
+    preferredSliceId: getSuggestedPipelineSlice(normalizedItem),
+    source: normalizeText(source),
+    requestedAt: new Date().toISOString(),
   });
 }
 
-export function createSavedPipelineView(orgId, { name, snapshot }) {
-  const current = readPipelinePreferences(orgId);
-  const trimmedName = String(name || '').trim();
+export function activatePipelineSlice(scopeOrOrgId, maybeUserEmailOrSliceId = '', maybeSliceId = null) {
+  const hasExplicitUserEmail = typeof maybeSliceId === 'string';
+  const userEmail = hasExplicitUserEmail ? maybeUserEmailOrSliceId : '';
+  const sliceId = hasExplicitUserEmail ? maybeSliceId : maybeUserEmailOrSliceId;
+  const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+  return writePipelinePreferences(scopeOrOrgId, userEmail, {
+    ...current,
+    activeSliceId: normalizePipelineSliceId(sliceId),
+  });
+}
+
+export function createSavedPipelineView(scopeOrOrgId, maybeUserEmailOrValue = '', maybeValue = null) {
+  const hasExplicitUserEmail = typeof maybeUserEmailOrValue === 'string' || maybeUserEmailOrValue == null;
+  const userEmail = hasExplicitUserEmail ? maybeUserEmailOrValue : '';
+  const value = hasExplicitUserEmail ? maybeValue : maybeUserEmailOrValue;
+  const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+  const trimmedName = normalizeViewName(value?.name);
   if (!trimmedName) return current;
-  const id = `view_${Date.now().toString(36)}`;
-  const customViews = sanitizeCustomViews([
-    ...current.customViews,
-    {
-      id,
-      name: trimmedName,
-      snapshot: normalizePipelinePreferences(snapshot || current),
-    },
-  ]);
-  return writePipelinePreferences(orgId, {
+  const id = `view_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const customViews = mergeCustomView(current.customViews, {
+    id,
+    name: trimmedName,
+    description: normalizeViewDescription(value?.description),
+    pinned: Boolean(value?.pinned),
+    snapshot: normalizeSnapshot(value?.snapshot || current),
+  });
+  const pinnedViewRefs = Boolean(value?.pinned)
+    ? [`user:${id}`, ...(current.pinnedViewRefs || []).filter((ref) => ref !== `user:${id}`)].slice(0, MAX_PINNED_VIEW_REFS)
+    : current.pinnedViewRefs;
+  return writePipelinePreferences(scopeOrOrgId, userEmail, {
+    ...current,
+    customViews,
+    pinnedViewRefs,
+  });
+}
+
+export function updateSavedPipelineView(scopeOrOrgId, maybeUserEmailOrViewId = '', maybeViewIdOrPatch = null, maybePatch = null) {
+  const hasExplicitUserEmail = typeof maybeUserEmailOrViewId === 'string' && typeof maybeViewIdOrPatch === 'string';
+  const userEmail = hasExplicitUserEmail ? maybeUserEmailOrViewId : '';
+  const viewId = hasExplicitUserEmail ? maybeViewIdOrPatch : maybeUserEmailOrViewId;
+  const patch = hasExplicitUserEmail ? maybePatch : maybeViewIdOrPatch;
+  const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+  const customViews = sanitizeCustomViews(
+    current.customViews.map((view) => (
+      view.id === viewId
+        ? {
+            ...view,
+            name: normalizeViewName(patch?.name || view.name),
+            description: normalizeViewDescription(patch?.description ?? view.description),
+            snapshot: normalizeSnapshot(patch?.snapshot || view.snapshot),
+          }
+        : view
+    ))
+  );
+  return writePipelinePreferences(scopeOrOrgId, userEmail, {
     ...current,
     customViews,
   });
 }
 
-export function removeSavedPipelineView(orgId, viewId) {
-  const current = readPipelinePreferences(orgId);
-  return writePipelinePreferences(orgId, {
+export function pinPipelineView(scopeOrOrgId, maybeUserEmailOrViewRef = '', maybeViewRef = null) {
+  const hasExplicitUserEmail = typeof maybeViewRef === 'string';
+  const userEmail = hasExplicitUserEmail ? maybeUserEmailOrViewRef : '';
+  const viewRef = hasExplicitUserEmail ? maybeViewRef : maybeUserEmailOrViewRef;
+  const normalizedRef = normalizePipelineViewRef(viewRef);
+  if (!normalizedRef) return readPipelinePreferences(scopeOrOrgId, userEmail);
+  const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+  return writePipelinePreferences(scopeOrOrgId, userEmail, {
+    ...current,
+    pinnedViewRefs: [normalizedRef, ...(current.pinnedViewRefs || []).filter((ref) => ref !== normalizedRef)].slice(0, MAX_PINNED_VIEW_REFS),
+  });
+}
+
+export function unpinPipelineView(scopeOrOrgId, maybeUserEmailOrViewRef = '', maybeViewRef = null) {
+  const hasExplicitUserEmail = typeof maybeViewRef === 'string';
+  const userEmail = hasExplicitUserEmail ? maybeUserEmailOrViewRef : '';
+  const viewRef = hasExplicitUserEmail ? maybeViewRef : maybeUserEmailOrViewRef;
+  const normalizedRef = normalizePipelineViewRef(viewRef);
+  const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+  return writePipelinePreferences(scopeOrOrgId, userEmail, {
+    ...current,
+    pinnedViewRefs: (current.pinnedViewRefs || []).filter((ref) => ref !== normalizedRef),
+  });
+}
+
+export function pinSavedPipelineView(scopeOrOrgId, maybeUserEmailOrViewId = '', maybeViewId = null) {
+  const hasExplicitUserEmail = typeof maybeViewId === 'string';
+  const userEmail = hasExplicitUserEmail ? maybeUserEmailOrViewId : '';
+  const viewId = hasExplicitUserEmail ? maybeViewId : maybeUserEmailOrViewId;
+  return pinPipelineView(scopeOrOrgId, userEmail, `user:${viewId}`);
+}
+
+export function unpinSavedPipelineView(scopeOrOrgId, maybeUserEmailOrViewId = '', maybeViewId = null) {
+  const hasExplicitUserEmail = typeof maybeViewId === 'string';
+  const userEmail = hasExplicitUserEmail ? maybeUserEmailOrViewId : '';
+  const viewId = hasExplicitUserEmail ? maybeViewId : maybeUserEmailOrViewId;
+  return unpinPipelineView(scopeOrOrgId, userEmail, `user:${viewId}`);
+}
+
+export function removeSavedPipelineView(scopeOrOrgId, maybeUserEmailOrViewId = '', maybeViewId = null) {
+  const hasExplicitUserEmail = typeof maybeViewId === 'string';
+  const userEmail = hasExplicitUserEmail ? maybeUserEmailOrViewId : '';
+  const viewId = hasExplicitUserEmail ? maybeViewId : maybeUserEmailOrViewId;
+  const current = readPipelinePreferences(scopeOrOrgId, userEmail);
+  const viewRef = `user:${normalizeText(viewId).toLowerCase()}`;
+  return writePipelinePreferences(scopeOrOrgId, userEmail, {
     ...current,
     customViews: current.customViews.filter((view) => view.id !== viewId),
+    pinnedViewRefs: (current.pinnedViewRefs || []).filter((ref) => ref !== viewRef),
   });
+}
+
+export function getPinnedPipelineViews(preferences = {}) {
+  const normalized = normalizePipelinePreferences(preferences);
+  return (normalized.pinnedViewRefs || [])
+    .map((viewRef) => resolvePipelineViewByRef(normalized, viewRef))
+    .filter(Boolean);
 }
 
 function parseDate(value) {
@@ -150,18 +615,56 @@ function diffInDays(left, right) {
   return Math.floor(diffMs / 86400000);
 }
 
+function diffInMinutes(left, right) {
+  const diffMs = right.getTime() - left.getTime();
+  return Math.max(0, Math.floor(diffMs / 60000));
+}
+
+export function getQueueEnteredAt(item = {}) {
+  return parseDate(item?.queue_entered_at || item?.received_at || item?.created_at || item?.updated_at);
+}
+
+export function getQueueAgeMinutes(item = {}, now = new Date()) {
+  const startedAt = getQueueEnteredAt(item);
+  if (!startedAt) return 0;
+  return diffInMinutes(startedAt, now);
+}
+
+export function getApprovalRequestedAt(item = {}) {
+  const state = normalizePipelineState(item.state);
+  if (state !== 'needs_approval') return null;
+  return parseDate(item?.approval_requested_at || item?.updated_at || item?.created_at);
+}
+
+export function getApprovalWaitMinutes(item = {}, now = new Date()) {
+  const startedAt = getApprovalRequestedAt(item);
+  if (!startedAt) return 0;
+  return diffInMinutes(startedAt, now);
+}
+
+export function getErpStatus(item = {}) {
+  const state = normalizePipelineState(item.state);
+  const normalizedStatus = normalizeText(item?.erp_status).toLowerCase();
+  if (normalizedStatus) return normalizedStatus;
+  if (state === 'posted_to_erp' || state === 'closed' || item?.erp_reference || item?.erp_bill_id) return 'posted';
+  if (state === 'failed_post') return 'failed';
+  if (state === 'ready_to_post' || state === 'approved') return 'ready';
+  if (item?.erp_connector_available || item?.connector_available) return 'connected';
+  return 'not_connected';
+}
+
 export function getPipelineBlockerKinds(item = {}) {
   const blockers = new Set();
   const state = normalizePipelineState(item.state);
-  const exceptionCode = String(item?.exception_code || '').trim().toLowerCase();
-  const budgetStatus = String(item?.budget_status || '').trim().toLowerCase();
+  const exceptionCode = normalizeText(item?.exception_code).toLowerCase();
+  const budgetStatus = normalizeText(item?.budget_status).toLowerCase();
   const confidence = Number(item?.confidence);
 
   if (state === 'needs_approval') blockers.add('approval');
   if (state === 'needs_info') blockers.add('info');
   if (state === 'failed_post') blockers.add('erp');
   if (exceptionCode) blockers.add('exception');
-  if ((item?.requires_field_review || Number.isFinite(confidence) && confidence < 0.95)) blockers.add('confidence');
+  if (item?.requires_field_review || (Number.isFinite(confidence) && confidence < 0.95)) blockers.add('confidence');
   if (item?.budget_requires_decision || ['critical', 'exceeded'].includes(budgetStatus)) blockers.add('budget');
   if (exceptionCode.includes('po') || (!item?.po_number && exceptionCode)) blockers.add('po');
 
@@ -172,23 +675,29 @@ export function matchesPipelineSlice(item = {}, sliceId = 'all_open', now = new 
   const state = normalizePipelineState(item.state);
   const dueDate = parseDate(item?.due_date);
   const blockers = getPipelineBlockerKinds(item);
+  const normalizedSlice = normalizePipelineSliceId(sliceId);
 
-  switch (sliceId) {
+  switch (normalizedSlice) {
     case 'all':
       return true;
     case 'all_open':
       return !isClosedPipelineState(state);
-    case 'approval_backlog':
+    case 'waiting_on_approval':
       return state === 'needs_approval';
     case 'ready_to_post':
       return state === 'ready_to_post';
     case 'needs_info':
       return state === 'needs_info';
-    case 'exceptions':
-      return state === 'failed_post' || blockers.some((kind) => ['exception', 'confidence', 'budget', 'po', 'erp'].includes(kind));
+    case 'failed_post':
+      return state === 'failed_post';
+    case 'blocked_exception':
+      return blockers.some((kind) => ['exception', 'confidence', 'budget', 'po', 'erp'].includes(kind));
     case 'due_soon':
       if (!dueDate || isClosedPipelineState(state)) return false;
-      return diffInDays(dueDate, now) <= 7;
+      return diffInDays(dueDate, now) >= 0 && diffInDays(dueDate, now) <= 7;
+    case 'overdue':
+      if (!dueDate || isClosedPipelineState(state)) return false;
+      return diffInDays(dueDate, now) < 0;
     default:
       return true;
   }
@@ -199,9 +708,13 @@ export function matchesPipelineFilters(item = {}, filters = {}, now = new Date()
   const dueDate = parseDate(item?.due_date);
   const blockers = getPipelineBlockerKinds(item);
   const amount = Number(item?.amount || 0);
-  const normalizedFilters = normalizePipelinePreferences({ filters }).filters;
+  const vendor = normalizeText(item?.vendor_name || item?.vendor || '').toLowerCase();
+  const approvalWaitMinutes = getApprovalWaitMinutes(item, now);
+  const erpStatus = getErpStatus(item);
+  const normalizedFilters = normalizeFilters(filters);
 
-  if (normalizedFilters.state !== 'all' && state !== normalizedFilters.state) return false;
+  if (normalizedFilters.state !== 'all' && state !== normalizePipelineState(normalizedFilters.state)) return false;
+  if (normalizedFilters.vendor && !vendor.includes(normalizedFilters.vendor.toLowerCase())) return false;
 
   if (normalizedFilters.due === 'overdue') {
     if (!dueDate || diffInDays(dueDate, now) >= 0) return false;
@@ -219,11 +732,20 @@ export function matchesPipelineFilters(item = {}, filters = {}, now = new Date()
   if (normalizedFilters.amount === '1k_10k' && (amount < 1000 || amount > 10000)) return false;
   if (normalizedFilters.amount === 'over_10k' && amount <= 10000) return false;
 
+  if (normalizedFilters.approvalAge !== 'all') {
+    if (state !== 'needs_approval') return false;
+    if (normalizedFilters.approvalAge === 'under_24h' && approvalWaitMinutes >= 1440) return false;
+    if (normalizedFilters.approvalAge === '1d_3d' && (approvalWaitMinutes < 1440 || approvalWaitMinutes > 4320)) return false;
+    if (normalizedFilters.approvalAge === 'over_3d' && approvalWaitMinutes <= 4320) return false;
+  }
+
+  if (normalizedFilters.erpStatus !== 'all' && erpStatus !== normalizedFilters.erpStatus) return false;
+
   return true;
 }
 
 export function itemMatchesSearch(item = {}, searchQuery = '') {
-  const q = String(searchQuery || '').trim().toLowerCase();
+  const q = normalizeSearchQuery(searchQuery).toLowerCase();
   if (!q) return true;
   return [
     item.vendor_name,
@@ -235,12 +757,14 @@ export function itemMatchesSearch(item = {}, searchQuery = '') {
   ].some((value) => String(value || '').toLowerCase().includes(q));
 }
 
-export function sortPipelineItems(items = [], sortCol = 'priority', sortDir = 'desc') {
+export function sortPipelineItems(items = [], sortCol = 'queue_age', sortDir = 'desc', now = new Date()) {
   const direction = sortDir === 'asc' ? 1 : -1;
+  const normalizedSortCol = normalizeSortColumn(sortCol, 'queue_age');
+
   return [...items].sort((left, right) => {
     let leftValue;
     let rightValue;
-    switch (sortCol) {
+    switch (normalizedSortCol) {
       case 'vendor':
         leftValue = String(left.vendor_name || left.vendor || '').toLowerCase();
         rightValue = String(right.vendor_name || right.vendor || '').toLowerCase();
@@ -261,18 +785,32 @@ export function sortPipelineItems(items = [], sortCol = 'priority', sortDir = 'd
         leftValue = parseDate(left.updated_at || left.created_at)?.getTime() || 0;
         rightValue = parseDate(right.updated_at || right.created_at)?.getTime() || 0;
         break;
+      case 'approval_wait':
+        leftValue = getApprovalWaitMinutes(left, now);
+        rightValue = getApprovalWaitMinutes(right, now);
+        break;
       case 'state':
         leftValue = normalizePipelineState(left.state);
         rightValue = normalizePipelineState(right.state);
         break;
       case 'priority':
-      default:
         leftValue = Number(left.priority_score || 0);
         rightValue = Number(right.priority_score || 0);
         break;
+      case 'queue_age':
+      default:
+        leftValue = getQueueAgeMinutes(left, now);
+        rightValue = getQueueAgeMinutes(right, now);
+        break;
     }
+
     if (leftValue < rightValue) return -1 * direction;
     if (leftValue > rightValue) return 1 * direction;
+
+    const leftUpdatedAt = parseDate(left.updated_at || left.created_at)?.getTime() || 0;
+    const rightUpdatedAt = parseDate(right.updated_at || right.created_at)?.getTime() || 0;
+    if (leftUpdatedAt < rightUpdatedAt) return 1;
+    if (leftUpdatedAt > rightUpdatedAt) return -1;
     return 0;
   });
 }
@@ -282,7 +820,7 @@ export function filterPipelineItems(items = [], options = {}) {
     activeSliceId = 'all_open',
     filters = {},
     searchQuery = '',
-    sortCol = 'priority',
+    sortCol = 'queue_age',
     sortDir = 'desc',
     now = new Date(),
   } = options;
@@ -294,6 +832,7 @@ export function filterPipelineItems(items = [], options = {}) {
       .filter((item) => itemMatchesSearch(item, searchQuery)),
     sortCol,
     sortDir,
+    now,
   );
 }
 

@@ -52,16 +52,18 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
 
   return html`
     <div class="panel">
-      <h3>How invoices are handled</h3>
-      <p class="muted" style="margin-top:0">Keep the core AP controls simple here. Detailed policy authoring stays outside the daily Gmail workflow.</p>
+      <h3>Only keep daily AP controls here</h3>
+      <p class="muted" style="margin-top:0">This page should answer one question: when does an invoice stay in Gmail, route for approval, or stop for PO review? Detailed policy authoring stays outside Gmail.</p>
       <div style="display:flex;flex-direction:column;gap:16px;margin-top:8px">
         <div>
           <label>Auto-approval confidence threshold</label>
           <input id="cl-policy-confidence" type="number" min="0" max="1" step="0.01" value=${String(confidenceThreshold)} />
+          <div class="muted" style="margin-top:6px">Invoices below this confidence stay with an operator before approval or posting.</div>
         </div>
         <div>
           <label>Maximum auto-approve amount</label>
           <input id="cl-policy-max-amount" type="number" min="0" step="1" value=${String(maxAutoAmount)} />
+          <div class="muted" style="margin-top:6px">Invoices above this amount always wait for human approval.</div>
         </div>
         <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500">
           <input id="cl-policy-require-po" type="checkbox" checked=${requirePO} />
@@ -74,7 +76,8 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
     </div>
 
     <div class="panel">
-      <h3 style="margin-top:0">Current policy</h3>
+      <h3 style="margin-top:0">Current approval behavior</h3>
+      <p class="muted" style="margin-top:0">A compact summary of the rules operators will feel in the queue.</p>
       <div class="readiness-list" style="margin-top:12px">
         <div class="readiness-item"><strong>Policy name:</strong> ${policy.policy_name || 'Default AP policy'}</div>
         <div class="readiness-item"><strong>Confidence threshold:</strong> ${confidenceThreshold}</div>

@@ -5,6 +5,7 @@ const _listeners = new Set();
 const store = {
   queueState: [],
   scanStatus: {},
+  currentUserRole: null,
   selectedItemId: null,
   currentThreadId: null,
   agentSessionsState: new Map(),
@@ -20,6 +21,7 @@ const store = {
   batchOpsPolicyState: { maxItems: 5, amountThreshold: '', selectionPreset: 'queue_order' },
   auditState: { itemId: null, loading: false, events: [] },
   rowDecorated: new Set(),
+  openComposeWithPrefill: null,
 
   update(patch) {
     Object.assign(this, patch);
@@ -53,6 +55,13 @@ const store = {
       auditState: { itemId: null, loading: false, events: [] },
       contextUiState: { itemId: null, loading: false, error: '' },
     });
+  },
+
+  async composeWithPrefill(prefill = {}) {
+    if (typeof this.openComposeWithPrefill !== 'function') {
+      throw new Error('compose_launcher_unavailable');
+    }
+    return this.openComposeWithPrefill(prefill);
   },
 
   getPrimaryItem() {

@@ -56,6 +56,8 @@ Gmail is the primary Clearledgr product surface, following a Streak-style model:
 2. Gmail-native page routes handle setup, pipeline views, monitoring, policy management, team access, and plan/health pages.
    - Default pinned nav is `Home`, `Pipeline`, and `Connections`.
    - `Activity` and other secondary pages stay available from Home or via pinning, but are not pinned by default.
+   - `Pipeline` is the default AP queue/process surface with AP-first slices, finance-native filters/sorts, and direct thread-to-pipeline / pipeline-to-thread reopening.
+   - Saved pipeline views are persisted per authenticated user and organization; `Home` surfaces pinned views first, then finance-native starter views.
    - `Health` and comparable admin pages are role-gated secondary pages.
    - These pages are still inside Gmail and do not require a separate operating console for normal use.
    - Ops/telemetry/batch/debug content remains out of the thread panel itself and is role-gated in Gmail-native routed pages.
@@ -178,8 +180,15 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ### 5. Run core regression slices
 
 ```bash
-PYTHONPATH=. pytest -q tests/test_finance_contracts.py tests/test_finance_agent_runtime.py tests/test_erp_adapter_contracts.py tests/test_api_endpoints.py::TestAgentIntentEndpoints tests/test_api_endpoints.py::TestExtensionEndpoints
-node --test ui/gmail-extension/tests/*.test.cjs
+PYTHONPATH=. pytest -q tests/test_finance_contracts.py tests/test_finance_agent_runtime.py tests/test_erp_adapter_contracts.py tests/test_api_endpoints.py::TestAgentIntentEndpoints tests/test_api_endpoints.py::TestExtensionEndpoints tests/test_runtime_surface_scope.py
+node --test ui/gmail-extension/tests/inboxsdk-layer-ui.test.cjs ui/gmail-extension/tests/pipeline-views.test.cjs
+```
+
+Release-gate doctrine slices:
+
+```bash
+PYTHONPATH=. pytest -q tests/test_runtime_surface_scope.py
+node --test ui/gmail-extension/tests/inboxsdk-layer-ui.test.cjs ui/gmail-extension/tests/pipeline-views.test.cjs
 ```
 
 Optional real-browser Gmail harness:
@@ -219,6 +228,27 @@ GitHub workflows:
 - `/.github/workflows/gmail-extension-browser-harness.yml` runs deterministic browser harness on PR/push for extension changes.
 - `/.github/workflows/gmail-runtime-smoke-nightly.yml` runs nightly authenticated Gmail runtime smoke in a controlled self-hosted environment and uploads evidence artifacts.
 - Runner setup/playbook: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GMAIL_RUNTIME_RUNNER_SETUP.md`
+
+## Phase 7 Release Gate
+
+Doctrine tests must explicitly enforce:
+
+1. Sparse default Gmail nav (`Home`, `Pipeline`, `Connections` for admins; lighter by default for non-admins).
+2. Thread card content limits: one focused work panel, evidence checklist, collapsed audit memory, no KPI/debug/dashboard clutter.
+3. No startup Gmail OAuth auto-popup; auth opens only from explicit operator/admin CTAs.
+4. Role-gated admin routes and secondary pages.
+5. Runtime-backed AP mutations at the Gmail contract boundary.
+6. Pipeline slice/view persistence for authenticated user and organization scope.
+
+Manual product review checklist for each release candidate:
+
+1. Thread card: identity strip, status, blockers, one primary CTA, evidence checklist, collapsed key history/background activity.
+2. Pipeline slices: waiting on approval, ready to post, needs info, failed post, blocked/exception, due soon, overdue.
+3. Home lightness: launch hub only, not a dashboard competing with Pipeline or the thread card.
+4. Route gating: admin/setup pages remain secondary and unavailable to non-admin users.
+5. Gmail auth flow: no startup popup; `Connect Gmail` stays user-initiated.
+6. Slack/Teams to Gmail roundtrip: approval/reject/request-info decisions update the same AP item and Gmail record state.
+7. ERP post roundtrip: ready-to-post, posted, and failed-post states return to the same AP record and audit history.
 
 ## Security and Operational Expectations
 

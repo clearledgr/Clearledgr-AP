@@ -6,6 +6,7 @@ class ClearledgrQueueManager {
   constructor() {
     this.queue = [];
     this.listeners = [];
+    this.currentUserRole = null;
     this.scanStatus = {
       state: 'initializing',
       mode: 'dom',

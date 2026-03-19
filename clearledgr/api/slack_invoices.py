@@ -17,6 +17,10 @@ from clearledgr.core.approval_action_contract import (
     normalize_slack_action,
     validate_action_state_preflight,
 )
+from clearledgr.core.ap_item_resolution import (
+    resolve_ap_context as resolve_shared_ap_context,
+    resolve_ap_correlation_id,
+)
 from clearledgr.core.database import get_db
 from clearledgr.core.launch_controls import get_channel_action_block_reason
 from clearledgr.core.slack_verify import require_slack_signature
@@ -78,39 +82,18 @@ def _audit_callback_event(
 
 
 def _resolve_ap_context(db, organization_id: str, gmail_id: str) -> tuple[str, str | None]:
-    if not gmail_id:
-        return organization_id or "default", None
-    row = db.get_invoice_status(gmail_id) if hasattr(db, "get_invoice_status") else None
-    org_id = str((row or {}).get("organization_id") or organization_id or "default")
-    ap_item_id = None
-    if hasattr(db, "get_ap_item_by_thread"):
-        try:
-            ap_row = db.get_ap_item_by_thread(org_id, gmail_id)
-            if ap_row and ap_row.get("id"):
-                ap_item_id = str(ap_row["id"])
-        except Exception:
-            ap_item_id = None
+    org_id, ap_item = resolve_shared_ap_context(db, organization_id, gmail_id)
+    ap_item_id = str((ap_item or {}).get("id") or "").strip() or None
     return org_id, ap_item_id
 
 
 def _resolve_correlation_id(db, ap_item_id: str | None, org_id: str, gmail_id: str) -> str | None:
-    try:
-        row = None
-        if ap_item_id and hasattr(db, "get_ap_item"):
-            row = db.get_ap_item(ap_item_id)
-        if row is None and gmail_id and hasattr(db, "get_invoice_status"):
-            row = db.get_invoice_status(gmail_id)
-        raw_meta = (row or {}).get("metadata")
-        if isinstance(raw_meta, dict):
-            metadata = raw_meta
-        elif isinstance(raw_meta, str) and raw_meta.strip():
-            metadata = json.loads(raw_meta)
-        else:
-            metadata = {}
-        corr = str(metadata.get("correlation_id") or "").strip()
-        return corr or None
-    except Exception:
-        return None
+    return resolve_ap_correlation_id(
+        db,
+        org_id,
+        ap_item_id=ap_item_id,
+        reference_id=gmail_id,
+    )
 
 
 async def _post_to_response_url(response_url: str, payload: Dict[str, Any]) -> None:
@@ -341,6 +324,9 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
         )
         return {"response_type": "ephemeral", "text": f"Action rejected: {exc.message}"}
 
+    if not ap_item_id and normalized.gmail_id:
+        organization_id, ap_item_id = _resolve_ap_context(db, organization_id, normalized.gmail_id)
+    normalized.organization_id = organization_id
     normalized.ap_item_id = ap_item_id
     normalized.correlation_id = _resolve_correlation_id(db, ap_item_id, organization_id, normalized.gmail_id)
 

@@ -3,9 +3,9 @@
  * Keeps setup reachable without turning Gmail into a separate dashboard.
  */
 import { h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { integrationByName, fmtDateTime, hasOpsAccess, useAction } from '../route-helpers.js';
+import { integrationByName, fmtDateTime, hasAdminAccess, hasOpsAccess, useAction } from '../route-helpers.js';
 import {
   getRoutePreferenceState,
   getVisibleNavRoutes,
@@ -15,44 +15,38 @@ import {
   showRoute,
   unpinRoute,
 } from '../route-registry.js';
-import { activatePipelineSlice, readPipelinePreferences, writePipelinePreferences } from '../pipeline-views.js';
+import {
+  PIPELINE_BUILTIN_SLICES,
+  activatePipelineSlice,
+  getBootstrappedPipelinePreferences,
+  clearPipelineNavigation,
+  getPinnedPipelineViews,
+  getStarterPipelineViews,
+  hasMeaningfulPipelinePreferences,
+  normalizePipelinePreferences,
+  pipelinePreferencesEqual,
+  readPipelinePreferences,
+  writePipelinePreferences,
+} from '../pipeline-views.js';
 
 const html = htm.bind(h);
 
-const ICONS = {
-  home: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10.5V20h14v-9.5"/><path d="M9 20v-5h6v5"/></svg>`,
-  pipeline: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>`,
-  activity: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>`,
-  vendors: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
-  recon: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/></svg>`,
-  settings: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`,
-  rules: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
-  team: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
-  company: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01"/></svg>`,
-  plan: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.86L12 17.77 5.82 21l1.18-6.86-5-4.87 6.91-1.01z"/></svg>`,
-  health: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`,
-  connections: html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
-};
+const HOME_PIPELINE_SHORTCUTS = [
+  'waiting_on_approval',
+  'ready_to_post',
+  'needs_info',
+  'blocked_exception',
+  'failed_post',
+  'due_soon',
+  'overdue',
+];
 
-function getRouteIcon(iconKey) {
-  return ICONS[iconKey] || ICONS.settings;
-}
-
-function QuickAccessCard({ icon, label, detail, onClick }) {
-  return html`<button onClick=${onClick} style="
-    display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;gap:8px;
-    padding:14px 14px;min-width:120px;min-height:108px;text-align:left;
-    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);
-    cursor:pointer;transition:all 0.15s;color:var(--ink);font-family:inherit;
-  " onMouseOver=${e => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
-     onMouseOut=${e => { e.currentTarget.style.borderColor = 'var(--border)'; }}>
-    <div style="color:var(--ink-secondary)">${icon}</div>
-    <div>
-      <div style="font-size:13px;font-weight:600;margin-bottom:2px">${label}</div>
-      <div style="font-size:12px;color:var(--ink-muted);line-height:1.4">${detail}</div>
-    </div>
-  </button>`;
-}
+const WORKFLOW_SURFACE_ROUTE_IDS = [
+  'clearledgr/upcoming',
+  'clearledgr/vendors',
+  'clearledgr/templates',
+  'clearledgr/reports',
+];
 
 function StatusRow({ label, ready, detail, actionLabel, onAction, pending = false }) {
   return html`<div style="
@@ -119,7 +113,7 @@ function RoutePreferenceRow({ route, preferenceState, onPin, onUnpin, onHide, on
   </div>`;
 }
 
-function LaunchSummary({ allReady, approvalsReady, erpReady, lastScanAt, navigate }) {
+function LaunchSummary({ allReady, approvalsReady, erpReady, lastScanAt, navigate, adminAccess }) {
   const summary = allReady
     ? 'Clearledgr is ready to work invoices from Gmail through approval and ERP posting.'
     : 'Finish the missing AP setup steps so operators can stay in Gmail and work invoices end-to-end.';
@@ -139,7 +133,7 @@ function LaunchSummary({ allReady, approvalsReady, erpReady, lastScanAt, navigat
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
-        <button class="alt" onClick=${() => navigate('clearledgr/connections')}>Review connections</button>
+        ${adminAccess && html`<button class="alt" onClick=${() => navigate('clearledgr/connections')}>Review connections</button>`}
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
@@ -153,7 +147,7 @@ function LaunchSummary({ allReady, approvalsReady, erpReady, lastScanAt, navigat
   </div>`;
 }
 
-function RecentActivity({ entries = [], navigate }) {
+function RecentActivity({ entries = [], navigate, canOpenActivity = false }) {
   const rows = Array.isArray(entries) ? entries.slice(0, 5) : [];
   return html`<div class="panel">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px">
@@ -161,7 +155,7 @@ function RecentActivity({ entries = [], navigate }) {
         <h3 style="margin:0 0 4px">Recent activity</h3>
         <p class="muted" style="margin:0">What changed recently in AP.</p>
       </div>
-      <button class="alt" onClick=${() => navigate('clearledgr/activity')} style="padding:8px 12px;font-size:12px">Open activity</button>
+      ${canOpenActivity && html`<button class="alt" onClick=${() => navigate('clearledgr/activity')} style="padding:8px 12px;font-size:12px">Open activity</button>`}
     </div>
     ${rows.length
       ? html`<div style="display:grid;gap:8px">
@@ -196,7 +190,45 @@ function QueueShortcutRow({ label, detail, onClick }) {
   </button>`;
 }
 
+function SupportPageRow({ label, detail, onClick }) {
+  return html`<div style="
+    display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;
+    padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);
+  ">
+    <div>
+      <strong style="display:block;font-size:13px;margin-bottom:2px">${label}</strong>
+      <span class="muted" style="font-size:12px">${detail}</span>
+    </div>
+    <button class="alt" onClick=${onClick} style="padding:8px 12px;font-size:12px">Open</button>
+  </div>`;
+}
+
+function UpcomingTaskRow({ task, onClick }) {
+  const amount = Number(task?.amount);
+  const amountLabel = Number.isFinite(amount)
+    ? `${task?.currency || 'USD'} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : 'Amount unavailable';
+  return html`<button
+    onClick=${onClick}
+    style="
+      display:flex;align-items:flex-start;justify-content:space-between;gap:14px;
+      width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);
+      background:var(--surface);cursor:pointer;font-family:inherit;text-align:left;
+    "
+  >
+    <span style="min-width:0;flex:1">
+      <strong style="display:block;font-size:13px;margin-bottom:2px">${task?.title || 'AP follow-up'}</strong>
+      <span class="muted" style="display:block;font-size:12px;line-height:1.45">
+        ${task?.vendor_name || 'Unknown vendor'} · ${task?.invoice_number || 'No invoice #'} · ${amountLabel}
+      </span>
+      <span class="muted" style="display:block;font-size:12px;line-height:1.45;margin-top:4px">${task?.detail || 'Open this follow-up in Upcoming.'}</span>
+    </span>
+    <span class="muted" style="font-size:12px;font-weight:700;white-space:nowrap">${task?.status === 'overdue' ? 'Overdue' : 'Open'}</span>
+  </button>`;
+}
+
 export default function HomePage({
+  api,
   bootstrap,
   toast,
   orgId,
@@ -220,9 +252,22 @@ export default function HomePage({
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
   const policyConfig = bootstrap?.policyPayload?.policy?.config_json || {};
-  const routeOptions = { includeAdmin: hasOpsAccess(bootstrap) };
-  const pipelinePrefs = readPipelinePreferences(orgId);
-  const savedPipelineViews = Array.isArray(pipelinePrefs?.customViews) ? pipelinePrefs.customViews.slice(0, 3) : [];
+  const adminAccess = hasAdminAccess(bootstrap);
+  const routeOptions = {
+    includeAdmin: adminAccess,
+    includeOps: hasOpsAccess(bootstrap),
+  };
+  const pipelineScope = { orgId, userEmail };
+  const [pipelinePrefs, setPipelinePrefs] = useState(() => readPipelinePreferences(pipelineScope));
+  const [upcomingPayload, setUpcomingPayload] = useState({ summary: {}, tasks: [] });
+  const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
+  const pinnedPipelineViews = getPinnedPipelineViews(pipelinePrefs).slice(0, 4);
+  const starterSavedViews = getStarterPipelineViews(pipelinePrefs)
+    .filter((view) => !pinnedPipelineViews.some((pinnedView) => pinnedView.id === view.id && pinnedView.scope === view.scope))
+    .slice(0, 3);
+  const starterPipelineSlices = HOME_PIPELINE_SHORTCUTS
+    .map((sliceId) => PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === sliceId))
+    .filter(Boolean);
   const gmailOk = Boolean(gmail.connected);
   const slackOk = Boolean(slack.connected);
   const teamsOk = Boolean(teams.connected);
@@ -232,10 +277,13 @@ export default function HomePage({
   const allReady = gmailOk && approvalSurfaceOk && erpOk && policyOk;
   const lastScanAt = dashboard?.last_scan_at || dashboard?.lastScanAt || bootstrap?.health?.last_scan_at || '';
 
-  const quickAccessRoutes = getVisibleNavRoutes(routePreferences, routeOptions)
-    .filter((route) => route.id !== 'clearledgr/home')
+  const supportRoutes = getVisibleNavRoutes(routePreferences, routeOptions)
+    .filter((route) => !['clearledgr/home', 'clearledgr/pipeline'].includes(route.id))
     .slice(0, 4);
-  const customizableRoutes = availableRoutes.filter((route) => !route.adminOnly);
+  const workflowSupportRoutes = availableRoutes
+    .filter((route) => WORKFLOW_SURFACE_ROUTE_IDS.includes(route.id))
+    .filter((route) => !route.adminOnly || adminAccess);
+  const customizableRoutes = availableRoutes;
 
   const [connectGmail, gmailPending] = useAction(async () => {
     const authUrl = bootstrap?.gmail_auth_url || bootstrap?.integrations?.find?.((it) => it.type === 'gmail')?.auth_url;
@@ -254,6 +302,38 @@ export default function HomePage({
     navigate('clearledgr/connections');
   });
 
+  useEffect(() => {
+    setPipelinePrefs(readPipelinePreferences(pipelineScope));
+  }, [pipelineScope]);
+
+  useEffect(() => {
+    const local = readPipelinePreferences(pipelineScope);
+    const remote = bootstrapPipelinePrefs ? normalizePipelinePreferences(bootstrapPipelinePrefs) : null;
+    if (remote && hasMeaningfulPipelinePreferences(remote) && !pipelinePreferencesEqual(local, remote)) {
+      const next = writePipelinePreferences(pipelineScope, remote);
+      setPipelinePrefs(next);
+      return;
+    }
+    setPipelinePrefs(local);
+  }, [bootstrapPipelinePrefs, pipelineScope]);
+
+  useEffect(() => {
+    if (!routeOptions.includeOps) {
+      setUpcomingPayload({ summary: {}, tasks: [] });
+      return;
+    }
+    api(`/api/ap/items/upcoming?organization_id=${encodeURIComponent(orgId)}&limit=4`, { silent: true })
+      .then((data) => {
+        setUpcomingPayload({
+          summary: data?.summary || {},
+          tasks: Array.isArray(data?.tasks) ? data.tasks.slice(0, 4) : [],
+        });
+      })
+      .catch(() => {
+        setUpcomingPayload({ summary: {}, tasks: [] });
+      });
+  }, [api, orgId, routeOptions.includeOps]);
+
   async function applyRoutePreferences(nextPreferences, message) {
     if (typeof updateRoutePreferences !== 'function') return;
     await updateRoutePreferences(nextPreferences);
@@ -261,14 +341,22 @@ export default function HomePage({
   }
 
   const openPipelineSlice = (sliceId) => {
-    activatePipelineSlice(orgId, sliceId);
+    clearPipelineNavigation(pipelineScope);
+    activatePipelineSlice(pipelineScope, sliceId);
+    setPipelinePrefs(readPipelinePreferences(pipelineScope));
     navigate('clearledgr/pipeline');
   };
 
   const openSavedPipelineView = (view) => {
     if (!view?.snapshot) return;
-    writePipelinePreferences(orgId, view.snapshot);
+    clearPipelineNavigation(pipelineScope);
+    writePipelinePreferences(pipelineScope, view.snapshot);
+    setPipelinePrefs(readPipelinePreferences(pipelineScope));
     navigate('clearledgr/pipeline');
+  };
+
+  const openUpcoming = () => {
+    navigate('clearledgr/upcoming');
   };
 
   return html`
@@ -285,27 +373,78 @@ export default function HomePage({
       erpReady=${erpOk}
       lastScanAt=${lastScanAt}
       navigate=${navigate}
+      adminAccess=${adminAccess}
     />
 
-    <div style="
-      display:flex;gap:10px;overflow-x:auto;padding:4px 0 8px;
-      border-bottom:1px solid var(--border);margin-bottom:20px;
-    ">
-      ${quickAccessRoutes.map((route) => html`
-        <${QuickAccessCard}
-          icon=${getRouteIcon(route.icon)}
-          label=${route.title}
-          detail=${route.subtitle}
-          onClick=${() => navigate(route.id)}
-        />
-      `)}
-      <${QuickAccessCard}
-        icon=${ICONS.settings}
-        label="Customize"
-        detail="Pin or hide Gmail pages."
-        onClick=${() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })}
-      />
-    </div>
+    ${routeOptions.includeOps && html`
+      <div class="panel">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
+          <div>
+            <h3 style="margin:0 0 4px">Upcoming follow-ups</h3>
+            <p class="muted" style="margin:0">
+              ${Number(upcomingPayload?.summary?.total || 0) > 0
+                ? `${Number(upcomingPayload.summary.total || 0).toLocaleString()} follow-ups are due across approvals, vendor replies, posting, and blockers.`
+                : 'No AP follow-ups are due right now.'}
+            </p>
+          </div>
+          <button class="alt" onClick=${openUpcoming} style="padding:8px 12px;font-size:12px">Open Upcoming</button>
+        </div>
+        ${Array.isArray(upcomingPayload?.tasks) && upcomingPayload.tasks.length > 0
+          ? html`<div style="display:grid;gap:10px">
+              ${upcomingPayload.tasks.map((task) => html`
+                <${UpcomingTaskRow}
+                  key=${task.id}
+                  task=${task}
+                  onClick=${openUpcoming}
+                />
+              `)}
+            </div>`
+          : html`<div class="muted" style="font-size:13px">Clearledgr will surface due follow-ups here when approvals, vendor replies, or posting retries need attention.</div>`}
+      </div>
+    `}
+
+    ${supportRoutes.length > 0 && html`
+      <div class="panel">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
+          <div>
+            <h3 style="margin:0 0 4px">Support surfaces</h3>
+            <p class="muted" style="margin:0">Secondary pages stay available without taking attention from Pipeline or the thread card.</p>
+          </div>
+          ${adminAccess && html`<button class="alt" onClick=${() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })} style="padding:8px 12px;font-size:12px">Customize</button>`}
+        </div>
+        <div style="display:grid;gap:10px">
+          ${supportRoutes.map((route) => html`
+            <${SupportPageRow}
+              key=${route.id}
+              label=${route.title}
+              detail=${route.subtitle}
+              onClick=${() => navigate(route.id)}
+            />
+          `)}
+        </div>
+      </div>
+    `}
+
+    ${workflowSupportRoutes.length > 0 && html`
+      <div class="panel">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
+          <div>
+            <h3 style="margin:0 0 4px">Workflow tools</h3>
+            <p class="muted" style="margin:0">Deeper AP support surfaces stay reachable from Home without inflating the default Gmail nav.</p>
+          </div>
+        </div>
+        <div style="display:grid;gap:10px">
+          ${workflowSupportRoutes.map((route) => html`
+            <${SupportPageRow}
+              key=${route.id}
+              label=${route.title}
+              detail=${route.subtitle}
+              onClick=${() => navigate(route.id)}
+            />
+          `)}
+        </div>
+      </div>
+    `}
 
     <div class="panel">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
@@ -316,27 +455,12 @@ export default function HomePage({
         <button class="alt" onClick=${() => navigate('clearledgr/pipeline')} style="padding:8px 12px;font-size:12px">Open pipeline</button>
       </div>
       <div style="display:grid;gap:10px">
-        <${QueueShortcutRow}
-          label="Approval backlog"
-          detail="Open invoices waiting on approvers."
-          onClick=${() => openPipelineSlice('approval_backlog')}
-        />
-        <${QueueShortcutRow}
-          label="Ready to post"
-          detail="Go straight to invoices that can move to ERP."
-          onClick=${() => openPipelineSlice('ready_to_post')}
-        />
-        <${QueueShortcutRow}
-          label="Exceptions"
-          detail="Review policy, confidence, and posting blockers."
-          onClick=${() => openPipelineSlice('exceptions')}
-        />
-        ${savedPipelineViews.map((view) => html`
+        ${starterPipelineSlices.map((slice) => html`
           <${QueueShortcutRow}
-            key=${view.id}
-            label=${view.name || 'Saved view'}
-            detail="Open a saved AP queue view."
-            onClick=${() => openSavedPipelineView(view)}
+            key=${slice.id}
+            label=${slice.label}
+            detail=${slice.description}
+            onClick=${() => openPipelineSlice(slice.id)}
           />
         `)}
       </div>
@@ -345,70 +469,109 @@ export default function HomePage({
     <div class="panel">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
         <div>
-          <h3 style="margin:0 0 4px">What still needs setup</h3>
-          <p class="muted" style="margin:0">Only the steps that matter for AP launch.</p>
+          <h3 style="margin:0 0 4px">Saved views</h3>
+          <p class="muted" style="margin:0">
+            ${pinnedPipelineViews.length
+              ? 'Your pinned pipeline views are ready from Home.'
+              : 'Finance-native starter views are ready until you pin your own favorites.'}
+          </p>
         </div>
-        <button class="alt" onClick=${() => navigate('clearledgr/connections')} style="padding:8px 12px;font-size:12px">Open connections</button>
+        <button class="alt" onClick=${() => navigate('clearledgr/pipeline')} style="padding:8px 12px;font-size:12px">Manage views</button>
       </div>
       <div style="display:grid;gap:10px">
-        <${StatusRow}
-          label="Gmail"
-          ready=${gmailOk}
-          detail=${gmailOk ? 'Gmail monitoring is connected.' : 'Connect Gmail so Clearledgr can detect invoice threads.'}
-          actionLabel=${gmailOk ? '' : 'Connect'}
-          onAction=${connectGmail}
-          pending=${gmailPending}
-        />
-        <${StatusRow}
-          label="Approvals"
-          ready=${approvalSurfaceOk}
-          detail=${approvalSurfaceOk
-            ? (slackOk ? `Slack ready${slack?.approval_channel ? ` · ${slack.approval_channel}` : ''}` : 'Teams ready')
-            : 'Connect Slack or Teams so Clearledgr can route approval requests.'}
-          actionLabel=${approvalSurfaceOk ? '' : 'Connect'}
-          onAction=${slackOk || teamsOk ? null : connectSlack}
-          pending=${slackPending}
-        />
-        <${StatusRow}
-          label="ERP"
-          ready=${erpOk}
-          detail=${erpOk ? `${erp.erp_type || 'ERP'} is connected.` : 'Connect an ERP before posting approved invoices.'}
-          actionLabel=${erpOk ? '' : 'Connect'}
-          onAction=${() => navigate('clearledgr/connections')}
-        />
-        <${StatusRow}
-          label="Approval rules"
-          ready=${policyOk}
-          detail=${policyOk ? 'Approval rules are configured.' : 'Review the approval policy before going live.'}
-          actionLabel=${policyOk ? '' : 'Review rules'}
-          onAction=${() => navigate('clearledgr/rules')}
-        />
+        ${pinnedPipelineViews.map((view) => html`
+          <${QueueShortcutRow}
+            key=${`${view.scope || 'user'}:${view.id}`}
+            label=${view.name || 'Saved view'}
+            detail=${view.description || 'Open a pinned AP queue view.'}
+            onClick=${() => openSavedPipelineView(view)}
+          />
+        `)}
+        ${pinnedPipelineViews.length === 0 && starterSavedViews.map((view) => html`
+          <${QueueShortcutRow}
+            key=${`${view.scope || 'starter'}:${view.id}`}
+            label=${view.name || 'Starter view'}
+            detail=${view.description || 'Open a finance-native starter view.'}
+            onClick=${() => openSavedPipelineView(view)}
+          />
+        `)}
       </div>
     </div>
 
-    <${RecentActivity} entries=${recentActivity} navigate=${navigate} />
+    ${adminAccess
+      ? html`<div class="panel">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
+            <div>
+              <h3 style="margin:0 0 4px">What still needs setup</h3>
+              <p class="muted" style="margin:0">Only the few setup steps that can block AP work in Gmail.</p>
+            </div>
+            <button class="alt" onClick=${() => navigate('clearledgr/connections')} style="padding:8px 12px;font-size:12px">Open connections</button>
+          </div>
+          <div style="display:grid;gap:10px">
+            <${StatusRow}
+              label="Gmail"
+              ready=${gmailOk}
+              detail=${gmailOk ? 'Gmail monitoring is connected.' : 'Connect Gmail so Clearledgr can detect invoice threads.'}
+              actionLabel=${gmailOk ? '' : 'Connect'}
+              onAction=${connectGmail}
+              pending=${gmailPending}
+            />
+            <${StatusRow}
+              label="Approvals"
+              ready=${approvalSurfaceOk}
+              detail=${approvalSurfaceOk
+                ? (slackOk ? `Slack ready${slack?.approval_channel ? ` · ${slack.approval_channel}` : ''}` : 'Teams ready')
+                : 'Connect Slack or Teams so Clearledgr can route approval requests.'}
+              actionLabel=${approvalSurfaceOk ? '' : 'Connect'}
+              onAction=${slackOk || teamsOk ? null : connectSlack}
+              pending=${slackPending}
+            />
+            <${StatusRow}
+              label="ERP"
+              ready=${erpOk}
+              detail=${erpOk ? `${erp.erp_type || 'ERP'} is connected.` : 'Connect an ERP before posting approved invoices.'}
+              actionLabel=${erpOk ? '' : 'Connect'}
+              onAction=${() => navigate('clearledgr/connections')}
+            />
+            <${StatusRow}
+              label="Approval rules"
+              ready=${policyOk}
+              detail=${policyOk ? 'Approval rules are configured.' : 'Review the approval policy before going live.'}
+              actionLabel=${policyOk ? '' : 'Review rules'}
+              onAction=${() => navigate('clearledgr/rules')}
+            />
+          </div>
+        </div>`
+      : html`<div class="panel">
+          <h3 style="margin:0 0 6px">Workspace readiness</h3>
+          <p class="muted" style="margin:0">Setup pages are reserved for admins. If Gmail, approvals, or ERP are not ready, ask an admin to review Connections and Approval Rules.</p>
+        </div>`}
 
-    <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
-        <div>
-          <h3 style="margin:0 0 4px">Customize your left sidebar</h3>
-          <p class="muted" style="margin:0">Keep daily pages pinned. Leave the rest available without clutter.</p>
+    <${RecentActivity} entries=${recentActivity} navigate=${navigate} canOpenActivity=${routeOptions.includeOps} />
+
+    ${adminAccess && html`
+      <div class="panel">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
+          <div>
+            <h3 style="margin:0 0 4px">Customize your left sidebar</h3>
+            <p class="muted" style="margin:0">Keep daily pages pinned. Leave the rest available without turning Gmail into a dashboard.</p>
+          </div>
+          <button class="alt" onClick=${() => applyRoutePreferences(resetRoutePreferences(routeOptions), 'Navigation reset to defaults.')} style="padding:8px 12px;font-size:12px">Reset</button>
         </div>
-        <button class="alt" onClick=${() => applyRoutePreferences(resetRoutePreferences(routeOptions), 'Navigation reset to defaults.')} style="padding:8px 12px;font-size:12px">Reset</button>
+        <div style="display:grid;gap:10px">
+          ${customizableRoutes.map((route) => {
+            const preferenceState = getRoutePreferenceState(route.id, routePreferences, routeOptions);
+            return html`<${RoutePreferenceRow}
+              route=${route}
+              preferenceState=${preferenceState}
+              onPin=${() => applyRoutePreferences(pinRoute(route.id, routePreferences, routeOptions), `${route.title} pinned to the sidebar.`)}
+              onUnpin=${() => applyRoutePreferences(unpinRoute(route.id, routePreferences, routeOptions), `${route.title} removed from pinned pages.`)}
+              onHide=${() => applyRoutePreferences(hideRoute(route.id, routePreferences, routeOptions), `${route.title} hidden from the sidebar.`)}
+              onShow=${() => applyRoutePreferences(showRoute(route.id, routePreferences, routeOptions), `${route.title} restored to the sidebar.`)}
+            />`;
+          })}
+        </div>
       </div>
-      <div style="display:grid;gap:10px">
-        ${customizableRoutes.map((route) => {
-          const preferenceState = getRoutePreferenceState(route.id, routePreferences, routeOptions);
-          return html`<${RoutePreferenceRow}
-            route=${route}
-            preferenceState=${preferenceState}
-            onPin=${() => applyRoutePreferences(pinRoute(route.id, routePreferences, routeOptions), `${route.title} pinned to the sidebar.`)}
-            onUnpin=${() => applyRoutePreferences(unpinRoute(route.id, routePreferences, routeOptions), `${route.title} removed from pinned pages.`)}
-            onHide=${() => applyRoutePreferences(hideRoute(route.id, routePreferences, routeOptions), `${route.title} hidden from the sidebar.`)}
-            onShow=${() => applyRoutePreferences(showRoute(route.id, routePreferences, routeOptions), `${route.title} restored to the sidebar.`)}
-          />`;
-        })}
-      </div>
-    </div>
+    `}
   `;
 }

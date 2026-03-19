@@ -121,7 +121,7 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
 
     with TestClient(app) as _client:
         paths = _mounted_paths()
-        assert len(paths) <= 130
+        assert len(paths) <= 135
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
@@ -168,3 +168,18 @@ def test_ap_runtime_registers_sidebar_core_intents():
     assert "nudge_approval" in supported
     assert "reject_invoice" in supported
     assert "post_to_erp" in supported
+
+
+def test_gmail_extension_mutations_delegate_to_runtime_owned_ap_contract():
+    source = (ROOT / "clearledgr/api/gmail_extension.py").read_text(encoding="utf-8")
+
+    assert 'async def approve_and_post(' in source
+    assert 'result = await runtime.execute_intent(' in source
+    assert '"post_to_erp",' in source
+    assert 'async def submit_for_approval(' in source
+    assert 'async def escalate_to_manager(' in source
+    assert 'runtime.escalate_invoice_review(' in source
+    assert 'async def finance_summary_share(' in source
+    assert 'runtime.share_finance_summary(' in source
+    assert 'async def record_field_correction(' in source
+    assert 'return runtime.record_field_correction(' in source

@@ -51,15 +51,11 @@ export default function ReconciliationPage({ api, toast, orgId, onRefresh }) {
   }, [sheetUrl, range, orgId, api, toast, onRefresh]);
 
   return html`
-    <div style="display:grid;grid-template-columns:1fr 340px;gap:24px;align-items:start">
+    <div style="display:grid;grid-template-columns:1fr;gap:16px;align-items:start">
 
-      ${/* Main form */''}
       <div class="panel">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/></svg>
-          <h3 style="margin:0">Reconciliation groundwork</h3>
-        </div>
-        <p class="muted" style="margin-bottom:20px">This surface is early groundwork for future reconciliation workflows. AP remains the primary production workflow today.</p>
+        <h3 style="margin:0 0 6px">Reconciliation groundwork only</h3>
+        <p class="muted" style="margin-bottom:20px">This surface is intentionally secondary. AP remains the primary production workflow today, so use this page only when testing reconciliation groundwork.</p>
 
         <div style="display:flex;flex-direction:column;gap:14px">
           <div>
@@ -84,9 +80,8 @@ export default function ReconciliationPage({ api, toast, orgId, onRefresh }) {
         `}
       </div>
 
-      ${/* How it works sidebar */''}
       <div class="panel" style="background:var(--bg)">
-        <h3 style="font-size:14px;margin-bottom:12px">What this does</h3>
+        <h3 style="font-size:14px;margin-bottom:12px">What this groundwork run does</h3>
         <${Step} number="1" text="Import transactions from your Google Sheet" />
         <${Step} number="2" text="Match each transaction against posted invoices by amount, date, vendor, and reference" />
         <${Step} number="3" text="Flag exceptions for human review" />
