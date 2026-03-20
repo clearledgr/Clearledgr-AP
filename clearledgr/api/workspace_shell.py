@@ -28,7 +28,7 @@ from clearledgr.core.launch_controls import (
 from clearledgr.services.erp_readiness import evaluate_erp_connector_readiness
 from clearledgr.services.learning_calibration import get_learning_calibration_service
 from clearledgr.services.policy_compliance import AP_POLICY_NAME, get_policy_compliance
-from clearledgr.services.gmail_api import generate_auth_url
+from clearledgr.services.gmail_api import generate_auth_url, get_google_oauth_config
 from clearledgr.services.slack_api import SlackAPIClient, resolve_slack_runtime
 from clearledgr.services.teams_api import TeamsAPIClient
 from clearledgr.services.subscription import PlanTier, get_subscription_service
@@ -455,7 +455,7 @@ class NetSuiteConnectSubmitRequest(BaseModel):
 
 class GmailConnectStartRequest(BaseModel):
     organization_id: Optional[str] = None
-    redirect_path: str = Field(default="/workspace?page=integrations", max_length=512)
+    redirect_path: str = Field(default="/gmail/connected", max_length=512)
 
 
 class SubscriptionPlanPatchRequest(BaseModel):
@@ -593,15 +593,17 @@ def start_gmail_connect(
 ):
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
-    redirect_path = str(request.redirect_path or "/workspace?page=integrations").strip()
+    redirect_path = str(request.redirect_path or "/gmail/connected").strip()
     if not redirect_path.startswith("/"):
         raise HTTPException(status_code=400, detail="invalid_redirect_path")
 
+    oauth_redirect_uri = get_google_oauth_config().get("redirect_uri")
     state = _sign_state(
         {
             "organization_id": org_id,
             "user_id": user.user_id,
             "redirect_url": redirect_path,
+            "oauth_redirect_uri": oauth_redirect_uri,
             "iat": int(_utcnow().timestamp()),
             "nonce": secrets.token_urlsafe(8),
         }

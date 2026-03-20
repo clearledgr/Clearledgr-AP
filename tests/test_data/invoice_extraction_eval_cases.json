@@ -70,7 +70,7 @@
       },
       "expected": {
         "email_type": "invoice",
-        "vendor": "Vendorco",
+        "vendor": "VendorCo LLC",
         "primary_amount": 440.0,
         "primary_invoice": "VC-2026-44",
         "currency": "USD"
@@ -195,7 +195,7 @@
         ]
       },
       "expected": {
-        "vendor": "Billingportal",
+        "vendor": "Northwind Traders",
         "primary_amount": 2345.67,
         "primary_invoice": "NW-9921",
         "currency": "USD"
@@ -805,7 +805,7 @@
       },
       "expected": {
         "email_type": "invoice",
-        "vendor": "Paperline",
+        "vendor": "Paperline Services LLC",
         "primary_amount": 499.95,
         "primary_invoice": "ATT-9300",
         "currency": "GBP"
@@ -827,7 +827,7 @@
       },
       "expected": {
         "email_type": "invoice",
-        "vendor": "Netcloud",
+        "vendor": "Netcloud Services LLC",
         "primary_amount": 711.05,
         "primary_invoice": "ATT-9301",
         "currency": "CAD"
@@ -849,7 +849,7 @@
       },
       "expected": {
         "email_type": "invoice",
-        "vendor": "Seabright",
+        "vendor": "Seabright Services LLC",
         "primary_amount": 922.15,
         "primary_invoice": "ATT-9302",
         "currency": "AUD"
@@ -871,7 +871,7 @@
       },
       "expected": {
         "email_type": "invoice",
-        "vendor": "Atlasworks",
+        "vendor": "Atlasworks Services LLC",
         "primary_amount": 1133.25,
         "primary_invoice": "ATT-9303",
         "currency": "INR"
@@ -893,7 +893,7 @@
       },
       "expected": {
         "email_type": "invoice",
-        "vendor": "Meadowtech",
+        "vendor": "Meadowtech Services LLC",
         "primary_amount": 1344.35,
         "primary_invoice": "ATT-9304",
         "currency": "CHF"
@@ -915,7 +915,7 @@
       },
       "expected": {
         "email_type": "invoice",
-        "vendor": "Ridgepoint",
+        "vendor": "Ridgepoint Services LLC",
         "primary_amount": 1555.45,
         "primary_invoice": "ATT-9305",
         "currency": "USD"
@@ -937,7 +937,7 @@
       },
       "expected": {
         "email_type": "invoice",
-        "vendor": "Harborwest",
+        "vendor": "Harborwest Services LLC",
         "primary_amount": 1766.55,
         "primary_invoice": "ATT-9306",
         "currency": "EUR"
@@ -959,7 +959,7 @@
       },
       "expected": {
         "email_type": "invoice",
-        "vendor": "Oakfield",
+        "vendor": "Oakfield Services LLC",
         "primary_amount": 1977.65,
         "primary_invoice": "ATT-9307",
         "currency": "GBP"

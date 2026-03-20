@@ -267,6 +267,8 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
     "/extension/vendor-followup",
     "/extension/route-low-risk-approval",
     "/extension/retry-recoverable-failure",
+    "/extension/repair-historical-invoices",
+    "/extension/cleanup-gmail-labels",
     "/extension/finance-summary-share",
     "/extension/record-field-correction",
     "/extension/health",
@@ -325,6 +327,7 @@ STRICT_PROFILE_ALLOWED_AUTH_PATHS = {
 
 STRICT_PROFILE_ALLOWED_GMAIL_PATHS = {
     "/gmail/callback",
+    "/gmail/connected",
     "/gmail/disconnect",
     "/gmail/push",
 }

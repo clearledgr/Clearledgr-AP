@@ -115,6 +115,16 @@ class _FakeDB:
             item[key] = value
         return True
 
+    def update_ap_item_metadata_merge(self, ap_item_id, patch):
+        token = str(ap_item_id or "")
+        item = self.items.get(token)
+        if not item:
+            return False
+        metadata = dict(item.get("metadata") or {})
+        metadata.update(dict(patch or {}))
+        item["metadata"] = metadata
+        return True
+
     def create_ap_item(self, payload):
         item_id = str((payload or {}).get("id") or f"ap-created-{len(self.items) + 1}")
         item = {
@@ -130,6 +140,9 @@ class _FakeDB:
             "subject": (payload or {}).get("subject"),
             "sender": (payload or {}).get("sender"),
             "confidence": (payload or {}).get("confidence", 0.0),
+            "field_confidences": (payload or {}).get("field_confidences"),
+            "exception_code": (payload or {}).get("exception_code"),
+            "exception_severity": (payload or {}).get("exception_severity"),
             "metadata": (payload or {}).get("metadata", {}),
         }
         self.items[item_id] = item
@@ -329,6 +342,65 @@ def test_execute_route_low_risk_for_approval_success_and_idempotent_replay():
     assert second["status"] == "pending_approval"
     assert second["idempotency_replayed"] is True
     assert len(db.audit_rows) == 1
+
+
+def test_execute_route_low_risk_for_approval_blocks_field_review_precheck():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.evaluate_batch_route_low_risk_for_approval.return_value = {
+        "eligible": False,
+        "reason_codes": ["field_review_required", "blocking_source_conflicts"],
+        "blocked_fields": ["amount"],
+    }
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        result = asyncio.run(
+            runtime.execute_intent(
+                "route_low_risk_for_approval",
+                {"email_id": "gmail-thread-route-1"},
+                idempotency_key="idem-runtime-route-blocked-1",
+            )
+        )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "field_review_required"
+    assert result["audit_event_id"]
+    workflow._send_for_approval.assert_not_called()
+
+
+def test_execute_post_to_erp_blocked_by_field_review_precheck():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    db.items["ap-route-1"]["state"] = "ready_to_post"
+    workflow = MagicMock()
+    workflow.evaluate_financial_action_precheck.return_value = {
+        "eligible": False,
+        "reason_codes": ["field_review_required", "blocking_source_conflicts"],
+        "state": "ready_to_post",
+        "blocked_fields": ["amount"],
+        "source_conflicts": [
+            {
+                "field": "amount",
+                "blocking": True,
+                "reason": "source_value_mismatch",
+            }
+        ],
+    }
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        result = asyncio.run(
+            runtime.execute_intent(
+                "post_to_erp",
+                {"email_id": "gmail-thread-route-1"},
+                idempotency_key="idem-runtime-post-blocked-1",
+            )
+        )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "field_review_required"
+    assert result["audit_event_id"]
+    workflow.approve_invoice.assert_not_called()
 
 
 def test_execute_prepare_vendor_followups_waiting_sla_block():
@@ -675,6 +747,136 @@ def test_seed_ap_item_replaces_placeholder_vendor_and_zero_amount():
     assert item["vendor_name"] == "Google Payments"
     assert item["amount"] == 123.45
     assert item["invoice_number"] == "5499678906"
+
+
+def test_refresh_invoice_record_from_extraction_updates_ap_item_without_planner():
+    db = _FakeDB()
+    runtime = _runtime(db)
+
+    result = runtime.refresh_invoice_record_from_extraction(
+        {
+            "organization_id": "default",
+            "thread_id": "gmail-thread-refresh-1",
+            "message_id": "gmail-message-refresh-1",
+            "sender": "billing@vendor.test",
+            "subject": "Invoice INV-REFRESH-1",
+            "vendor_name": "Vendor Refresh Co",
+            "amount": 451.23,
+            "currency": "USD",
+            "invoice_number": "INV-REFRESH-1",
+            "primary_source": "attachment",
+        },
+        attachments=[{"filename": "invoice.pdf"}],
+        correlation_id="corr-refresh-1",
+        refresh_reason="golden_replay",
+    )
+
+    assert result["status"] == "refreshed"
+    seeded = db.get_ap_item_by_thread("default", "gmail-thread-refresh-1")
+    assert seeded is not None
+    assert seeded["vendor_name"] == "Vendor Refresh Co"
+    assert seeded["amount"] == 451.23
+    assert seeded["invoice_number"] == "INV-REFRESH-1"
+    assert seeded["metadata"]["processing_status"] == "extraction_refreshed"
+    assert seeded["metadata"]["refresh_reason"] == "golden_replay"
+
+
+def test_execute_ap_invoice_processing_registers_missing_ap_skill():
+    db = _FakeDB()
+    runtime = _runtime(db)
+
+    class _FakePlanner:
+        def __init__(self):
+            self._skills = {}
+            self.registered = []
+
+        def register_skill(self, skill):
+            self.registered.append(skill.skill_name)
+            self._skills[skill.skill_name] = skill
+
+        async def run_task(self, task):
+            return SimpleNamespace(
+                outcome={"status": "processed", "ap_item_state": "validated"},
+                task_run_id="task-run-1",
+                step_count=1,
+                status="completed",
+            )
+
+    planner = _FakePlanner()
+    invoice_payload = {
+        "gmail_id": "gmail-skill-register-1",
+        "thread_id": "gmail-thread-skill-register-1",
+        "message_id": "gmail-message-skill-register-1",
+        "organization_id": "default",
+        "sender": "billing@example.com",
+        "subject": "Invoice INV-SKILL-1",
+        "vendor_name": "Planner Registration Co",
+        "amount": 42.0,
+        "currency": "USD",
+    }
+
+    with patch("clearledgr.core.agent_runtime.get_planning_engine", return_value=planner):
+        result = asyncio.run(
+            runtime.execute_ap_invoice_processing(
+                invoice_payload=invoice_payload,
+                idempotency_key="idem-skill-register-1",
+                correlation_id="corr-skill-register-1",
+            )
+        )
+
+    assert planner.registered == ["ap_invoice_processing"]
+    assert result["status"] == "processed"
+    assert result["execution_mode"] == "agent_planning_engine"
+
+
+def test_execute_ap_invoice_processing_blocks_on_field_review_without_planner():
+    db = _FakeDB()
+    runtime = _runtime(db)
+
+    planner = MagicMock()
+    invoice_payload = {
+        "gmail_id": "gmail-blocked-1",
+        "thread_id": "gmail-thread-blocked-1",
+        "message_id": "gmail-message-blocked-1",
+        "organization_id": "default",
+        "sender": "billing@example.com",
+        "subject": "Invoice INV-BLOCK-1",
+        "vendor_name": "Conflict Co",
+        "amount": 199.0,
+        "currency": "USD",
+        "invoice_number": "INV-BLOCK-1",
+        "requires_field_review": True,
+        "confidence_blockers": [{"field": "amount", "reason": "source_value_mismatch"}],
+        "source_conflicts": [
+            {
+                "field": "amount",
+                "blocking": True,
+                "reason": "source_value_mismatch",
+                "preferred_source": "attachment",
+                "values": {"email": 0.0, "attachment": 199.0},
+            }
+        ],
+        "conflict_actions": [{"action": "review_fields", "field": "amount", "blocking": True}],
+        "field_confidences": {"amount": 0.98},
+    }
+
+    with patch("clearledgr.core.agent_runtime.get_planning_engine", return_value=planner):
+        result = asyncio.run(
+            runtime.execute_ap_invoice_processing(
+                invoice_payload=invoice_payload,
+                idempotency_key="idem-blocked-1",
+                correlation_id="corr-blocked-1",
+            )
+        )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "field_review_required"
+    planner.run_task.assert_not_called()
+    seeded = db.get_ap_item_by_thread("default", "gmail-thread-blocked-1")
+    assert seeded is not None
+    assert seeded["exception_code"] == "field_conflict"
+    assert seeded["metadata"]["requires_field_review"] is True
+    assert seeded["metadata"]["processing_status"] == "field_review_required"
 
 
 def test_runtime_prefers_sender_name_over_generic_processor_vendor():

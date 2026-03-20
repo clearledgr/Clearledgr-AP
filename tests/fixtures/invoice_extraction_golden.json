@@ -1,0 +1,120 @@
+[
+  {
+    "name": "google_workspace_attachment_invoice",
+    "input": {
+      "sender": "Google Payments <payments-noreply@google.com>",
+      "subject": "Google Workspace: Your invoice is available for clearledgr.com",
+      "body": "Your Google Workspace monthly invoice is available. Please find the PDF attached.",
+      "attachments": [
+        {
+          "filename": "5449235811.pdf",
+          "content_type": "application/pdf",
+          "content_text": "Google Cloud EMEA Limited\nInvoice number: 5449235811\nInvoice date: 31 Dec 2025\nTotal in EUR EUR 40.23\n"
+        }
+      ]
+    },
+    "expected": {
+      "email_type": "invoice",
+      "vendor": "Google Cloud EMEA Limited",
+      "primary_amount": 40.23,
+      "currency": "EUR",
+      "primary_invoice": "5449235811",
+      "primary_source": "attachment"
+    }
+  },
+  {
+    "name": "google_cloud_zero_amount_attachment_invoice",
+    "input": {
+      "sender": "Google Payments <payments-noreply@google.com>",
+      "subject": "Google Cloud Platform & APIs: Your invoice is available for 01CE14-3817D6-5288E5",
+      "body": "Please find attached invoice.",
+      "attachments": [
+        {
+          "filename": "5515266827.pdf",
+          "content_type": "application/pdf",
+          "content_text": "Google Cloud EMEA Limited\nInvoice number: 5515266827\nInvoice date: 31 Dec 2025\nTotal in USD USD 0.00\n"
+        }
+      ]
+    },
+    "expected": {
+      "email_type": "invoice",
+      "vendor": "Google Cloud EMEA Limited",
+      "primary_amount": 0.0,
+      "currency": "USD",
+      "primary_invoice": "5515266827",
+      "primary_source": "attachment"
+    }
+  },
+  {
+    "name": "replit_receipt_from_processor",
+    "input": {
+      "sender": "invoice+statements+acct_15YpNsJAmnYVOvfn@stripe.com",
+      "subject": "Your receipt from Replit #2462-2703",
+      "body": "Thank you for your payment. Amount paid: USD 15.00",
+      "attachments": []
+    },
+    "expected": {
+      "email_type": "receipt",
+      "vendor": "Replit",
+      "primary_amount": 15.0,
+      "currency": "USD",
+      "primary_source": "email"
+    }
+  },
+  {
+    "name": "contractor_payment_request",
+    "input": {
+      "sender": "contractor@freelance.dev",
+      "subject": "Payment request for February work",
+      "body": "Please pay USD 2000.00 for February retainer. Thank you.",
+      "attachments": []
+    },
+    "expected": {
+      "email_type": "payment_request",
+      "vendor": "Freelance",
+      "primary_amount": 2000.0,
+      "currency": "USD",
+      "primary_source": "email"
+    }
+  },
+  {
+    "name": "scanned_ocr_style_attachment_invoice",
+    "input": {
+      "sender": "billing@google.com",
+      "subject": "Invoice attached",
+      "body": "Please see attached invoice.",
+      "attachments": [
+        {
+          "filename": "invoice.pdf",
+          "content_type": "application/pdf",
+          "content_text": "--- Page 1 Tables ---\n5..5..1.5..2..6.6..8..2.7......\nTotal in USD\nUS$40.00\n--- Page 1 Text ---\nGoogle Cloud EMEA Limited\nInvoice number: 5515266827\nInvoice date: 31 Dec 2025\nTotal in USD US$40.00\n"
+        }
+      ]
+    },
+    "expected": {
+      "email_type": "invoice",
+      "vendor": "Google Cloud EMEA Limited",
+      "primary_amount": 40.0,
+      "currency": "USD",
+      "primary_invoice": "5515266827",
+      "primary_source": "attachment"
+    }
+  },
+  {
+    "name": "table_total_outweighs_subtotal",
+    "input": {
+      "sender": "billing@designco.com",
+      "subject": "Invoice INV-7788",
+      "body": "Subtotal: USD 300.00\nTax: USD 22.00\nDiscount: USD 42.00\nTotal Due: USD 280.00\nInvoice # INV-7788",
+      "attachments": []
+    },
+    "expected": {
+      "email_type": "invoice",
+      "vendor": "Designco",
+      "primary_amount": 280.0,
+      "currency": "USD",
+      "primary_invoice": "INV-7788",
+      "primary_source": "email"
+    }
+  }
+]

@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDateTime, useAction } from '../route-helpers.js';
 import { openSourceEmail } from '../../utils/formatters.js';
+import { navigateToRecordDetail } from '../../utils/record-route.js';
 import {
   activatePipelineSlice,
   clearPipelineNavigation,
@@ -112,7 +113,7 @@ export default function UpcomingPage({ api, toast, orgId, userEmail, navigate })
   const openRecord = (task) => {
     if (!task?.ap_item_id) return;
     focusPipelineItem(pipelineScope, buildTaskLocator(task), 'upcoming');
-    navigate(`clearledgr/invoice/${encodeURIComponent(task.ap_item_id)}`);
+    navigateToRecordDetail(navigate, task.ap_item_id);
   };
 
   const openEmail = (task) => {

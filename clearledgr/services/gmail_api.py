@@ -23,7 +23,11 @@ from cryptography.fernet import Fernet
 logger = logging.getLogger(__name__)
 
 # Configuration
-DEFAULT_GOOGLE_REDIRECT_URI = "http://localhost:8010/gmail/callback"
+def _default_google_redirect_uri() -> str:
+    base = os.getenv("API_BASE_URL", "http://127.0.0.1:8010").strip().rstrip("/")
+    if not base:
+        base = "http://127.0.0.1:8010"
+    return f"{base}/gmail/callback"
 PUBSUB_TOPIC = os.getenv("GMAIL_PUBSUB_TOPIC", "projects/clearledgr/topics/gmail-push")
 TOKEN_KEY_FILE = os.getenv("TOKEN_ENCRYPTION_KEY_FILE", ".clearledgr_token_key")
 
@@ -32,9 +36,9 @@ def get_google_oauth_config() -> Dict[str, str]:
     """Return current Google OAuth config from environment."""
     client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
-    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", DEFAULT_GOOGLE_REDIRECT_URI).strip()
+    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "").strip()
     if not redirect_uri:
-        redirect_uri = DEFAULT_GOOGLE_REDIRECT_URI
+        redirect_uri = _default_google_redirect_uri()
     return {
         "client_id": client_id,
         "client_secret": client_secret,
@@ -270,6 +274,8 @@ class GmailAPIClient:
         """Refresh an expired access token."""
         if not self._token:
             raise ValueError("No token to refresh")
+        if not str(self._token.refresh_token or "").strip():
+            raise ValueError("gmail_reconnect_required_missing_refresh_token")
         oauth = validate_google_oauth_config(require_secret=False)
         payload = {
             "client_id": oauth["client_id"],
@@ -312,6 +318,7 @@ class GmailAPIClient:
         query: str = "",
         max_results: int = 100,
         page_token: Optional[str] = None,
+        label_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         List messages matching a query.
@@ -331,6 +338,8 @@ class GmailAPIClient:
             params["q"] = query
         if page_token:
             params["pageToken"] = page_token
+        if label_ids:
+            params["labelIds"] = [str(label_id).strip() for label_id in label_ids if str(label_id).strip()]
         
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -532,6 +541,15 @@ class GmailAPIClient:
             )
             response.raise_for_status()
             return response.json()
+
+    async def delete_label(self, label_id: str) -> None:
+        """Delete a Gmail label."""
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{GMAIL_API_BASE}/users/me/labels/{label_id}",
+                headers=self._headers(),
+            )
+            response.raise_for_status()
     
     async def create_draft(
         self,
@@ -709,6 +727,7 @@ def generate_auth_url(state: str = "") -> str:
         "scope": " ".join(GMAIL_SCOPES),
         "access_type": "offline",  # Get refresh token
         "prompt": "consent",  # Always show consent screen
+        "include_granted_scopes": "true",
     }
     if state:
         params["state"] = state

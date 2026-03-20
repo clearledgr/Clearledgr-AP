@@ -88,6 +88,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
 
         from clearledgr.services.state_observers import (
             AuditTrailObserver,
+            GmailLabelObserver,
             NotificationObserver,
             StateObserverRegistry,
             VendorFeedbackObserver,
@@ -96,6 +97,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         self._observer_registry.register(AuditTrailObserver(self.db))
         self._observer_registry.register(VendorFeedbackObserver(self.db))
         self._observer_registry.register(NotificationObserver(self.db))
+        self._observer_registry.register(GmailLabelObserver(self.db))
 
     def _load_settings(self):
         """Load organization settings if not already loaded."""
@@ -607,6 +609,22 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             preferred=invoice.correlation_id,
         )
         invoice.correlation_id = correlation_id
+
+        field_review_gate = self.evaluate_financial_action_field_review_gate(existing or {})
+        if field_review_gate.get("blocked"):
+            self._persist_financial_action_field_review_gate(ap_item_id, field_review_gate)
+            return {
+                "status": "blocked",
+                "invoice_id": invoice.gmail_id,
+                "reason": "field_review_required",
+                "detail": field_review_gate.get("detail"),
+                "requires_field_review": True,
+                "confidence_blockers": field_review_gate.get("confidence_blockers") or [],
+                "source_conflicts": field_review_gate.get("source_conflicts") or [],
+                "blocking_source_conflicts": field_review_gate.get("blocking_source_conflicts") or [],
+                "blocked_fields": field_review_gate.get("blocked_fields") or [],
+                "exception_code": field_review_gate.get("exception_code"),
+            }
 
         # Canonical AP path for auto-approval:
         # validated -> needs_approval -> approved -> ready_to_post

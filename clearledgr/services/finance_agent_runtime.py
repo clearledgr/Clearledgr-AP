@@ -382,12 +382,25 @@ class FinanceAgentRuntime:
         metadata_updates = {
             "correlation_id": str(correlation_id or "").strip() or None,
             "intake_source": invoice.get("intake_source") or "gmail_autopilot",
+            "document_type": invoice.get("document_type") or invoice.get("email_type") or "invoice",
             "email_type": invoice.get("email_type") or "invoice",
             "has_attachment": has_attachment,
             "attachment_count": attachment_count,
         }
         if isinstance(invoice.get("field_confidences"), dict) and invoice.get("field_confidences"):
             metadata_updates["field_confidences"] = invoice.get("field_confidences")
+        if isinstance(invoice.get("field_provenance"), dict) and invoice.get("field_provenance"):
+            metadata_updates["field_provenance"] = invoice.get("field_provenance")
+        if isinstance(invoice.get("field_evidence"), dict) and invoice.get("field_evidence"):
+            metadata_updates["field_evidence"] = invoice.get("field_evidence")
+        if isinstance(invoice.get("source_conflicts"), list) and invoice.get("source_conflicts"):
+            metadata_updates["source_conflicts"] = invoice.get("source_conflicts")
+        if isinstance(invoice.get("conflict_actions"), list) and invoice.get("conflict_actions"):
+            metadata_updates["conflict_actions"] = invoice.get("conflict_actions")
+        if isinstance(invoice.get("confidence_gate"), dict) and invoice.get("confidence_gate"):
+            metadata_updates["confidence_gate"] = invoice.get("confidence_gate")
+        if isinstance(invoice.get("confidence_blockers"), list) and invoice.get("confidence_blockers"):
+            metadata_updates["confidence_blockers"] = invoice.get("confidence_blockers")
         if isinstance(invoice.get("raw_parser"), dict) and invoice.get("raw_parser"):
             metadata_updates["raw_parser"] = invoice.get("raw_parser")
         if isinstance(invoice.get("attachment_manifest"), list) and invoice.get("attachment_manifest"):
@@ -399,10 +412,16 @@ class FinanceAgentRuntime:
             "payment_processor",
             "invoice_date",
             "primary_source",
+            "exception_code",
+            "exception_severity",
         ):
             value = invoice.get(key)
             if value:
                 metadata_updates[key] = value
+        if invoice.get("requires_extraction_review") is not None:
+            metadata_updates["requires_extraction_review"] = bool(invoice.get("requires_extraction_review"))
+        if invoice.get("requires_field_review") is not None:
+            metadata_updates["requires_field_review"] = bool(invoice.get("requires_field_review"))
         if invoice.get("zero_amount_confirmed_by_attachment") is not None:
             metadata_updates["zero_amount_confirmed_by_attachment"] = bool(
                 invoice.get("zero_amount_confirmed_by_attachment")
@@ -442,6 +461,12 @@ class FinanceAgentRuntime:
                 updates["currency"] = currency
             if confidence > self._safe_float(existing.get("confidence"), 0.0):
                 updates["confidence"] = confidence
+            if isinstance(invoice.get("field_confidences"), dict) and invoice.get("field_confidences"):
+                updates["field_confidences"] = invoice.get("field_confidences")
+            if invoice.get("exception_code"):
+                updates["exception_code"] = invoice.get("exception_code")
+            if invoice.get("exception_severity"):
+                updates["exception_severity"] = invoice.get("exception_severity")
             if updates and hasattr(self.db, "update_ap_item"):
                 try:
                     self.db.update_ap_item(str(existing.get("id") or "").strip(), **updates)
@@ -479,6 +504,9 @@ class FinanceAgentRuntime:
                 "attachment_url": attachment_url,
                 "state": "received",
                 "confidence": confidence,
+                "field_confidences": invoice.get("field_confidences") if isinstance(invoice.get("field_confidences"), dict) else None,
+                "exception_code": invoice.get("exception_code"),
+                "exception_severity": invoice.get("exception_severity"),
                 "organization_id": organization_id,
                 "user_id": user_id,
                 "metadata": metadata_updates,
@@ -1078,6 +1106,107 @@ class FinanceAgentRuntime:
         )
         return await self.execute_skill_request(request, action=action)
 
+    def refresh_invoice_record_from_extraction(
+        self,
+        invoice_payload: Optional[Dict[str, Any]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        *,
+        correlation_id: Optional[str] = None,
+        refresh_reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Refresh canonical AP record fields from extraction without planner execution.
+
+        Used by replay/backfill and repair flows that need deterministic field
+        refresh but must not depend on planning skill registration.
+        """
+        invoice = invoice_payload if isinstance(invoice_payload, dict) else {}
+        gmail_thread_id = self._invoice_thread_id(invoice)
+        gmail_message_id = self._invoice_message_id(invoice)
+        resolved_correlation_id = (
+            str(correlation_id or "").strip()
+            or str(invoice.get("correlation_id") or "").strip()
+            or None
+        )
+        invoice_org = str(invoice.get("organization_id") or self.organization_id or "default").strip() or "default"
+        attachment_list = attachments if isinstance(attachments, list) else []
+        attachment_url = ""
+        attachment_names: List[str] = []
+        source_conflicts = invoice.get("source_conflicts") if isinstance(invoice.get("source_conflicts"), list) else []
+        blocking_conflicts = [
+            conflict for conflict in source_conflicts
+            if isinstance(conflict, dict) and bool(conflict.get("blocking"))
+        ]
+        confidence_blockers = invoice.get("confidence_blockers") if isinstance(invoice.get("confidence_blockers"), list) else []
+        if not confidence_blockers:
+            gate = invoice.get("confidence_gate") if isinstance(invoice.get("confidence_gate"), dict) else {}
+            confidence_blockers = gate.get("confidence_blockers") if isinstance(gate.get("confidence_blockers"), list) else []
+        requires_field_review = bool(
+            invoice.get("requires_field_review")
+            or invoice.get("requires_extraction_review")
+            or confidence_blockers
+            or blocking_conflicts
+        )
+        if attachment_list:
+            first_attachment = attachment_list[0] if isinstance(attachment_list[0], dict) else {}
+            attachment_url = str(
+                first_attachment.get("url")
+                or first_attachment.get("attachment_url")
+                or ""
+            ).strip()
+            for attachment in attachment_list:
+                if not isinstance(attachment, dict):
+                    continue
+                name = str(attachment.get("filename") or attachment.get("name") or "").strip()
+                if name:
+                    attachment_names.append(name)
+
+        seeded_item = self._seed_ap_item_for_invoice_processing(
+            {
+                **invoice,
+                "organization_id": invoice_org,
+                "thread_id": gmail_thread_id or invoice.get("thread_id"),
+                "message_id": gmail_message_id or invoice.get("message_id"),
+                "attachment_url": attachment_url or invoice.get("attachment_url"),
+                "attachment_count": len(attachment_list),
+                "attachment_names": attachment_names,
+                "has_attachment": bool(attachment_list),
+                "requires_field_review": requires_field_review,
+            },
+            correlation_id=resolved_correlation_id,
+        )
+
+        if not seeded_item:
+            return {
+                "status": "error",
+                "reason": "ap_item_seed_failed",
+                "execution_mode": "extraction_refresh",
+            }
+
+        refresh_metadata = {
+            "processing_status": "extraction_refreshed",
+            "refresh_reason": str(refresh_reason or "replay_backfill").strip() or "replay_backfill",
+            "extraction_refreshed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        ap_item_id = str(seeded_item.get("id") or "").strip()
+        if ap_item_id and hasattr(self.db, "update_ap_item_metadata_merge"):
+            try:
+                self.db.update_ap_item_metadata_merge(ap_item_id, refresh_metadata)
+            except Exception:
+                pass
+        if ap_item_id and hasattr(self.db, "get_ap_item"):
+            try:
+                seeded_item = self.db.get_ap_item(ap_item_id) or seeded_item
+            except Exception:
+                pass
+
+        return {
+            "status": "refreshed",
+            "execution_mode": "extraction_refresh",
+            "ap_item_id": seeded_item.get("id"),
+            "email_id": gmail_thread_id or gmail_message_id or seeded_item.get("thread_id"),
+            "correlation_id": resolved_correlation_id,
+        }
+
     async def execute_ap_invoice_processing(
         self,
         invoice_payload: Optional[Dict[str, Any]] = None,
@@ -1105,6 +1234,21 @@ class FinanceAgentRuntime:
         attachment_list = attachments if isinstance(attachments, list) else []
         attachment_url = ""
         attachment_names: List[str] = []
+        source_conflicts = invoice.get("source_conflicts") if isinstance(invoice.get("source_conflicts"), list) else []
+        blocking_conflicts = [
+            conflict for conflict in source_conflicts
+            if isinstance(conflict, dict) and bool(conflict.get("blocking"))
+        ]
+        confidence_blockers = invoice.get("confidence_blockers") if isinstance(invoice.get("confidence_blockers"), list) else []
+        if not confidence_blockers:
+            gate = invoice.get("confidence_gate") if isinstance(invoice.get("confidence_gate"), dict) else {}
+            confidence_blockers = gate.get("confidence_blockers") if isinstance(gate.get("confidence_blockers"), list) else []
+        requires_field_review = bool(
+            invoice.get("requires_field_review")
+            or invoice.get("requires_extraction_review")
+            or confidence_blockers
+            or blocking_conflicts
+        )
         if attachment_list:
             first_attachment = attachment_list[0] if isinstance(attachment_list[0], dict) else {}
             attachment_url = str(
@@ -1166,6 +1310,54 @@ class FinanceAgentRuntime:
             field_confidences=invoice.get("field_confidences") if isinstance(invoice.get("field_confidences"), dict) else None,
         )
 
+        if requires_field_review:
+            ap_item_id = str(seeded_item.get("id") or "").strip() if seeded_item else ""
+            review_exception_code = str(invoice.get("exception_code") or "").strip() or (
+                "field_conflict" if blocking_conflicts else "field_review_required"
+            )
+            review_exception_severity = str(invoice.get("exception_severity") or "").strip() or (
+                "high" if blocking_conflicts else "medium"
+            )
+            if seeded_item and hasattr(self.db, "update_ap_item"):
+                merged_metadata = {
+                    **self._parse_json_dict(seeded_item.get("metadata")),
+                    "requires_field_review": True,
+                    "processing_status": "field_review_required",
+                    "confidence_blockers": confidence_blockers,
+                    "source_conflicts": source_conflicts,
+                    "conflict_actions": invoice.get("conflict_actions") if isinstance(invoice.get("conflict_actions"), list) else [],
+                    "exception_code": review_exception_code,
+                    "exception_severity": review_exception_severity,
+                }
+                try:
+                    self.db.update_ap_item(
+                        ap_item_id,
+                        exception_code=review_exception_code,
+                        exception_severity=review_exception_severity,
+                        field_confidences=invoice.get("field_confidences") if isinstance(invoice.get("field_confidences"), dict) else None,
+                        metadata=merged_metadata,
+                    )
+                except Exception:
+                    pass
+            response = {
+                "status": "blocked",
+                "reason": "field_review_required",
+                "detail": "Invoice extraction has unresolved field blockers; workflow execution was not performed.",
+                "execution_mode": "agent_planning_engine",
+                "requires_field_review": True,
+                "confidence_blockers": confidence_blockers,
+                "source_conflicts": source_conflicts,
+                "conflict_actions": invoice.get("conflict_actions") if isinstance(invoice.get("conflict_actions"), list) else [],
+            }
+            if seeded_item:
+                response.setdefault("ap_item_id", seeded_item.get("id"))
+                response.setdefault("email_id", runtime_reference or seeded_item.get("thread_id"))
+            if resolved_idempotency_key:
+                response.setdefault("idempotency_key", resolved_idempotency_key)
+            if resolved_correlation_id:
+                response.setdefault("correlation_id", resolved_correlation_id)
+            return response
+
         # Route through AgentPlanningEngine (Claude tool-use planning loop).
         # Fail closed if planner is unavailable; never bypass policy gates with
         # a direct workflow fallback.
@@ -1174,6 +1366,10 @@ class FinanceAgentRuntime:
             from clearledgr.core.skills.base import AgentTask
 
             planner = get_planning_engine()
+            if "ap_invoice_processing" not in planner._skills:
+                from clearledgr.core.skills.ap_skill import APSkill
+
+                planner.register_skill(APSkill())
             if "ap_invoice_processing" not in planner._skills:
                 raise RuntimeError("APSkill not registered")
 

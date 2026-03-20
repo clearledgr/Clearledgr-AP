@@ -9,6 +9,7 @@ import time
 import pytest
 from fastapi import HTTPException
 
+from clearledgr.api import workspace_shell as workspace_shell_module
 from clearledgr.api.gmail_webhooks import (
     _validate_push_payload,
     _unsign_oauth_state,
@@ -132,6 +133,15 @@ class TestUnsignOAuthState:
         with pytest.raises(HTTPException) as exc_info:
             _unsign_oauth_state(state)
         assert "expired" in exc_info.value.detail
+
+    def test_accepts_workspace_signed_state_with_dev_secret_fallback(self, monkeypatch):
+        monkeypatch.setenv("ENV", "dev")
+        monkeypatch.delenv("CLEARLEDGR_SECRET_KEY", raising=False)
+        payload = {"user_id": "u1", "org_id": "acme", "iat": int(time.time())}
+        state = workspace_shell_module._sign_state(payload)
+        result = _unsign_oauth_state(state)
+        assert result["user_id"] == "u1"
+        assert result["org_id"] == "acme"
 
 
 # ---------------------------------------------------------------------------

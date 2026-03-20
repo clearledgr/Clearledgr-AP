@@ -3,8 +3,8 @@
  * Each route renders as a full-page view in Gmail's content area via InboxSDK Router.
  *
  * Streak-style doctrine:
- * - Keep the default left nav intentionally small.
- * - Let operators pin extra pages as needed.
+ * - Keep Home support cards intentionally small.
+ * - Let the Gmail left nav expose every eligible page unless a user hides it.
  * - Let less-used pages stay accessible from Home without cluttering the nav.
  */
 
@@ -177,14 +177,14 @@ export function getNavEligibleRoutes({ includeAdmin = false, includeOps = true }
     .sort((left, right) => Number(left.navOrder || 0) - Number(right.navOrder || 0));
 }
 
-export function getDefaultPinnedRouteIds({ includeAdmin = false } = {}) {
-  return getNavEligibleRoutes({ includeAdmin })
+export function getDefaultPinnedRouteIds({ includeAdmin = false, includeOps = true } = {}) {
+  return getNavEligibleRoutes({ includeAdmin, includeOps })
     .filter((route) => route.defaultPinned)
     .map((route) => route.id);
 }
 
-export function normalizeRoutePreferences(value = {}, { includeAdmin = false } = {}) {
-  const allowedRouteIds = new Set(getNavEligibleRoutes({ includeAdmin }).map((route) => route.id));
+export function normalizeRoutePreferences(value = {}, { includeAdmin = false, includeOps = true } = {}) {
+  const allowedRouteIds = new Set(getNavEligibleRoutes({ includeAdmin, includeOps }).map((route) => route.id));
   const routeMap = new Map(ROUTES.map((route) => [route.id, route]));
 
   const normalizeList = (items) => [...new Set(
@@ -266,6 +266,14 @@ export function getVisibleNavRoutes(preferences = {}, options = {}) {
   return getNavEligibleRoutes(options).filter((route) => {
     const state = getRoutePreferenceState(route.id, prefs, options);
     return state.visible;
+  });
+}
+
+export function getMenuNavRoutes(preferences = {}, options = {}) {
+  const prefs = normalizeRoutePreferences(preferences, options);
+  return getNavEligibleRoutes(options).filter((route) => {
+    const state = getRoutePreferenceState(route.id, prefs, options);
+    return !state.hidden;
   });
 }
 

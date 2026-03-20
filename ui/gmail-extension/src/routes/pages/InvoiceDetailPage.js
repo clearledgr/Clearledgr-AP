@@ -13,9 +13,11 @@ import { hasOpsAccessRole } from '../../utils/roles.js';
 import {
   formatAmount,
   getExceptionReason,
+  getFieldReviewBlockers,
   getIssueSummary,
   getSourceMessageId,
   getSourceThreadId,
+  getWorkflowPauseReason,
   normalizeBudgetContext,
   openSourceEmail,
   partitionAuditEvents,
@@ -26,7 +28,18 @@ import {
   getPrimaryActionConfig,
   getWorkStateNotice,
   normalizeWorkState,
+  shouldOfferResumeWorkflow,
 } from '../../utils/work-actions.js';
+import {
+  getDocumentReferenceLabel,
+  getDocumentReferenceText,
+  getDocumentTypeLabel,
+  getNonInvoiceWorkflowGuidance,
+  isInvoiceDocumentType,
+  normalizeDocumentType,
+} from '../../utils/document-types.js';
+import { navigateToRecordDetail } from '../../utils/record-route.js';
+import { navigateToVendorRecord } from '../../utils/vendor-route.js';
 import { focusPipelineItem } from '../pipeline-views.js';
 import {
   buildReplyTemplatePrefill,
@@ -66,15 +79,19 @@ function StatePill({ state }) {
   ">${tone.label}</span>`;
 }
 
-function getBlockers(item, state, budgetContext) {
+function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   const blockers = [];
+  const fieldReviewBlockers = getFieldReviewBlockers(item);
+  const pauseReason = getWorkflowPauseReason(item);
+  const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
+  const isInvoiceDocument = isInvoiceDocumentType(documentType);
   const push = (key, label, detail) => {
     if (!label || blockers.some((entry) => entry.key === key)) return;
     blockers.push({ key, label, detail });
   };
 
   if (budgetContext?.requiresDecision) {
-    push('budget', 'Budget review required', 'A budget decision is still required before this invoice can move forward.');
+    push('budget', 'Budget review required', `A budget decision is still required before this ${isInvoiceDocument ? 'invoice' : 'record'} can move forward.`);
   }
 
   const exceptionCode = String(item?.exception_code || '').trim().toLowerCase();
@@ -84,28 +101,48 @@ function getBlockers(item, state, budgetContext) {
   }
 
   if (!item?.po_number && exceptionCode.includes('po')) {
-    push('po', 'PO reference missing', 'Link the correct PO before continuing this invoice.');
+    push('po', 'PO reference missing', `Link the correct PO before continuing this ${isInvoiceDocument ? 'invoice' : 'record'}.`);
   }
 
   const confidence = Number(item?.confidence);
-  if (Number.isFinite(confidence) && confidence < 0.95 && !['posted_to_erp', 'closed', 'rejected'].includes(state)) {
-    push('confidence', 'Review extracted fields', `Current confidence is ${Math.round(confidence * 100)}%, so a field check is still required.`);
+  if ((item?.requires_field_review || (Number.isFinite(confidence) && confidence < 0.95)) && !['posted_to_erp', 'closed', 'rejected'].includes(state)) {
+    push(
+      'confidence',
+      fieldReviewBlockers.length ? 'Workflow paused for field review' : 'Review extracted fields',
+      pauseReason || `Current confidence is ${Math.round(confidence * 100)}%, so a field check is still required.`,
+    );
   }
 
   if (state === 'needs_approval') {
     push('approval', 'Waiting on approver', 'The approval request is still pending.');
   }
   if (state === 'needs_info') {
-    push('info', 'Missing invoice details', 'Clearledgr still needs more information before this invoice can continue.');
+    push(
+      'info',
+      isInvoiceDocument ? 'Missing invoice details' : 'Missing document details',
+      `Clearledgr still needs more information before this ${isInvoiceDocument ? 'invoice' : 'record'} can continue.`,
+    );
   }
   if (state === 'failed_post') {
     push('erp', 'ERP posting failed', 'Retry the ERP post or review the connector result.');
   }
   if (blockers.length === 0 && state === 'received') {
-    push('received', 'Ready for review', 'This invoice is ready for AP validation and approval routing.');
+    push(
+      'received',
+      isInvoiceDocument ? 'Ready for review' : 'Needs finance review',
+      isInvoiceDocument
+        ? 'This invoice is ready for AP validation and approval routing.'
+        : getNonInvoiceWorkflowGuidance(documentType),
+    );
   }
   if (blockers.length === 0 && state === 'validated') {
-    push('validated', 'Ready for approval', 'Checks are complete and the invoice can be routed to approval.');
+    push(
+      'validated',
+      isInvoiceDocument ? 'Ready for approval' : `Ready to review ${documentLabel}`,
+      isInvoiceDocument
+        ? 'Checks are complete and the invoice can be routed to approval.'
+        : getNonInvoiceWorkflowGuidance(documentType),
+    );
   }
   return blockers.slice(0, 5);
 }
@@ -127,6 +164,47 @@ function getEvidenceChecklist(item, state, contextPayload) {
     { key: 'approval', label: 'Approval', text: hasApproval ? (state === 'needs_approval' ? 'Routed' : 'Available') : 'Not routed', ok: hasApproval },
     { key: 'erp', label: 'ERP', text: hasErpLink ? (item?.erp_reference || erp.erp_reference ? 'Linked' : 'Connected') : 'Not connected', ok: hasErpLink },
   ];
+}
+
+function FieldReviewRows({ blockers, pauseReason }) {
+  if ((!Array.isArray(blockers) || blockers.length === 0) && !pauseReason) {
+    return html`<p class="muted">No paused field review.</p>`;
+  }
+
+  return html`
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${pauseReason && html`
+        <div style="padding:10px 12px;border:1px solid #fcd34d;border-radius:var(--radius-sm);background:#FEFCE8;color:#78350f;font-size:13px;line-height:1.45">
+          ${pauseReason}
+        </div>
+      `}
+      ${(blockers || []).map((blocker) => html`
+        <div key=${`${blocker.field || 'field'}-${blocker.kind || 'review'}`} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);display:flex;flex-direction:column;gap:6px">
+          <div style="font-weight:700;font-size:13px">${blocker.field_label || 'Field'} blocked</div>
+          ${blocker.email_value_display && html`
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+              <span class="muted" style="font-size:12px">Email said</span>
+              <span style="font-size:13px;font-weight:600;text-align:right">${blocker.email_value_display}</span>
+            </div>
+          `}
+          ${blocker.attachment_value_display && html`
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+              <span class="muted" style="font-size:12px">Attachment said</span>
+              <span style="font-size:13px;font-weight:600;text-align:right">${blocker.attachment_value_display}</span>
+            </div>
+          `}
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+            <span class="muted" style="font-size:12px">Source selected</span>
+            <span style="font-size:13px;font-weight:600;text-align:right">
+              ${blocker.winning_source_label || 'Review required'}
+              ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ''}
+            </span>
+          </div>
+          <div class="muted" style="font-size:12px;line-height:1.45">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
+        </div>
+      `)}
+    </div>
+  `;
 }
 
 async function executeIntent(api, orgId, intent, input) {
@@ -274,15 +352,29 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
   }, [bootstrapTemplatePrefs, orgId, userEmail]);
 
   const state = normalizeWorkState(item?.state || 'received');
+  const documentType = normalizeDocumentType(item?.document_type);
+  const documentLabel = getDocumentTypeLabel(documentType);
+  const isInvoiceDocument = isInvoiceDocumentType(documentType);
   const actorRole = bootstrap?.current_user?.role || 'operator';
   const readOnlyMode = !hasOpsAccessRole(actorRole);
   const pipelineScope = { orgId, userEmail };
   const budgetContext = normalizeBudgetContext(context || {}, item);
-  const blockers = useMemo(() => getBlockers(item, state, budgetContext), [item, state, budgetContext]);
+  const blockers = useMemo(() => getBlockers(item, state, budgetContext, documentType), [item, state, budgetContext, documentType]);
+  const fieldReviewBlockers = useMemo(() => getFieldReviewBlockers(item), [item]);
   const evidence = useMemo(() => getEvidenceChecklist(item, state, context), [item, state, context]);
   const auditSections = useMemo(() => partitionAuditEvents(auditEvents), [auditEvents]);
-  const stateNotice = getWorkStateNotice(state);
-  const primaryAction = getPrimaryActionConfig(state, actorRole);
+  const pauseReason = useMemo(() => getWorkflowPauseReason(item), [item]);
+  const resumeWorkflowEligible = useMemo(
+    () => !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType),
+    [auditEvents, documentType, item, pauseReason],
+  );
+  const stateNotice = resumeWorkflowEligible
+    ? 'Field review is cleared. Resume workflow to continue the posting step.'
+    : getWorkStateNotice(state, documentType);
+  const basePrimaryAction = pauseReason ? null : getPrimaryActionConfig(state, actorRole, documentType);
+  const primaryAction = resumeWorkflowEligible && ['preview_erp_post', 'retry_erp_post'].includes(basePrimaryAction?.id)
+    ? { id: 'resume_workflow', label: 'Resume workflow' }
+    : basePrimaryAction;
   const canOpenEmail = Boolean(item && (getSourceThreadId(item) || getSourceMessageId(item) || item.subject));
   const smartRejectDefault = item?.exception_code ? getExceptionReason(item.exception_code) : '';
   const relatedRecords = context?.related_records || {};
@@ -342,6 +434,41 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
     await refresh();
   });
 
+  const [doResumeWorkflow, resumingWorkflow] = useAction(async () => {
+    const confirmed = await openDialog({
+      dialogMode: 'confirm',
+      actionType: 'resume_workflow',
+      title: 'Resume workflow',
+      message: 'Review blockers are cleared. Clearledgr will continue the guarded posting step.',
+      previewLines: [
+        item?.vendor_name || item?.vendor || 'Unknown vendor',
+        formatAmount(item?.amount, item?.currency || 'USD'),
+        getDocumentReferenceText(documentType, item?.invoice_number || ''),
+        isInvoiceDocument && item?.due_date ? `Due: ${item.due_date}` : null,
+      ].filter(Boolean),
+      confirmLabel: 'Resume workflow',
+      cancelLabel: 'Cancel',
+    });
+    if (!confirmed) return;
+    const result = await executeIntent(api, orgId, 'retry_recoverable_failures', {
+      ap_item_id: item.id,
+      email_id: item.thread_id || item.message_id || item.id,
+      reason: 'Resume workflow after review cleared',
+      source_channel: 'gmail_route',
+      source_channel_id: 'gmail_route',
+      source_message_ref: item.thread_id || item.message_id || item.id,
+    });
+    const status = String(result?.status || '').toLowerCase();
+    const ok = ['posted', 'posted_to_erp', 'recovered', 'ready_to_post'].includes(status);
+    toast(
+      ok
+        ? (status === 'posted' || status === 'posted_to_erp' ? 'Workflow resumed and invoice posted.' : 'Workflow resumed.')
+        : (result?.reason || 'Could not resume workflow.'),
+      ok ? 'success' : 'error',
+    );
+    await refresh();
+  });
+
   const [doPost, posting] = useAction(async () => {
     const confirmed = await openDialog({
       dialogMode: 'confirm',
@@ -351,8 +478,8 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
       previewLines: [
         item?.vendor_name || item?.vendor || 'Unknown vendor',
         formatAmount(item?.amount, item?.currency || 'USD'),
-        `Invoice ${item?.invoice_number || 'N/A'}`,
-        item?.due_date ? `Due ${item.due_date}` : null,
+        getDocumentReferenceText(documentType, item?.invoice_number || ''),
+        isInvoiceDocument && item?.due_date ? `Due ${item.due_date}` : null,
       ].filter(Boolean),
       confirmLabel: 'Post to ERP',
       cancelLabel: 'Cancel',
@@ -408,13 +535,13 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
   const openVendorRecord = useCallback(() => {
     const vendorName = String(item?.vendor_name || item?.vendor || '').trim();
     if (!vendorName) return;
-    navigate(`clearledgr/vendor/${encodeURIComponent(vendorName)}`);
+    navigateToVendorRecord(navigate, vendorName);
   }, [item, navigate]);
 
   const openRelatedRecord = useCallback((relatedItem) => {
     if (!relatedItem?.id) return;
     focusPipelineItem(pipelineScope, relatedItem, 'related_record');
-    navigate(`clearledgr/invoice/${encodeURIComponent(relatedItem.id)}`);
+    navigateToRecordDetail(navigate, relatedItem.id);
   }, [navigate, pipelineScope]);
 
   const [draftReply, draftingReply] = useAction(async (templateId) => {
@@ -437,13 +564,13 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
   });
 
   if (loading) {
-    return html`<div class="panel"><p class="muted">Loading invoice…</p></div>`;
+    return html`<div class="panel"><p class="muted">Loading record…</p></div>`;
   }
 
   if (!item) {
     return html`
       <div class="panel">
-        <p class="muted">Invoice not found.</p>
+        <p class="muted">Record not found.</p>
         <button class="alt" onClick=${() => navigate('clearledgr/pipeline')}>Back to pipeline</button>
       </div>
     `;
@@ -466,6 +593,9 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
   } else if (primaryAction?.id === 'retry_erp_post') {
     primaryHandler = doRetry;
     primaryPending = retrying;
+  } else if (primaryAction?.id === 'resume_workflow') {
+    primaryHandler = doResumeWorkflow;
+    primaryPending = resumingWorkflow;
   }
 
   return html`
@@ -483,13 +613,17 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
           <h3 style="margin:0 0 4px">${item.vendor_name || item.vendor || 'Unknown vendor'}</h3>
           <div style="font-size:28px;font-weight:700;letter-spacing:-0.02em">${formatAmount(item.amount, item.currency || 'USD')}</div>
           <div class="muted" style="margin-top:6px">
-            Invoice ${item.invoice_number || 'N/A'} · Due ${item.due_date || 'N/A'} · ${item.po_number ? `PO ${item.po_number}` : 'No PO'}
+            ${[
+              item?.invoice_number ? getDocumentReferenceText(documentType, item.invoice_number) : documentLabel,
+              ...(isInvoiceDocument ? [`Due ${item.due_date || 'N/A'}`, item.po_number ? `PO ${item.po_number}` : 'No PO'] : []),
+            ].join(' · ')}
           </div>
         </div>
         <${StatePill} state=${state} />
       </div>
 
-      ${stateNotice && html`<div class="muted" style="margin-top:12px">${stateNotice}</div>`}
+      ${pauseReason && html`<div class="muted" style="margin-top:12px">${pauseReason}</div>`}
+      ${!pauseReason && stateNotice && html`<div class="muted" style="margin-top:12px">${stateNotice}</div>`}
 
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">
         ${primaryAction?.label && primaryHandler && html`
@@ -500,10 +634,10 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
         ${readOnlyMode && html`
           <div class="muted" style="width:100%">Read-only view. Queue actions are reserved for AP operators.</div>
         `}
-        ${canRejectWorkItem(state, actorRole) && html`
+        ${canRejectWorkItem(state, actorRole, documentType) && html`
           <button class="alt" onClick=${doReject} disabled=${rejecting}>Reject</button>
         `}
-        ${canNudgeApprover(state, actorRole) && primaryAction?.id !== 'nudge_approver' && html`
+        ${canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== 'nudge_approver' && html`
           <button class="alt" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
         `}
       </div>
@@ -526,6 +660,11 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
         </div>
 
         <div class="panel">
+          <h3 style="margin-top:0">Paused field review</h3>
+          <${FieldReviewRows} blockers=${fieldReviewBlockers} pauseReason=${pauseReason} />
+        </div>
+
+        <div class="panel">
           <h3 style="margin-top:0">Evidence checklist</h3>
           <div style="display:flex;flex-direction:column;gap:10px">
             ${evidence.map((entry) => html`
@@ -538,11 +677,12 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Invoice details</h3>
+          <h3 style="margin-top:0">${documentLabel} details</h3>
           <div style="display:flex;flex-direction:column;gap:10px">
-            ${detailRow('Invoice #', item.invoice_number || '—')}
-            ${detailRow('Due date', item.due_date ? fmtDate(item.due_date) : '—')}
-            ${detailRow('PO number', item.po_number || 'None')}
+            ${detailRow(getDocumentReferenceLabel(documentType), item.invoice_number || '—')}
+            ${detailRow('Document type', documentLabel)}
+            ${isInvoiceDocument ? detailRow('Due date', item.due_date ? fmtDate(item.due_date) : '—') : null}
+            ${isInvoiceDocument ? detailRow('PO number', item.po_number || 'None') : null}
             ${detailRow('Confidence', item.confidence ? `${Math.round(Number(item.confidence) * 100)}%` : '—')}
             ${detailRow('Sender', item.sender || '—')}
             ${detailRow('Subject', item.subject || '—')}

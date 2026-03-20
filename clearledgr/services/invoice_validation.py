@@ -38,6 +38,16 @@ class InvoiceValidationMixin:
     """Mixin providing validation, gate, and helper methods for InvoiceWorkflowService."""
 
     @staticmethod
+    def _coerce_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    @staticmethod
     def _budget_status_rank(status: str) -> int:
         return budget_status_rank(status)
 
@@ -206,6 +216,129 @@ class InvoiceValidationMixin:
                 return {}
         return {}
 
+    @staticmethod
+    def _parse_json_list(raw: Any) -> List[Any]:
+        if isinstance(raw, list):
+            return list(raw)
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+                return parsed if isinstance(parsed, list) else []
+            except Exception:
+                return []
+        return []
+
+    def _blocking_source_conflicts(self, raw_conflicts: Any) -> List[Dict[str, Any]]:
+        blockers: List[Dict[str, Any]] = []
+        for conflict in self._parse_json_list(raw_conflicts):
+            if not isinstance(conflict, dict):
+                continue
+            field = str(conflict.get("field") or "").strip().lower()
+            if not field or not self._coerce_bool(conflict.get("blocking")):
+                continue
+            blockers.append(conflict)
+        return blockers
+
+    def evaluate_financial_action_field_review_gate(
+        self,
+        invoice_row: Dict[str, Any],
+        *,
+        field_confidences_override: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Return the hard-stop field review gate for approval/posting actions."""
+        row = invoice_row if isinstance(invoice_row, dict) else {}
+        metadata = self._parse_metadata_dict(row.get("metadata"))
+        confidence_gate = self._evaluate_invoice_row_confidence_gate(
+            row,
+            field_confidences_override=field_confidences_override,
+        )
+
+        confidence_blockers = self._parse_json_list(row.get("confidence_blockers"))
+        if not confidence_blockers:
+            confidence_blockers = self._parse_json_list(metadata.get("confidence_blockers"))
+        if not confidence_blockers:
+            raw_gate_blockers = confidence_gate.get("confidence_blockers")
+            confidence_blockers = raw_gate_blockers if isinstance(raw_gate_blockers, list) else []
+
+        source_conflicts = self._parse_json_list(row.get("source_conflicts"))
+        if not source_conflicts:
+            source_conflicts = self._parse_json_list(metadata.get("source_conflicts"))
+        blocking_source_conflicts = self._blocking_source_conflicts(source_conflicts)
+
+        requires_field_review = bool(
+            self._coerce_bool(row.get("requires_field_review"))
+            or self._coerce_bool(metadata.get("requires_field_review"))
+            or bool(confidence_gate.get("requires_field_review"))
+            or bool(confidence_blockers)
+            or bool(blocking_source_conflicts)
+        )
+
+        blocked_fields: List[str] = []
+        for issue in list(confidence_blockers) + list(blocking_source_conflicts):
+            if not isinstance(issue, dict):
+                continue
+            field = str(issue.get("field") or "").strip().lower()
+            if field and field not in blocked_fields:
+                blocked_fields.append(field)
+
+        blocked = requires_field_review or bool(blocking_source_conflicts)
+        return {
+            "blocked": blocked,
+            "reason": "field_review_required" if blocked else None,
+            "detail": (
+                "Financial action blocked until required field review is completed."
+                if blocked
+                else None
+            ),
+            "requires_field_review": requires_field_review,
+            "confidence_gate": confidence_gate,
+            "confidence_blockers": confidence_blockers,
+            "source_conflicts": source_conflicts,
+            "blocking_source_conflicts": blocking_source_conflicts,
+            "blocked_fields": blocked_fields,
+            "exception_code": (
+                "field_conflict"
+                if blocking_source_conflicts
+                else ("field_review_required" if requires_field_review else None)
+            ),
+            "exception_severity": (
+                "high"
+                if blocking_source_conflicts
+                else ("medium" if requires_field_review else None)
+            ),
+        }
+
+    def evaluate_financial_action_precheck(
+        self,
+        ap_item: Dict[str, Any],
+        *,
+        allowed_states: List[str],
+        state_reason_code: str,
+    ) -> Dict[str, Any]:
+        """Evaluate state plus hard-stop review blockers for mutating financial actions."""
+        state = self._canonical_invoice_state(ap_item) or ""
+        field_review_gate = self.evaluate_financial_action_field_review_gate(ap_item)
+        reason_codes: List[str] = []
+
+        if state not in {str(value or "").strip().lower() for value in allowed_states}:
+            reason_codes.append(state_reason_code)
+        if field_review_gate.get("blocked"):
+            reason_codes.append("field_review_required")
+        if field_review_gate.get("blocking_source_conflicts"):
+            reason_codes.append("blocking_source_conflicts")
+
+        return {
+            "eligible": len(reason_codes) == 0,
+            "state": state or None,
+            "reason_codes": list(dict.fromkeys(reason_codes)),
+            "requires_field_review": bool(field_review_gate.get("requires_field_review")),
+            "confidence_blockers": field_review_gate.get("confidence_blockers") or [],
+            "source_conflicts": field_review_gate.get("source_conflicts") or [],
+            "blocking_source_conflicts": field_review_gate.get("blocking_source_conflicts") or [],
+            "blocked_fields": field_review_gate.get("blocked_fields") or [],
+            "exception_code": field_review_gate.get("exception_code"),
+        }
+
     def _get_ap_item_correlation_id(
         self,
         *,
@@ -298,30 +431,53 @@ class InvoiceValidationMixin:
             or None,
         )
 
+    def _persist_financial_action_field_review_gate(
+        self,
+        ap_item_id: Optional[str],
+        gate: Dict[str, Any],
+    ) -> None:
+        """Persist the latest field-review blocker snapshot for blocked financial actions."""
+        if not ap_item_id or not isinstance(gate, dict) or not gate.get("blocked"):
+            return
+        self._update_ap_item_metadata(
+            ap_item_id,
+            {
+                "requires_field_review": True,
+                "confidence_gate": gate.get("confidence_gate") or {},
+                "confidence_blockers": gate.get("confidence_blockers") or [],
+                "source_conflicts": gate.get("source_conflicts") or [],
+                "exception_code": gate.get("exception_code"),
+                "exception_severity": gate.get("exception_severity"),
+            },
+        )
+        try:
+            self.db.update_ap_item(
+                ap_item_id,
+                exception_code=gate.get("exception_code"),
+                exception_severity=gate.get("exception_severity"),
+            )
+        except Exception as exc:
+            logger.error("Could not persist field-review block metadata for %s: %s", ap_item_id, exc)
+
     def evaluate_batch_route_low_risk_for_approval(self, ap_item: Dict[str, Any]) -> Dict[str, Any]:
         """Evaluate deterministic prechecks for batch `route_low_risk_for_approval`."""
         state = self._canonical_invoice_state(ap_item) or ""
         metadata = self._parse_metadata_dict((ap_item or {}).get("metadata"))
         reason_codes: List[str] = []
+        field_review_gate = self.evaluate_financial_action_field_review_gate(ap_item)
 
         if state != APState.VALIDATED.value:
             reason_codes.append("state_not_validated")
 
-        requires_field_review = bool(
-            ap_item.get("requires_field_review")
-            or metadata.get("requires_field_review")
-        )
+        requires_field_review = bool(field_review_gate.get("requires_field_review"))
         if requires_field_review:
             reason_codes.append("field_review_required")
 
-        confidence_blockers = []
-        raw_blockers = ap_item.get("confidence_blockers")
-        if isinstance(raw_blockers, list):
-            confidence_blockers = [entry for entry in raw_blockers if entry]
-        elif isinstance(metadata.get("confidence_blockers"), list):
-            confidence_blockers = [entry for entry in metadata.get("confidence_blockers") if entry]
+        confidence_blockers = field_review_gate.get("confidence_blockers") or []
         if confidence_blockers:
             reason_codes.append("confidence_blockers_present")
+        if field_review_gate.get("blocking_source_conflicts"):
+            reason_codes.append("blocking_source_conflicts")
 
         budget_requires_decision = bool(
             ap_item.get("budget_requires_decision")
@@ -353,11 +509,14 @@ class InvoiceValidationMixin:
         return {
             "eligible": len(reason_codes) == 0,
             "state": state or None,
-            "reason_codes": reason_codes,
+            "reason_codes": list(dict.fromkeys(reason_codes)),
             "requires_field_review": requires_field_review,
             "confidence_blockers": confidence_blockers,
+            "source_conflicts": field_review_gate.get("source_conflicts") or [],
+            "blocking_source_conflicts": field_review_gate.get("blocking_source_conflicts") or [],
+            "blocked_fields": field_review_gate.get("blocked_fields") or [],
             "budget_requires_decision": budget_requires_decision,
-            "exception_code": exception_code or None,
+            "exception_code": field_review_gate.get("exception_code") or exception_code or None,
             "document_type": document_type or "invoice",
         }
 
@@ -392,16 +551,26 @@ class InvoiceValidationMixin:
             exception_code=exception_code,
         )
         reason_codes: List[str] = []
+        field_review_gate = self.evaluate_financial_action_field_review_gate(ap_item)
         if not recoverability.get("recoverable"):
             reason_codes.append(str(recoverability.get("reason") or "non_recoverable_failure"))
+        if field_review_gate.get("blocked"):
+            reason_codes.append("field_review_required")
+        if field_review_gate.get("blocking_source_conflicts"):
+            reason_codes.append("blocking_source_conflicts")
 
         return {
             "eligible": len(reason_codes) == 0,
             "state": state,
-            "reason_codes": reason_codes,
+            "reason_codes": list(dict.fromkeys(reason_codes)),
             "recoverability": recoverability,
             "last_error": last_error or None,
-            "exception_code": exception_code or None,
+            "exception_code": field_review_gate.get("exception_code") or exception_code or None,
+            "requires_field_review": bool(field_review_gate.get("requires_field_review")),
+            "confidence_blockers": field_review_gate.get("confidence_blockers") or [],
+            "source_conflicts": field_review_gate.get("source_conflicts") or [],
+            "blocking_source_conflicts": field_review_gate.get("blocking_source_conflicts") or [],
+            "blocked_fields": field_review_gate.get("blocked_fields") or [],
         }
 
     @staticmethod

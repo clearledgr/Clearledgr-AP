@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   getStateLabel, formatAmount, trimText, getIssueSummary,
   getExceptionReason, getDueRiskLabel, getDecisionSummary,
-  normalizeBudgetContext, getReasonSheetDefaults, parseJsonObject,
+  getFieldReviewBlockers, getWorkflowPauseReason, normalizeBudgetContext, getReasonSheetDefaults, parseJsonObject,
   readLocalStorage, writeLocalStorage,
 } from './formatters.js';
 
@@ -133,6 +133,49 @@ describe('normalizeBudgetContext', () => {
     expect(result.status).toBe('');
     expect(result.requiresDecision).toBe(false);
     expect(result.checks).toEqual([]);
+  });
+});
+
+describe('field review summaries', () => {
+  it('builds source conflict summaries from raw extraction evidence', () => {
+    const blockers = getFieldReviewBlockers({
+      currency: 'USD',
+      requires_field_review: true,
+      field_provenance: {
+        amount: {
+          source: 'attachment',
+          value: 440.0,
+        },
+      },
+      field_evidence: {
+        amount: {
+          source: 'attachment',
+          selected_value: 440.0,
+          email_value: 400.0,
+          attachment_value: 440.0,
+          attachment_name: 'invoice.pdf',
+        },
+      },
+      source_conflicts: [
+        {
+          field: 'amount',
+          blocking: true,
+          reason: 'source_value_mismatch',
+          preferred_source: 'attachment',
+          values: { email: 400.0, attachment: 440.0 },
+        },
+      ],
+    });
+
+    expect(blockers).toHaveLength(1);
+    expect(blockers[0].field_label).toBe('Amount');
+    expect(blockers[0].email_value_display).toBe('USD 400.00');
+    expect(blockers[0].attachment_value_display).toBe('USD 440.00');
+    expect(blockers[0].winning_source_label).toBe('Attachment');
+  });
+
+  it('prefers explicit workflow pause copy when present', () => {
+    expect(getWorkflowPauseReason({ workflow_paused_reason: 'Workflow paused for review.' })).toBe('Workflow paused for review.');
   });
 });
 

@@ -164,3 +164,57 @@ class NotificationObserver(StateObserver):
             },
             ap_item_id=event.ap_item_id,
         )
+
+
+class GmailLabelObserver(StateObserver):
+    """Synchronize Gmail labels to match the canonical finance record."""
+
+    def __init__(self, db: Any) -> None:
+        self._db = db
+
+    @staticmethod
+    def _record_value(record: Any, key: str) -> Any:
+        if isinstance(record, dict):
+            return record.get(key)
+        return getattr(record, key, None)
+
+    async def on_transition(self, event: StateTransitionEvent) -> None:
+        if not event.gmail_id or not hasattr(self._db, "get_invoice_status"):
+            return
+
+        row = self._db.get_invoice_status(event.gmail_id)
+        if not isinstance(row, dict):
+            return
+
+        message_id = str(row.get("message_id") or "").strip() or str(event.gmail_id or "").strip()
+        user_id = str(row.get("user_id") or "").strip()
+        finance_email = None
+
+        if hasattr(self._db, "get_finance_email_by_gmail_id") and message_id:
+            try:
+                finance_email = self._db.get_finance_email_by_gmail_id(message_id)
+            except Exception:
+                finance_email = None
+
+        if not user_id and finance_email is not None:
+            user_id = str(self._record_value(finance_email, "user_id") or "").strip()
+        if not user_id:
+            return
+
+        try:
+            from clearledgr.services.gmail_api import GmailAPIClient
+            from clearledgr.services.gmail_labels import sync_finance_labels
+
+            client = GmailAPIClient(user_id)
+            if not await client.ensure_authenticated():
+                return
+
+            await sync_finance_labels(
+                client,
+                message_id,
+                ap_item=row,
+                finance_email=finance_email,
+                user_email=user_id,
+            )
+        except Exception as exc:
+            logger.warning("GmailLabelObserver: %s", exc)

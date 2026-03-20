@@ -1,4 +1,69 @@
 import { hasOpsAccessRole } from './roles.js';
+import {
+  getDocumentTypeLabel,
+  isInvoiceDocumentType,
+} from './document-types.js';
+import { parseJsonObject } from './formatters.js';
+
+const RESUME_WORKFLOW_REASON_CODES = new Set([
+  'field_review_required',
+  'blocking_source_conflicts',
+  'confidence_field_review_required',
+]);
+
+function normalizeAuditToken(value) {
+  return String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+}
+
+function addReasonTokens(target, value) {
+  if (!value) return;
+  if (Array.isArray(value)) {
+    value.forEach((entry) => addReasonTokens(target, entry));
+    return;
+  }
+  String(value)
+    .split(',')
+    .map((entry) => normalizeAuditToken(entry))
+    .filter(Boolean)
+    .forEach((entry) => target.add(entry));
+}
+
+function getAuditReasonTokens(event) {
+  const payload = parseJsonObject(event?.payload_json || event?.payloadJson || event?.payload) || {};
+  const response = payload?.response && typeof payload.response === 'object' ? payload.response : {};
+  const target = new Set();
+
+  addReasonTokens(target, event?.reason);
+  addReasonTokens(target, event?.operator_reason);
+  addReasonTokens(target, payload?.reason);
+  addReasonTokens(target, payload?.reason_code);
+  addReasonTokens(target, payload?.reason_codes);
+  addReasonTokens(target, response?.reason);
+  addReasonTokens(target, response?.reason_code);
+  addReasonTokens(target, response?.reason_codes);
+
+  return target;
+}
+
+export function shouldOfferResumeWorkflow(item, auditEvents = [], documentType = 'invoice') {
+  if (!isInvoiceDocumentType(documentType)) return false;
+
+  const normalizedState = normalizeWorkState(item?.state || '');
+  if (!['ready_to_post', 'failed_post'].includes(normalizedState)) return false;
+  if (Boolean(item?.requires_field_review)) return false;
+
+  const sourceConflicts = Array.isArray(item?.source_conflicts) ? item.source_conflicts : [];
+  if (sourceConflicts.some((conflict) => Boolean(conflict?.blocking))) return false;
+
+  return (Array.isArray(auditEvents) ? auditEvents : []).some((event) => {
+    const eventType = normalizeAuditToken(event?.event_type || event?.eventType);
+    const reasons = getAuditReasonTokens(event);
+    if ([...reasons].some((reason) => RESUME_WORKFLOW_REASON_CODES.has(reason))) {
+      return true;
+    }
+    return eventType === 'retry_recoverable_failure_blocked';
+  });
+}
 
 export function normalizeWorkState(state) {
   const normalized = String(state || '').trim().toLowerCase();
@@ -8,8 +73,9 @@ export function normalizeWorkState(state) {
   return normalized;
 }
 
-export function getPrimaryActionConfig(state, actorRole = 'operator') {
+export function getPrimaryActionConfig(state, actorRole = 'operator', documentType = 'invoice') {
   if (!hasOpsAccessRole(actorRole)) return null;
+  if (!isInvoiceDocumentType(documentType)) return null;
   const normalized = normalizeWorkState(state);
   if (normalized === 'received' || normalized === 'validated') {
     return { id: 'request_approval', label: 'Request approval' };
@@ -29,8 +95,18 @@ export function getPrimaryActionConfig(state, actorRole = 'operator') {
   return null;
 }
 
-export function getWorkStateNotice(state) {
+export function getWorkStateNotice(state, documentType = 'invoice') {
   const normalized = normalizeWorkState(state);
+  if (!isInvoiceDocumentType(documentType)) {
+    const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
+    if (normalized === 'rejected') {
+      return `This ${documentLabel} has been rejected.`;
+    }
+    if (normalized === 'closed') {
+      return `This ${documentLabel} has been closed.`;
+    }
+    return `This ${documentLabel} is tracked as a non-invoice finance document. Invoice approval and ERP posting are disabled.`;
+  }
   if (normalized === 'approved') {
     return 'Approval received. Clearledgr is preparing the posting step.';
   }
@@ -43,13 +119,15 @@ export function getWorkStateNotice(state) {
   return '';
 }
 
-export function canRejectWorkItem(state, actorRole = 'operator') {
+export function canRejectWorkItem(state, actorRole = 'operator', documentType = 'invoice') {
   if (!hasOpsAccessRole(actorRole)) return false;
+  if (!isInvoiceDocumentType(documentType)) return false;
   const normalized = normalizeWorkState(state);
   return ['received', 'validated', 'needs_approval', 'needs_info'].includes(normalized);
 }
 
-export function canNudgeApprover(state, actorRole = 'operator') {
+export function canNudgeApprover(state, actorRole = 'operator', documentType = 'invoice') {
   if (!hasOpsAccessRole(actorRole)) return false;
+  if (!isInvoiceDocumentType(documentType)) return false;
   return normalizeWorkState(state) === 'needs_approval';
 }

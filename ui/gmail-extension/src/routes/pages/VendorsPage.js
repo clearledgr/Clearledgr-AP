@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDateTime, fmtDollar, useAction } from '../route-helpers.js';
 import { clearPipelineNavigation, readPipelinePreferences, writePipelinePreferences } from '../pipeline-views.js';
+import { navigateToVendorRecord } from '../../utils/vendor-route.js';
 
 const html = htm.bind(h);
 
@@ -46,7 +47,7 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
   const openVendorRecord = (vendor) => {
     const vendorName = String(vendor?.vendor_name || '').trim();
     if (!vendorName) return;
-    navigate(`clearledgr/vendor/${encodeURIComponent(vendorName)}`);
+    navigateToVendorRecord(navigate, vendorName);
   };
 
   const openVendorPipeline = (vendor) => {

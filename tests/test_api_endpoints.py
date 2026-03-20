@@ -397,7 +397,7 @@ class TestGmailWebhooks:
             {
                 "organization_id": "default",
                 "user_id": "gmail-user-1",
-                "redirect_url": "/workspace?org=default&page=integrations",
+                "redirect_url": "/gmail/connected?source=oauth",
                 "iat": int(datetime.now(timezone.utc).timestamp()),
                 "nonce": "test-nonce",
             }
@@ -423,10 +423,57 @@ class TestGmailWebhooks:
 
         assert response.status_code in {302, 307}
         location = str(response.headers.get("location") or "")
-        assert "/workspace" in location
-        assert "org=default" in location
-        assert "page=integrations" in location
+        assert "/gmail/connected" in location
+        assert "source=oauth" in location
         assert "success=true" in location
+
+    def test_gmail_connected_page_renders_success_message(self):
+        response = client.get("/gmail/connected?success=true")
+        assert response.status_code == 200
+        assert "Gmail connected" in response.text
+        assert "Return to Gmail" in response.text
+        assert "Monitoring active" in response.text
+
+    def test_gmail_callback_preserves_existing_refresh_token_when_google_omits_one(self, monkeypatch):
+        monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
+        state = workspace_shell_module._sign_state(
+            {
+                "organization_id": "default",
+                "user_id": "gmail-user-1",
+                "redirect_url": "/workspace?page=integrations",
+                "iat": int(datetime.now(timezone.utc).timestamp()),
+                "nonce": "test-nonce-refresh",
+            }
+        )
+        fake_token = SimpleNamespace(
+            user_id="gmail-user-1",
+            access_token="access-token",
+            refresh_token="",
+            expires_at=int(datetime.now(timezone.utc).timestamp()) + 3600,
+            email="ops@example.com",
+        )
+        stored = {}
+
+        class _TokenStore:
+            def get(self, _user_id):
+                return SimpleNamespace(refresh_token="preserved-refresh-token")
+
+            def store(self, token):
+                stored["token"] = token
+
+        with patch.object(gmail_webhooks_module, "exchange_code_for_tokens", AsyncMock(return_value=fake_token)):
+            with patch.object(gmail_webhooks_module, "token_store", _TokenStore()):
+                with patch.object(gmail_webhooks_module, "_should_setup_watch", return_value=False):
+                    with patch.object(gmail_webhooks_module, "GmailAPIClient", MagicMock()):
+                        with patch.object(gmail_webhooks_module, "get_db", return_value=MagicMock()):
+                            response = client.get(
+                                "/gmail/callback",
+                                params={"code": "test-code", "state": state},
+                                follow_redirects=False,
+                            )
+
+        assert response.status_code in {200, 302, 307}
+        assert stored["token"].refresh_token == "preserved-refresh-token"
 
     def test_process_single_email_propagates_org_to_invoice_handler(self):
         class _FakeClient:
@@ -574,6 +621,132 @@ class TestGmailWebhooks:
         assert seen["message_id"] == "msg-retry-1"
         assert fake_db.saved.id == "finance-email-1"
 
+    def test_process_single_email_labels_receipt_without_ap_workflow(self):
+        class _FakeClient:
+            async def get_message(self, _message_id):
+                return SimpleNamespace(
+                    id="msg-receipt-1",
+                    thread_id="thread-receipt-1",
+                    subject="Your receipt from Replit #2462-2703",
+                    sender="billing@replit.com",
+                    recipient="ap@company.test",
+                    date=datetime.now(timezone.utc),
+                    snippet="Payment confirmed",
+                    body_text="Thanks for your payment. Receipt attached.",
+                    body_html="",
+                    labels=[],
+                    attachments=[],
+                )
+
+        class _FakeDB:
+            def __init__(self):
+                self.saved = []
+
+            def get_finance_email_by_gmail_id(self, _gmail_id):
+                return None
+
+            def save_finance_email(self, email):
+                self.saved.append(email)
+                return email
+
+        fake_db = _FakeDB()
+        sync_labels = AsyncMock(return_value={"processed", "receipts", "payments"})
+
+        with patch.object(
+            gmail_webhooks_module,
+            "classify_email_with_llm",
+            AsyncMock(return_value={"type": "NOISE", "confidence": 0.91}),
+        ):
+            with patch.object(
+                gmail_webhooks_module,
+                "_label_only_document_parse",
+                return_value={
+                    "email_type": "receipt",
+                    "vendor": "Replit",
+                    "amount": 19.0,
+                    "currency": "usd",
+                    "confidence": 0.91,
+                },
+            ):
+                with patch.object(gmail_webhooks_module, "sync_finance_labels", sync_labels):
+                    with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
+                        asyncio.run(
+                            gmail_webhooks_module.process_single_email(
+                                client=_FakeClient(),
+                                message_id="msg-receipt-1",
+                                user_id="gmail-user-1",
+                                organization_id="tenant-42",
+                            )
+                        )
+
+        assert len(fake_db.saved) == 1
+        assert fake_db.saved[0].email_type == "receipt"
+        assert fake_db.saved[0].status == "processed"
+        sync_labels.assert_awaited_once()
+
+    def test_process_single_email_labels_refund_without_ap_workflow(self):
+        class _FakeClient:
+            async def get_message(self, _message_id):
+                return SimpleNamespace(
+                    id="msg-refund-1",
+                    thread_id="thread-refund-1",
+                    subject="Your refund from Cursor #3779-4144",
+                    sender="billing@cursor.com",
+                    recipient="ap@company.test",
+                    date=datetime.now(timezone.utc),
+                    snippet="Refund confirmed",
+                    body_text="We processed your refund.",
+                    body_html="",
+                    labels=[],
+                    attachments=[],
+                )
+
+        class _FakeDB:
+            def __init__(self):
+                self.saved = []
+
+            def get_finance_email_by_gmail_id(self, _gmail_id):
+                return None
+
+            def save_finance_email(self, email):
+                self.saved.append(email)
+                return email
+
+        fake_db = _FakeDB()
+        sync_labels = AsyncMock(return_value={"processed", "refunds"})
+
+        with patch.object(
+            gmail_webhooks_module,
+            "classify_email_with_llm",
+            AsyncMock(return_value={"type": "NOISE", "confidence": 0.91}),
+        ):
+            with patch.object(
+                gmail_webhooks_module,
+                "_label_only_document_parse",
+                return_value={
+                    "email_type": "refund",
+                    "vendor": "Cursor",
+                    "amount": 20.0,
+                    "currency": "usd",
+                    "confidence": 0.91,
+                },
+            ):
+                with patch.object(gmail_webhooks_module, "sync_finance_labels", sync_labels):
+                    with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
+                        asyncio.run(
+                            gmail_webhooks_module.process_single_email(
+                                client=_FakeClient(),
+                                message_id="msg-refund-1",
+                                user_id="gmail-user-1",
+                                organization_id="tenant-42",
+                            )
+                        )
+
+        assert len(fake_db.saved) == 1
+        assert fake_db.saved[0].email_type == "refund"
+        assert fake_db.saved[0].status == "processed"
+        sync_labels.assert_awaited_once()
+
     def test_process_invoice_email_persists_extracted_fields_and_sender_fallback(self):
         class _FakeDB:
             def __init__(self):
@@ -642,6 +815,378 @@ class TestGmailWebhooks:
         runtime_payload = fake_runtime.execute_ap_invoice_processing.await_args.kwargs["invoice_payload"]
         assert runtime_payload["vendor_name"] == "Google Payments"
         assert runtime_payload["amount"] == 125.0
+
+    def test_process_invoice_email_uses_extracted_document_type_for_metadata_and_labels(self):
+        class _FakeDB:
+            def __init__(self):
+                self.saved = []
+
+            def get_finance_email_by_gmail_id(self, _gmail_id):
+                return SimpleNamespace(id="finance-email-doc-type-1")
+
+            def save_finance_email(self, email):
+                self.saved.append(email)
+                return email
+
+        fake_db = _FakeDB()
+        fake_runtime = MagicMock()
+        fake_runtime.execute_ap_invoice_processing = AsyncMock(return_value={"status": "pending_approval"})
+        sync_mock = AsyncMock(return_value=None)
+        message = SimpleNamespace(
+            id="msg-doc-type-1",
+            thread_id="thread-doc-type-1",
+            subject="Your refund from Cursor #3779-4144",
+            sender="Cursor <billing@cursor.com>",
+            snippet="Refund processed",
+            body_text="Refund receipt attached.",
+            attachments=[],
+            date=datetime.now(timezone.utc),
+        )
+
+        with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
+            with patch(
+                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                AsyncMock(
+                    return_value={
+                        "vendor": "Cursor",
+                        "amount": 0.0,
+                        "currency": "usd",
+                        "invoice_number": "CR-3779-4144",
+                        "confidence": 0.97,
+                        "document_type": "refund",
+                        "email_type": "refund",
+                    }
+                ),
+            ):
+                with patch(
+                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    return_value=fake_runtime,
+                ):
+                    with patch.object(
+                        gmail_webhooks_module,
+                        "_sync_message_finance_labels",
+                        sync_mock,
+                    ):
+                        with patch.object(
+                            gmail_webhooks_module,
+                            "_create_invoice_draft_summary",
+                            AsyncMock(return_value=None),
+                        ):
+                            asyncio.run(
+                                gmail_webhooks_module.process_invoice_email(
+                                    client=MagicMock(),
+                                    message=message,
+                                    user_id="gmail-user-1",
+                                    organization_id="default",
+                                    confidence=0.91,
+                                )
+                            )
+
+        assert len(fake_db.saved) == 2
+        assert fake_db.saved[-1].email_type == "refund"
+        assert fake_db.saved[-1].metadata["document_type"] == "refund"
+        assert fake_db.saved[-1].metadata["email_type"] == "refund"
+        fake_runtime.execute_ap_invoice_processing.assert_not_awaited()
+        assert sync_mock.await_args.kwargs["document_type"] == "refund"
+
+    def test_process_invoice_email_allows_label_resolver_override_for_invoice_shaped_refund_subjects(self):
+        class _FakeDB:
+            def __init__(self):
+                self.saved = []
+
+            def get_finance_email_by_gmail_id(self, _gmail_id):
+                return SimpleNamespace(id="finance-email-refund-1")
+
+            def save_finance_email(self, email):
+                self.saved.append(email)
+                return email
+
+        fake_db = _FakeDB()
+        fake_runtime = MagicMock()
+        fake_runtime.execute_ap_invoice_processing = AsyncMock(return_value={"status": "pending_approval"})
+        sync_mock = AsyncMock(return_value=None)
+        message = SimpleNamespace(
+            id="msg-refund-1",
+            thread_id="thread-refund-1",
+            subject="Your refund from Cursor #3779-4144",
+            sender="Cursor <billing@cursor.com>",
+            snippet="Refund processed",
+            body_text="Refund receipt attached.",
+            attachments=[],
+            date=datetime.now(timezone.utc),
+        )
+
+        with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
+            with patch(
+                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                AsyncMock(
+                    return_value={
+                        "vendor": "Cursor",
+                        "amount": 0.0,
+                        "currency": "usd",
+                        "invoice_number": "CR-3779-4144",
+                        "confidence": 0.97,
+                        "document_type": "invoice",
+                        "email_type": "invoice",
+                    }
+                ),
+            ):
+                with patch(
+                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    return_value=fake_runtime,
+                ):
+                    with patch.object(
+                        gmail_webhooks_module,
+                        "_sync_message_finance_labels",
+                        sync_mock,
+                    ):
+                        with patch.object(
+                            gmail_webhooks_module,
+                            "_create_invoice_draft_summary",
+                            AsyncMock(return_value=None),
+                        ):
+                            asyncio.run(
+                                gmail_webhooks_module.process_invoice_email(
+                                    client=MagicMock(),
+                                    message=message,
+                                    user_id="gmail-user-1",
+                                    organization_id="default",
+                                    confidence=0.91,
+                                )
+                            )
+
+        assert len(fake_db.saved) == 2
+        assert fake_db.saved[-1].email_type == "refund"
+        assert sync_mock.await_args.kwargs["document_type"] == "refund"
+
+    def test_process_invoice_email_subject_refund_overrides_credit_note_extraction(self):
+        class _FakeDB:
+            def __init__(self):
+                self.saved = []
+
+            def get_finance_email_by_gmail_id(self, _gmail_id):
+                return SimpleNamespace(id="finance-email-refund-override-1")
+
+            def save_finance_email(self, email):
+                self.saved.append(email)
+                return email
+
+        fake_db = _FakeDB()
+        fake_runtime = MagicMock()
+        fake_runtime.execute_ap_invoice_processing = AsyncMock(return_value={"status": "pending_approval"})
+        sync_mock = AsyncMock(return_value=None)
+        message = SimpleNamespace(
+            id="msg-refund-override-1",
+            thread_id="thread-refund-override-1",
+            subject="Your refund from Cursor #3779-4144",
+            sender="Cursor <billing@cursor.com>",
+            snippet="Refund processed",
+            body_text="A credit note has been issued.",
+            attachments=[],
+            date=datetime.now(timezone.utc),
+        )
+
+        with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
+            with patch(
+                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                AsyncMock(
+                    return_value={
+                        "vendor": "Cursor",
+                        "amount": 0.0,
+                        "currency": "usd",
+                        "invoice_number": "CR-3779-4144",
+                        "confidence": 0.97,
+                        "document_type": "credit_note",
+                        "email_type": "credit_note",
+                    }
+                ),
+            ):
+                with patch(
+                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    return_value=fake_runtime,
+                ):
+                    with patch.object(
+                        gmail_webhooks_module,
+                        "_sync_message_finance_labels",
+                        sync_mock,
+                    ):
+                        with patch.object(
+                            gmail_webhooks_module,
+                            "_create_invoice_draft_summary",
+                            AsyncMock(return_value=None),
+                        ):
+                            result = asyncio.run(
+                                gmail_webhooks_module.process_invoice_email(
+                                    client=MagicMock(),
+                                    message=message,
+                                    user_id="gmail-user-1",
+                                    organization_id="default",
+                                    confidence=0.91,
+                                )
+                            )
+
+        assert result["status"] == "processed_non_invoice"
+        assert result["document_type"] == "refund"
+        assert len(fake_db.saved) == 2
+        assert fake_db.saved[-1].email_type == "refund"
+        assert fake_runtime.execute_ap_invoice_processing.assert_not_awaited() is None
+        assert sync_mock.await_args.kwargs["document_type"] == "refund"
+
+    def test_process_invoice_email_refresh_only_skips_runtime_execution_and_draft(self):
+        class _FakeDB:
+            def __init__(self):
+                self.saved = []
+
+            def get_finance_email_by_gmail_id(self, _gmail_id):
+                return SimpleNamespace(id="finance-email-refresh-1")
+
+            def save_finance_email(self, email):
+                self.saved.append(email)
+                return email
+
+        fake_db = _FakeDB()
+        fake_runtime = MagicMock()
+        fake_runtime.execute_ap_invoice_processing = AsyncMock(side_effect=AssertionError("runtime execute should not run"))
+        fake_runtime.refresh_invoice_record_from_extraction = MagicMock(
+            return_value={"status": "refreshed", "execution_mode": "extraction_refresh"}
+        )
+        message = SimpleNamespace(
+            id="msg-refresh-1",
+            thread_id="thread-refresh-1",
+            subject="Invoice INV-REFRESH-1",
+            sender="billing@vendor.test",
+            snippet="Invoice attached",
+            body_text="Please find attached invoice.",
+            attachments=[],
+            date=datetime.now(timezone.utc),
+        )
+        draft_mock = AsyncMock(return_value=None)
+
+        with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
+            with patch(
+                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                AsyncMock(
+                    return_value={
+                        "vendor": "Vendor Refresh Co",
+                        "amount": 451.23,
+                        "currency": "usd",
+                        "invoice_number": "INV-REFRESH-1",
+                        "confidence": 0.97,
+                        "primary_source": "attachment",
+                    }
+                ),
+            ):
+                with patch(
+                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    return_value=fake_runtime,
+                ):
+                    with patch.object(
+                        gmail_webhooks_module,
+                        "_create_invoice_draft_summary",
+                        draft_mock,
+                    ):
+                        result = asyncio.run(
+                            gmail_webhooks_module.process_invoice_email(
+                                client=MagicMock(),
+                                message=message,
+                                user_id="gmail-user-1",
+                                organization_id="default",
+                                confidence=0.91,
+                                run_runtime=False,
+                                create_draft=False,
+                                refresh_reason="repair_pass",
+                            )
+                        )
+
+        assert result["status"] == "refreshed"
+        assert len(fake_db.saved) == 2
+        assert fake_runtime.refresh_invoice_record_from_extraction.called
+        assert fake_runtime.refresh_invoice_record_from_extraction.call_args.kwargs["refresh_reason"] == "repair_pass"
+        draft_mock.assert_not_awaited()
+
+    def test_process_invoice_email_persists_field_review_gate_and_review_required_status(self):
+        class _FakeDB:
+            def __init__(self):
+                self.saved = []
+
+            def get_finance_email_by_gmail_id(self, _gmail_id):
+                return SimpleNamespace(id="finance-email-review-1")
+
+            def save_finance_email(self, email):
+                self.saved.append(email)
+                return email
+
+        fake_db = _FakeDB()
+        fake_runtime = MagicMock()
+        fake_runtime.execute_ap_invoice_processing = AsyncMock(
+            return_value={"status": "blocked", "reason": "field_review_required"}
+        )
+        message = SimpleNamespace(
+            id="msg-review-1",
+            thread_id="thread-review-1",
+            subject="Invoice INV-REVIEW-1",
+            sender="billing@vendor.test",
+            snippet="Invoice attached",
+            body_text="Please find attached invoice.",
+            attachments=[],
+            date=datetime.now(timezone.utc),
+        )
+
+        with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
+            with patch(
+                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                AsyncMock(
+                    return_value={
+                        "vendor": "Vendor Review Co",
+                        "amount": 451.23,
+                        "currency": "usd",
+                        "invoice_number": "INV-REVIEW-1",
+                        "confidence": 0.97,
+                        "primary_source": "attachment",
+                        "requires_extraction_review": True,
+                        "field_provenance": {"amount": {"source": "attachment", "value": 451.23}},
+                        "field_evidence": {"amount": {"source": "attachment", "selected_value": 451.23}},
+                        "source_conflicts": [
+                            {
+                                "field": "amount",
+                                "blocking": True,
+                                "reason": "source_value_mismatch",
+                                "preferred_source": "attachment",
+                                "values": {"email": 400.0, "attachment": 451.23},
+                            }
+                        ],
+                        "conflict_actions": [{"action": "review_fields", "field": "amount", "blocking": True}],
+                        "field_confidences": {"amount": 0.99},
+                    }
+                ),
+            ):
+                with patch(
+                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    return_value=fake_runtime,
+                ):
+                    with patch.object(
+                        gmail_webhooks_module,
+                        "_create_invoice_draft_summary",
+                        AsyncMock(return_value=None),
+                    ):
+                        asyncio.run(
+                            gmail_webhooks_module.process_invoice_email(
+                                client=MagicMock(),
+                                message=message,
+                                user_id="gmail-user-1",
+                                organization_id="default",
+                                confidence=0.91,
+                            )
+                        )
+
+        assert len(fake_db.saved) == 2
+        assert fake_db.saved[-1].status == "review_required"
+        assert fake_db.saved[0].metadata["requires_field_review"] is True
+        assert fake_db.saved[0].metadata["confidence_gate"]["requires_field_review"] is True
+        assert fake_db.saved[0].metadata["exception_code"] == "field_conflict"
+        runtime_payload = fake_runtime.execute_ap_invoice_processing.await_args.kwargs["invoice_payload"]
+        assert runtime_payload["requires_field_review"] is True
+        assert runtime_payload["source_conflicts"][0]["field"] == "amount"
 
     def test_extension_by_thread_recovers_detected_finance_email(self):
         class _FakeDB:
@@ -836,6 +1381,7 @@ class TestAdminConsoleIntegrations:
 
     def test_start_gmail_connect_returns_google_auth_url(self, monkeypatch):
         monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
+        monkeypatch.setenv("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8010/gmail/callback")
         captured = {}
 
         def _fake_auth_url(*, state):
@@ -847,7 +1393,7 @@ class TestAdminConsoleIntegrations:
             with patch.object(workspace_shell_module, "generate_auth_url", side_effect=_fake_auth_url):
                 response = client.post(
                     "/api/workspace/integrations/gmail/connect/start",
-                    json={"organization_id": "default", "redirect_path": "/workspace?org=default&page=integrations"},
+                    json={"organization_id": "default", "redirect_path": "/gmail/connected"},
                 )
         finally:
             app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
@@ -855,14 +1401,35 @@ class TestAdminConsoleIntegrations:
         assert response.status_code == 200
         payload = response.json()
         assert payload["organization_id"] == "default"
-        assert payload["redirect_path"] == "/workspace?org=default&page=integrations"
+        assert payload["redirect_path"] == "/gmail/connected"
         assert payload["auth_url"].startswith("https://accounts.google.com/o/oauth2/v2/auth")
         signed_state = captured.get("state")
         assert isinstance(signed_state, str) and "." in signed_state
         decoded = gmail_webhooks_module._unsign_oauth_state(signed_state)
         assert decoded.get("user_id") == "admin-user-1"
         assert decoded.get("organization_id") == "default"
-        assert decoded.get("redirect_url") == "/workspace?org=default&page=integrations"
+        assert decoded.get("redirect_url") == "/gmail/connected"
+        assert decoded.get("oauth_redirect_uri") == "http://127.0.0.1:8010/gmail/callback"
+
+    def test_generate_gmail_auth_url_requests_offline_consent_and_granted_scopes(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
+        monkeypatch.setenv("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8010/gmail/callback")
+
+        auth_url = workspace_shell_module.generate_auth_url(state="signed-state")
+
+        assert "access_type=offline" in auth_url
+        assert "prompt=consent" in auth_url
+        assert "include_granted_scopes=true" in auth_url
+        assert "state=signed-state" in auth_url
+
+    def test_generate_gmail_auth_url_defaults_to_api_base_callback(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
+        monkeypatch.setenv("API_BASE_URL", "http://127.0.0.1:8010")
+        monkeypatch.delenv("GOOGLE_REDIRECT_URI", raising=False)
+
+        auth_url = workspace_shell_module.generate_auth_url(state="signed-state")
+
+        assert "redirect_uri=http%3A%2F%2F127.0.0.1%3A8010%2Fgmail%2Fcallback" in auth_url
 
     def test_gmail_status_requires_reconnect_without_refresh_token(self):
         fake_db = MagicMock()
@@ -1487,6 +2054,165 @@ class TestExtensionEndpoints:
         assert match_erp.status_code == 200
         assert "vendor_match" in match_erp.json()
         assert "duplicate_invoice" in match_erp.json()
+
+    def test_repair_historical_invoices_replays_live_gmail_records_without_runtime_side_effects(self):
+        finance_email = SimpleNamespace(
+            id="finance-email-1",
+            gmail_id="msg-repair-1",
+            email_type="invoice",
+            confidence=0.92,
+            organization_id="default",
+            user_id="extension-user-1",
+            status="processed",
+            metadata={},
+            created_at="2026-03-18T10:00:00+00:00",
+        )
+        updated_finance_email = SimpleNamespace(
+            id="finance-email-1",
+            gmail_id="msg-repair-1",
+            email_type="invoice",
+            confidence=0.92,
+            organization_id="default",
+            user_id="extension-user-1",
+            status="review_required",
+            metadata={"field_provenance": {"amount": {"source": "attachment"}}},
+            created_at="2026-03-18T10:00:00+00:00",
+        )
+
+        class _FakeDB:
+            def list_finance_emails_for_repair(self, *_args, **_kwargs):
+                return [finance_email]
+
+            def get_finance_email_by_gmail_id(self, gmail_id):
+                assert gmail_id == "msg-repair-1"
+                return updated_finance_email
+
+            def get_ap_item_by_message_id(self, organization_id, message_id):
+                assert organization_id == "default"
+                assert message_id == "msg-repair-1"
+                return {"id": "ap-item-1", "metadata": {}}
+
+            def get_ap_item_by_thread(self, _organization_id, _thread_id):
+                return None
+
+        class _FakeGmailClient:
+            def __init__(self, user_id):
+                assert user_id == "extension-user-1"
+
+            async def ensure_authenticated(self):
+                return True
+
+            async def get_message(self, message_id):
+                assert message_id == "msg-repair-1"
+                return SimpleNamespace(
+                    id="msg-repair-1",
+                    thread_id="thread-repair-1",
+                    subject="Invoice INV-REPAIR-1",
+                    sender="billing@vendor.test",
+                    snippet="Invoice attached",
+                    body_text="Please find attached invoice.",
+                    attachments=[],
+                    date=datetime.now(timezone.utc),
+                )
+
+        replay_mock = AsyncMock(return_value={"status": "refreshed"})
+
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=_FakeDB()):
+                with patch.object(gmail_extension_module, "GmailAPIClient", _FakeGmailClient):
+                    with patch.object(
+                        gmail_extension_module,
+                        "build_worklist_item",
+                        return_value={
+                            "id": "ap-item-1",
+                            "requires_field_review": True,
+                            "blocked_fields": ["amount"],
+                            "workflow_paused_reason": "Workflow paused until amount is confirmed because the email and attachment disagree.",
+                        },
+                    ):
+                        with patch.object(gmail_webhooks_module, "process_invoice_email", replay_mock):
+                            response = client.post(
+                                "/extension/repair-historical-invoices",
+                                json={
+                                    "organization_id": "default",
+                                    "limit": 10,
+                                },
+                            )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["processed"] == 1
+        assert payload["review_required"] == 1
+        assert payload["repaired"] == 0
+        assert payload["results"][0]["gmail_id"] == "msg-repair-1"
+        assert payload["results"][0]["requires_field_review"] is True
+        assert payload["results"][0]["blocked_fields"] == ["amount"]
+        replay_mock.assert_awaited_once()
+        replay_kwargs = replay_mock.await_args.kwargs
+        assert replay_kwargs["run_runtime"] is False
+        assert replay_kwargs["create_draft"] is False
+        assert replay_kwargs["refresh_reason"] == "historical_repair_pass"
+
+    def test_cleanup_gmail_labels_migrates_and_deletes_legacy_mailbox_labels(self):
+        class _FakeGmailClient:
+            def __init__(self, user_id):
+                assert user_id == "extension-user-1"
+
+            async def ensure_authenticated(self):
+                return True
+
+        cleanup_mock = AsyncMock(
+            return_value={
+                "status": "completed",
+                "dry_run": False,
+                "labels_scanned": 2,
+                "labels_deleted": 2,
+                "messages_relabelled": 7,
+                "results": [
+                    {
+                        "label_name": "Clearledgr/Invoice",
+                        "target_labels": ["Clearledgr/Invoices"],
+                        "messages_relabelled": 5,
+                        "deleted": True,
+                    },
+                    {
+                        "label_name": "Clearledgr/Payment Request",
+                        "target_labels": ["Clearledgr/Payment Requests"],
+                        "messages_relabelled": 2,
+                        "deleted": True,
+                    },
+                ],
+            }
+        )
+
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        try:
+            with patch.object(gmail_extension_module, "GmailAPIClient", _FakeGmailClient):
+                with patch("clearledgr.services.gmail_labels.cleanup_legacy_labels", cleanup_mock):
+                    response = client.post(
+                        "/extension/cleanup-gmail-labels",
+                        json={
+                            "organization_id": "default",
+                            "dry_run": False,
+                            "max_messages_per_label": 250,
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["mailbox_user_email"] == "extension@example.com"
+        assert payload["labels_deleted"] == 2
+        assert payload["messages_relabelled"] == 7
+        cleanup_mock.assert_awaited_once()
+        kwargs = cleanup_mock.await_args.kwargs
+        assert kwargs["user_email"] == "extension@example.com"
+        assert kwargs["dry_run"] is False
+        assert kwargs["max_messages_per_label"] == 250
 
     def test_extension_cors_preflight_returns_single_origin_header(self):
         response = client.options(

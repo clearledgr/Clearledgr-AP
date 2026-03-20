@@ -5,6 +5,7 @@ import { h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDate, fmtDateTime, fmtDollar, useAction } from '../route-helpers.js';
+import { navigateToRecordDetail } from '../../utils/record-route.js';
 import {
   clearPipelineNavigation,
   focusPipelineItem,
@@ -91,6 +92,9 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
   const recentItems = Array.isArray(payload?.recent_items) ? payload.recent_items : [];
   const history = Array.isArray(payload?.history) ? payload.history : [];
   const topExceptionCodes = Array.isArray(payload?.top_exception_codes) ? payload.top_exception_codes : [];
+  const senderEmails = Array.isArray(summary?.sender_emails) ? summary.sender_emails : [];
+  const topStates = Array.isArray(summary?.top_states) ? summary.top_states : [];
+  const anomalyFlags = Array.isArray(profile?.anomaly_flags) ? profile.anomaly_flags : [];
 
   const openVendorInPipeline = () => {
     const current = readPipelinePreferences(pipelineScope);
@@ -111,7 +115,7 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
   const openItemDetail = (item) => {
     if (!item?.id) return;
     focusPipelineItem(pipelineScope, item, 'vendor_record');
-    navigate(`clearledgr/invoice/${encodeURIComponent(item.id)}`);
+    navigateToRecordDetail(navigate, item.id);
   };
 
   if (loading) {
@@ -233,20 +237,20 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
             </div>
           </div>
 
-          ${(summary.sender_emails || []).length > 0 && html`
+          ${senderEmails.length > 0 && html`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Known sender emails</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${(summary.sender_emails || []).map((email) => html`<span key=${email} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px">${email}</span>`)}
+                ${senderEmails.map((email) => html`<span key=${email} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px">${email}</span>`)}
               </div>
             </div>
           `}
 
-          ${(profile.anomaly_flags || []).length > 0 && html`
+          ${anomalyFlags.length > 0 && html`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Anomaly flags</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${(profile.anomaly_flags || []).map((flag) => html`<span key=${flag} style="padding:5px 10px;border-radius:999px;background:#FEF2F2;color:#B91C1C;font-size:12px;font-weight:600">${String(flag).replace(/_/g, ' ')}</span>`)}
+                ${anomalyFlags.map((flag) => html`<span key=${flag} style="padding:5px 10px;border-radius:999px;background:#FEF2F2;color:#B91C1C;font-size:12px;font-weight:600">${String(flag).replace(/_/g, ' ')}</span>`)}
               </div>
             </div>
           `}
@@ -254,10 +258,10 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
 
         <div class="panel">
           <h3 style="margin-top:0">Common states</h3>
-          ${(summary.top_states || []).length === 0
+          ${topStates.length === 0
             ? html`<p class="muted" style="margin:0">No state history yet.</p>`
             : html`<div style="display:flex;flex-direction:column;gap:8px">
-                ${(summary.top_states || []).map((row) => html`
+                ${topStates.map((row) => html`
                   <div key=${row.state} style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
                     <span>${String(row.state || '').replace(/_/g, ' ')}</span>
                     <strong>${Number(row.count || 0).toLocaleString()}</strong>

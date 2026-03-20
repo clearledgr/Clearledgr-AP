@@ -6,7 +6,14 @@ import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDate, fmtDateTime, useAction } from '../route-helpers.js';
-import { openSourceEmail } from '../../utils/formatters.js';
+import { getFieldReviewBlockers, getWorkflowPauseReason, openSourceEmail } from '../../utils/formatters.js';
+import { navigateToRecordDetail } from '../../utils/record-route.js';
+import {
+  getDocumentReferenceText,
+  getDocumentTypeLabel,
+  isInvoiceDocumentType,
+  normalizeDocumentType,
+} from '../../utils/document-types.js';
 import {
   PIPELINE_BUILTIN_SLICES,
   PIPELINE_STARTER_VIEWS,
@@ -120,6 +127,35 @@ function BlockerChip({ kind }) {
   ">${BLOCKER_LABELS[kind] || kind}</span>`;
 }
 
+function FieldReviewSummary({ item, compact = false }) {
+  const blockers = getFieldReviewBlockers(item);
+  const pauseReason = getWorkflowPauseReason(item);
+  const first = blockers[0];
+  if (!first && !pauseReason) return null;
+
+  return html`
+    <div style="
+      margin-top:${compact ? '6px' : '0'};
+      padding:${compact ? '6px 0 0' : '10px 12px'};
+      border:${compact ? 'none' : '1px solid #FED7AA'};
+      border-radius:${compact ? '0' : '12px'};
+      background:${compact ? 'transparent' : '#FFF7ED'};
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    ">
+      ${first && html`<div style="font-size:12px;font-weight:700;color:#9A3412">
+        ${first.field_label || 'Field'} blocked
+        ${first.winning_source_label ? ` · ${first.winning_source_label} wins` : ''}
+      </div>`}
+      ${first && html`<div class="muted" style="font-size:12px;line-height:1.45">
+        Email ${first.email_value_display || 'Not found'} · Attachment ${first.attachment_value_display || 'Not found'}
+      </div>`}
+      ${pauseReason && html`<div class="muted" style="font-size:12px;line-height:1.45">${pauseReason}</div>`}
+    </div>
+  `;
+}
+
 function SavedViewChip({ view, active, onOpen, onTogglePin, onDelete }) {
   const scopeLabel = view.scope === 'starter' ? 'Starter' : 'Personal';
   return html`
@@ -159,7 +195,7 @@ function openItemDetail(navigate, pipelineScope, item) {
   if (!item?.id) return;
   saveActiveItemId(item.id);
   focusPipelineItem(pipelineScope, item, 'pipeline');
-  navigate(`clearledgr/invoice/${item.id}`);
+  navigateToRecordDetail(navigate, item.id);
 }
 
 function openItemEmail(pipelineScope, item) {
@@ -177,6 +213,25 @@ function getAmountLabel(item) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+function getDocumentSummary(item) {
+  const documentType = normalizeDocumentType(item?.document_type);
+  const reference = String(item?.invoice_number || '').trim();
+  return reference ? getDocumentReferenceText(documentType, reference) : getDocumentTypeLabel(documentType);
+}
+
+function getPipelineTimeline(item, erpStatus) {
+  const documentType = normalizeDocumentType(item?.document_type);
+  const parts = [];
+  if (isInvoiceDocumentType(documentType)) {
+    parts.push(`Due ${item.due_date ? fmtDate(item.due_date) : '—'}`);
+    parts.push(`ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus}`);
+  } else {
+    parts.push(`Type ${getDocumentTypeLabel(documentType)}`);
+  }
+  parts.push(`Updated ${fmtDateTime(item.updated_at || item.created_at)}`);
+  return parts.join(' · ');
 }
 
 function getSavedViewLabel(view) {
@@ -454,11 +509,11 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
     <div class="kpi-row">
       <div class="kpi-card">
         <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.total}</strong>
-        <span>Total invoices</span>
+        <span>Total records</span>
       </div>
       <div class="kpi-card">
         <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.open}</strong>
-        <span>Open in AP</span>
+        <span>Open records</span>
       </div>
       <div class="kpi-card kpi-warning">
         <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.waitingApproval}</strong>
@@ -484,7 +539,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                   <${StatePill} state=${focusedItem.state} />
                 </div>
                 <div class="muted" style="font-size:13px">
-                  ${focusedItem.vendor_name || focusedItem.vendor || 'Unknown vendor'} · ${focusedItem.invoice_number || 'No invoice #'} · ${getAmountLabel(focusedItem)}
+                  ${focusedItem.vendor_name || focusedItem.vendor || 'Unknown vendor'} · ${getDocumentSummary(focusedItem)} · ${getAmountLabel(focusedItem)}
                 </div>
                 <div class="muted" style="font-size:12px;margin-top:4px">
                   ${focusedItemVisible
@@ -574,7 +629,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
         <label style="display:flex;flex-direction:column;gap:6px">
           <span class="muted" style="font-size:12px">Search</span>
           <input
-            placeholder="Search vendors, invoices, PO, sender…"
+            placeholder="Search vendors, references, PO, sender…"
             value=${searchQuery}
             onInput=${(event) => setSearchQuery(event.target.value)}
             style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
@@ -683,7 +738,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
       ? html`
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px">
             ${displayed.length === 0
-              ? html`<div class="panel" style="grid-column:1/-1;text-align:center;padding:32px"><p class="muted">No invoices match this view.</p></div>`
+              ? html`<div class="panel" style="grid-column:1/-1;text-align:center;padding:32px"><p class="muted">No records match this view.</p></div>`
               : displayed.map((item) => {
                   const blockers = getPipelineBlockerKinds(item);
                   const focused = String(navState.focusItemId || '') === String(item.id || '');
@@ -699,7 +754,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px">
                         <div>
                           <div style="font-size:15px;font-weight:700">${item.vendor_name || item.vendor || 'Unknown vendor'}</div>
-                          <div class="muted" style="font-size:12px;margin-top:2px">${item.invoice_number || 'No invoice #'} · ${getAmountLabel(item)}</div>
+                          <div class="muted" style="font-size:12px;margin-top:2px">${getDocumentSummary(item)} · ${getAmountLabel(item)}</div>
                         </div>
                         <${StatePill} state=${item.state} />
                       </div>
@@ -718,8 +773,9 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                           ? blockers.slice(0, 3).map((kind) => html`<${BlockerChip} key=${kind} kind=${kind} />`)
                           : html`<span class="muted" style="font-size:12px">No blocking signals</span>`}
                       </div>
+                      <${FieldReviewSummary} item=${item} />
                       <div class="muted" style="font-size:12px;line-height:1.5;margin-bottom:12px">
-                        Due ${item.due_date ? fmtDate(item.due_date) : '—'} · ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus} · Updated ${fmtDateTime(item.updated_at || item.created_at)}
+                        ${getPipelineTimeline(item, erpStatus)}
                       </div>
                       <div style="display:flex;gap:8px;flex-wrap:wrap">
                         <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>Open detail</button>
@@ -736,7 +792,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
               <thead>
                 <tr>
                   <th>Vendor</th>
-                  <th>Invoice</th>
+                  <th>Document</th>
                   <th style="text-align:right">Amount</th>
                   <th>Due</th>
                   <th>Status</th>
@@ -750,29 +806,31 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
               </thead>
               <tbody>
                 ${displayed.length === 0
-                  ? html`<tr><td colspan="11" class="muted" style="text-align:center;padding:32px">No invoices match this view.</td></tr>`
+                  ? html`<tr><td colspan="11" class="muted" style="text-align:center;padding:32px">No records match this view.</td></tr>`
                   : displayed.map((item) => {
                       const blockers = getPipelineBlockerKinds(item);
                       const focused = String(navState.focusItemId || '') === String(item.id || '');
                       const approvalWait = getApprovalWaitMinutes(item);
                       const queueAge = getQueueAgeMinutes(item);
                       const erpStatus = getErpStatus(item);
+                      const isInvoiceDocument = isInvoiceDocumentType(item?.document_type);
                       return html`
                         <tr key=${item.id} style=${focused ? 'background:rgba(14,165,233,0.07)' : ''}>
                           <td style="font-weight:600;cursor:pointer" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>${item.vendor_name || item.vendor || 'Unknown vendor'}</td>
-                          <td style="font-family:var(--font-mono);font-size:12px">${item.invoice_number || '—'}</td>
+                          <td style="font-family:var(--font-mono);font-size:12px">${getDocumentSummary(item)}</td>
                           <td style="text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums">${getAmountLabel(item)}</td>
-                          <td>${item.due_date ? fmtDate(item.due_date) : '—'}</td>
+                          <td>${isInvoiceDocument && item.due_date ? fmtDate(item.due_date) : '—'}</td>
                           <td><${StatePill} state=${item.state} /></td>
                           <td>${formatDurationMinutes(queueAge)}</td>
-                          <td>${approvalWait ? formatDurationMinutes(approvalWait) : '—'}</td>
-                          <td>${ERP_STATUS_LABELS[erpStatus] || erpStatus}</td>
+                          <td>${isInvoiceDocument && approvalWait ? formatDurationMinutes(approvalWait) : '—'}</td>
+                          <td>${isInvoiceDocument ? (ERP_STATUS_LABELS[erpStatus] || erpStatus) : 'N/A'}</td>
                           <td>
                             <div style="display:flex;gap:6px;flex-wrap:wrap">
                               ${blockers.length
                                 ? blockers.slice(0, 2).map((kind) => html`<${BlockerChip} key=${kind} kind=${kind} />`)
                                 : html`<span class="muted" style="font-size:12px">Clear</span>`}
                             </div>
+                            <${FieldReviewSummary} item=${item} compact=${true} />
                           </td>
                           <td class="muted" style="font-size:12px">${fmtDateTime(item.updated_at || item.created_at)}</td>
                           <td style="text-align:right">
@@ -790,7 +848,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
         `}
 
     <div class="muted" style="text-align:center;padding:12px 0;font-size:12px">
-      Showing ${displayed.length} of ${items.length} invoices in ${PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === viewPrefs.activeSliceId)?.label || 'this view'}.
+      Showing ${displayed.length} of ${items.length} records in ${PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === viewPrefs.activeSliceId)?.label || 'this view'}.
     </div>
   `;
 }

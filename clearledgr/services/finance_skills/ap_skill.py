@@ -216,15 +216,11 @@ class APFinanceSkill(FinanceSkill):
             }
 
         if normalized_intent == "approve_invoice":
-            state = str(ap_item.get("state") or "").strip().lower()
-            reason_codes = []
-            if state not in {"needs_approval", "pending_approval"}:
-                reason_codes.append("state_not_waiting_for_approval")
-            precheck = {
-                "eligible": not reason_codes,
-                "reason_codes": reason_codes,
-                "state": state,
-            }
+            precheck = workflow.evaluate_financial_action_precheck(
+                ap_item,
+                allowed_states=["needs_approval", "pending_approval"],
+                state_reason_code="state_not_waiting_for_approval",
+            )
             return {
                 "intent": normalized_intent,
                 "ap_item": ap_item,
@@ -294,15 +290,11 @@ class APFinanceSkill(FinanceSkill):
             }
 
         if normalized_intent == "post_to_erp":
-            state = str(ap_item.get("state") or "").strip().lower()
-            reason_codes = []
-            if state not in {"approved", "ready_to_post"}:
-                reason_codes.append("state_not_ready_to_post")
-            precheck = {
-                "eligible": not reason_codes,
-                "reason_codes": reason_codes,
-                "state": state,
-            }
+            precheck = workflow.evaluate_financial_action_precheck(
+                ap_item,
+                allowed_states=["approved", "ready_to_post"],
+                state_reason_code="state_not_ready_to_post",
+            )
             return {
                 "intent": normalized_intent,
                 "ap_item": ap_item,
@@ -905,11 +897,17 @@ class APFinanceSkill(FinanceSkill):
         if normalized_intent == "approve_invoice":
             workflow = context["workflow"]
             if not precheck.get("eligible"):
+                reason_codes = set(precheck.get("reason_codes") or [])
+                blocked_reason = (
+                    "field_review_required"
+                    if {"field_review_required", "blocking_source_conflicts"} & reason_codes
+                    else "state_not_waiting_for_approval"
+                )
                 response = {
                     "skill_id": self.skill_id,
                     "intent": normalized_intent,
                     "status": "blocked",
-                    "reason": "state_not_waiting_for_approval",
+                    "reason": blocked_reason,
                     "email_id": email_id,
                     "ap_item_id": ap_item_id,
                     "policy_precheck": precheck,
@@ -918,7 +916,7 @@ class APFinanceSkill(FinanceSkill):
                 audit_row = runtime._append_runtime_audit(
                     ap_item_id=ap_item_id,
                     event_type="invoice_approval_blocked",
-                    reason="state_not_waiting_for_approval",
+                    reason=blocked_reason,
                     metadata={
                         "intent": normalized_intent,
                         "policy_precheck": precheck,
@@ -954,11 +952,16 @@ class APFinanceSkill(FinanceSkill):
                 override_justification=justification,
             )
             result_status = str((result or {}).get("status") or "").strip().lower()
+            blocked = result_status in {"blocked", "needs_field_review"}
             approved = result_status in {"approved", "posted", "posted_to_erp"}
+            response_status = "blocked" if blocked else (result_status or ("approved" if approved else "error"))
+            blocked_reason = (
+                str((result or {}).get("reason") or "").strip().lower() or "field_review_required"
+            )
             response = {
                 "skill_id": self.skill_id,
                 "intent": normalized_intent,
-                "status": result_status or ("approved" if approved else "error"),
+                "status": response_status,
                 "email_id": email_id,
                 "ap_item_id": ap_item_id,
                 "policy_precheck": precheck,
@@ -966,10 +969,16 @@ class APFinanceSkill(FinanceSkill):
                 "audit_contract": self.audit_contract(normalized_intent),
                 "next_step": "none" if approved else "review_blockers",
             }
+            if blocked:
+                response["reason"] = blocked_reason
             audit_row = runtime._append_runtime_audit(
                 ap_item_id=ap_item_id,
-                event_type="invoice_approved" if approved else "invoice_approval_failed",
-                reason="runtime_approve_invoice",
+                event_type=(
+                    "invoice_approved"
+                    if approved
+                    else ("invoice_approval_blocked" if blocked else "invoice_approval_failed")
+                ),
+                reason=blocked_reason if blocked else "runtime_approve_invoice",
                 metadata={
                     "intent": normalized_intent,
                     "policy_precheck": precheck,
@@ -1236,11 +1245,17 @@ class APFinanceSkill(FinanceSkill):
         if normalized_intent == "post_to_erp":
             workflow = context["workflow"]
             if not precheck.get("eligible"):
+                reason_codes = set(precheck.get("reason_codes") or [])
+                blocked_reason = (
+                    "field_review_required"
+                    if {"field_review_required", "blocking_source_conflicts"} & reason_codes
+                    else "state_not_ready_to_post"
+                )
                 response = {
                     "skill_id": self.skill_id,
                     "intent": normalized_intent,
                     "status": "blocked",
-                    "reason": "state_not_ready_to_post",
+                    "reason": blocked_reason,
                     "email_id": email_id,
                     "ap_item_id": ap_item_id,
                     "policy_precheck": precheck,
@@ -1249,7 +1264,7 @@ class APFinanceSkill(FinanceSkill):
                 audit_row = runtime._append_runtime_audit(
                     ap_item_id=ap_item_id,
                     event_type="erp_post_blocked",
-                    reason="state_not_ready_to_post",
+                    reason=blocked_reason,
                     metadata={
                         "intent": normalized_intent,
                         "policy_precheck": precheck,
@@ -1295,11 +1310,16 @@ class APFinanceSkill(FinanceSkill):
                 correlation_id=correlation_id,
             )
             result_status = str((result or {}).get("status") or "").strip().lower()
+            blocked = result_status in {"blocked", "needs_field_review"}
             posted = result_status in {"posted", "approved", "posted_to_erp"}
+            response_status = "blocked" if blocked else (result_status or ("posted_to_erp" if posted else "error"))
+            blocked_reason = (
+                str((result or {}).get("reason") or "").strip().lower() or "field_review_required"
+            )
             response = {
                 "skill_id": self.skill_id,
                 "intent": normalized_intent,
-                "status": result_status or ("posted_to_erp" if posted else "error"),
+                "status": response_status,
                 "email_id": email_id,
                 "ap_item_id": ap_item_id,
                 "erp_reference": (result or {}).get("erp_reference") if isinstance(result, dict) else None,
@@ -1308,10 +1328,16 @@ class APFinanceSkill(FinanceSkill):
                 "audit_contract": self.audit_contract(normalized_intent),
                 "next_step": "none" if posted else "review_blockers",
             }
+            if blocked:
+                response["reason"] = blocked_reason
             audit_row = runtime._append_runtime_audit(
                 ap_item_id=ap_item_id,
-                event_type="erp_post_completed" if posted else "erp_post_failed",
-                reason="runtime_post_to_erp",
+                event_type=(
+                    "erp_post_completed"
+                    if posted
+                    else ("erp_post_blocked" if blocked else "erp_post_failed")
+                ),
+                reason=blocked_reason if blocked else "runtime_post_to_erp",
                 metadata={
                     "intent": normalized_intent,
                     "policy_precheck": precheck,
@@ -1329,11 +1355,17 @@ class APFinanceSkill(FinanceSkill):
             reason = str(payload.get("reason") or "agent_runtime_route_low_risk_for_approval")
 
             if not precheck.get("eligible"):
+                reason_codes = set(precheck.get("reason_codes") or [])
+                blocked_reason = (
+                    "field_review_required"
+                    if {"field_review_required", "blocking_source_conflicts"} & reason_codes
+                    else "policy_precheck_failed"
+                )
                 response = {
                     "skill_id": self.skill_id,
                     "intent": normalized_intent,
                     "status": "blocked",
-                    "reason": "policy_precheck_failed",
+                    "reason": blocked_reason,
                     "email_id": email_id,
                     "ap_item_id": ap_item_id,
                     "policy_precheck": precheck,
@@ -1342,7 +1374,7 @@ class APFinanceSkill(FinanceSkill):
                 audit_row = runtime._append_runtime_audit(
                     ap_item_id=ap_item_id,
                     event_type="route_low_risk_for_approval_blocked",
-                    reason="policy_precheck_failed",
+                    reason=blocked_reason,
                     metadata={
                         "intent": normalized_intent,
                         "policy_precheck": precheck,
@@ -1395,11 +1427,17 @@ class APFinanceSkill(FinanceSkill):
         if normalized_intent == "retry_recoverable_failures":
             workflow = context["workflow"]
             if not precheck.get("eligible"):
+                reason_codes = set(precheck.get("reason_codes") or [])
+                blocked_reason = (
+                    "field_review_required"
+                    if {"field_review_required", "blocking_source_conflicts"} & reason_codes
+                    else "retry_not_recoverable"
+                )
                 response = {
                     "skill_id": self.skill_id,
                     "intent": normalized_intent,
                     "status": "blocked",
-                    "reason": "retry_not_recoverable",
+                    "reason": blocked_reason,
                     "email_id": email_id,
                     "ap_item_id": ap_item_id,
                     "policy_precheck": precheck,
@@ -1408,7 +1446,7 @@ class APFinanceSkill(FinanceSkill):
                 audit_row = runtime._append_runtime_audit(
                     ap_item_id=ap_item_id,
                     event_type="retry_recoverable_failure_blocked",
-                    reason="retry_not_recoverable",
+                    reason=blocked_reason,
                     metadata={
                         "intent": normalized_intent,
                         "policy_precheck": precheck,
@@ -1426,8 +1464,14 @@ class APFinanceSkill(FinanceSkill):
                 result = {"status": "error", "reason": str(exc)}
 
             resume_status = str((result or {}).get("status") or "").strip().lower()
+            blocked = resume_status == "blocked"
+            blocked_reason = (
+                str((result or {}).get("reason") or "").strip().lower() or "field_review_required"
+            )
             if resume_status == "recovered":
                 response_status = "posted"
+            elif blocked:
+                response_status = "blocked"
             elif resume_status == "not_resumable":
                 response_status = "ready_to_post"
             elif resume_status == "error":
@@ -1446,14 +1490,16 @@ class APFinanceSkill(FinanceSkill):
                 "result": result,
                 "audit_contract": self.audit_contract(normalized_intent),
             }
+            if blocked:
+                response["reason"] = blocked_reason
             audit_row = runtime._append_runtime_audit(
                 ap_item_id=ap_item_id,
                 event_type=(
                     "retry_recoverable_failure_completed"
                     if response_status in {"posted", "ready_to_post"}
-                    else "retry_recoverable_failure_failed"
+                    else ("retry_recoverable_failure_blocked" if blocked else "retry_recoverable_failure_failed")
                 ),
-                reason="batch_retry_recoverable_failures",
+                reason=blocked_reason if blocked else "batch_retry_recoverable_failures",
                 metadata={
                     "intent": normalized_intent,
                     "policy_precheck": precheck,

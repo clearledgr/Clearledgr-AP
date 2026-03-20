@@ -120,13 +120,12 @@ class InvoicePostingMixin:
         if invoice_data.get("erp_bill_id") or invoice_data.get("erp_reference"):
             return {"status": "error", "reason": "Invoice already posted"}
 
-        budget_checks = self._load_budget_context_from_invoice_row(invoice_data)
-        budget_summary = self._compute_budget_summary(budget_checks)
-        confidence_gate = self._evaluate_invoice_row_confidence_gate(
+        field_review_gate = self.evaluate_financial_action_field_review_gate(
             invoice_data,
             field_confidences_override=field_confidences,
         )
-        confidence_blockers = confidence_gate.get("confidence_blockers") or []
+        confidence_gate = field_review_gate.get("confidence_gate") or {}
+        confidence_blockers = field_review_gate.get("confidence_blockers") or []
 
         # Persist per-field confidences to the AP item row so accuracy trends
         # are queryable without re-parsing audit events.
@@ -142,6 +141,29 @@ class InvoicePostingMixin:
                     )
                 except Exception as _fc_err:
                     logger.warning("field_confidences persist failed: %s", _fc_err)
+
+        if field_review_gate.get("blocked"):
+            self._persist_financial_action_field_review_gate(ap_item_id, field_review_gate)
+            return {
+                "status": "blocked",
+                "invoice_id": gmail_id,
+                "reason": "field_review_required",
+                "detail": field_review_gate.get("detail"),
+                "requires_field_review": True,
+                "confidence_gate": confidence_gate,
+                "confidence_blockers": confidence_blockers,
+                "source_conflicts": field_review_gate.get("source_conflicts") or [],
+                "blocking_source_conflicts": field_review_gate.get("blocking_source_conflicts") or [],
+                "blocked_fields": field_review_gate.get("blocked_fields") or [],
+                "exception_code": field_review_gate.get("exception_code"),
+                "options": [
+                    "review_fields",
+                    "reject",
+                ],
+            }
+
+        budget_checks = self._load_budget_context_from_invoice_row(invoice_data)
+        budget_summary = self._compute_budget_summary(budget_checks)
 
         # Hard block: budget exceeded cannot be overridden with justification alone
         if budget_summary.get("hard_block"):
@@ -175,29 +197,6 @@ class InvoicePostingMixin:
                     "reason": "budget_override_requires_justification",
                 }
 
-        if confidence_gate.get("requires_field_review") and not allow_confidence_override:
-            return {
-                "status": "needs_field_review",
-                "invoice_id": gmail_id,
-                "reason": "critical_field_confidence_below_threshold",
-                "requires_field_review": True,
-                "confidence_blockers": confidence_blockers,
-                "threshold": confidence_gate.get("threshold_pct")
-                or round(float(confidence_gate.get("threshold") or 0) * 100),
-                "options": [
-                    "review_fields",
-                    "approve_override_with_justification",
-                    "reject",
-                ],
-            }
-        if allow_confidence_override and confidence_gate.get("requires_field_review"):
-            if not str(override_justification or "").strip():
-                return {
-                    "status": "error",
-                    "invoice_id": gmail_id,
-                    "reason": "confidence_override_requires_justification",
-                }
-
         # PO exception blocking: check for unresolved high-severity PO exceptions
         po_block = self._check_po_exception_block(invoice_data)
         if po_block.get("blocked") and not allow_po_exception_override:
@@ -219,6 +218,10 @@ class InvoicePostingMixin:
                     "invoice_id": gmail_id,
                     "reason": "po_override_requires_reason",
                 }
+
+        budget_override_used = bool(allow_budget_override and budget_summary.get("requires_decision"))
+        po_override_used = bool(allow_po_exception_override and po_block.get("blocked"))
+        decision_type = "approve_override" if (budget_override_used or po_override_used) else "approve"
 
         if decision_idempotency_key and not self._acquire_decision_action_lock(
             ap_item_id=ap_item_id,
@@ -301,49 +304,6 @@ class InvoicePostingMixin:
         )
         if isinstance(field_confidences, dict) and field_confidences:
             self._update_ap_item_metadata(ap_item_id, {"field_confidences": field_confidences})
-        if allow_confidence_override and confidence_gate.get("requires_field_review"):
-            self._update_ap_item_metadata(
-                ap_item_id,
-                {
-                    "confidence_gate": confidence_gate,
-                    "requires_field_review": False,
-                    "confidence_override": {
-                        "used": True,
-                        "actor": approved_by,
-                        "at": approved_at,
-                        "source_channel": resolved_source_channel,
-                        "justification": override_justification,
-                        "blockers": confidence_blockers,
-                    },
-                },
-            )
-            if ap_item_id:
-                try:
-                    _override_meta: Dict[str, Any] = {
-                        "source_channel": resolved_source_channel,
-                        "channel_id": resolved_channel_id,
-                        "message_ref": resolved_message_ref,
-                        "justification": override_justification,
-                        "confidence_gate": confidence_gate,
-                    }
-                    # Merge structured override context when supplied (Gap #15 fix)
-                    if override_context is not None:
-                        _override_meta.update(override_context.to_dict())
-                    self.db.append_ap_audit_event(
-                        {
-                            "ap_item_id": ap_item_id,
-                            "event_type": "confidence_override_used",
-                            "actor_type": "user",
-                            "actor_id": approved_by,
-                            "reason": "critical_field_confidence_override",
-                            "metadata": _override_meta,
-                            "organization_id": self.organization_id,
-                            "correlation_id": correlation_id,
-                            "source": resolved_source_channel,
-                        }
-                    )
-                except Exception as exc:
-                    logger.error("Could not append confidence override audit event: %s", exc)
 
         self._maybe_record_ap_decision_override(
             ap_item_id, "approved", approved_by, correlation_id=correlation_id
@@ -358,11 +318,7 @@ class InvoicePostingMixin:
             status="processing",
             decision_idempotency_key=decision_idempotency_key,
             decision_payload={
-                "decision": (
-                    "approve_override"
-                    if (allow_budget_override or allow_confidence_override or allow_po_exception_override)
-                    else "approve"
-                ),
+                "decision": decision_type,
                 "run_id": action_run_id,
                 "request_ts": decision_request_ts,
                 "actor_display": actor_display,
@@ -446,16 +402,12 @@ class InvoicePostingMixin:
                 source_message_ref=gmail_id,
                 status="approved",
                 decision_payload={
-                    "decision": (
-                        "approve_override"
-                        if (allow_budget_override or allow_confidence_override or allow_po_exception_override)
-                        else "approve"
-                    ),
+                    "decision": decision_type,
                     "override_justification": override_justification,
-                    "confidence_override": bool(allow_confidence_override and confidence_gate.get("requires_field_review")),
+                    "confidence_override": False,
                     "confidence_gate": confidence_gate,
                     "po_override_reason": po_override_reason,
-                    "po_exceptions_overridden": po_block.get("exceptions") if allow_po_exception_override else None,
+                    "po_exceptions_overridden": po_block.get("exceptions") if po_override_used else None,
                     "budget": budget_summary,
                     "budget_impact": budget_checks,
                     "erp_result": result,
@@ -533,13 +485,9 @@ class InvoicePostingMixin:
                 source_message_ref=gmail_id,
                 status="failed",
                 decision_payload={
-                    "decision": (
-                        "approve_override"
-                        if (allow_budget_override or allow_confidence_override or allow_po_exception_override)
-                        else "approve"
-                    ),
+                    "decision": decision_type,
                     "override_justification": override_justification,
-                    "confidence_override": bool(allow_confidence_override and confidence_gate.get("requires_field_review")),
+                    "confidence_override": False,
                     "confidence_gate": confidence_gate,
                     "po_override_reason": po_override_reason,
                     "budget": budget_summary,
@@ -576,8 +524,8 @@ class InvoicePostingMixin:
             "invoice_id": gmail_id,
             "approved_by": approved_by,
             "decision_idempotency_key": decision_idempotency_key,
-            "budget_override": bool(allow_budget_override),
-            "confidence_override": bool(allow_confidence_override and confidence_gate.get("requires_field_review")),
+            "budget_override": budget_override_used,
+            "confidence_override": False,
             "requires_field_review": bool(confidence_gate.get("requires_field_review")),
             "confidence_blockers": confidence_blockers,
             "override_justification": override_justification,
@@ -837,6 +785,23 @@ class InvoicePostingMixin:
                 "status": "error",
                 "ap_item_id": ap_item_id,
                 "reason": "missing_gmail_id_on_ap_item",
+            }
+
+        field_review_gate = self.evaluate_financial_action_field_review_gate(row)
+        if field_review_gate.get("blocked"):
+            self._persist_financial_action_field_review_gate(ap_item_id, field_review_gate)
+            return {
+                "status": "blocked",
+                "reason": "field_review_required",
+                "ap_item_id": ap_item_id,
+                "current_state": current_state,
+                "detail": field_review_gate.get("detail"),
+                "requires_field_review": True,
+                "confidence_blockers": field_review_gate.get("confidence_blockers") or [],
+                "source_conflicts": field_review_gate.get("source_conflicts") or [],
+                "blocking_source_conflicts": field_review_gate.get("blocking_source_conflicts") or [],
+                "blocked_fields": field_review_gate.get("blocked_fields") or [],
+                "exception_code": field_review_gate.get("exception_code"),
             }
 
         # If in failed_post, step back to ready_to_post first (idempotent if already there)
@@ -1145,9 +1110,31 @@ class InvoicePostingMixin:
             vendor_name=invoice.vendor_name,
             invoice_number=invoice.invoice_number,
         )
+        existing: Optional[Dict[str, Any]] = None
         if ap_item_id:
             existing = self.db.get_ap_item(ap_item_id)
-            current_state = str(existing.get("state") or "").strip().lower() if existing else ""
+        elif hasattr(self.db, "get_invoice_status"):
+            existing = self.db.get_invoice_status(invoice.gmail_id)
+
+        field_review_gate = self.evaluate_financial_action_field_review_gate(existing or {})
+        if field_review_gate.get("blocked"):
+            self._persist_financial_action_field_review_gate(ap_item_id, field_review_gate)
+            return {
+                "status": "blocked",
+                "reason": "field_review_required",
+                "invoice_id": invoice.gmail_id,
+                "ap_item_id": ap_item_id,
+                "detail": field_review_gate.get("detail"),
+                "requires_field_review": True,
+                "confidence_blockers": field_review_gate.get("confidence_blockers") or [],
+                "source_conflicts": field_review_gate.get("source_conflicts") or [],
+                "blocking_source_conflicts": field_review_gate.get("blocking_source_conflicts") or [],
+                "blocked_fields": field_review_gate.get("blocked_fields") or [],
+                "exception_code": field_review_gate.get("exception_code"),
+            }
+
+        if existing:
+            current_state = self._canonical_invoice_state(existing) or ""
             if current_state not in ("ready_to_post",):
                 logger.error(
                     "State guard: refusing ERP post for AP item %s in state '%s' (expected ready_to_post)",

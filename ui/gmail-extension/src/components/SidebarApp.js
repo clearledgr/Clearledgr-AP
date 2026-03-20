@@ -10,11 +10,13 @@ import {
   getStateLabel,
   formatAmount,
   getAssetUrl,
+  getFieldReviewBlockers,
   normalizeBudgetContext,
   getIssueSummary,
   getExceptionReason,
   getSourceThreadId,
   getSourceMessageId,
+  getWorkflowPauseReason,
   openSourceEmail,
   partitionAuditEvents,
 } from '../utils/formatters.js';
@@ -22,9 +24,17 @@ import {
   normalizeWorkState,
   getPrimaryActionConfig,
   getWorkStateNotice,
+  shouldOfferResumeWorkflow,
   canRejectWorkItem,
   canNudgeApprover,
 } from '../utils/work-actions.js';
+import {
+  getDocumentTypeLabel,
+  getNonInvoiceWorkflowGuidance,
+  isInvoiceDocumentType,
+  normalizeDocumentType,
+} from '../utils/document-types.js';
+import { navigateToVendorRecord } from '../utils/vendor-route.js';
 import { focusPipelineItem } from '../routes/pipeline-views.js';
 
 const html = htm.bind(h);
@@ -160,8 +170,12 @@ function StatePill({ state }) {
   return html`<span class=${cls}>${getStateLabel(state)}</span>`;
 }
 
-function getBlockers(item, state, budgetContext) {
+function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   const blockers = [];
+  const fieldReviewBlockers = getFieldReviewBlockers(item);
+  const pauseReason = getWorkflowPauseReason(item);
+  const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
+  const isInvoiceDocument = isInvoiceDocumentType(documentType);
   const add = (id, label, detail) => {
     if (!label) return;
     if (blockers.some((entry) => entry.id === id || entry.label === label)) return;
@@ -172,7 +186,7 @@ function getBlockers(item, state, budgetContext) {
     add(
       'budget',
       'Budget review required',
-      'A budget decision is still needed before this invoice can move forward.',
+      `A budget decision is still needed before this ${isInvoiceDocument ? 'invoice' : 'record'} can move forward.`,
     );
   }
 
@@ -183,15 +197,17 @@ function getBlockers(item, state, budgetContext) {
   }
 
   if (!item?.po_number && exceptionCode.includes('po')) {
-    add('po', 'PO reference missing', 'Link the correct PO before continuing this invoice.');
+    add('po', 'PO reference missing', `Link the correct PO before continuing this ${isInvoiceDocument ? 'invoice' : 'record'}.`);
   }
 
   const confidence = Number(item?.confidence);
-  if (Number.isFinite(confidence) && confidence < 0.95 && !['posted_to_erp', 'closed', 'rejected'].includes(state)) {
+  if ((item?.requires_field_review || (Number.isFinite(confidence) && confidence < 0.95)) && !['posted_to_erp', 'closed', 'rejected'].includes(state)) {
     add(
       'confidence',
-      'Review extracted fields',
-      `Current confidence is ${Math.round(confidence * 100)}%, so a quick field check is still required.`,
+      fieldReviewBlockers.length ? 'Workflow paused for field review' : 'Review extracted fields',
+      fieldReviewBlockers.length
+        ? null
+        : (pauseReason || `Current confidence is ${Math.round(confidence * 100)}%, so a quick field check is still required.`),
     );
   }
 
@@ -200,7 +216,11 @@ function getBlockers(item, state, budgetContext) {
   }
 
   if (state === 'needs_info') {
-    add('needs_info', 'Missing invoice details', 'Clearledgr still needs more information before routing or posting.');
+    add(
+      'needs_info',
+      isInvoiceDocument ? 'Missing invoice details' : 'Missing document details',
+      `Clearledgr still needs more information before this ${isInvoiceDocument ? 'invoice' : 'record'} can continue.`,
+    );
   }
 
   if (state === 'failed_post') {
@@ -208,11 +228,23 @@ function getBlockers(item, state, budgetContext) {
   }
 
   if (blockers.length === 0 && state === 'received') {
-    add('received', 'Ready for review', 'This invoice is ready for AP validation and approval routing.');
+    add(
+      'received',
+      isInvoiceDocument ? 'Ready for review' : 'Needs finance review',
+      isInvoiceDocument
+        ? 'This invoice is ready for AP validation and approval routing.'
+        : getNonInvoiceWorkflowGuidance(documentType),
+    );
   }
 
   if (blockers.length === 0 && state === 'validated') {
-    add('validated', 'Ready for approval', 'Checks are complete and the invoice can be routed to approval.');
+    add(
+      'validated',
+      isInvoiceDocument ? 'Ready for approval' : `Ready to review ${documentLabel}`,
+      isInvoiceDocument
+        ? 'Checks are complete and the invoice can be routed to approval.'
+        : getNonInvoiceWorkflowGuidance(documentType),
+    );
   }
 
   return blockers.slice(0, 4);
@@ -271,6 +303,41 @@ function EvidenceChecklist({ entries }) {
           </div>
         `)}
       </div>
+    </div>
+  `;
+}
+
+function FieldReviewPanel({ blockers, pauseReason }) {
+  if ((!Array.isArray(blockers) || blockers.length === 0) && !pauseReason) return null;
+  return html`
+    <div class="cl-review-panel" aria-label="Paused field review">
+      <div class="cl-section-title">Paused field review</div>
+      ${pauseReason && html`<div class="cl-review-copy">${pauseReason}</div>`}
+      ${(blockers || []).map((blocker) => html`
+        <div key=${`${blocker.field || 'field'}-${blocker.kind || 'review'}`} class="cl-review-card">
+          <div class="cl-review-card-title">${blocker.field_label || 'Field'} blocked</div>
+          ${blocker.email_value_display && html`
+            <div class="cl-review-row">
+              <span class="cl-review-label">Email said</span>
+              <span class="cl-review-value">${blocker.email_value_display}</span>
+            </div>
+          `}
+          ${blocker.attachment_value_display && html`
+            <div class="cl-review-row">
+              <span class="cl-review-label">Attachment said</span>
+              <span class="cl-review-value">${blocker.attachment_value_display}</span>
+            </div>
+          `}
+          <div class="cl-review-row">
+            <span class="cl-review-label">Source selected</span>
+            <span class="cl-review-value">
+              ${blocker.winning_source_label || 'Review required'}
+              ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ''}
+            </span>
+          </div>
+          <div class="cl-review-why">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
+        </div>
+      `)}
     </div>
   `;
 }
@@ -372,17 +439,30 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   const actorRole = s.currentUserRole || queueManager?.currentUserRole || 'operator';
   const humanIndex = itemIndex >= 0 ? itemIndex + 1 : 1;
   const state = normalizeWorkState(item?.state || 'received');
+  const documentType = normalizeDocumentType(item?.document_type);
+  const documentLabel = getDocumentTypeLabel(documentType);
+  const isInvoiceDocument = isInvoiceDocumentType(documentType);
   const vendor = item.vendor_name || item.vendor || item.sender || 'Unknown vendor';
   const amountLabel = formatAmount(item.amount, item.currency || 'USD');
   const invoiceNumber = item.invoice_number || 'N/A';
   const dueDate = item.due_date || 'N/A';
-  const poLabel = item.po_number ? `PO ${item.po_number}` : 'No PO';
+  const referenceText = invoiceNumber !== 'N/A' ? `${documentLabel} #: ${invoiceNumber}` : documentLabel;
+  const metaLine = [
+    amountLabel,
+    referenceText,
+    ...(isInvoiceDocument ? [`Due: ${dueDate}`, item.po_number ? `PO: ${item.po_number}` : 'No PO'] : []),
+  ].join(' · ');
   const contextPayload = item?.id ? s.contextState.get(item.id) || null : null;
   const budgetContext = normalizeBudgetContext(contextPayload || {}, item);
-  const blockers = getBlockers(item, state, budgetContext);
+  const blockers = getBlockers(item, state, budgetContext, documentType);
+  const fieldReviewBlockers = getFieldReviewBlockers(item);
   const evidence = getEvidenceChecklist(item, state, contextPayload);
   const auditEvents = s.auditState.itemId === item.id && Array.isArray(s.auditState.events) ? s.auditState.events : [];
-  const stateNotice = getWorkStateNotice(state);
+  const pauseReason = getWorkflowPauseReason(item);
+  const resumeWorkflowEligible = !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType);
+  const stateNotice = resumeWorkflowEligible
+    ? 'Field review is cleared. Resume workflow to continue the posting step.'
+    : getWorkStateNotice(state, documentType);
   const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : '';
   const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
 
@@ -430,6 +510,36 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     setOptimisticState(null);
   });
 
+  const [doResumeWorkflow, resumePending] = useAction(async () => {
+    const confirmed = await openDialog({
+      dialogMode: 'confirm',
+      actionType: 'resume_workflow',
+      title: 'Resume workflow',
+      message: 'Review blockers are cleared. Clearledgr will continue the guarded posting step.',
+      previewLines: [
+        vendor,
+        amountLabel,
+        referenceText,
+        isInvoiceDocument && dueDate && dueDate !== 'N/A' ? `Due: ${dueDate}` : null,
+      ].filter(Boolean),
+      confirmLabel: 'Resume workflow',
+      cancelLabel: 'Cancel',
+    });
+    if (!confirmed) return;
+    const result = await queueManager.retryRecoverableFailure(item, {
+      reason: 'Resume workflow after review cleared',
+    });
+    const status = String(result?.status || '').toLowerCase();
+    const ok = ['posted', 'posted_to_erp', 'recovered', 'ready_to_post'].includes(status);
+    showToast(
+      ok
+        ? (status === 'posted' || status === 'posted_to_erp' ? 'Workflow resumed and invoice posted' : 'Workflow resumed')
+        : (result?.reason || 'Could not resume workflow'),
+      ok ? 'success' : 'error',
+    );
+    await queueManager.refreshQueue();
+  });
+
   const [doPost, postPending] = useAction(async () => {
     setOptimisticState('posted_to_erp');
     const result = await queueManager.approveAndPost(item, { override: false });
@@ -466,8 +576,8 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
       previewLines: [
         vendor,
         amountLabel,
-        `Invoice ${invoiceNumber}`,
-        dueDate && dueDate !== 'N/A' ? `Due ${dueDate}` : null,
+        referenceText,
+        isInvoiceDocument && dueDate && dueDate !== 'N/A' ? `Due: ${dueDate}` : null,
       ].filter(Boolean),
       confirmLabel: 'Post to ERP',
       cancelLabel: 'Cancel',
@@ -490,10 +600,13 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   const openVendorRecord = useCallback(() => {
     const vendorName = String(item?.vendor_name || item?.vendor || '').trim();
     if (!vendorName) return;
-    store.sdk?.Router?.goto?.(`clearledgr/vendor/${encodeURIComponent(vendorName)}`);
+    navigateToVendorRecord((routeId) => store.sdk?.Router?.goto?.(routeId), vendorName);
   }, [item]);
 
-  const primaryAction = getPrimaryActionConfig(displayState, actorRole);
+  const basePrimaryAction = pauseReason ? null : getPrimaryActionConfig(displayState, actorRole, documentType);
+  const primaryAction = resumeWorkflowEligible && ['preview_erp_post', 'retry_erp_post'].includes(basePrimaryAction?.id)
+    ? { id: 'resume_workflow', label: 'Resume workflow' }
+    : basePrimaryAction;
   let primaryHandler = null;
   let primaryPending = false;
   let primaryClass = '';
@@ -513,13 +626,17 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   } else if (primaryAction?.id === 'retry_erp_post') {
     primaryHandler = doRetry;
     primaryPending = retryPending;
+  } else if (primaryAction?.id === 'resume_workflow') {
+    primaryHandler = doResumeWorkflow;
+    primaryPending = resumePending;
+    primaryClass = 'cl-btn-approve';
   }
 
   return html`
     <div id="cl-thread-context" class="cl-thread-card cl-work-surface">
       ${totalItems > 1 && html`
         <div class="cl-navigator">
-          <div class="cl-nav-label">Invoice ${humanIndex} of ${totalItems}</div>
+          <div class="cl-nav-label">Record ${humanIndex} of ${totalItems}</div>
           <div class="cl-nav-buttons">
             <button class="cl-nav-btn" onClick=${goPrev} disabled=${itemIndex <= 0} aria-label="Previous">‹</button>
             <button class="cl-nav-btn" onClick=${goNext} disabled=${itemIndex >= totalItems - 1} aria-label="Next">›</button>
@@ -530,13 +647,13 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
       <div class="cl-thread-header">
         <div class="cl-thread-header-copy">
           <div class="cl-thread-title">${vendor}</div>
-          <div class="cl-thread-meta-inline">${amountLabel} · Invoice ${invoiceNumber} · Due ${dueDate} · ${poLabel}</div>
+          <div class="cl-thread-meta-inline">${metaLine}</div>
         </div>
         <${StatePill} state=${displayState} />
       </div>
 
       ${blockers.length > 0 && html`
-        <div class="cl-blocker-list" aria-label="What is blocking this invoice">
+        <div class="cl-blocker-list" aria-label="What is blocking this record">
           ${blockers.map((blocker) => html`
             <div key=${blocker.id} class="cl-blocker-row">
               <div class="cl-blocker-label">${blocker.label}</div>
@@ -546,7 +663,8 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
         </div>
       `}
 
-      ${stateNotice && html`<div class="cl-state-note">${stateNotice}</div>`}
+      ${pauseReason && fieldReviewBlockers.length === 0 && html`<div class="cl-state-note">${pauseReason}</div>`}
+      ${!pauseReason && stateNotice && html`<div class="cl-state-note">${stateNotice}</div>`}
       ${readOnlyMode && html`
         <div class="cl-state-note">Read-only view. Queue actions are reserved for AP operators.</div>
       `}
@@ -563,14 +681,15 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
         ${(item?.vendor_name || item?.vendor) && html`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openVendorRecord}>Vendor record</button>
         `}
-        ${canRejectWorkItem(displayState, actorRole) && html`
+        ${canRejectWorkItem(displayState, actorRole, documentType) && html`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
         `}
-        ${canNudgeApprover(displayState, actorRole) && primaryAction?.id !== 'nudge_approver' && html`
+        ${canNudgeApprover(displayState, actorRole, documentType) && primaryAction?.id !== 'nudge_approver' && html`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Nudge approver</button>
         `}
       </div>
 
+      <${FieldReviewPanel} blockers=${fieldReviewBlockers} pauseReason=${pauseReason} />
       <${EvidenceChecklist} entries=${evidence} />
       <${AuditDisclosure} events=${auditEvents} loading=${Boolean(s.auditState.loading && s.auditState.itemId === item.id)} />
       <${ActionDialog} ...${dialog} />
@@ -585,8 +704,8 @@ function EmptyState({ queueCount }) {
 
   if (threadSelected) {
     return html`<div class="cl-section"><div class="cl-empty">
-      <p>No invoice is linked to this thread.</p>
-      <p class="cl-muted">Open the AP pipeline to work invoices that Clearledgr has already detected.</p>
+      <p>No finance document is linked to this thread.</p>
+      <p class="cl-muted">Open the pipeline to work records that Clearledgr has already detected.</p>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
       </div>
@@ -595,8 +714,8 @@ function EmptyState({ queueCount }) {
 
   if (queueCount > 0) {
     return html`<div class="cl-section"><div class="cl-empty">
-      <p>${queueCount} invoice${queueCount !== 1 ? 's are' : ' is'} ready in the AP pipeline.</p>
-      <p class="cl-muted">Open a thread to work a specific invoice, or review the queue in Pipeline.</p>
+      <p>${queueCount} record${queueCount !== 1 ? 's are' : ' is'} ready in the pipeline.</p>
+      <p class="cl-muted">Open a thread to work a specific finance document, or review the queue in Pipeline.</p>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
@@ -605,8 +724,8 @@ function EmptyState({ queueCount }) {
   }
 
   return html`<div class="cl-section"><div class="cl-empty">
-    <p>No invoices in queue.</p>
-    <p class="cl-muted">Clearledgr is monitoring this mailbox and will surface AP work here as invoices arrive.</p>
+    <p>No finance documents in queue.</p>
+    <p class="cl-muted">Clearledgr is monitoring this mailbox and will surface finance work here as records arrive.</p>
     <div class="cl-thread-actions">
       <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
     </div>
@@ -655,7 +774,7 @@ export default function SidebarApp({ queueManager }) {
           Clearledgr AP
         </div>
         <div class="cl-header-right">
-          ${queueCount > 0 && html`<span class="cl-header-badge">${queueCount} invoice${queueCount !== 1 ? 's' : ''}</span>`}
+          ${queueCount > 0 && html`<span class="cl-header-badge">${queueCount} record${queueCount !== 1 ? 's' : ''}</span>`}
         </div>
       </div>
 
@@ -671,7 +790,7 @@ export default function SidebarApp({ queueManager }) {
         <//>
       `}
 
-      <${ErrorBoundary} fallback="Could not load invoice details">
+      <${ErrorBoundary} fallback="Could not load record details">
         ${item
           ? html`<${WorkPanel} item=${item} queueManager=${queueManager} itemIndex=${itemIndex} totalItems=${queueCount} />`
           : html`<${EmptyState} queueCount=${queueCount} />`}

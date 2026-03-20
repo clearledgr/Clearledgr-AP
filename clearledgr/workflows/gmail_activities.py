@@ -211,6 +211,7 @@ async def extract_email_data_activity(payload: Dict[str, Any]) -> Dict[str, Any]
         "invoice_number": invoice_number or None,
         "due_date": due_date,
         "confidence": confidence,
+        "document_type": parsed.get("document_type") or parsed.get("email_type"),
         "email_type": parsed.get("email_type"),
         "invoice_date": _normalize_date(parsed.get("invoice_date")),
         "field_confidences": field_confidences,
@@ -219,6 +220,11 @@ async def extract_email_data_activity(payload: Dict[str, Any]) -> Dict[str, Any]
         "extraction_method": str(parsed.get("extraction_method") or "").strip() or None,
         "extraction_model": str(parsed.get("extraction_model") or "").strip() or None,
         "primary_source": str(parsed.get("primary_source") or "email").strip() or "email",
+        "field_provenance": parsed.get("field_provenance") if isinstance(parsed.get("field_provenance"), dict) else {},
+        "field_evidence": parsed.get("field_evidence") if isinstance(parsed.get("field_evidence"), dict) else {},
+        "source_conflicts": parsed.get("source_conflicts") if isinstance(parsed.get("source_conflicts"), list) else [],
+        "requires_extraction_review": bool(parsed.get("requires_extraction_review")),
+        "conflict_actions": parsed.get("conflict_actions") if isinstance(parsed.get("conflict_actions"), list) else [],
         "attachment_count": len(payload.get("attachments") or []),
         "attachment_names": [
             str(att.get("filename") or att.get("name") or "").strip()
@@ -232,6 +238,9 @@ async def extract_email_data_activity(payload: Dict[str, Any]) -> Dict[str, Any]
             "has_statement_attachment": bool(parsed.get("has_statement_attachment")),
             "extraction_method": parsed.get("extraction_method"),
             "primary_source": parsed.get("primary_source"),
+            "field_provenance": parsed.get("field_provenance") if isinstance(parsed.get("field_provenance"), dict) else {},
+            "field_evidence": parsed.get("field_evidence") if isinstance(parsed.get("field_evidence"), dict) else {},
+            "source_conflicts": parsed.get("source_conflicts") if isinstance(parsed.get("source_conflicts"), list) else [],
             "parsed_attachments": _compact_attachment_evidence(parsed.get("attachments") or []),
         },
     }

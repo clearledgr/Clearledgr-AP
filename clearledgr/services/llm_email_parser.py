@@ -101,7 +101,7 @@ BODY:
 Return exactly this JSON shape (use null for any field you cannot determine with confidence):
 
 {{
-  "document_type": "<invoice|receipt|payment_request|statement|other>",
+  "document_type": "<invoice|receipt|refund|credit_note|payment_request|statement|other>",
   "vendor": "<exact merchant/vendor name — NOT the payment processor>",
   "payment_processor": "<platform routing this email, e.g. Stripe, PayPal — or null>",
   "amount": <number or null>,
@@ -124,6 +124,8 @@ Return exactly this JSON shape (use null for any field you cannot determine with
 Classification rules:
 - "invoice"         — a request for payment that has NOT yet been paid
 - "receipt"         — a confirmation that payment HAS already been made
+- "refund"          — a reversal where money was returned after a prior payment
+- "credit_note"     — a vendor-issued credit against an invoice or account balance
 - "payment_request" — informal payment request (expense, contractor, wire)
 - "statement"       — account statement showing multiple transactions
 - "other"           — anything that is not a financial document
@@ -279,7 +281,7 @@ def _llm_result_to_parse_email_dict(
 
     # Normalise document_type → email_type (existing consumer key)
     doc_type = str(llm.get("document_type") or "invoice").lower().strip()
-    valid_types = {"invoice", "receipt", "payment_request", "statement", "other"}
+    valid_types = {"invoice", "receipt", "refund", "credit_note", "payment_request", "statement", "other"}
     email_type = doc_type if doc_type in valid_types else "invoice"
 
     parsed_attachments = [{"type": "document", "parsed": False} for _ in attachments]
@@ -321,6 +323,354 @@ def _llm_result_to_parse_email_dict(
     }
 
 
+def _is_placeholder_vendor(value: Any) -> bool:
+    token = str(value or "").strip().lower()
+    return token in {"", "unknown", "unknown vendor", "vendor", "merchant", "payment processor"}
+
+
+def _merge_attachment_evidence(
+    llm_result: Dict[str, Any],
+    local_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Promote stronger deterministic attachment evidence over weak LLM fields."""
+    if not isinstance(local_result, dict):
+        return llm_result
+    if local_result.get("primary_source") != "attachment" and not local_result.get("has_invoice_attachment"):
+        return llm_result
+
+    merged = dict(llm_result)
+    promoted_fields: List[str] = []
+    field_confidences = dict(merged.get("field_confidences") or {})
+    local_field_confidences = dict(local_result.get("field_confidences") or {})
+
+    local_vendor = str(local_result.get("vendor") or "").strip()
+    llm_vendor = str(merged.get("vendor") or "").strip()
+    payment_processor = str(merged.get("payment_processor") or "").strip()
+    if local_vendor and (
+        _is_placeholder_vendor(llm_vendor)
+        or (payment_processor and llm_vendor.lower() == payment_processor.lower())
+    ):
+        merged["vendor"] = local_vendor
+        field_confidences["vendor"] = max(
+            float(field_confidences.get("vendor") or 0.0),
+            float(local_field_confidences.get("vendor") or 0.9),
+        )
+        promoted_fields.append("vendor")
+
+    local_amount = local_result.get("primary_amount")
+    llm_amount = merged.get("primary_amount")
+    llm_amount_conf = float(field_confidences.get("amount") or 0.0)
+    llm_amount_value = _safe_float(llm_amount)
+    local_amount_value = _safe_float(local_amount)
+    if local_amount is not None and (
+        llm_amount is None
+        or (llm_amount_value == 0.0 and (local_amount_value or 0.0) > 0.0)
+        or llm_amount_conf < 0.8
+    ):
+        merged["primary_amount"] = local_amount
+        merged["amounts"] = local_result.get("amounts") or merged.get("amounts") or []
+        merged["currency"] = local_result.get("currency") or merged.get("currency")
+        field_confidences["amount"] = max(
+            llm_amount_conf,
+            float(local_field_confidences.get("amount") or 0.92),
+        )
+        promoted_fields.append("amount")
+
+    local_invoice = str(local_result.get("primary_invoice") or "").strip()
+    llm_invoice = str(merged.get("primary_invoice") or "").strip()
+    if local_invoice and (not llm_invoice or float(field_confidences.get("invoice_number") or 0.0) < 0.85):
+        merged["primary_invoice"] = local_invoice
+        merged["invoice_numbers"] = local_result.get("invoice_numbers") or [local_invoice]
+        field_confidences["invoice_number"] = max(
+            float(field_confidences.get("invoice_number") or 0.0),
+            float(local_field_confidences.get("invoice_number") or 0.92),
+        )
+        promoted_fields.append("invoice_number")
+
+    local_due_date = str(local_result.get("due_date") or local_result.get("primary_date") or "").strip()
+    llm_due_date = str(merged.get("due_date") or merged.get("primary_date") or "").strip()
+    if local_due_date and (not llm_due_date or float(field_confidences.get("due_date") or 0.0) < 0.8):
+        merged["due_date"] = local_result.get("due_date") or merged.get("due_date")
+        merged["invoice_date"] = local_result.get("invoice_date") or merged.get("invoice_date")
+        merged["primary_date"] = local_result.get("primary_date") or local_result.get("due_date") or merged.get("primary_date")
+        local_dates = local_result.get("dates")
+        if isinstance(local_dates, list) and local_dates:
+            merged["dates"] = local_dates
+        field_confidences["due_date"] = max(
+            float(field_confidences.get("due_date") or 0.0),
+            float(local_field_confidences.get("due_date") or 0.88),
+        )
+        promoted_fields.append("due_date")
+
+    local_type = str(local_result.get("email_type") or "").strip().lower()
+    llm_type = str(merged.get("email_type") or "").strip().lower()
+    if local_type in {"invoice", "receipt", "refund", "credit_note", "payment_request", "statement"} and llm_type == "other":
+        merged["email_type"] = local_type
+        merged["document_type"] = local_type
+        promoted_fields.append("document_type")
+
+    if local_result.get("attachments"):
+        merged["attachments"] = local_result.get("attachments")
+    merged["has_invoice_attachment"] = bool(
+        local_result.get("has_invoice_attachment") or merged.get("has_invoice_attachment")
+    )
+    merged["has_statement_attachment"] = bool(
+        local_result.get("has_statement_attachment") or merged.get("has_statement_attachment")
+    )
+    merged["primary_source"] = local_result.get("primary_source") or merged.get("primary_source")
+    merged["field_confidences"] = field_confidences
+
+    if promoted_fields:
+        merged["extraction_method"] = "llm+attachment_evidence"
+        reasoning = str(merged.get("reasoning_summary") or "").strip()
+        suffix = f" Attachment evidence strengthened {', '.join(promoted_fields)}."
+        merged["reasoning_summary"] = f"{reasoning}{suffix}".strip()
+
+    return _merge_source_trace(merged, local_result)
+
+
+def _result_field_value(result: Dict[str, Any], field: str) -> Any:
+    if field == "amount":
+        return result.get("primary_amount")
+    if field == "invoice_number":
+        return result.get("primary_invoice")
+    if field == "invoice_date":
+        return result.get("invoice_date") or result.get("primary_date")
+    if field == "due_date":
+        return result.get("due_date")
+    if field == "vendor":
+        return result.get("vendor")
+    if field == "currency":
+        return result.get("currency")
+    return result.get(field)
+
+
+def _comparable_trace_value(field: str, value: Any) -> Any:
+    if value is None:
+        return None
+    if field == "amount":
+        parsed = _safe_float(value)
+        return round(parsed, 2) if parsed is not None else None
+    token = str(value or "").strip()
+    if not token:
+        return None
+    if field == "currency":
+        return token.upper()
+    if field == "vendor":
+        return "".join(ch for ch in token.lower() if ch.isalnum()) or None
+    return "".join(token.lower().split()) or None
+
+
+def _merge_source_trace(
+    merged_result: Dict[str, Any],
+    local_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not isinstance(local_result, dict):
+        return merged_result
+
+    merged = dict(merged_result)
+    provenance = {
+        key: dict(value)
+        for key, value in dict(local_result.get("field_provenance") or {}).items()
+        if isinstance(value, dict)
+    }
+    evidence = {
+        key: dict(value)
+        for key, value in dict(local_result.get("field_evidence") or {}).items()
+        if isinstance(value, dict)
+    }
+    conflicts = [
+        dict(value)
+        for value in (local_result.get("source_conflicts") or [])
+        if isinstance(value, dict)
+    ]
+    conflict_actions = [
+        dict(value)
+        for value in (local_result.get("conflict_actions") or [])
+        if isinstance(value, dict)
+    ]
+
+    for field in ("vendor", "amount", "currency", "invoice_number", "invoice_date", "due_date"):
+        final_value = _result_field_value(merged, field)
+        entry = provenance.setdefault(field, {"candidates": {}})
+        candidates = entry.get("candidates")
+        if not isinstance(candidates, dict):
+            candidates = {}
+            entry["candidates"] = candidates
+
+        llm_value = final_value
+        if llm_value not in (None, ""):
+            candidates["llm"] = llm_value
+
+        chosen_source = entry.get("source")
+        for source_name in ("attachment", "email"):
+            candidate_value = candidates.get(source_name)
+            if _comparable_trace_value(field, candidate_value) == _comparable_trace_value(field, final_value):
+                chosen_source = source_name
+                break
+        if not chosen_source:
+            chosen_source = "llm"
+        entry["source"] = chosen_source
+        entry["value"] = final_value
+
+        evidence_entry = evidence.setdefault(field, {})
+        if isinstance(evidence_entry, dict):
+            evidence_entry["source"] = chosen_source
+            evidence_entry["selected_value"] = final_value
+            if llm_value not in (None, ""):
+                evidence_entry["llm_value"] = llm_value
+
+        attachment_value = candidates.get("attachment")
+        if chosen_source == "llm" and attachment_value not in (None, ""):
+            if _comparable_trace_value(field, attachment_value) != _comparable_trace_value(field, final_value):
+                blocking = field in {"amount", "currency", "invoice_number"}
+                conflict_key = (field, "attachment", "llm")
+                existing_key = {
+                    (
+                        str(item.get("field") or ""),
+                        str(item.get("preferred_source") or ""),
+                        "llm" if str((item.get("values") or {}).get("llm") or "") else "attachment",
+                    )
+                    for item in conflicts
+                    if isinstance(item, dict)
+                }
+                if conflict_key not in existing_key:
+                    conflicts.append(
+                        {
+                            "field": field,
+                            "reason": "attachment_llm_mismatch",
+                            "severity": "high" if blocking else "medium",
+                            "blocking": blocking,
+                            "preferred_source": "attachment",
+                            "values": {
+                                "attachment": attachment_value,
+                                "llm": final_value,
+                            },
+                        }
+                    )
+                    conflict_actions.append(
+                        {
+                            "action": "review_fields",
+                            "field": field,
+                            "reason": "attachment_llm_mismatch",
+                            "blocking": blocking,
+                        }
+                    )
+
+    merged["field_provenance"] = provenance
+    merged["field_evidence"] = evidence
+    merged["source_conflicts"] = conflicts
+    merged["conflict_actions"] = conflict_actions
+    merged["requires_extraction_review"] = any(bool(item.get("blocking")) for item in conflicts)
+    return merged
+
+
+def _attachment_authority_score(local_result: Dict[str, Any]) -> int:
+    if not isinstance(local_result, dict):
+        return 0
+    if str(local_result.get("primary_source") or "").strip().lower() != "attachment":
+        return 0
+
+    score = 0
+    email_type = str(local_result.get("email_type") or "").strip().lower()
+    if email_type in {"invoice", "receipt", "refund", "credit_note", "statement", "payment_request"}:
+        score += 1
+
+    if local_result.get("has_invoice_attachment") or local_result.get("has_statement_attachment"):
+        score += 2
+
+    vendor = str(local_result.get("vendor") or "").strip()
+    if vendor and not _is_placeholder_vendor(vendor):
+        score += 2
+
+    invoice_number = str(local_result.get("primary_invoice") or "").strip()
+    if invoice_number:
+        score += 3
+
+    amount_value = _safe_float(local_result.get("primary_amount"))
+    if local_result.get("primary_amount") is not None:
+        score += 3 if (amount_value or 0.0) > 0.0 else 2
+
+    if str(local_result.get("due_date") or local_result.get("primary_date") or "").strip():
+        score += 1
+
+    return score
+
+
+def _attachment_result_is_authoritative(local_result: Dict[str, Any]) -> bool:
+    if not isinstance(local_result, dict):
+        return False
+    if str(local_result.get("primary_source") or "").strip().lower() != "attachment":
+        return False
+    return _attachment_authority_score(local_result) >= 7
+
+
+def _local_field_confidences(local_result: Dict[str, Any]) -> Dict[str, float]:
+    existing = dict(local_result.get("field_confidences") or {})
+    authoritative = _attachment_result_is_authoritative(local_result)
+
+    vendor = str(local_result.get("vendor") or "").strip()
+    if vendor and not _is_placeholder_vendor(vendor):
+        existing["vendor"] = max(float(existing.get("vendor") or 0.0), 0.94 if authoritative else 0.82)
+
+    if local_result.get("primary_amount") is not None:
+        amount_value = _safe_float(local_result.get("primary_amount"))
+        amount_floor = 0.95 if authoritative and (amount_value or 0.0) > 0.0 else 0.91 if authoritative else 0.78
+        existing["amount"] = max(float(existing.get("amount") or 0.0), amount_floor)
+
+    if str(local_result.get("primary_invoice") or "").strip():
+        existing["invoice_number"] = max(
+            float(existing.get("invoice_number") or 0.0),
+            0.94 if authoritative else 0.82,
+        )
+
+    if str(local_result.get("due_date") or local_result.get("primary_date") or "").strip():
+        existing["due_date"] = max(float(existing.get("due_date") or 0.0), 0.89 if authoritative else 0.76)
+
+    return existing
+
+
+def _decorate_deterministic_result(
+    local_result: Dict[str, Any],
+    *,
+    extraction_method: str,
+    extraction_error: Optional[str] = None,
+) -> Dict[str, Any]:
+    result = dict(local_result or {})
+    result["document_type"] = result.get("document_type") or result.get("email_type") or "invoice"
+    result["field_confidences"] = _local_field_confidences(result)
+    result["payment_processor"] = result.get("payment_processor") or None
+    result["extraction_method"] = extraction_method
+    result["extraction_model"] = None
+
+    authoritative = _attachment_result_is_authoritative(result)
+    baseline_confidence = 0.95 if authoritative else 0.82
+    result["confidence"] = max(float(result.get("confidence") or 0.0), baseline_confidence)
+
+    evidence_bits: List[str] = []
+    if str(result.get("vendor") or "").strip() and not _is_placeholder_vendor(result.get("vendor")):
+        evidence_bits.append("vendor")
+    if result.get("primary_amount") is not None:
+        evidence_bits.append("amount")
+    if str(result.get("primary_invoice") or "").strip():
+        evidence_bits.append("invoice number")
+    if str(result.get("due_date") or result.get("primary_date") or "").strip():
+        evidence_bits.append("dates")
+    if not evidence_bits:
+        evidence_bits.append("attachment evidence")
+
+    if authoritative:
+        reasoning = f"Deterministic attachment extraction supplied authoritative {', '.join(evidence_bits)}."
+    else:
+        reasoning = f"Deterministic extraction supplied {', '.join(evidence_bits)}."
+    if extraction_error:
+        reasoning = f"{reasoning} LLM path was skipped after error."
+        result["extraction_error"] = extraction_error
+
+    result["reasoning_summary"] = str(result.get("reasoning_summary") or "").strip() or reasoning
+    return _merge_source_trace(result, local_result)
+
+
 class LLMEmailParser:
     """LLM-first email parser using Claude for extraction and classification.
 
@@ -351,19 +701,43 @@ class LLMEmailParser:
         Falls back to regex EmailParser if Claude is unavailable or fails.
         """
         attachments = attachments or []
+        local_result: Optional[Dict[str, Any]] = None
+        if attachments:
+            from clearledgr.services.email_parser import EmailParser
+
+            local_result = EmailParser().parse_email(subject, body, sender, attachments)
+            if _attachment_result_is_authoritative(local_result):
+                logger.info(
+                    "[LLMEmailParser] Skipping Claude for authoritative attachment-backed extraction: subject=%r",
+                    subject[:60],
+                )
+                return _decorate_deterministic_result(
+                    local_result,
+                    extraction_method="attachment_authoritative",
+                )
 
         if not self._api_key:
             logger.info("[LLMEmailParser] No ANTHROPIC_API_KEY — using regex fallback")
-            return self._regex_fallback(subject, body, sender, attachments)
+            return self._regex_fallback(subject, body, sender, attachments, local_result=local_result)
 
         try:
-            return self._extract_with_llm(subject, body, sender, attachments)
+            return self._extract_with_llm(
+                subject,
+                body,
+                sender,
+                attachments,
+                local_result=local_result,
+            )
         except Exception as exc:
             logger.warning("[LLMEmailParser] LLM extraction failed (%s) — using regex fallback", exc)
-            result = self._regex_fallback(subject, body, sender, attachments)
-            result["extraction_method"] = "regex_fallback"
-            result["extraction_error"] = str(exc)
-            return result
+            return self._regex_fallback(
+                subject,
+                body,
+                sender,
+                attachments,
+                local_result=local_result,
+                extraction_error=str(exc),
+            )
 
     def _extract_with_llm(
         self,
@@ -371,6 +745,8 @@ class LLMEmailParser:
         body: str,
         sender: str,
         attachments: List[Dict[str, Any]],
+        *,
+        local_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         visual_atts, text_att_content = _categorize_attachments(attachments)
         prompt = _build_extraction_prompt(
@@ -400,6 +776,12 @@ class LLMEmailParser:
             attachments=attachments,
             model=model,
         )
+        if attachments:
+            if local_result is None:
+                from clearledgr.services.email_parser import EmailParser
+
+                local_result = EmailParser().parse_email(subject, body, sender, attachments)
+            result = _merge_attachment_evidence(result, local_result)
         logger.info(
             "[LLMEmailParser] Extracted: type=%s vendor=%r amount=%s confidence=%.2f",
             result["email_type"],
@@ -415,14 +797,22 @@ class LLMEmailParser:
         body: str,
         sender: str,
         attachments: List[Dict[str, Any]],
+        *,
+        local_result: Optional[Dict[str, Any]] = None,
+        extraction_error: Optional[str] = None,
     ) -> Dict[str, Any]:
-        from clearledgr.services.email_parser import EmailParser
-        result = EmailParser().parse_email(subject, body, sender, attachments)
-        result["extraction_method"] = "regex_fallback"
-        result["field_confidences"] = result.get("field_confidences") or {}
-        result["reasoning_summary"] = result.get("reasoning_summary") or ""
-        result["payment_processor"] = None
-        result["document_type"] = result.get("email_type", "invoice")
+        if local_result is None:
+            from clearledgr.services.email_parser import EmailParser
+
+            local_result = EmailParser().parse_email(subject, body, sender, attachments)
+        method = "attachment_authoritative" if _attachment_result_is_authoritative(local_result) else "regex_fallback"
+        result = _decorate_deterministic_result(
+            local_result,
+            extraction_method=method,
+            extraction_error=extraction_error,
+        )
+        if not result.get("payment_processor"):
+            result["payment_processor"] = None
         return result
 
 

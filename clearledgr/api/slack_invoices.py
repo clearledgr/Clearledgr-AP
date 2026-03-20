@@ -164,7 +164,8 @@ async def _dispatch_slack_action(action: NormalizedApprovalAction) -> Dict[str, 
                 "text": "Budget decision required. Use Approve override, Request info, or Reject.",
                 "result": result,
             }
-        if status == "needs_field_review":
+        blocked_reason = str(workflow_result.get("reason") or result.get("reason") or "").strip().lower()
+        if status == "needs_field_review" or (status == "blocked" and blocked_reason == "field_review_required"):
             return {
                 "response_type": "ephemeral",
                 "text": "Field review required before posting. Open the invoice to review critical fields.",

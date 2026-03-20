@@ -11,17 +11,21 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import time
+from html import escape
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, Depends
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from clearledgr.core.errors import safe_error
 from clearledgr.core.auth import TokenData, get_current_user
+from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
 
 from clearledgr.services.gmail_api import (
     GmailAPIClient,
@@ -75,9 +79,231 @@ def _merge_finance_email_metadata(existing: Optional[FinanceEmail], updates: Dic
         metadata[key] = value
     return metadata
 
+
+def _conflict_blockers(raw_conflicts: Any) -> list[dict[str, Any]]:
+    blockers: list[dict[str, Any]] = []
+    if not isinstance(raw_conflicts, list):
+        return blockers
+    for conflict in raw_conflicts:
+        if not isinstance(conflict, dict) or not conflict.get("blocking"):
+            continue
+        field = str(conflict.get("field") or "").strip()
+        if not field:
+            continue
+        blockers.append(
+            {
+                "field": field,
+                "reason": str(conflict.get("reason") or "source_value_mismatch"),
+                "severity": str(conflict.get("severity") or "high"),
+                "sources": list((conflict.get("values") or {}).keys()),
+                "preferred_source": str(conflict.get("preferred_source") or "attachment"),
+                "values": conflict.get("values") or {},
+            }
+        )
+    return blockers
+
+
+def _build_extraction_review_gate(
+    *,
+    extraction: Dict[str, Any],
+    amount: float,
+    currency: str,
+    invoice_number: Optional[str],
+    due_date: Optional[str],
+    confidence: float,
+) -> Dict[str, Any]:
+    gate = evaluate_critical_field_confidence(
+        overall_confidence=confidence,
+        field_values={
+            "vendor": extraction.get("vendor"),
+            "amount": amount,
+            "invoice_number": invoice_number,
+            "due_date": due_date,
+        },
+        field_confidences=extraction.get("field_confidences") if isinstance(extraction.get("field_confidences"), dict) else {},
+    )
+    blockers = list(gate.get("confidence_blockers") or [])
+    blockers.extend(_conflict_blockers(extraction.get("source_conflicts")))
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for blocker in blockers:
+        if not isinstance(blocker, dict):
+            continue
+        key = (
+            str(blocker.get("field") or "").strip(),
+            str(blocker.get("reason") or "").strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(blocker)
+    gate["confidence_blockers"] = deduped
+    gate["requires_field_review"] = bool(deduped or extraction.get("requires_extraction_review"))
+    gate["currency"] = currency
+    return gate
+
+
+def _lookup_latest_ap_item(db: Any, organization_id: str, *, thread_id: Optional[str], message_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    item = None
+    if thread_id and hasattr(db, "get_ap_item_by_thread"):
+        try:
+            item = db.get_ap_item_by_thread(organization_id, thread_id)
+        except Exception:
+            item = None
+    if not item and message_id and hasattr(db, "get_ap_item_by_message_id"):
+        try:
+            item = db.get_ap_item_by_message_id(organization_id, message_id)
+        except Exception:
+            item = None
+    return item if isinstance(item, dict) else None
+
+
+def _label_only_document_parse(message: Any) -> Dict[str, Any]:
+    try:
+        from clearledgr.services.email_parser import EmailParser
+
+        parser = EmailParser()
+        attachment_manifest = [
+            {
+                "name": str(raw.get("filename") or raw.get("name") or "").strip(),
+                "filename": str(raw.get("filename") or raw.get("name") or "").strip(),
+                "content_type": str(raw.get("content_type") or raw.get("mime_type") or raw.get("mimeType") or "").strip(),
+            }
+            for raw in (getattr(message, "attachments", None) or [])
+            if isinstance(raw, dict)
+        ]
+        parsed = parser.parse_email(
+            subject=getattr(message, "subject", "") or "",
+            body=getattr(message, "body_text", "") or "",
+            sender=getattr(message, "sender", "") or "",
+            attachments=attachment_manifest,
+        )
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception as exc:
+        logger.debug("Label-only finance document parse failed for %s: %s", getattr(message, "id", "unknown"), exc)
+        return {}
+
+
+def _label_only_document_type(message: Any, parsed: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    parsed = parsed if isinstance(parsed, dict) else {}
+    subject_only = str(getattr(message, "subject", "") or "").lower()
+    if re.search(r"\b(credit note|credit memo)\b", subject_only):
+        return "credit_note"
+    if re.search(r"\brefund\b", subject_only):
+        return "refund"
+    parsed_type = str(parsed.get("email_type") or "").strip().lower()
+    if parsed_type in {"receipt", "refund", "credit_note", "invoice", "payment_request"}:
+        return parsed_type
+
+    subject_and_body = " ".join(
+        [
+            str(getattr(message, "subject", "") or ""),
+            str(getattr(message, "body_text", "") or ""),
+            str(getattr(message, "snippet", "") or ""),
+        ]
+    ).lower()
+    attachment_names = " ".join(
+        str(raw.get("filename") or raw.get("name") or "").strip().lower()
+        for raw in (getattr(message, "attachments", None) or [])
+        if isinstance(raw, dict)
+    )
+
+    if re.search(r"\b(credit note|credit memo)\b", subject_and_body):
+        return "credit_note"
+    if re.search(r"\brefund\b", subject_and_body):
+        return "refund"
+    if parsed.get("has_statement_attachment"):
+        return "statement"
+    if re.search(r"\b(bank|card|account)\s+statement\b", subject_and_body):
+        return "statement"
+    if "statement" in attachment_names:
+        return "statement"
+    return None
+
+
+def _save_label_only_finance_email(
+    db: Any,
+    *,
+    message: Any,
+    user_id: str,
+    organization_id: str,
+    document_type: str,
+    parsed: Optional[Dict[str, Any]] = None,
+) -> FinanceEmail:
+    parsed = parsed if isinstance(parsed, dict) else {}
+    existing = db.get_finance_email_by_gmail_id(message.id) if hasattr(db, "get_finance_email_by_gmail_id") else None
+    received_at = message.date.isoformat() if hasattr(message.date, "isoformat") else str(message.date)
+    payload = {
+        "gmail_id": message.id,
+        "subject": message.subject or "",
+        "sender": message.sender or "",
+        "received_at": received_at,
+        "email_type": document_type,
+        "confidence": float(parsed.get("confidence") or 0.8),
+        "vendor": parsed.get("vendor") or None,
+        "amount": parsed.get("amount"),
+        "currency": str(parsed.get("currency") or "USD").strip().upper() or "USD",
+        "invoice_number": parsed.get("invoice_number"),
+        "status": "processed",
+        "organization_id": organization_id,
+        "user_id": user_id,
+        "metadata": _merge_finance_email_metadata(
+            existing,
+            {
+                "gmail_thread_id": getattr(message, "thread_id", None) or message.id,
+                "attachment_manifest": _attachment_manifest(getattr(message, "attachments", None) or []),
+                "label_only_parse": parsed,
+                "document_type": document_type,
+                "email_type": document_type,
+            },
+        ),
+    }
+    existing_id = str(getattr(existing, "id", "") or "").strip()
+    if existing_id:
+        payload["id"] = existing_id
+    return db.save_finance_email(FinanceEmail(**payload))
+
+
+async def _sync_message_finance_labels(
+    client: GmailAPIClient,
+    *,
+    user_id: str,
+    organization_id: str,
+    message_id: str,
+    thread_id: Optional[str] = None,
+    finance_email: Optional[Any] = None,
+    ap_item: Optional[Dict[str, Any]] = None,
+    document_type: Optional[str] = None,
+    db: Optional[Any] = None,
+) -> None:
+    if not message_id:
+        return
+    db = db or get_db()
+    row = ap_item or _lookup_latest_ap_item(
+        db,
+        organization_id,
+        thread_id=thread_id,
+        message_id=message_id,
+    )
+    record = finance_email
+    if record is None and hasattr(db, "get_finance_email_by_gmail_id"):
+        try:
+            record = db.get_finance_email_by_gmail_id(message_id)
+        except Exception:
+            record = None
+
+    await sync_finance_labels(
+        client,
+        message_id,
+        ap_item=row,
+        finance_email=record,
+        document_type=document_type,
+        user_email=user_id,
+    )
+
 router = APIRouter(prefix="/gmail", tags=["gmail"])
 
-from clearledgr.services.gmail_labels import apply_label as apply_clearledgr_label
+from clearledgr.services.gmail_labels import sync_finance_labels
 
 _ORG_ADMIN_ROLES = {"admin", "owner", "api"}
 
@@ -107,10 +333,11 @@ def _resolve_vendor_name(value: Any, sender: str) -> str:
 
 
 def _oauth_state_secret() -> str:
-    secret = str(os.getenv("CLEARLEDGR_SECRET_KEY", "")).strip()
-    if secret:
-        return secret
-    raise HTTPException(status_code=503, detail="oauth_state_signing_unavailable")
+    try:
+        from clearledgr.core.secrets import require_secret
+        return require_secret("CLEARLEDGR_SECRET_KEY")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="oauth_state_signing_unavailable") from exc
 
 
 def _unsign_oauth_state(state: str) -> Dict[str, Any]:
@@ -155,6 +382,287 @@ def _append_success_query(redirect_url: str, *, success: bool) -> str:
     existing_query["success"] = "true" if success else "false"
     rebuilt_query = urlencode(existing_query)
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, rebuilt_query, parsed.fragment))
+
+
+def _oauth_success_page(message: str) -> HTMLResponse:
+    safe_message = escape(str(message or "").strip())
+    html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clearledgr Gmail Connected</title>
+    <style>
+      :root {{
+        color-scheme: light;
+        --bg: #efe6d4;
+        --panel: #fffdf8;
+        --ink: #1d2a21;
+        --muted: #5d6b61;
+        --accent: #0a8f57;
+        --accent-soft: rgba(10, 143, 87, 0.12);
+        --border: rgba(29, 42, 33, 0.1);
+        --shadow: 0 28px 90px rgba(29, 42, 33, 0.16);
+      }}
+      body {{
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(10, 143, 87, 0.18), transparent 28%),
+          radial-gradient(circle at right 18%, rgba(199, 156, 72, 0.16), transparent 22%),
+          linear-gradient(180deg, #f9f5eb 0%, var(--bg) 58%, #e8dcc8 100%);
+        font-family: Georgia, \"Iowan Old Style\", serif;
+        color: var(--ink);
+      }}
+      .shell {{
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 28px;
+      }}
+      .card {{
+        width: min(620px, calc(100vw - 32px));
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 28px;
+        box-shadow: var(--shadow);
+        padding: 28px 28px 26px;
+        position: relative;
+        overflow: hidden;
+      }}
+      .card::after {{
+        content: "";
+        position: absolute;
+        inset: auto -42px -42px auto;
+        width: 160px;
+        height: 160px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(10, 143, 87, 0.12), transparent 66%);
+        pointer-events: none;
+      }}
+      .topline {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+      }}
+      .eyebrow {{
+        display: inline-block;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }}
+      .pill {{
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--ink);
+        font-size: 13px;
+      }}
+      .pill::before {{
+        content: "";
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 0 4px rgba(10, 143, 87, 0.16);
+      }}
+      .hero {{
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 18px;
+        align-items: start;
+      }}
+      .mark {{
+        width: 72px;
+        height: 72px;
+        border-radius: 22px;
+        display: grid;
+        place-items: center;
+        background:
+          linear-gradient(180deg, rgba(10, 143, 87, 0.18), rgba(10, 143, 87, 0.08)),
+          #f3fbf7;
+        border: 1px solid rgba(10, 143, 87, 0.18);
+        color: var(--accent);
+      }}
+      h1 {{
+        margin: 0 0 10px;
+        font-size: clamp(36px, 5vw, 48px);
+        line-height: 0.98;
+        letter-spacing: -0.03em;
+      }}
+      .lede {{
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.6;
+        color: var(--muted);
+      }}
+      .notes {{
+        margin-top: 22px;
+        display: grid;
+        gap: 12px;
+        position: relative;
+        z-index: 1;
+      }}
+      .note {{
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 12px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(29, 42, 33, 0.08);
+      }}
+      .note strong {{
+        display: block;
+        margin-bottom: 3px;
+        font-size: 15px;
+      }}
+      .note span {{
+        display: block;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.45;
+      }}
+      .note-bullet {{
+        width: 12px;
+        height: 12px;
+        margin-top: 5px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 0 5px rgba(10, 143, 87, 0.12);
+      }}
+      .actions {{
+        margin-top: 22px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        position: relative;
+        z-index: 1;
+      }}
+      a, button {{
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 18px;
+        font: inherit;
+        text-decoration: none;
+        cursor: pointer;
+        transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+      }}
+      a:hover, button:hover {{
+        transform: translateY(-1px);
+      }}
+      .primary {{
+        background: var(--accent);
+        color: #fff;
+        box-shadow: 0 10px 24px rgba(10, 143, 87, 0.24);
+      }}
+      .secondary {{
+        background: rgba(255, 255, 255, 0.8);
+        color: var(--ink);
+        border: 1px solid rgba(29, 42, 33, 0.1);
+      }}
+      .meta {{
+        margin-top: 16px;
+        color: var(--muted);
+        font-size: 13px;
+      }}
+      @media (max-width: 640px) {{
+        .shell {{
+          padding: 16px;
+        }}
+        .card {{
+          padding: 22px 20px 20px;
+          border-radius: 22px;
+        }}
+        .hero {{
+          grid-template-columns: 1fr;
+        }}
+        .mark {{
+          width: 64px;
+          height: 64px;
+          border-radius: 18px;
+        }}
+      }}
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="card">
+        <div class="topline">
+          <div class="eyebrow">Clearledgr AP</div>
+          <div class="pill">Monitoring active</div>
+        </div>
+        <div class="hero">
+          <div class="mark" aria-hidden="true">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" role="presentation">
+              <path d="M20 7L10 17L5 12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div>
+            <h1>Gmail connected</h1>
+            <p class="lede">{safe_message}</p>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="note">
+            <div class="note-bullet"></div>
+            <div>
+              <strong>Connection is durable now</strong>
+              <span>Clearledgr can keep monitoring Gmail in the background with the new refresh token.</span>
+            </div>
+          </div>
+          <div class="note">
+            <div class="note-bullet"></div>
+            <div>
+              <strong>Back to your inbox</strong>
+              <span>You can close this tab or return to Gmail now. This page will jump back automatically in <span id="countdown">4</span> seconds.</span>
+            </div>
+          </div>
+        </div>
+        <div class="actions">
+          <a class="primary" href="https://mail.google.com/mail/u/0/#inbox">Return to Gmail</a>
+          <button class="secondary" type="button" onclick="window.close()">Close tab</button>
+        </div>
+        <div class="meta">If your browser blocks closing this tab, just switch back to Gmail.</div>
+      </section>
+    </main>
+    <script>
+      (function() {{
+        var destination = "https://mail.google.com/mail/u/0/#inbox";
+        var countdownNode = document.getElementById("countdown");
+        var remaining = 4;
+        function tick() {{
+          remaining -= 1;
+          if (countdownNode) countdownNode.textContent = String(Math.max(remaining, 0));
+          if (remaining <= 0) {{
+            window.location.href = destination;
+          }}
+        }}
+        window.setInterval(tick, 1000);
+      }})();
+    </script>
+  </body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@router.get("/connected", include_in_schema=False)
+async def gmail_connected(success: Optional[str] = None):
+    is_success = str(success or "").strip().lower() == "true"
+    message = (
+        "Clearledgr can now continue Gmail monitoring. You can return to Gmail."
+        if is_success
+        else "You can close this tab and return to Gmail."
+    )
+    return _oauth_success_page(message)
 
 
 def _assert_user_owns_gmail_identity(
@@ -421,15 +929,59 @@ async def process_single_email(
         classification.get("type"),
         classification.get("confidence", 0.0),
     )
-    
-    # Skip non-AP emails
-    if classification.get("type") == "NOISE" or classification.get("confidence", 0) < 0.7:
-        logger.info("Skipping non-AP email: %s", message.subject)
-        return
-    
+
     category = str(classification.get("type") or "").lower()
+    label_parse = _label_only_document_parse(message)
+    label_only_category = _label_only_document_type(message, label_parse)
+
+    # Non-AP finance docs still need to be labeled in Gmail even when they do
+    # not enter the AP workflow.
+    if classification.get("type") == "NOISE" or classification.get("confidence", 0) < 0.7:
+        if label_only_category in {"receipt", "refund", "credit_note", "statement"}:
+            finance_email = _save_label_only_finance_email(
+                db,
+                message=message,
+                user_id=user_id,
+                organization_id=organization_id,
+                document_type=label_only_category,
+                parsed=label_parse,
+            )
+            await _sync_message_finance_labels(
+                client,
+                user_id=user_id,
+                organization_id=organization_id,
+                message_id=message.id,
+                thread_id=getattr(message, "thread_id", None),
+                finance_email=finance_email,
+                document_type=label_only_category,
+                db=db,
+            )
+        else:
+            logger.info("Skipping non-AP email: %s", message.subject)
+        return
+
     if category not in {"invoice", "payment_request"}:
-        logger.info("Skipping non-AP email: %s (%s)", message.subject, category or "unknown")
+        if label_only_category in {"receipt", "refund", "credit_note", "statement"}:
+            finance_email = _save_label_only_finance_email(
+                db,
+                message=message,
+                user_id=user_id,
+                organization_id=organization_id,
+                document_type=label_only_category,
+                parsed=label_parse,
+            )
+            await _sync_message_finance_labels(
+                client,
+                user_id=user_id,
+                organization_id=organization_id,
+                message_id=message.id,
+                thread_id=getattr(message, "thread_id", None),
+                finance_email=finance_email,
+                document_type=label_only_category,
+                db=db,
+            )
+        else:
+            logger.info("Skipping non-AP email: %s (%s)", message.subject, category or "unknown")
         return
 
     # Store as detected finance email
@@ -477,15 +1029,6 @@ async def process_single_email(
             organization_id=organization_id,
             confidence=classification.get("confidence", 0.0),
         )
-    
-    # Apply Gmail labels — users see AP status in their inbox (Fyxer pattern)
-    user_email = message.sender or ""
-    await apply_clearledgr_label(client, message.id, "processed", user_email)
-    if category == "invoice":
-        await apply_clearledgr_label(client, message.id, "invoice", user_email)
-        await apply_clearledgr_label(client, message.id, "needs_approval", user_email)
-    elif category == "payment_request":
-        await apply_clearledgr_label(client, message.id, "payment", user_email)
 
 
 async def classify_email_with_llm(
@@ -525,6 +1068,10 @@ async def process_invoice_email(
     user_id: str,
     organization_id: str,
     confidence: float,
+    *,
+    run_runtime: bool = True,
+    create_draft: bool = True,
+    refresh_reason: Optional[str] = None,
 ):
     """
     Process an invoice email through the invoice workflow.
@@ -601,6 +1148,20 @@ async def process_invoice_email(
 
     vendor_name = _resolve_vendor_name(extraction.get("vendor"), message.sender)
     extracted_currency = str(extraction.get("currency") or "USD").strip().upper() or "USD"
+    extracted_document_type = (
+        str(extraction.get("document_type") or extraction.get("email_type") or "invoice")
+        .strip()
+        .lower()
+        .replace("-", "_")
+        .replace(" ", "_")
+    ) or "invoice"
+    subject_only = str(getattr(message, "subject", "") or "").lower()
+    if re.search(r"\b(credit note|credit memo)\b", subject_only):
+        extracted_document_type = "credit_note"
+    elif re.search(r"\brefund\b", subject_only):
+        extracted_document_type = "refund"
+    if extracted_document_type not in {"invoice", "receipt", "refund", "credit_note", "payment_request", "statement", "other"}:
+        extracted_document_type = "invoice"
     try:
         extracted_amount = float(
             extraction.get("amount")
@@ -610,6 +1171,30 @@ async def process_invoice_email(
     except (TypeError, ValueError):
         extracted_amount = 0.0
     extracted_confidence = extraction.get("confidence", confidence)
+
+    def _safe_date(value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value)).date().isoformat()
+        except Exception:
+            return None
+
+    extraction_gate = _build_extraction_review_gate(
+        extraction=extraction,
+        amount=extracted_amount,
+        currency=extracted_currency,
+        invoice_number=extraction.get("invoice_number"),
+        due_date=_safe_date(extraction.get("due_date")),
+        confidence=float(extracted_confidence or 0.0),
+    )
+    requires_field_review = bool(extraction_gate.get("requires_field_review"))
+    confidence_blockers = extraction_gate.get("confidence_blockers") if isinstance(extraction_gate.get("confidence_blockers"), list) else []
+    source_conflicts = extraction.get("source_conflicts") if isinstance(extraction.get("source_conflicts"), list) else []
+    conflict_actions = extraction.get("conflict_actions") if isinstance(extraction.get("conflict_actions"), list) else []
+    blocking_conflicts = _conflict_blockers(source_conflicts)
+    extraction_exception_code = "field_conflict" if blocking_conflicts else None
+    extraction_exception_severity = "high" if blocking_conflicts else None
 
     db = get_db()
     existing_finance_email = db.get_finance_email_by_gmail_id(message.id) if hasattr(db, "get_finance_email_by_gmail_id") else None
@@ -625,11 +1210,23 @@ async def process_invoice_email(
             "extraction_method": extraction.get("extraction_method"),
             "extraction_model": extraction.get("extraction_model"),
             "primary_source": extraction.get("primary_source"),
+            "document_type": extracted_document_type,
+            "email_type": extracted_document_type,
             "field_confidences": extraction.get("field_confidences") or {},
+            "field_provenance": extraction.get("field_provenance") or {},
+            "field_evidence": extraction.get("field_evidence") or {},
+            "source_conflicts": source_conflicts,
+            "confidence_gate": extraction_gate,
+            "requires_field_review": requires_field_review,
+            "confidence_blockers": confidence_blockers,
+            "requires_extraction_review": bool(extraction.get("requires_extraction_review")),
+            "conflict_actions": conflict_actions,
             "raw_parser": extraction.get("raw_parser") or {},
             "reasoning_summary": extraction.get("reasoning_summary"),
             "payment_processor": extraction.get("payment_processor"),
             "invoice_date": extraction.get("invoice_date"),
+            "exception_code": extraction_exception_code,
+            "exception_severity": extraction_exception_severity,
             "zero_amount_confirmed_by_attachment": bool(
                 extracted_amount == 0.0 and (extraction.get("raw_parser") or {}).get("has_invoice_attachment")
             ),
@@ -640,7 +1237,7 @@ async def process_invoice_email(
         "subject": message.subject or "",
         "sender": message.sender or "",
         "received_at": received_at,
-        "email_type": "invoice",
+        "email_type": extracted_document_type,
         "confidence": extracted_confidence,
         "vendor": vendor_name or None,
         "amount": extracted_amount,
@@ -656,14 +1253,6 @@ async def process_invoice_email(
     if existing_finance_email_id:
         finance_email_payload["id"] = existing_finance_email_id
     db.save_finance_email(FinanceEmail(**finance_email_payload))
-
-    def _safe_date(value: Optional[str]) -> Optional[str]:
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(str(value)).date().isoformat()
-        except Exception:
-            return None
     
     # Combine all text for discount detection
     invoice_text = f"{message.subject}\n{message.snippet}\n{message.body_text or ''}"
@@ -684,47 +1273,111 @@ async def process_invoice_email(
         invoice_text=invoice_text,  # For discount detection
     )
     
+    if extracted_document_type != "invoice":
+        finance_email_payload["status"] = "processed"
+        saved_finance_email = db.save_finance_email(FinanceEmail(**finance_email_payload))
+        try:
+            await _sync_message_finance_labels(
+                client,
+                user_id=user_id,
+                organization_id=organization_id,
+                message_id=message.id,
+                thread_id=getattr(message, "thread_id", None),
+                finance_email=saved_finance_email,
+                ap_item={"metadata": {"document_type": extracted_document_type, "email_type": extracted_document_type}},
+                document_type=extracted_document_type,
+                db=db,
+            )
+        except Exception as exc:
+            logger.warning("Could not sync Gmail labels for non-invoice finance doc %s: %s", message.id, exc)
+        return {
+            "status": "processed_non_invoice",
+            "execution_mode": "classification_correction",
+            "document_type": extracted_document_type,
+            "email_id": message.id,
+        }
+
     # Submit through canonical finance runtime (AP skill v1)
+    runtime_invoice_payload = {
+        **invoice.__dict__,
+        "thread_id": getattr(message, "thread_id", None) or message.id,
+        "message_id": message.id,
+        "gmail_thread_id": getattr(message, "thread_id", None) or message.id,
+        "gmail_message_id": message.id,
+        "document_type": extracted_document_type,
+        "email_type": extracted_document_type,
+        "intake_source": "gmail_autopilot" if run_runtime else "gmail_replay_refresh",
+        "field_confidences": extraction.get("field_confidences") or {},
+        "raw_parser": extraction.get("raw_parser") or {},
+        "extraction_method": extraction.get("extraction_method"),
+        "extraction_model": extraction.get("extraction_model"),
+        "reasoning_summary": extraction.get("reasoning_summary"),
+        "payment_processor": extraction.get("payment_processor"),
+        "invoice_date": extraction.get("invoice_date"),
+        "primary_source": extraction.get("primary_source"),
+        "attachment_manifest": attachment_manifest,
+        "zero_amount_confirmed_by_attachment": extraction_metadata.get("zero_amount_confirmed_by_attachment"),
+        "field_provenance": extraction.get("field_provenance") or {},
+        "field_evidence": extraction.get("field_evidence") or {},
+        "source_conflicts": source_conflicts,
+        "confidence_gate": extraction_gate,
+        "requires_field_review": requires_field_review,
+        "confidence_blockers": confidence_blockers,
+        "requires_extraction_review": bool(extraction.get("requires_extraction_review")),
+        "conflict_actions": conflict_actions,
+        "exception_code": extraction_exception_code,
+        "exception_severity": extraction_exception_severity,
+    }
+
     try:
         from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
+
         runtime = get_platform_finance_runtime(invoice.organization_id or organization_id)
-        result = await runtime.execute_ap_invoice_processing(
-            invoice_payload={
-                **invoice.__dict__,
-                "thread_id": getattr(message, "thread_id", None) or message.id,
-                "message_id": message.id,
-                "gmail_thread_id": getattr(message, "thread_id", None) or message.id,
-                "gmail_message_id": message.id,
-                "email_type": "invoice",
-                "intake_source": "gmail_autopilot",
-                "field_confidences": extraction.get("field_confidences") or {},
-                "raw_parser": extraction.get("raw_parser") or {},
-                "extraction_method": extraction.get("extraction_method"),
-                "extraction_model": extraction.get("extraction_model"),
-                "reasoning_summary": extraction.get("reasoning_summary"),
-                "payment_processor": extraction.get("payment_processor"),
-                "invoice_date": extraction.get("invoice_date"),
-                "primary_source": extraction.get("primary_source"),
-                "attachment_manifest": attachment_manifest,
-                "zero_amount_confirmed_by_attachment": extraction_metadata.get("zero_amount_confirmed_by_attachment"),
-            },
-            attachments=attachments_with_content,
-            correlation_id=invoice.correlation_id,
-        )
+        if run_runtime:
+            result = await runtime.execute_ap_invoice_processing(
+                invoice_payload=runtime_invoice_payload,
+                attachments=attachments_with_content,
+                correlation_id=invoice.correlation_id,
+            )
+        else:
+            result = runtime.refresh_invoice_record_from_extraction(
+                invoice_payload=runtime_invoice_payload,
+                attachments=attachments_with_content,
+                correlation_id=invoice.correlation_id,
+                refresh_reason=refresh_reason,
+            )
         logger.info("Finance runtime AP result: %s", result.get("status"))
     except Exception as e:
         logger.error("Finance runtime AP processing failed: %s", e)
         result = {"status": "error", "error": str(e)}
 
-    finance_email_payload["status"] = "processed" if result.get("status") not in {"error", "failed"} else "detected"
-    db.save_finance_email(FinanceEmail(**finance_email_payload))
+    if result.get("reason") == "field_review_required" or requires_field_review:
+        finance_email_payload["status"] = "review_required"
+    else:
+        finance_email_payload["status"] = "processed" if result.get("status") not in {"error", "failed"} else "detected"
+    saved_finance_email = db.save_finance_email(FinanceEmail(**finance_email_payload))
+
+    try:
+        await _sync_message_finance_labels(
+            client,
+            user_id=user_id,
+            organization_id=organization_id,
+            message_id=message.id,
+            thread_id=getattr(message, "thread_id", None),
+            finance_email=saved_finance_email,
+            document_type=None if extracted_document_type == "invoice" else extracted_document_type,
+            db=db,
+        )
+    except Exception as exc:
+        logger.warning("Could not sync Gmail labels for invoice %s: %s", message.id, exc)
 
     # Create draft summary on the thread (Fyxer pattern)
     # User opens the thread → sees a draft with the extracted invoice data
-    try:
-        await _create_invoice_draft_summary(client, message, invoice)
-    except Exception as exc:
-        logger.warning("Could not create draft summary: %s", exc)
+    if create_draft:
+        try:
+            await _create_invoice_draft_summary(client, message, invoice)
+        except Exception as exc:
+            logger.warning("Could not create draft summary: %s", exc)
 
     return result
 
@@ -805,6 +1458,8 @@ async def process_payment_request_email(
     from clearledgr.services.slack_notifications import send_payment_request_notification
     
     logger.info(f"Processing payment request email: {message.subject}")
+    db = get_db()
+    existing_finance_email = db.get_finance_email_by_gmail_id(message.id) if hasattr(db, "get_finance_email_by_gmail_id") else None
     
     # Get sender info
     sender_name = _extract_vendor_from_sender(message.sender)
@@ -834,6 +1489,53 @@ async def process_payment_request_email(
             await send_payment_request_notification(request)
         except Exception as e:
             logger.warning(f"Failed to send Slack notification: {e}")
+
+        saved_finance_email = None
+        if hasattr(db, "save_finance_email"):
+            received_at = message.date.isoformat() if hasattr(message.date, "isoformat") else str(message.date)
+            payload = {
+                "gmail_id": message.id,
+                "subject": message.subject or "",
+                "sender": message.sender or "",
+                "received_at": received_at,
+                "email_type": "payment_request",
+                "confidence": confidence,
+                "vendor": sender_name or None,
+                "amount": getattr(request, "amount", None),
+                "currency": str(getattr(request, "currency", "USD") or "USD").strip().upper() or "USD",
+                "invoice_number": None,
+                "status": "processed",
+                "organization_id": organization_id,
+                "user_id": user_id,
+                "metadata": _merge_finance_email_metadata(
+                    existing_finance_email,
+                    {
+                        "gmail_thread_id": getattr(message, "thread_id", None) or message.id,
+                        "attachment_manifest": _attachment_manifest(getattr(message, "attachments", None) or []),
+                        "payment_request_id": getattr(request, "request_id", None),
+                        "payment_request_status": "created",
+                        "email_type": "payment_request",
+                    },
+                ),
+            }
+            existing_id = str(getattr(existing_finance_email, "id", "") or "").strip()
+            if existing_id:
+                payload["id"] = existing_id
+            saved_finance_email = db.save_finance_email(FinanceEmail(**payload))
+
+        try:
+            await _sync_message_finance_labels(
+                client,
+                user_id=user_id,
+                organization_id=organization_id,
+                message_id=message.id,
+                thread_id=getattr(message, "thread_id", None),
+                finance_email=saved_finance_email or existing_finance_email,
+                document_type="payment_request",
+                db=db,
+            )
+        except Exception as exc:
+            logger.warning("Could not sync Gmail labels for payment request %s: %s", message.id, exc)
         
         return {
             "status": "created",
@@ -844,6 +1546,47 @@ async def process_payment_request_email(
     
     except Exception as e:
         logger.error(f"Payment request creation failed: {e}")
+        if hasattr(db, "save_finance_email"):
+            received_at = message.date.isoformat() if hasattr(message.date, "isoformat") else str(message.date)
+            payload = {
+                "gmail_id": message.id,
+                "subject": message.subject or "",
+                "sender": message.sender or "",
+                "received_at": received_at,
+                "email_type": "payment_request",
+                "confidence": confidence,
+                "vendor": sender_name or None,
+                "status": "detected",
+                "organization_id": organization_id,
+                "user_id": user_id,
+                "metadata": _merge_finance_email_metadata(
+                    existing_finance_email,
+                    {
+                        "gmail_thread_id": getattr(message, "thread_id", None) or message.id,
+                        "attachment_manifest": _attachment_manifest(getattr(message, "attachments", None) or []),
+                        "payment_request_status": "error",
+                        "payment_request_error": str(e),
+                        "email_type": "payment_request",
+                    },
+                ),
+            }
+            existing_id = str(getattr(existing_finance_email, "id", "") or "").strip()
+            if existing_id:
+                payload["id"] = existing_id
+            saved_finance_email = db.save_finance_email(FinanceEmail(**payload))
+            try:
+                await _sync_message_finance_labels(
+                    client,
+                    user_id=user_id,
+                    organization_id=organization_id,
+                    message_id=message.id,
+                    thread_id=getattr(message, "thread_id", None),
+                    finance_email=saved_finance_email,
+                    document_type="payment_request",
+                    db=db,
+                )
+            except Exception as exc:
+                logger.warning("Could not sync Gmail labels for failed payment request %s: %s", message.id, exc)
         return {"status": "error", "error": str(e)}
 
 
@@ -863,7 +1606,7 @@ async def gmail_callback(code: str, state: Optional[str] = None):
         
         # Exchange code for tokens
         token = await exchange_code_for_tokens(code, redirect_uri=oauth_redirect_uri)
-        
+
         # Override user_id if provided in state
         if user_id:
             token = token.__class__(
@@ -873,7 +1616,21 @@ async def gmail_callback(code: str, state: Optional[str] = None):
                 expires_at=token.expires_at,
                 email=token.email,
             )
-        
+
+        existing_token = token_store.get(token.user_id) if token.user_id else None
+        if (
+            not str(token.refresh_token or "").strip()
+            and existing_token
+            and str(existing_token.refresh_token or "").strip()
+        ):
+            token = token.__class__(
+                user_id=token.user_id,
+                access_token=token.access_token,
+                refresh_token=existing_token.refresh_token,
+                expires_at=token.expires_at,
+                email=token.email,
+            )
+
         # Store token
         token_store.store(token)
 
@@ -925,7 +1682,10 @@ async def gmail_callback(code: str, state: Optional[str] = None):
         # Return success or redirect
         if redirect_url:
             from fastapi.responses import RedirectResponse
-            return RedirectResponse(url=_append_success_query(redirect_url, success=True))
+            safe_redirect = _append_success_query(redirect_url, success=True)
+            if str(redirect_url).startswith("/workspace"):
+                return _oauth_success_page("Clearledgr connected Gmail successfully. Return to Gmail to continue.")
+            return RedirectResponse(url=safe_redirect)
         
         return {
             "status": "success",

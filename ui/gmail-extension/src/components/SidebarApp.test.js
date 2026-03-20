@@ -54,7 +54,7 @@ beforeEach(() => {
 describe('SidebarApp', () => {
   it('renders empty state when queue is empty', () => {
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('No invoices in queue.')).toBeTruthy();
+    expect(screen.getByText('No finance documents in queue.')).toBeTruthy();
   });
 
   it('renders header with logo and title', () => {
@@ -185,6 +185,64 @@ describe('SidebarApp', () => {
     expect(screen.getByText('Attachment')).toBeTruthy();
     expect(screen.queryByText('Context fields')).toBeNull();
     expect(screen.queryByText(/Agent timeline/i)).toBeNull();
+  });
+
+  it('renders paused field review detail when extraction sources conflict', () => {
+    store.queueState = [{
+      id: 'inv-conflict-1',
+      vendor_name: 'Acme Corp',
+      amount: 440,
+      currency: 'USD',
+      invoice_number: 'INV-77',
+      due_date: '2026-04-01',
+      state: 'received',
+      requires_field_review: true,
+      workflow_paused_reason: 'Workflow paused until amount is confirmed because the email and attachment disagree.',
+      field_review_blockers: [
+        {
+          kind: 'source_conflict',
+          field: 'amount',
+          field_label: 'Amount',
+          email_value_display: 'USD 400.00',
+          attachment_value_display: 'USD 440.00',
+          winning_source_label: 'Attachment',
+          winning_value_display: 'USD 440.00',
+          winner_reason: 'Attachment currently wins because Clearledgr selected the value from invoice.pdf as canonical.',
+        },
+      ],
+    }];
+    store.selectedItemId = 'inv-conflict-1';
+
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+
+    expect(screen.getByText('Paused field review')).toBeTruthy();
+    expect(screen.getByText(/Workflow paused until amount is confirmed/)).toBeTruthy();
+    expect(screen.getByText('Email said')).toBeTruthy();
+    expect(screen.getByText('USD 400.00')).toBeTruthy();
+    expect(screen.getByText('Attachment said')).toBeTruthy();
+    expect(screen.getByText('USD 440.00')).toBeTruthy();
+    expect(screen.getByText(/Attachment currently wins/)).toBeTruthy();
+    expect(screen.queryByText('Request approval')).toBeNull();
+  });
+
+  it('renders credit notes as non-invoice finance documents', () => {
+    store.queueState = [{
+      id: 'doc-credit-1',
+      vendor_name: 'Attio',
+      amount: 36,
+      currency: 'USD',
+      invoice_number: 'AW63GKYA-0003',
+      state: 'received',
+      document_type: 'credit_note',
+    }];
+    store.selectedItemId = 'doc-credit-1';
+
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+
+    expect(screen.getByText(/Credit note/)).toBeTruthy();
+    expect(screen.getByText(/non-invoice finance document/i)).toBeTruthy();
+    expect(screen.queryByText('Request approval')).toBeNull();
+    expect(screen.queryByText('Reject')).toBeNull();
   });
 
   it('groups audit history into key history and background activity', () => {

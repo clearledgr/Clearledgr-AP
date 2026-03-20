@@ -341,6 +341,84 @@ class APRuntimeStore:
             )
         return results
 
+    def list_finance_emails_for_repair(
+        self,
+        organization_id: str,
+        *,
+        email_type: Optional[str] = "invoice",
+        user_id: Optional[str] = None,
+        gmail_ids: Optional[List[str]] = None,
+        before_created_at: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Any]:
+        from clearledgr.core.models import FinanceEmail
+
+        conditions = ["organization_id = ?"]
+        params: List[Any] = [organization_id]
+
+        normalized_email_type = str(email_type or "").strip().lower()
+        if normalized_email_type:
+            conditions.append("LOWER(email_type) = ?")
+            params.append(normalized_email_type)
+
+        normalized_user_id = str(user_id or "").strip()
+        if normalized_user_id:
+            conditions.append("user_id = ?")
+            params.append(normalized_user_id)
+
+        normalized_before = str(before_created_at or "").strip()
+        if normalized_before:
+            conditions.append("created_at < ?")
+            params.append(normalized_before)
+
+        normalized_gmail_ids = [
+            str(value).strip()
+            for value in (gmail_ids or [])
+            if str(value or "").strip()
+        ]
+        if normalized_gmail_ids:
+            placeholders = ",".join("?" for _ in normalized_gmail_ids)
+            conditions.append(f"gmail_id IN ({placeholders})")
+            params.extend(normalized_gmail_ids)
+
+        where = " AND ".join(conditions)
+        sql = self._prepare_sql(
+            f"SELECT * FROM finance_emails WHERE {where} ORDER BY created_at DESC LIMIT ?"
+        )
+        params.append(max(1, min(int(limit or 100), 5000)))
+
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+        results: List[Any] = []
+        for row in rows:
+            r = dict(row)
+            results.append(
+                FinanceEmail(
+                    id=r["id"],
+                    gmail_id=r.get("gmail_id", ""),
+                    subject=r.get("subject", ""),
+                    sender=r.get("sender", ""),
+                    received_at=r.get("received_at", ""),
+                    email_type=r.get("email_type", ""),
+                    confidence=r.get("confidence", 0.0),
+                    vendor=r.get("vendor"),
+                    amount=r.get("amount"),
+                    currency=r.get("currency", "EUR"),
+                    invoice_number=r.get("invoice_number"),
+                    status=r.get("status", "detected"),
+                    processed_at=r.get("processed_at"),
+                    transaction_id=r.get("transaction_id"),
+                    organization_id=r.get("organization_id"),
+                    user_id=r.get("user_id"),
+                    metadata=self._decode_json_value(r.get("metadata"), {}),
+                    created_at=r.get("created_at", ""),
+                )
+            )
+        return results
+
     def get_finance_email_by_gmail_id(self, gmail_id: str) -> Optional[Any]:
         from clearledgr.core.models import FinanceEmail
 

@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from clearledgr.api.deps import get_audit_service
 from clearledgr.services.audit import AuditTrailService
@@ -149,6 +149,162 @@ async def _recover_ap_item_for_thread(
     return None
 
 
+def _resolve_invoice_repair_user(
+    user: Any,
+    *,
+    requested_user_email: Optional[str],
+    organization_id: str,
+) -> Dict[str, str]:
+    requested_email = str(requested_user_email or "").strip().lower()
+    actor_email = str(getattr(user, "email", None) or "").strip().lower()
+    actor_user_id = str(getattr(user, "user_id", None) or "").strip()
+
+    if not requested_email or requested_email == actor_email:
+        if not actor_user_id:
+            raise HTTPException(status_code=400, detail="missing_authenticated_user_id")
+        return {
+            "user_id": actor_user_id,
+            "email": actor_email or _authenticated_actor(user, fallback="gmail_extension"),
+        }
+
+    if not _is_admin_user(user):
+        raise HTTPException(status_code=403, detail="target_user_requires_admin")
+
+    target_user = get_user_by_email(requested_email)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="target_user_not_found")
+    if str(getattr(target_user, "organization_id", "") or "").strip() != organization_id:
+        raise HTTPException(status_code=403, detail="org_mismatch")
+
+    target_user_id = str(getattr(target_user, "user_id", None) or "").strip()
+    if not target_user_id:
+        raise HTTPException(status_code=400, detail="target_user_missing_id")
+
+    return {
+        "user_id": target_user_id,
+        "email": str(getattr(target_user, "email", None) or requested_email).strip() or requested_email,
+    }
+
+
+def _linked_ap_item_for_finance_email(
+    db: Any,
+    *,
+    organization_id: str,
+    finance_email: Any,
+) -> Optional[Dict[str, Any]]:
+    gmail_id = str(getattr(finance_email, "gmail_id", None) or "").strip()
+    if gmail_id and hasattr(db, "get_ap_item_by_message_id"):
+        try:
+            item = db.get_ap_item_by_message_id(organization_id, gmail_id)
+            if item:
+                return item
+        except Exception:
+            pass
+
+    metadata = _parse_json_dict(getattr(finance_email, "metadata", {}))
+    gmail_thread_id = str(metadata.get("gmail_thread_id") or "").strip()
+    if gmail_thread_id and hasattr(db, "get_ap_item_by_thread"):
+        try:
+            item = db.get_ap_item_by_thread(organization_id, gmail_thread_id)
+            if item:
+                return item
+        except Exception:
+            pass
+    return None
+
+
+def _finance_email_needs_historical_repair(
+    db: Any,
+    *,
+    organization_id: str,
+    finance_email: Any,
+) -> bool:
+    metadata = _parse_json_dict(getattr(finance_email, "metadata", {}))
+    linked_ap_item = _linked_ap_item_for_finance_email(
+        db,
+        organization_id=organization_id,
+        finance_email=finance_email,
+    )
+    if not linked_ap_item:
+        return True
+
+    ap_metadata = _parse_json_dict(linked_ap_item.get("metadata"))
+    finance_has_trace = bool(metadata.get("field_provenance")) and bool(metadata.get("field_evidence"))
+    ap_has_trace = bool(ap_metadata.get("field_provenance")) and bool(ap_metadata.get("field_evidence"))
+    if not finance_has_trace or not ap_has_trace:
+        return True
+
+    finance_conflicts = metadata.get("source_conflicts") if isinstance(metadata.get("source_conflicts"), list) else []
+    ap_conflicts = ap_metadata.get("source_conflicts") if isinstance(ap_metadata.get("source_conflicts"), list) else []
+    finance_has_blocking_conflicts = any(
+        isinstance(entry, dict) and bool(entry.get("blocking"))
+        for entry in finance_conflicts
+    )
+    if finance_conflicts and not ap_conflicts:
+        return True
+    if finance_has_blocking_conflicts and not bool(ap_metadata.get("requires_field_review")):
+        return True
+    return False
+
+
+def _load_historical_invoice_repair_candidates(
+    db: Any,
+    *,
+    organization_id: str,
+    target_user_id: str,
+    gmail_ids: List[str],
+    limit: int,
+    before_created_at: Optional[str],
+    only_unrepaired: bool,
+) -> List[Any]:
+    requested_gmail_ids = [
+        str(value).strip()
+        for value in (gmail_ids or [])
+        if str(value or "").strip()
+    ]
+
+    if requested_gmail_ids:
+        rows: List[Any] = []
+        for gmail_id in requested_gmail_ids:
+            record = db.get_finance_email_by_gmail_id(gmail_id) if hasattr(db, "get_finance_email_by_gmail_id") else None
+            if record:
+                rows.append(record)
+    elif hasattr(db, "list_finance_emails_for_repair"):
+        rows = db.list_finance_emails_for_repair(
+            organization_id,
+            email_type="invoice",
+            user_id=target_user_id,
+            before_created_at=before_created_at,
+            limit=max(limit * 3, limit),
+        )
+    else:
+        rows = db.get_finance_emails(organization_id, limit=max(limit * 3, limit))
+
+    candidates: List[Any] = []
+    normalized_before = _parse_iso_utc(before_created_at)
+    for row in rows:
+        email_type = str(getattr(row, "email_type", "") or "").strip().lower()
+        row_user_id = str(getattr(row, "user_id", None) or "").strip()
+        created_at = _parse_iso_utc(getattr(row, "created_at", None) or getattr(row, "received_at", None))
+
+        if email_type != "invoice":
+            continue
+        if row_user_id and row_user_id != target_user_id:
+            continue
+        if normalized_before and created_at and created_at >= normalized_before:
+            continue
+        if only_unrepaired and not _finance_email_needs_historical_repair(
+            db,
+            organization_id=organization_id,
+            finance_email=row,
+        ):
+            continue
+        candidates.append(row)
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
 # ==================== REQUEST MODELS ====================
 
 class EmailTriageRequest(BaseModel):
@@ -181,6 +337,24 @@ class BulkScanRequest(BaseModel):
     email_ids: List[str]
     organization_id: Optional[str] = None
     user_email: Optional[str] = None
+
+
+class HistoricalInvoiceRepairRequest(BaseModel):
+    """Replay historical invoice emails into the live AP record store."""
+    organization_id: Optional[str] = None
+    user_email: Optional[str] = None
+    gmail_ids: List[str] = Field(default_factory=list)
+    limit: int = 100
+    before_created_at: Optional[str] = None
+    only_unrepaired: bool = True
+
+
+class GmailLabelCleanupRequest(BaseModel):
+    """Migrate and delete obsolete Gmail labels from a Clearledgr mailbox."""
+    organization_id: Optional[str] = None
+    user_email: Optional[str] = None
+    dry_run: bool = False
+    max_messages_per_label: int = Field(default=1000, ge=1, le=5000)
 
 
 class ApproveAndPostRequest(BaseModel):
@@ -787,6 +961,159 @@ def get_extension_worklist(
         "items": normalized,
         "total": len(normalized),
     }
+
+
+@router.post("/repair-historical-invoices", dependencies=[Depends(get_current_user)])
+async def repair_historical_invoices(
+    request: HistoricalInvoiceRepairRequest,
+    user=Depends(require_ops_user),
+):
+    """Replay stored invoice emails to repair provenance/conflict fields on live AP rows."""
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    target_user = _resolve_invoice_repair_user(
+        user,
+        requested_user_email=request.user_email,
+        organization_id=org_id,
+    )
+    db = get_db()
+    limit = max(1, min(_safe_int(request.limit, 100), 500))
+    candidates = _load_historical_invoice_repair_candidates(
+        db,
+        organization_id=org_id,
+        target_user_id=target_user["user_id"],
+        gmail_ids=request.gmail_ids,
+        limit=limit,
+        before_created_at=request.before_created_at,
+        only_unrepaired=bool(request.only_unrepaired),
+    )
+
+    if not candidates:
+        return {
+            "status": "completed",
+            "organization_id": org_id,
+            "mailbox_user_email": target_user["email"],
+            "processed": 0,
+            "repaired": 0,
+            "review_required": 0,
+            "errors": 0,
+            "next_cursor": None,
+            "results": [],
+        }
+
+    gmail_client = GmailAPIClient(target_user["user_id"])
+    if not await gmail_client.ensure_authenticated():
+        raise HTTPException(status_code=409, detail="gmail_not_connected")
+
+    from clearledgr.api.gmail_webhooks import process_invoice_email
+
+    repaired = 0
+    review_required = 0
+    errors = 0
+    results: List[Dict[str, Any]] = []
+
+    for record in candidates:
+        gmail_id = str(getattr(record, "gmail_id", None) or "").strip()
+        if not gmail_id:
+            errors += 1
+            results.append({"gmail_id": None, "status": "error", "reason": "missing_gmail_id"})
+            continue
+
+        try:
+            message = await gmail_client.get_message(gmail_id)
+            replay_result = await process_invoice_email(
+                client=gmail_client,
+                message=message,
+                user_id=target_user["user_id"],
+                organization_id=org_id,
+                confidence=float(getattr(record, "confidence", 0.0) or 0.0),
+                run_runtime=False,
+                create_draft=False,
+                refresh_reason="historical_repair_pass",
+            )
+        except Exception as exc:
+            errors += 1
+            results.append(
+                {
+                    "gmail_id": gmail_id,
+                    "status": "error",
+                    "reason": str(exc),
+                }
+            )
+            continue
+
+        updated_record = db.get_finance_email_by_gmail_id(gmail_id) if hasattr(db, "get_finance_email_by_gmail_id") else None
+        linked_item = _linked_ap_item_for_finance_email(
+            db,
+            organization_id=org_id,
+            finance_email=updated_record or record,
+        )
+        normalized_item = build_worklist_item(db, linked_item) if linked_item else None
+        item_requires_review = bool(normalized_item and normalized_item.get("requires_field_review"))
+
+        if item_requires_review or str(getattr(updated_record, "status", "") or "").strip().lower() == "review_required":
+            review_required += 1
+        else:
+            repaired += 1
+
+        results.append(
+            {
+                "gmail_id": gmail_id,
+                "thread_id": str(getattr(message, "thread_id", None) or "").strip() or None,
+                "status": str(replay_result.get("status") or "refreshed"),
+                "finance_email_status": str(getattr(updated_record, "status", None) or "").strip() or None,
+                "ap_item_id": str((normalized_item or {}).get("id") or "").strip() or None,
+                "requires_field_review": item_requires_review,
+                "blocked_fields": (normalized_item or {}).get("blocked_fields") or [],
+                "workflow_paused_reason": (normalized_item or {}).get("workflow_paused_reason"),
+            }
+        )
+
+    next_cursor = None
+    if len(candidates) >= limit:
+        last_row = candidates[-1]
+        next_cursor = str(getattr(last_row, "created_at", None) or "").strip() or None
+
+    return {
+        "status": "completed",
+        "organization_id": org_id,
+        "mailbox_user_email": target_user["email"],
+        "processed": len(results),
+        "repaired": repaired,
+        "review_required": review_required,
+        "errors": errors,
+        "next_cursor": next_cursor,
+        "results": results,
+    }
+
+
+@router.post("/cleanup-gmail-labels", dependencies=[Depends(get_current_user)])
+async def cleanup_gmail_labels(
+    request: GmailLabelCleanupRequest,
+    user=Depends(require_ops_user),
+):
+    """Migrate legacy Clearledgr Gmail labels and delete obsolete label objects."""
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    target_user = _resolve_invoice_repair_user(
+        user,
+        requested_user_email=request.user_email,
+        organization_id=org_id,
+    )
+
+    gmail_client = GmailAPIClient(target_user["user_id"])
+    if not await gmail_client.ensure_authenticated():
+        raise HTTPException(status_code=409, detail="gmail_not_connected")
+
+    from clearledgr.services.gmail_labels import cleanup_legacy_labels
+
+    result = await cleanup_legacy_labels(
+        gmail_client,
+        user_email=target_user["email"],
+        dry_run=bool(request.dry_run),
+        max_messages_per_label=int(request.max_messages_per_label),
+    )
+    result["organization_id"] = org_id
+    result["mailbox_user_email"] = target_user["email"]
+    return result
 
 
 @router.get("/by-thread/{thread_id}")

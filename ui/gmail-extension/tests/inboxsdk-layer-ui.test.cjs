@@ -61,6 +61,7 @@ test('route registry stays Gmail-native and does not define an in-Gmail Ops rout
   const {
     ROUTES,
     DEFAULT_ROUTE,
+    getMenuNavRoutes,
     getNavEligibleRoutes,
     getVisibleNavRoutes,
     hideRoute,
@@ -78,6 +79,12 @@ test('route registry stays Gmail-native and does not define an in-Gmail Ops rout
   const adminVisibleRouteIds = getVisibleNavRoutes(
     pinRoute('clearledgr/health', {}, { includeAdmin: true }),
     { includeAdmin: true },
+  ).map((route) => route.id);
+  const defaultMenuRouteIds = getMenuNavRoutes().map((route) => route.id);
+  const approverMenuRouteIds = getMenuNavRoutes({}, { includeOps: false }).map((route) => route.id);
+  const adminMenuRouteIds = getMenuNavRoutes({}, { includeAdmin: true }).map((route) => route.id);
+  const hiddenMenuRouteIds = getMenuNavRoutes(
+    hideRoute('clearledgr/vendors', pinRoute('clearledgr/vendors')),
   ).map((route) => route.id);
 
   assert.equal(DEFAULT_ROUTE, 'clearledgr/home');
@@ -106,11 +113,33 @@ test('route registry stays Gmail-native and does not define an in-Gmail Ops rout
     'clearledgr/home',
     'clearledgr/pipeline',
   ]);
+  assert.equal(defaultMenuRouteIds.includes('clearledgr/home'), true);
+  assert.equal(defaultMenuRouteIds.includes('clearledgr/pipeline'), true);
+  assert.equal(defaultMenuRouteIds.includes('clearledgr/vendors'), true);
+  assert.equal(defaultMenuRouteIds.includes('clearledgr/connections'), false);
+  assert.deepEqual(approverMenuRouteIds, [
+    'clearledgr/home',
+    'clearledgr/pipeline',
+  ]);
+  assert.equal(adminMenuRouteIds.includes('clearledgr/connections'), true);
+  assert.equal(adminMenuRouteIds.includes('clearledgr/health'), true);
+  assert.equal(hiddenMenuRouteIds.includes('clearledgr/vendors'), false);
   assert.equal(routeMap.get('clearledgr/connections').adminOnly, true);
   assert.equal(routeMap.get('clearledgr/rules').adminOnly, true);
   assert.equal(routeMap.get('clearledgr/team').adminOnly, true);
   assert.equal(routeMap.get('clearledgr/company').adminOnly, true);
   assert.equal(routeMap.get('clearledgr/plan').adminOnly, true);
+});
+
+test('route icon mapper returns concrete icon assets for menu routes', async () => {
+  const { ROUTES } = await importModule('src/routes/route-registry.js');
+  const { getPipelineViewIconUrl, getRouteIconUrl } = await importModule('src/routes/route-icons.js');
+
+  const iconUrls = ROUTES.map((route) => getRouteIconUrl(route));
+
+  assert.equal(iconUrls.every((url) => String(url).startsWith('data:image/svg+xml')), true);
+  assert.equal(new Set(iconUrls).size >= 6, true);
+  assert.equal(getPipelineViewIconUrl().startsWith('data:image/svg+xml'), true);
 });
 
 test('admin bootstrap adapter preserves backend current user role instead of hardcoding admin', async () => {
@@ -197,7 +226,7 @@ test('invoice detail page stays on the canonical AP action contract', () => {
   );
 
   assert.equal(source.includes('/extension/approve-and-post'), false);
-  assert.equal(source.includes("getPrimaryActionConfig(state, actorRole)"), true);
+  assert.equal(source.includes("getPrimaryActionConfig(state, actorRole, documentType)"), true);
   assert.equal(source.includes("auditData?.events"), true);
   assert.equal(source.includes("executeIntent(api, orgId, 'post_to_erp'"), true);
   assert.equal(source.includes("executeIntent(api, orgId, 'request_approval'"), true);
@@ -205,6 +234,9 @@ test('invoice detail page stays on the canonical AP action contract', () => {
   assert.equal(source.includes('partitionAuditEvents(auditEvents)'), true);
   assert.equal(source.includes('Record history'), true);
   assert.equal(source.includes('Background activity'), true);
+  assert.equal(source.includes('Paused field review'), true);
+  assert.equal(source.includes('Email said'), true);
+  assert.equal(source.includes('Attachment said'), true);
 });
 
 test('home page queue shortcuts and saved views stay user and org scoped', () => {
@@ -237,6 +269,8 @@ test('pipeline page syncs saved views through the authenticated user preferences
   assert.equal(source.includes('getBootstrappedPipelinePreferences(bootstrap)'), true);
   assert.equal(source.includes('getStarterPipelineViews(viewPrefs)'), true);
   assert.equal(source.includes('Update active view'), true);
+  assert.equal(source.includes('FieldReviewSummary'), true);
+  assert.equal(source.includes('Email ${first.email_value_display ||'), true);
 });
 
 test('thread card stays compact, capped, and free of dashboard/debug clutter', () => {
@@ -248,6 +282,10 @@ test('thread card stays compact, capped, and free of dashboard/debug clutter', (
   assert.equal(source.includes('primaryLimit: 4'), true);
   assert.equal(source.includes('secondaryLimit: 2'), true);
   assert.equal(source.includes('Evidence checklist'), true);
+  assert.equal(source.includes('#: ${invoiceNumber}'), true);
+  assert.equal(source.includes('Due: ${dueDate}'), true);
+  assert.equal(source.includes('Paused field review'), true);
+  assert.equal(source.includes('Email said'), true);
   assert.equal(source.includes('View audit'), true);
   assert.equal(source.includes('Key history'), true);
   assert.equal(source.includes('Background activity'), true);
@@ -335,6 +373,10 @@ test('gmail route gating distinguishes ops access from admin access and removes 
 
   assert.equal(inboxSource.includes('hasAdminAccess(bootstrap)'), true);
   assert.equal(inboxSource.includes('hasOpsAccess(bootstrap)'), true);
+  assert.equal(inboxSource.includes('let routeAccessResolved = false;'), true);
+  assert.equal(inboxSource.includes('if (!routeAccessResolved) return;'), true);
+  assert.equal(inboxSource.includes('iconUrl: getRouteIconUrl(route)'), true);
+  assert.equal(inboxSource.includes('iconUrl: route.iconUrl'), true);
   assert.equal(inboxSource.includes('queueManager.submitForApproval'), false);
   assert.equal(inboxSource.includes('title: \'Open in pipeline\''), true);
 });

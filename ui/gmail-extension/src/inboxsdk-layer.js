@@ -18,19 +18,22 @@ import { ClearledgrQueueManager } from '../queue-manager.js';
 import store from './utils/store.js';
 import SidebarApp, { showToast } from './components/SidebarApp.js';
 import { STATE_LABELS, STATE_COLORS, getStateLabel, readLocalStorage, writeLocalStorage, getAssetUrl } from './utils/formatters.js';
+import { resolveRecordRouteId } from './utils/record-route.js';
+import { resolveVendorRouteName } from './utils/vendor-route.js';
 
 // Route imports (Gmail-native support pages — Streak pattern)
 import {
   ROUTES,
   DEFAULT_ROUTE,
   getNavEligibleRoutes,
-  getVisibleNavRoutes,
+  getMenuNavRoutes,
   readRoutePreferences,
   writeRoutePreferences,
 } from './routes/route-registry.js';
 import { createWorkspaceShellApi, setToastFn } from './routes/workspace-shell-api.js';
 import { createOAuthBridge } from './routes/oauth-bridge.js';
 import { ROUTE_CSS } from './routes/route-styles.js';
+import { getPipelineViewIconUrl, getRouteIconUrl } from './routes/route-icons.js';
 import HomePage from './routes/pages/HomePage.js';
 import UpcomingPage from './routes/pages/UpcomingPage.js';
 import ActivityPage from './routes/pages/ActivityPage.js';
@@ -200,10 +203,10 @@ function registerThreadHandler() {
                 writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, item.id);
               }
             }
-          } catch (_) { /* no invoice for this thread — that's fine */ }
+          } catch (_) { /* no finance record for this thread — that's fine */ }
         }
 
-        // Inject thread-top banner for invoice threads (Mixmax-style)
+        // Inject thread-top banner for finance-record threads (Mixmax-style)
         if (item && typeof threadView.addNoticeBar === 'function') {
           injectInvoiceBanner(threadView, item);
         }
@@ -545,7 +548,7 @@ async function bootstrap() {
                 el: (() => {
                   const bar = document.createElement('div');
                   bar.style.cssText = 'padding:6px 14px;font-size:12px;color:#92400e;background:#fef9ee;border-bottom:1px solid #f3e8d0;font-family:inherit;';
-                  bar.textContent = `Clearledgr: ${vendor} has ${count} invoice${count > 1 ? 's' : ''} in your AP queue.`;
+                  bar.textContent = `Clearledgr: ${vendor} has ${count} record${count > 1 ? 's' : ''} in your AP queue.`;
                   return bar;
                 })(),
               });
@@ -637,8 +640,9 @@ function registerAppMenuAndRoutes() {
   }
 
   function rebuildMenuNavigation() {
+    if (!routeAccessResolved) return;
     const routeOptions = currentRouteAccess;
-    const visibleRoutes = getVisibleNavRoutes(readRoutePreferences(routeOptions), routeOptions);
+    const menuRoutes = getMenuNavRoutes(readRoutePreferences(routeOptions), routeOptions);
     const pipelineScope = {
       orgId: queueManager?.runtimeConfig?.organizationId || 'default',
       userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
@@ -648,15 +652,17 @@ function registerAppMenuAndRoutes() {
       .map((view) => ({
         title: `View: ${view.name}`,
         id: `clearledgr/pipeline-view/${encodeURIComponent(getPipelineViewRef(view))}`,
+        iconUrl: getPipelineViewIconUrl(),
       }));
     clearNavItemViews(appMenuNavItemViews);
     clearNavItemViews(fallbackNavItemViews);
 
     if (appMenuPanelView && typeof appMenuPanelView.addNavItem === 'function') {
-      visibleRoutes.forEach((route) => {
+      menuRoutes.forEach((route) => {
         const navHandle = appMenuPanelView.addNavItem({
           name: route.title,
           routeID: route.id,
+          iconUrl: getRouteIconUrl(route),
         });
         appMenuNavItemViews.push(navHandle);
       });
@@ -664,6 +670,7 @@ function registerAppMenuAndRoutes() {
         const navHandle = appMenuPanelView.addNavItem({
           name: route.title,
           routeID: route.id,
+          iconUrl: route.iconUrl,
         });
         appMenuNavItemViews.push(navHandle);
       });
@@ -671,11 +678,12 @@ function registerAppMenuAndRoutes() {
     }
 
     if (sdk.NavMenu && typeof sdk.NavMenu.addNavItem === 'function') {
-      visibleRoutes.forEach((route) => {
+      menuRoutes.forEach((route) => {
         const navHandle = sdk.NavMenu.addNavItem({
           name: route.title,
           routeID: route.id,
           type: 'NAVIGATION',
+          iconUrl: getRouteIconUrl(route),
         });
         fallbackNavItemViews.push(navHandle);
       });
@@ -684,6 +692,7 @@ function registerAppMenuAndRoutes() {
           name: route.title,
           routeID: route.id,
           type: 'NAVIGATION',
+          iconUrl: route.iconUrl,
         });
         fallbackNavItemViews.push(navHandle);
       });
@@ -710,6 +719,7 @@ function registerAppMenuAndRoutes() {
   let bootstrapCache = null;
   let bootstrapPromise = null;
   let currentRouteAccess = { includeAdmin: false, includeOps: false };
+  let routeAccessResolved = false;
 
   async function getBootstrap() {
     if (bootstrapCache) return bootstrapCache;
@@ -740,7 +750,12 @@ function registerAppMenuAndRoutes() {
         includeAdmin: hasAdminAccess(data),
         includeOps: hasOpsAccess(data),
       };
+      const hadResolvedRouteAccess = routeAccessResolved;
+      routeAccessResolved = true;
       if (
+        !hadResolvedRouteAccess
+        || appMenuNavItemViews.length === 0
+        || 
         nextRouteAccess.includeAdmin !== currentRouteAccess.includeAdmin
         || nextRouteAccess.includeOps !== currentRouteAccess.includeOps
       ) {
@@ -800,7 +815,7 @@ function registerAppMenuAndRoutes() {
     container.appendChild(style);
     const topbar = document.createElement('div');
     topbar.className = 'topbar';
-    topbar.innerHTML = '<h2>Invoice Detail</h2>';
+    topbar.innerHTML = '<h2>Record Detail</h2>';
     container.appendChild(topbar);
     const pageMount = document.createElement('div');
     container.appendChild(pageMount);
@@ -808,7 +823,7 @@ function registerAppMenuAndRoutes() {
     routeEl.appendChild(container);
 
     const params = customRouteView.getParams?.() || {};
-    const rawId = params.id || window.location.hash.split('clearledgr/invoice/')[1]?.split('?')[0] || '';
+    const rawId = resolveRecordRouteId(params, window.location.hash);
     const orgId = workspaceShellApi.orgId();
     const navigate = (routeId) => sdk.Router.goto(routeId);
     const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
@@ -821,7 +836,7 @@ function registerAppMenuAndRoutes() {
       orgId=${orgId}
       userEmail=${userEmail}
       navigate=${navigate}
-      routeParams=${{ id: decodeURIComponent(rawId) }}
+      routeParams=${{ id: rawId }}
     />`, pageMount);
   });
 
@@ -841,7 +856,7 @@ function registerAppMenuAndRoutes() {
     routeEl.appendChild(container);
 
     const params = customRouteView.getParams?.() || {};
-    const rawName = params.name || window.location.hash.split('clearledgr/vendor/')[1]?.split('?')[0] || '';
+    const rawName = resolveVendorRouteName(params, window.location.hash);
     const orgId = workspaceShellApi.orgId();
     const navigate = (routeId) => sdk.Router.goto(routeId);
     const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
@@ -854,7 +869,7 @@ function registerAppMenuAndRoutes() {
       orgId=${orgId}
       userEmail=${userEmail}
       navigate=${navigate}
-      routeParams=${{ name: decodeURIComponent(rawName) }}
+      routeParams=${{ name: rawName }}
     />`, pageMount);
   });
 

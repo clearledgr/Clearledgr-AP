@@ -1,0 +1,70 @@
+name: Invoice Extraction Regression
+
+on:
+  pull_request:
+    paths:
+      - "clearledgr/services/email_parser.py"
+      - "clearledgr/services/llm_email_parser.py"
+      - "clearledgr/services/llm_multimodal.py"
+      - "clearledgr/workflows/gmail_activities.py"
+      - "scripts/evaluate_invoice_extraction.py"
+      - "tests/test_invoice_extraction_golden.py"
+      - "tests/test_invoice_extraction_eval_harness.py"
+      - "tests/test_email_parser_amount_selection.py"
+      - "tests/fixtures/invoice_extraction_golden.json"
+      - "tests/test_data/invoice_extraction_eval_cases.json"
+      - ".github/workflows/invoice-extraction-regression.yml"
+  push:
+    branches:
+      - "main"
+      - "master"
+      - "codex/**"
+    paths:
+      - "clearledgr/services/email_parser.py"
+      - "clearledgr/services/llm_email_parser.py"
+      - "clearledgr/services/llm_multimodal.py"
+      - "clearledgr/workflows/gmail_activities.py"
+      - "scripts/evaluate_invoice_extraction.py"
+      - "tests/test_invoice_extraction_golden.py"
+      - "tests/test_invoice_extraction_eval_harness.py"
+      - "tests/test_email_parser_amount_selection.py"
+      - "tests/fixtures/invoice_extraction_golden.json"
+      - "tests/test_data/invoice_extraction_eval_cases.json"
+      - ".github/workflows/invoice-extraction-regression.yml"
+
+jobs:
+  invoice-extraction-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate extraction scorecard
+        run: python scripts/evaluate_invoice_extraction.py --json > invoice-extraction-report.json
+
+      - name: Enforce extraction quality gates
+        run: |
+          pytest -q \
+            tests/test_invoice_extraction_golden.py \
+            tests/test_invoice_extraction_eval_harness.py \
+            tests/test_email_parser_amount_selection.py
+
+      - name: Upload extraction report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: invoice-extraction-report
+          path: invoice-extraction-report.json
+          if-no-files-found: error
+          retention-days: 14

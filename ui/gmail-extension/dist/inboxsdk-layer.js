@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:807969962d138d2bd5fd817e3cf5e56bb875255f426ff215c02d0bdb845e8256 */
+/* clearledgr-source-fingerprint:27e1c21fe94e466ba11c8801c307e366d49f09ce6901d482bed061f0658a0c72 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -55400,15 +55400,22 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         --cl-font-body: 'DM Sans', -apple-system, system-ui, sans-serif;
         --cl-font-mono: 'Geist Mono', 'SF Mono', monospace;
         --cl-transition: 0.15s ease;
+        --cl-shell-pad-y: 10px;
+        --cl-shell-pad-x: 8px;
+        --cl-surface-pad: 10px;
+        --cl-panel-pad: 10px;
         font-family: var(--cl-font-body);
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
         color: var(--cl-primary);
-        padding: 16px;
+        padding: var(--cl-shell-pad-y) var(--cl-shell-pad-x);
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 8px;
         height: 100%;
+        width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
         background: var(--cl-bg);
         position: relative;
         font-size: 13px;
@@ -55420,8 +55427,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       .cl-header {
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding-bottom: 12px;
+        gap: 8px;
+        padding-bottom: 8px;
         border-bottom: 1px solid var(--cl-border);
       }
       .cl-title {
@@ -55451,7 +55458,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         font-weight: 600;
         color: var(--cl-brand-muted, #10B981);
         background: var(--cl-accent-soft, #ECFDF5);
-        padding: 3px 10px;
+        padding: 2px 8px;
         border-radius: 999px;
       }
 
@@ -55587,11 +55594,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         background: var(--cl-surface);
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-md);
-        padding: 16px;
+        padding: var(--cl-surface-pad);
         display: flex;
         flex-direction: column;
         gap: 10px;
         box-shadow: var(--cl-shadow-sm);
+        min-width: 0;
       }
       .cl-section-title {
         font-size: 11px;
@@ -55607,11 +55615,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         background: var(--cl-card);
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-md);
-        padding: 16px;
+        padding: var(--cl-surface-pad);
         display: flex;
         flex-direction: column;
         gap: 8px;
         box-shadow: var(--cl-shadow-sm);
+        min-width: 0;
       }
 
       /* Navigator */
@@ -55663,13 +55672,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 8px;
+        gap: 6px;
+        flex-wrap: wrap;
       }
       .cl-thread-header-copy {
         min-width: 0;
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 3px;
+        flex: 1 1 180px;
       }
       .cl-thread-header-with-thumb {
         display: flex;
@@ -55678,7 +55689,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       .cl-thread-title {
         font-weight: 700;
-        font-size: 15px;
+        font-size: 14px;
         letter-spacing: -0.01em;
         color: var(--cl-primary);
       }
@@ -55724,10 +55735,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         color: var(--cl-secondary);
       }
       .cl-thread-meta-inline {
-        font-size: 12px;
+        font-size: 11.5px;
         color: var(--cl-secondary);
-        line-height: 1.45;
+        line-height: 1.38;
         overflow-wrap: anywhere;
+      }
+      .cl-thread-header > .cl-pill {
+        margin-left: auto;
+        flex-shrink: 0;
       }
 
       .cl-blocker-list {
@@ -55739,7 +55754,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
         background: var(--cl-bg);
-        padding: 10px 12px;
+        padding: 9px 10px;
         display: flex;
         flex-direction: column;
         gap: 3px;
@@ -55761,12 +55776,61 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
         background: var(--cl-surface);
-        padding: 10px 12px;
+        padding: 9px 10px;
+      }
+      .cl-review-panel {
+        border: 1px solid #fcd34d;
+        border-radius: var(--cl-radius-sm);
+        background: var(--cl-amber-soft);
+        padding: 9px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .cl-review-copy {
+        font-size: 12px;
+        color: #78350f;
+        line-height: 1.45;
+      }
+      .cl-review-card {
+        border: 1px solid rgba(180, 83, 9, 0.16);
+        border-radius: var(--cl-radius-sm);
+        background: rgba(255, 255, 255, 0.82);
+        padding: 9px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .cl-review-card-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--cl-primary);
+      }
+      .cl-review-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .cl-review-label {
+        font-size: 11px;
+        color: var(--cl-secondary);
+      }
+      .cl-review-value {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--cl-primary);
+        text-align: right;
+      }
+      .cl-review-why {
+        font-size: 11px;
+        color: #92400e;
+        line-height: 1.45;
       }
 
       .cl-evidence-section {
         border-top: 1px solid var(--cl-border);
-        padding-top: 10px;
+        padding-top: 8px;
         display: flex;
         flex-direction: column;
         gap: 8px;
@@ -56012,7 +56076,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       .cl-primary-cta {
         margin-top: 4px;
         width: 100%;
-        padding: 10px 16px;
+        padding: 9px 14px;
         font-size: 13px;
         font-weight: 700;
         border-radius: var(--cl-radius-sm);
@@ -57011,16 +57075,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       /* ==================== PILLS / BADGES ==================== */
 
       .cl-pill {
-        font-size: 11px;
+        font-size: 10px;
         text-transform: uppercase;
         border-radius: 999px;
-        padding: 3px 10px;
+        padding: 2px 8px;
         font-weight: 600;
         white-space: nowrap;
         letter-spacing: 0.02em;
         display: inline-flex;
         align-items: center;
-        gap: 5px;
+        gap: 4px;
       }
       .cl-pill::before {
         content: '';
@@ -57397,6 +57461,128 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return text;
     return `${text.slice(0, Math.max(1, maxLength - 1)).trim()}…`;
   }
+  function humanizeSnakeText(value) {
+    return String(value || "").replace(/_/g, " ").trim().replace(/\b\w/g, (ch) => ch.toUpperCase());
+  }
+  var FIELD_LABELS = {
+    amount: "Amount",
+    currency: "Currency",
+    invoice_number: "Invoice number",
+    vendor: "Vendor",
+    invoice_date: "Invoice date",
+    due_date: "Due date",
+    document_type: "Document type"
+  };
+  var SOURCE_LABELS = {
+    email: "Email",
+    attachment: "Attachment",
+    llm: "Model"
+  };
+  function getFieldLabel(field) {
+    const token = String(field || "").trim().toLowerCase();
+    if (!token)
+      return "Field";
+    return FIELD_LABELS[token] || humanizeSnakeText(token);
+  }
+  function getSourceLabel(source) {
+    const token = String(source || "").trim().toLowerCase();
+    if (!token)
+      return "Source";
+    return SOURCE_LABELS[token] || humanizeSnakeText(token);
+  }
+  function formatFieldReviewValue(field, value, currency = "USD") {
+    if (value === null || value === undefined || value === "")
+      return "Not found";
+    if (String(field || "").trim().toLowerCase() === "amount") {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric))
+        return `${currency} ${numeric.toFixed(2)}`;
+    }
+    return String(value);
+  }
+  function getFieldReviewBlockers(item = {}) {
+    const existing = Array.isArray(item?.field_review_blockers) ? item.field_review_blockers : [];
+    if (existing.length > 0)
+      return existing;
+    const provenance = item?.field_provenance && typeof item.field_provenance === "object" ? item.field_provenance : {};
+    const evidence = item?.field_evidence && typeof item.field_evidence === "object" ? item.field_evidence : {};
+    const conflicts = Array.isArray(item?.source_conflicts) ? item.source_conflicts : [];
+    const blockers = [];
+    const seen = new Set;
+    const currency = String(item?.currency || "USD").trim().toUpperCase() || "USD";
+    for (const conflict of conflicts) {
+      if (!conflict || typeof conflict !== "object" || !conflict.blocking)
+        continue;
+      const field = String(conflict.field || "").trim().toLowerCase();
+      if (!field)
+        continue;
+      const provenanceEntry = provenance[field] && typeof provenance[field] === "object" ? provenance[field] : {};
+      const evidenceEntry = evidence[field] && typeof evidence[field] === "object" ? evidence[field] : {};
+      const values = conflict.values && typeof conflict.values === "object" ? conflict.values : {};
+      const winningSource = String(provenanceEntry.source || conflict.preferred_source || evidenceEntry.source || "attachment").trim().toLowerCase() || "attachment";
+      const winningValue = provenanceEntry.value ?? evidenceEntry.selected_value ?? values[winningSource];
+      const fieldLabel = getFieldLabel(field);
+      const winnerLabel = getSourceLabel(winningSource);
+      const attachmentName = String(evidenceEntry.attachment_name || "").trim();
+      let winnerReason = `${winnerLabel} currently wins because Clearledgr selected that value as canonical.`;
+      if (winningSource === "attachment" && attachmentName) {
+        winnerReason = `${winnerLabel} currently wins because Clearledgr selected the value from ${attachmentName} as canonical.`;
+      }
+      blockers.push({
+        kind: "source_conflict",
+        field,
+        field_label: fieldLabel,
+        email_value: values.email ?? evidenceEntry.email_value ?? null,
+        email_value_display: formatFieldReviewValue(field, values.email ?? evidenceEntry.email_value, currency),
+        attachment_value: values.attachment ?? evidenceEntry.attachment_value ?? null,
+        attachment_value_display: formatFieldReviewValue(field, values.attachment ?? evidenceEntry.attachment_value, currency),
+        winning_source: winningSource,
+        winning_source_label: winnerLabel,
+        winning_value: winningValue,
+        winning_value_display: formatFieldReviewValue(field, winningValue, currency),
+        reason: String(conflict.reason || "source_value_mismatch"),
+        reason_label: "Email and attachment disagree.",
+        paused_reason: `Workflow paused until ${fieldLabel.toLowerCase()} is confirmed because the email and attachment disagree.`,
+        winner_reason: winnerReason
+      });
+      seen.add(field);
+    }
+    const confidenceBlockers = Array.isArray(item?.confidence_blockers) ? item.confidence_blockers : [];
+    for (const blocker of confidenceBlockers) {
+      const field = String(typeof blocker === "string" ? blocker : blocker?.field || blocker?.code || "").trim().toLowerCase();
+      if (!field || seen.has(field))
+        continue;
+      const fieldLabel = getFieldLabel(field);
+      blockers.push({
+        kind: "confidence",
+        field,
+        field_label: fieldLabel,
+        reason: String(typeof blocker === "object" ? blocker?.reason || blocker?.code || "critical_field_review_required" : "critical_field_review_required"),
+        reason_label: "Critical extracted field needs review.",
+        paused_reason: `Workflow paused until ${fieldLabel.toLowerCase()} is reviewed.`
+      });
+      seen.add(field);
+    }
+    return blockers;
+  }
+  function getWorkflowPauseReason(item = {}) {
+    const explicit = String(item?.workflow_paused_reason || "").trim();
+    if (explicit)
+      return explicit;
+    const blockers = getFieldReviewBlockers(item);
+    if (blockers.length === 0 && !item?.requires_field_review)
+      return "";
+    const fieldLabels = blockers.map((blocker) => String(blocker?.field_label || "").trim().toLowerCase()).filter(Boolean);
+    if (fieldLabels.length === 0)
+      return "Workflow paused until extracted fields are reviewed.";
+    if (fieldLabels.length === 1) {
+      const hasSourceConflict2 = blockers.some((blocker) => blocker?.kind === "source_conflict");
+      return hasSourceConflict2 ? `Workflow paused until ${fieldLabels[0]} is confirmed because the email and attachment disagree.` : `Workflow paused until ${fieldLabels[0]} is reviewed.`;
+    }
+    const summary = `${fieldLabels.slice(0, -1).join(", ")} and ${fieldLabels[fieldLabels.length - 1]}`;
+    const hasSourceConflict = blockers.some((blocker) => blocker?.kind === "source_conflict");
+    return hasSourceConflict ? `Workflow paused until ${summary} are confirmed because the email and attachment disagree.` : `Workflow paused until ${summary} are reviewed.`;
+  }
   function readLocalStorage(key) {
     try {
       return String(window?.localStorage?.getItem(key) || "").trim();
@@ -57766,7 +57952,146 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return ["owner", "admin"].includes(normalizeUserRole(role));
   }
 
+  // src/utils/document-types.js
+  var DOCUMENT_TYPE_ALIASES = {
+    invoice: "invoice",
+    invoices: "invoice",
+    receipt: "receipt",
+    receipts: "receipt",
+    refund: "refund",
+    refunds: "refund",
+    credit_note: "credit_note",
+    credit_notes: "credit_note",
+    creditnote: "credit_note",
+    credit_memo: "credit_note",
+    credit_memos: "credit_note",
+    creditmemo: "credit_note",
+    payment_request: "payment_request",
+    payment_requests: "payment_request",
+    paymentrequest: "payment_request",
+    statement: "statement",
+    statements: "statement",
+    bank_statement: "statement",
+    bank_statements: "statement",
+    other: "other"
+  };
+  var DOCUMENT_TYPE_LABELS = {
+    invoice: "Invoice",
+    receipt: "Receipt",
+    refund: "Refund",
+    credit_note: "Credit note",
+    payment_request: "Payment request",
+    statement: "Bank statement",
+    other: "Finance document"
+  };
+  var DOCUMENT_TYPE_PLURAL_LABELS = {
+    invoice: "Invoices",
+    receipt: "Receipts",
+    refund: "Refunds",
+    credit_note: "Credit notes",
+    payment_request: "Payment requests",
+    statement: "Bank statements",
+    other: "Finance documents"
+  };
+  function normalizeDocumentType(value) {
+    const raw = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+    if (!raw)
+      return "invoice";
+    return DOCUMENT_TYPE_ALIASES[raw] || raw;
+  }
+  function isInvoiceDocumentType(value) {
+    return normalizeDocumentType(value) === "invoice";
+  }
+  function getDocumentTypeLabel(value, options = {}) {
+    const { plural = false, lowercase = false } = options;
+    const normalized = normalizeDocumentType(value);
+    const base = plural ? DOCUMENT_TYPE_PLURAL_LABELS[normalized] || DOCUMENT_TYPE_PLURAL_LABELS.other : DOCUMENT_TYPE_LABELS[normalized] || DOCUMENT_TYPE_LABELS.other;
+    if (!lowercase)
+      return base;
+    return `${base.charAt(0).toLowerCase()}${base.slice(1)}`;
+  }
+  function getDocumentReferenceLabel(value) {
+    return isInvoiceDocumentType(value) ? "Invoice #" : "Reference #";
+  }
+  function getDocumentReferenceText(value, reference) {
+    const normalized = normalizeDocumentType(value);
+    const label = getDocumentTypeLabel(normalized);
+    const referenceText = String(reference || "").trim();
+    if (!referenceText)
+      return label;
+    if (normalized === "invoice")
+      return `Invoice ${referenceText}`;
+    return `${label} · Ref ${referenceText}`;
+  }
+  function getNonInvoiceWorkflowGuidance(value) {
+    switch (normalizeDocumentType(value)) {
+      case "credit_note":
+        return "Review this credit note and link it to the related invoice before any downstream action.";
+      case "refund":
+        return "Review this refund and link it to the related payment or vendor balance activity.";
+      case "receipt":
+        return "Review this receipt and link it to the related payment activity.";
+      case "payment_request":
+        return "Review this payment request before routing it outside the invoice workflow.";
+      case "statement":
+        return "Review this bank statement before reconciliation or follow-up.";
+      default:
+        return "Review this finance document before any downstream action.";
+    }
+  }
+
   // src/utils/work-actions.js
+  var RESUME_WORKFLOW_REASON_CODES = new Set([
+    "field_review_required",
+    "blocking_source_conflicts",
+    "confidence_field_review_required"
+  ]);
+  function normalizeAuditToken(value) {
+    return String(value || "").trim().toLowerCase().replace(/[-\s]+/g, "_");
+  }
+  function addReasonTokens(target, value) {
+    if (!value)
+      return;
+    if (Array.isArray(value)) {
+      value.forEach((entry) => addReasonTokens(target, entry));
+      return;
+    }
+    String(value).split(",").map((entry) => normalizeAuditToken(entry)).filter(Boolean).forEach((entry) => target.add(entry));
+  }
+  function getAuditReasonTokens(event) {
+    const payload = parseJsonObject(event?.payload_json || event?.payloadJson || event?.payload) || {};
+    const response = payload?.response && typeof payload.response === "object" ? payload.response : {};
+    const target = new Set;
+    addReasonTokens(target, event?.reason);
+    addReasonTokens(target, event?.operator_reason);
+    addReasonTokens(target, payload?.reason);
+    addReasonTokens(target, payload?.reason_code);
+    addReasonTokens(target, payload?.reason_codes);
+    addReasonTokens(target, response?.reason);
+    addReasonTokens(target, response?.reason_code);
+    addReasonTokens(target, response?.reason_codes);
+    return target;
+  }
+  function shouldOfferResumeWorkflow(item, auditEvents = [], documentType = "invoice") {
+    if (!isInvoiceDocumentType(documentType))
+      return false;
+    const normalizedState = normalizeWorkState(item?.state || "");
+    if (!["ready_to_post", "failed_post"].includes(normalizedState))
+      return false;
+    if (Boolean(item?.requires_field_review))
+      return false;
+    const sourceConflicts = Array.isArray(item?.source_conflicts) ? item.source_conflicts : [];
+    if (sourceConflicts.some((conflict) => Boolean(conflict?.blocking)))
+      return false;
+    return (Array.isArray(auditEvents) ? auditEvents : []).some((event) => {
+      const eventType = normalizeAuditToken(event?.event_type || event?.eventType);
+      const reasons = getAuditReasonTokens(event);
+      if ([...reasons].some((reason) => RESUME_WORKFLOW_REASON_CODES.has(reason))) {
+        return true;
+      }
+      return eventType === "retry_recoverable_failure_blocked";
+    });
+  }
   function normalizeWorkState(state) {
     const normalized = String(state || "").trim().toLowerCase();
     if (!normalized)
@@ -57777,8 +58102,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "posted_to_erp";
     return normalized;
   }
-  function getPrimaryActionConfig(state, actorRole = "operator") {
+  function getPrimaryActionConfig(state, actorRole = "operator", documentType = "invoice") {
     if (!hasOpsAccessRole(actorRole))
+      return null;
+    if (!isInvoiceDocumentType(documentType))
       return null;
     const normalized = normalizeWorkState(state);
     if (normalized === "received" || normalized === "validated") {
@@ -57798,8 +58125,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     return null;
   }
-  function getWorkStateNotice(state) {
+  function getWorkStateNotice(state, documentType = "invoice") {
     const normalized = normalizeWorkState(state);
+    if (!isInvoiceDocumentType(documentType)) {
+      const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
+      if (normalized === "rejected") {
+        return `This ${documentLabel} has been rejected.`;
+      }
+      if (normalized === "closed") {
+        return `This ${documentLabel} has been closed.`;
+      }
+      return `This ${documentLabel} is tracked as a non-invoice finance document. Invoice approval and ERP posting are disabled.`;
+    }
     if (normalized === "approved") {
       return "Approval received. Clearledgr is preparing the posting step.";
     }
@@ -57811,16 +58148,61 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     return "";
   }
-  function canRejectWorkItem(state, actorRole = "operator") {
+  function canRejectWorkItem(state, actorRole = "operator", documentType = "invoice") {
     if (!hasOpsAccessRole(actorRole))
+      return false;
+    if (!isInvoiceDocumentType(documentType))
       return false;
     const normalized = normalizeWorkState(state);
     return ["received", "validated", "needs_approval", "needs_info"].includes(normalized);
   }
-  function canNudgeApprover(state, actorRole = "operator") {
+  function canNudgeApprover(state, actorRole = "operator", documentType = "invoice") {
     if (!hasOpsAccessRole(actorRole))
       return false;
+    if (!isInvoiceDocumentType(documentType))
+      return false;
     return normalizeWorkState(state) === "needs_approval";
+  }
+
+  // src/utils/vendor-route.js
+  var ACTIVE_VENDOR_NAME_STORAGE_KEY = "clearledgr_active_vendor_name";
+  function safeDecode(value) {
+    const text = String(value || "").trim();
+    if (!text)
+      return "";
+    try {
+      return decodeURIComponent(text);
+    } catch {
+      return text;
+    }
+  }
+  function normalizeVendorRouteName(value) {
+    return safeDecode(value).trim();
+  }
+  function rememberVendorRouteName(vendorName) {
+    const normalized = normalizeVendorRouteName(vendorName);
+    if (!normalized)
+      return "";
+    writeLocalStorage(ACTIVE_VENDOR_NAME_STORAGE_KEY, normalized);
+    return normalized;
+  }
+  function navigateToVendorRecord(navigate, vendorName) {
+    const normalized = rememberVendorRouteName(vendorName);
+    if (!normalized || typeof navigate !== "function")
+      return false;
+    navigate("clearledgr/vendor");
+    return true;
+  }
+  function resolveVendorRouteName(params = {}, hash = "") {
+    const paramName = normalizeVendorRouteName(params?.name);
+    if (paramName)
+      return paramName;
+    const hashText = String(hash || "");
+    const hashMatch = hashText.match(/clearledgr\/vendor\/([^?]+)/);
+    const hashName = normalizeVendorRouteName(hashMatch?.[1]);
+    if (hashName)
+      return hashName;
+    return normalizeVendorRouteName(readLocalStorage(ACTIVE_VENDOR_NAME_STORAGE_KEY));
   }
 
   // src/routes/pipeline-views.js
@@ -58699,8 +59081,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const cls = `cl-pill cl-pill-${String(state || "received").replace(/_/g, "-")}`;
     return html2`<span class=${cls}>${getStateLabel(state)}</span>`;
   }
-  function getBlockers(item, state, budgetContext) {
+  function getBlockers(item, state, budgetContext, documentType = "invoice") {
     const blockers = [];
+    const fieldReviewBlockers = getFieldReviewBlockers(item);
+    const pauseReason = getWorkflowPauseReason(item);
+    const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
+    const isInvoiceDocument = isInvoiceDocumentType(documentType);
     const add = (id, label, detail) => {
       if (!label)
         return;
@@ -58709,7 +59095,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       blockers.push({ id, label, detail });
     };
     if (budgetContext?.requiresDecision) {
-      add("budget", "Budget review required", "A budget decision is still needed before this invoice can move forward.");
+      add("budget", "Budget review required", `A budget decision is still needed before this ${isInvoiceDocument ? "invoice" : "record"} can move forward.`);
     }
     const exceptionCode = String(item?.exception_code || "").trim().toLowerCase();
     const exceptionReason = getExceptionReason(exceptionCode);
@@ -58717,26 +59103,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       add("exception", exceptionReason, getIssueSummary(item));
     }
     if (!item?.po_number && exceptionCode.includes("po")) {
-      add("po", "PO reference missing", "Link the correct PO before continuing this invoice.");
+      add("po", "PO reference missing", `Link the correct PO before continuing this ${isInvoiceDocument ? "invoice" : "record"}.`);
     }
     const confidence = Number(item?.confidence);
-    if (Number.isFinite(confidence) && confidence < 0.95 && !["posted_to_erp", "closed", "rejected"].includes(state)) {
-      add("confidence", "Review extracted fields", `Current confidence is ${Math.round(confidence * 100)}%, so a quick field check is still required.`);
+    if ((item?.requires_field_review || Number.isFinite(confidence) && confidence < 0.95) && !["posted_to_erp", "closed", "rejected"].includes(state)) {
+      add("confidence", fieldReviewBlockers.length ? "Workflow paused for field review" : "Review extracted fields", fieldReviewBlockers.length ? null : pauseReason || `Current confidence is ${Math.round(confidence * 100)}%, so a quick field check is still required.`);
     }
     if (state === "needs_approval") {
       add("approval", "Waiting on approver", "The approval request is still outstanding.");
     }
     if (state === "needs_info") {
-      add("needs_info", "Missing invoice details", "Clearledgr still needs more information before routing or posting.");
+      add("needs_info", isInvoiceDocument ? "Missing invoice details" : "Missing document details", `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
     }
     if (state === "failed_post") {
       add("failed_post", "ERP posting failed", "Retry the ERP post or review the connector response.");
     }
     if (blockers.length === 0 && state === "received") {
-      add("received", "Ready for review", "This invoice is ready for AP validation and approval routing.");
+      add("received", isInvoiceDocument ? "Ready for review" : "Needs finance review", isInvoiceDocument ? "This invoice is ready for AP validation and approval routing." : getNonInvoiceWorkflowGuidance(documentType));
     }
     if (blockers.length === 0 && state === "validated") {
-      add("validated", "Ready for approval", "Checks are complete and the invoice can be routed to approval.");
+      add("validated", isInvoiceDocument ? "Ready for approval" : `Ready to review ${documentLabel}`, isInvoiceDocument ? "Checks are complete and the invoice can be routed to approval." : getNonInvoiceWorkflowGuidance(documentType));
     }
     return blockers.slice(0, 4);
   }
@@ -58786,6 +59172,41 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         `)}
       </div>
+    </div>
+  `;
+  }
+  function FieldReviewPanel({ blockers, pauseReason }) {
+    if ((!Array.isArray(blockers) || blockers.length === 0) && !pauseReason)
+      return null;
+    return html2`
+    <div class="cl-review-panel" aria-label="Paused field review">
+      <div class="cl-section-title">Paused field review</div>
+      ${pauseReason && html2`<div class="cl-review-copy">${pauseReason}</div>`}
+      ${(blockers || []).map((blocker) => html2`
+        <div key=${`${blocker.field || "field"}-${blocker.kind || "review"}`} class="cl-review-card">
+          <div class="cl-review-card-title">${blocker.field_label || "Field"} blocked</div>
+          ${blocker.email_value_display && html2`
+            <div class="cl-review-row">
+              <span class="cl-review-label">Email said</span>
+              <span class="cl-review-value">${blocker.email_value_display}</span>
+            </div>
+          `}
+          ${blocker.attachment_value_display && html2`
+            <div class="cl-review-row">
+              <span class="cl-review-label">Attachment said</span>
+              <span class="cl-review-value">${blocker.attachment_value_display}</span>
+            </div>
+          `}
+          <div class="cl-review-row">
+            <span class="cl-review-label">Source selected</span>
+            <span class="cl-review-value">
+              ${blocker.winning_source_label || "Review required"}
+              ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ""}
+            </span>
+          </div>
+          <div class="cl-review-why">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
+        </div>
+      `)}
     </div>
   `;
   }
@@ -58881,17 +59302,28 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const actorRole = s3.currentUserRole || queueManager?.currentUserRole || "operator";
     const humanIndex = itemIndex >= 0 ? itemIndex + 1 : 1;
     const state = normalizeWorkState(item?.state || "received");
+    const documentType = normalizeDocumentType(item?.document_type);
+    const documentLabel = getDocumentTypeLabel(documentType);
+    const isInvoiceDocument = isInvoiceDocumentType(documentType);
     const vendor = item.vendor_name || item.vendor || item.sender || "Unknown vendor";
     const amountLabel = formatAmount(item.amount, item.currency || "USD");
     const invoiceNumber = item.invoice_number || "N/A";
     const dueDate = item.due_date || "N/A";
-    const poLabel = item.po_number ? `PO ${item.po_number}` : "No PO";
+    const referenceText = invoiceNumber !== "N/A" ? `${documentLabel} #: ${invoiceNumber}` : documentLabel;
+    const metaLine = [
+      amountLabel,
+      referenceText,
+      ...isInvoiceDocument ? [`Due: ${dueDate}`, item.po_number ? `PO: ${item.po_number}` : "No PO"] : []
+    ].join(" · ");
     const contextPayload = item?.id ? s3.contextState.get(item.id) || null : null;
     const budgetContext = normalizeBudgetContext(contextPayload || {}, item);
-    const blockers = getBlockers(item, state, budgetContext);
+    const blockers = getBlockers(item, state, budgetContext, documentType);
+    const fieldReviewBlockers = getFieldReviewBlockers(item);
     const evidence = getEvidenceChecklist(item, state, contextPayload);
     const auditEvents = s3.auditState.itemId === item.id && Array.isArray(s3.auditState.events) ? s3.auditState.events : [];
-    const stateNotice = getWorkStateNotice(state);
+    const pauseReason = getWorkflowPauseReason(item);
+    const resumeWorkflowEligible = !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType);
+    const stateNotice = resumeWorkflowEligible ? "Field review is cleared. Resume workflow to continue the posting step." : getWorkStateNotice(state, documentType);
     const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : "";
     const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
     const [optimisticState, setOptimisticState] = d2(null);
@@ -58936,6 +59368,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       await queueManager.refreshQueue();
       setOptimisticState(null);
     });
+    const [doResumeWorkflow, resumePending] = useAction(async () => {
+      const confirmed = await openDialog({
+        dialogMode: "confirm",
+        actionType: "resume_workflow",
+        title: "Resume workflow",
+        message: "Review blockers are cleared. Clearledgr will continue the guarded posting step.",
+        previewLines: [
+          vendor,
+          amountLabel,
+          referenceText,
+          isInvoiceDocument && dueDate && dueDate !== "N/A" ? `Due: ${dueDate}` : null
+        ].filter(Boolean),
+        confirmLabel: "Resume workflow",
+        cancelLabel: "Cancel"
+      });
+      if (!confirmed)
+        return;
+      const result = await queueManager.retryRecoverableFailure(item, {
+        reason: "Resume workflow after review cleared"
+      });
+      const status = String(result?.status || "").toLowerCase();
+      const ok = ["posted", "posted_to_erp", "recovered", "ready_to_post"].includes(status);
+      showToast(ok ? status === "posted" || status === "posted_to_erp" ? "Workflow resumed and invoice posted" : "Workflow resumed" : result?.reason || "Could not resume workflow", ok ? "success" : "error");
+      await queueManager.refreshQueue();
+    });
     const [doPost, postPending] = useAction(async () => {
       setOptimisticState("posted_to_erp");
       const result = await queueManager.approveAndPost(item, { override: false });
@@ -58972,8 +59429,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         previewLines: [
           vendor,
           amountLabel,
-          `Invoice ${invoiceNumber}`,
-          dueDate && dueDate !== "N/A" ? `Due ${dueDate}` : null
+          referenceText,
+          isInvoiceDocument && dueDate && dueDate !== "N/A" ? `Due: ${dueDate}` : null
         ].filter(Boolean),
         confirmLabel: "Post to ERP",
         cancelLabel: "Cancel"
@@ -58999,9 +59456,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const vendorName = String(item?.vendor_name || item?.vendor || "").trim();
       if (!vendorName)
         return;
-      store_default.sdk?.Router?.goto?.(`clearledgr/vendor/${encodeURIComponent(vendorName)}`);
+      navigateToVendorRecord((routeId) => store_default.sdk?.Router?.goto?.(routeId), vendorName);
     }, [item]);
-    const primaryAction = getPrimaryActionConfig(displayState, actorRole);
+    const basePrimaryAction = pauseReason ? null : getPrimaryActionConfig(displayState, actorRole, documentType);
+    const primaryAction = resumeWorkflowEligible && ["preview_erp_post", "retry_erp_post"].includes(basePrimaryAction?.id) ? { id: "resume_workflow", label: "Resume workflow" } : basePrimaryAction;
     let primaryHandler = null;
     let primaryPending = false;
     let primaryClass = "";
@@ -59021,12 +59479,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     } else if (primaryAction?.id === "retry_erp_post") {
       primaryHandler = doRetry;
       primaryPending = retryPending;
+    } else if (primaryAction?.id === "resume_workflow") {
+      primaryHandler = doResumeWorkflow;
+      primaryPending = resumePending;
+      primaryClass = "cl-btn-approve";
     }
     return html2`
     <div id="cl-thread-context" class="cl-thread-card cl-work-surface">
       ${totalItems > 1 && html2`
         <div class="cl-navigator">
-          <div class="cl-nav-label">Invoice ${humanIndex} of ${totalItems}</div>
+          <div class="cl-nav-label">Record ${humanIndex} of ${totalItems}</div>
           <div class="cl-nav-buttons">
             <button class="cl-nav-btn" onClick=${goPrev} disabled=${itemIndex <= 0} aria-label="Previous">‹</button>
             <button class="cl-nav-btn" onClick=${goNext} disabled=${itemIndex >= totalItems - 1} aria-label="Next">›</button>
@@ -59037,13 +59499,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="cl-thread-header">
         <div class="cl-thread-header-copy">
           <div class="cl-thread-title">${vendor}</div>
-          <div class="cl-thread-meta-inline">${amountLabel} · Invoice ${invoiceNumber} · Due ${dueDate} · ${poLabel}</div>
+          <div class="cl-thread-meta-inline">${metaLine}</div>
         </div>
         <${StatePill} state=${displayState} />
       </div>
 
       ${blockers.length > 0 && html2`
-        <div class="cl-blocker-list" aria-label="What is blocking this invoice">
+        <div class="cl-blocker-list" aria-label="What is blocking this record">
           ${blockers.map((blocker) => html2`
             <div key=${blocker.id} class="cl-blocker-row">
               <div class="cl-blocker-label">${blocker.label}</div>
@@ -59053,7 +59515,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       `}
 
-      ${stateNotice && html2`<div class="cl-state-note">${stateNotice}</div>`}
+      ${pauseReason && fieldReviewBlockers.length === 0 && html2`<div class="cl-state-note">${pauseReason}</div>`}
+      ${!pauseReason && stateNotice && html2`<div class="cl-state-note">${stateNotice}</div>`}
       ${readOnlyMode && html2`
         <div class="cl-state-note">Read-only view. Queue actions are reserved for AP operators.</div>
       `}
@@ -59070,14 +59533,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ${(item?.vendor_name || item?.vendor) && html2`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openVendorRecord}>Vendor record</button>
         `}
-        ${canRejectWorkItem(displayState, actorRole) && html2`
+        ${canRejectWorkItem(displayState, actorRole, documentType) && html2`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
         `}
-        ${canNudgeApprover(displayState, actorRole) && primaryAction?.id !== "nudge_approver" && html2`
+        ${canNudgeApprover(displayState, actorRole, documentType) && primaryAction?.id !== "nudge_approver" && html2`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Nudge approver</button>
         `}
       </div>
 
+      <${FieldReviewPanel} blockers=${fieldReviewBlockers} pauseReason=${pauseReason} />
       <${EvidenceChecklist} entries=${evidence} />
       <${AuditDisclosure} events=${auditEvents} loading=${Boolean(s3.auditState.loading && s3.auditState.itemId === item.id)} />
       <${ActionDialog} ...${dialog} />
@@ -59090,8 +59554,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const threadSelected = Boolean(store_default.currentThreadId);
     if (threadSelected) {
       return html2`<div class="cl-section"><div class="cl-empty">
-      <p>No invoice is linked to this thread.</p>
-      <p class="cl-muted">Open the AP pipeline to work invoices that Clearledgr has already detected.</p>
+      <p>No finance document is linked to this thread.</p>
+      <p class="cl-muted">Open the pipeline to work records that Clearledgr has already detected.</p>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
       </div>
@@ -59099,8 +59563,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     if (queueCount > 0) {
       return html2`<div class="cl-section"><div class="cl-empty">
-      <p>${queueCount} invoice${queueCount !== 1 ? "s are" : " is"} ready in the AP pipeline.</p>
-      <p class="cl-muted">Open a thread to work a specific invoice, or review the queue in Pipeline.</p>
+      <p>${queueCount} record${queueCount !== 1 ? "s are" : " is"} ready in the pipeline.</p>
+      <p class="cl-muted">Open a thread to work a specific finance document, or review the queue in Pipeline.</p>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
@@ -59108,8 +59572,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div></div>`;
     }
     return html2`<div class="cl-section"><div class="cl-empty">
-    <p>No invoices in queue.</p>
-    <p class="cl-muted">Clearledgr is monitoring this mailbox and will surface AP work here as invoices arrive.</p>
+    <p>No finance documents in queue.</p>
+    <p class="cl-muted">Clearledgr is monitoring this mailbox and will surface finance work here as records arrive.</p>
     <div class="cl-thread-actions">
       <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
     </div>
@@ -59155,7 +59619,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           Clearledgr AP
         </div>
         <div class="cl-header-right">
-          ${queueCount > 0 && html2`<span class="cl-header-badge">${queueCount} invoice${queueCount !== 1 ? "s" : ""}</span>`}
+          ${queueCount > 0 && html2`<span class="cl-header-badge">${queueCount} record${queueCount !== 1 ? "s" : ""}</span>`}
         </div>
       </div>
 
@@ -59171,11 +59635,52 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <//>
       `}
 
-      <${ErrorBoundary} fallback="Could not load invoice details">
+      <${ErrorBoundary} fallback="Could not load record details">
         ${item ? html2`<${WorkPanel} item=${item} queueManager=${queueManager} itemIndex=${itemIndex} totalItems=${queueCount} />` : html2`<${EmptyState} queueCount=${queueCount} />`}
       <//>
     </div>
   `;
+  }
+
+  // src/utils/record-route.js
+  var ACTIVE_RECORD_ID_STORAGE_KEY = "clearledgr_active_ap_item_id";
+  function safeDecode2(value) {
+    const text = String(value || "").trim();
+    if (!text)
+      return "";
+    try {
+      return decodeURIComponent(text);
+    } catch {
+      return text;
+    }
+  }
+  function normalizeRecordRouteId(value) {
+    return safeDecode2(value).trim();
+  }
+  function rememberRecordRouteId(recordId) {
+    const normalized = normalizeRecordRouteId(recordId);
+    if (!normalized)
+      return "";
+    writeLocalStorage(ACTIVE_RECORD_ID_STORAGE_KEY, normalized);
+    return normalized;
+  }
+  function navigateToRecordDetail(navigate, recordId) {
+    const normalized = rememberRecordRouteId(recordId);
+    if (!normalized || typeof navigate !== "function")
+      return false;
+    navigate("clearledgr/invoice");
+    return true;
+  }
+  function resolveRecordRouteId(params = {}, hash = "") {
+    const paramId = normalizeRecordRouteId(params?.id);
+    if (paramId)
+      return paramId;
+    const hashText = String(hash || "");
+    const hashMatch = hashText.match(/clearledgr\/invoice\/([^?]+)/);
+    const hashId = normalizeRecordRouteId(hashMatch?.[1]);
+    if (hashId)
+      return hashId;
+    return normalizeRecordRouteId(readLocalStorage(ACTIVE_RECORD_ID_STORAGE_KEY));
   }
 
   // src/routes/route-registry.js
@@ -59334,8 +59839,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function getNavEligibleRoutes({ includeAdmin = false, includeOps = true } = {}) {
     return ROUTES.filter((route) => (includeOps || !route.opsOnly) && (includeAdmin || !route.adminOnly)).sort((left, right) => Number(left.navOrder || 0) - Number(right.navOrder || 0));
   }
-  function normalizeRoutePreferences(value = {}, { includeAdmin = false } = {}) {
-    const allowedRouteIds = new Set(getNavEligibleRoutes({ includeAdmin }).map((route) => route.id));
+  function normalizeRoutePreferences(value = {}, { includeAdmin = false, includeOps = true } = {}) {
+    const allowedRouteIds = new Set(getNavEligibleRoutes({ includeAdmin, includeOps }).map((route) => route.id));
     const routeMap = new Map(ROUTES.map((route) => [route.id, route]));
     const normalizeList = (items) => [...new Set((Array.isArray(items) ? items : []).map((item) => String(item || "").trim()).filter((item) => item && allowedRouteIds.has(item)))];
     const pinned = normalizeList(value?.pinned).filter((routeId) => !routeMap.get(routeId)?.defaultPinned);
@@ -59400,6 +59905,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return getNavEligibleRoutes(options).filter((route) => {
       const state = getRoutePreferenceState(route.id, prefs, options);
       return state.visible;
+    });
+  }
+  function getMenuNavRoutes(preferences = {}, options = {}) {
+    const prefs = normalizeRoutePreferences(preferences, options);
+    return getNavEligibleRoutes(options).filter((route) => {
+      const state = getRoutePreferenceState(route.id, prefs, options);
+      return !state.hidden;
     });
   }
   function pinRoute(routeId, preferences = {}, options = {}) {
@@ -59714,6 +60226,44 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     .cl-route .readiness-list { grid-template-columns: 1fr; }
   }
 `;
+
+  // src/routes/route-icons.js
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var ROUTE_ICON_MARKUP = {
+    home: '<path d="M3.5 8.75 10 3.75l6.5 5v7a1 1 0 0 1-1 1h-3.75v-4.5h-3.5v4.5H4.5a1 1 0 0 1-1-1z"/>',
+    pipeline: '<rect x="3.5" y="4" width="13" height="3" rx="1.25"/><rect x="5.5" y="8.5" width="9" height="3" rx="1.25"/><rect x="7.5" y="13" width="5" height="3" rx="1.25"/>',
+    activity: '<path d="M3.5 13.5h2.5l2-6 3.2 8 2-5h3.3"/>',
+    connections: '<path d="M7 6.25h-1.5A1.75 1.75 0 0 0 3.75 8v4A1.75 1.75 0 0 0 5.5 13.75H7"/><path d="M13 6.25h1.5A1.75 1.75 0 0 1 16.25 8v4A1.75 1.75 0 0 1 14.5 13.75H13"/><path d="M6.75 10h6.5"/>',
+    vendors: '<path d="M4.25 7.25 10 4l5.75 3.25v7.5H4.25z"/><path d="M7 16.75V10h6v6.75"/><path d="M2.75 16.75h14.5"/>',
+    rules: '<path d="M5 5.5h10"/><path d="M5 10h10"/><path d="M5 14.5h10"/><circle cx="8" cy="5.5" r="1.5"/><circle cx="12.5" cy="10" r="1.5"/><circle cx="9.5" cy="14.5" r="1.5"/>',
+    team: '<circle cx="7" cy="8" r="2.25"/><circle cx="13.25" cy="7.25" r="1.75"/><path d="M3.75 15c.7-2.1 2.3-3.25 4.75-3.25S12.55 12.9 13.25 15"/><path d="M11.75 14.75c.4-1.35 1.35-2.05 2.9-2.05 1.15 0 2.05.4 2.6 1.25"/>',
+    company: '<rect x="4" y="3.75" width="12" height="12.5" rx="1.5"/><path d="M7.25 7h1.25"/><path d="M11.5 7h1.25"/><path d="M7.25 10.25h1.25"/><path d="M11.5 10.25h1.25"/><path d="M7.25 13.5h5.5"/>',
+    plan: '<rect x="3.75" y="5" width="12.5" height="10" rx="1.75"/><path d="M6.5 8.25h7"/><path d="M6.5 11.25h4.5"/>',
+    recon: '<path d="M5 6.5h8.5"/><path d="m11.5 4.5 2 2-2 2"/><path d="M15 13.5H6.5"/><path d="m8.5 11.5-2 2 2 2"/>',
+    health: '<path d="M3.75 10h3l1.5-3.25 3.25 6.5 1.75-3.25h3"/>',
+    view: '<rect x="3.75" y="4.25" width="5.25" height="5.25" rx="1"/><rect x="11" y="4.25" width="5.25" height="5.25" rx="1"/><rect x="3.75" y="11.5" width="5.25" height="5.25" rx="1"/><rect x="11" y="11.5" width="5.25" height="5.25" rx="1"/>'
+  };
+  var iconCache = new Map;
+  function buildRouteIconUrl(iconKey) {
+    const resolvedKey = ROUTE_ICON_MARKUP[iconKey] ? iconKey : "activity";
+    if (iconCache.has(resolvedKey))
+      return iconCache.get(resolvedKey);
+    const svg = `
+    <svg xmlns="${SVG_NS}" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#64748B" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      ${ROUTE_ICON_MARKUP[resolvedKey]}
+    </svg>
+  `.trim().replace(/\s+/g, " ");
+    const dataUrl = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+    iconCache.set(resolvedKey, dataUrl);
+    return dataUrl;
+  }
+  function getRouteIconUrl(routeOrIconKey) {
+    const iconKey = typeof routeOrIconKey === "string" ? routeOrIconKey : String(routeOrIconKey?.icon || "").trim();
+    return buildRouteIconUrl(iconKey || "activity");
+  }
+  function getPipelineViewIconUrl() {
+    return buildRouteIconUrl("view");
+  }
 
   // src/routes/route-helpers.js
   var html3 = htm_module_default.bind(_);
@@ -60367,7 +60917,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (!task?.ap_item_id)
         return;
       focusPipelineItem(pipelineScope, buildTaskLocator(task), "upcoming");
-      navigate(`clearledgr/invoice/${encodeURIComponent(task.ap_item_id)}`);
+      navigateToRecordDetail(navigate, task.ap_item_id);
     };
     const openEmail = (task) => {
       const ok = openSourceEmail({
@@ -61078,6 +61628,34 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     background:#FFF7ED;border:1px solid #FED7AA;color:#9A3412;
   ">${BLOCKER_LABELS[kind] || kind}</span>`;
   }
+  function FieldReviewSummary({ item, compact = false }) {
+    const blockers = getFieldReviewBlockers(item);
+    const pauseReason = getWorkflowPauseReason(item);
+    const first = blockers[0];
+    if (!first && !pauseReason)
+      return null;
+    return html14`
+    <div style="
+      margin-top:${compact ? "6px" : "0"};
+      padding:${compact ? "6px 0 0" : "10px 12px"};
+      border:${compact ? "none" : "1px solid #FED7AA"};
+      border-radius:${compact ? "0" : "12px"};
+      background:${compact ? "transparent" : "#FFF7ED"};
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    ">
+      ${first && html14`<div style="font-size:12px;font-weight:700;color:#9A3412">
+        ${first.field_label || "Field"} blocked
+        ${first.winning_source_label ? ` · ${first.winning_source_label} wins` : ""}
+      </div>`}
+      ${first && html14`<div class="muted" style="font-size:12px;line-height:1.45">
+        Email ${first.email_value_display || "Not found"} · Attachment ${first.attachment_value_display || "Not found"}
+      </div>`}
+      ${pauseReason && html14`<div class="muted" style="font-size:12px;line-height:1.45">${pauseReason}</div>`}
+    </div>
+  `;
+  }
   function SavedViewChip({ view, active, onOpen, onTogglePin, onDelete }) {
     const scopeLabel = view.scope === "starter" ? "Starter" : "Personal";
     return html14`
@@ -61113,7 +61691,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return;
     saveActiveItemId(item.id);
     focusPipelineItem(pipelineScope, item, "pipeline");
-    navigate(`clearledgr/invoice/${item.id}`);
+    navigateToRecordDetail(navigate, item.id);
   }
   function openItemEmail(pipelineScope, item) {
     if (!item?.id)
@@ -61131,6 +61709,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
     })}`;
+  }
+  function getDocumentSummary(item) {
+    const documentType = normalizeDocumentType(item?.document_type);
+    const reference = String(item?.invoice_number || "").trim();
+    return reference ? getDocumentReferenceText(documentType, reference) : getDocumentTypeLabel(documentType);
+  }
+  function getPipelineTimeline(item, erpStatus) {
+    const documentType = normalizeDocumentType(item?.document_type);
+    const parts = [];
+    if (isInvoiceDocumentType(documentType)) {
+      parts.push(`Due ${item.due_date ? fmtDate(item.due_date) : "—"}`);
+      parts.push(`ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus}`);
+    } else {
+      parts.push(`Type ${getDocumentTypeLabel(documentType)}`);
+    }
+    parts.push(`Updated ${fmtDateTime(item.updated_at || item.created_at)}`);
+    return parts.join(" · ");
   }
   function getSavedViewLabel(view) {
     return String(view?.name || "").trim() || "Saved view";
@@ -61375,11 +61970,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <div class="kpi-row">
       <div class="kpi-card">
         <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.total}</strong>
-        <span>Total invoices</span>
+        <span>Total records</span>
       </div>
       <div class="kpi-card">
         <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.open}</strong>
-        <span>Open in AP</span>
+        <span>Open records</span>
       </div>
       <div class="kpi-card kpi-warning">
         <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.waitingApproval}</strong>
@@ -61404,7 +61999,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   <${StatePill2} state=${focusedItem.state} />
                 </div>
                 <div class="muted" style="font-size:13px">
-                  ${focusedItem.vendor_name || focusedItem.vendor || "Unknown vendor"} · ${focusedItem.invoice_number || "No invoice #"} · ${getAmountLabel(focusedItem)}
+                  ${focusedItem.vendor_name || focusedItem.vendor || "Unknown vendor"} · ${getDocumentSummary(focusedItem)} · ${getAmountLabel(focusedItem)}
                 </div>
                 <div class="muted" style="font-size:12px;margin-top:4px">
                   ${focusedItemVisible ? "The current item is visible in this pipeline view." : "The current item is outside the active slice or filters. Open its AP slice to keep queue context intact."}
@@ -61487,7 +62082,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <label style="display:flex;flex-direction:column;gap:6px">
           <span class="muted" style="font-size:12px">Search</span>
           <input
-            placeholder="Search vendors, invoices, PO, sender…"
+            placeholder="Search vendors, references, PO, sender…"
             value=${searchQuery}
             onInput=${(event) => setSearchQuery(event.target.value)}
             style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
@@ -61592,7 +62187,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
     ${viewPrefs.viewMode === "cards" ? html14`
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px">
-            ${displayed.length === 0 ? html14`<div class="panel" style="grid-column:1/-1;text-align:center;padding:32px"><p class="muted">No invoices match this view.</p></div>` : displayed.map((item) => {
+            ${displayed.length === 0 ? html14`<div class="panel" style="grid-column:1/-1;text-align:center;padding:32px"><p class="muted">No records match this view.</p></div>` : displayed.map((item) => {
       const blockers = getPipelineBlockerKinds(item);
       const focused = String(navState.focusItemId || "") === String(item.id || "");
       const approvalWait = getApprovalWaitMinutes(item);
@@ -61607,7 +62202,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px">
                         <div>
                           <div style="font-size:15px;font-weight:700">${item.vendor_name || item.vendor || "Unknown vendor"}</div>
-                          <div class="muted" style="font-size:12px;margin-top:2px">${item.invoice_number || "No invoice #"} · ${getAmountLabel(item)}</div>
+                          <div class="muted" style="font-size:12px;margin-top:2px">${getDocumentSummary(item)} · ${getAmountLabel(item)}</div>
                         </div>
                         <${StatePill2} state=${item.state} />
                       </div>
@@ -61624,8 +62219,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
                         ${blockers.length ? blockers.slice(0, 3).map((kind) => html14`<${BlockerChip} key=${kind} kind=${kind} />`) : html14`<span class="muted" style="font-size:12px">No blocking signals</span>`}
                       </div>
+                      <${FieldReviewSummary} item=${item} />
                       <div class="muted" style="font-size:12px;line-height:1.5;margin-bottom:12px">
-                        Due ${item.due_date ? fmtDate(item.due_date) : "—"} · ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus} · Updated ${fmtDateTime(item.updated_at || item.created_at)}
+                        ${getPipelineTimeline(item, erpStatus)}
                       </div>
                       <div style="display:flex;gap:8px;flex-wrap:wrap">
                         <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>Open detail</button>
@@ -61641,7 +62237,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <thead>
                 <tr>
                   <th>Vendor</th>
-                  <th>Invoice</th>
+                  <th>Document</th>
                   <th style="text-align:right">Amount</th>
                   <th>Due</th>
                   <th>Status</th>
@@ -61654,26 +62250,28 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 </tr>
               </thead>
               <tbody>
-                ${displayed.length === 0 ? html14`<tr><td colspan="11" class="muted" style="text-align:center;padding:32px">No invoices match this view.</td></tr>` : displayed.map((item) => {
+                ${displayed.length === 0 ? html14`<tr><td colspan="11" class="muted" style="text-align:center;padding:32px">No records match this view.</td></tr>` : displayed.map((item) => {
       const blockers = getPipelineBlockerKinds(item);
       const focused = String(navState.focusItemId || "") === String(item.id || "");
       const approvalWait = getApprovalWaitMinutes(item);
       const queueAge = getQueueAgeMinutes(item);
       const erpStatus = getErpStatus(item);
+      const isInvoiceDocument = isInvoiceDocumentType(item?.document_type);
       return html14`
                         <tr key=${item.id} style=${focused ? "background:rgba(14,165,233,0.07)" : ""}>
                           <td style="font-weight:600;cursor:pointer" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>${item.vendor_name || item.vendor || "Unknown vendor"}</td>
-                          <td style="font-family:var(--font-mono);font-size:12px">${item.invoice_number || "—"}</td>
+                          <td style="font-family:var(--font-mono);font-size:12px">${getDocumentSummary(item)}</td>
                           <td style="text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums">${getAmountLabel(item)}</td>
-                          <td>${item.due_date ? fmtDate(item.due_date) : "—"}</td>
+                          <td>${isInvoiceDocument && item.due_date ? fmtDate(item.due_date) : "—"}</td>
                           <td><${StatePill2} state=${item.state} /></td>
                           <td>${formatDurationMinutes(queueAge)}</td>
-                          <td>${approvalWait ? formatDurationMinutes(approvalWait) : "—"}</td>
-                          <td>${ERP_STATUS_LABELS[erpStatus] || erpStatus}</td>
+                          <td>${isInvoiceDocument && approvalWait ? formatDurationMinutes(approvalWait) : "—"}</td>
+                          <td>${isInvoiceDocument ? ERP_STATUS_LABELS[erpStatus] || erpStatus : "N/A"}</td>
                           <td>
                             <div style="display:flex;gap:6px;flex-wrap:wrap">
                               ${blockers.length ? blockers.slice(0, 2).map((kind) => html14`<${BlockerChip} key=${kind} kind=${kind} />`) : html14`<span class="muted" style="font-size:12px">Clear</span>`}
                             </div>
+                            <${FieldReviewSummary} item=${item} compact=${true} />
                           </td>
                           <td class="muted" style="font-size:12px">${fmtDateTime(item.updated_at || item.created_at)}</td>
                           <td style="text-align:right">
@@ -61691,7 +62289,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         `}
 
     <div class="muted" style="text-align:center;padding:12px 0;font-size:12px">
-      Showing ${displayed.length} of ${items.length} invoices in ${PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === viewPrefs.activeSliceId)?.label || "this view"}.
+      Showing ${displayed.length} of ${items.length} records in ${PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === viewPrefs.activeSliceId)?.label || "this view"}.
     </div>
   `;
   }
@@ -61989,15 +62587,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     background:${tone.bg};color:${tone.text};text-transform:uppercase;letter-spacing:0.02em;
   ">${tone.label}</span>`;
   }
-  function getBlockers2(item, state, budgetContext) {
+  function getBlockers2(item, state, budgetContext, documentType = "invoice") {
     const blockers = [];
+    const fieldReviewBlockers = getFieldReviewBlockers(item);
+    const pauseReason = getWorkflowPauseReason(item);
+    const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
+    const isInvoiceDocument = isInvoiceDocumentType(documentType);
     const push = (key, label, detail) => {
       if (!label || blockers.some((entry) => entry.key === key))
         return;
       blockers.push({ key, label, detail });
     };
     if (budgetContext?.requiresDecision) {
-      push("budget", "Budget review required", "A budget decision is still required before this invoice can move forward.");
+      push("budget", "Budget review required", `A budget decision is still required before this ${isInvoiceDocument ? "invoice" : "record"} can move forward.`);
     }
     const exceptionCode = String(item?.exception_code || "").trim().toLowerCase();
     const exceptionReason = getExceptionReason(exceptionCode);
@@ -62005,26 +62607,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       push("exception", exceptionReason, getIssueSummary(item));
     }
     if (!item?.po_number && exceptionCode.includes("po")) {
-      push("po", "PO reference missing", "Link the correct PO before continuing this invoice.");
+      push("po", "PO reference missing", `Link the correct PO before continuing this ${isInvoiceDocument ? "invoice" : "record"}.`);
     }
     const confidence = Number(item?.confidence);
-    if (Number.isFinite(confidence) && confidence < 0.95 && !["posted_to_erp", "closed", "rejected"].includes(state)) {
-      push("confidence", "Review extracted fields", `Current confidence is ${Math.round(confidence * 100)}%, so a field check is still required.`);
+    if ((item?.requires_field_review || Number.isFinite(confidence) && confidence < 0.95) && !["posted_to_erp", "closed", "rejected"].includes(state)) {
+      push("confidence", fieldReviewBlockers.length ? "Workflow paused for field review" : "Review extracted fields", pauseReason || `Current confidence is ${Math.round(confidence * 100)}%, so a field check is still required.`);
     }
     if (state === "needs_approval") {
       push("approval", "Waiting on approver", "The approval request is still pending.");
     }
     if (state === "needs_info") {
-      push("info", "Missing invoice details", "Clearledgr still needs more information before this invoice can continue.");
+      push("info", isInvoiceDocument ? "Missing invoice details" : "Missing document details", `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
     }
     if (state === "failed_post") {
       push("erp", "ERP posting failed", "Retry the ERP post or review the connector result.");
     }
     if (blockers.length === 0 && state === "received") {
-      push("received", "Ready for review", "This invoice is ready for AP validation and approval routing.");
+      push("received", isInvoiceDocument ? "Ready for review" : "Needs finance review", isInvoiceDocument ? "This invoice is ready for AP validation and approval routing." : getNonInvoiceWorkflowGuidance(documentType));
     }
     if (blockers.length === 0 && state === "validated") {
-      push("validated", "Ready for approval", "Checks are complete and the invoice can be routed to approval.");
+      push("validated", isInvoiceDocument ? "Ready for approval" : `Ready to review ${documentLabel}`, isInvoiceDocument ? "Checks are complete and the invoice can be routed to approval." : getNonInvoiceWorkflowGuidance(documentType));
     }
     return blockers.slice(0, 5);
   }
@@ -62041,6 +62643,45 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       { key: "approval", label: "Approval", text: hasApproval ? state === "needs_approval" ? "Routed" : "Available" : "Not routed", ok: hasApproval },
       { key: "erp", label: "ERP", text: hasErpLink ? item?.erp_reference || erp.erp_reference ? "Linked" : "Connected" : "Not connected", ok: hasErpLink }
     ];
+  }
+  function FieldReviewRows({ blockers, pauseReason }) {
+    if ((!Array.isArray(blockers) || blockers.length === 0) && !pauseReason) {
+      return html15`<p class="muted">No paused field review.</p>`;
+    }
+    return html15`
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${pauseReason && html15`
+        <div style="padding:10px 12px;border:1px solid #fcd34d;border-radius:var(--radius-sm);background:#FEFCE8;color:#78350f;font-size:13px;line-height:1.45">
+          ${pauseReason}
+        </div>
+      `}
+      ${(blockers || []).map((blocker) => html15`
+        <div key=${`${blocker.field || "field"}-${blocker.kind || "review"}`} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);display:flex;flex-direction:column;gap:6px">
+          <div style="font-weight:700;font-size:13px">${blocker.field_label || "Field"} blocked</div>
+          ${blocker.email_value_display && html15`
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+              <span class="muted" style="font-size:12px">Email said</span>
+              <span style="font-size:13px;font-weight:600;text-align:right">${blocker.email_value_display}</span>
+            </div>
+          `}
+          ${blocker.attachment_value_display && html15`
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+              <span class="muted" style="font-size:12px">Attachment said</span>
+              <span style="font-size:13px;font-weight:600;text-align:right">${blocker.attachment_value_display}</span>
+            </div>
+          `}
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+            <span class="muted" style="font-size:12px">Source selected</span>
+            <span style="font-size:13px;font-weight:600;text-align:right">
+              ${blocker.winning_source_label || "Review required"}
+              ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ""}
+            </span>
+          </div>
+          <div class="muted" style="font-size:12px;line-height:1.45">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
+        </div>
+      `)}
+    </div>
+  `;
   }
   async function executeIntent(api, orgId, intent, input) {
     return api("/api/agent/intents/execute", {
@@ -62181,15 +62822,22 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       setTemplatePrefs(local);
     }, [bootstrapTemplatePrefs, orgId, userEmail]);
     const state = normalizeWorkState(item?.state || "received");
+    const documentType = normalizeDocumentType(item?.document_type);
+    const documentLabel = getDocumentTypeLabel(documentType);
+    const isInvoiceDocument = isInvoiceDocumentType(documentType);
     const actorRole = bootstrap?.current_user?.role || "operator";
     const readOnlyMode = !hasOpsAccessRole(actorRole);
     const pipelineScope = { orgId, userEmail };
     const budgetContext = normalizeBudgetContext(context || {}, item);
-    const blockers = T2(() => getBlockers2(item, state, budgetContext), [item, state, budgetContext]);
+    const blockers = T2(() => getBlockers2(item, state, budgetContext, documentType), [item, state, budgetContext, documentType]);
+    const fieldReviewBlockers = T2(() => getFieldReviewBlockers(item), [item]);
     const evidence = T2(() => getEvidenceChecklist2(item, state, context), [item, state, context]);
     const auditSections = T2(() => partitionAuditEvents(auditEvents), [auditEvents]);
-    const stateNotice = getWorkStateNotice(state);
-    const primaryAction = getPrimaryActionConfig(state, actorRole);
+    const pauseReason = T2(() => getWorkflowPauseReason(item), [item]);
+    const resumeWorkflowEligible = T2(() => !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType), [auditEvents, documentType, item, pauseReason]);
+    const stateNotice = resumeWorkflowEligible ? "Field review is cleared. Resume workflow to continue the posting step." : getWorkStateNotice(state, documentType);
+    const basePrimaryAction = pauseReason ? null : getPrimaryActionConfig(state, actorRole, documentType);
+    const primaryAction = resumeWorkflowEligible && ["preview_erp_post", "retry_erp_post"].includes(basePrimaryAction?.id) ? { id: "resume_workflow", label: "Resume workflow" } : basePrimaryAction;
     const canOpenEmail = Boolean(item && (getSourceThreadId(item) || getSourceMessageId(item) || item.subject));
     const smartRejectDefault = item?.exception_code ? getExceptionReason(item.exception_code) : "";
     const relatedRecords = context?.related_records || {};
@@ -62243,6 +62891,36 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       toast(ok ? "ERP retry submitted." : result?.reason || "Retry failed.", ok ? "success" : "error");
       await refresh();
     });
+    const [doResumeWorkflow, resumingWorkflow] = useAction2(async () => {
+      const confirmed = await openDialog({
+        dialogMode: "confirm",
+        actionType: "resume_workflow",
+        title: "Resume workflow",
+        message: "Review blockers are cleared. Clearledgr will continue the guarded posting step.",
+        previewLines: [
+          item?.vendor_name || item?.vendor || "Unknown vendor",
+          formatAmount(item?.amount, item?.currency || "USD"),
+          getDocumentReferenceText(documentType, item?.invoice_number || ""),
+          isInvoiceDocument && item?.due_date ? `Due: ${item.due_date}` : null
+        ].filter(Boolean),
+        confirmLabel: "Resume workflow",
+        cancelLabel: "Cancel"
+      });
+      if (!confirmed)
+        return;
+      const result = await executeIntent(api, orgId, "retry_recoverable_failures", {
+        ap_item_id: item.id,
+        email_id: item.thread_id || item.message_id || item.id,
+        reason: "Resume workflow after review cleared",
+        source_channel: "gmail_route",
+        source_channel_id: "gmail_route",
+        source_message_ref: item.thread_id || item.message_id || item.id
+      });
+      const status = String(result?.status || "").toLowerCase();
+      const ok = ["posted", "posted_to_erp", "recovered", "ready_to_post"].includes(status);
+      toast(ok ? status === "posted" || status === "posted_to_erp" ? "Workflow resumed and invoice posted." : "Workflow resumed." : result?.reason || "Could not resume workflow.", ok ? "success" : "error");
+      await refresh();
+    });
     const [doPost, posting] = useAction2(async () => {
       const confirmed = await openDialog({
         dialogMode: "confirm",
@@ -62252,8 +62930,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         previewLines: [
           item?.vendor_name || item?.vendor || "Unknown vendor",
           formatAmount(item?.amount, item?.currency || "USD"),
-          `Invoice ${item?.invoice_number || "N/A"}`,
-          item?.due_date ? `Due ${item.due_date}` : null
+          getDocumentReferenceText(documentType, item?.invoice_number || ""),
+          isInvoiceDocument && item?.due_date ? `Due ${item.due_date}` : null
         ].filter(Boolean),
         confirmLabel: "Post to ERP",
         cancelLabel: "Cancel"
@@ -62309,13 +62987,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const vendorName = String(item?.vendor_name || item?.vendor || "").trim();
       if (!vendorName)
         return;
-      navigate(`clearledgr/vendor/${encodeURIComponent(vendorName)}`);
+      navigateToVendorRecord(navigate, vendorName);
     }, [item, navigate]);
     const openRelatedRecord = q2((relatedItem) => {
       if (!relatedItem?.id)
         return;
       focusPipelineItem(pipelineScope, relatedItem, "related_record");
-      navigate(`clearledgr/invoice/${encodeURIComponent(relatedItem.id)}`);
+      navigateToRecordDetail(navigate, relatedItem.id);
     }, [navigate, pipelineScope]);
     const [draftReply, draftingReply] = useAction2(async (templateId) => {
       const template = resolveReplyTemplate(templatePrefs, templateId);
@@ -62336,12 +63014,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
     });
     if (loading) {
-      return html15`<div class="panel"><p class="muted">Loading invoice…</p></div>`;
+      return html15`<div class="panel"><p class="muted">Loading record…</p></div>`;
     }
     if (!item) {
       return html15`
       <div class="panel">
-        <p class="muted">Invoice not found.</p>
+        <p class="muted">Record not found.</p>
         <button class="alt" onClick=${() => navigate("clearledgr/pipeline")}>Back to pipeline</button>
       </div>
     `;
@@ -62363,6 +63041,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     } else if (primaryAction?.id === "retry_erp_post") {
       primaryHandler = doRetry;
       primaryPending = retrying;
+    } else if (primaryAction?.id === "resume_workflow") {
+      primaryHandler = doResumeWorkflow;
+      primaryPending = resumingWorkflow;
     }
     return html15`
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
@@ -62379,13 +63060,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <h3 style="margin:0 0 4px">${item.vendor_name || item.vendor || "Unknown vendor"}</h3>
           <div style="font-size:28px;font-weight:700;letter-spacing:-0.02em">${formatAmount(item.amount, item.currency || "USD")}</div>
           <div class="muted" style="margin-top:6px">
-            Invoice ${item.invoice_number || "N/A"} · Due ${item.due_date || "N/A"} · ${item.po_number ? `PO ${item.po_number}` : "No PO"}
+            ${[
+      item?.invoice_number ? getDocumentReferenceText(documentType, item.invoice_number) : documentLabel,
+      ...isInvoiceDocument ? [`Due ${item.due_date || "N/A"}`, item.po_number ? `PO ${item.po_number}` : "No PO"] : []
+    ].join(" · ")}
           </div>
         </div>
         <${StatePill3} state=${state} />
       </div>
 
-      ${stateNotice && html15`<div class="muted" style="margin-top:12px">${stateNotice}</div>`}
+      ${pauseReason && html15`<div class="muted" style="margin-top:12px">${pauseReason}</div>`}
+      ${!pauseReason && stateNotice && html15`<div class="muted" style="margin-top:12px">${stateNotice}</div>`}
 
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">
         ${primaryAction?.label && primaryHandler && html15`
@@ -62396,10 +63081,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ${readOnlyMode && html15`
           <div class="muted" style="width:100%">Read-only view. Queue actions are reserved for AP operators.</div>
         `}
-        ${canRejectWorkItem(state, actorRole) && html15`
+        ${canRejectWorkItem(state, actorRole, documentType) && html15`
           <button class="alt" onClick=${doReject} disabled=${rejecting}>Reject</button>
         `}
-        ${canNudgeApprover(state, actorRole) && primaryAction?.id !== "nudge_approver" && html15`
+        ${canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== "nudge_approver" && html15`
           <button class="alt" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
         `}
       </div>
@@ -62420,6 +63105,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
 
         <div class="panel">
+          <h3 style="margin-top:0">Paused field review</h3>
+          <${FieldReviewRows} blockers=${fieldReviewBlockers} pauseReason=${pauseReason} />
+        </div>
+
+        <div class="panel">
           <h3 style="margin-top:0">Evidence checklist</h3>
           <div style="display:flex;flex-direction:column;gap:10px">
             ${evidence.map((entry) => html15`
@@ -62432,11 +63122,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Invoice details</h3>
+          <h3 style="margin-top:0">${documentLabel} details</h3>
           <div style="display:flex;flex-direction:column;gap:10px">
-            ${detailRow("Invoice #", item.invoice_number || "—")}
-            ${detailRow("Due date", item.due_date ? fmtDate(item.due_date) : "—")}
-            ${detailRow("PO number", item.po_number || "None")}
+            ${detailRow(getDocumentReferenceLabel(documentType), item.invoice_number || "—")}
+            ${detailRow("Document type", documentLabel)}
+            ${isInvoiceDocument ? detailRow("Due date", item.due_date ? fmtDate(item.due_date) : "—") : null}
+            ${isInvoiceDocument ? detailRow("PO number", item.po_number || "None") : null}
             ${detailRow("Confidence", item.confidence ? `${Math.round(Number(item.confidence) * 100)}%` : "—")}
             ${detailRow("Sender", item.sender || "—")}
             ${detailRow("Subject", item.subject || "—")}
@@ -62597,7 +63288,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const vendorName = String(vendor?.vendor_name || "").trim();
       if (!vendorName)
         return;
-      navigate(`clearledgr/vendor/${encodeURIComponent(vendorName)}`);
+      navigateToVendorRecord(navigate, vendorName);
     };
     const openVendorPipeline = (vendor) => {
       const vendorName = String(vendor?.vendor_name || "").trim();
@@ -62765,6 +63456,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const recentItems = Array.isArray(payload?.recent_items) ? payload.recent_items : [];
     const history = Array.isArray(payload?.history) ? payload.history : [];
     const topExceptionCodes = Array.isArray(payload?.top_exception_codes) ? payload.top_exception_codes : [];
+    const senderEmails = Array.isArray(summary?.sender_emails) ? summary.sender_emails : [];
+    const topStates = Array.isArray(summary?.top_states) ? summary.top_states : [];
+    const anomalyFlags = Array.isArray(profile?.anomaly_flags) ? profile.anomaly_flags : [];
     const openVendorInPipeline = () => {
       const current = readPipelinePreferences(pipelineScope);
       clearPipelineNavigation(pipelineScope);
@@ -62784,7 +63478,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (!item?.id)
         return;
       focusPipelineItem(pipelineScope, item, "vendor_record");
-      navigate(`clearledgr/invoice/${encodeURIComponent(item.id)}`);
+      navigateToRecordDetail(navigate, item.id);
     };
     if (loading) {
       return html17`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor record…</p></div>`;
@@ -62895,20 +63589,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
           </div>
 
-          ${(summary.sender_emails || []).length > 0 && html17`
+          ${senderEmails.length > 0 && html17`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Known sender emails</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${(summary.sender_emails || []).map((email) => html17`<span key=${email} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px">${email}</span>`)}
+                ${senderEmails.map((email) => html17`<span key=${email} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px">${email}</span>`)}
               </div>
             </div>
           `}
 
-          ${(profile.anomaly_flags || []).length > 0 && html17`
+          ${anomalyFlags.length > 0 && html17`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Anomaly flags</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${(profile.anomaly_flags || []).map((flag) => html17`<span key=${flag} style="padding:5px 10px;border-radius:999px;background:#FEF2F2;color:#B91C1C;font-size:12px;font-weight:600">${String(flag).replace(/_/g, " ")}</span>`)}
+                ${anomalyFlags.map((flag) => html17`<span key=${flag} style="padding:5px 10px;border-radius:999px;background:#FEF2F2;color:#B91C1C;font-size:12px;font-weight:600">${String(flag).replace(/_/g, " ")}</span>`)}
               </div>
             </div>
           `}
@@ -62916,8 +63610,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
         <div class="panel">
           <h3 style="margin-top:0">Common states</h3>
-          ${(summary.top_states || []).length === 0 ? html17`<p class="muted" style="margin:0">No state history yet.</p>` : html17`<div style="display:flex;flex-direction:column;gap:8px">
-                ${(summary.top_states || []).map((row) => html17`
+          ${topStates.length === 0 ? html17`<p class="muted" style="margin:0">No state history yet.</p>` : html17`<div style="display:flex;flex-direction:column;gap:8px">
+                ${topStates.map((row) => html17`
                   <div key=${row.state} style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
                     <span>${String(row.state || "").replace(/_/g, " ")}</span>
                     <strong>${Number(row.count || 0).toLocaleString()}</strong>
@@ -64069,7 +64763,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   el: (() => {
                     const bar = document.createElement("div");
                     bar.style.cssText = "padding:6px 14px;font-size:12px;color:#92400e;background:#fef9ee;border-bottom:1px solid #f3e8d0;font-family:inherit;";
-                    bar.textContent = `Clearledgr: ${vendor} has ${count} invoice${count > 1 ? "s" : ""} in your AP queue.`;
+                    bar.textContent = `Clearledgr: ${vendor} has ${count} record${count > 1 ? "s" : ""} in your AP queue.`;
                     return bar;
                   })()
                 });
@@ -64143,41 +64837,47 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       handles.length = 0;
     }
     function rebuildMenuNavigation() {
+      if (!routeAccessResolved)
+        return;
       const routeOptions = currentRouteAccess;
-      const visibleRoutes = getVisibleNavRoutes(readRoutePreferences(routeOptions), routeOptions);
+      const menuRoutes = getMenuNavRoutes(readRoutePreferences(routeOptions), routeOptions);
       const pipelineScope = {
         orgId: queueManager?.runtimeConfig?.organizationId || "default",
         userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || ""
       };
       const pinnedViewRoutes = getPinnedPipelineViews(readPipelinePreferences(pipelineScope)).slice(0, 3).map((view) => ({
         title: `View: ${view.name}`,
-        id: `clearledgr/pipeline-view/${encodeURIComponent(getPipelineViewRef(view))}`
+        id: `clearledgr/pipeline-view/${encodeURIComponent(getPipelineViewRef(view))}`,
+        iconUrl: getPipelineViewIconUrl()
       }));
       clearNavItemViews(appMenuNavItemViews);
       clearNavItemViews(fallbackNavItemViews);
       if (appMenuPanelView && typeof appMenuPanelView.addNavItem === "function") {
-        visibleRoutes.forEach((route) => {
+        menuRoutes.forEach((route) => {
           const navHandle = appMenuPanelView.addNavItem({
             name: route.title,
-            routeID: route.id
+            routeID: route.id,
+            iconUrl: getRouteIconUrl(route)
           });
           appMenuNavItemViews.push(navHandle);
         });
         pinnedViewRoutes.forEach((route) => {
           const navHandle = appMenuPanelView.addNavItem({
             name: route.title,
-            routeID: route.id
+            routeID: route.id,
+            iconUrl: route.iconUrl
           });
           appMenuNavItemViews.push(navHandle);
         });
         return;
       }
       if (sdk.NavMenu && typeof sdk.NavMenu.addNavItem === "function") {
-        visibleRoutes.forEach((route) => {
+        menuRoutes.forEach((route) => {
           const navHandle = sdk.NavMenu.addNavItem({
             name: route.title,
             routeID: route.id,
-            type: "NAVIGATION"
+            type: "NAVIGATION",
+            iconUrl: getRouteIconUrl(route)
           });
           fallbackNavItemViews.push(navHandle);
         });
@@ -64185,7 +64885,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const navHandle = sdk.NavMenu.addNavItem({
             name: route.title,
             routeID: route.id,
-            type: "NAVIGATION"
+            type: "NAVIGATION",
+            iconUrl: route.iconUrl
           });
           fallbackNavItemViews.push(navHandle);
         });
@@ -64207,6 +64908,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     let bootstrapCache = null;
     let bootstrapPromise = null;
     let currentRouteAccess = { includeAdmin: false, includeOps: false };
+    let routeAccessResolved = false;
     async function getBootstrap() {
       if (bootstrapCache)
         return bootstrapCache;
@@ -64236,7 +64938,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           includeAdmin: hasAdminAccess(data),
           includeOps: hasOpsAccess(data)
         };
-        if (nextRouteAccess.includeAdmin !== currentRouteAccess.includeAdmin || nextRouteAccess.includeOps !== currentRouteAccess.includeOps) {
+        const hadResolvedRouteAccess = routeAccessResolved;
+        routeAccessResolved = true;
+        if (!hadResolvedRouteAccess || appMenuNavItemViews.length === 0 || nextRouteAccess.includeAdmin !== currentRouteAccess.includeAdmin || nextRouteAccess.includeOps !== currentRouteAccess.includeOps) {
           currentRouteAccess = nextRouteAccess;
           rebuildMenuNavigation();
         }
@@ -64288,14 +64992,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       container.appendChild(style);
       const topbar = document.createElement("div");
       topbar.className = "topbar";
-      topbar.innerHTML = "<h2>Invoice Detail</h2>";
+      topbar.innerHTML = "<h2>Record Detail</h2>";
       container.appendChild(topbar);
       const pageMount = document.createElement("div");
       container.appendChild(pageMount);
       const routeEl = customRouteView.getElement();
       routeEl.appendChild(container);
       const params = customRouteView.getParams?.() || {};
-      const rawId = params.id || window.location.hash.split("clearledgr/invoice/")[1]?.split("?")[0] || "";
+      const rawId = resolveRecordRouteId(params, window.location.hash);
       const orgId = workspaceShellApi.orgId();
       const navigate = (routeId) => sdk.Router.goto(routeId);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
@@ -64307,7 +65011,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       orgId=${orgId}
       userEmail=${userEmail}
       navigate=${navigate}
-      routeParams=${{ id: decodeURIComponent(rawId) }}
+      routeParams=${{ id: rawId }}
     />`, pageMount);
     });
     sdk.Router.handleCustomRoute("clearledgr/vendor", async (customRouteView) => {
@@ -64325,7 +65029,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const routeEl = customRouteView.getElement();
       routeEl.appendChild(container);
       const params = customRouteView.getParams?.() || {};
-      const rawName = params.name || window.location.hash.split("clearledgr/vendor/")[1]?.split("?")[0] || "";
+      const rawName = resolveVendorRouteName(params, window.location.hash);
       const orgId = workspaceShellApi.orgId();
       const navigate = (routeId) => sdk.Router.goto(routeId);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
@@ -64337,7 +65041,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       orgId=${orgId}
       userEmail=${userEmail}
       navigate=${navigate}
-      routeParams=${{ name: decodeURIComponent(rawName) }}
+      routeParams=${{ name: rawName }}
     />`, pageMount);
     });
     for (const route of ROUTES) {

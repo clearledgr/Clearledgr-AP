@@ -61,6 +61,140 @@ export function humanizeSnakeText(value) {
   return String(value || '').replace(/_/g, ' ').trim().replace(/\b\w/g, ch => ch.toUpperCase());
 }
 
+const FIELD_LABELS = {
+  amount: 'Amount',
+  currency: 'Currency',
+  invoice_number: 'Invoice number',
+  vendor: 'Vendor',
+  invoice_date: 'Invoice date',
+  due_date: 'Due date',
+  document_type: 'Document type',
+};
+
+const SOURCE_LABELS = {
+  email: 'Email',
+  attachment: 'Attachment',
+  llm: 'Model',
+};
+
+function getFieldLabel(field) {
+  const token = String(field || '').trim().toLowerCase();
+  if (!token) return 'Field';
+  return FIELD_LABELS[token] || humanizeSnakeText(token);
+}
+
+function getSourceLabel(source) {
+  const token = String(source || '').trim().toLowerCase();
+  if (!token) return 'Source';
+  return SOURCE_LABELS[token] || humanizeSnakeText(token);
+}
+
+function formatFieldReviewValue(field, value, currency = 'USD') {
+  if (value === null || value === undefined || value === '') return 'Not found';
+  if (String(field || '').trim().toLowerCase() === 'amount') {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return `${currency} ${numeric.toFixed(2)}`;
+  }
+  return String(value);
+}
+
+export function getFieldReviewBlockers(item = {}) {
+  const existing = Array.isArray(item?.field_review_blockers) ? item.field_review_blockers : [];
+  if (existing.length > 0) return existing;
+
+  const provenance = item?.field_provenance && typeof item.field_provenance === 'object' ? item.field_provenance : {};
+  const evidence = item?.field_evidence && typeof item.field_evidence === 'object' ? item.field_evidence : {};
+  const conflicts = Array.isArray(item?.source_conflicts) ? item.source_conflicts : [];
+  const blockers = [];
+  const seen = new Set();
+  const currency = String(item?.currency || 'USD').trim().toUpperCase() || 'USD';
+
+  for (const conflict of conflicts) {
+    if (!conflict || typeof conflict !== 'object' || !conflict.blocking) continue;
+    const field = String(conflict.field || '').trim().toLowerCase();
+    if (!field) continue;
+
+    const provenanceEntry = provenance[field] && typeof provenance[field] === 'object' ? provenance[field] : {};
+    const evidenceEntry = evidence[field] && typeof evidence[field] === 'object' ? evidence[field] : {};
+    const values = conflict.values && typeof conflict.values === 'object' ? conflict.values : {};
+    const winningSource = String(
+      provenanceEntry.source
+      || conflict.preferred_source
+      || evidenceEntry.source
+      || 'attachment'
+    ).trim().toLowerCase() || 'attachment';
+    const winningValue = provenanceEntry.value ?? evidenceEntry.selected_value ?? values[winningSource];
+    const fieldLabel = getFieldLabel(field);
+    const winnerLabel = getSourceLabel(winningSource);
+    const attachmentName = String(evidenceEntry.attachment_name || '').trim();
+    let winnerReason = `${winnerLabel} currently wins because Clearledgr selected that value as canonical.`;
+    if (winningSource === 'attachment' && attachmentName) {
+      winnerReason = `${winnerLabel} currently wins because Clearledgr selected the value from ${attachmentName} as canonical.`;
+    }
+
+    blockers.push({
+      kind: 'source_conflict',
+      field,
+      field_label: fieldLabel,
+      email_value: values.email ?? evidenceEntry.email_value ?? null,
+      email_value_display: formatFieldReviewValue(field, values.email ?? evidenceEntry.email_value, currency),
+      attachment_value: values.attachment ?? evidenceEntry.attachment_value ?? null,
+      attachment_value_display: formatFieldReviewValue(field, values.attachment ?? evidenceEntry.attachment_value, currency),
+      winning_source: winningSource,
+      winning_source_label: winnerLabel,
+      winning_value: winningValue,
+      winning_value_display: formatFieldReviewValue(field, winningValue, currency),
+      reason: String(conflict.reason || 'source_value_mismatch'),
+      reason_label: 'Email and attachment disagree.',
+      paused_reason: `Workflow paused until ${fieldLabel.toLowerCase()} is confirmed because the email and attachment disagree.`,
+      winner_reason: winnerReason,
+    });
+    seen.add(field);
+  }
+
+  const confidenceBlockers = Array.isArray(item?.confidence_blockers) ? item.confidence_blockers : [];
+  for (const blocker of confidenceBlockers) {
+    const field = String(
+      typeof blocker === 'string'
+        ? blocker
+        : blocker?.field || blocker?.code || ''
+    ).trim().toLowerCase();
+    if (!field || seen.has(field)) continue;
+    const fieldLabel = getFieldLabel(field);
+    blockers.push({
+      kind: 'confidence',
+      field,
+      field_label: fieldLabel,
+      reason: String(typeof blocker === 'object' ? blocker?.reason || blocker?.code || 'critical_field_review_required' : 'critical_field_review_required'),
+      reason_label: 'Critical extracted field needs review.',
+      paused_reason: `Workflow paused until ${fieldLabel.toLowerCase()} is reviewed.`,
+    });
+    seen.add(field);
+  }
+
+  return blockers;
+}
+
+export function getWorkflowPauseReason(item = {}) {
+  const explicit = String(item?.workflow_paused_reason || '').trim();
+  if (explicit) return explicit;
+  const blockers = getFieldReviewBlockers(item);
+  if (blockers.length === 0 && !item?.requires_field_review) return '';
+  const fieldLabels = blockers.map((blocker) => String(blocker?.field_label || '').trim().toLowerCase()).filter(Boolean);
+  if (fieldLabels.length === 0) return 'Workflow paused until extracted fields are reviewed.';
+  if (fieldLabels.length === 1) {
+    const hasSourceConflict = blockers.some((blocker) => blocker?.kind === 'source_conflict');
+    return hasSourceConflict
+      ? `Workflow paused until ${fieldLabels[0]} is confirmed because the email and attachment disagree.`
+      : `Workflow paused until ${fieldLabels[0]} is reviewed.`;
+  }
+  const summary = `${fieldLabels.slice(0, -1).join(', ')} and ${fieldLabels[fieldLabels.length - 1]}`;
+  const hasSourceConflict = blockers.some((blocker) => blocker?.kind === 'source_conflict');
+  return hasSourceConflict
+    ? `Workflow paused until ${summary} are confirmed because the email and attachment disagree.`
+    : `Workflow paused until ${summary} are reviewed.`;
+}
+
 export function readLocalStorage(key) {
   try { return String(window?.localStorage?.getItem(key) || '').trim(); } catch { return ''; }
 }

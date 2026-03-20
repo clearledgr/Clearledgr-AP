@@ -38,15 +38,22 @@ export const SIDEBAR_CSS = `
         --cl-font-body: 'DM Sans', -apple-system, system-ui, sans-serif;
         --cl-font-mono: 'Geist Mono', 'SF Mono', monospace;
         --cl-transition: 0.15s ease;
+        --cl-shell-pad-y: 10px;
+        --cl-shell-pad-x: 8px;
+        --cl-surface-pad: 10px;
+        --cl-panel-pad: 10px;
         font-family: var(--cl-font-body);
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
         color: var(--cl-primary);
-        padding: 16px;
+        padding: var(--cl-shell-pad-y) var(--cl-shell-pad-x);
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 8px;
         height: 100%;
+        width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
         background: var(--cl-bg);
         position: relative;
         font-size: 13px;
@@ -58,8 +65,8 @@ export const SIDEBAR_CSS = `
       .cl-header {
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding-bottom: 12px;
+        gap: 8px;
+        padding-bottom: 8px;
         border-bottom: 1px solid var(--cl-border);
       }
       .cl-title {
@@ -89,7 +96,7 @@ export const SIDEBAR_CSS = `
         font-weight: 600;
         color: var(--cl-brand-muted, #10B981);
         background: var(--cl-accent-soft, #ECFDF5);
-        padding: 3px 10px;
+        padding: 2px 8px;
         border-radius: 999px;
       }
 
@@ -225,11 +232,12 @@ export const SIDEBAR_CSS = `
         background: var(--cl-surface);
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-md);
-        padding: 16px;
+        padding: var(--cl-surface-pad);
         display: flex;
         flex-direction: column;
         gap: 10px;
         box-shadow: var(--cl-shadow-sm);
+        min-width: 0;
       }
       .cl-section-title {
         font-size: 11px;
@@ -245,11 +253,12 @@ export const SIDEBAR_CSS = `
         background: var(--cl-card);
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-md);
-        padding: 16px;
+        padding: var(--cl-surface-pad);
         display: flex;
         flex-direction: column;
         gap: 8px;
         box-shadow: var(--cl-shadow-sm);
+        min-width: 0;
       }
 
       /* Navigator */
@@ -301,13 +310,15 @@ export const SIDEBAR_CSS = `
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 8px;
+        gap: 6px;
+        flex-wrap: wrap;
       }
       .cl-thread-header-copy {
         min-width: 0;
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 3px;
+        flex: 1 1 180px;
       }
       .cl-thread-header-with-thumb {
         display: flex;
@@ -316,7 +327,7 @@ export const SIDEBAR_CSS = `
       }
       .cl-thread-title {
         font-weight: 700;
-        font-size: 15px;
+        font-size: 14px;
         letter-spacing: -0.01em;
         color: var(--cl-primary);
       }
@@ -362,10 +373,14 @@ export const SIDEBAR_CSS = `
         color: var(--cl-secondary);
       }
       .cl-thread-meta-inline {
-        font-size: 12px;
+        font-size: 11.5px;
         color: var(--cl-secondary);
-        line-height: 1.45;
+        line-height: 1.38;
         overflow-wrap: anywhere;
+      }
+      .cl-thread-header > .cl-pill {
+        margin-left: auto;
+        flex-shrink: 0;
       }
 
       .cl-blocker-list {
@@ -377,7 +392,7 @@ export const SIDEBAR_CSS = `
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
         background: var(--cl-bg);
-        padding: 10px 12px;
+        padding: 9px 10px;
         display: flex;
         flex-direction: column;
         gap: 3px;
@@ -399,12 +414,61 @@ export const SIDEBAR_CSS = `
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
         background: var(--cl-surface);
-        padding: 10px 12px;
+        padding: 9px 10px;
+      }
+      .cl-review-panel {
+        border: 1px solid #fcd34d;
+        border-radius: var(--cl-radius-sm);
+        background: var(--cl-amber-soft);
+        padding: 9px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .cl-review-copy {
+        font-size: 12px;
+        color: #78350f;
+        line-height: 1.45;
+      }
+      .cl-review-card {
+        border: 1px solid rgba(180, 83, 9, 0.16);
+        border-radius: var(--cl-radius-sm);
+        background: rgba(255, 255, 255, 0.82);
+        padding: 9px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .cl-review-card-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--cl-primary);
+      }
+      .cl-review-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .cl-review-label {
+        font-size: 11px;
+        color: var(--cl-secondary);
+      }
+      .cl-review-value {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--cl-primary);
+        text-align: right;
+      }
+      .cl-review-why {
+        font-size: 11px;
+        color: #92400e;
+        line-height: 1.45;
       }
 
       .cl-evidence-section {
         border-top: 1px solid var(--cl-border);
-        padding-top: 10px;
+        padding-top: 8px;
         display: flex;
         flex-direction: column;
         gap: 8px;
@@ -650,7 +714,7 @@ export const SIDEBAR_CSS = `
       .cl-primary-cta {
         margin-top: 4px;
         width: 100%;
-        padding: 10px 16px;
+        padding: 9px 14px;
         font-size: 13px;
         font-weight: 700;
         border-radius: var(--cl-radius-sm);
@@ -1649,16 +1713,16 @@ export const SIDEBAR_CSS = `
       /* ==================== PILLS / BADGES ==================== */
 
       .cl-pill {
-        font-size: 11px;
+        font-size: 10px;
         text-transform: uppercase;
         border-radius: 999px;
-        padding: 3px 10px;
+        padding: 2px 8px;
         font-weight: 600;
         white-space: nowrap;
         letter-spacing: 0.02em;
         display: inline-flex;
         align-items: center;
-        gap: 5px;
+        gap: 4px;
       }
       .cl-pill::before {
         content: '';

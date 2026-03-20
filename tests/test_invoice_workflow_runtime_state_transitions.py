@@ -208,6 +208,12 @@ def test_workflow_state_transition_audits_share_single_correlation_id_across_int
         confidence=0.50,
         invoice_number="INV-CORR-1",
         due_date="2026-03-10",
+        field_confidences={
+            "vendor": 0.99,
+            "amount": 0.99,
+            "invoice_number": 0.99,
+            "due_date": 0.99,
+        },
     )
 
     intake_result = asyncio.run(service.process_new_invoice(invoice))
@@ -627,7 +633,8 @@ def test_approve_invoice_blocks_low_confidence_critical_fields_without_override(
         )
     )
 
-    assert result["status"] == "needs_field_review"
+    assert result["status"] == "blocked"
+    assert result["reason"] == "field_review_required"
     assert result["requires_field_review"] is True
     assert any(b["field"] == "vendor" for b in result["confidence_blockers"])
 
@@ -635,7 +642,7 @@ def test_approve_invoice_blocks_low_confidence_critical_fields_without_override(
     assert row["state"] == "needs_approval"
 
 
-def test_approve_invoice_allows_confidence_override_with_justification_and_audits(service, db, monkeypatch):
+def test_approve_invoice_blocks_confidence_override_even_with_justification(service, db, monkeypatch):
     item = _create_ap_item(
         db,
         gmail_id="gmail-confidence-override",
@@ -654,10 +661,10 @@ def test_approve_invoice_allows_confidence_override_with_justification_and_audit
     monkeypatch.setattr(service, "_load_budget_context_from_invoice_row", lambda _row: [])
     monkeypatch.setattr(service, "_check_po_exception_block", lambda _row: {"blocked": False, "exceptions": []})
 
-    async def _fake_post(_invoice, **_kwargs):
-        return {"status": "success", "bill_id": "BILL-CONF-1"}
+    async def _should_not_post(_invoice, **_kwargs):
+        raise AssertionError("ERP post should not execute when confidence review is required")
 
-    monkeypatch.setattr(service, "_post_to_erp", _fake_post)
+    monkeypatch.setattr(service, "_post_to_erp", _should_not_post)
 
     result = asyncio.run(
         service.approve_invoice(
@@ -668,21 +675,73 @@ def test_approve_invoice_allows_confidence_override_with_justification_and_audit
         )
     )
 
-    assert result["status"] == "approved"
-    assert result["confidence_override"] is True
+    assert result["status"] == "blocked"
+    assert result["reason"] == "field_review_required"
 
     row = db.get_invoice_status("gmail-confidence-override")
-    assert row["state"] == "closed"  # M1: posted_to_erp now transitions to closed
+    assert row["state"] == "needs_approval"
 
     stored = db.get_ap_item(item["id"])
     metadata_raw = stored.get("metadata")
     metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else dict(metadata_raw or {})
-    assert metadata["confidence_override"]["used"] is True
-    assert metadata["confidence_override"]["justification"]
+    assert metadata["requires_field_review"] is True
 
     audit_events = db.list_ap_audit_events(item["id"])
     override_events = [e for e in audit_events if e.get("event_type") == "confidence_override_used"]
-    assert override_events
+    assert override_events == []
+
+
+def test_approve_invoice_blocks_blocking_source_conflicts(service, db, monkeypatch):
+    _create_ap_item(
+        db,
+        gmail_id="gmail-source-conflict-block",
+        state="needs_approval",
+        confidence=0.99,
+        metadata={
+            "field_confidences": {
+                "vendor": 0.99,
+                "amount": 0.99,
+                "invoice_number": 0.99,
+                "due_date": 0.99,
+            },
+            "requires_field_review": True,
+            "source_conflicts": [
+                {
+                    "field": "amount",
+                    "blocking": True,
+                    "reason": "source_value_mismatch",
+                    "preferred_source": "attachment",
+                    "values": {"email": 400.0, "attachment": 440.0},
+                }
+            ],
+        },
+    )
+
+    monkeypatch.setattr(service, "_load_budget_context_from_invoice_row", lambda _row: [])
+    monkeypatch.setattr(service, "_check_po_exception_block", lambda _row: {"blocked": False, "exceptions": []})
+
+    async def _should_not_post(_invoice, **_kwargs):
+        raise AssertionError("ERP post should not execute when blocking source conflicts are present")
+
+    monkeypatch.setattr(service, "_post_to_erp", _should_not_post)
+
+    result = asyncio.run(
+        service.approve_invoice(
+            gmail_id="gmail-source-conflict-block",
+            approved_by="approver@example.com",
+            allow_confidence_override=True,
+            override_justification="Attempted override should still fail closed",
+        )
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "field_review_required"
+    assert result["exception_code"] == "field_conflict"
+    assert result["blocked_fields"] == ["amount"]
+    assert result["blocking_source_conflicts"][0]["field"] == "amount"
+
+    row = db.get_invoice_status("gmail-source-conflict-block")
+    assert row["state"] == "needs_approval"
 
 
 def test_auto_approve_success_transitions_through_ready_to_post(service, db, monkeypatch):
@@ -714,6 +773,45 @@ def test_auto_approve_success_transitions_through_ready_to_post(service, db, mon
     assert ("needs_approval", "approved") in transitions
     assert ("approved", "ready_to_post") in transitions
     assert ("ready_to_post", "posted_to_erp") in transitions
+
+
+def test_auto_approve_blocks_when_field_review_required(service, db, monkeypatch):
+    _create_ap_item(
+        db,
+        gmail_id="gmail-auto-blocked",
+        state="validated",
+        confidence=0.99,
+        metadata={
+            "requires_field_review": True,
+            "field_confidences": {
+                "vendor": 0.80,
+                "amount": 0.99,
+                "invoice_number": 0.99,
+                "due_date": 0.99,
+            },
+        },
+    )
+
+    async def _should_not_post(_invoice, **_kwargs):
+        raise AssertionError("ERP post should not execute when auto-approve is blocked for field review")
+
+    monkeypatch.setattr(service, "_post_to_erp", _should_not_post)
+
+    invoice = InvoiceData(
+        gmail_id="gmail-auto-blocked",
+        subject="Invoice",
+        sender="billing@vendor.test",
+        vendor_name="Vendor Test",
+        amount=125.0,
+        confidence=0.99,
+    )
+
+    result = asyncio.run(service._auto_approve_and_post(invoice))
+    assert result["status"] == "blocked"
+    assert result["reason"] == "field_review_required"
+
+    row = db.get_invoice_status("gmail-auto-blocked")
+    assert row["state"] == "validated"
 
 
 def test_auto_approve_failure_transitions_to_failed_post(service, db, monkeypatch):
@@ -787,6 +885,36 @@ def test_resume_workflow_from_ready_to_post_succeeds(service, db, monkeypatch):
     assert result["status"] == "recovered"
     row = db.get_invoice_status("gmail-resume-rtp")
     assert row["state"] == "closed"  # M1: posted_to_erp now transitions to closed
+
+
+def test_resume_workflow_blocks_when_field_review_required(service, db, monkeypatch):
+    item = _create_ap_item(
+        db,
+        gmail_id="gmail-resume-blocked",
+        state="failed_post",
+        metadata={
+            "requires_field_review": True,
+            "field_confidences": {
+                "vendor": 0.80,
+                "amount": 0.99,
+                "invoice_number": 0.99,
+                "due_date": 0.99,
+            },
+        },
+    )
+
+    async def _should_not_post(_invoice, **_kwargs):
+        raise AssertionError("ERP post should not execute when resume is blocked for field review")
+
+    monkeypatch.setattr(service, "_post_to_erp", _should_not_post)
+
+    result = asyncio.run(service.resume_workflow(item["id"]))
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "field_review_required"
+
+    row = db.get_invoice_status("gmail-resume-blocked")
+    assert row["state"] == "failed_post"
 
 
 def test_resume_workflow_still_failing_stays_in_failed_post(service, db, monkeypatch):
@@ -921,12 +1049,24 @@ def test_batch_route_low_risk_precheck_blocks_policy_risk_fields(service):
         "exception_code": "policy_validation_failed",
         "requires_field_review": True,
         "confidence_blockers": [{"field": "vendor"}],
-        "metadata": {},
+        "metadata": {
+            "source_conflicts": [
+                {
+                    "field": "amount",
+                    "blocking": True,
+                    "reason": "source_value_mismatch",
+                    "preferred_source": "attachment",
+                    "values": {"email": 400.0, "attachment": 440.0},
+                }
+            ],
+        },
     }
     precheck = service.evaluate_batch_route_low_risk_for_approval(row)
     assert precheck["eligible"] is False
     assert "exception_present" in precheck["reason_codes"]
     assert "field_review_required" in precheck["reason_codes"]
+    assert "blocking_source_conflicts" in precheck["reason_codes"]
+    assert precheck["blocked_fields"] == ["vendor", "amount"]
 
 
 def test_batch_retry_recoverable_precheck_allows_transient_failed_post(service):
@@ -951,3 +1091,28 @@ def test_batch_retry_recoverable_precheck_blocks_non_recoverable_failed_post(ser
     precheck = service.evaluate_batch_retry_recoverable_failure(row)
     assert precheck["eligible"] is False
     assert precheck["recoverability"]["recoverable"] is False
+
+
+def test_batch_retry_recoverable_precheck_blocks_field_review_required(service):
+    row = {
+        "id": "ap-retry-field-review",
+        "state": "failed_post",
+        "last_error": "connector timeout",
+        "metadata": {
+            "requires_field_review": True,
+            "source_conflicts": [
+                {
+                    "field": "amount",
+                    "blocking": True,
+                    "reason": "source_value_mismatch",
+                    "preferred_source": "attachment",
+                    "values": {"email": 400.0, "attachment": 440.0},
+                }
+            ],
+        },
+    }
+    precheck = service.evaluate_batch_retry_recoverable_failure(row)
+    assert precheck["eligible"] is False
+    assert "field_review_required" in precheck["reason_codes"]
+    assert "blocking_source_conflicts" in precheck["reason_codes"]
+    assert precheck["exception_code"] == "field_conflict"

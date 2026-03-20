@@ -493,6 +493,44 @@ def test_slack_interactive_duplicate_storm_is_idempotent(monkeypatch, client, db
     assert len(duplicates) >= 1
 
 
+def test_slack_interactive_approve_surfaces_field_review_block(monkeypatch, client, db):
+    item = _create_ap_item(db, gmail_id="thread-slack-field-review")
+    db.update_ap_item(item["id"], metadata={"correlation_id": "corr-slack-field-review"})
+
+    async def _return_body(request):
+        return await request.body()
+
+    async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
+        assert intent == "approve_invoice"
+        return {
+            "status": "blocked",
+            "reason": "field_review_required",
+            "result": {"status": "blocked", "reason": "field_review_required"},
+        }
+
+    monkeypatch.setattr("clearledgr.api.slack_invoices.require_slack_signature", _return_body)
+    monkeypatch.setattr("clearledgr.api.slack_invoices.FinanceAgentRuntime.execute_intent", _runtime_execute)
+
+    payload = {
+        "callback_id": "run-slack-field-review-1",
+        "user": {"id": "U1", "username": "approver"},
+        "channel": {"id": "C1"},
+        "message": {"ts": "1713333333.000"},
+        "actions": [{"action_id": "approve_invoice_thread-slack-field-review", "value": "thread-slack-field-review"}],
+    }
+    response = client.post(
+        "/slack/invoices/interactive",
+        content=_slack_form_body(payload),
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "x-slack-request-timestamp": str(int(time.time())),
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Field review required before posting" in response.json()["text"]
+
+
 def test_teams_interactive_requires_authorization_and_audits(monkeypatch, client, db):
     captured = []
     original_append = db.append_ap_audit_event

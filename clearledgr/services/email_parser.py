@@ -37,6 +37,13 @@ except ImportError:
     logger.warning("pdfplumber not available - table extraction disabled. Install with: pip install pdfplumber")
 
 try:
+    import pypdfium2 as pdfium
+    PDFIUM_AVAILABLE = True
+except ImportError:
+    PDFIUM_AVAILABLE = False
+    logger.warning("pypdfium2 not available - scanned PDF OCR disabled. Install with: pip install pypdfium2")
+
+try:
     import docx
     DOCX_AVAILABLE = True
 except ImportError:
@@ -106,7 +113,7 @@ class EmailParser:
     
     INVOICE_PATTERNS = [
         r'Invoice\s*(?:Number|No\.?|#)\s*[:#-]?\s*([A-Z0-9][\w\-/]+)',
-        r'INV[:\-\s#]*([A-Z0-9][\w\-]+)',
+        r'\b((?:INV)(?:[:\-\s#]*[A-Z0-9][\w\-]+))\b',
         r'Bill\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
         r'Reference\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
         r'Order\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9][\w\-/]+)',
@@ -150,6 +157,16 @@ class EmailParser:
         'payment confirmation', 'payment received', 'payment processed',
         'thank you for your payment', 'thank you for your purchase',
         'order confirmation', 'subscription receipt', 'order receipt',
+    ]
+
+    REFUND_KEYWORDS = [
+        'refund', 'refunded', 'refund receipt', 'refund confirmation',
+        'refund processed', 'money returned',
+    ]
+
+    CREDIT_NOTE_KEYWORDS = [
+        'credit note', 'credit memo', 'vendor credit',
+        'credit applied', 'credit issued',
     ]
 
     # Domains that act as payment processors / billing platforms.
@@ -205,11 +222,31 @@ class EmailParser:
         
         # Extract dates
         dates = self._extract_dates(subject + " " + body)
+
+        email_fields = {
+            "vendor": vendor,
+            "amount": self._primary_amount_details(amounts).get("value"),
+            "currency": self._primary_amount_details(amounts).get("currency"),
+            "invoice_number": invoice_numbers[0] if invoice_numbers else None,
+            "invoice_date": dates[0] if dates else None,
+            "due_date": None,
+            "amount_score": self._primary_amount_details(amounts).get("score"),
+        }
         
         # Parse attachments
         parsed_attachments = []
         attachment_extractions = []
         primary_source = "email"
+        preferred_extraction: Dict[str, Any] = {}
+        attachment_fields = {
+            "vendor": None,
+            "amount": None,
+            "currency": None,
+            "invoice_number": None,
+            "invoice_date": None,
+            "due_date": None,
+            "amount_score": 1.0,
+        }
         for attachment in attachments:
             parsed = self._parse_attachment(attachment)
             if parsed:
@@ -252,18 +289,24 @@ class EmailParser:
                         source_fragment=str(parsed_amount),
                     )
                     if amount_value is not None:
+                        attachment_fields["amount"] = amount_value
+                        attachment_fields["currency"] = preferred_extraction.get("currency") or self._detect_currency(str(parsed_amount))
                         amounts = [{
                             "value": amount_value,
                             "raw": str(parsed_amount),
                             "currency": preferred_extraction.get("currency") or self._detect_currency(str(parsed_amount)),
                         }]
             if preferred_extraction.get("invoice_number"):
+                attachment_fields["invoice_number"] = preferred_extraction.get("invoice_number")
                 invoice_numbers = [preferred_extraction.get("invoice_number")]
             if preferred_extraction.get("date"):
+                attachment_fields["invoice_date"] = preferred_extraction.get("date")
                 dates = [preferred_extraction.get("date")]
             if preferred_extraction.get("due_date"):
+                attachment_fields["due_date"] = preferred_extraction.get("due_date")
                 dates = [preferred_extraction.get("due_date"), *dates]
             if preferred_extraction.get("vendor"):
+                attachment_fields["vendor"] = preferred_extraction.get("vendor")
                 vendor = preferred_extraction.get("vendor")
 
         # Merge attachment data with email data
@@ -293,6 +336,44 @@ class EmailParser:
             else:
                 primary_amount = amounts[0]
 
+        if attachment_fields["amount"] is None:
+            attachment_amount = preferred_extraction.get("amount")
+            if isinstance(attachment_amount, dict):
+                attachment_fields["amount"] = self._safe_float(attachment_amount.get("value"))
+                attachment_fields["currency"] = attachment_fields["currency"] or attachment_amount.get("currency")
+            elif attachment_amount is not None:
+                attachment_fields["amount"] = self._parse_amount_value(str(attachment_amount), source_fragment=str(attachment_amount))
+        attachment_fields["vendor"] = attachment_fields["vendor"] or preferred_extraction.get("vendor")
+        attachment_fields["invoice_number"] = attachment_fields["invoice_number"] or preferred_extraction.get("invoice_number")
+        attachment_fields["invoice_date"] = attachment_fields["invoice_date"] or preferred_extraction.get("date")
+        attachment_fields["due_date"] = attachment_fields["due_date"] or preferred_extraction.get("due_date")
+
+        final_fields = {
+            "vendor": vendor,
+            "amount": primary_amount,
+            "currency": primary_currency,
+            "invoice_number": invoice_numbers[0] if invoice_numbers else None,
+            "invoice_date": self._first_matching_date(dates, attachment_fields.get("invoice_date")),
+            "due_date": self._first_matching_date(dates, attachment_fields.get("due_date")),
+        }
+        field_provenance = self._build_field_provenance(
+            final_fields=final_fields,
+            email_fields=email_fields,
+            attachment_fields=attachment_fields,
+        )
+        field_evidence = self._build_field_evidence(
+            field_provenance=field_provenance,
+            email_fields=email_fields,
+            attachment_fields=attachment_fields,
+            parsed_attachments=parsed_attachments,
+        )
+        source_conflicts = self._build_source_conflicts(
+            email_fields=email_fields,
+            attachment_fields=attachment_fields,
+            field_provenance=field_provenance,
+        )
+        conflict_actions = self._build_conflict_actions(source_conflicts)
+
         return {
             "email_type": email_type,
             "vendor": vendor,
@@ -310,8 +391,195 @@ class EmailParser:
             "confidence": self._calculate_confidence(email_type, amounts, invoice_numbers),
             "currency": primary_currency,
             "primary_source": primary_source,
+            "field_provenance": field_provenance,
+            "field_evidence": field_evidence,
+            "source_conflicts": source_conflicts,
+            "requires_extraction_review": any(bool(entry.get("blocking")) for entry in source_conflicts),
+            "conflict_actions": conflict_actions,
             "parsed_at": datetime.now(timezone.utc).isoformat()
         }
+
+    def _primary_amount_details(self, amounts: List[Any]) -> Dict[str, Any]:
+        if not isinstance(amounts, list) or not amounts:
+            return {"value": None, "currency": None, "score": 0.0, "raw": None}
+        primary = amounts[0]
+        if isinstance(primary, dict):
+            return {
+                "value": primary.get("value"),
+                "currency": primary.get("currency"),
+                "score": self._safe_float(primary.get("score"), 0.0),
+                "raw": primary.get("raw"),
+            }
+        return {"value": primary, "currency": None, "score": 0.0, "raw": primary}
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _has_field_value(self, value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return bool(value.strip())
+        return True
+
+    def _first_matching_date(self, dates: List[Any], preferred: Any) -> Optional[str]:
+        preferred_token = str(preferred or "").strip()
+        if preferred_token:
+            return preferred_token
+        for value in dates or []:
+            token = str(value or "").strip()
+            if token:
+                return token
+        return None
+
+    def _generic_vendor_candidate(self, value: Any) -> bool:
+        token = re.sub(r"\s+", " ", str(value or "").strip()).lower()
+        if not token:
+            return True
+        if token in {"unknown", "unknown vendor", "vendor", "merchant", "payment processor"}:
+            return True
+        return any(marker in token for marker in ("payment", "payments", "billing", "noreply"))
+
+    def _comparable_field_value(self, field: str, value: Any) -> Any:
+        if value is None:
+            return None
+        if field == "amount":
+            try:
+                return round(float(value), 2)
+            except (TypeError, ValueError):
+                return None
+        if field == "currency":
+            token = str(value or "").strip().upper()
+            return token or None
+        token = str(value or "").strip()
+        if not token:
+            return None
+        if field == "vendor":
+            return re.sub(r"[^a-z0-9]", "", token.lower()) or None
+        return re.sub(r"\s+", "", token).lower()
+
+    def _sources_conflict(self, field: str, left: Any, right: Any) -> bool:
+        left_value = self._comparable_field_value(field, left)
+        right_value = self._comparable_field_value(field, right)
+        if left_value is None or right_value is None:
+            return False
+        if field == "vendor" and (
+            self._generic_vendor_candidate(left) or self._generic_vendor_candidate(right)
+        ):
+            return False
+        return left_value != right_value
+
+    def _build_field_provenance(
+        self,
+        *,
+        final_fields: Dict[str, Any],
+        email_fields: Dict[str, Any],
+        attachment_fields: Dict[str, Any],
+    ) -> Dict[str, Dict[str, Any]]:
+        provenance: Dict[str, Dict[str, Any]] = {}
+        for field in ("vendor", "amount", "currency", "invoice_number", "invoice_date", "due_date"):
+            final_value = final_fields.get(field)
+            email_value = email_fields.get(field)
+            attachment_value = attachment_fields.get(field)
+            chosen_source = None
+            if self._has_field_value(final_value):
+                if self._has_field_value(attachment_value) and not self._sources_conflict(field, final_value, attachment_value):
+                    chosen_source = "attachment"
+                elif self._has_field_value(email_value) and not self._sources_conflict(field, final_value, email_value):
+                    chosen_source = "email"
+            if not chosen_source:
+                chosen_source = "attachment" if self._has_field_value(attachment_value) else "email"
+            candidates = {}
+            if self._has_field_value(email_value):
+                candidates["email"] = email_value
+            if self._has_field_value(attachment_value):
+                candidates["attachment"] = attachment_value
+            provenance[field] = {
+                "source": chosen_source,
+                "value": final_value,
+                "candidates": candidates,
+            }
+        return provenance
+
+    def _build_field_evidence(
+        self,
+        *,
+        field_provenance: Dict[str, Dict[str, Any]],
+        email_fields: Dict[str, Any],
+        attachment_fields: Dict[str, Any],
+        parsed_attachments: List[Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Any]]:
+        attachment_name = None
+        for parsed in parsed_attachments:
+            token = str(parsed.get("name") or "").strip()
+            if token:
+                attachment_name = token
+                break
+        evidence: Dict[str, Dict[str, Any]] = {}
+        for field, entry in field_provenance.items():
+            source = str(entry.get("source") or "email").strip() or "email"
+            field_evidence = {
+                "source": source,
+                "selected_value": entry.get("value"),
+                "email_value": email_fields.get(field),
+                "attachment_value": attachment_fields.get(field),
+            }
+            if source == "attachment" and attachment_name:
+                field_evidence["attachment_name"] = attachment_name
+            evidence[field] = {
+                key: value
+                for key, value in field_evidence.items()
+                if value not in (None, "", [], {})
+            }
+        return evidence
+
+    def _build_source_conflicts(
+        self,
+        *,
+        email_fields: Dict[str, Any],
+        attachment_fields: Dict[str, Any],
+        field_provenance: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        conflicts: List[Dict[str, Any]] = []
+        for field in ("amount", "currency", "invoice_number", "vendor", "due_date"):
+            email_value = email_fields.get(field)
+            attachment_value = attachment_fields.get(field)
+            if not self._sources_conflict(field, email_value, attachment_value):
+                continue
+            blocking = field in {"amount", "currency", "invoice_number"}
+            conflicts.append(
+                {
+                    "field": field,
+                    "reason": "source_value_mismatch",
+                    "severity": "high" if blocking else "medium",
+                    "blocking": blocking,
+                    "preferred_source": field_provenance.get(field, {}).get("source") or "attachment",
+                    "values": {
+                        "email": email_value,
+                        "attachment": attachment_value,
+                    },
+                }
+            )
+        return conflicts
+
+    def _build_conflict_actions(self, source_conflicts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        actions: List[Dict[str, Any]] = []
+        for conflict in source_conflicts:
+            field = str(conflict.get("field") or "").strip()
+            if not field:
+                continue
+            actions.append(
+                {
+                    "action": "review_fields",
+                    "field": field,
+                    "reason": str(conflict.get("reason") or "source_value_mismatch"),
+                    "blocking": bool(conflict.get("blocking")),
+                }
+            )
+        return actions
     
     def parse_invoice_text(self, text: str) -> Dict[str, Any]:
         """
@@ -392,10 +660,16 @@ class EmailParser:
     def _classify_email(self, subject: str, body: str) -> str:
         """Classify email type based on content.
 
-        Receipt check runs first — receipt emails often mention 'invoice'
-        in the body but are fundamentally payment confirmations, not AP items.
+        Credit notes and refunds must win before receipt/invoice checks because
+        they often mention invoice IDs and payment receipts in the body.
         """
         text = (subject + " " + body).lower()
+
+        if any(kw in text for kw in self.CREDIT_NOTE_KEYWORDS):
+            return "credit_note"
+
+        if any(kw in text for kw in self.REFUND_KEYWORDS):
+            return "refund"
 
         # Receipts must be detected before invoice keywords to avoid misclassification.
         if any(kw in text for kw in self.RECEIPT_KEYWORDS):
@@ -418,12 +692,12 @@ class EmailParser:
         """
         import re
         patterns = [
-            # "receipt from X #123" or "invoice from Acme Corp"
-            r'(?:receipt|invoice|bill|statement)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|\s+for\b|[,\.]|$)',
+            # "receipt from X #123" or "credit note from Acme Corp"
+            r'(?:receipt|refund|invoice|bill|statement|credit\s+note|credit\s+memo)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|\s+for\b|[,\.]|$)',
             # "Your receipt from X" at the start of the subject
-            r'^(?:your\s+)?(?:receipt|invoice|bill|statement|order)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|[,\.]|$)',
-            # "Acme invoice", "Acme receipt" — vendor name before the document type
-            r'^([A-Z][A-Za-z0-9\s&\.\-]+?)\s+(?:invoice|receipt|bill)\b',
+            r'^(?:your\s+)?(?:receipt|refund|invoice|bill|statement|order|credit\s+note|credit\s+memo)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|[,\.]|$)',
+            # "Acme invoice", "Acme receipt", "Acme credit note"
+            r'^([A-Z][A-Za-z0-9\s&\.\-]+?)\s+(?:invoice|receipt|bill|refund|credit\s+note|credit\s+memo)\b',
         ]
         for text in [subject, (body or '')[:300]]:
             for pattern in patterns:
@@ -1341,38 +1615,44 @@ class EmailParser:
             # Decode base64 image
             image_data = base64.b64decode(content_base64)
             image = Image.open(io.BytesIO(image_data))
-            
-            # Convert to RGB if necessary (for PNG with transparency)
+            return self._extract_pil_text_ocr(image)
+        except Exception as e:
+            logger.warning(f"OCR extraction failed: {e}")
+            return None
+
+    def _extract_pil_text_ocr(self, image: "Image.Image") -> Optional[str]:
+        """Extract OCR text from a PIL image after invoice-friendly preprocessing."""
+        if not OCR_AVAILABLE:
+            return None
+
+        try:
+            # Convert to RGB if necessary (for PNG with transparency / palettes)
             if image.mode in ('RGBA', 'LA', 'P'):
                 background = Image.new('RGB', image.size, (255, 255, 255))
                 if image.mode == 'P':
                     image = image.convert('RGBA')
                 background.paste(image, mask=image.split()[-1] if 'A' in image.mode else None)
                 image = background
-            
-            # Preprocess image for better OCR
-            # Convert to grayscale
+
             if image.mode != 'L':
                 gray = image.convert('L')
             else:
                 gray = image
-            
-            # Increase contrast
+
             from PIL import ImageEnhance
-            enhancer = ImageEnhance.Contrast(gray)
-            enhanced = enhancer.enhance(1.5)
-            
-            # Run OCR with custom config for invoices
+
+            contrast = ImageEnhance.Contrast(gray).enhance(1.8)
+            sharpened = ImageEnhance.Sharpness(contrast).enhance(1.3)
+
             custom_config = r'--oem 3 --psm 6'
-            text = pytesseract.image_to_string(enhanced, config=custom_config)
-            
-            if text and len(text.strip()) > 20:  # Minimum viable text
-                logger.info(f"OCR extracted {len(text)} characters from image")
+            text = pytesseract.image_to_string(sharpened, config=custom_config)
+
+            if text and len(text.strip()) > 20:
+                logger.info("OCR extracted %s characters from rendered image", len(text))
                 return text.strip()
-            
             return None
         except Exception as e:
-            logger.warning(f"OCR extraction failed: {e}")
+            logger.warning(f"PIL OCR extraction failed: {e}")
             return None
 
     def _extract_docx_text(self, content_base64: str) -> Optional[str]:
@@ -1421,8 +1701,7 @@ class EmailParser:
     def _extract_pdf_text(self, content_base64: str, max_pages: int = None) -> Optional[str]:
         """
         Extract text from a base64-encoded PDF attachment.
-        Uses pdfplumber for better table extraction if available,
-        falls back to PyPDF2.
+        Uses text-layer extraction first and falls back to OCR for scanned PDFs.
         
         Args:
             content_base64: Base64-encoded PDF content
@@ -1433,29 +1712,52 @@ class EmailParser:
         except Exception as e:
             logger.warning(f"Failed to decode PDF base64: {e}")
             return None
-        
-        # Try pdfplumber first (better table extraction)
+        return self._extract_pdf_text_from_bytes(data, max_pages=max_pages)
+
+    def _extract_pdf_text_from_bytes(self, pdf_data: bytes, max_pages: int = None) -> Optional[str]:
+        """Extract PDF text using text-layer parsing first, then OCR when needed."""
+        text_candidates: List[Tuple[str, str]] = []
+
+        text_layer = self._extract_pdf_text_layer(pdf_data, max_pages=max_pages)
+        parsed_text_layer = self.parse_invoice_text(text_layer) if text_layer else None
+        if text_layer:
+            text_candidates.append(("text_layer", text_layer))
+
+        if self._should_attempt_pdf_ocr(text_layer, parsed_text_layer):
+            ocr_text = self._extract_pdf_text_ocr(pdf_data, max_pages=max_pages)
+            if ocr_text:
+                text_candidates.append(("ocr", ocr_text))
+
+        best = self._choose_best_pdf_text_candidate(text_candidates)
+        return best[1] if best else None
+
+    def _extract_pdf_text_layer(self, pdf_data: bytes, max_pages: int = None) -> Optional[str]:
+        """Extract PDF text from embedded text layers before attempting OCR."""
         if PDFPLUMBER_AVAILABLE:
             try:
-                text = self._extract_with_pdfplumber(data, max_pages)
+                text = self._extract_with_pdfplumber(pdf_data, max_pages)
                 if text:
                     return text
             except Exception as e:
                 logger.warning(f"pdfplumber extraction failed: {e}")
-        
-        # Fall back to PyPDF2
+
+        return self._extract_with_pypdf2(pdf_data, max_pages=max_pages)
+
+    def _extract_with_pypdf2(self, pdf_data: bytes, max_pages: int = None) -> Optional[str]:
+        """Extract PDF text using PyPDF2 as a fallback text-layer parser."""
         try:
             import PyPDF2
-            reader = PyPDF2.PdfReader(io.BytesIO(data))
+
+            reader = PyPDF2.PdfReader(io.BytesIO(pdf_data))
             total_pages = len(reader.pages)
             pages_to_read = total_pages if max_pages is None else min(total_pages, max_pages)
-            
+
             text_parts = []
             for i in range(pages_to_read):
                 page = reader.pages[i]
                 extracted = page.extract_text() or ""
                 text_parts.append(extracted)
-            
+
             text = "\n".join(text_parts).strip()
             return text or None
         except Exception as e:
@@ -1501,6 +1803,136 @@ class EmailParser:
         except Exception as e:
             logger.warning(f"pdfplumber failed: {e}")
             return None
+
+    def _extract_pdf_text_ocr(self, pdf_data: bytes, max_pages: int = None) -> Optional[str]:
+        """Render a PDF to images and OCR the pages when no reliable text layer exists."""
+        if not (OCR_AVAILABLE and PDFIUM_AVAILABLE):
+            return None
+
+        try:
+            with pdfium.PdfDocument(pdf_data) as doc:
+                total_pages = len(doc)
+                page_limit = max_pages if max_pages is not None else 3
+                pages_to_read = min(total_pages, max(1, page_limit))
+                scale = 300 / 72.0
+                text_parts: List[str] = []
+
+                for index in range(pages_to_read):
+                    page = doc[index]
+                    bitmap = None
+                    try:
+                        bitmap = page.render(scale=scale, grayscale=True)
+                        image = bitmap.to_pil()
+                        page_text = self._extract_pil_text_ocr(image)
+                        if page_text:
+                            text_parts.append(f"--- Page {index + 1} OCR ---")
+                            text_parts.append(page_text)
+                    finally:
+                        if bitmap is not None and hasattr(bitmap, "close"):
+                            bitmap.close()
+                        if hasattr(page, "close"):
+                            page.close()
+
+            text = "\n".join(text_parts).strip()
+            return text or None
+        except Exception as e:
+            logger.warning(f"PDF OCR extraction failed: {e}")
+            return None
+
+    def _should_attempt_pdf_ocr(
+        self,
+        text: Optional[str],
+        parsed_invoice: Optional[Dict[str, Any]],
+    ) -> bool:
+        """Decide whether a PDF should be rasterized and OCR'd."""
+        if not (OCR_AVAILABLE and PDFIUM_AVAILABLE):
+            return False
+
+        normalized = re.sub(r"\s+", "", str(text or ""))
+        if len(normalized) < 60:
+            return True
+
+        if not isinstance(parsed_invoice, dict):
+            return True
+
+        strong_fields = 0
+        if str(parsed_invoice.get("vendor") or "").strip():
+            strong_fields += 1
+        if str(parsed_invoice.get("invoice_number") or "").strip():
+            strong_fields += 1
+
+        amount = parsed_invoice.get("amount")
+        amount_value = None
+        if isinstance(amount, dict):
+            amount_value = amount.get("value")
+        elif amount is not None:
+            amount_value = amount
+        if amount_value is not None:
+            strong_fields += 1
+
+        if str(parsed_invoice.get("date") or "").strip():
+            strong_fields += 1
+        if str(parsed_invoice.get("due_date") or "").strip():
+            strong_fields += 1
+
+        text_lower = str(text or "").lower()
+        has_table_noise = text_lower.count("--- page") > 0 and text_lower.count(" | ") > 4
+        if strong_fields >= 4 and not has_table_noise:
+            return False
+        return strong_fields <= 2 or has_table_noise
+
+    def _choose_best_pdf_text_candidate(
+        self,
+        candidates: List[Tuple[str, str]],
+    ) -> Optional[Tuple[str, str]]:
+        """Choose the strongest PDF text candidate by parsed invoice signal."""
+        best: Optional[Tuple[str, str]] = None
+        best_score = -1
+        best_text_length = -1
+
+        for method, text in candidates:
+            parsed = self.parse_invoice_text(text) if text else {}
+            score = self._score_invoice_parse(parsed)
+            text_length = len(re.sub(r"\s+", "", text or ""))
+            if score > best_score or (score == best_score and text_length > best_text_length):
+                best = (method, text)
+                best_score = score
+                best_text_length = text_length
+
+        return best
+
+    def _score_invoice_parse(self, parsed_invoice: Optional[Dict[str, Any]]) -> int:
+        """Score parsed invoice completeness for source arbitration."""
+        if not isinstance(parsed_invoice, dict):
+            return 0
+
+        score = 0
+        vendor = str(parsed_invoice.get("vendor") or "").strip()
+        if vendor and not self._is_vendor_noise_candidate(vendor):
+            score += 2
+
+        if str(parsed_invoice.get("invoice_number") or "").strip():
+            score += 3
+
+        amount = parsed_invoice.get("amount")
+        amount_value = None
+        if isinstance(amount, dict):
+            amount_value = amount.get("value")
+        elif amount is not None:
+            amount_value = amount
+        if amount_value is not None:
+            score += 3 if float(amount_value) > 0 else 2
+
+        if str(parsed_invoice.get("date") or "").strip():
+            score += 1
+        if str(parsed_invoice.get("due_date") or "").strip():
+            score += 1
+
+        line_items = parsed_invoice.get("line_items")
+        if isinstance(line_items, list) and line_items:
+            score += 1
+
+        return score
     
     def _calculate_confidence(
         self,
@@ -1512,7 +1944,7 @@ class EmailParser:
         score = 0.0
         
         # Base score for AP email type
-        if email_type in ['invoice', 'payment_request']:
+        if email_type in ['invoice', 'payment_request', 'refund', 'credit_note']:
             score += 0.3
         
         # Score for extracted amounts
@@ -1571,6 +2003,7 @@ def get_parser_capabilities() -> Dict[str, Any]:
     return {
         "ocr_available": OCR_AVAILABLE,
         "table_extraction_available": PDFPLUMBER_AVAILABLE,
+        "pdf_ocr_available": OCR_AVAILABLE and PDFIUM_AVAILABLE,
         "fuzzy_matching_available": FUZZY_AVAILABLE,
         "supported_image_formats": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".tiff", ".bmp"] if OCR_AVAILABLE else [],
         "supported_document_formats": [".pdf", ".csv", ".xlsx", ".xls"],

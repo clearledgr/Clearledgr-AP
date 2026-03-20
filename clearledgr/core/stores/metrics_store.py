@@ -78,6 +78,446 @@ class MetricsStore:
             return value.strip().lower() in {"1", "true", "yes", "on"}
         return bool(value)
 
+    @staticmethod
+    def _safe_rate(numerator: int, denominator: int) -> float:
+        return round((float(numerator) / float(denominator)) if denominator else 0.0, 4)
+
+    def _blocking_source_conflicts(self, raw_conflicts: Any) -> List[Dict[str, Any]]:
+        blockers: List[Dict[str, Any]] = []
+        if not isinstance(raw_conflicts, list):
+            return blockers
+        for conflict in raw_conflicts:
+            if not isinstance(conflict, dict):
+                continue
+            field = str(conflict.get("field") or "").strip().lower()
+            if not field:
+                continue
+            if not bool(conflict.get("blocking")):
+                continue
+            blockers.append(conflict)
+        return blockers
+
+    @staticmethod
+    def _dominant_count_key(counts: Dict[str, int]) -> str:
+        if not counts:
+            return ""
+        ordered = sorted(
+            ((str(key or ""), int(value or 0)) for key, value in counts.items()),
+            key=lambda pair: (-pair[1], pair[0]),
+        )
+        if not ordered or ordered[0][1] <= 0:
+            return ""
+        return ordered[0][0]
+
+    def _build_extraction_drift_metrics(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        now: datetime,
+        recent_window_days: int = 7,
+        baseline_window_days: int = 30,
+        scorecard_limit: int = 20,
+        sample_limit: int = 20,
+    ) -> Dict[str, Any]:
+        if not items:
+            return {
+                "summary": {
+                    "window_days": int(baseline_window_days),
+                    "recent_window_days": int(recent_window_days),
+                    "vendors_monitored": 0,
+                    "vendors_at_risk": 0,
+                    "high_risk_vendors": 0,
+                    "sampled_review_count": 0,
+                    "recent_open_blocked_items": 0,
+                },
+                "vendor_scorecards": [],
+                "sampled_review_queue": [],
+            }
+
+        window_start = now - timedelta(days=max(1, int(baseline_window_days)))
+        recent_start = now - timedelta(days=max(1, int(recent_window_days)))
+        open_states = {
+            "received",
+            "validated",
+            "needs_info",
+            "needs_approval",
+            "pending_approval",
+            "approved",
+            "ready_to_post",
+            "failed_post",
+        }
+        drift_fields = ("amount", "currency", "invoice_number", "vendor")
+        vendor_buckets: Dict[str, Dict[str, Any]] = {}
+
+        def _new_slice() -> Dict[str, Any]:
+            return {
+                "count": 0,
+                "requires_field_review_count": 0,
+                "blocking_conflict_count": 0,
+                "open_blocked_count": 0,
+                "conflict_fields": {},
+                "field_sources": {field: {} for field in drift_fields},
+            }
+
+        def _bump(mapping: Dict[str, int], key: str, amount: int = 1) -> None:
+            safe_key = str(key or "").strip().lower()
+            if not safe_key:
+                return
+            mapping[safe_key] = mapping.get(safe_key, 0) + int(amount)
+
+        for item in items:
+            item_ts = self._parse_iso(item.get("created_at")) or self._parse_iso(item.get("updated_at")) or now
+            if item_ts < window_start:
+                continue
+
+            vendor = str(item.get("vendor_name") or item.get("vendor") or "Unknown").strip() or "Unknown"
+            metadata = self._decode_json_any(item.get("metadata"))
+            metadata_dict = metadata if isinstance(metadata, dict) else {}
+            confidence_gate = metadata_dict.get("confidence_gate")
+            confidence_gate_dict = confidence_gate if isinstance(confidence_gate, dict) else {}
+            requires_field_review = self._coerce_bool(
+                item.get("requires_field_review")
+                if item.get("requires_field_review") is not None
+                else (
+                    metadata_dict.get("requires_field_review")
+                    if metadata_dict.get("requires_field_review") is not None
+                    else confidence_gate_dict.get("requires_field_review")
+                )
+            )
+            raw_conflicts = metadata_dict.get("source_conflicts")
+            source_conflicts = raw_conflicts if isinstance(raw_conflicts, list) else []
+            blocking_conflicts = self._blocking_source_conflicts(source_conflicts)
+            blocking_fields = sorted(
+                {
+                    str(conflict.get("field") or "").strip().lower()
+                    for conflict in blocking_conflicts
+                    if str(conflict.get("field") or "").strip()
+                }
+            )
+
+            field_provenance = metadata_dict.get("field_provenance")
+            field_provenance_dict = field_provenance if isinstance(field_provenance, dict) else {}
+            state = str(item.get("state") or "").strip().lower()
+            open_blocked = state in open_states and (requires_field_review or bool(blocking_fields))
+
+            bucket = vendor_buckets.setdefault(
+                vendor,
+                {
+                    "vendor_name": vendor,
+                    "recent": _new_slice(),
+                    "baseline": _new_slice(),
+                    "recent_items": [],
+                },
+            )
+            window_bucket = bucket["recent"] if item_ts >= recent_start else bucket["baseline"]
+            window_bucket["count"] += 1
+            if requires_field_review:
+                window_bucket["requires_field_review_count"] += 1
+            if blocking_fields:
+                window_bucket["blocking_conflict_count"] += 1
+            if open_blocked:
+                window_bucket["open_blocked_count"] += 1
+            for field in blocking_fields:
+                _bump(window_bucket["conflict_fields"], field)
+            for field in drift_fields:
+                provenance_entry = field_provenance_dict.get(field)
+                if not isinstance(provenance_entry, dict):
+                    continue
+                source = str(provenance_entry.get("source") or "").strip().lower()
+                if not source:
+                    continue
+                _bump(window_bucket["field_sources"].setdefault(field, {}), source)
+
+            if item_ts >= recent_start:
+                bucket["recent_items"].append(
+                    {
+                        "ap_item_id": str(item.get("id") or "").strip(),
+                        "vendor_name": vendor,
+                        "invoice_number": str(item.get("invoice_number") or "").strip() or None,
+                        "amount": round(self._safe_float(item.get("amount"), 0.0), 2)
+                        if item.get("amount") is not None
+                        else None,
+                        "currency": str(item.get("currency") or "USD").strip().upper(),
+                        "state": state or "received",
+                        "created_at": item_ts.isoformat(),
+                        "sort_ts": float(item_ts.timestamp()),
+                        "requires_field_review": requires_field_review,
+                        "open_blocked": open_blocked,
+                        "blocking_fields": blocking_fields,
+                    }
+                )
+
+        def _priority_rank(entry: Dict[str, Any]) -> int:
+            if bool(entry.get("open_blocked")):
+                return 0
+            if entry.get("blocking_fields"):
+                return 1
+            if bool(entry.get("requires_field_review")):
+                return 2
+            if str(entry.get("state") or "").strip().lower() in open_states:
+                return 3
+            return 4
+
+        state_priority = {
+            "received": 0,
+            "validated": 1,
+            "needs_info": 2,
+            "needs_approval": 3,
+            "pending_approval": 4,
+            "approved": 5,
+            "ready_to_post": 6,
+            "failed_post": 7,
+        }
+
+        def _state_rank(entry: Dict[str, Any]) -> int:
+            return state_priority.get(str(entry.get("state") or "").strip().lower(), 99)
+
+        risk_rank = {"high": 0, "medium": 1, "stable": 2}
+        scorecards: List[Dict[str, Any]] = []
+        sampled_review_queue: List[Dict[str, Any]] = []
+
+        for bucket in vendor_buckets.values():
+            recent = bucket["recent"]
+            baseline = bucket["baseline"]
+            recent_count = int(recent.get("count") or 0)
+            baseline_count = int(baseline.get("count") or 0)
+            recent_review_rate = self._safe_rate(
+                int(recent.get("requires_field_review_count") or 0),
+                recent_count,
+            )
+            baseline_review_rate = self._safe_rate(
+                int(baseline.get("requires_field_review_count") or 0),
+                baseline_count,
+            )
+            recent_blocking_rate = self._safe_rate(
+                int(recent.get("blocking_conflict_count") or 0),
+                recent_count,
+            )
+            baseline_blocking_rate = self._safe_rate(
+                int(baseline.get("blocking_conflict_count") or 0),
+                baseline_count,
+            )
+
+            source_shift_fields: List[Dict[str, Any]] = []
+            for field in drift_fields:
+                recent_sources = recent.get("field_sources", {}).get(field) or {}
+                baseline_sources = baseline.get("field_sources", {}).get(field) or {}
+                recent_total = sum(int(value or 0) for value in recent_sources.values())
+                baseline_total = sum(int(value or 0) for value in baseline_sources.values())
+                recent_dominant = self._dominant_count_key(recent_sources)
+                baseline_dominant = self._dominant_count_key(baseline_sources)
+                if (
+                    recent_total >= 2
+                    and baseline_total >= 2
+                    and recent_dominant
+                    and baseline_dominant
+                    and recent_dominant != baseline_dominant
+                ):
+                    source_shift_fields.append(
+                        {
+                            "field": field,
+                            "from_source": baseline_dominant,
+                            "to_source": recent_dominant,
+                        }
+                    )
+
+            recent_conflict_fields = recent.get("conflict_fields") or {}
+            top_conflict_fields = [
+                field
+                for field, _count in sorted(
+                    recent_conflict_fields.items(),
+                    key=lambda pair: (-int(pair[1] or 0), pair[0]),
+                )[:3]
+            ]
+
+            risk_signals: List[str] = []
+            risk_score = 0
+            if recent_count >= 2 and recent_review_rate >= 0.25:
+                risk_signals.append("field_review_rate_high")
+                risk_score += 2
+            if (
+                recent_count >= 2
+                and int(recent.get("requires_field_review_count") or 0) > 0
+                and recent_review_rate >= (baseline_review_rate + 0.15)
+            ):
+                risk_signals.append("field_review_rate_spike")
+                risk_score += 2
+            if recent_count >= 2 and recent_blocking_rate >= 0.2:
+                risk_signals.append("blocking_conflict_rate_high")
+                risk_score += 2
+            if (
+                recent_count >= 2
+                and int(recent.get("blocking_conflict_count") or 0) > 0
+                and recent_blocking_rate >= (baseline_blocking_rate + 0.10)
+            ):
+                risk_signals.append("blocking_conflict_rate_spike")
+                risk_score += 2
+            if int(recent_conflict_fields.get("amount") or 0) > 0:
+                risk_signals.append("amount_conflict_present")
+                risk_score += 2
+            if int(recent_conflict_fields.get("invoice_number") or 0) > 0:
+                risk_signals.append("invoice_number_conflict_present")
+                risk_score += 2
+            if int(recent.get("open_blocked_count") or 0) > 0:
+                risk_signals.append("open_blocked_items_present")
+                risk_score += 1
+            for shift in source_shift_fields:
+                risk_signals.append(
+                    f"source_shift:{shift['field']}:{shift['from_source']}->{shift['to_source']}"
+                )
+                risk_score += 1
+
+            if (
+                int(recent.get("open_blocked_count") or 0) >= 2
+                or risk_score >= 5
+                or (recent_count >= 3 and recent_blocking_rate >= 0.34)
+            ):
+                drift_risk = "high"
+            elif int(recent.get("open_blocked_count") or 0) >= 1 or risk_score >= 2:
+                drift_risk = "medium"
+            else:
+                drift_risk = "stable"
+
+            sample_recommended_count = 0
+            if drift_risk == "high":
+                sample_recommended_count = 3 if recent_count >= 5 else 2 if recent_count >= 2 else 1
+            elif drift_risk == "medium":
+                sample_recommended_count = 1
+
+            scorecard = {
+                "vendor_name": bucket["vendor_name"],
+                "window_invoice_count": int(recent_count + baseline_count),
+                "recent_invoice_count": recent_count,
+                "baseline_invoice_count": baseline_count,
+                "recent_requires_field_review_count": int(recent.get("requires_field_review_count") or 0),
+                "recent_requires_field_review_rate": recent_review_rate,
+                "baseline_requires_field_review_rate": baseline_review_rate,
+                "recent_blocking_conflict_count": int(recent.get("blocking_conflict_count") or 0),
+                "recent_blocking_conflict_rate": recent_blocking_rate,
+                "baseline_blocking_conflict_rate": baseline_blocking_rate,
+                "recent_open_blocked_count": int(recent.get("open_blocked_count") or 0),
+                "top_conflict_fields": top_conflict_fields,
+                "source_shift_fields": source_shift_fields,
+                "drift_risk": drift_risk,
+                "risk_score": int(risk_score),
+                "risk_signals": risk_signals,
+                "sample_recommended_count": int(sample_recommended_count),
+            }
+            scorecards.append(scorecard)
+
+            if sample_recommended_count <= 0:
+                continue
+
+            recent_items = sorted(
+                bucket["recent_items"],
+                key=lambda entry: (
+                    _priority_rank(entry),
+                    _state_rank(entry),
+                    -float(entry.get("sort_ts") or 0.0),
+                    str(entry.get("ap_item_id") or ""),
+                ),
+            )
+            blocked_candidates = [entry for entry in recent_items if _priority_rank(entry) <= 2]
+            clean_candidates = [entry for entry in recent_items if _priority_rank(entry) >= 3]
+            chosen: List[Dict[str, Any]] = []
+            chosen_ids: set[str] = set()
+
+            def _add_candidate(entry: Dict[str, Any]) -> None:
+                ap_item_id = str(entry.get("ap_item_id") or "").strip()
+                if not ap_item_id or ap_item_id in chosen_ids or len(chosen) >= sample_recommended_count:
+                    return
+                chosen.append(entry)
+                chosen_ids.add(ap_item_id)
+
+            if blocked_candidates:
+                _add_candidate(blocked_candidates[0])
+            if drift_risk == "high" and clean_candidates:
+                _add_candidate(clean_candidates[0])
+            for entry in recent_items:
+                _add_candidate(entry)
+                if len(chosen) >= sample_recommended_count:
+                    break
+
+            for entry in chosen:
+                item_signals: List[str] = []
+                if bool(entry.get("requires_field_review")):
+                    item_signals.append("requires_field_review")
+                for field in list(entry.get("blocking_fields") or [])[:3]:
+                    item_signals.append(f"blocking_conflict:{field}")
+                for signal in risk_signals[:4]:
+                    if signal not in item_signals:
+                        item_signals.append(signal)
+
+                if entry.get("blocking_fields"):
+                    sample_reason = "blocking_conflict_present"
+                elif bool(entry.get("requires_field_review")):
+                    sample_reason = "field_review_required"
+                elif source_shift_fields:
+                    sample_reason = "vendor_layout_shift_check"
+                else:
+                    sample_reason = "vendor_drift_review"
+
+                sampled_review_queue.append(
+                    {
+                        "ap_item_id": entry.get("ap_item_id"),
+                        "vendor_name": entry.get("vendor_name"),
+                        "invoice_number": entry.get("invoice_number"),
+                        "amount": entry.get("amount"),
+                        "currency": entry.get("currency"),
+                        "state": entry.get("state"),
+                        "created_at": entry.get("created_at"),
+                        "sample_reason": sample_reason,
+                        "risk_signals": item_signals,
+                        "requires_field_review": bool(entry.get("requires_field_review")),
+                        "blocking_fields": list(entry.get("blocking_fields") or []),
+                    }
+                )
+
+        scorecards.sort(
+            key=lambda row: (
+                risk_rank.get(str(row.get("drift_risk") or "stable"), 3),
+                -int(row.get("risk_score") or 0),
+                -int(row.get("recent_invoice_count") or 0),
+                str(row.get("vendor_name") or ""),
+            )
+        )
+        sampled_review_queue.sort(
+            key=lambda row: (
+                0 if str(row.get("sample_reason") or "").startswith("blocking") else 1,
+                -int(bool(row.get("requires_field_review"))),
+                str(row.get("created_at") or ""),
+                str(row.get("ap_item_id") or ""),
+            ),
+            reverse=False,
+        )
+        sampled_review_queue = sorted(
+            sampled_review_queue,
+            key=lambda row: (
+                0 if str(row.get("sample_reason") or "").startswith("blocking") else 1,
+                -int(bool(row.get("requires_field_review"))),
+                -float(self._parse_iso(row.get("created_at")).timestamp()) if self._parse_iso(row.get("created_at")) else 0.0,
+                str(row.get("ap_item_id") or ""),
+            ),
+        )[: max(1, int(scorecard_limit if sample_limit <= 0 else sample_limit))]
+
+        at_risk_count = sum(1 for row in scorecards if str(row.get("drift_risk")) in {"high", "medium"})
+        high_risk_count = sum(1 for row in scorecards if str(row.get("drift_risk")) == "high")
+        recent_open_blocked_items = sum(int((row.get("recent_open_blocked_count") or 0)) for row in scorecards)
+
+        return {
+            "summary": {
+                "window_days": int(baseline_window_days),
+                "recent_window_days": int(recent_window_days),
+                "vendors_monitored": len(scorecards),
+                "vendors_at_risk": int(at_risk_count),
+                "high_risk_vendors": int(high_risk_count),
+                "sampled_review_count": len(sampled_review_queue),
+                "recent_open_blocked_items": int(recent_open_blocked_items),
+            },
+            "vendor_scorecards": scorecards[: max(1, int(scorecard_limit))],
+            "sampled_review_queue": sampled_review_queue,
+        }
+
     # ------------------------------------------------------------------
     # Audit events (query)
     # ------------------------------------------------------------------
@@ -611,6 +1051,7 @@ class MetricsStore:
         approval_wait_p95_minutes = round(self._p95(approval_wait_minutes) or 0.0, 2)
         browser_human_control = browser_metrics.get("human_control") if isinstance(browser_metrics, dict) else {}
         browser_routing = browser_metrics.get("api_first_routing") if isinstance(browser_metrics, dict) else {}
+        extraction_drift_metrics = self._build_extraction_drift_metrics(items, now=now)
 
         total_items = len(items)
         return {
@@ -677,6 +1118,7 @@ class MetricsStore:
                     "agent_actions_requiring_manual_override": "browser actions requiring confirmation / total browser actions within window",
                     "approval_override_rate": "approval decisions that used budget/confidence/PO override semantics",
                     "top_blocker_reasons": "open-item blocker categories/reasons derived from AP item state, validation gates, confidence blockers, and ERP failures",
+                    "extraction_drift": "vendor-level review-rate, conflict-rate, and provenance-shift scorecards with sampled review recommendations",
                 },
                 "straight_through_rate": {
                     "eligible_count": int(touchless_eligible),
@@ -720,6 +1162,7 @@ class MetricsStore:
                     "by_category": blocker_category_counts,
                     "top_reasons": top_blocker_reasons,
                 },
+                "extraction_drift": extraction_drift_metrics,
             },
         }
 

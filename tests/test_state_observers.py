@@ -3,10 +3,11 @@
 import asyncio
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from clearledgr.services.state_observers import (
     AuditTrailObserver,
+    GmailLabelObserver,
     NotificationObserver,
     StateObserver,
     StateObserverRegistry,
@@ -207,6 +208,60 @@ def test_notification_observer_skips_without_method():
     db = MagicMock(spec=[])  # no enqueue_notification
     obs = NotificationObserver(db)
     _run(obs.on_transition(_make_event(new_state="needs_approval")))  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# GmailLabelObserver
+# ---------------------------------------------------------------------------
+
+
+def test_gmail_label_observer_syncs_message_labels():
+    db = MagicMock()
+    db.get_invoice_status.return_value = {
+        "id": "ap-001",
+        "thread_id": "thread-001",
+        "message_id": "msg-001",
+        "user_id": "gmail-user-1",
+        "state": "approved",
+        "metadata": {"email_type": "invoice"},
+    }
+    db.get_finance_email_by_gmail_id.return_value = MagicMock(
+        user_id="gmail-user-1",
+        email_type="invoice",
+        status="processed",
+        metadata={},
+    )
+
+    fake_client = MagicMock()
+    fake_client.ensure_authenticated = AsyncMock(return_value=True)
+    sync_labels = AsyncMock(return_value={"processed", "invoices", "approved"})
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("clearledgr.services.gmail_api.GmailAPIClient", lambda _user_id: fake_client)
+        mp.setattr("clearledgr.services.gmail_labels.sync_finance_labels", sync_labels)
+
+        obs = GmailLabelObserver(db)
+        _run(obs.on_transition(_make_event(gmail_id="thread-001", new_state="approved")))
+
+    sync_labels.assert_awaited_once()
+    assert sync_labels.await_args.args[0] is fake_client
+    assert sync_labels.await_args.args[1] == "msg-001"
+
+
+def test_gmail_label_observer_skips_without_user_context():
+    db = MagicMock()
+    db.get_invoice_status.return_value = {
+        "id": "ap-001",
+        "thread_id": "thread-001",
+        "message_id": "msg-001",
+        "user_id": "",
+        "state": "approved",
+        "metadata": {"email_type": "invoice"},
+    }
+    db.get_finance_email_by_gmail_id.return_value = None
+
+    obs = GmailLabelObserver(db)
+    _run(obs.on_transition(_make_event(gmail_id="thread-001", new_state="approved")))
 
 
 # ---------------------------------------------------------------------------

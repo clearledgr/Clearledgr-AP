@@ -197,6 +197,69 @@ def test_build_worklist_item_recovers_google_invoice_attachment_signal_for_legac
     assert normalized["attachment_count"] == 1
 
 
+def test_build_worklist_item_surfaces_extraction_conflicts_and_provenance(db):
+    item = db.create_ap_item(
+        _item_payload(
+            "conflict-1",
+            "default",
+            extra={
+                "exception_code": "field_conflict",
+                "exception_severity": "high",
+                "metadata": {
+                    "requires_field_review": True,
+                    "requires_extraction_review": True,
+                    "field_provenance": {
+                        "amount": {
+                            "source": "attachment",
+                            "value": 440.0,
+                            "candidates": {"email": 400.0, "attachment": 440.0},
+                        }
+                    },
+                    "field_evidence": {
+                        "amount": {
+                            "source": "attachment",
+                            "selected_value": 440.0,
+                            "attachment_name": "invoice.pdf",
+                        }
+                    },
+                    "source_conflicts": [
+                        {
+                            "field": "amount",
+                            "blocking": True,
+                            "reason": "source_value_mismatch",
+                            "preferred_source": "attachment",
+                            "values": {"email": 400.0, "attachment": 440.0},
+                        }
+                    ],
+                    "confidence_blockers": [
+                        {"field": "amount", "reason": "source_value_mismatch", "severity": "high"}
+                    ],
+                    "conflict_actions": [
+                        {"action": "review_fields", "field": "amount", "blocking": True}
+                    ],
+                },
+            },
+        )
+    )
+
+    normalized = build_worklist_item(db, item)
+
+    assert normalized["requires_field_review"] is True
+    assert normalized["requires_extraction_review"] is True
+    assert normalized["exception_code"] == "field_conflict"
+    assert normalized["field_provenance"]["amount"]["source"] == "attachment"
+    assert normalized["source_conflicts"][0]["field"] == "amount"
+    assert normalized["conflict_actions"][0]["action"] == "review_fields"
+    assert normalized["blocked_fields"] == ["amount"]
+    assert normalized["workflow_paused_reason"] == (
+        "Workflow paused until amount is confirmed because the email and attachment disagree."
+    )
+    assert normalized["field_review_blockers"][0]["field_label"] == "Amount"
+    assert normalized["field_review_blockers"][0]["email_value_display"] == "USD 400.00"
+    assert normalized["field_review_blockers"][0]["attachment_value_display"] == "USD 440.00"
+    assert normalized["field_review_blockers"][0]["winning_source_label"] == "Attachment"
+
+
 def test_vendor_record_endpoint_returns_shared_vendor_context(client, db):
     db.create_ap_item(
         _item_payload(
