@@ -3,7 +3,7 @@ import {
   getDocumentTypeLabel,
   isInvoiceDocumentType,
 } from './document-types.js';
-import { parseJsonObject } from './formatters.js';
+import { getFinanceEffectNotice, parseJsonObject } from './formatters.js';
 
 const RESUME_WORKFLOW_REASON_CODES = new Set([
   'field_review_required',
@@ -104,6 +104,7 @@ export function getPrimaryActionConfig(state, actorRole = 'operator', documentTy
 
 export function getWorkStateNotice(state, documentType = 'invoice', item = null) {
   const normalized = normalizeWorkState(state);
+  const financeEffectNotice = getFinanceEffectNotice(item);
   if (!isInvoiceDocumentType(documentType)) {
     const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
     const resolution = item && typeof item === 'object' && item.non_invoice_resolution && typeof item.non_invoice_resolution === 'object'
@@ -144,6 +145,9 @@ export function getWorkStateNotice(state, documentType = 'invoice', item = null)
       return 'This receipt is supporting evidence for a completed payment, not an open payable.';
     }
     return `This ${documentLabel} is tracked as a non-invoice finance document. Invoice approval and ERP posting are disabled.`;
+  }
+  if (financeEffectNotice) {
+    return financeEffectNotice;
   }
   if (normalized === 'approved') {
     return 'Approval received. Clearledgr is preparing the posting step.';

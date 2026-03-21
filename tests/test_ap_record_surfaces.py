@@ -501,6 +501,20 @@ def test_bulk_field_review_resolution_endpoint_updates_multiple_items(client, db
 
 
 def test_non_invoice_resolution_endpoint_closes_credit_note_with_reference(client, db):
+    related_invoice = db.create_ap_item(
+        _item_payload(
+            "invoice-target-1",
+            "default",
+            state="ready_to_post",
+            extra={
+                "invoice_number": "INV-12345",
+                "metadata": {
+                    "document_type": "invoice",
+                    "email_type": "invoice",
+                },
+            },
+        )
+    )
     item = db.create_ap_item(
         _item_payload(
             "credit-note-1",
@@ -539,12 +553,99 @@ def test_non_invoice_resolution_endpoint_closes_credit_note_with_reference(clien
     metadata = stored["metadata"] if isinstance(stored["metadata"], dict) else json.loads(stored["metadata"])
     assert metadata["non_invoice_resolution"]["outcome"] == "apply_to_invoice"
     assert metadata["non_invoice_resolution"]["related_reference"] == "INV-12345"
+    assert metadata["non_invoice_resolution"]["related_ap_item_id"] == related_invoice["id"]
     assert metadata["non_invoice_resolution"]["closed_record"] is True
+    assert metadata["non_invoice_resolution"]["link_status"] == "linked"
     assert metadata["non_invoice_resolution"]["accounting_treatment"] == "vendor_credit_applied"
     assert metadata["non_invoice_resolution"]["downstream_queue"] == "vendor_credit_ledger"
+    assert metadata["non_invoice_resolution"]["linked_record"]["id"] == related_invoice["id"]
 
     audit_events = db.list_ap_audit_events(item["id"])
     assert any(event["event_type"] == "non_invoice_review_resolved" for event in audit_events)
+
+    related_stored = db.get_ap_item(related_invoice["id"])
+    related_metadata = related_stored["metadata"] if isinstance(related_stored["metadata"], dict) else json.loads(related_stored["metadata"])
+    assert related_metadata["linked_finance_summary"]["credit_note_count"] == 1
+    assert related_metadata["linked_finance_summary"]["credit_note_total"] == 125.0
+    assert related_metadata["vendor_credit_summary"]["applied_total"] == 125.0
+    assert related_metadata["vendor_credit_summary"]["application_state"] == "fully_credited"
+    assert related_metadata["finance_effect_summary"]["original_amount"] == 125.0
+    assert related_metadata["finance_effect_summary"]["applied_credit_total"] == 125.0
+    assert related_metadata["finance_effect_summary"]["remaining_payable_amount"] == 0.0
+    assert related_metadata["finance_effect_summary"]["credit_application_state"] == "fully_credited"
+    assert related_metadata["finance_effect_review_required"] is True
+    assert "linked_credit_adjustment_present" in related_metadata["finance_effect_summary"]["blocked_reason_codes"]
+    assert related_metadata["linked_finance_documents"][0]["source_ap_item_id"] == item["id"]
+    normalized_related = build_worklist_item(db, related_stored)
+    assert normalized_related["finance_effect_review_required"] is True
+    assert normalized_related["next_action"] == "review_finance_effects"
+
+    related_audit_events = db.list_ap_audit_events(related_invoice["id"])
+    assert any(event["event_type"] == "credit_note_linked" for event in related_audit_events)
+
+
+def test_non_invoice_resolution_endpoint_links_refund_to_related_payment_record(client, db):
+    related_invoice = db.create_ap_item(
+        _item_payload(
+            "invoice-payment-target-1",
+            "default",
+            state="posted_to_erp",
+            extra={
+                "invoice_number": "PAY-APPLIED-9",
+                "metadata": {
+                    "document_type": "invoice",
+                    "email_type": "invoice",
+                },
+            },
+        )
+    )
+    item = db.create_ap_item(
+        _item_payload(
+            "refund-doc-1",
+            "default",
+            state="received",
+            extra={
+                "invoice_number": "RF-001",
+                "metadata": {
+                    "document_type": "refund",
+                    "email_type": "refund",
+                },
+            },
+        )
+    )
+
+    response = client.post(
+        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=default",
+        headers=_auth_headers("default"),
+        json={
+            "outcome": "link_to_payment",
+            "related_reference": "PAY-APPLIED-9",
+            "close_record": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["document_type"] == "refund"
+    assert payload["ap_item"]["linked_record"]["id"] == related_invoice["id"]
+
+    stored = db.get_ap_item(item["id"])
+    metadata = stored["metadata"] if isinstance(stored["metadata"], dict) else json.loads(stored["metadata"])
+    assert metadata["non_invoice_resolution"]["accounting_treatment"] == "vendor_refund_linked"
+    assert metadata["non_invoice_resolution"]["related_ap_item_id"] == related_invoice["id"]
+
+    related_stored = db.get_ap_item(related_invoice["id"])
+    related_metadata = related_stored["metadata"] if isinstance(related_stored["metadata"], dict) else json.loads(related_stored["metadata"])
+    assert related_metadata["linked_finance_summary"]["refund_count"] == 1
+    assert related_metadata["linked_finance_summary"]["refund_total"] == 125.0
+    assert related_metadata["cash_application_summary"]["refund_total"] == 125.0
+    assert related_metadata["finance_effect_summary"]["refund_total"] == 125.0
+    assert related_metadata["finance_effect_summary"]["settlement_state"] == "refund_mismatch"
+    assert related_metadata["finance_effect_summary"]["remaining_balance_amount"] == 125.0
+    assert "linked_refund_exceeds_cash_out" in related_metadata["finance_effect_summary"]["blocked_reason_codes"]
+
+    related_audit_events = db.list_ap_audit_events(related_invoice["id"])
+    assert any(event["event_type"] == "refund_linked" for event in related_audit_events)
 
 
 def test_non_invoice_resolution_endpoint_records_payment_confirmation(client, db):
@@ -623,6 +724,14 @@ def test_non_invoice_resolution_endpoint_sends_bank_statement_to_reconciliation(
     assert metadata["non_invoice_resolution"]["outcome"] == "send_to_reconciliation"
     assert metadata["non_invoice_resolution"]["accounting_treatment"] == "queued_for_reconciliation"
     assert metadata["non_invoice_resolution"]["downstream_queue"] == "reconciliation"
+    assert metadata["non_invoice_resolution"]["reconciliation_session_id"]
+    assert metadata["non_invoice_resolution"]["reconciliation_item_id"]
+    session = db.get_recon_session(metadata["non_invoice_resolution"]["reconciliation_session_id"])
+    assert session["source_type"] == "gmail_statement"
+    recon_items = db.list_recon_items(session["id"])
+    assert len(recon_items) == 1
+    assert recon_items[0]["id"] == metadata["non_invoice_resolution"]["reconciliation_item_id"]
+    assert recon_items[0]["state"] == "review"
 
 
 def test_vendor_record_endpoint_returns_shared_vendor_context(client, db):

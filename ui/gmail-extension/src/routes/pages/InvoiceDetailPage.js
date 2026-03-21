@@ -12,6 +12,8 @@ import store from '../../utils/store.js';
 import { hasOpsAccessRole } from '../../utils/roles.js';
 import {
   formatAmount,
+  getFinanceEffectBlockers,
+  getFinanceEffectNotice,
   getExceptionReason,
   getFieldReviewBlockers,
   getEvidenceChecklistEntries,
@@ -131,6 +133,8 @@ function getNonInvoiceActions(item) {
 function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   const blockers = [];
   const fieldReviewBlockers = getFieldReviewBlockers(item);
+  const financeEffectBlockers = getFinanceEffectBlockers(item);
+  const financeEffectNotice = getFinanceEffectNotice(item);
   const pauseReason = getWorkflowPauseReason(item);
   const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
   const isInvoiceDocument = isInvoiceDocumentType(documentType);
@@ -159,6 +163,13 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
       'confidence',
       fieldReviewBlockers.length ? 'Workflow paused for field review' : 'Review extracted fields',
       pauseReason || `Current confidence is ${Math.round(confidence * 100)}%, so a field check is still required.`,
+    );
+  }
+  if (item?.finance_effect_review_required) {
+    push(
+      'finance_effect',
+      financeEffectBlockers[0]?.label || 'Accounting linkage needs review',
+      financeEffectBlockers[0]?.detail || financeEffectNotice || 'Linked finance documents changed the payable or settlement balance.',
     );
   }
 
@@ -435,13 +446,33 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
   const stateNotice = resumeWorkflowEligible
     ? 'Field review is cleared. Resume workflow to continue the posting step.'
     : getWorkStateNotice(state, documentType, item);
-  const basePrimaryAction = pauseReason ? null : getPrimaryActionConfig(state, actorRole, documentType);
+  const basePrimaryAction = (pauseReason || item?.finance_effect_review_required)
+    ? null
+    : getPrimaryActionConfig(state, actorRole, documentType);
   const primaryAction = resumeWorkflowEligible && ['preview_erp_post', 'retry_erp_post'].includes(basePrimaryAction?.id)
     ? { id: 'resume_workflow', label: 'Resume workflow' }
     : basePrimaryAction;
   const canOpenEmail = Boolean(item && (getSourceThreadId(item) || getSourceMessageId(item) || item.subject));
   const smartRejectDefault = item?.exception_code ? getExceptionReason(item.exception_code) : '';
   const relatedRecords = context?.related_records || {};
+  const linkedRecord = item?.linked_record && typeof item.linked_record === 'object' ? item.linked_record : null;
+  const linkedFinanceDocuments = Array.isArray(item?.linked_finance_documents) ? item.linked_finance_documents.slice(0, 4) : [];
+  const financeEffectSummary = item?.finance_effect_summary && typeof item.finance_effect_summary === 'object'
+    ? item.finance_effect_summary
+    : {};
+  const financeEffectBlockers = getFinanceEffectBlockers(item);
+  const financeEffectNotice = getFinanceEffectNotice(item);
+  const reconciliationReference = item?.reconciliation_reference && typeof item.reconciliation_reference === 'object'
+    ? item.reconciliation_reference
+    : {};
+  const hasAccountingLinkage = Boolean(
+    linkedRecord
+    || linkedFinanceDocuments.length
+    || Object.keys(financeEffectSummary).length
+    || reconciliationReference?.session_id
+    || item?.non_invoice_accounting_treatment
+    || item?.non_invoice_downstream_queue
+  );
   const sourceGroups = Array.isArray(context?.email?.source_groups?.groups) ? context.email.source_groups.groups : [];
   const replyTemplates = useMemo(() => getAllReplyTemplates(templatePrefs), [templatePrefs]);
   const quickReplyTemplates = useMemo(() => {
@@ -878,6 +909,76 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
             ${detailRow('Last update', fmtDateTime(item.updated_at || item.created_at))}
           </div>
         </div>
+
+        ${hasAccountingLinkage && html`
+          <div class="panel">
+            <h3 style="margin-top:0">Accounting linkage</h3>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              ${financeEffectNotice
+                ? html`<div class="muted" style="font-size:13px;line-height:1.45">${financeEffectNotice}</div>`
+                : null}
+              ${Object.keys(financeEffectSummary).length
+                ? html`
+                    ${detailRow('Original amount', formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency || 'USD'))}
+                    ${detailRow('Credits applied', formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency || 'USD'))}
+                    ${detailRow('Cash out evidence', formatAmount(financeEffectSummary.gross_cash_out_total, financeEffectSummary.currency || item.currency || 'USD'))}
+                    ${detailRow('Refunds linked', formatAmount(financeEffectSummary.refund_total, financeEffectSummary.currency || item.currency || 'USD'))}
+                    ${detailRow('Net cash applied', formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency || 'USD'))}
+                    ${detailRow('Remaining balance', formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency || 'USD'))}
+                    ${detailRow('Credit state', String(financeEffectSummary.credit_application_state || 'none').replace(/_/g, ' '))}
+                    ${detailRow('Settlement state', String(financeEffectSummary.settlement_state || 'open').replace(/_/g, ' '))}
+                  `
+                : null}
+              ${financeEffectBlockers.length > 0
+                ? html`
+                    <div style="display:flex;flex-direction:column;gap:8px">
+                      ${financeEffectBlockers.map((blocker) => html`
+                        <div key=${blocker.code} style="padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
+                          <div style="font-weight:700;font-size:13px">${blocker.label}</div>
+                          ${blocker.detail && html`<div class="muted" style="margin-top:4px;font-size:12px;line-height:1.45">${blocker.detail}</div>`}
+                        </div>
+                      `)}
+                    </div>
+                  `
+                : null}
+              ${linkedRecord
+                ? html`<${RelatedRecordRow}
+                    label="Linked record"
+                    item=${linkedRecord}
+                    onOpen=${() => openRelatedRecord(linkedRecord)}
+                  />`
+                : null}
+              ${item?.non_invoice_accounting_treatment
+                ? detailRow('Treatment', String(item.non_invoice_accounting_treatment).replace(/_/g, ' '))
+                : null}
+              ${item?.non_invoice_downstream_queue
+                ? detailRow('Downstream queue', String(item.non_invoice_downstream_queue).replace(/_/g, ' '))
+                : null}
+              ${reconciliationReference?.session_id
+                ? detailRow(
+                    'Reconciliation queue',
+                    `Session ${reconciliationReference.session_id}${reconciliationReference.item_id ? ` · Item ${reconciliationReference.item_id}` : ''}`
+                  )
+                : null}
+              ${linkedFinanceDocuments.map((linkedDocument) => html`
+                <${RelatedRecordRow}
+                  key=${linkedDocument.source_ap_item_id}
+                  label=${`${getDocumentTypeLabel(linkedDocument.document_type || 'other')} linked`}
+                  item=${{
+                    id: linkedDocument.source_ap_item_id,
+                    vendor_name: linkedDocument.vendor_name,
+                    invoice_number: linkedDocument.invoice_number,
+                    amount: linkedDocument.amount,
+                    currency: linkedDocument.currency,
+                    state: linkedDocument.outcome,
+                    updated_at: linkedDocument.linked_at,
+                  }}
+                  onOpen=${() => openRelatedRecord({ id: linkedDocument.source_ap_item_id })}
+                />`
+              )}
+            </div>
+          </div>
+        `}
 
         <div class="panel">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">

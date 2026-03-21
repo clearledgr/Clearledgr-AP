@@ -185,6 +185,7 @@ class APFinanceSkill(FinanceSkill):
             vendor_name=ap_item.get("vendor_name") or ap_item.get("vendor"),
             action=action,
             autonomous_requested=autonomous_requested,
+            ap_item=ap_item,
         )
         merged["autonomous_requested"] = autonomous_requested
         merged["autonomy_policy"] = autonomy_policy

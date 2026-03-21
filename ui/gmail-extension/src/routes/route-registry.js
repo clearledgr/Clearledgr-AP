@@ -4,8 +4,8 @@
  *
  * Streak-style doctrine:
  * - Keep Home support cards intentionally small.
- * - Let the Gmail left nav expose every eligible page unless a user hides it.
- * - Let less-used pages stay accessible from Home without cluttering the nav.
+ * - Let the Gmail AppMenu expose every eligible page for the current role.
+ * - Let Home quick-access cards stay personalized without hiding core pages from nav.
  */
 
 export const NAV_PREFS_STORAGE_KEY = 'clearledgr_nav_preferences_v1';
@@ -280,11 +280,7 @@ export function getVisibleNavRoutes(preferences = {}, options = {}) {
 }
 
 export function getMenuNavRoutes(preferences = {}, options = {}) {
-  const prefs = normalizeRoutePreferences(preferences, options);
-  return getNavEligibleRoutes(options).filter((route) => {
-    const state = getRoutePreferenceState(route.id, prefs, options);
-    return !state.hidden;
-  });
+  return getNavEligibleRoutes(options);
 }
 
 export function pinRoute(routeId, preferences = {}, options = {}) {

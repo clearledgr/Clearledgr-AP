@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:182d27290928f4e0b6366112a422d825c4c90b6e5ace01c08fb55e784d87784d */
+/* clearledgr-source-fingerprint:eb4b8786228ee7671025074b8f68a72cbcafcf748f3d7a1c10a001639067c106 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -51567,7 +51567,7 @@ Add a <Suspense fallback=...> component higher in the tree to provide a loading 
               f = bound(f, ctx);
               return compose(map(f), cat);
             }
-            function push(arr, x) {
+            function push2(arr, x) {
               arr.push(x);
               return arr;
             }
@@ -51590,7 +51590,7 @@ Add a <Suspense fallback=...> component higher in the tree to provide a loading 
             arrayReducer["@@transducer/result"] = function(v) {
               return v;
             };
-            arrayReducer["@@transducer/step"] = push;
+            arrayReducer["@@transducer/step"] = push2;
             var objReducer = {};
             objReducer["@@transducer/init"] = function() {
               return {};
@@ -51705,7 +51705,7 @@ Add a <Suspense fallback=...> component higher in the tree to provide a loading 
               Reduced,
               isReduced,
               iterator,
-              push,
+              push: push2,
               merge,
               transduce,
               seq,
@@ -57543,6 +57543,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     attachment: "Attachment",
     llm: "Model"
   };
+  var FINANCE_EFFECT_REASON_LABELS = {
+    linked_finance_target_amount_missing: "Target amount missing",
+    linked_finance_target_not_invoice: "Linked target is not an invoice",
+    linked_credit_adjustment_present: "Linked credit changes payable amount",
+    linked_cash_application_present: "Linked cash activity changes settlement",
+    linked_over_credit: "Linked credits exceed invoice amount",
+    linked_overpayment: "Linked cash exceeds remaining balance",
+    linked_refund_exceeds_cash_out: "Refund exceeds linked cash out"
+  };
   function getFieldLabel(field) {
     const token = String(field || "").trim().toLowerCase();
     if (!token)
@@ -57647,6 +57656,39 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const summary = `${fieldLabels.slice(0, -1).join(", ")} and ${fieldLabels[fieldLabels.length - 1]}`;
     const hasSourceConflict = blockers.some((blocker) => blocker?.kind === "source_conflict");
     return hasSourceConflict ? `Workflow paused until ${summary} are confirmed because the email and attachment disagree.` : `Workflow paused until ${summary} are reviewed.`;
+  }
+  function getFinanceEffectBlockers(item = {}) {
+    const rawBlockers = Array.isArray(item?.finance_effect_blockers) ? item.finance_effect_blockers : [];
+    return rawBlockers.map((blocker) => {
+      if (!blocker || typeof blocker !== "object")
+        return null;
+      const code = String(blocker.code || "").trim();
+      if (!code)
+        return null;
+      return {
+        code,
+        label: FINANCE_EFFECT_REASON_LABELS[code] || humanizeSnakeText(code.replace(/^linked_/, "")),
+        detail: String(blocker.detail || "").trim()
+      };
+    }).filter(Boolean);
+  }
+  function getFinanceEffectNotice(item = {}) {
+    const summary = item?.finance_effect_summary && typeof item.finance_effect_summary === "object" ? item.finance_effect_summary : {};
+    const blockers = getFinanceEffectBlockers(item);
+    if (Boolean(item?.finance_effect_review_required)) {
+      return blockers[0]?.detail || "Linked credits, payments, or refunds change the net payable amount. Review the accounting linkage before routing or posting.";
+    }
+    if (!summary || Object.keys(summary).length === 0)
+      return "";
+    const creditTotal = Number(summary.applied_credit_total || 0);
+    const netCashTotal = Number(summary.net_cash_applied_total || 0);
+    const remainingBalance = Number(summary.remaining_balance_amount || 0);
+    if (!Number.isFinite(creditTotal) && !Number.isFinite(netCashTotal))
+      return "";
+    if ((creditTotal > 0 || netCashTotal !== 0) && Number.isFinite(remainingBalance)) {
+      return `Net payable after linked finance documents: ${formatAmount(remainingBalance, summary.currency || item?.currency || "USD")}.`;
+    }
+    return "";
   }
   function readLocalStorage(key) {
     try {
@@ -58243,6 +58285,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function getWorkStateNotice(state, documentType = "invoice", item = null) {
     const normalized = normalizeWorkState(state);
+    const financeEffectNotice = getFinanceEffectNotice(item);
     if (!isInvoiceDocumentType(documentType)) {
       const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
       const resolution = item && typeof item === "object" && item.non_invoice_resolution && typeof item.non_invoice_resolution === "object" ? item.non_invoice_resolution : {};
@@ -58273,6 +58316,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return "This receipt is supporting evidence for a completed payment, not an open payable.";
       }
       return `This ${documentLabel} is tracked as a non-invoice finance document. Invoice approval and ERP posting are disabled.`;
+    }
+    if (financeEffectNotice) {
+      return financeEffectNotice;
     }
     if (normalized === "approved") {
       return "Approval received. Clearledgr is preparing the posting step.";
@@ -59221,6 +59267,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function getBlockers(item, state, budgetContext, documentType = "invoice") {
     const blockers = [];
     const fieldReviewBlockers = getFieldReviewBlockers(item);
+    const financeEffectBlockers = getFinanceEffectBlockers(item);
+    const financeEffectNotice = getFinanceEffectNotice(item);
     const pauseReason = getWorkflowPauseReason(item);
     const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
     const isInvoiceDocument = isInvoiceDocumentType(documentType);
@@ -59245,6 +59293,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const confidence = Number(item?.confidence);
     if ((item?.requires_field_review || Number.isFinite(confidence) && confidence < 0.95) && !["posted_to_erp", "closed", "rejected"].includes(state)) {
       add("confidence", fieldReviewBlockers.length ? "Workflow paused for field review" : "Review extracted fields", fieldReviewBlockers.length ? null : pauseReason || `Current confidence is ${Math.round(confidence * 100)}%, so a quick field check is still required.`);
+    }
+    if (item?.finance_effect_review_required) {
+      push("finance_effect", financeEffectBlockers[0]?.label || "Accounting linkage needs review", financeEffectBlockers[0]?.detail || financeEffectNotice || "Linked finance documents changed the payable or settlement balance.");
     }
     if (state === "needs_approval") {
       add("approval", "Waiting on approver", "The approval request is still outstanding.");
@@ -59457,6 +59508,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const evidence = getEvidenceChecklistEntries(item, state, contextPayload);
     const auditEvents = s3.auditState.itemId === item.id && Array.isArray(s3.auditState.events) ? s3.auditState.events : [];
     const pauseReason = getWorkflowPauseReason(item);
+    const financeEffectSummary = item?.finance_effect_summary && typeof item.finance_effect_summary === "object" ? item.finance_effect_summary : {};
+    const financeEffectBlockers = getFinanceEffectBlockers(item);
+    const financeEffectNotice = getFinanceEffectNotice(item);
     const resumeWorkflowEligible = !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType);
     const stateNotice = resumeWorkflowEligible ? "Field review is cleared. Resume workflow to continue the posting step." : getWorkStateNotice(state, documentType, item);
     const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : "";
@@ -59635,7 +59689,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return;
       navigateToVendorRecord((routeId) => store_default.sdk?.Router?.goto?.(routeId), vendorName);
     }, [item]);
-    const basePrimaryAction = pauseReason ? null : getPrimaryActionConfig(displayState, actorRole, documentType);
+    const basePrimaryAction = pauseReason || item?.finance_effect_review_required ? null : getPrimaryActionConfig(displayState, actorRole, documentType);
     const primaryAction = resumeWorkflowEligible && ["preview_erp_post", "retry_erp_post"].includes(basePrimaryAction?.id) ? { id: "resume_workflow", label: "Resume workflow" } : basePrimaryAction;
     let primaryHandler = null;
     let primaryPending = false;
@@ -59726,6 +59780,46 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         onResolve=${readOnlyMode ? null : doResolveFieldReview}
         resolvingField=${resolvePending ? resolvingFieldKey : ""}
       />
+      ${(financeEffectNotice || Object.keys(financeEffectSummary).length) && html2`
+        <div class="cl-section" aria-label="Accounting linkage">
+          <div class="cl-section-title">Accounting linkage</div>
+          ${financeEffectNotice && html2`<div class="cl-review-copy">${financeEffectNotice}</div>`}
+          <div style="display:flex;flex-direction:column;gap:8px">
+            ${Object.keys(financeEffectSummary).length > 0 && html2`
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Original amount</div>
+                </div>
+                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency || "USD")}</div>
+              </div>
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Credits applied</div>
+                </div>
+                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency || "USD")}</div>
+              </div>
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Net cash applied</div>
+                </div>
+                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency || "USD")}</div>
+              </div>
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Remaining balance</div>
+                </div>
+                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency || "USD")}</div>
+              </div>
+            `}
+            ${financeEffectBlockers.map((blocker) => html2`
+              <div key=${blocker.code} class="cl-blocker-row">
+                <div class="cl-blocker-label">${blocker.label}</div>
+                ${blocker.detail && html2`<div class="cl-blocker-detail">${blocker.detail}</div>`}
+              </div>
+            `)}
+          </div>
+        </div>
+      `}
       <${EvidenceChecklist} entries=${evidence} />
       <${AuditDisclosure} events=${auditEvents} loading=${Boolean(s3.auditState.loading && s3.auditState.itemId === item.id)} />
       <${ActionDialog} ...${dialog} />
@@ -60102,11 +60196,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     });
   }
   function getMenuNavRoutes(preferences = {}, options = {}) {
-    const prefs = normalizeRoutePreferences(preferences, options);
-    return getNavEligibleRoutes(options).filter((route) => {
-      const state = getRoutePreferenceState(route.id, prefs, options);
-      return !state.hidden;
-    });
+    return getNavEligibleRoutes(options);
   }
   function pinRoute(routeId, preferences = {}, options = {}) {
     const route = getRouteById(routeId);
@@ -60867,7 +60957,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
           <div>
             <h3 style="margin:0 0 4px">Support surfaces</h3>
-            <p class="muted" style="margin:0">Secondary pages stay available without taking attention from Pipeline or the thread card.</p>
+            <p class="muted" style="margin:0">Home can stay focused while the AppMenu still exposes every eligible Clearledgr page.</p>
           </div>
           ${adminAccess && html4`<button class="alt" onClick=${() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })} style="padding:8px 12px;font-size:12px">Customize</button>`}
         </div>
@@ -61006,8 +61096,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="panel">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
           <div>
-            <h3 style="margin:0 0 4px">Customize your left sidebar</h3>
-            <p class="muted" style="margin:0">Keep daily pages pinned. Leave the rest available without turning Gmail into a dashboard.</p>
+            <h3 style="margin:0 0 4px">Customize Home quick access</h3>
+            <p class="muted" style="margin:0">Choose which secondary pages stay surfaced on Home. The AppMenu still shows every eligible Clearledgr page.</p>
           </div>
           <button class="alt" onClick=${() => applyRoutePreferences(resetRoutePreferences(routeOptions), "Navigation reset to defaults.")} style="padding:8px 12px;font-size:12px">Reset</button>
         </div>
@@ -61017,10 +61107,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return html4`<${RoutePreferenceRow}
               route=${route}
               preferenceState=${preferenceState}
-              onPin=${() => applyRoutePreferences(pinRoute(route.id, routePreferences, routeOptions), `${route.title} pinned to the sidebar.`)}
-              onUnpin=${() => applyRoutePreferences(unpinRoute(route.id, routePreferences, routeOptions), `${route.title} removed from pinned pages.`)}
-              onHide=${() => applyRoutePreferences(hideRoute(route.id, routePreferences, routeOptions), `${route.title} hidden from the sidebar.`)}
-              onShow=${() => applyRoutePreferences(showRoute(route.id, routePreferences, routeOptions), `${route.title} restored to the sidebar.`)}
+              onPin=${() => applyRoutePreferences(pinRoute(route.id, routePreferences, routeOptions), `${route.title} added to Home quick access.`)}
+              onUnpin=${() => applyRoutePreferences(unpinRoute(route.id, routePreferences, routeOptions), `${route.title} removed from Home quick access.`)}
+              onHide=${() => applyRoutePreferences(hideRoute(route.id, routePreferences, routeOptions), `${route.title} hidden from Home quick access.`)}
+              onShow=${() => applyRoutePreferences(showRoute(route.id, routePreferences, routeOptions), `${route.title} restored to Home quick access.`)}
             />`;
     })}
         </div>
@@ -63879,43 +63969,48 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function getBlockers2(item, state, budgetContext, documentType = "invoice") {
     const blockers = [];
     const fieldReviewBlockers = getFieldReviewBlockers(item);
+    const financeEffectBlockers = getFinanceEffectBlockers(item);
+    const financeEffectNotice = getFinanceEffectNotice(item);
     const pauseReason = getWorkflowPauseReason(item);
     const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
     const isInvoiceDocument = isInvoiceDocumentType(documentType);
-    const push = (key, label, detail) => {
+    const push2 = (key, label, detail) => {
       if (!label || blockers.some((entry) => entry.key === key))
         return;
       blockers.push({ key, label, detail });
     };
     if (budgetContext?.requiresDecision) {
-      push("budget", "Budget review required", `A budget decision is still required before this ${isInvoiceDocument ? "invoice" : "record"} can move forward.`);
+      push2("budget", "Budget review required", `A budget decision is still required before this ${isInvoiceDocument ? "invoice" : "record"} can move forward.`);
     }
     const exceptionCode = String(item?.exception_code || "").trim().toLowerCase();
     const exceptionReason = getExceptionReason(exceptionCode);
     if (exceptionReason) {
-      push("exception", exceptionReason, getIssueSummary(item));
+      push2("exception", exceptionReason, getIssueSummary(item));
     }
     if (!item?.po_number && exceptionCode.includes("po")) {
-      push("po", "PO reference missing", `Link the correct PO before continuing this ${isInvoiceDocument ? "invoice" : "record"}.`);
+      push2("po", "PO reference missing", `Link the correct PO before continuing this ${isInvoiceDocument ? "invoice" : "record"}.`);
     }
     const confidence = Number(item?.confidence);
     if ((item?.requires_field_review || Number.isFinite(confidence) && confidence < 0.95) && !["posted_to_erp", "closed", "rejected"].includes(state)) {
-      push("confidence", fieldReviewBlockers.length ? "Workflow paused for field review" : "Review extracted fields", pauseReason || `Current confidence is ${Math.round(confidence * 100)}%, so a field check is still required.`);
+      push2("confidence", fieldReviewBlockers.length ? "Workflow paused for field review" : "Review extracted fields", pauseReason || `Current confidence is ${Math.round(confidence * 100)}%, so a field check is still required.`);
+    }
+    if (item?.finance_effect_review_required) {
+      push2("finance_effect", financeEffectBlockers[0]?.label || "Accounting linkage needs review", financeEffectBlockers[0]?.detail || financeEffectNotice || "Linked finance documents changed the payable or settlement balance.");
     }
     if (state === "needs_approval") {
-      push("approval", "Waiting on approver", "The approval request is still pending.");
+      push2("approval", "Waiting on approver", "The approval request is still pending.");
     }
     if (state === "needs_info") {
-      push("info", isInvoiceDocument ? "Missing invoice details" : "Missing document details", `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
+      push2("info", isInvoiceDocument ? "Missing invoice details" : "Missing document details", `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
     }
     if (state === "failed_post") {
-      push("erp", "ERP posting failed", "Retry the ERP post or review the connector result.");
+      push2("erp", "ERP posting failed", "Retry the ERP post or review the connector result.");
     }
     if (blockers.length === 0 && state === "received") {
-      push("received", isInvoiceDocument ? "Ready for review" : "Needs finance review", isInvoiceDocument ? "This invoice is ready for AP validation and approval routing." : getNonInvoiceWorkflowGuidance(documentType));
+      push2("received", isInvoiceDocument ? "Ready for review" : "Needs finance review", isInvoiceDocument ? "This invoice is ready for AP validation and approval routing." : getNonInvoiceWorkflowGuidance(documentType));
     }
     if (blockers.length === 0 && state === "validated") {
-      push("validated", isInvoiceDocument ? "Ready for approval" : `Ready to review ${documentLabel}`, isInvoiceDocument ? "Checks are complete and the invoice can be routed to approval." : getNonInvoiceWorkflowGuidance(documentType));
+      push2("validated", isInvoiceDocument ? "Ready for approval" : `Ready to review ${documentLabel}`, isInvoiceDocument ? "Checks are complete and the invoice can be routed to approval." : getNonInvoiceWorkflowGuidance(documentType));
     }
     return blockers.slice(0, 5);
   }
@@ -64145,11 +64240,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const pauseReason = T2(() => getWorkflowPauseReason(item), [item]);
     const resumeWorkflowEligible = T2(() => !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType), [auditEvents, documentType, item, pauseReason]);
     const stateNotice = resumeWorkflowEligible ? "Field review is cleared. Resume workflow to continue the posting step." : getWorkStateNotice(state, documentType, item);
-    const basePrimaryAction = pauseReason ? null : getPrimaryActionConfig(state, actorRole, documentType);
+    const basePrimaryAction = pauseReason || item?.finance_effect_review_required ? null : getPrimaryActionConfig(state, actorRole, documentType);
     const primaryAction = resumeWorkflowEligible && ["preview_erp_post", "retry_erp_post"].includes(basePrimaryAction?.id) ? { id: "resume_workflow", label: "Resume workflow" } : basePrimaryAction;
     const canOpenEmail = Boolean(item && (getSourceThreadId(item) || getSourceMessageId(item) || item.subject));
     const smartRejectDefault = item?.exception_code ? getExceptionReason(item.exception_code) : "";
     const relatedRecords = context?.related_records || {};
+    const linkedRecord = item?.linked_record && typeof item.linked_record === "object" ? item.linked_record : null;
+    const linkedFinanceDocuments = Array.isArray(item?.linked_finance_documents) ? item.linked_finance_documents.slice(0, 4) : [];
+    const financeEffectSummary = item?.finance_effect_summary && typeof item.finance_effect_summary === "object" ? item.finance_effect_summary : {};
+    const financeEffectBlockers = getFinanceEffectBlockers(item);
+    const financeEffectNotice = getFinanceEffectNotice(item);
+    const reconciliationReference = item?.reconciliation_reference && typeof item.reconciliation_reference === "object" ? item.reconciliation_reference : {};
+    const hasAccountingLinkage = Boolean(linkedRecord || linkedFinanceDocuments.length || Object.keys(financeEffectSummary).length || reconciliationReference?.session_id || item?.non_invoice_accounting_treatment || item?.non_invoice_downstream_queue);
     const sourceGroups = Array.isArray(context?.email?.source_groups?.groups) ? context.email.source_groups.groups : [];
     const replyTemplates = T2(() => getAllReplyTemplates(templatePrefs), [templatePrefs]);
     const quickReplyTemplates = T2(() => {
@@ -64557,6 +64659,58 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             ${detailRow("Last update", fmtDateTime(item.updated_at || item.created_at))}
           </div>
         </div>
+
+        ${hasAccountingLinkage && html16`
+          <div class="panel">
+            <h3 style="margin-top:0">Accounting linkage</h3>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              ${financeEffectNotice ? html16`<div class="muted" style="font-size:13px;line-height:1.45">${financeEffectNotice}</div>` : null}
+              ${Object.keys(financeEffectSummary).length ? html16`
+                    ${detailRow("Original amount", formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency || "USD"))}
+                    ${detailRow("Credits applied", formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency || "USD"))}
+                    ${detailRow("Cash out evidence", formatAmount(financeEffectSummary.gross_cash_out_total, financeEffectSummary.currency || item.currency || "USD"))}
+                    ${detailRow("Refunds linked", formatAmount(financeEffectSummary.refund_total, financeEffectSummary.currency || item.currency || "USD"))}
+                    ${detailRow("Net cash applied", formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency || "USD"))}
+                    ${detailRow("Remaining balance", formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency || "USD"))}
+                    ${detailRow("Credit state", String(financeEffectSummary.credit_application_state || "none").replace(/_/g, " "))}
+                    ${detailRow("Settlement state", String(financeEffectSummary.settlement_state || "open").replace(/_/g, " "))}
+                  ` : null}
+              ${financeEffectBlockers.length > 0 ? html16`
+                    <div style="display:flex;flex-direction:column;gap:8px">
+                      ${financeEffectBlockers.map((blocker) => html16`
+                        <div key=${blocker.code} style="padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
+                          <div style="font-weight:700;font-size:13px">${blocker.label}</div>
+                          ${blocker.detail && html16`<div class="muted" style="margin-top:4px;font-size:12px;line-height:1.45">${blocker.detail}</div>`}
+                        </div>
+                      `)}
+                    </div>
+                  ` : null}
+              ${linkedRecord ? html16`<${RelatedRecordRow}
+                    label="Linked record"
+                    item=${linkedRecord}
+                    onOpen=${() => openRelatedRecord(linkedRecord)}
+                  />` : null}
+              ${item?.non_invoice_accounting_treatment ? detailRow("Treatment", String(item.non_invoice_accounting_treatment).replace(/_/g, " ")) : null}
+              ${item?.non_invoice_downstream_queue ? detailRow("Downstream queue", String(item.non_invoice_downstream_queue).replace(/_/g, " ")) : null}
+              ${reconciliationReference?.session_id ? detailRow("Reconciliation queue", `Session ${reconciliationReference.session_id}${reconciliationReference.item_id ? ` · Item ${reconciliationReference.item_id}` : ""}`) : null}
+              ${linkedFinanceDocuments.map((linkedDocument) => html16`
+                <${RelatedRecordRow}
+                  key=${linkedDocument.source_ap_item_id}
+                  label=${`${getDocumentTypeLabel(linkedDocument.document_type || "other")} linked`}
+                  item=${{
+      id: linkedDocument.source_ap_item_id,
+      vendor_name: linkedDocument.vendor_name,
+      invoice_number: linkedDocument.invoice_number,
+      amount: linkedDocument.amount,
+      currency: linkedDocument.currency,
+      state: linkedDocument.outcome,
+      updated_at: linkedDocument.linked_at
+    }}
+                  onOpen=${() => openRelatedRecord({ id: linkedDocument.source_ap_item_id })}
+                />`)}
+            </div>
+          </div>
+        `}
 
         <div class="panel">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">

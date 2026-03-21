@@ -77,6 +77,16 @@ const SOURCE_LABELS = {
   llm: 'Model',
 };
 
+const FINANCE_EFFECT_REASON_LABELS = {
+  linked_finance_target_amount_missing: 'Target amount missing',
+  linked_finance_target_not_invoice: 'Linked target is not an invoice',
+  linked_credit_adjustment_present: 'Linked credit changes payable amount',
+  linked_cash_application_present: 'Linked cash activity changes settlement',
+  linked_over_credit: 'Linked credits exceed invoice amount',
+  linked_overpayment: 'Linked cash exceeds remaining balance',
+  linked_refund_exceeds_cash_out: 'Refund exceeds linked cash out',
+};
+
 function getFieldLabel(field) {
   const token = String(field || '').trim().toLowerCase();
   if (!token) return 'Field';
@@ -193,6 +203,43 @@ export function getWorkflowPauseReason(item = {}) {
   return hasSourceConflict
     ? `Workflow paused until ${summary} are confirmed because the email and attachment disagree.`
     : `Workflow paused until ${summary} are reviewed.`;
+}
+
+export function getFinanceEffectBlockers(item = {}) {
+  const rawBlockers = Array.isArray(item?.finance_effect_blockers) ? item.finance_effect_blockers : [];
+  return rawBlockers
+    .map((blocker) => {
+      if (!blocker || typeof blocker !== 'object') return null;
+      const code = String(blocker.code || '').trim();
+      if (!code) return null;
+      return {
+        code,
+        label: FINANCE_EFFECT_REASON_LABELS[code] || humanizeSnakeText(code.replace(/^linked_/, '')),
+        detail: String(blocker.detail || '').trim(),
+      };
+    })
+    .filter(Boolean);
+}
+
+export function getFinanceEffectNotice(item = {}) {
+  const summary = item?.finance_effect_summary && typeof item.finance_effect_summary === 'object'
+    ? item.finance_effect_summary
+    : {};
+  const blockers = getFinanceEffectBlockers(item);
+  if (Boolean(item?.finance_effect_review_required)) {
+    return blockers[0]?.detail
+      || 'Linked credits, payments, or refunds change the net payable amount. Review the accounting linkage before routing or posting.';
+  }
+  if (!summary || Object.keys(summary).length === 0) return '';
+
+  const creditTotal = Number(summary.applied_credit_total || 0);
+  const netCashTotal = Number(summary.net_cash_applied_total || 0);
+  const remainingBalance = Number(summary.remaining_balance_amount || 0);
+  if (!Number.isFinite(creditTotal) && !Number.isFinite(netCashTotal)) return '';
+  if ((creditTotal > 0 || netCashTotal !== 0) && Number.isFinite(remainingBalance)) {
+    return `Net payable after linked finance documents: ${formatAmount(remainingBalance, summary.currency || item?.currency || 'USD')}.`;
+  }
+  return '';
 }
 
 export function readLocalStorage(key) {

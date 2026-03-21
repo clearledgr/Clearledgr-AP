@@ -57,7 +57,7 @@ test('work-surface primary action map matches the current Gmail execution doctri
   assert.equal(canRejectWorkItem('needs_approval', 'viewer'), false);
 });
 
-test('route registry stays Gmail-native and does not define an in-Gmail Ops route', async () => {
+test('route registry stays Gmail-native and AppMenu exposes every eligible route', async () => {
   const {
     ROUTES,
     DEFAULT_ROUTE,
@@ -125,7 +125,7 @@ test('route registry stays Gmail-native and does not define an in-Gmail Ops rout
   ]);
   assert.equal(adminMenuRouteIds.includes('clearledgr/connections'), true);
   assert.equal(adminMenuRouteIds.includes('clearledgr/health'), true);
-  assert.equal(hiddenMenuRouteIds.includes('clearledgr/vendors'), false);
+  assert.equal(hiddenMenuRouteIds.includes('clearledgr/vendors'), true);
   assert.equal(routeMap.get('clearledgr/connections').adminOnly, true);
   assert.equal(routeMap.get('clearledgr/rules').adminOnly, true);
   assert.equal(routeMap.get('clearledgr/team').adminOnly, true);
@@ -236,6 +236,7 @@ test('invoice detail page stays on the canonical AP action contract', () => {
   assert.equal(source.includes('partitionAuditEvents(auditEvents)'), true);
   assert.equal(source.includes('Record history'), true);
   assert.equal(source.includes('Background activity'), true);
+  assert.equal(source.includes('Accounting linkage'), true);
   assert.equal(source.includes('Paused field review'), true);
   assert.equal(source.includes('Email said'), true);
   assert.equal(source.includes('Attachment said'), true);

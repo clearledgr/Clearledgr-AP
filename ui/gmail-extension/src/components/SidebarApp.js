@@ -10,6 +10,8 @@ import {
   getStateLabel,
   formatAmount,
   getAssetUrl,
+  getFinanceEffectBlockers,
+  getFinanceEffectNotice,
   getFieldReviewBlockers,
   normalizeBudgetContext,
   getIssueSummary,
@@ -174,6 +176,8 @@ function StatePill({ state }) {
 function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   const blockers = [];
   const fieldReviewBlockers = getFieldReviewBlockers(item);
+  const financeEffectBlockers = getFinanceEffectBlockers(item);
+  const financeEffectNotice = getFinanceEffectNotice(item);
   const pauseReason = getWorkflowPauseReason(item);
   const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
   const isInvoiceDocument = isInvoiceDocumentType(documentType);
@@ -209,6 +213,13 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
       fieldReviewBlockers.length
         ? null
         : (pauseReason || `Current confidence is ${Math.round(confidence * 100)}%, so a quick field check is still required.`),
+    );
+  }
+  if (item?.finance_effect_review_required) {
+    push(
+      'finance_effect',
+      financeEffectBlockers[0]?.label || 'Accounting linkage needs review',
+      financeEffectBlockers[0]?.detail || financeEffectNotice || 'Linked finance documents changed the payable or settlement balance.',
     );
   }
 
@@ -451,6 +462,11 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   const evidence = getEvidenceChecklistEntries(item, state, contextPayload);
   const auditEvents = s.auditState.itemId === item.id && Array.isArray(s.auditState.events) ? s.auditState.events : [];
   const pauseReason = getWorkflowPauseReason(item);
+  const financeEffectSummary = item?.finance_effect_summary && typeof item.finance_effect_summary === 'object'
+    ? item.finance_effect_summary
+    : {};
+  const financeEffectBlockers = getFinanceEffectBlockers(item);
+  const financeEffectNotice = getFinanceEffectNotice(item);
   const resumeWorkflowEligible = !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType);
   const stateNotice = resumeWorkflowEligible
     ? 'Field review is cleared. Resume workflow to continue the posting step.'
@@ -644,7 +660,9 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     navigateToVendorRecord((routeId) => store.sdk?.Router?.goto?.(routeId), vendorName);
   }, [item]);
 
-  const basePrimaryAction = pauseReason ? null : getPrimaryActionConfig(displayState, actorRole, documentType);
+  const basePrimaryAction = (pauseReason || item?.finance_effect_review_required)
+    ? null
+    : getPrimaryActionConfig(displayState, actorRole, documentType);
   const primaryAction = resumeWorkflowEligible && ['preview_erp_post', 'retry_erp_post'].includes(basePrimaryAction?.id)
     ? { id: 'resume_workflow', label: 'Resume workflow' }
     : basePrimaryAction;
@@ -738,6 +756,46 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
         onResolve=${readOnlyMode ? null : doResolveFieldReview}
         resolvingField=${resolvePending ? resolvingFieldKey : ''}
       />
+      ${(financeEffectNotice || Object.keys(financeEffectSummary).length) && html`
+        <div class="cl-section" aria-label="Accounting linkage">
+          <div class="cl-section-title">Accounting linkage</div>
+          ${financeEffectNotice && html`<div class="cl-review-copy">${financeEffectNotice}</div>`}
+          <div style="display:flex;flex-direction:column;gap:8px">
+            ${Object.keys(financeEffectSummary).length > 0 && html`
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Original amount</div>
+                </div>
+                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency || 'USD')}</div>
+              </div>
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Credits applied</div>
+                </div>
+                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency || 'USD')}</div>
+              </div>
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Net cash applied</div>
+                </div>
+                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency || 'USD')}</div>
+              </div>
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Remaining balance</div>
+                </div>
+                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency || 'USD')}</div>
+              </div>
+            `}
+            ${financeEffectBlockers.map((blocker) => html`
+              <div key=${blocker.code} class="cl-blocker-row">
+                <div class="cl-blocker-label">${blocker.label}</div>
+                ${blocker.detail && html`<div class="cl-blocker-detail">${blocker.detail}</div>`}
+              </div>
+            `)}
+          </div>
+        </div>
+      `}
       <${EvidenceChecklist} entries=${evidence} />
       <${AuditDisclosure} events=${auditEvents} loading=${Boolean(s.auditState.loading && s.auditState.itemId === item.id)} />
       <${ActionDialog} ...${dialog} />

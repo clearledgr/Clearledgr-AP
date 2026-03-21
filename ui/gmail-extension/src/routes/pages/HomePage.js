@@ -410,7 +410,7 @@ export default function HomePage({
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
           <div>
             <h3 style="margin:0 0 4px">Support surfaces</h3>
-            <p class="muted" style="margin:0">Secondary pages stay available without taking attention from Pipeline or the thread card.</p>
+            <p class="muted" style="margin:0">Home can stay focused while the AppMenu still exposes every eligible Clearledgr page.</p>
           </div>
           ${adminAccess && html`<button class="alt" onClick=${() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })} style="padding:8px 12px;font-size:12px">Customize</button>`}
         </div>
@@ -559,8 +559,8 @@ export default function HomePage({
       <div class="panel">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
           <div>
-            <h3 style="margin:0 0 4px">Customize your left sidebar</h3>
-            <p class="muted" style="margin:0">Keep daily pages pinned. Leave the rest available without turning Gmail into a dashboard.</p>
+            <h3 style="margin:0 0 4px">Customize Home quick access</h3>
+            <p class="muted" style="margin:0">Choose which secondary pages stay surfaced on Home. The AppMenu still shows every eligible Clearledgr page.</p>
           </div>
           <button class="alt" onClick=${() => applyRoutePreferences(resetRoutePreferences(routeOptions), 'Navigation reset to defaults.')} style="padding:8px 12px;font-size:12px">Reset</button>
         </div>
@@ -570,10 +570,10 @@ export default function HomePage({
             return html`<${RoutePreferenceRow}
               route=${route}
               preferenceState=${preferenceState}
-              onPin=${() => applyRoutePreferences(pinRoute(route.id, routePreferences, routeOptions), `${route.title} pinned to the sidebar.`)}
-              onUnpin=${() => applyRoutePreferences(unpinRoute(route.id, routePreferences, routeOptions), `${route.title} removed from pinned pages.`)}
-              onHide=${() => applyRoutePreferences(hideRoute(route.id, routePreferences, routeOptions), `${route.title} hidden from the sidebar.`)}
-              onShow=${() => applyRoutePreferences(showRoute(route.id, routePreferences, routeOptions), `${route.title} restored to the sidebar.`)}
+              onPin=${() => applyRoutePreferences(pinRoute(route.id, routePreferences, routeOptions), `${route.title} added to Home quick access.`)}
+              onUnpin=${() => applyRoutePreferences(unpinRoute(route.id, routePreferences, routeOptions), `${route.title} removed from Home quick access.`)}
+              onHide=${() => applyRoutePreferences(hideRoute(route.id, routePreferences, routeOptions), `${route.title} hidden from Home quick access.`)}
+              onShow=${() => applyRoutePreferences(showRoute(route.id, routePreferences, routeOptions), `${route.title} restored to Home quick access.`)}
             />`;
           })}
         </div>

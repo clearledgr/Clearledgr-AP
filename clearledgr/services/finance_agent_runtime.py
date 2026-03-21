@@ -1208,6 +1208,55 @@ class FinanceAgentRuntime:
     def _dedupe_reason_codes(codes: List[str]) -> List[str]:
         return list(dict.fromkeys([str(code).strip() for code in codes if str(code).strip()]))
 
+    def _item_finance_effect_policy(self, ap_item: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        item = ap_item if isinstance(ap_item, dict) else {}
+        metadata = self._parse_json_dict(item.get("metadata"))
+        document_type = str(
+            item.get("document_type")
+            or item.get("email_type")
+            or metadata.get("document_type")
+            or metadata.get("email_type")
+            or "invoice"
+        ).strip().lower() or "invoice"
+        if document_type != "invoice":
+            return {
+                "reason_codes": [],
+                "detail_lines": [],
+                "summary": {},
+            }
+
+        summary = item.get("finance_effect_summary") if isinstance(item.get("finance_effect_summary"), dict) else {}
+        if not summary:
+            summary = metadata.get("finance_effect_summary") if isinstance(metadata.get("finance_effect_summary"), dict) else {}
+        blockers = item.get("finance_effect_blockers") if isinstance(item.get("finance_effect_blockers"), list) else []
+        if not blockers:
+            blockers = metadata.get("finance_effect_blockers") if isinstance(metadata.get("finance_effect_blockers"), list) else []
+        requires_review = bool(
+            item.get("finance_effect_review_required")
+            or metadata.get("finance_effect_review_required")
+        )
+
+        reason_codes: List[str] = []
+        detail_lines: List[str] = []
+        if requires_review:
+            reason_codes.append("linked_finance_effect_review_required")
+        for blocker in blockers:
+            if isinstance(blocker, dict):
+                code = str(blocker.get("code") or "").strip()
+                detail = str(blocker.get("detail") or "").strip()
+            else:
+                code = str(blocker or "").strip()
+                detail = ""
+            if code:
+                reason_codes.append(code)
+            if detail:
+                detail_lines.append(detail)
+        return {
+            "reason_codes": self._dedupe_reason_codes(reason_codes),
+            "detail_lines": list(dict.fromkeys([line for line in detail_lines if line])),
+            "summary": summary or {},
+        }
+
     def _autonomy_requested_action_dependencies(self, action: Any) -> tuple[str, ...]:
         token = str(action or "").strip().lower()
         return _AUTONOMY_ACTION_ALIASES.get(token, (token or "route_low_risk_for_approval",))
@@ -1524,6 +1573,7 @@ class FinanceAgentRuntime:
         action: str = "route_low_risk_for_approval",
         autonomous_requested: bool = False,
         window_hours: int = 168,
+        ap_item: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         readiness: Dict[str, Any]
         try:
@@ -1550,7 +1600,7 @@ class FinanceAgentRuntime:
             evaluation["action_policies"].get(dependency, {})
             for dependency in dependencies
         ]
-        autonomous_allowed = all(bool(policy.get("autonomous_allowed")) for policy in dependency_policies)
+        vendor_allowed = all(bool(policy.get("autonomous_allowed")) for policy in dependency_policies)
         reason_codes = self._dedupe_reason_codes(
             [
                 code
@@ -1558,12 +1608,22 @@ class FinanceAgentRuntime:
                 for code in (policy.get("blocked_reason_codes") or [])
             ]
         )
+        item_finance_policy = self._item_finance_effect_policy(ap_item)
+        item_reason_codes = list(item_finance_policy.get("reason_codes") or [])
+        autonomous_allowed = bool(vendor_allowed and not item_reason_codes)
         if autonomous_allowed:
             detail = (
                 dependency_policies[0].get("detail")
                 if len(dependency_policies) == 1
                 else "Autonomous approval and ERP post are both earned for this vendor."
             )
+        elif item_reason_codes:
+            reason_codes = self._dedupe_reason_codes([*reason_codes, *item_reason_codes])
+            detail_lines = list(item_finance_policy.get("detail_lines") or [])
+            detail = (
+                "Autonomous action is blocked until linked finance effects are reviewed. "
+                + " ".join(detail_lines)
+            ).strip()
         elif len(dependencies) > 1:
             detail = "Autonomous approval/post is blocked until: " + ", ".join(reason_codes)
         else:
@@ -1589,6 +1649,8 @@ class FinanceAgentRuntime:
             "blocked_actions": dict(evaluation.get("blocked_actions") or {}),
             "action_policies": dict(evaluation.get("action_policies") or {}),
             "action_thresholds": self._autonomy_action_thresholds(),
+            "item_reason_codes": item_reason_codes,
+            "finance_effect_summary": item_finance_policy.get("summary") or {},
             "vendor_drift_risk": (
                 str(scorecard.get("drift_risk") or "").strip().lower() or "unknown"
             ),
@@ -1829,6 +1891,7 @@ class FinanceAgentRuntime:
             vendor_name=vendor_name,
             action="auto_approve_post",
             autonomous_requested=True,
+            ap_item=seeded_item,
         )
         shadow_decision = self._build_shadow_decision_proposal(
             invoice=invoice,
@@ -2011,6 +2074,7 @@ class FinanceAgentRuntime:
             vendor_name=invoice_data.vendor_name,
             action="auto_approve_post",
             autonomous_requested=True,
+            ap_item=seeded_item,
         )
         autonomy_threshold = self.ap_auto_approve_threshold()
         shadow_decision = self._build_shadow_decision_proposal(

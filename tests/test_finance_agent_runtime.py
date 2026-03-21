@@ -481,6 +481,78 @@ def test_ap_autonomy_policy_auto_when_vendor_has_earned_approval_and_post():
     assert policy["reason_codes"] == []
 
 
+def test_ap_autonomy_policy_blocks_item_when_linked_finance_effect_review_is_required():
+    db = _FakeDB()
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["summary"] = {
+        "vendors_monitored": 1,
+        "vendors_at_risk": 0,
+        "high_risk_vendors": 0,
+        "recent_open_blocked_items": 0,
+    }
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "drift_risk": "stable",
+            "recent_invoice_count": 6,
+            "sample_recommended_count": 0,
+            "source_shift_fields": [],
+        }
+    ]
+    db.ap_kpis["agentic_telemetry"]["shadow_decision_scoring"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "scored_item_count": 6,
+            "action_match_rate": 0.97,
+            "critical_field_match_rate": 0.99,
+            "disagreement_count": 0,
+        }
+    ]
+    db.ap_kpis["agentic_telemetry"]["post_action_verification"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "attempted_count": 3,
+            "verified_count": 3,
+            "mismatch_count": 0,
+            "verification_rate": 1.0,
+        }
+    ]
+    db.items["ap-route-1"]["metadata"] = {
+        **db.items["ap-route-1"]["metadata"],
+        "finance_effect_review_required": True,
+        "finance_effect_blockers": [
+            {
+                "code": "linked_credit_adjustment_present",
+                "detail": "A linked credit note changes the payable amount and should be reviewed before invoice routing or posting.",
+            }
+        ],
+        "finance_effect_summary": {
+            "applied_credit_total": 30.0,
+            "remaining_balance_amount": 93.45,
+            "currency": "USD",
+        },
+    }
+    runtime = _runtime(db)
+    readiness = {
+        "status": "ready",
+        "gates": [],
+        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+    }
+
+    with patch.object(runtime, "skill_readiness", return_value=readiness):
+        policy = runtime.ap_autonomy_policy(
+            vendor_name="Runtime Co",
+            action="post_to_erp",
+            autonomous_requested=True,
+            ap_item=db.items["ap-route-1"],
+        )
+
+    assert policy["mode"] == "auto"
+    assert policy["autonomous_allowed"] is False
+    assert "linked_finance_effect_review_required" in policy["reason_codes"]
+    assert "linked_credit_adjustment_present" in policy["reason_codes"]
+    assert policy["finance_effect_summary"]["applied_credit_total"] == 30.0
+
+
 def test_ap_autonomy_policy_manual_when_vendor_shadow_quality_is_low():
     db = _FakeDB()
     db.ap_kpis["agentic_telemetry"]["extraction_drift"]["summary"] = {

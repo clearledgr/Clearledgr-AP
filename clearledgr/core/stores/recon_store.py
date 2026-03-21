@@ -66,14 +66,14 @@ class ReconStore:
         """Create a new reconciliation session."""
         now = datetime.now(timezone.utc).isoformat()
         session_id = f"RECON-{uuid.uuid4().hex[:24]}"
-        conn = self.connect()
-        conn.execute(
-            """INSERT INTO recon_sessions
-               (id, organization_id, state, source_type, spreadsheet_id, sheet_range, created_at, updated_at)
-               VALUES (?, ?, 'created', ?, ?, ?, ?, ?)""",
-            (session_id, organization_id, source_type, spreadsheet_id, sheet_range, now, now),
-        )
-        conn.commit()
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO recon_sessions
+                   (id, organization_id, state, source_type, spreadsheet_id, sheet_range, created_at, updated_at)
+                   VALUES (?, ?, 'created', ?, ?, ?, ?, ?)""",
+                (session_id, organization_id, source_type, spreadsheet_id, sheet_range, now, now),
+            )
+            conn.commit()
         return {"id": session_id, "organization_id": organization_id, "state": "created"}
 
     def create_recon_item(
@@ -89,16 +89,16 @@ class ReconStore:
         """Create a reconciliation item (one imported transaction row)."""
         now = datetime.now(timezone.utc).isoformat()
         item_id = f"RI-{uuid.uuid4().hex[:20]}"
-        conn = self.connect()
-        conn.execute(
-            """INSERT INTO recon_items
-               (id, session_id, organization_id, state, row_index,
-                transaction_date, description, amount, reference, created_at, updated_at)
-               VALUES (?, ?, ?, 'imported', ?, ?, ?, ?, ?, ?, ?)""",
-            (item_id, session_id, organization_id, row_index,
-             transaction_date, description, amount, reference, now, now),
-        )
-        conn.commit()
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO recon_items
+                   (id, session_id, organization_id, state, row_index,
+                    transaction_date, description, amount, reference, created_at, updated_at)
+                   VALUES (?, ?, ?, 'imported', ?, ?, ?, ?, ?, ?, ?)""",
+                (item_id, session_id, organization_id, row_index,
+                 transaction_date, description, amount, reference, now, now),
+            )
+            conn.commit()
         return item_id
 
     def update_recon_item(self, item_id: str, **kwargs) -> bool:
@@ -110,46 +110,46 @@ class ReconStore:
             return False
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clause = ", ".join(f"{k} = ?" for k in updates)
-        conn = self.connect()
-        cursor = conn.execute(
-            f"UPDATE recon_items SET {set_clause} WHERE id = ?",
-            (*updates.values(), item_id),
-        )
-        conn.commit()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                f"UPDATE recon_items SET {set_clause} WHERE id = ?",
+                (*updates.values(), item_id),
+            )
+            conn.commit()
         return cursor.rowcount > 0
 
     def get_recon_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get a reconciliation session by ID."""
-        conn = self.connect()
-        row = conn.execute("SELECT * FROM recon_sessions WHERE id = ?", (session_id,)).fetchone()
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM recon_sessions WHERE id = ?", (session_id,)).fetchone()
         return dict(row) if row else None
 
     def list_recon_items(self, session_id: str, state: Optional[str] = None) -> List[Dict[str, Any]]:
         """List reconciliation items for a session, optionally filtered by state."""
-        conn = self.connect()
-        if state:
-            rows = conn.execute(
-                "SELECT * FROM recon_items WHERE session_id = ? AND state = ? ORDER BY row_index",
-                (session_id, state),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM recon_items WHERE session_id = ? ORDER BY row_index",
-                (session_id,),
-            ).fetchall()
+        with self.connect() as conn:
+            if state:
+                rows = conn.execute(
+                    "SELECT * FROM recon_items WHERE session_id = ? AND state = ? ORDER BY row_index",
+                    (session_id, state),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM recon_items WHERE session_id = ? ORDER BY row_index",
+                    (session_id,),
+                ).fetchall()
         return [dict(r) for r in rows]
 
     def update_recon_session_counts(self, session_id: str) -> None:
         """Recalculate matched/exception counts for a session."""
-        conn = self.connect()
         now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            """UPDATE recon_sessions SET
-                total_rows = (SELECT COUNT(*) FROM recon_items WHERE session_id = ?),
-                matched_count = (SELECT COUNT(*) FROM recon_items WHERE session_id = ? AND state IN ('matched', 'resolved', 'posted')),
-                exception_count = (SELECT COUNT(*) FROM recon_items WHERE session_id = ? AND state IN ('exception', 'review')),
-                updated_at = ?
-               WHERE id = ?""",
-            (session_id, session_id, session_id, now, session_id),
-        )
-        conn.commit()
+        with self.connect() as conn:
+            conn.execute(
+                """UPDATE recon_sessions SET
+                    total_rows = (SELECT COUNT(*) FROM recon_items WHERE session_id = ?),
+                    matched_count = (SELECT COUNT(*) FROM recon_items WHERE session_id = ? AND state IN ('matched', 'resolved', 'posted')),
+                    exception_count = (SELECT COUNT(*) FROM recon_items WHERE session_id = ? AND state IN ('exception', 'review')),
+                    updated_at = ?
+                   WHERE id = ?""",
+                (session_id, session_id, session_id, now, session_id),
+            )
+            conn.commit()
