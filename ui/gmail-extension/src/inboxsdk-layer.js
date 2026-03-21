@@ -35,6 +35,7 @@ import { createOAuthBridge } from './routes/oauth-bridge.js';
 import { ROUTE_CSS } from './routes/route-styles.js';
 import { getPipelineViewIconUrl, getRouteIconUrl } from './routes/route-icons.js';
 import HomePage from './routes/pages/HomePage.js';
+import ReviewPage from './routes/pages/ReviewPage.js';
 import UpcomingPage from './routes/pages/UpcomingPage.js';
 import ActivityPage from './routes/pages/ActivityPage.js';
 import ConnectionsPage from './routes/pages/ConnectionsPage.js';
@@ -163,6 +164,27 @@ function initializeSidebar() {
   if (restoredId) {
     store.update({ selectedItemId: restoredId });
   }
+}
+
+function injectAppMenuPanelStyles() {
+  if (document.getElementById('cl-appmenu-panel-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'cl-appmenu-panel-styles';
+  style.textContent = `
+    .cl-appmenu-panel .aic {
+      display: none;
+    }
+    .cl-appmenu-panel .aBO {
+      padding-top: 0;
+    }
+    .cl-appmenu-panel .Ls77Lb {
+      margin-top: 0;
+    }
+    .cl-appmenu-panel .nM.inboxsdk__collapsiblePanel_navItems {
+      padding-top: 0;
+    }
+  `;
+  document.head.appendChild(style);
 }
 
 // ==================== THREAD HANDLERS ====================
@@ -617,6 +639,7 @@ async function bootstrap() {
 function registerAppMenuAndRoutes() {
   const PAGE_MAP = {
     'clearledgr/home': HomePage,
+    'clearledgr/review': ReviewPage,
     'clearledgr/upcoming': UpcomingPage,
     'clearledgr/pipeline': PipelinePage,
     'clearledgr/activity': ActivityPage,
@@ -970,10 +993,14 @@ function registerAppMenuAndRoutes() {
       });
 
       if (appMenuItemView && typeof appMenuItemView.addCollapsiblePanel === 'function') {
-        appMenuItemView.addCollapsiblePanel({})
+        injectAppMenuPanelStyles();
+        appMenuItemView.addCollapsiblePanel({
+          className: 'cl-appmenu-panel',
+        })
           .then((panel) => {
             if (!panel || typeof panel.addNavItem !== 'function') return;
             appMenuPanelView = panel;
+            try { panel.on?.('destroy', () => { appMenuPanelView = null; }); } catch (_) { /* best effort */ }
             rebuildMenuNavigation();
           })
           .catch((err) => console.warn('[Clearledgr] CollapsiblePanel failed:', err));

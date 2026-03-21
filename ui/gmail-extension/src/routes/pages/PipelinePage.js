@@ -83,6 +83,12 @@ const ERP_STATUS_LABELS = {
   not_connected: 'Not connected',
 };
 
+function isTypingTarget(target) {
+  if (!target || typeof target !== 'object') return false;
+  const tag = String(target.tagName || '').toUpperCase();
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(target.isContentEditable);
+}
+
 function getPipelineScope(orgId, userEmail) {
   return { orgId, userEmail };
 }
@@ -234,6 +240,15 @@ function getPipelineTimeline(item, erpStatus) {
   return parts.join(' · ');
 }
 
+function isRouteableInvoiceItem(item) {
+  if (!isInvoiceDocumentType(item?.document_type)) return false;
+  const state = normalizePipelineState(item?.state);
+  if (!['received', 'validated'].includes(state)) return false;
+  if (Boolean(item?.requires_field_review)) return false;
+  const blockers = getPipelineBlockerKinds(item);
+  return !blockers.some((kind) => ['confidence', 'exception', 'budget', 'po', 'erp'].includes(kind));
+}
+
 function getSavedViewLabel(view) {
   return String(view?.name || '').trim() || 'Saved view';
 }
@@ -259,6 +274,8 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [activeItemId, setActiveItemId] = useState('');
   const [viewPrefs, setViewPrefs] = useState(() => readPipelinePreferences(pipelineScope));
   const [navState, setNavState] = useState(() => readPipelineNavigation(pipelineScope));
   const [savedViewName, setSavedViewName] = useState('');
@@ -406,6 +423,19 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
     sortCol: viewPrefs.sortCol,
     sortDir: viewPrefs.sortDir,
   }), [items, searchQuery, viewPrefs]);
+  const selectedSet = useMemo(() => new Set(selectedIds.map((itemId) => String(itemId || ''))), [selectedIds]);
+  const selectedItems = useMemo(
+    () => displayed.filter((item) => selectedSet.has(String(item.id || ''))),
+    [displayed, selectedSet],
+  );
+  const activeItem = useMemo(
+    () => displayed.find((item) => String(item.id || '') === String(activeItemId || '')) || null,
+    [activeItemId, displayed],
+  );
+  const routeableSelectedItems = useMemo(
+    () => selectedItems.filter((item) => isRouteableInvoiceItem(item)),
+    [selectedItems],
+  );
 
   const sliceCounts = useMemo(() => buildPipelineSliceCounts(items), [items]);
   const starterViews = useMemo(() => getStarterPipelineViews(viewPrefs), [viewPrefs]);
@@ -434,6 +464,21 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
       setSavedViewName(getSavedViewLabel(activeSavedView));
     }
   }, [activeSavedView, savedViewName]);
+
+  useEffect(() => {
+    const validIds = new Set(items.map((item) => String(item.id || '')));
+    setSelectedIds((prev) => prev.filter((itemId) => validIds.has(String(itemId || ''))));
+  }, [items]);
+
+  useEffect(() => {
+    if (!displayed.length) {
+      if (activeItemId) setActiveItemId('');
+      return;
+    }
+    if (!displayed.some((item) => String(item.id || '') === String(activeItemId || ''))) {
+      setActiveItemId(String(displayed[0]?.id || ''));
+    }
+  }, [displayed, activeItemId]);
 
   const applySlice = (sliceId) => {
     clearPipelineNavigation(pipelineScope);
@@ -500,6 +545,109 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
     clearPipelineNavigation(pipelineScope);
     setNavState(readPipelineNavigation(pipelineScope));
   };
+
+  const toggleSelected = (itemId) => {
+    const normalizedId = String(itemId || '').trim();
+    if (!normalizedId) return;
+    setSelectedIds((prev) => (
+      prev.includes(normalizedId)
+        ? prev.filter((value) => value !== normalizedId)
+        : [...prev, normalizedId]
+    ));
+  };
+
+  const selectVisible = () => {
+    setSelectedIds(displayed.map((item) => String(item.id || '')));
+  };
+
+  const clearSelection = () => {
+    setSelectedIds([]);
+  };
+
+  const [routeSelected, routingSelected] = useAction(async (explicitItems = null) => {
+    const targetItems = Array.isArray(explicitItems)
+      ? explicitItems
+      : (selectedItems.length ? selectedItems : (activeItem ? [activeItem] : []));
+    const routeableItems = targetItems.filter((item) => isRouteableInvoiceItem(item)).slice(0, 25);
+    if (!routeableItems.length) {
+      toast('No selected invoices are ready for approval routing.', 'warning');
+      return;
+    }
+
+    let successCount = 0;
+    let failedCount = 0;
+    for (const item of routeableItems) {
+      try {
+        const result = await api('/extension/route-low-risk-approval', {
+          method: 'POST',
+          body: JSON.stringify({
+            ap_item_id: item.id,
+            email_id: item.thread_id || item.message_id || item.id,
+            organization_id: orgId,
+            reason: selectedItems.length > 1 ? 'bulk_pipeline_route' : 'pipeline_route',
+          }),
+        });
+        const status = String(result?.status || '').toLowerCase();
+        if (['pending_approval', 'needs_approval'].includes(status)) successCount += 1;
+        else failedCount += 1;
+      } catch {
+        failedCount += 1;
+      }
+    }
+
+    setLoading(true);
+    try {
+      const data = await api(`/extension/worklist?organization_id=${encodeURIComponent(orgId)}&limit=500`, { silent: true });
+      setItems(Array.isArray(data?.items) ? data.items : []);
+    } finally {
+      setLoading(false);
+    }
+    setSelectedIds((prev) => prev.filter((itemId) => !routeableItems.some((item) => String(item.id || '') === String(itemId || ''))));
+    toast(
+      failedCount > 0
+        ? `${successCount} invoice(s) routed, ${failedCount} failed.`
+        : `${successCount} invoice(s) routed for approval.`,
+      failedCount > 0 ? 'warning' : 'success',
+    );
+  });
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (!displayed.length || isTypingTarget(event.target)) return;
+      const currentIndex = Math.max(0, displayed.findIndex((item) => String(item.id || '') === String(activeItemId || '')));
+      const currentItem = displayed[currentIndex] || displayed[0];
+      const lower = String(event.key || '').toLowerCase();
+      let handled = false;
+
+      if (lower === 'j' || event.key === 'ArrowDown') {
+        setActiveItemId(String(displayed[Math.min(displayed.length - 1, currentIndex + 1)]?.id || ''));
+        handled = true;
+      } else if (lower === 'k' || event.key === 'ArrowUp') {
+        setActiveItemId(String(displayed[Math.max(0, currentIndex - 1)]?.id || ''));
+        handled = true;
+      } else if (lower === 'x' && currentItem?.id) {
+        toggleSelected(currentItem.id);
+        handled = true;
+      } else if (lower === 'o' && currentItem) {
+        openItemDetail(navigate, pipelineScope, currentItem);
+        handled = true;
+      } else if (lower === 'e' && currentItem) {
+        openItemEmail(pipelineScope, currentItem);
+        handled = true;
+      } else if (lower === 'a') {
+        void routeSelected();
+        handled = true;
+      }
+
+      if (handled) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [activeItemId, displayed, navigate, pipelineScope, routeSelected, selectedItems.length]);
 
   if (loading) {
     return html`<div class="panel" style="padding:48px;text-align:center"><p class="muted">Loading AP pipeline…</p></div>`;
@@ -732,6 +880,28 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
           Sort ${viewPrefs.sortDir === 'desc' ? 'descending' : 'ascending'} by ${viewPrefs.sortCol.replace(/_/g, ' ')}.
         </span>
       </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px">
+        <div class="muted" style="font-size:12px">
+          Keyboard: J/K move · X select · O open detail · E open thread · A route selected/current invoice
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="alt" onClick=${selectVisible}>Select visible</button>
+          <button class="alt" onClick=${clearSelection} disabled=${selectedIds.length === 0}>Clear selection</button>
+          <span class="muted" style="font-size:12px;align-self:center">
+            ${selectedItems.length ? `${selectedItems.length} selected` : 'No selection'}
+            ${routeableSelectedItems.length ? ` · ${routeableSelectedItems.length} routeable` : ''}
+          </span>
+          <button
+            onClick=${() => routeSelected()}
+            disabled=${routingSelected || (!routeableSelectedItems.length && !isRouteableInvoiceItem(activeItem))}
+          >
+            ${routingSelected
+              ? 'Routing…'
+              : (routeableSelectedItems.length > 0 ? 'Route selected' : 'Route current')}
+          </button>
+        </div>
+      </div>
     </div>
 
     ${viewPrefs.viewMode === 'cards'
@@ -742,18 +912,32 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
               : displayed.map((item) => {
                   const blockers = getPipelineBlockerKinds(item);
                   const focused = String(navState.focusItemId || '') === String(item.id || '');
+                  const active = String(activeItemId || '') === String(item.id || '');
                   const approvalWait = getApprovalWaitMinutes(item);
                   const queueAge = getQueueAgeMinutes(item);
                   const erpStatus = getErpStatus(item);
+                  const routeable = isRouteableInvoiceItem(item);
                   return html`
                     <div
                       key=${item.id}
                       class="panel"
-                      style="padding:16px;margin-bottom:0;border-color:${focused ? 'var(--accent)' : 'var(--border)'};box-shadow:${focused ? '0 0 0 1px var(--accent-soft)' : 'none'}"
+                      style="padding:16px;margin-bottom:0;border-color:${active || focused ? 'var(--accent)' : 'var(--border)'};box-shadow:${active || focused ? '0 0 0 1px var(--accent-soft)' : 'none'}"
+                      onClick=${() => setActiveItemId(String(item.id || ''))}
                     >
                       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px">
                         <div>
-                          <div style="font-size:15px;font-weight:700">${item.vendor_name || item.vendor || 'Unknown vendor'}</div>
+                          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                            <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-secondary)">
+                              <input
+                                type="checkbox"
+                                checked=${selectedSet.has(String(item.id || ''))}
+                                onClick=${(event) => event.stopPropagation()}
+                                onChange=${() => toggleSelected(item.id)}
+                              />
+                              Select
+                            </label>
+                            <div style="font-size:15px;font-weight:700">${item.vendor_name || item.vendor || 'Unknown vendor'}</div>
+                          </div>
                           <div class="muted" style="font-size:12px;margin-top:2px">${getDocumentSummary(item)} · ${getAmountLabel(item)}</div>
                         </div>
                         <${StatePill} state=${item.state} />
@@ -778,8 +962,11 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                         ${getPipelineTimeline(item, erpStatus)}
                       </div>
                       <div style="display:flex;gap:8px;flex-wrap:wrap">
-                        <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>Open detail</button>
-                        <button class="alt" onClick=${() => openItemEmail(pipelineScope, item)} disabled=${!item.thread_id && !item.message_id}>Open thread</button>
+                        ${routeable
+                          ? html`<button onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected}>${routingSelected ? 'Routing…' : 'Route approval'}</button>`
+                          : null}
+                        <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Open detail</button>
+                        <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }} disabled=${!item.thread_id && !item.message_id}>Open thread</button>
                       </div>
                     </div>
                   `;
@@ -791,6 +978,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
             <table class="table" style="min-width:1320px">
               <thead>
                 <tr>
+                  <th>Select</th>
                   <th>Vendor</th>
                   <th>Document</th>
                   <th style="text-align:right">Amount</th>
@@ -806,17 +994,31 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
               </thead>
               <tbody>
                 ${displayed.length === 0
-                  ? html`<tr><td colspan="11" class="muted" style="text-align:center;padding:32px">No records match this view.</td></tr>`
+                  ? html`<tr><td colspan="12" class="muted" style="text-align:center;padding:32px">No records match this view.</td></tr>`
                   : displayed.map((item) => {
                       const blockers = getPipelineBlockerKinds(item);
                       const focused = String(navState.focusItemId || '') === String(item.id || '');
+                      const active = String(activeItemId || '') === String(item.id || '');
                       const approvalWait = getApprovalWaitMinutes(item);
                       const queueAge = getQueueAgeMinutes(item);
                       const erpStatus = getErpStatus(item);
                       const isInvoiceDocument = isInvoiceDocumentType(item?.document_type);
+                      const routeable = isRouteableInvoiceItem(item);
                       return html`
-                        <tr key=${item.id} style=${focused ? 'background:rgba(14,165,233,0.07)' : ''}>
-                          <td style="font-weight:600;cursor:pointer" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>${item.vendor_name || item.vendor || 'Unknown vendor'}</td>
+                        <tr
+                          key=${item.id}
+                          style=${active || focused ? 'background:rgba(14,165,233,0.07)' : ''}
+                          onClick=${() => setActiveItemId(String(item.id || ''))}
+                        >
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked=${selectedSet.has(String(item.id || ''))}
+                              onClick=${(event) => event.stopPropagation()}
+                              onChange=${() => toggleSelected(item.id)}
+                            />
+                          </td>
+                          <td style="font-weight:600;cursor:pointer" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>${item.vendor_name || item.vendor || 'Unknown vendor'}</td>
                           <td style="font-family:var(--font-mono);font-size:12px">${getDocumentSummary(item)}</td>
                           <td style="text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums">${getAmountLabel(item)}</td>
                           <td>${isInvoiceDocument && item.due_date ? fmtDate(item.due_date) : '—'}</td>
@@ -835,8 +1037,11 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                           <td class="muted" style="font-size:12px">${fmtDateTime(item.updated_at || item.created_at)}</td>
                           <td style="text-align:right">
                             <div style="display:flex;gap:8px;justify-content:flex-end">
-                              <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, item)}>Detail</button>
-                              <button class="alt" onClick=${() => openItemEmail(pipelineScope, item)} disabled=${!item.thread_id && !item.message_id}>Thread</button>
+                              ${routeable
+                                ? html`<button onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected}>${routingSelected ? 'Routing…' : 'Route'}</button>`
+                                : null}
+                              <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Detail</button>
+                              <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }} disabled=${!item.thread_id && !item.message_id}>Thread</button>
                             </div>
                           </td>
                         </tr>

@@ -32,6 +32,7 @@ const mockQueueManager = {
   prepareVendorFollowup: vi.fn().mockResolvedValue({ status: 'prepared' }),
   retryFailedPost: vi.fn().mockResolvedValue({ status: 'ready_to_post' }),
   approveAndPost: vi.fn().mockResolvedValue({ status: 'posted' }),
+  resolveFieldReview: vi.fn().mockResolvedValue({ status: 'resolved', ap_item: { id: 'inv-conflict-1' } }),
 };
 
 beforeEach(() => {
@@ -223,6 +224,47 @@ describe('SidebarApp', () => {
     expect(screen.getByText('USD 440.00')).toBeTruthy();
     expect(screen.getByText(/Attachment currently wins/)).toBeTruthy();
     expect(screen.queryByText('Request approval')).toBeNull();
+    expect(screen.getByText('Use email')).toBeTruthy();
+    expect(screen.getByText('Use attachment')).toBeTruthy();
+    expect(screen.getByText('Enter manually')).toBeTruthy();
+  });
+
+  it('resolves a field-review blocker from the sidebar', async () => {
+    store.queueState = [{
+      id: 'inv-conflict-1',
+      vendor_name: 'Acme Corp',
+      amount: 440,
+      currency: 'USD',
+      invoice_number: 'INV-77',
+      due_date: '2026-04-01',
+      state: 'received',
+      requires_field_review: true,
+      workflow_paused_reason: 'Workflow paused until amount is confirmed because the email and attachment disagree.',
+      field_review_blockers: [
+        {
+          kind: 'source_conflict',
+          field: 'amount',
+          field_label: 'Amount',
+          email_value: 400,
+          email_value_display: 'USD 400.00',
+          attachment_value: 440,
+          attachment_value_display: 'USD 440.00',
+          winning_source_label: 'Attachment',
+          winning_value_display: 'USD 440.00',
+          winner_reason: 'Attachment currently wins because Clearledgr selected the value from invoice.pdf as canonical.',
+        },
+      ],
+    }];
+    store.selectedItemId = 'inv-conflict-1';
+
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+    fireEvent.click(screen.getByText('Use attachment'));
+
+    await Promise.resolve();
+    expect(mockQueueManager.resolveFieldReview).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'inv-conflict-1' }),
+      expect.objectContaining({ field: 'amount', source: 'attachment', autoResume: true }),
+    );
   });
 
   it('renders credit notes as non-invoice finance documents', () => {

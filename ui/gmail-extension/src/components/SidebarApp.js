@@ -307,7 +307,7 @@ function EvidenceChecklist({ entries }) {
   `;
 }
 
-function FieldReviewPanel({ blockers, pauseReason }) {
+function FieldReviewPanel({ blockers, pauseReason, onResolve = null, resolvingField = '' }) {
   if ((!Array.isArray(blockers) || blockers.length === 0) && !pauseReason) return null;
   return html`
     <div class="cl-review-panel" aria-label="Paused field review">
@@ -336,6 +336,35 @@ function FieldReviewPanel({ blockers, pauseReason }) {
             </span>
           </div>
           <div class="cl-review-why">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
+          ${typeof onResolve === 'function' && html`
+            <div class="cl-thread-actions" style="margin-top:8px">
+              ${blocker.email_value !== null && blocker.email_value !== undefined && html`
+                <button
+                  class="cl-btn cl-btn-secondary cl-btn-small"
+                  onClick=${() => onResolve(blocker, 'email')}
+                  disabled=${Boolean(resolvingField === `${blocker.field}:email`)}
+                >
+                  ${resolvingField === `${blocker.field}:email` ? 'Saving…' : 'Use email'}
+                </button>
+              `}
+              ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html`
+                <button
+                  class="cl-btn cl-btn-secondary cl-btn-small"
+                  onClick=${() => onResolve(blocker, 'attachment')}
+                  disabled=${Boolean(resolvingField === `${blocker.field}:attachment`)}
+                >
+                  ${resolvingField === `${blocker.field}:attachment` ? 'Saving…' : 'Use attachment'}
+                </button>
+              `}
+              <button
+                class="cl-btn cl-btn-secondary cl-btn-small"
+                onClick=${() => onResolve(blocker, 'manual')}
+                disabled=${Boolean(resolvingField === `${blocker.field}:manual`)}
+              >
+                ${resolvingField === `${blocker.field}:manual` ? 'Saving…' : 'Enter manually'}
+              </button>
+            </div>
+          `}
         </div>
       `)}
     </div>
@@ -470,6 +499,7 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   const displayState = normalizeWorkState(optimisticState || state);
   const readOnlyMode = !hasOpsAccessRole(actorRole);
   const [dialog, openDialog] = useActionDialog();
+  const [resolvingFieldKey, setResolvingFieldKey] = useState('');
   const pipelineScope = {
     orgId: queueManager?.runtimeConfig?.organizationId || 'default',
     userEmail: queueManager?.runtimeConfig?.userEmail || '',
@@ -586,6 +616,54 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     await doPost();
   });
 
+  const [doResolveFieldReview, resolvePending] = useAction(async (blocker, source) => {
+    if (!item?.id || !queueManager?.resolveFieldReview || !blocker?.field) return;
+    const pendingKey = `${blocker.field}:${source}`;
+    setResolvingFieldKey(pendingKey);
+    let manualValue;
+    try {
+      if (source === 'manual') {
+        manualValue = await openDialog({
+          actionType: 'field_review_manual',
+          title: `Set ${blocker.field_label || 'field'}`,
+          label: `${blocker.field_label || 'Field'} value`,
+          message: 'Enter the canonical value that Clearledgr should keep on the AP record.',
+          defaultValue: blocker.winning_value ?? '',
+          confirmLabel: 'Apply value',
+          cancelLabel: 'Cancel',
+          required: true,
+          chips: [],
+        });
+        if (manualValue === null) {
+          return;
+        }
+      }
+
+      const result = await queueManager.resolveFieldReview(item, {
+        field: blocker.field,
+        source,
+        manualValue,
+        autoResume: true,
+      });
+      const ok = ['resolved', 'resolved_and_resumed'].includes(String(result?.status || '').toLowerCase());
+      if (!ok) {
+        showToast(result?.reason || 'Could not resolve blocked field', 'error');
+        setResolvingFieldKey('');
+        return;
+      }
+
+      showToast(
+        result?.auto_resumed
+          ? `${blocker.field_label || 'Field'} updated and workflow resumed`
+          : `${blocker.field_label || 'Field'} updated`,
+        'success',
+      );
+      await queueManager.refreshQueue();
+    } finally {
+      setResolvingFieldKey('');
+    }
+  });
+
   const goPrev = useCallback(() => store.selectItemByOffset(-1), []);
   const goNext = useCallback(() => store.selectItemByOffset(1), []);
   const openPipeline = useCallback(() => {
@@ -689,7 +767,12 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
         `}
       </div>
 
-      <${FieldReviewPanel} blockers=${fieldReviewBlockers} pauseReason=${pauseReason} />
+      <${FieldReviewPanel}
+        blockers=${fieldReviewBlockers}
+        pauseReason=${pauseReason}
+        onResolve=${readOnlyMode ? null : doResolveFieldReview}
+        resolvingField=${resolvePending ? resolvingFieldKey : ''}
+      />
       <${EvidenceChecklist} entries=${evidence} />
       <${AuditDisclosure} events=${auditEvents} loading=${Boolean(s.auditState.loading && s.auditState.itemId === item.id)} />
       <${ActionDialog} ...${dialog} />

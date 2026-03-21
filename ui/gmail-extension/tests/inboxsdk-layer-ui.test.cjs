@@ -90,6 +90,7 @@ test('route registry stays Gmail-native and does not define an in-Gmail Ops rout
   assert.equal(DEFAULT_ROUTE, 'clearledgr/home');
   assert.ok(routeIds.includes('clearledgr/home'));
   assert.ok(routeIds.includes('clearledgr/pipeline'));
+  assert.ok(routeIds.includes('clearledgr/review'));
   assert.ok(routeIds.includes('clearledgr/activity'));
   assert.ok(routeIds.includes('clearledgr/connections'));
   assert.equal(routeIds.some((id) => /\bops\b/i.test(id)), false);
@@ -115,6 +116,7 @@ test('route registry stays Gmail-native and does not define an in-Gmail Ops rout
   ]);
   assert.equal(defaultMenuRouteIds.includes('clearledgr/home'), true);
   assert.equal(defaultMenuRouteIds.includes('clearledgr/pipeline'), true);
+  assert.equal(defaultMenuRouteIds.includes('clearledgr/review'), true);
   assert.equal(defaultMenuRouteIds.includes('clearledgr/vendors'), true);
   assert.equal(defaultMenuRouteIds.includes('clearledgr/connections'), false);
   assert.deepEqual(approverMenuRouteIds, [
@@ -237,6 +239,51 @@ test('invoice detail page stays on the canonical AP action contract', () => {
   assert.equal(source.includes('Paused field review'), true);
   assert.equal(source.includes('Email said'), true);
   assert.equal(source.includes('Attachment said'), true);
+});
+
+test('review workbench route is mounted in Gmail and exposes field resolution actions', () => {
+  const routerSource = fs.readFileSync(
+    path.resolve(__dirname, '..', 'src/inboxsdk-layer.js'),
+    'utf8',
+  );
+  const reviewSource = fs.readFileSync(
+    path.resolve(__dirname, '..', 'src/routes/pages/ReviewPage.js'),
+    'utf8',
+  );
+
+  assert.equal(routerSource.includes("import ReviewPage from './routes/pages/ReviewPage.js';"), true);
+  assert.equal(routerSource.includes("'clearledgr/review': ReviewPage"), true);
+  assert.equal(reviewSource.includes('Review workbench'), true);
+  assert.equal(reviewSource.includes('/field-review/resolve'), true);
+  assert.equal(reviewSource.includes('/field-review/bulk-resolve'), true);
+  assert.equal(reviewSource.includes('/non-invoice/resolve'), true);
+  assert.equal(reviewSource.includes('Keyboard: J/K move'), true);
+  assert.equal(reviewSource.includes('Paused field review'), true);
+});
+
+test('pipeline page supports bulk routing and keyboard-first queue movement', () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '..', 'src/routes/pages/PipelinePage.js'),
+    'utf8',
+  );
+
+  assert.equal(source.includes("/extension/route-low-risk-approval"), true);
+  assert.equal(source.includes('Select visible'), true);
+  assert.equal(source.includes('Route selected'), true);
+  assert.equal(source.includes('Keyboard: J/K move'), true);
+  assert.equal(source.includes("const [selectedIds, setSelectedIds] = useState([]);"), true);
+});
+
+test('invoice detail page exposes explicit non-invoice review actions', () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '..', 'src/routes/pages/InvoiceDetailPage.js'),
+    'utf8',
+  );
+
+  assert.equal(source.includes('/non-invoice/resolve'), true);
+  assert.equal(source.includes('Apply to invoice'), true);
+  assert.equal(source.includes('Link to payment'), true);
+  assert.equal(source.includes('Record vendor credit'), true);
 });
 
 test('home page queue shortcuts and saved views stay user and org scoped', () => {
@@ -379,6 +426,19 @@ test('gmail route gating distinguishes ops access from admin access and removes 
   assert.equal(inboxSource.includes('iconUrl: route.iconUrl'), true);
   assert.equal(inboxSource.includes('queueManager.submitForApproval'), false);
   assert.equal(inboxSource.includes('title: \'Open in pipeline\''), true);
+});
+
+test('app menu collapses the panel top slot instead of rendering a second Clearledgr logo', () => {
+  const inboxSource = fs.readFileSync(
+    path.resolve(__dirname, '..', 'src/inboxsdk-layer.js'),
+    'utf8',
+  );
+
+  assert.equal(inboxSource.includes('function injectAppMenuPanelStyles()'), true);
+  assert.equal(inboxSource.includes("className: 'cl-appmenu-panel'"), true);
+  assert.equal(inboxSource.includes('.cl-appmenu-panel .aic {'), true);
+  assert.equal(inboxSource.includes('display: none;'), true);
+  assert.equal(inboxSource.includes('primaryButton:'), false);
 });
 
 test('secondary Gmail pages stay lightweight and avoid raw admin/dashboard surfaces', () => {

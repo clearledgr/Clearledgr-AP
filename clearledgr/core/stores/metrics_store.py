@@ -518,6 +518,445 @@ class MetricsStore:
             "sampled_review_queue": sampled_review_queue,
         }
 
+    @staticmethod
+    def _normalize_shadow_field_value(field: str, value: Any) -> Any:
+        token = str(field or "").strip().lower()
+        if value is None:
+            return None
+        if token == "amount":
+            try:
+                return round(float(value), 2)
+            except (TypeError, ValueError):
+                return None
+        if token == "currency":
+            return str(value or "").strip().upper() or None
+        if token in {"vendor", "invoice_number", "document_type", "due_date"}:
+            normalized = str(value or "").strip()
+            return normalized.casefold() if normalized else None
+        return str(value or "").strip() or None
+
+    def _actual_shadow_field_value(
+        self,
+        *,
+        field: str,
+        item: Dict[str, Any],
+        metadata: Dict[str, Any],
+    ) -> Any:
+        token = str(field or "").strip().lower()
+        if token == "vendor":
+            return item.get("vendor_name") or item.get("vendor")
+        if token == "document_type":
+            return metadata.get("document_type") or metadata.get("email_type") or "invoice"
+        return item.get(token)
+
+    def _actual_shadow_action(
+        self,
+        *,
+        item: Dict[str, Any],
+        metadata: Dict[str, Any],
+        approvals: List[Dict[str, Any]],
+        audit_events: List[Dict[str, Any]],
+    ) -> Optional[str]:
+        document_type = str(
+            metadata.get("document_type") or metadata.get("email_type") or "invoice"
+        ).strip().lower() or "invoice"
+        if document_type != "invoice":
+            return "non_invoice_finance_doc"
+
+        resolutions = metadata.get("field_review_resolutions")
+        resolutions = resolutions if isinstance(resolutions, dict) else {}
+        confidence_blockers = metadata.get("confidence_blockers")
+        confidence_blockers = confidence_blockers if isinstance(confidence_blockers, list) else []
+        source_conflicts = metadata.get("source_conflicts")
+        blocking_conflicts = self._blocking_source_conflicts(
+            source_conflicts if isinstance(source_conflicts, list) else []
+        )
+        if (
+            self._coerce_bool(metadata.get("requires_field_review"))
+            or resolutions
+            or confidence_blockers
+            or blocking_conflicts
+        ):
+            return "field_review"
+
+        if approvals:
+            return "route_for_approval"
+
+        state = str(item.get("state") or "").strip().lower()
+        event_types = {
+            str((event or {}).get("event_type") or "").strip().lower()
+            for event in audit_events
+            if isinstance(event, dict)
+        }
+        if state in {"closed", "posted_to_erp", "approved", "ready_to_post", "failed_post"}:
+            return "auto_approve_post"
+        if event_types & {"erp_post_attempted", "erp_post_succeeded", "erp_post_failed"}:
+            return "auto_approve_post"
+        if state in {"received", "validated"}:
+            return None
+        return "route_for_approval"
+
+    def _build_shadow_decision_metrics(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        approvals_by_item: Dict[str, List[Dict[str, Any]]],
+        audit_events_by_item: Dict[str, List[Dict[str, Any]]],
+        scorecard_limit: int = 20,
+        sample_limit: int = 20,
+    ) -> Dict[str, Any]:
+        summary = {
+            "scored_item_count": 0,
+            "action_population": 0,
+            "action_match_count": 0,
+            "action_match_rate": 0.0,
+            "critical_field_population": 0,
+            "critical_field_match_count": 0,
+            "critical_field_match_rate": 0.0,
+            "corrected_item_count": 0,
+            "disagreement_count": 0,
+        }
+        if not items:
+            return {
+                "summary": summary,
+                "vendor_scorecards": [],
+                "sampled_disagreements": [],
+            }
+
+        critical_fields = ("amount", "currency", "invoice_number", "vendor", "document_type")
+        vendor_buckets: Dict[str, Dict[str, Any]] = {}
+        sampled_disagreements: List[Dict[str, Any]] = []
+
+        def _vendor_bucket(vendor_name: str) -> Dict[str, Any]:
+            return vendor_buckets.setdefault(
+                vendor_name,
+                {
+                    "vendor_name": vendor_name,
+                    "scored_item_count": 0,
+                    "action_population": 0,
+                    "action_match_count": 0,
+                    "critical_field_population": 0,
+                    "critical_field_match_count": 0,
+                    "corrected_item_count": 0,
+                    "disagreement_count": 0,
+                    "disagreement_fields": {},
+                },
+            )
+
+        for item in items:
+            metadata = self._decode_json_any(item.get("metadata"))
+            metadata_dict = metadata if isinstance(metadata, dict) else {}
+            shadow = metadata_dict.get("shadow_decision")
+            shadow = shadow if isinstance(shadow, dict) else {}
+            proposed_fields = shadow.get("proposed_fields") if isinstance(shadow.get("proposed_fields"), dict) else {}
+            proposed_action = str(shadow.get("proposed_action") or "").strip().lower()
+            if not shadow or (not proposed_fields and not proposed_action):
+                continue
+
+            item_id = str(item.get("id") or "").strip()
+            vendor_name = str(item.get("vendor_name") or item.get("vendor") or "Unknown").strip() or "Unknown"
+            approvals = approvals_by_item.get(item_id, [])
+            audit_events = audit_events_by_item.get(item_id, [])
+            actual_action = self._actual_shadow_action(
+                item=item,
+                metadata=metadata_dict,
+                approvals=approvals,
+                audit_events=audit_events,
+            )
+            corrected = bool(
+                metadata_dict.get("field_review_resolutions")
+                or any(
+                    str((event or {}).get("event_type") or "").strip().lower() == "field_correction"
+                    for event in audit_events
+                )
+            )
+
+            bucket = _vendor_bucket(vendor_name)
+            summary["scored_item_count"] += 1
+            bucket["scored_item_count"] += 1
+            if corrected:
+                summary["corrected_item_count"] += 1
+                bucket["corrected_item_count"] += 1
+
+            disagreement_fields: List[str] = []
+            for field in critical_fields:
+                proposed_value = self._normalize_shadow_field_value(field, proposed_fields.get(field))
+                actual_value = self._normalize_shadow_field_value(
+                    field,
+                    self._actual_shadow_field_value(field=field, item=item, metadata=metadata_dict),
+                )
+                if proposed_value is None and actual_value is None:
+                    continue
+                summary["critical_field_population"] += 1
+                bucket["critical_field_population"] += 1
+                if proposed_value == actual_value:
+                    summary["critical_field_match_count"] += 1
+                    bucket["critical_field_match_count"] += 1
+                else:
+                    disagreement_fields.append(field)
+                    field_counts = bucket["disagreement_fields"]
+                    field_counts[field] = int(field_counts.get(field) or 0) + 1
+
+            action_match = True
+            if actual_action:
+                summary["action_population"] += 1
+                bucket["action_population"] += 1
+                action_match = proposed_action == actual_action
+                if action_match:
+                    summary["action_match_count"] += 1
+                    bucket["action_match_count"] += 1
+
+            if disagreement_fields or (actual_action and not action_match):
+                summary["disagreement_count"] += 1
+                bucket["disagreement_count"] += 1
+                sampled_disagreements.append(
+                    {
+                        "ap_item_id": item_id,
+                        "vendor_name": vendor_name,
+                        "invoice_number": str(item.get("invoice_number") or "").strip() or None,
+                        "proposed_action": proposed_action or None,
+                        "actual_action": actual_action,
+                        "disagreement_fields": disagreement_fields,
+                        "corrected": corrected,
+                        "created_at": str(item.get("created_at") or item.get("updated_at") or ""),
+                    }
+                )
+
+        summary["action_match_rate"] = self._safe_rate(
+            int(summary["action_match_count"]),
+            int(summary["action_population"]),
+        )
+        summary["critical_field_match_rate"] = self._safe_rate(
+            int(summary["critical_field_match_count"]),
+            int(summary["critical_field_population"]),
+        )
+
+        vendor_scorecards: List[Dict[str, Any]] = []
+        for bucket in vendor_buckets.values():
+            disagreement_fields = [
+                field
+                for field, _count in sorted(
+                    (bucket.get("disagreement_fields") or {}).items(),
+                    key=lambda pair: (-int(pair[1] or 0), pair[0]),
+                )[:3]
+            ]
+            scored_count = int(bucket.get("scored_item_count") or 0)
+            action_rate = self._safe_rate(
+                int(bucket.get("action_match_count") or 0),
+                int(bucket.get("action_population") or 0),
+            )
+            critical_rate = self._safe_rate(
+                int(bucket.get("critical_field_match_count") or 0),
+                int(bucket.get("critical_field_population") or 0),
+            )
+            if scored_count < 2:
+                trust = "unproven"
+            elif action_rate < 0.75 or critical_rate < 0.85:
+                trust = "weak"
+            elif action_rate < 0.9 or critical_rate < 0.95 or int(bucket.get("disagreement_count") or 0) > 0:
+                trust = "watch"
+            else:
+                trust = "strong"
+            vendor_scorecards.append(
+                {
+                    "vendor_name": bucket["vendor_name"],
+                    "scored_item_count": scored_count,
+                    "action_population": int(bucket.get("action_population") or 0),
+                    "action_match_rate": action_rate,
+                    "critical_field_population": int(bucket.get("critical_field_population") or 0),
+                    "critical_field_match_rate": critical_rate,
+                    "corrected_item_count": int(bucket.get("corrected_item_count") or 0),
+                    "disagreement_count": int(bucket.get("disagreement_count") or 0),
+                    "top_disagreement_fields": disagreement_fields,
+                    "trust_mode": trust,
+                }
+            )
+
+        vendor_scorecards.sort(
+            key=lambda row: (
+                {"weak": 0, "watch": 1, "unproven": 2, "strong": 3}.get(str(row.get("trust_mode") or "strong"), 9),
+                -int(row.get("disagreement_count") or 0),
+                -int(row.get("scored_item_count") or 0),
+                str(row.get("vendor_name") or ""),
+            )
+        )
+        sampled_disagreements = sorted(
+            sampled_disagreements,
+            key=lambda row: (
+                0 if row.get("actual_action") and row.get("proposed_action") != row.get("actual_action") else 1,
+                -len(row.get("disagreement_fields") or []),
+                str(row.get("created_at") or ""),
+                str(row.get("ap_item_id") or ""),
+            ),
+        )[: max(1, int(sample_limit))]
+
+        return {
+            "summary": summary,
+            "vendor_scorecards": vendor_scorecards[: max(1, int(scorecard_limit))],
+            "sampled_disagreements": sampled_disagreements,
+        }
+
+    def _build_post_action_verification_metrics(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        audit_events_by_item: Dict[str, List[Dict[str, Any]]],
+        scorecard_limit: int = 20,
+        sample_limit: int = 20,
+    ) -> Dict[str, Any]:
+        summary = {
+            "attempted_count": 0,
+            "verified_count": 0,
+            "mismatch_count": 0,
+            "verification_rate": 0.0,
+            "success_event_count": 0,
+            "failed_event_count": 0,
+        }
+        if not items:
+            return {
+                "summary": summary,
+                "vendor_scorecards": [],
+                "sampled_mismatches": [],
+            }
+
+        vendor_buckets: Dict[str, Dict[str, Any]] = {}
+        sampled_mismatches: List[Dict[str, Any]] = []
+
+        def _vendor_bucket(vendor_name: str) -> Dict[str, Any]:
+            return vendor_buckets.setdefault(
+                vendor_name,
+                {
+                    "vendor_name": vendor_name,
+                    "attempted_count": 0,
+                    "verified_count": 0,
+                    "mismatch_count": 0,
+                },
+            )
+
+        for item in items:
+            item_id = str(item.get("id") or "").strip()
+            audit_events = audit_events_by_item.get(item_id, [])
+            metadata = self._decode_json_any(item.get("metadata"))
+            metadata_dict = metadata if isinstance(metadata, dict) else {}
+            post_verification = metadata_dict.get("post_action_verification")
+            post_verification = post_verification if isinstance(post_verification, dict) else {}
+            event_types = {
+                str((event or {}).get("event_type") or "").strip().lower()
+                for event in audit_events
+                if isinstance(event, dict)
+            }
+            attempted = bool(post_verification.get("attempted")) or bool(
+                event_types & {"erp_post_attempted", "erp_post_succeeded", "erp_post_failed"}
+            )
+            if not attempted:
+                continue
+
+            summary["attempted_count"] += 1
+            vendor_name = str(item.get("vendor_name") or item.get("vendor") or "Unknown").strip() or "Unknown"
+            bucket = _vendor_bucket(vendor_name)
+            bucket["attempted_count"] += 1
+
+            success_event = "erp_post_succeeded" in event_types
+            failed_event = "erp_post_failed" in event_types
+            if success_event:
+                summary["success_event_count"] += 1
+            if failed_event:
+                summary["failed_event_count"] += 1
+
+            state = str(item.get("state") or "").strip().lower()
+            erp_reference = str(
+                item.get("erp_reference")
+                or post_verification.get("erp_reference")
+                or ""
+            ).strip()
+            exception_code = str(
+                item.get("exception_code")
+                or metadata_dict.get("exception_code")
+                or ""
+            ).strip().lower()
+            last_error = str(
+                item.get("last_error")
+                or metadata_dict.get("last_error")
+                or ""
+            ).strip().lower()
+
+            mismatch_reasons: List[str] = []
+            verified = False
+            if success_event:
+                if state in {"closed", "posted_to_erp"} and erp_reference:
+                    verified = True
+                else:
+                    if state not in {"closed", "posted_to_erp"}:
+                        mismatch_reasons.append("posted_success_state_mismatch")
+                    if not erp_reference:
+                        mismatch_reasons.append("posted_success_missing_reference")
+            elif failed_event:
+                if state == "failed_post" or "erp_post_failed" in exception_code or "erp" in last_error:
+                    verified = True
+                else:
+                    mismatch_reasons.append("post_failure_state_mismatch")
+            else:
+                mismatch_reasons.append("post_attempt_missing_terminal_event")
+
+            if verified:
+                summary["verified_count"] += 1
+                bucket["verified_count"] += 1
+            else:
+                summary["mismatch_count"] += 1
+                bucket["mismatch_count"] += 1
+                sampled_mismatches.append(
+                    {
+                        "ap_item_id": item_id,
+                        "vendor_name": vendor_name,
+                        "invoice_number": str(item.get("invoice_number") or "").strip() or None,
+                        "state": state or None,
+                        "erp_reference": erp_reference or None,
+                        "mismatch_reasons": mismatch_reasons,
+                        "created_at": str(item.get("updated_at") or item.get("created_at") or ""),
+                    }
+                )
+
+        summary["verification_rate"] = self._safe_rate(
+            int(summary["verified_count"]),
+            int(summary["attempted_count"]),
+        )
+
+        vendor_scorecards = [
+            {
+                "vendor_name": bucket["vendor_name"],
+                "attempted_count": int(bucket.get("attempted_count") or 0),
+                "verified_count": int(bucket.get("verified_count") or 0),
+                "mismatch_count": int(bucket.get("mismatch_count") or 0),
+                "verification_rate": self._safe_rate(
+                    int(bucket.get("verified_count") or 0),
+                    int(bucket.get("attempted_count") or 0),
+                ),
+            }
+            for bucket in vendor_buckets.values()
+        ]
+        vendor_scorecards.sort(
+            key=lambda row: (
+                float(row.get("verification_rate") or 0.0),
+                -int(row.get("mismatch_count") or 0),
+                -int(row.get("attempted_count") or 0),
+                str(row.get("vendor_name") or ""),
+            )
+        )
+        sampled_mismatches = sorted(
+            sampled_mismatches,
+            key=lambda row: (
+                -len(row.get("mismatch_reasons") or []),
+                str(row.get("created_at") or ""),
+                str(row.get("ap_item_id") or ""),
+            ),
+        )[: max(1, int(sample_limit))]
+
+        return {
+            "summary": summary,
+            "vendor_scorecards": vendor_scorecards[: max(1, int(scorecard_limit))],
+            "sampled_mismatches": sampled_mismatches,
+        }
+
     # ------------------------------------------------------------------
     # Audit events (query)
     # ------------------------------------------------------------------
@@ -926,6 +1365,23 @@ class MetricsStore:
                 "totals": {"events": 0},
             }
 
+        shadow_audit_events = self.list_audit_events(
+            organization_id,
+            event_types=[
+                "field_correction",
+                "erp_post_attempted",
+                "erp_post_succeeded",
+                "erp_post_failed",
+            ],
+            limit=20000,
+        )
+        audit_events_by_item: Dict[str, List[Dict[str, Any]]] = {}
+        for event in shadow_audit_events:
+            ap_item_id = str(event.get("ap_item_id") or "").strip()
+            if not ap_item_id:
+                continue
+            audit_events_by_item.setdefault(ap_item_id, []).append(event)
+
         blocker_category_counts: Dict[str, int] = {
             "confidence": 0,
             "policy": 0,
@@ -1052,6 +1508,15 @@ class MetricsStore:
         browser_human_control = browser_metrics.get("human_control") if isinstance(browser_metrics, dict) else {}
         browser_routing = browser_metrics.get("api_first_routing") if isinstance(browser_metrics, dict) else {}
         extraction_drift_metrics = self._build_extraction_drift_metrics(items, now=now)
+        shadow_decision_metrics = self._build_shadow_decision_metrics(
+            items,
+            approvals_by_item=approvals_by_item,
+            audit_events_by_item=audit_events_by_item,
+        )
+        post_action_verification_metrics = self._build_post_action_verification_metrics(
+            items,
+            audit_events_by_item=audit_events_by_item,
+        )
 
         total_items = len(items)
         return {
@@ -1119,6 +1584,8 @@ class MetricsStore:
                     "approval_override_rate": "approval decisions that used budget/confidence/PO override semantics",
                     "top_blocker_reasons": "open-item blocker categories/reasons derived from AP item state, validation gates, confidence blockers, and ERP failures",
                     "extraction_drift": "vendor-level review-rate, conflict-rate, and provenance-shift scorecards with sampled review recommendations",
+                    "shadow_decision_scoring": "agreement between persisted shadow proposals and final/operator truth for action path and critical fields",
+                    "post_action_verification": "verification that ERP post outcomes reconciled with terminal AP state and ERP references",
                 },
                 "straight_through_rate": {
                     "eligible_count": int(touchless_eligible),
@@ -1163,6 +1630,8 @@ class MetricsStore:
                     "top_reasons": top_blocker_reasons,
                 },
                 "extraction_drift": extraction_drift_metrics,
+                "shadow_decision_scoring": shadow_decision_metrics,
+                "post_action_verification": post_action_verification_metrics,
             },
         }
 

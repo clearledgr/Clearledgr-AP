@@ -12,6 +12,53 @@ from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 class _FakeDB:
     def __init__(self) -> None:
         self.organization = {"id": "default", "settings": {"auto_approve_threshold": 0.91}}
+        self.ap_kpis = {
+            "organization_id": "default",
+            "agentic_telemetry": {
+                "agent_suggestion_acceptance": {
+                    "prompted_count": 10,
+                    "accepted_count": 8,
+                    "rate": 0.8,
+                },
+                "extraction_drift": {
+                    "summary": {
+                        "vendors_monitored": 0,
+                        "vendors_at_risk": 0,
+                        "high_risk_vendors": 0,
+                        "recent_open_blocked_items": 0,
+                    },
+                    "vendor_scorecards": [],
+                    "sampled_review_queue": [],
+                },
+                "shadow_decision_scoring": {
+                    "summary": {
+                        "scored_item_count": 0,
+                        "action_population": 0,
+                        "action_match_count": 0,
+                        "action_match_rate": 0.0,
+                        "critical_field_population": 0,
+                        "critical_field_match_count": 0,
+                        "critical_field_match_rate": 0.0,
+                        "corrected_item_count": 0,
+                        "disagreement_count": 0,
+                    },
+                    "vendor_scorecards": [],
+                    "sampled_disagreements": [],
+                },
+                "post_action_verification": {
+                    "summary": {
+                        "attempted_count": 0,
+                        "verified_count": 0,
+                        "mismatch_count": 0,
+                        "verification_rate": 0.0,
+                        "success_event_count": 0,
+                        "failed_event_count": 0,
+                    },
+                    "vendor_scorecards": [],
+                    "sampled_mismatches": [],
+                },
+            },
+        }
         self.items = {
             "ap-route-1": {
                 "id": "ap-route-1",
@@ -191,16 +238,9 @@ class _FakeDB:
 
     def get_ap_kpis(self, organization_id, approval_sla_minutes=240):
         _ = approval_sla_minutes
-        return {
-            "organization_id": organization_id,
-            "agentic_telemetry": {
-                "agent_suggestion_acceptance": {
-                    "prompted_count": 10,
-                    "accepted_count": 8,
-                    "rate": 0.8,
-                }
-            },
-        }
+        payload = dict(self.ap_kpis)
+        payload["organization_id"] = organization_id
+        return payload
 
     def get_operational_metrics(self, organization_id, approval_sla_minutes=240, workflow_stuck_minutes=120):
         _ = approval_sla_minutes, workflow_stuck_minutes
@@ -289,6 +329,178 @@ def test_skill_readiness_reports_gate_statuses_for_ap_skill():
     assert "metrics" in readiness
 
 
+def test_ap_autonomy_policy_manual_when_readiness_gates_fail():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    readiness = {
+        "status": "blocked",
+        "gates": [
+            {"gate": "audit_coverage", "status": "fail"},
+            {"gate": "operator_acceptance", "status": "pass"},
+        ],
+        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+    }
+
+    with patch.object(runtime, "skill_readiness", return_value=readiness):
+        policy = runtime.ap_autonomy_policy(
+            vendor_name="Runtime Co",
+            action="route_low_risk_for_approval",
+            autonomous_requested=True,
+        )
+
+    assert policy["mode"] == "manual"
+    assert policy["autonomous_allowed"] is False
+    assert "ap_skill_not_ready" in policy["reason_codes"]
+    assert "gate:audit_coverage" in policy["reason_codes"]
+
+
+def test_ap_autonomy_policy_assisted_when_vendor_is_unscored():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    readiness = {
+        "status": "ready",
+        "gates": [],
+        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+    }
+
+    with patch.object(runtime, "skill_readiness", return_value=readiness):
+        policy = runtime.ap_autonomy_policy(
+            vendor_name="Runtime Co",
+            action="route_low_risk_for_approval",
+            autonomous_requested=True,
+        )
+
+    assert policy["mode"] == "assisted"
+    assert policy["autonomous_allowed"] is False
+    assert "vendor_unscored" in policy["reason_codes"]
+
+
+def test_ap_autonomy_policy_auto_for_stable_vendor_when_readiness_is_ready():
+    db = _FakeDB()
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["summary"] = {
+        "vendors_monitored": 1,
+        "vendors_at_risk": 0,
+        "high_risk_vendors": 0,
+        "recent_open_blocked_items": 0,
+    }
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "drift_risk": "stable",
+            "recent_invoice_count": 5,
+            "sample_recommended_count": 0,
+            "source_shift_fields": [],
+        }
+    ]
+    runtime = _runtime(db)
+    readiness = {
+        "status": "ready",
+        "gates": [],
+        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+    }
+
+    with patch.object(runtime, "skill_readiness", return_value=readiness):
+        policy = runtime.ap_autonomy_policy(
+            vendor_name="Runtime Co",
+            action="route_low_risk_for_approval",
+            autonomous_requested=True,
+        )
+
+    assert policy["mode"] == "auto"
+    assert policy["autonomous_allowed"] is True
+    assert policy["reason_codes"] == []
+
+
+def test_ap_autonomy_policy_manual_when_vendor_shadow_quality_is_low():
+    db = _FakeDB()
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["summary"] = {
+        "vendors_monitored": 1,
+        "vendors_at_risk": 0,
+        "high_risk_vendors": 0,
+        "recent_open_blocked_items": 0,
+    }
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "drift_risk": "stable",
+            "recent_invoice_count": 6,
+            "sample_recommended_count": 0,
+            "source_shift_fields": [],
+        }
+    ]
+    db.ap_kpis["agentic_telemetry"]["shadow_decision_scoring"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "scored_item_count": 4,
+            "action_match_rate": 0.5,
+            "critical_field_match_rate": 0.8,
+            "disagreement_count": 2,
+        }
+    ]
+    runtime = _runtime(db)
+    readiness = {
+        "status": "ready",
+        "gates": [],
+        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+    }
+
+    with patch.object(runtime, "skill_readiness", return_value=readiness):
+        policy = runtime.ap_autonomy_policy(
+            vendor_name="Runtime Co",
+            action="route_low_risk_for_approval",
+            autonomous_requested=True,
+        )
+
+    assert policy["mode"] == "manual"
+    assert policy["autonomous_allowed"] is False
+    assert "vendor_shadow_quality_low" in policy["reason_codes"]
+
+
+def test_ap_autonomy_policy_manual_when_vendor_post_verification_is_low():
+    db = _FakeDB()
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["summary"] = {
+        "vendors_monitored": 1,
+        "vendors_at_risk": 0,
+        "high_risk_vendors": 0,
+        "recent_open_blocked_items": 0,
+    }
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "drift_risk": "stable",
+            "recent_invoice_count": 6,
+            "sample_recommended_count": 0,
+            "source_shift_fields": [],
+        }
+    ]
+    db.ap_kpis["agentic_telemetry"]["post_action_verification"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "attempted_count": 3,
+            "verified_count": 2,
+            "mismatch_count": 1,
+            "verification_rate": 0.6667,
+        }
+    ]
+    runtime = _runtime(db)
+    readiness = {
+        "status": "ready",
+        "gates": [],
+        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+    }
+
+    with patch.object(runtime, "skill_readiness", return_value=readiness):
+        policy = runtime.ap_autonomy_policy(
+            vendor_name="Runtime Co",
+            action="post_to_erp",
+            autonomous_requested=True,
+        )
+
+    assert policy["mode"] == "manual"
+    assert policy["autonomous_allowed"] is False
+    assert "vendor_post_verification_low" in policy["reason_codes"]
+
+
 def test_preview_route_low_risk_for_approval_returns_precheck():
     db = _FakeDB()
     runtime = _runtime(db)
@@ -366,6 +578,40 @@ def test_execute_route_low_risk_for_approval_blocks_field_review_precheck():
     assert result["status"] == "blocked"
     assert result["reason"] == "field_review_required"
     assert result["audit_event_id"]
+    workflow._send_for_approval.assert_not_called()
+
+
+def test_execute_route_low_risk_for_approval_blocks_autonomous_mode_when_vendor_not_earned():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.evaluate_batch_route_low_risk_for_approval.return_value = {
+        "eligible": True,
+        "reason_codes": [],
+    }
+    readiness = {
+        "status": "ready",
+        "gates": [],
+        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+    }
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch.object(runtime, "skill_readiness", return_value=readiness):
+            result = asyncio.run(
+                runtime.execute_intent(
+                    "route_low_risk_for_approval",
+                    {
+                        "email_id": "gmail-thread-route-1",
+                        "execution_context": "autonomous",
+                    },
+                    idempotency_key="idem-runtime-route-autonomy-blocked-1",
+                )
+            )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "autonomy_gate_blocked"
+    assert result["policy_precheck"]["autonomy_policy"]["mode"] == "assisted"
+    assert result["policy_precheck"]["autonomous_requested"] is True
     workflow._send_for_approval.assert_not_called()
 
 
@@ -827,6 +1073,63 @@ def test_execute_ap_invoice_processing_registers_missing_ap_skill():
     assert planner.registered == ["ap_invoice_processing"]
     assert result["status"] == "processed"
     assert result["execution_mode"] == "agent_planning_engine"
+
+
+def test_execute_ap_invoice_processing_downgrades_auto_post_when_autonomy_not_earned():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    captured = {}
+
+    class _FakePlanner:
+        def __init__(self):
+            self._skills = {"ap_invoice_processing": object()}
+
+        async def run_task(self, task):
+            captured["task"] = task
+            return SimpleNamespace(
+                outcome={"status": "pending_approval"},
+                task_run_id="task-run-autonomy-1",
+                step_count=1,
+                status="awaiting_human",
+            )
+
+    readiness = {
+        "status": "ready",
+        "gates": [],
+        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+    }
+    invoice_payload = {
+        "gmail_id": "gmail-autonomy-downgrade-1",
+        "thread_id": "gmail-thread-autonomy-downgrade-1",
+        "message_id": "gmail-message-autonomy-downgrade-1",
+        "organization_id": "default",
+        "sender": "billing@example.com",
+        "subject": "Invoice INV-AUTO-1",
+        "vendor_name": "Unscored Vendor Co",
+        "amount": 42.0,
+        "currency": "USD",
+        "confidence": 0.99,
+    }
+
+    with patch.object(runtime, "skill_readiness", return_value=readiness):
+        with patch("clearledgr.core.agent_runtime.get_planning_engine", return_value=_FakePlanner()):
+            result = asyncio.run(
+                runtime.execute_ap_invoice_processing(
+                    invoice_payload=invoice_payload,
+                    idempotency_key="idem-autonomy-downgrade-1",
+                    correlation_id="corr-autonomy-downgrade-1",
+                )
+            )
+
+    threshold = runtime.ap_auto_approve_threshold()
+    task_invoice = captured["task"].payload["invoice"]
+    assert float(task_invoice["confidence"]) < threshold
+    assert result["status"] == "pending_approval"
+    assert result["autonomy_policy"]["mode"] == "assisted"
+    assert result["autonomy_auto_post_downgraded"] is True
+    seeded = db.get_ap_item_by_thread("default", "gmail-thread-autonomy-downgrade-1")
+    assert seeded is not None
+    assert seeded["metadata"]["autonomy_mode"] == "assisted"
 
 
 def test_execute_ap_invoice_processing_blocks_on_field_review_without_planner():

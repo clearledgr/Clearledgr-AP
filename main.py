@@ -344,6 +344,7 @@ STRICT_PROFILE_ALLOWED_AGENT_PATHS = {
 
 STRICT_PROFILE_ALLOWED_AP_PATHS = {
     "/api/ap/audit/recent",
+    "/api/ap/items/field-review/bulk-resolve",
     "/api/ap/items/metrics/aggregation",
     "/api/ap/items/upcoming",
     "/api/ap/items/vendors",
@@ -369,8 +370,10 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/ap/items/[^/]+/audit$",
         r"^/api/ap/items/[^/]+/context$",
         r"^/api/ap/items/[^/]+/merge$",
+        r"^/api/ap/items/[^/]+/non-invoice/resolve$",
         r"^/api/ap/items/[^/]+/resubmit$",
         r"^/api/ap/items/[^/]+/retry-post$",
+        r"^/api/ap/items/[^/]+/field-review/resolve$",
         r"^/api/ap/items/[^/]+/sources$",
         r"^/api/ap/items/[^/]+/sources/link$",
         r"^/api/ap/items/[^/]+/split$",

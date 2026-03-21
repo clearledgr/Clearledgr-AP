@@ -306,6 +306,10 @@ def test_ap_items_endpoints_require_auth(unauth_client, db):
         json={"source_type": "gmail_thread", "source_ref": "thread-1"},
     ).status_code == 401
     assert unauth_client.post(
+        f"/api/ap/items/{ap_item_id}/field-review/resolve?organization_id=default",
+        json={"field": "amount", "source": "email"},
+    ).status_code == 401
+    assert unauth_client.post(
         f"/api/ap/items/{ap_item_id}/resubmit",
         json={"actor_id": "user", "reason": "fix"},
     ).status_code == 401
@@ -1131,6 +1135,8 @@ def test_ap_kpis_exposes_agentic_telemetry_bundle(client, db):
     assert telemetry["agent_suggestion_acceptance"]["accepted_count"] >= 1
     assert telemetry["agent_actions_requiring_manual_override"]["count"] >= 1
     assert telemetry["approval_override_rate"]["override_count"] >= 1
+    assert "shadow_decision_scoring" in telemetry
+    assert "post_action_verification" in telemetry
 
     top_reasons = telemetry["top_blocker_reasons"]["top_reasons"]
     assert isinstance(top_reasons, list)
@@ -1154,6 +1160,8 @@ def test_admin_bootstrap_dashboard_includes_agentic_snapshot(client, db):
     assert telemetry.get("window_hours") == 168
     snapshot = dashboard.get("agentic_snapshot") or {}
     assert snapshot.get("straight_through_rate_pct", 0) > 0
+    assert "shadow_action_match_pct" in snapshot
+    assert "post_verification_rate_pct" in snapshot
     assert "top_blockers" in snapshot
 
 
@@ -1183,6 +1191,9 @@ def test_autopilot_status_includes_agent_runtime_truth_claims(client, monkeypatc
     assert execution_contract["mode"] == "agentic_runtime"
     assert execution_contract["planning_loop_enabled"] is True
     assert execution_contract["legacy_fallback_on_error"] is False
+    autonomy_gate = payload["agent_runtime"]["ap_autonomy_gate"]
+    assert autonomy_gate["mode"] in {"manual", "assisted"}
+    assert "failing_gates" in autonomy_gate
     surface = payload.get("runtime_surface") or {}
     assert surface.get("profile") == "strict"
     assert surface.get("strict_effective") is True
@@ -1217,6 +1228,8 @@ def test_autopilot_status_keeps_durable_retry_enabled_in_production(client, monk
     assert contract["legacy_fallback_on_error"] is False
     assert "planning_loop_forced_on_in_production" in contract["warnings"]
     assert "legacy_fallback_forced_off_in_production" in contract["warnings"]
+    autonomy_gate = runtime_status["ap_autonomy_gate"]
+    assert autonomy_gate["mode"] in {"manual", "assisted"}
     surface = autopilot.get("runtime_surface") or {}
     assert surface.get("production_like") is True
     assert surface.get("legacy_override_requested") is True

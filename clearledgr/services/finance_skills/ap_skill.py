@@ -169,6 +169,39 @@ class APFinanceSkill(FinanceSkill):
     def manifest(self) -> SkillCapabilityManifest:
         return self._MANIFEST
 
+    @staticmethod
+    def _with_autonomy_policy(
+        runtime,
+        *,
+        ap_item: Dict[str, Any],
+        payload: Dict[str, Any],
+        precheck: Dict[str, Any],
+        action: str,
+    ) -> Dict[str, Any]:
+        merged = dict(precheck or {})
+        reason_codes = list(merged.get("reason_codes") or [])
+        autonomous_requested = runtime.is_autonomous_request(payload)
+        autonomy_policy = runtime.ap_autonomy_policy(
+            vendor_name=ap_item.get("vendor_name") or ap_item.get("vendor"),
+            action=action,
+            autonomous_requested=autonomous_requested,
+        )
+        merged["autonomous_requested"] = autonomous_requested
+        merged["autonomy_policy"] = autonomy_policy
+        if autonomous_requested and not autonomy_policy.get("autonomous_allowed"):
+            reason_codes.extend(
+                [
+                    "autonomy_gate_blocked",
+                    f"autonomy_mode_{autonomy_policy.get('mode')}",
+                    *(autonomy_policy.get("reason_codes") or []),
+                ]
+            )
+            merged["eligible"] = False
+        merged["reason_codes"] = list(dict.fromkeys([code for code in reason_codes if code]))
+        if "eligible" not in merged:
+            merged["eligible"] = len(merged["reason_codes"]) == 0
+        return merged
+
     def policy_precheck(
         self,
         runtime,
@@ -206,6 +239,13 @@ class APFinanceSkill(FinanceSkill):
                 "reason_codes": reason_codes,
                 "state": state,
             }
+            precheck = self._with_autonomy_policy(
+                runtime,
+                ap_item=ap_item,
+                payload=payload,
+                precheck=precheck,
+                action=normalized_intent,
+            )
             return {
                 "intent": normalized_intent,
                 "ap_item": ap_item,
@@ -295,6 +335,13 @@ class APFinanceSkill(FinanceSkill):
                 allowed_states=["approved", "ready_to_post"],
                 state_reason_code="state_not_ready_to_post",
             )
+            precheck = self._with_autonomy_policy(
+                runtime,
+                ap_item=ap_item,
+                payload=payload,
+                precheck=precheck,
+                action=normalized_intent,
+            )
             return {
                 "intent": normalized_intent,
                 "ap_item": ap_item,
@@ -306,6 +353,13 @@ class APFinanceSkill(FinanceSkill):
 
         if normalized_intent == "route_low_risk_for_approval":
             precheck = workflow.evaluate_batch_route_low_risk_for_approval(ap_item)
+            precheck = self._with_autonomy_policy(
+                runtime,
+                ap_item=ap_item,
+                payload=payload,
+                precheck=precheck,
+                action=normalized_intent,
+            )
             return {
                 "intent": normalized_intent,
                 "ap_item": ap_item,
@@ -317,6 +371,13 @@ class APFinanceSkill(FinanceSkill):
 
         if normalized_intent == "retry_recoverable_failures":
             precheck = workflow.evaluate_batch_retry_recoverable_failure(ap_item)
+            precheck = self._with_autonomy_policy(
+                runtime,
+                ap_item=ap_item,
+                payload=payload,
+                precheck=precheck,
+                action=normalized_intent,
+            )
             return {
                 "intent": normalized_intent,
                 "ap_item": ap_item,
@@ -1247,15 +1308,24 @@ class APFinanceSkill(FinanceSkill):
             if not precheck.get("eligible"):
                 reason_codes = set(precheck.get("reason_codes") or [])
                 blocked_reason = (
+                    "autonomy_gate_blocked"
+                    if "autonomy_gate_blocked" in reason_codes
+                    else (
                     "field_review_required"
                     if {"field_review_required", "blocking_source_conflicts"} & reason_codes
                     else "state_not_ready_to_post"
+                    )
                 )
                 response = {
                     "skill_id": self.skill_id,
                     "intent": normalized_intent,
                     "status": "blocked",
                     "reason": blocked_reason,
+                    "detail": (
+                        ((precheck.get("autonomy_policy") or {}).get("detail"))
+                        if blocked_reason == "autonomy_gate_blocked"
+                        else None
+                    ),
                     "email_id": email_id,
                     "ap_item_id": ap_item_id,
                     "policy_precheck": precheck,
@@ -1357,15 +1427,24 @@ class APFinanceSkill(FinanceSkill):
             if not precheck.get("eligible"):
                 reason_codes = set(precheck.get("reason_codes") or [])
                 blocked_reason = (
+                    "autonomy_gate_blocked"
+                    if "autonomy_gate_blocked" in reason_codes
+                    else (
                     "field_review_required"
                     if {"field_review_required", "blocking_source_conflicts"} & reason_codes
                     else "policy_precheck_failed"
+                    )
                 )
                 response = {
                     "skill_id": self.skill_id,
                     "intent": normalized_intent,
                     "status": "blocked",
                     "reason": blocked_reason,
+                    "detail": (
+                        ((precheck.get("autonomy_policy") or {}).get("detail"))
+                        if blocked_reason == "autonomy_gate_blocked"
+                        else None
+                    ),
                     "email_id": email_id,
                     "ap_item_id": ap_item_id,
                     "policy_precheck": precheck,
@@ -1429,15 +1508,24 @@ class APFinanceSkill(FinanceSkill):
             if not precheck.get("eligible"):
                 reason_codes = set(precheck.get("reason_codes") or [])
                 blocked_reason = (
+                    "autonomy_gate_blocked"
+                    if "autonomy_gate_blocked" in reason_codes
+                    else (
                     "field_review_required"
                     if {"field_review_required", "blocking_source_conflicts"} & reason_codes
                     else "retry_not_recoverable"
+                    )
                 )
                 response = {
                     "skill_id": self.skill_id,
                     "intent": normalized_intent,
                     "status": "blocked",
                     "reason": blocked_reason,
+                    "detail": (
+                        ((precheck.get("autonomy_policy") or {}).get("detail"))
+                        if blocked_reason == "autonomy_gate_blocked"
+                        else None
+                    ),
                     "email_id": email_id,
                     "ap_item_id": ap_item_id,
                     "policy_precheck": precheck,

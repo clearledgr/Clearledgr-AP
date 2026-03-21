@@ -364,6 +364,10 @@ def _build_agentic_snapshot(kpis: Dict[str, Any]) -> Dict[str, Any]:
             count = int(entry.get("count") or 0)
             if reason:
                 top_blockers.append(f"{reason} ({count})")
+    shadow = agentic.get("shadow_decision_scoring") if isinstance(agentic.get("shadow_decision_scoring"), dict) else {}
+    shadow_summary = shadow.get("summary") if isinstance(shadow.get("summary"), dict) else {}
+    post_verification = agentic.get("post_action_verification") if isinstance(agentic.get("post_action_verification"), dict) else {}
+    post_verification_summary = post_verification.get("summary") if isinstance(post_verification.get("summary"), dict) else {}
     return {
         "window_hours": int(agentic.get("window_hours") or 0),
         "straight_through_rate_pct": round(_metric_percent(agentic.get("straight_through_rate")), 2),
@@ -372,6 +376,13 @@ def _build_agentic_snapshot(kpis: Dict[str, Any]) -> Dict[str, Any]:
         "agent_suggestion_acceptance_pct": round(_metric_percent(agentic.get("agent_suggestion_acceptance")), 2),
         "manual_override_required_pct": round(_metric_percent(agentic.get("agent_actions_requiring_manual_override")), 2),
         "awaiting_approval_avg_hours": round(_metric_hours(agentic.get("awaiting_approval_time_hours")), 2),
+        "shadow_action_match_pct": round(_metric_percent(shadow_summary.get("action_match_rate")), 2),
+        "shadow_critical_field_match_pct": round(_metric_percent(shadow_summary.get("critical_field_match_rate")), 2),
+        "shadow_disagreement_count": int(shadow_summary.get("disagreement_count") or 0),
+        "shadow_scored_items": int(shadow_summary.get("scored_item_count") or 0),
+        "post_verification_rate_pct": round(_metric_percent(post_verification_summary.get("verification_rate")), 2),
+        "post_verification_mismatch_count": int(post_verification_summary.get("mismatch_count") or 0),
+        "post_verification_attempted_count": int(post_verification_summary.get("attempted_count") or 0),
         "top_blockers": top_blockers,
     }
 

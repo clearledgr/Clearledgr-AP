@@ -42,6 +42,7 @@ const HOME_PIPELINE_SHORTCUTS = [
 ];
 
 const WORKFLOW_SURFACE_ROUTE_IDS = [
+  'clearledgr/review',
   'clearledgr/upcoming',
   'clearledgr/vendors',
   'clearledgr/templates',

@@ -1249,6 +1249,33 @@ class InvoicePostingMixin:
                 )
             except Exception:
                 pass  # Non-fatal
+            if hasattr(self.db, "update_ap_item_metadata_merge"):
+                verification_status = "verified_success" if result.get("status") == "success" else "verified_failure"
+                verification_reasons = []
+                if result.get("status") == "success":
+                    if not (result.get("erp_reference") or result.get("bill_id")):
+                        verification_status = "verification_gap"
+                        verification_reasons.append("missing_erp_reference")
+                else:
+                    if not (result.get("reason") or result.get("error")):
+                        verification_reasons.append("missing_failure_reason")
+                try:
+                    self.db.update_ap_item_metadata_merge(
+                        ap_item_id,
+                        {
+                            "post_action_verification": {
+                                "verified_at": datetime.now(timezone.utc).isoformat(),
+                                "status": verification_status,
+                                "attempted": True,
+                                "result_status": result.get("status"),
+                                "erp_reference": result.get("erp_reference") or result.get("bill_id"),
+                                "erp_type": result.get("erp") or result.get("erp_type"),
+                                "reason_codes": verification_reasons,
+                            }
+                        },
+                    )
+                except Exception:
+                    pass
 
         if result.get("status") == "success":
             result["vendor_id"] = vendor_id

@@ -79,6 +79,35 @@ function StatePill({ state }) {
   ">${tone.label}</span>`;
 }
 
+function getNonInvoiceActions(item) {
+  const documentType = normalizeDocumentType(item?.document_type);
+  if (documentType === 'credit_note') {
+    return [
+      { id: 'apply_to_invoice', label: 'Apply to invoice', requiresReference: true, referenceLabel: 'Invoice reference' },
+      { id: 'record_vendor_credit', label: 'Record vendor credit', requiresReference: false },
+      { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
+    ];
+  }
+  if (documentType === 'refund') {
+    return [
+      { id: 'link_to_payment', label: 'Link to payment', requiresReference: true, referenceLabel: 'Payment reference' },
+      { id: 'record_vendor_refund', label: 'Record vendor refund', requiresReference: false },
+      { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
+    ];
+  }
+  if (documentType === 'receipt') {
+    return [
+      { id: 'link_to_payment', label: 'Link to payment', requiresReference: true, referenceLabel: 'Payment reference' },
+      { id: 'archive_receipt', label: 'Archive receipt', requiresReference: false },
+      { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
+    ];
+  }
+  return [
+    { id: 'mark_reviewed', label: 'Mark reviewed', requiresReference: false },
+    { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
+  ];
+}
+
 function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   const blockers = [];
   const fieldReviewBlockers = getFieldReviewBlockers(item);
@@ -166,7 +195,7 @@ function getEvidenceChecklist(item, state, contextPayload) {
   ];
 }
 
-function FieldReviewRows({ blockers, pauseReason }) {
+function FieldReviewRows({ blockers, pauseReason, onResolve = null, resolvingField = '' }) {
   if ((!Array.isArray(blockers) || blockers.length === 0) && !pauseReason) {
     return html`<p class="muted">No paused field review.</p>`;
   }
@@ -201,6 +230,38 @@ function FieldReviewRows({ blockers, pauseReason }) {
             </span>
           </div>
           <div class="muted" style="font-size:12px;line-height:1.45">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
+          ${typeof onResolve === 'function' && html`
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+              ${blocker.email_value !== null && blocker.email_value !== undefined && html`
+                <button
+                  class="alt"
+                  onClick=${() => onResolve(blocker, 'email')}
+                  disabled=${Boolean(resolvingField === `${blocker.field}:email`)}
+                  style="padding:8px 12px;font-size:12px"
+                >
+                  ${resolvingField === `${blocker.field}:email` ? 'Saving…' : 'Use email'}
+                </button>
+              `}
+              ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html`
+                <button
+                  class="alt"
+                  onClick=${() => onResolve(blocker, 'attachment')}
+                  disabled=${Boolean(resolvingField === `${blocker.field}:attachment`)}
+                  style="padding:8px 12px;font-size:12px"
+                >
+                  ${resolvingField === `${blocker.field}:attachment` ? 'Saving…' : 'Use attachment'}
+                </button>
+              `}
+              <button
+                class="alt"
+                onClick=${() => onResolve(blocker, 'manual')}
+                disabled=${Boolean(resolvingField === `${blocker.field}:manual`)}
+                style="padding:8px 12px;font-size:12px"
+              >
+                ${resolvingField === `${blocker.field}:manual` ? 'Saving…' : 'Enter manually'}
+              </button>
+            </div>
+          `}
         </div>
       `)}
     </div>
@@ -310,6 +371,8 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
   const [context, setContext] = useState(null);
   const [loading, setLoading] = useState(true);
   const [dialog, openDialog] = useActionDialog();
+  const [resolvingFieldKey, setResolvingFieldKey] = useState('');
+  const [resolvingNonInvoiceKey, setResolvingNonInvoiceKey] = useState('');
   const itemId = routeParams?.id || '';
   const templateScope = { orgId, userEmail };
   const [templatePrefs, setTemplatePrefs] = useState(() => readReplyTemplatePreferences(templateScope));
@@ -387,6 +450,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
     if (ordered.length > 0) return ordered;
     return replyTemplates.slice(0, 4);
   }, [replyTemplates, templatePrefs]);
+  const nonInvoiceActions = useMemo(() => (!isInvoiceDocument ? getNonInvoiceActions(item) : []), [isInvoiceDocument, item]);
 
   const [doRequestApproval, requestingApproval] = useAction(async () => {
     const result = await executeIntent(api, orgId, 'request_approval', {
@@ -467,6 +531,112 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
       ok ? 'success' : 'error',
     );
     await refresh();
+  });
+
+  const [doResolveFieldReview, resolvingFieldReview] = useAction(async (blocker, source) => {
+    if (!item?.id || !blocker?.field) return;
+    const pendingKey = `${blocker.field}:${source}`;
+    setResolvingFieldKey(pendingKey);
+    let manualValue;
+    try {
+      if (source === 'manual') {
+        manualValue = await openDialog({
+          actionType: 'field_review_manual',
+          title: `Set ${blocker.field_label || 'field'}`,
+          label: `${blocker.field_label || 'Field'} value`,
+          message: 'Enter the canonical value that Clearledgr should keep on the AP record.',
+          defaultValue: blocker.winning_value ?? '',
+          confirmLabel: 'Apply value',
+          cancelLabel: 'Cancel',
+          required: true,
+          chips: [],
+        });
+        if (manualValue === null) return;
+      }
+
+      const result = await api(`/api/ap/items/${encodeURIComponent(item.id)}/field-review/resolve?organization_id=${encodeURIComponent(orgId)}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          field: blocker.field,
+          source,
+          manual_value: manualValue,
+          auto_resume: true,
+        }),
+      });
+      const ok = ['resolved', 'resolved_and_resumed'].includes(String(result?.status || '').toLowerCase());
+      toast(
+        ok
+          ? (result?.auto_resumed
+              ? `${blocker.field_label || 'Field'} updated and workflow resumed.`
+              : `${blocker.field_label || 'Field'} updated.`)
+          : (result?.reason || 'Could not resolve blocked field.'),
+        ok ? 'success' : 'error',
+      );
+      await refresh();
+    } catch (error) {
+      toast(error?.message || 'Could not resolve blocked field.', 'error');
+    } finally {
+      setResolvingFieldKey('');
+    }
+  });
+
+  const [doResolveNonInvoice, resolvingNonInvoice] = useAction(async (action) => {
+    if (!item?.id || !action?.id) return;
+    const pendingKey = `${item.id}:${action.id}`;
+    setResolvingNonInvoiceKey(pendingKey);
+    try {
+      let relatedReference = null;
+      let note = null;
+      if (action.requiresReference) {
+        relatedReference = await openDialog({
+          actionType: 'generic',
+          title: action.label,
+          label: action.referenceLabel || 'Related reference',
+          message: 'Capture the linked invoice or payment reference so this non-invoice finance document is auditable.',
+          placeholder: action.referenceLabel || 'Reference',
+          defaultValue: String(item?.invoice_number || '').trim(),
+          confirmLabel: action.label,
+          cancelLabel: 'Cancel',
+          required: true,
+          chips: [],
+        });
+        if (relatedReference == null) return;
+      } else if (action.id === 'needs_followup') {
+        note = await openDialog({
+          actionType: 'generic',
+          title: 'Needs follow-up',
+          label: 'Why does this still need follow-up?',
+          message: 'Record the next operator action before keeping this document open.',
+          confirmLabel: 'Save follow-up',
+          cancelLabel: 'Cancel',
+          required: true,
+          chips: [],
+        });
+        if (note == null) return;
+      }
+
+      const result = await api(`/api/ap/items/${encodeURIComponent(item.id)}/non-invoice/resolve?organization_id=${encodeURIComponent(orgId)}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          outcome: action.id,
+          related_reference: relatedReference || undefined,
+          note: note || undefined,
+          close_record: action.id !== 'needs_followup',
+        }),
+      });
+      const ok = String(result?.status || '').toLowerCase() === 'resolved';
+      toast(
+        ok
+          ? `${documentLabel} updated.`
+          : (result?.reason || 'Could not resolve non-invoice review.'),
+        ok ? 'success' : 'error',
+      );
+      await refresh();
+    } catch (error) {
+      toast(error?.message || 'Could not resolve non-invoice review.', 'error');
+    } finally {
+      setResolvingNonInvoiceKey('');
+    }
   });
 
   const [doPost, posting] = useAction(async () => {
@@ -631,6 +801,16 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
             ${primaryPending ? 'Processing…' : primaryAction.label}
           </button>
         `}
+        ${!readOnlyMode && !isInvoiceDocument && nonInvoiceActions.map((action) => html`
+          <button
+            key=${action.id}
+            class="alt"
+            onClick=${() => doResolveNonInvoice(action)}
+            disabled=${Boolean(resolvingNonInvoice && resolvingNonInvoiceKey === `${item.id}:${action.id}`)}
+          >
+            ${resolvingNonInvoice && resolvingNonInvoiceKey === `${item.id}:${action.id}` ? 'Processing…' : action.label}
+          </button>
+        `)}
         ${readOnlyMode && html`
           <div class="muted" style="width:100%">Read-only view. Queue actions are reserved for AP operators.</div>
         `}
@@ -661,7 +841,12 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
 
         <div class="panel">
           <h3 style="margin-top:0">Paused field review</h3>
-          <${FieldReviewRows} blockers=${fieldReviewBlockers} pauseReason=${pauseReason} />
+          <${FieldReviewRows}
+            blockers=${fieldReviewBlockers}
+            pauseReason=${pauseReason}
+            onResolve=${readOnlyMode ? null : doResolveFieldReview}
+            resolvingField=${resolvingFieldReview ? resolvingFieldKey : ''}
+          />
         </div>
 
         <div class="panel">

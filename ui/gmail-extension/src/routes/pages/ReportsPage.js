@@ -31,6 +31,19 @@ function ReportRow({ label, value, detail }) {
   </div>`;
 }
 
+function metricPercent(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? `${numeric.toFixed(2)}%` : '0.00%';
+}
+
+function toneForPercent(value, { watchBelow = 95, dangerBelow = 90 } = {}) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 'color:var(--text-muted);';
+  if (numeric < dangerBelow) return 'color:#B91C1C;';
+  if (numeric < watchBelow) return 'color:#A16207;';
+  return 'color:#047857;';
+}
+
 export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate, toast }) {
   const pipelineScope = useMemo(() => ({ orgId, userEmail }), [orgId, userEmail]);
   const [metrics, setMetrics] = useState(null);
@@ -67,6 +80,7 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
   };
 
   const dashboard = bootstrap?.dashboard || {};
+  const agenticSnapshot = dashboard?.agentic_snapshot || {};
   const totals = metrics?.totals || {};
   const sources = metrics?.sources || {};
   const duplicates = metrics?.duplicates || {};
@@ -152,6 +166,30 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
       </div>
 
       <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="panel">
+          <h3 style="margin-top:0">Autonomy quality</h3>
+          <p class="muted" style="margin:0 0 12px">
+            Keep autonomy honest: show whether live vendor decisions and ERP outcomes are matching what the agent proposed.
+          </p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <${ReportRow}
+              label="Shadow action match"
+              value=${html`<span style=${toneForPercent(agenticSnapshot.shadow_action_match_pct, { watchBelow: 95, dangerBelow: 90 })}>${metricPercent(agenticSnapshot.shadow_action_match_pct)}</span>`}
+              detail=${`${Number(agenticSnapshot.shadow_scored_items || 0).toLocaleString()} scored records · ${Number(agenticSnapshot.shadow_disagreement_count || 0).toLocaleString()} disagreements`}
+            />
+            <${ReportRow}
+              label="Critical field match"
+              value=${html`<span style=${toneForPercent(agenticSnapshot.shadow_critical_field_match_pct, { watchBelow: 97, dangerBelow: 92 })}>${metricPercent(agenticSnapshot.shadow_critical_field_match_pct)}</span>`}
+              detail="Amount, currency, invoice #, vendor, and document type"
+            />
+            <${ReportRow}
+              label="Post verification rate"
+              value=${html`<span style=${toneForPercent(agenticSnapshot.post_verification_rate_pct, { watchBelow: 100, dangerBelow: 95 })}>${metricPercent(agenticSnapshot.post_verification_rate_pct)}</span>`}
+              detail=${`${Number(agenticSnapshot.post_verification_attempted_count || 0).toLocaleString()} posted attempts · ${Number(agenticSnapshot.post_verification_mismatch_count || 0).toLocaleString()} mismatches`}
+            />
+          </div>
+        </div>
+
         <div class="panel">
           <h3 style="margin-top:0">Start from the right queue view</h3>
           <p class="muted" style="margin:0 0 12px">Reports should send you back into queue work, not trap you in a dashboard.</p>

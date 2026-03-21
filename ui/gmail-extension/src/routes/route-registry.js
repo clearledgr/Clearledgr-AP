@@ -30,6 +30,16 @@ export const ROUTES = [
     canHide: false,
   },
   {
+    id: 'clearledgr/review',
+    title: 'Review',
+    subtitle: 'Resolve blocked fields, exceptions, and posting retries.',
+    icon: 'review',
+    navOrder: 22,
+    defaultPinned: false,
+    canHide: true,
+    opsOnly: true,
+  },
+  {
     id: 'clearledgr/upcoming',
     title: 'Upcoming',
     subtitle: 'Due follow-ups across approvals, vendor replies, and posting.',

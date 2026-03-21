@@ -3,6 +3,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const ROUTE_ICON_MARKUP = {
   home: '<path d="M3.5 8.75 10 3.75l6.5 5v7a1 1 0 0 1-1 1h-3.75v-4.5h-3.5v4.5H4.5a1 1 0 0 1-1-1z"/>',
   pipeline: '<rect x="3.5" y="4" width="13" height="3" rx="1.25"/><rect x="5.5" y="8.5" width="9" height="3" rx="1.25"/><rect x="7.5" y="13" width="5" height="3" rx="1.25"/>',
+  review: '<path d="M6 4.75h8"/><path d="M6 8.5h8"/><path d="M6 12.25h4.25"/><path d="M4.75 3.75h10.5a1 1 0 0 1 1 1v10.5a1 1 0 0 1-1 1H4.75a1 1 0 0 1-1-1V4.75a1 1 0 0 1 1-1Z"/><path d="m11.75 13.75 1.5 1.5 3-3"/>',
   activity: '<path d="M3.5 13.5h2.5l2-6 3.2 8 2-5h3.3"/>',
   connections: '<path d="M7 6.25h-1.5A1.75 1.75 0 0 0 3.75 8v4A1.75 1.75 0 0 0 5.5 13.75H7"/><path d="M13 6.25h1.5A1.75 1.75 0 0 1 16.25 8v4A1.75 1.75 0 0 1 14.5 13.75H13"/><path d="M6.75 10h6.5"/>',
   vendors: '<path d="M4.25 7.25 10 4l5.75 3.25v7.5H4.25z"/><path d="M7 16.75V10h6v6.75"/><path d="M2.75 16.75h14.5"/>',

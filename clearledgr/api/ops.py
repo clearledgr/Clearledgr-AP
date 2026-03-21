@@ -386,6 +386,7 @@ async def get_autopilot_status(
             "organization_id": org_id,
             "pending_retry_jobs": await runtime.resume_pending_agent_tasks(),
             "ap_skill_readiness": runtime.skill_readiness("ap_v1", window_hours=168),
+            "ap_autonomy_gate": runtime.ap_autonomy_summary(window_hours=168),
             "autonomous_retry": {
                 "enabled": bool(enabled_by_config),
                 "durable": True,

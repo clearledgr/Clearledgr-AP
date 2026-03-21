@@ -210,3 +210,173 @@ def test_ap_kpis_expose_vendor_drift_scorecards_and_review_sampling(client, db):
     assert any(entry["ap_item_id"] == clean_recent["id"] for entry in review_queue)
     assert any(entry["sample_reason"] == "blocking_conflict_present" for entry in review_queue)
     assert any(entry["sample_reason"] == "vendor_layout_shift_check" for entry in review_queue)
+
+
+def test_ap_kpis_expose_shadow_scoring_and_post_action_verification(client, db):
+    now = datetime.now(timezone.utc)
+
+    strong_metadata = {
+        "document_type": "invoice",
+        "shadow_decision": {
+            "proposed_action": "auto_approve_post",
+            "proposed_fields": {
+                "vendor": "Shadow Strong",
+                "amount": 220.0,
+                "currency": "USD",
+                "invoice_number": "INV-SHADOW-STRONG",
+                "document_type": "invoice",
+            },
+        },
+        "post_action_verification": {
+            "attempted": True,
+            "status": "verified_success",
+            "erp_reference": "ERP-SHADOW-1",
+        },
+    }
+    strong_item = _create_item(
+        db,
+        item_id="SHADOW-STRONG-1",
+        vendor="Shadow Strong",
+        state="closed",
+        amount=220.0,
+        created_at=now - timedelta(days=1),
+        metadata=strong_metadata,
+    )
+    db.update_ap_item(
+        strong_item["id"],
+        erp_reference="ERP-SHADOW-1",
+        erp_posted_at=now.isoformat(),
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": strong_item["id"],
+            "organization_id": "default",
+            "event_type": "erp_post_attempted",
+            "actor_type": "system",
+            "actor_id": "test",
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": strong_item["id"],
+            "organization_id": "default",
+            "event_type": "erp_post_succeeded",
+            "actor_type": "system",
+            "actor_id": "test",
+        }
+    )
+
+    weak_item = _create_item(
+        db,
+        item_id="SHADOW-WEAK-1",
+        vendor="Shadow Weak",
+        state="needs_approval",
+        amount=120.0,
+        created_at=now - timedelta(hours=12),
+        metadata={
+            "document_type": "invoice",
+            "shadow_decision": {
+                "proposed_action": "auto_approve_post",
+                "proposed_fields": {
+                    "vendor": "Shadow Weak",
+                    "amount": 99.0,
+                    "currency": "USD",
+                    "invoice_number": "INV-SHADOW-WEAK",
+                    "document_type": "invoice",
+                },
+            },
+        },
+    )
+    db.save_approval(
+        {
+            "ap_item_id": weak_item["id"],
+            "channel_id": "slack",
+            "message_ts": "171.1",
+            "source_channel": "slack",
+            "status": "pending",
+            "organization_id": "default",
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": weak_item["id"],
+            "organization_id": "default",
+            "event_type": "field_correction",
+            "actor_type": "user",
+            "actor_id": "ops@example.com",
+        }
+    )
+
+    mismatch_item = _create_item(
+        db,
+        item_id="SHADOW-MISMATCH-1",
+        vendor="Shadow Weak",
+        state="approved",
+        amount=333.0,
+        created_at=now - timedelta(hours=6),
+        metadata={
+            "document_type": "invoice",
+            "shadow_decision": {
+                "proposed_action": "auto_approve_post",
+                "proposed_fields": {
+                    "vendor": "Shadow Weak",
+                    "amount": 333.0,
+                    "currency": "USD",
+                    "invoice_number": "INV-SHADOW-MISMATCH",
+                    "document_type": "invoice",
+                },
+            },
+            "post_action_verification": {
+                "attempted": True,
+                "status": "verification_gap",
+            },
+        },
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": mismatch_item["id"],
+            "organization_id": "default",
+            "event_type": "erp_post_attempted",
+            "actor_type": "system",
+            "actor_id": "test",
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": mismatch_item["id"],
+            "organization_id": "default",
+            "event_type": "erp_post_succeeded",
+            "actor_type": "system",
+            "actor_id": "test",
+        }
+    )
+
+    response = client.get("/api/ops/ap-kpis?organization_id=default")
+    assert response.status_code == 200
+
+    telemetry = ((response.json().get("kpis") or {}).get("agentic_telemetry") or {})
+    shadow = telemetry.get("shadow_decision_scoring") or {}
+    verification = telemetry.get("post_action_verification") or {}
+
+    assert shadow["summary"]["scored_item_count"] >= 3
+    assert shadow["summary"]["disagreement_count"] >= 1
+    assert shadow["summary"]["action_match_rate"] < 1.0
+    assert shadow["summary"]["critical_field_match_rate"] < 1.0
+    weak_shadow = next(
+        row for row in (shadow.get("vendor_scorecards") or [])
+        if row["vendor_name"] == "Shadow Weak"
+    )
+    assert weak_shadow["trust_mode"] in {"weak", "watch"}
+    assert weak_shadow["disagreement_count"] >= 1
+    assert "amount" in weak_shadow["top_disagreement_fields"]
+
+    assert verification["summary"]["attempted_count"] >= 2
+    assert verification["summary"]["verified_count"] >= 1
+    assert verification["summary"]["mismatch_count"] >= 1
+    assert verification["summary"]["verification_rate"] < 1.0
+    weak_verification = next(
+        row for row in (verification.get("vendor_scorecards") or [])
+        if row["vendor_name"] == "Shadow Weak"
+    )
+    assert weak_verification["attempted_count"] >= 1
+    assert weak_verification["verification_rate"] < 1.0

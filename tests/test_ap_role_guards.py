@@ -16,6 +16,7 @@ OPS_MUTATION_ROUTES = {
     ("POST", "/api/agent/intents/execute"),
     ("POST", "/api/agent/intents/execute-request"),
     ("POST", "/api/ap/items/{ap_item_id}/sources/link"),
+    ("POST", "/api/ap/items/{ap_item_id}/field-review/resolve"),
     ("POST", "/api/ap/items/{ap_item_id}/resubmit"),
     ("POST", "/api/ap/items/{ap_item_id}/merge"),
     ("POST", "/api/ap/items/{ap_item_id}/split"),

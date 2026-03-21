@@ -18,6 +18,7 @@ from clearledgr.core.errors import safe_error
 from clearledgr.api.deps import verify_org_access
 from clearledgr.services.ap_context_connectors import build_multi_system_context
 from clearledgr.services.ap_operator_audit import normalize_operator_audit_events
+from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
 
 router = APIRouter(prefix="/api/ap/items", tags=["ap-items"])
@@ -67,6 +68,31 @@ class ResubmitRejectedItemRequest(BaseModel):
     metadata: Dict[str, Any] = {}
 
 
+class ResolveFieldReviewRequest(BaseModel):
+    field: str = Field(..., min_length=1)
+    source: str = Field(..., min_length=1, description="email, attachment, or manual")
+    manual_value: Optional[Any] = None
+    note: Optional[str] = None
+    auto_resume: bool = True
+
+
+class BulkResolveFieldReviewRequest(BaseModel):
+    ap_item_ids: List[str] = Field(..., min_length=1)
+    field: str = Field(..., min_length=1)
+    source: str = Field(..., min_length=1, description="email, attachment, or manual")
+    manual_value: Optional[Any] = None
+    note: Optional[str] = None
+    auto_resume: bool = True
+
+
+class ResolveNonInvoiceReviewRequest(BaseModel):
+    outcome: str = Field(..., min_length=1)
+    related_reference: Optional[str] = None
+    related_ap_item_id: Optional[str] = None
+    note: Optional[str] = None
+    close_record: bool = True
+
+
 def _authenticated_actor(user: Any, fallback: str = "system") -> str:
     return str(
         getattr(user, "email", None)
@@ -85,6 +111,18 @@ def _parse_json(raw: Any) -> Dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return {}
+
+
+def _parse_json_list(raw: Any) -> List[Any]:
+    if isinstance(raw, list):
+        return list(raw)
+    if isinstance(raw, str):
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, list) else []
+        except json.JSONDecodeError:
+            return []
+    return []
 
 
 def _parse_iso(raw: Any) -> Optional[datetime]:
@@ -155,6 +193,159 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_optional_float(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+_FIELD_REVIEW_MUTABLE_FIELDS = {
+    "amount",
+    "currency",
+    "invoice_number",
+    "vendor",
+    "due_date",
+    "document_type",
+}
+
+_NON_INVOICE_ALLOWED_OUTCOMES = {
+    "credit_note": {"apply_to_invoice", "record_vendor_credit", "needs_followup"},
+    "refund": {"link_to_payment", "record_vendor_refund", "needs_followup"},
+    "receipt": {"link_to_payment", "archive_receipt", "needs_followup"},
+    "payment": {"link_to_payment", "needs_followup"},
+    "payment_request": {"route_outside_invoice_workflow", "needs_followup"},
+    "statement": {"send_to_reconciliation", "needs_followup"},
+    "bank_statement": {"send_to_reconciliation", "needs_followup"},
+    "other": {"mark_reviewed", "needs_followup"},
+}
+
+
+def _normalize_field_review_field(raw: Any) -> str:
+    return str(raw or "").strip().lower()
+
+
+def _normalize_field_review_source(raw: Any) -> str:
+    token = str(raw or "").strip().lower().replace("-", "_")
+    if token in {"email", "attachment", "manual"}:
+        return token
+    if token in {"manual_value", "manual_entry"}:
+        return "manual"
+    return token
+
+
+def _normalize_document_type_token(raw: Any) -> str:
+    token = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if token == "credit_memo":
+        return "credit_note"
+    if token == "bank_statement":
+        return "statement"
+    return token or "invoice"
+
+
+def _normalize_non_invoice_outcome(raw: Any) -> str:
+    return str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _get_conflict_field(raw: Any) -> str:
+    if isinstance(raw, dict):
+        return _normalize_field_review_field(raw.get("field") or raw.get("code"))
+    if isinstance(raw, str):
+        return _normalize_field_review_field(raw)
+    return ""
+
+
+def _resolve_field_review_source_value(
+    blocker: Optional[Dict[str, Any]],
+    *,
+    source: str,
+    manual_value: Any,
+) -> Any:
+    if source == "manual":
+        return manual_value
+    blocker_payload = blocker if isinstance(blocker, dict) else {}
+    return blocker_payload.get(f"{source}_value")
+
+
+def _coerce_field_review_value(field: str, value: Any) -> Any:
+    token = _normalize_field_review_field(field)
+    if token not in _FIELD_REVIEW_MUTABLE_FIELDS:
+        raise HTTPException(status_code=400, detail="unsupported_field_review_field")
+
+    if token == "amount":
+        numeric = _coerce_optional_float(value)
+        if numeric is None:
+            raise HTTPException(status_code=400, detail="invalid_amount_resolution")
+        return round(numeric, 2)
+
+    if token == "currency":
+        resolved = str(value or "").strip().upper()
+        if not resolved:
+            raise HTTPException(status_code=400, detail="invalid_currency_resolution")
+        return resolved
+
+    if token == "document_type":
+        resolved = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if resolved == "credit_memo":
+            resolved = "credit_note"
+        if resolved not in {"invoice", "receipt", "payment_request", "payment", "refund", "credit_note", "bank_statement"}:
+            raise HTTPException(status_code=400, detail="invalid_document_type_resolution")
+        return resolved
+
+    resolved = str(value or "").strip()
+    if not resolved:
+        raise HTTPException(status_code=400, detail="invalid_field_review_value")
+    return resolved
+
+
+def _field_resolution_column_updates(field: str, value: Any) -> Dict[str, Any]:
+    token = _normalize_field_review_field(field)
+    if token == "vendor":
+        return {"vendor_name": value}
+    if token in {"amount", "currency", "invoice_number", "due_date"}:
+        return {token: value}
+    return {}
+
+
+def _filter_allowed_ap_item_updates(db: ClearledgrDB, updates: Dict[str, Any]) -> Dict[str, Any]:
+    allowed = getattr(db, "_AP_ITEM_ALLOWED_COLUMNS", None)
+    filtered = dict(updates)
+    if isinstance(allowed, (set, frozenset)):
+        filtered = {
+            key: value
+            for key, value in filtered.items()
+            if key in allowed
+        }
+    serialized: Dict[str, Any] = {}
+    for key, value in filtered.items():
+        if key != "metadata" and isinstance(value, (dict, list)):
+            serialized[key] = json.dumps(value)
+        else:
+            serialized[key] = value
+    return serialized
+
+
+def _should_auto_resume_after_field_resolution(item: Dict[str, Any]) -> bool:
+    state = str(item.get("state") or "").strip().lower()
+    document_type = _normalize_document_type_token(item.get("document_type"))
+    return (
+        state in {"ready_to_post", "failed_post"}
+        and document_type == "invoice"
+        and not bool(item.get("requires_field_review"))
+    )
+
+
+def _non_invoice_resolution_state(
+    *,
+    current_state: str,
+    outcome: str,
+    close_record: bool,
+) -> str:
+    if outcome == "needs_followup":
+        return APState.NEEDS_INFO.value
+    return current_state
 
 
 def _derive_attachment_summary(
@@ -246,6 +437,18 @@ def _derive_next_action(payload: Dict[str, Any]) -> str:
     if payload.get("is_merged_source") or payload.get("merged_into"):
         return "none"
     state = str(payload.get("state") or "").strip().lower()
+    document_type = _normalize_document_type_token(payload.get("document_type"))
+    if document_type != "invoice":
+        resolution = payload.get("non_invoice_resolution") or {}
+        if isinstance(resolution, dict) and resolution.get("resolved_at"):
+            if state == APState.NEEDS_INFO.value or resolution.get("outcome") == "needs_followup":
+                return "needs_non_invoice_followup"
+            return "none"
+        if state in {APState.CLOSED.value, APState.REJECTED.value}:
+            return "none"
+        if state in {APState.NEEDS_INFO.value}:
+            return "needs_non_invoice_followup"
+        return "resolve_non_invoice"
     if payload.get("requires_field_review"):
         return "review_fields"
     if state in {APState.NEEDS_INFO.value}:
@@ -853,7 +1056,6 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         state=str(payload.get("state") or "").strip().lower(),
         metadata=metadata,
     )
-    payload["next_action"] = _derive_next_action(payload)
     payload["queue_entered_at"] = (
         payload.get("queue_entered_at")
         or payload.get("received_at")
@@ -861,6 +1063,14 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         or payload.get("updated_at")
     )
     state_token = str(payload.get("state") or "").strip().lower()
+    non_invoice_resolution = metadata.get("non_invoice_resolution")
+    payload["non_invoice_resolution"] = non_invoice_resolution if isinstance(non_invoice_resolution, dict) else {}
+    payload["non_invoice_review_required"] = bool(
+        _normalize_document_type_token(payload.get("document_type")) != "invoice"
+        and state_token not in {APState.CLOSED.value, APState.REJECTED.value}
+        and not payload["non_invoice_resolution"].get("resolved_at")
+    )
+    payload["next_action"] = _derive_next_action(payload)
     payload["approval_requested_at"] = (
         payload.get("approval_requested_at")
         or metadata.get("approval_requested_at")
@@ -1320,6 +1530,173 @@ def _require_item(db: ClearledgrDB, ap_item_id: str) -> Dict[str, Any]:
     return item
 
 
+def _preview_field_review_resolution(
+    db: ClearledgrDB,
+    item: Dict[str, Any],
+    *,
+    metadata: Dict[str, Any],
+    field: str,
+    resolved_value: Any,
+    resolved_source: str,
+    actor_id: str,
+    blocker: Optional[Dict[str, Any]] = None,
+    note: Optional[str] = None,
+) -> Dict[str, Any]:
+    field_token = _normalize_field_review_field(field)
+    now = datetime.now(timezone.utc).isoformat()
+
+    column_updates = _field_resolution_column_updates(field_token, resolved_value)
+
+    provenance = _parse_json(metadata.get("field_provenance"))
+    provenance_entry = provenance.get(field_token) if isinstance(provenance.get(field_token), dict) else {}
+    provenance_entry = dict(provenance_entry or {})
+    provenance_entry.update(
+        {
+            "source": resolved_source,
+            "value": resolved_value,
+            "resolved_at": now,
+            "resolved_by": actor_id,
+            "resolution_note": (str(note or "").strip() or None),
+        }
+    )
+    provenance[field_token] = provenance_entry
+    metadata["field_provenance"] = provenance
+
+    evidence = _parse_json(metadata.get("field_evidence"))
+    evidence_entry = evidence.get(field_token) if isinstance(evidence.get(field_token), dict) else {}
+    evidence_entry = dict(evidence_entry or {})
+    evidence_entry.update(
+        {
+            "source": resolved_source,
+            "selected_value": resolved_value,
+            "resolved_at": now,
+            "resolved_by": actor_id,
+        }
+    )
+    if resolved_source == "manual":
+        evidence_entry["manual_value"] = resolved_value
+    evidence[field_token] = evidence_entry
+    metadata["field_evidence"] = evidence
+
+    source_conflicts = _parse_json_list(metadata.get("source_conflicts"))
+    updated_conflicts: List[Dict[str, Any]] = []
+    for conflict in source_conflicts:
+        if not isinstance(conflict, dict):
+            continue
+        if _normalize_field_review_field(conflict.get("field")) != field_token:
+            updated_conflicts.append(conflict)
+            continue
+        resolved_conflict = dict(conflict)
+        resolved_conflict.update(
+            {
+                "blocking": False,
+                "resolved": True,
+                "resolved_at": now,
+                "resolved_by": actor_id,
+                "selected_source": resolved_source,
+                "selected_value": resolved_value,
+            }
+        )
+        if note:
+            resolved_conflict["resolution_note"] = str(note).strip()
+        updated_conflicts.append(resolved_conflict)
+    metadata["source_conflicts"] = updated_conflicts
+
+    confidence_blockers = _parse_json_list(
+        item.get("confidence_blockers") or metadata.get("confidence_blockers")
+    )
+    filtered_confidence_blockers = [
+        blocker
+        for blocker in confidence_blockers
+        if _get_conflict_field(blocker) != field_token
+    ]
+    metadata["confidence_blockers"] = filtered_confidence_blockers
+
+    field_confidences = _parse_json(item.get("field_confidences")) or _parse_json(metadata.get("field_confidences"))
+    if isinstance(field_confidences, dict):
+        field_confidences[field_token] = 1.0
+        metadata["field_confidences"] = field_confidences
+
+    resolutions = _parse_json(metadata.get("field_review_resolutions"))
+    resolutions[field_token] = {
+        "field": field_token,
+        "selected_source": resolved_source,
+        "selected_value": resolved_value,
+        "resolved_at": now,
+        "resolved_by": actor_id,
+        "note": str(note or "").strip() or None,
+        "email_value": blocker.get("email_value") if isinstance(blocker, dict) else None,
+        "attachment_value": blocker.get("attachment_value") if isinstance(blocker, dict) else None,
+        "previous_winning_source": blocker.get("winning_source") if isinstance(blocker, dict) else None,
+        "previous_winning_value": blocker.get("winning_value") if isinstance(blocker, dict) else None,
+    }
+    metadata["field_review_resolutions"] = resolutions
+
+    conflict_actions = _parse_json_list(metadata.get("conflict_actions"))
+    conflict_actions.append(
+        {
+            "action": "field_review_resolved",
+            "field": field_token,
+            "selected_source": resolved_source,
+            "selected_value": resolved_value,
+            "resolved_at": now,
+            "resolved_by": actor_id,
+            "note": str(note or "").strip() or None,
+        }
+    )
+    metadata["conflict_actions"] = conflict_actions[-25:]
+
+    if field_token == "document_type":
+        metadata["document_type"] = resolved_value
+        metadata["email_type"] = resolved_value
+
+    metadata["requires_field_review"] = False
+    metadata["requires_extraction_review"] = False
+    metadata.pop("confidence_gate", None)
+
+    preview_item = dict(item or {})
+    preview_item.update(column_updates)
+    preview_item["metadata"] = metadata
+    preview_item["requires_field_review"] = False
+    preview_item["confidence_blockers"] = filtered_confidence_blockers
+    preview_item["source_conflicts"] = updated_conflicts
+    if isinstance(field_confidences, dict):
+        preview_item["field_confidences"] = field_confidences
+
+    preview_worklist = build_worklist_item(db, preview_item)
+    unresolved = bool(preview_worklist.get("field_review_blockers")) or bool(preview_worklist.get("requires_field_review"))
+    metadata["requires_field_review"] = unresolved
+    metadata["requires_extraction_review"] = unresolved
+
+    column_payload: Dict[str, Any] = dict(column_updates)
+    column_payload.update(
+        {
+            "metadata": metadata,
+            "requires_field_review": unresolved,
+            "source_conflicts": updated_conflicts,
+            "confidence_blockers": filtered_confidence_blockers,
+        }
+    )
+    if isinstance(field_confidences, dict):
+        column_payload["field_confidences"] = field_confidences
+
+    existing_exception = str(item.get("exception_code") or "").strip().lower()
+    if not unresolved and existing_exception in {"field_conflict", "field_review_required"}:
+        column_payload["exception_code"] = None
+        column_payload["exception_severity"] = None
+    elif unresolved and existing_exception in {"field_conflict", "field_review_required", ""}:
+        column_payload["exception_code"] = "field_conflict"
+        column_payload["exception_severity"] = "high"
+
+    return {
+        "metadata": metadata,
+        "column_payload": _filter_allowed_ap_item_updates(db, column_payload),
+        "resolved_at": now,
+        "preview_worklist": preview_worklist,
+        "unresolved": unresolved,
+    }
+
+
 def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any]:
     metadata = _parse_json(item.get("metadata"))
     sources = db.list_ap_item_sources(item["id"])
@@ -1660,6 +2037,300 @@ def get_ap_item_sources(
     verify_org_access(item.get("organization_id") or "default", _user)
     sources = db.list_ap_item_sources(ap_item_id)
     return {"sources": sources, "source_count": len(sources)}
+
+
+async def _execute_field_review_resolution(
+    db: ClearledgrDB,
+    *,
+    ap_item_id: str,
+    request: ResolveFieldReviewRequest,
+    organization_id: str,
+    user: Any,
+) -> Dict[str, Any]:
+    item = _require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or organization_id or "default", user)
+
+    normalized_field = _normalize_field_review_field(request.field)
+    normalized_source = _normalize_field_review_source(request.source)
+    if normalized_field not in _FIELD_REVIEW_MUTABLE_FIELDS:
+        raise HTTPException(status_code=400, detail="unsupported_field_review_field")
+    if normalized_source not in {"email", "attachment", "manual"}:
+        raise HTTPException(status_code=400, detail="unsupported_field_review_source")
+
+    actor_id = _authenticated_actor(user)
+    metadata = _parse_json(item.get("metadata"))
+    worklist_item = build_worklist_item(db, {**item, "metadata": metadata})
+    blocker = next(
+        (
+            row
+            for row in (worklist_item.get("field_review_blockers") or [])
+            if _normalize_field_review_field(row.get("field")) == normalized_field
+        ),
+        None,
+    )
+    if not blocker:
+        raise HTTPException(status_code=400, detail="field_review_blocker_not_found")
+
+    source_value = _resolve_field_review_source_value(
+        blocker,
+        source=normalized_source,
+        manual_value=request.manual_value,
+    )
+    if source_value in (None, ""):
+        raise HTTPException(status_code=400, detail="field_review_value_unavailable")
+
+    resolved_value = _coerce_field_review_value(normalized_field, source_value)
+    preview = _preview_field_review_resolution(
+        db,
+        item,
+        metadata=metadata,
+        field=normalized_field,
+        resolved_value=resolved_value,
+        resolved_source=normalized_source,
+        actor_id=actor_id,
+        blocker=blocker,
+        note=request.note,
+    )
+
+    db.update_ap_item(
+        ap_item_id,
+        **preview["column_payload"],
+        _actor_type="user",
+        _actor_id=actor_id,
+        _source="field_review_resolution",
+        _decision_reason="field_review_resolved",
+    )
+
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": ap_item_id,
+            "event_type": "field_correction",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": str(item.get("organization_id") or organization_id or "default"),
+            "source": "ap_item_field_review_resolution",
+            "reason": "field_review_resolved",
+            "metadata": {
+                "field": normalized_field,
+                "selected_source": normalized_source,
+                "selected_value": resolved_value,
+                "note": str(request.note or "").strip() or None,
+                "resolved_at": preview["resolved_at"],
+            },
+        }
+    )
+
+    refreshed = _require_item(db, ap_item_id)
+    normalized_item = build_worklist_item(db, refreshed)
+    auto_resume_result: Optional[Dict[str, Any]] = None
+    auto_resumed = False
+
+    if request.auto_resume and _should_auto_resume_after_field_resolution(normalized_item):
+        runtime = FinanceAgentRuntime(
+            organization_id=str(refreshed.get("organization_id") or organization_id or "default"),
+            actor_id=actor_id,
+            actor_email=getattr(user, "email", None),
+            db=db,
+        )
+        auto_resume_result = await runtime.execute_intent(
+            "retry_recoverable_failures",
+            {
+                "ap_item_id": ap_item_id,
+                "email_id": str(refreshed.get("thread_id") or refreshed.get("message_id") or ap_item_id),
+                "reason": "Resume workflow after field review resolution",
+                "source_channel": "gmail_route",
+                "source_channel_id": "gmail_route",
+                "source_message_ref": str(refreshed.get("thread_id") or refreshed.get("message_id") or ap_item_id),
+            },
+        )
+        auto_resume_status = str((auto_resume_result or {}).get("status") or "").strip().lower()
+        auto_resumed = auto_resume_status in {"ready_to_post", "posted", "posted_to_erp", "recovered"}
+        refreshed = _require_item(db, ap_item_id)
+        normalized_item = build_worklist_item(db, refreshed)
+
+    return {
+        "status": "resolved_and_resumed" if auto_resumed else "resolved",
+        "ap_item_id": ap_item_id,
+        "field": normalized_field,
+        "selected_source": normalized_source,
+        "selected_value": resolved_value,
+        "auto_resumed": auto_resumed,
+        "auto_resume_result": auto_resume_result,
+        "ap_item": normalized_item,
+    }
+
+
+@router.post("/{ap_item_id}/field-review/resolve")
+async def resolve_ap_item_field_review(
+    ap_item_id: str,
+    request: ResolveFieldReviewRequest,
+    organization_id: str = Query(default="default"),
+    user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    db = get_db()
+    result = await _execute_field_review_resolution(
+        db,
+        ap_item_id=ap_item_id,
+        request=request,
+        organization_id=organization_id,
+        user=user,
+    )
+    result["requires_field_review"] = bool((result.get("ap_item") or {}).get("requires_field_review"))
+    return result
+
+
+@router.post("/field-review/bulk-resolve")
+async def bulk_resolve_ap_item_field_review(
+    request: BulkResolveFieldReviewRequest,
+    organization_id: str = Query(default="default"),
+    user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    db = get_db()
+    ap_item_ids = [
+        str(ap_item_id or "").strip()
+        for ap_item_id in (request.ap_item_ids or [])
+        if str(ap_item_id or "").strip()
+    ]
+    ap_item_ids = list(dict.fromkeys(ap_item_ids))[:50]
+    if not ap_item_ids:
+        raise HTTPException(status_code=400, detail="missing_ap_item_ids")
+
+    single_request = ResolveFieldReviewRequest(
+        field=request.field,
+        source=request.source,
+        manual_value=request.manual_value,
+        note=request.note,
+        auto_resume=request.auto_resume,
+    )
+    results: List[Dict[str, Any]] = []
+    success_count = 0
+    auto_resumed_count = 0
+
+    for ap_item_id in ap_item_ids:
+        try:
+            result = await _execute_field_review_resolution(
+                db,
+                ap_item_id=ap_item_id,
+                request=single_request,
+                organization_id=organization_id,
+                user=user,
+            )
+            result["requires_field_review"] = bool((result.get("ap_item") or {}).get("requires_field_review"))
+            success_count += 1
+            auto_resumed_count += int(bool(result.get("auto_resumed")))
+            results.append(result)
+        except HTTPException as exc:
+            results.append(
+                {
+                    "status": "error",
+                    "ap_item_id": ap_item_id,
+                    "reason": str(exc.detail),
+                    "http_status": exc.status_code,
+                }
+            )
+
+    return {
+        "status": "completed" if success_count == len(ap_item_ids) else ("partial" if success_count > 0 else "error"),
+        "requested_count": len(ap_item_ids),
+        "success_count": success_count,
+        "failed_count": len(ap_item_ids) - success_count,
+        "auto_resumed_count": auto_resumed_count,
+        "results": results,
+    }
+
+
+@router.post("/{ap_item_id}/non-invoice/resolve")
+def resolve_non_invoice_review(
+    ap_item_id: str,
+    request: ResolveNonInvoiceReviewRequest,
+    organization_id: str = Query(default="default"),
+    user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    db = get_db()
+    item = _require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or organization_id or "default", user)
+
+    metadata = _parse_json(item.get("metadata"))
+    document_type = _normalize_document_type_token(
+        item.get("document_type")
+        or metadata.get("document_type")
+        or metadata.get("email_type")
+    )
+    if document_type == "invoice":
+        raise HTTPException(status_code=400, detail="invoice_document_not_supported")
+
+    outcome = _normalize_non_invoice_outcome(request.outcome)
+    allowed_outcomes = _NON_INVOICE_ALLOWED_OUTCOMES.get(document_type) or _NON_INVOICE_ALLOWED_OUTCOMES["other"]
+    if outcome not in allowed_outcomes:
+        raise HTTPException(status_code=400, detail="invalid_non_invoice_outcome")
+
+    related_reference = str(request.related_reference or "").strip() or None
+    related_ap_item_id = str(request.related_ap_item_id or "").strip() or None
+    if outcome in {"apply_to_invoice", "link_to_payment"} and not (related_reference or related_ap_item_id):
+        raise HTTPException(status_code=400, detail="related_reference_required")
+
+    actor_id = _authenticated_actor(user)
+    resolved_at = datetime.now(timezone.utc).isoformat()
+    next_state = _non_invoice_resolution_state(
+        current_state=str(item.get("state") or "").strip().lower() or APState.RECEIVED.value,
+        outcome=outcome,
+        close_record=bool(request.close_record),
+    )
+
+    resolution = {
+        "document_type": document_type,
+        "outcome": outcome,
+        "related_reference": related_reference,
+        "related_ap_item_id": related_ap_item_id,
+        "note": str(request.note or "").strip() or None,
+        "resolved_at": resolved_at,
+        "resolved_by": actor_id,
+        "closed_record": bool(request.close_record),
+    }
+    metadata["non_invoice_resolution"] = resolution
+    metadata["non_invoice_review_required"] = False
+
+    current_state = str(item.get("state") or "").strip().lower() or APState.RECEIVED.value
+    update_payload: Dict[str, Any] = {
+        "metadata": metadata,
+    }
+    if next_state != current_state:
+        update_payload["state"] = next_state
+    if outcome != "needs_followup":
+        update_payload["exception_code"] = None
+        update_payload["exception_severity"] = None
+
+    db.update_ap_item(
+        ap_item_id,
+        **_filter_allowed_ap_item_updates(db, update_payload),
+        _actor_type="user",
+        _actor_id=actor_id,
+        _source="non_invoice_review_resolution",
+        _decision_reason=outcome,
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": ap_item_id,
+            "event_type": "non_invoice_review_resolved",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": str(item.get("organization_id") or organization_id or "default"),
+            "source": "ap_item_non_invoice_review_resolution",
+            "reason": outcome,
+            "metadata": resolution,
+        }
+    )
+
+    refreshed = _require_item(db, ap_item_id)
+    normalized_item = build_worklist_item(db, refreshed)
+    return {
+        "status": "resolved",
+        "ap_item_id": ap_item_id,
+        "document_type": document_type,
+        "outcome": outcome,
+        "state": next_state,
+        "ap_item": normalized_item,
+    }
 
 
 @router.post("/{ap_item_id}/sources/link")

@@ -1114,6 +1114,16 @@ class ClearledgrQueueManager {
     await this.syncAgentSessions();
   }
 
+  invalidateItemCaches(apItemId) {
+    if (!apItemId) return;
+    this.auditCache.delete(apItemId);
+    this.auditRequests.delete(apItemId);
+    this.contextByItem.delete(apItemId);
+    this.contextRequests.delete(apItemId);
+    this.sourcesByItem.delete(apItemId);
+    this.sourceRequests.delete(apItemId);
+  }
+
   async fetchAuditTrail(apItemId, { force = false } = {}) {
     if (!apItemId || !this.runtimeConfig?.backendUrl) return [];
     if (!force && this.auditCache.has(apItemId)) {
@@ -1785,6 +1795,51 @@ class ClearledgrQueueManager {
       await this.syncQueueWithBackend({ updateStatus: false });
       this.emitQueueUpdated();
       return result || { status: 'error', reason: 'unknown_response' };
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async resolveFieldReview(item, {
+    field = '',
+    source = '',
+    manualValue = undefined,
+    note = '',
+    autoResume = true,
+  } = {}) {
+    if (!item?.id || !this.runtimeConfig?.backendUrl) return { status: 'invalid', reason: 'invalid' };
+    const normalizedField = String(field || '').trim().toLowerCase();
+    const normalizedSource = String(source || '').trim().toLowerCase();
+    if (!normalizedField || !normalizedSource) return { status: 'invalid', reason: 'missing_resolution_input' };
+
+    try {
+      const url = new URL(
+        `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/field-review/resolve`
+      );
+      url.searchParams.set('organization_id', this.runtimeConfig.organizationId || 'default');
+      const response = await this.backendFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          field: normalizedField,
+          source: normalizedSource,
+          manual_value: manualValue,
+          note: note || undefined,
+          auto_resume: Boolean(autoResume),
+        }),
+      });
+      if (!response.ok) {
+        const detail = await this.readErrorDetail(response);
+        return { status: 'error', reason: detail || `http_${response.status}` };
+      }
+      const result = await response.json();
+      if (result?.ap_item) {
+        this.upsertQueueItem(result.ap_item);
+      }
+      this.invalidateItemCaches(item.id);
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result || { status: 'resolved' };
     } catch (_) {
       return { status: 'error', reason: 'network_error' };
     }

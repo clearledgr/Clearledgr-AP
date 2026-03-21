@@ -393,6 +393,8 @@ class FinanceAgentRuntime:
             metadata_updates["field_provenance"] = invoice.get("field_provenance")
         if isinstance(invoice.get("field_evidence"), dict) and invoice.get("field_evidence"):
             metadata_updates["field_evidence"] = invoice.get("field_evidence")
+        if isinstance(invoice.get("shadow_decision"), dict) and invoice.get("shadow_decision"):
+            metadata_updates["shadow_decision"] = invoice.get("shadow_decision")
         if isinstance(invoice.get("source_conflicts"), list) and invoice.get("source_conflicts"):
             metadata_updates["source_conflicts"] = invoice.get("source_conflicts")
         if isinstance(invoice.get("conflict_actions"), list) and invoice.get("conflict_actions"):
@@ -1040,6 +1042,368 @@ class FinanceAgentRuntime:
         base["status"] = "ready" if not base["blocked_reasons"] else "blocked"
         return base
 
+    def _ap_kpis_snapshot(self) -> Dict[str, Any]:
+        if not hasattr(self.db, "get_ap_kpis"):
+            return {}
+        try:
+            return self.db.get_ap_kpis(
+                self.organization_id,
+                approval_sla_minutes=self._approval_sla_minutes(),
+            ) or {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _readiness_gate_failures(readiness: Dict[str, Any]) -> List[str]:
+        failures: List[str] = []
+        for gate in readiness.get("gates") or []:
+            if not isinstance(gate, dict):
+                continue
+            status = str(gate.get("status") or "").strip().lower()
+            gate_key = str(gate.get("gate") or "").strip()
+            if gate_key and status in {"fail", "not_verifiable", "not_configured"}:
+                failures.append(gate_key)
+        return failures
+
+    @staticmethod
+    def _extraction_drift_payload(ap_kpis: Dict[str, Any]) -> Dict[str, Any]:
+        telemetry = (ap_kpis or {}).get("agentic_telemetry")
+        telemetry = telemetry if isinstance(telemetry, dict) else {}
+        drift = telemetry.get("extraction_drift")
+        return drift if isinstance(drift, dict) else {}
+
+    @staticmethod
+    def _shadow_decision_payload(ap_kpis: Dict[str, Any]) -> Dict[str, Any]:
+        telemetry = (ap_kpis or {}).get("agentic_telemetry")
+        telemetry = telemetry if isinstance(telemetry, dict) else {}
+        shadow = telemetry.get("shadow_decision_scoring")
+        return shadow if isinstance(shadow, dict) else {}
+
+    @staticmethod
+    def _post_action_verification_payload(ap_kpis: Dict[str, Any]) -> Dict[str, Any]:
+        telemetry = (ap_kpis or {}).get("agentic_telemetry")
+        telemetry = telemetry if isinstance(telemetry, dict) else {}
+        verification = telemetry.get("post_action_verification")
+        return verification if isinstance(verification, dict) else {}
+
+    def _vendor_shadow_scorecard(
+        self,
+        vendor_name: Any,
+        *,
+        ap_kpis: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        vendor = self._normalize_vendor_name(vendor_name)
+        if not vendor:
+            return None
+        vendor_token = vendor.casefold()
+        shadow = self._shadow_decision_payload(ap_kpis or {})
+        for row in shadow.get("vendor_scorecards") or []:
+            if not isinstance(row, dict):
+                continue
+            candidate = self._normalize_vendor_name(row.get("vendor_name"))
+            if candidate and candidate.casefold() == vendor_token:
+                return row
+        return None
+
+    def _vendor_post_verification_scorecard(
+        self,
+        vendor_name: Any,
+        *,
+        ap_kpis: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        vendor = self._normalize_vendor_name(vendor_name)
+        if not vendor:
+            return None
+        vendor_token = vendor.casefold()
+        verification = self._post_action_verification_payload(ap_kpis or {})
+        for row in verification.get("vendor_scorecards") or []:
+            if not isinstance(row, dict):
+                continue
+            candidate = self._normalize_vendor_name(row.get("vendor_name"))
+            if candidate and candidate.casefold() == vendor_token:
+                return row
+        return None
+
+    def _build_shadow_decision_proposal(
+        self,
+        *,
+        invoice: Dict[str, Any],
+        vendor_name: Optional[str],
+        amount: float,
+        confidence: float,
+        requires_field_review: bool,
+        autonomy_policy: Dict[str, Any],
+        auto_post_threshold: float,
+    ) -> Dict[str, Any]:
+        metadata = self._parse_json_dict(invoice.get("metadata"))
+        document_type = str(
+            invoice.get("document_type")
+            or invoice.get("email_type")
+            or metadata.get("document_type")
+            or metadata.get("email_type")
+            or "invoice"
+        ).strip().lower() or "invoice"
+        proposed_action = "route_for_approval"
+        reason_codes: List[str] = []
+
+        if document_type != "invoice":
+            proposed_action = "non_invoice_finance_doc"
+            reason_codes.append(f"document_type:{document_type}")
+        elif requires_field_review:
+            proposed_action = "field_review"
+            reason_codes.append("field_review_required")
+        elif autonomy_policy.get("autonomous_allowed") and amount >= 0 and confidence >= auto_post_threshold:
+            proposed_action = "auto_approve_post"
+            reason_codes.append("meets_auto_post_threshold")
+        else:
+            proposed_action = "route_for_approval"
+            if confidence < auto_post_threshold:
+                reason_codes.append("below_auto_post_threshold")
+            if not autonomy_policy.get("autonomous_allowed"):
+                reason_codes.append(f"autonomy_mode:{autonomy_policy.get('mode') or 'assisted'}")
+
+        return {
+            "version": 1,
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "source": "finance_agent_runtime",
+            "proposed_action": proposed_action,
+            "reason_codes": list(dict.fromkeys([code for code in reason_codes if code])),
+            "confidence": round(float(confidence or 0.0), 4),
+            "auto_post_threshold": round(float(auto_post_threshold or 0.0), 4),
+            "autonomy_mode": str(autonomy_policy.get("mode") or "manual"),
+            "autonomous_allowed": bool(autonomy_policy.get("autonomous_allowed")),
+            "proposed_fields": {
+                "vendor": vendor_name or None,
+                "amount": round(float(amount or 0.0), 2),
+                "currency": str(invoice.get("currency") or "USD").strip() or "USD",
+                "invoice_number": str(invoice.get("invoice_number") or "").strip() or None,
+                "document_type": document_type,
+                "due_date": str(invoice.get("due_date") or "").strip() or None,
+            },
+        }
+
+    def _vendor_drift_scorecard(
+        self,
+        vendor_name: Any,
+        *,
+        ap_kpis: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        vendor = self._normalize_vendor_name(vendor_name)
+        if not vendor:
+            return None
+        vendor_token = vendor.casefold()
+        drift = self._extraction_drift_payload(ap_kpis or {})
+        for row in drift.get("vendor_scorecards") or []:
+            if not isinstance(row, dict):
+                continue
+            candidate = self._normalize_vendor_name(row.get("vendor_name"))
+            if candidate and candidate.casefold() == vendor_token:
+                return row
+        return None
+
+    def is_autonomous_request(self, payload: Optional[Dict[str, Any]] = None) -> bool:
+        data = payload if isinstance(payload, dict) else {}
+        execution_context = str(
+            data.get("execution_context")
+            or data.get("run_mode")
+            or data.get("mode")
+            or ""
+        ).strip().lower()
+        if execution_context in {"autonomous", "auto", "system", "background", "autopilot", "agent"}:
+            return True
+        if self._as_bool(data.get("autonomous")) or self._as_bool(data.get("autonomous_requested")):
+            return True
+        source_channel = str(data.get("source_channel") or data.get("source") or "").strip().lower()
+        if source_channel in {"autopilot", "system", "agent_runtime", "background_worker"}:
+            return True
+        actor_id = str(self.actor_id or "").strip().lower()
+        actor_email = str(self.actor_email or "").strip().lower()
+        return actor_id in {"system", "agent_runtime"} or actor_email in {
+            "system",
+            "system@clearledgr.local",
+        }
+
+    def ap_autonomy_policy(
+        self,
+        *,
+        vendor_name: Any = None,
+        action: str = "route_low_risk_for_approval",
+        autonomous_requested: bool = False,
+        window_hours: int = 168,
+    ) -> Dict[str, Any]:
+        readiness: Dict[str, Any]
+        try:
+            readiness = self.skill_readiness("ap_v1", window_hours=window_hours)
+        except Exception:
+            readiness = {
+                "status": "blocked",
+                "blocked_reasons": ["skill_readiness_unavailable"],
+                "gates": [],
+                "metrics": {},
+            }
+
+        metrics = readiness.get("metrics") if isinstance(readiness.get("metrics"), dict) else {}
+        ap_kpis = metrics.get("ap_kpis") if isinstance(metrics.get("ap_kpis"), dict) else self._ap_kpis_snapshot()
+        drift = self._extraction_drift_payload(ap_kpis)
+        vendor = self._normalize_vendor_name(vendor_name)
+        scorecard = self._vendor_drift_scorecard(vendor, ap_kpis=ap_kpis)
+        shadow_scorecard = self._vendor_shadow_scorecard(vendor, ap_kpis=ap_kpis)
+        verification_scorecard = self._vendor_post_verification_scorecard(vendor, ap_kpis=ap_kpis)
+        failing_gates = self._readiness_gate_failures(readiness)
+
+        mode = "auto"
+        reason_codes: List[str] = []
+
+        if str(readiness.get("status") or "").strip().lower() != "ready" or failing_gates:
+            mode = "manual"
+            reason_codes.append("ap_skill_not_ready")
+            reason_codes.extend([f"gate:{gate}" for gate in failing_gates])
+        elif not vendor:
+            mode = "assisted"
+            reason_codes.append("vendor_missing")
+        elif not scorecard:
+            mode = "assisted"
+            reason_codes.append("vendor_unscored")
+        else:
+            drift_risk = str(scorecard.get("drift_risk") or "stable").strip().lower()
+            recent_invoice_count = int(scorecard.get("recent_invoice_count") or 0)
+            sample_recommended_count = int(scorecard.get("sample_recommended_count") or 0)
+            source_shift_fields = scorecard.get("source_shift_fields") if isinstance(scorecard.get("source_shift_fields"), list) else []
+
+            if drift_risk == "high":
+                mode = "manual"
+                reason_codes.append("vendor_drift_high")
+            elif drift_risk == "medium":
+                mode = "assisted"
+                reason_codes.append("vendor_drift_medium")
+
+            if mode == "auto" and recent_invoice_count < 2:
+                mode = "assisted"
+                reason_codes.append("vendor_observation_mode")
+            if mode == "auto" and sample_recommended_count > 0:
+                mode = "assisted"
+                reason_codes.append("vendor_sample_review_required")
+            if mode == "auto" and source_shift_fields:
+                mode = "assisted"
+                reason_codes.append("vendor_source_shift_detected")
+
+        if scorecard and shadow_scorecard:
+            scored_count = int(shadow_scorecard.get("scored_item_count") or 0)
+            action_match_rate = self._safe_float(shadow_scorecard.get("action_match_rate"))
+            critical_field_match_rate = self._safe_float(shadow_scorecard.get("critical_field_match_rate"))
+            disagreement_count = int(shadow_scorecard.get("disagreement_count") or 0)
+
+            if mode == "auto" and scored_count < 2:
+                mode = "assisted"
+                reason_codes.append("vendor_shadow_observation_mode")
+            elif scored_count >= 2:
+                if action_match_rate < 0.75 or critical_field_match_rate < 0.85:
+                    mode = "manual"
+                    reason_codes.append("vendor_shadow_quality_low")
+                elif mode == "auto" and (
+                    action_match_rate < 0.9
+                    or critical_field_match_rate < 0.95
+                    or disagreement_count > 0
+                ):
+                    mode = "assisted"
+                    reason_codes.append("vendor_shadow_quality_watch")
+
+        if scorecard and verification_scorecard:
+            attempted_count = int(verification_scorecard.get("attempted_count") or 0)
+            verification_rate = self._safe_float(verification_scorecard.get("verification_rate"))
+            mismatch_count = int(verification_scorecard.get("mismatch_count") or 0)
+            if attempted_count >= 2 and verification_rate < 0.9:
+                mode = "manual"
+                reason_codes.append("vendor_post_verification_low")
+            elif mode == "auto" and attempted_count >= 1 and (verification_rate < 1.0 or mismatch_count > 0):
+                mode = "assisted"
+                reason_codes.append("vendor_post_verification_watch")
+
+        allowed_autonomous_actions = (
+            [
+                "auto_approve_post",
+                "route_low_risk_for_approval",
+                "retry_recoverable_failures",
+                "post_to_erp",
+            ]
+            if mode == "auto"
+            else []
+        )
+        autonomous_allowed = str(action or "").strip().lower() in allowed_autonomous_actions
+
+        if mode == "manual":
+            detail = "Autonomous AP actions are disabled until readiness and drift gates recover."
+        elif mode == "assisted":
+            detail = "Autonomous AP actions require a human trigger while this vendor stays in assisted mode."
+        else:
+            detail = "Autonomous AP actions are allowed for this vendor and workflow."
+
+        return {
+            "mode": mode,
+            "action": str(action or "").strip().lower() or None,
+            "autonomous_requested": bool(autonomous_requested),
+            "autonomous_allowed": bool(autonomous_allowed),
+            "requires_human_trigger": mode != "auto",
+            "vendor_name": vendor or None,
+            "reason_codes": list(dict.fromkeys(reason_codes)),
+            "detail": detail,
+            "ap_skill_status": str(readiness.get("status") or "blocked"),
+            "failing_gates": failing_gates,
+            "vendor_drift_risk": (
+                str((scorecard or {}).get("drift_risk") or "").strip().lower() or "unknown"
+            ),
+            "vendor_recent_invoice_count": int((scorecard or {}).get("recent_invoice_count") or 0),
+            "vendor_sample_recommended_count": int((scorecard or {}).get("sample_recommended_count") or 0),
+            "vendor_source_shift_fields": list((scorecard or {}).get("source_shift_fields") or []),
+            "vendor_shadow_scored_item_count": int((shadow_scorecard or {}).get("scored_item_count") or 0),
+            "vendor_shadow_action_match_rate": round(self._safe_float((shadow_scorecard or {}).get("action_match_rate")), 4),
+            "vendor_shadow_critical_field_match_rate": round(self._safe_float((shadow_scorecard or {}).get("critical_field_match_rate")), 4),
+            "vendor_post_verification_rate": round(self._safe_float((verification_scorecard or {}).get("verification_rate")), 4),
+            "vendor_post_verification_attempt_count": int((verification_scorecard or {}).get("attempted_count") or 0),
+            "vendors_at_risk": int((drift.get("summary") or {}).get("vendors_at_risk") or 0),
+            "high_risk_vendors": int((drift.get("summary") or {}).get("high_risk_vendors") or 0),
+        }
+
+    def ap_autonomy_summary(self, *, window_hours: int = 168) -> Dict[str, Any]:
+        try:
+            readiness = self.skill_readiness("ap_v1", window_hours=window_hours)
+        except Exception:
+            readiness = {
+                "status": "blocked",
+                "blocked_reasons": ["skill_readiness_unavailable"],
+                "gates": [],
+                "metrics": {},
+            }
+        metrics = readiness.get("metrics") if isinstance(readiness.get("metrics"), dict) else {}
+        ap_kpis = metrics.get("ap_kpis") if isinstance(metrics.get("ap_kpis"), dict) else self._ap_kpis_snapshot()
+        drift = self._extraction_drift_payload(ap_kpis)
+        shadow = self._shadow_decision_payload(ap_kpis)
+        verification = self._post_action_verification_payload(ap_kpis)
+        summary = drift.get("summary") if isinstance(drift.get("summary"), dict) else {}
+        shadow_summary = shadow.get("summary") if isinstance(shadow.get("summary"), dict) else {}
+        verification_summary = verification.get("summary") if isinstance(verification.get("summary"), dict) else {}
+        failing_gates = self._readiness_gate_failures(readiness)
+        default_mode = "manual" if str(readiness.get("status") or "").strip().lower() != "ready" or failing_gates else "assisted"
+        return {
+            "mode": default_mode,
+            "readiness_status": str(readiness.get("status") or "blocked"),
+            "failing_gates": failing_gates,
+            "vendors_monitored": int(summary.get("vendors_monitored") or 0),
+            "vendors_at_risk": int(summary.get("vendors_at_risk") or 0),
+            "high_risk_vendors": int(summary.get("high_risk_vendors") or 0),
+            "recent_open_blocked_items": int(summary.get("recent_open_blocked_items") or 0),
+            "shadow_scored_items": int(shadow_summary.get("scored_item_count") or 0),
+            "shadow_disagreement_count": int(shadow_summary.get("disagreement_count") or 0),
+            "shadow_action_match_rate": round(self._safe_float(shadow_summary.get("action_match_rate")), 4),
+            "post_verification_rate": round(self._safe_float(verification_summary.get("verification_rate")), 4),
+            "post_verification_mismatch_count": int(verification_summary.get("mismatch_count") or 0),
+            "detail": (
+                "Autonomy is held in manual mode until readiness gates pass."
+                if default_mode == "manual"
+                else "Autonomy defaults to assisted mode; vendor-level auto execution is earned."
+            ),
+        }
+
     def preview_intent(self, intent: str, input_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         payload = input_payload if isinstance(input_payload, dict) else {}
         request = self._build_skill_request(intent=intent, payload=payload)
@@ -1146,6 +1510,27 @@ class FinanceAgentRuntime:
             or confidence_blockers
             or blocking_conflicts
         )
+        vendor_name = self._resolved_vendor_name(
+            invoice.get("vendor_name") or invoice.get("vendor"),
+            invoice.get("sender"),
+        )
+        confidence_value = self._safe_float(invoice.get("confidence"))
+        amount_value = self._safe_float(invoice.get("amount"))
+        autonomy_threshold = self.ap_auto_approve_threshold()
+        autonomy_policy = self.ap_autonomy_policy(
+            vendor_name=vendor_name,
+            action="auto_approve_post",
+            autonomous_requested=True,
+        )
+        shadow_decision = self._build_shadow_decision_proposal(
+            invoice=invoice,
+            vendor_name=vendor_name,
+            amount=amount_value,
+            confidence=confidence_value,
+            requires_field_review=requires_field_review,
+            autonomy_policy=autonomy_policy,
+            auto_post_threshold=autonomy_threshold,
+        )
         if attachment_list:
             first_attachment = attachment_list[0] if isinstance(attachment_list[0], dict) else {}
             attachment_url = str(
@@ -1171,6 +1556,7 @@ class FinanceAgentRuntime:
                 "attachment_names": attachment_names,
                 "has_attachment": bool(attachment_list),
                 "requires_field_review": requires_field_review,
+                "shadow_decision": shadow_decision,
             },
             correlation_id=resolved_correlation_id,
         )
@@ -1186,6 +1572,9 @@ class FinanceAgentRuntime:
             "processing_status": "extraction_refreshed",
             "refresh_reason": str(refresh_reason or "replay_backfill").strip() or "replay_backfill",
             "extraction_refreshed_at": datetime.now(timezone.utc).isoformat(),
+            "shadow_decision": shadow_decision,
+            "autonomy_policy": autonomy_policy,
+            "autonomy_mode": autonomy_policy.get("mode"),
         }
         ap_item_id = str(seeded_item.get("id") or "").strip()
         if ap_item_id and hasattr(self.db, "update_ap_item_metadata_merge"):
@@ -1310,6 +1699,41 @@ class FinanceAgentRuntime:
             field_confidences=invoice.get("field_confidences") if isinstance(invoice.get("field_confidences"), dict) else None,
         )
 
+        autonomy_policy = self.ap_autonomy_policy(
+            vendor_name=invoice_data.vendor_name,
+            action="auto_approve_post",
+            autonomous_requested=True,
+        )
+        autonomy_threshold = self.ap_auto_approve_threshold()
+        shadow_decision = self._build_shadow_decision_proposal(
+            invoice=invoice,
+            vendor_name=invoice_data.vendor_name,
+            amount=invoice_data.amount,
+            confidence=invoice_data.confidence,
+            requires_field_review=requires_field_review,
+            autonomy_policy=autonomy_policy,
+            auto_post_threshold=autonomy_threshold,
+        )
+        autonomy_downgraded_auto_post = False
+        if not autonomy_policy.get("autonomous_allowed") and invoice_data.confidence >= autonomy_threshold:
+            invoice_data.confidence = max(0.0, autonomy_threshold - 0.01)
+            autonomy_downgraded_auto_post = True
+
+        if seeded_item and hasattr(self.db, "update_ap_item_metadata_merge"):
+            try:
+                self.db.update_ap_item_metadata_merge(
+                    str(seeded_item.get("id") or "").strip(),
+                    {
+                        "autonomy_policy": autonomy_policy,
+                        "autonomy_mode": autonomy_policy.get("mode"),
+                        "autonomy_reason_codes": autonomy_policy.get("reason_codes") or [],
+                        "autonomy_auto_post_downgraded": bool(autonomy_downgraded_auto_post),
+                        "shadow_decision": shadow_decision,
+                    },
+                )
+            except Exception:
+                pass
+
         if requires_field_review:
             ap_item_id = str(seeded_item.get("id") or "").strip() if seeded_item else ""
             review_exception_code = str(invoice.get("exception_code") or "").strip() or (
@@ -1348,6 +1772,7 @@ class FinanceAgentRuntime:
                 "confidence_blockers": confidence_blockers,
                 "source_conflicts": source_conflicts,
                 "conflict_actions": invoice.get("conflict_actions") if isinstance(invoice.get("conflict_actions"), list) else [],
+                "autonomy_policy": autonomy_policy,
             }
             if seeded_item:
                 response.setdefault("ap_item_id", seeded_item.get("id"))
@@ -1423,6 +1848,7 @@ class FinanceAgentRuntime:
                 "detail": "AP planner unavailable; no workflow execution was performed.",
                 "execution_mode": "agent_planning_engine",
                 "agent_status": "failed",
+                "autonomy_policy": autonomy_policy,
             }
 
         if seeded_item:
@@ -1432,6 +1858,9 @@ class FinanceAgentRuntime:
             response.setdefault("idempotency_key", resolved_idempotency_key)
         if resolved_correlation_id:
             response.setdefault("correlation_id", resolved_correlation_id)
+        response.setdefault("autonomy_policy", autonomy_policy)
+        if autonomy_downgraded_auto_post:
+            response.setdefault("autonomy_auto_post_downgraded", True)
         return response
 
     def ap_auto_approve_threshold(self) -> float:

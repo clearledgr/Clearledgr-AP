@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-03-20T14:37:07.083Z",
-  "fingerprint": "27e1c21fe94e466ba11c8801c307e366d49f09ce6901d482bed061f0658a0c72",
+  "generated_at": "2026-03-21T11:48:23.347Z",
+  "fingerprint": "8ce5324e68ffb89e26276cf5836a96d90f2a4b511cbffccf05b8724f8cad0e92",
   "inputs": [
     "background.js",
     "manifest.json",
@@ -22,6 +22,7 @@
     "src/routes/pages/PlanPage.js",
     "src/routes/pages/ReconciliationPage.js",
     "src/routes/pages/ReportsPage.js",
+    "src/routes/pages/ReviewPage.js",
     "src/routes/pages/RulesPage.js",
     "src/routes/pages/TeamPage.js",
     "src/routes/pages/TemplatesPage.js",

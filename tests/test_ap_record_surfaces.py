@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -258,6 +259,290 @@ def test_build_worklist_item_surfaces_extraction_conflicts_and_provenance(db):
     assert normalized["field_review_blockers"][0]["email_value_display"] == "USD 400.00"
     assert normalized["field_review_blockers"][0]["attachment_value_display"] == "USD 440.00"
     assert normalized["field_review_blockers"][0]["winning_source_label"] == "Attachment"
+
+
+def test_field_review_resolution_endpoint_updates_canonical_record_and_clears_blocker(client, db):
+    item = db.create_ap_item(
+        _item_payload(
+            "resolve-1",
+            "default",
+            amount=400.0,
+            state="received",
+            extra={
+                "confidence": 0.84,
+                "field_confidences": {"amount": 0.62, "vendor": 0.99, "invoice_number": 0.98, "due_date": 0.97},
+                "metadata": {
+                    "requires_field_review": True,
+                    "requires_extraction_review": True,
+                    "field_provenance": {
+                        "amount": {
+                            "source": "attachment",
+                            "value": 440.0,
+                            "candidates": {"email": 400.0, "attachment": 440.0},
+                        }
+                    },
+                    "field_evidence": {
+                        "amount": {
+                            "source": "attachment",
+                            "selected_value": 440.0,
+                            "email_value": 400.0,
+                            "attachment_value": 440.0,
+                            "attachment_name": "invoice.pdf",
+                        }
+                    },
+                    "source_conflicts": [
+                        {
+                            "field": "amount",
+                            "blocking": True,
+                            "reason": "source_value_mismatch",
+                            "preferred_source": "attachment",
+                            "values": {"email": 400.0, "attachment": 440.0},
+                        }
+                    ],
+                    "confidence_blockers": [
+                        {"field": "amount", "reason": "source_value_mismatch", "severity": "high"}
+                    ],
+                },
+            },
+        )
+    )
+
+    response = client.post(
+        f"/api/ap/items/{item['id']}/field-review/resolve?organization_id=default",
+        headers=_auth_headers("default"),
+        json={
+            "field": "amount",
+            "source": "attachment",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "resolved"
+    assert payload["selected_source"] == "attachment"
+    assert payload["selected_value"] == 440.0
+    assert payload["requires_field_review"] is False
+    assert payload["ap_item"]["amount"] == 440.0
+    assert payload["ap_item"]["requires_field_review"] is False
+    assert payload["ap_item"]["field_review_blockers"] == []
+
+    stored = db.get_ap_item(item["id"])
+    assert stored["amount"] == 440.0
+    metadata = stored["metadata"] if isinstance(stored["metadata"], dict) else json.loads(stored["metadata"])
+    assert metadata["requires_field_review"] is False
+    assert metadata["field_provenance"]["amount"]["source"] == "attachment"
+    assert metadata["field_review_resolutions"]["amount"]["selected_source"] == "attachment"
+    assert metadata["source_conflicts"][0]["blocking"] is False
+    assert metadata["confidence_blockers"] == []
+
+    audit_events = db.list_ap_audit_events(item["id"])
+    assert any(event["event_type"] == "field_correction" for event in audit_events)
+
+
+def test_field_review_resolution_endpoint_auto_resumes_retry_path_when_last_blocker_clears(client, db, monkeypatch):
+    item = db.create_ap_item(
+        _item_payload(
+            "resolve-resume-1",
+            "default",
+            amount=125.0,
+            state="failed_post",
+            extra={
+                "field_confidences": {"amount": 0.51, "vendor": 0.99, "invoice_number": 0.99, "due_date": 0.99},
+                "metadata": {
+                    "requires_field_review": True,
+                    "document_type": "invoice",
+                    "source_conflicts": [
+                        {
+                            "field": "amount",
+                            "blocking": True,
+                            "reason": "source_value_mismatch",
+                            "preferred_source": "email",
+                            "values": {"email": 125.0, "attachment": 130.0},
+                        }
+                    ],
+                    "field_evidence": {
+                        "amount": {
+                            "source": "email",
+                            "selected_value": 125.0,
+                            "email_value": 125.0,
+                            "attachment_value": 130.0,
+                        }
+                    },
+                    "confidence_blockers": [
+                        {"field": "amount", "reason": "source_value_mismatch", "severity": "high"}
+                    ],
+                },
+            },
+        )
+    )
+
+    async def _fake_execute_intent(self, intent, input_payload=None, idempotency_key=None):
+        assert intent == "retry_recoverable_failures"
+        db.update_ap_item(item["id"], state="ready_to_post", _actor_type="system", _actor_id="test-runtime")
+        return {"status": "ready_to_post", "reason": "resume_after_field_resolution"}
+
+    monkeypatch.setattr(
+        "clearledgr.api.ap_items.FinanceAgentRuntime.execute_intent",
+        _fake_execute_intent,
+    )
+
+    response = client.post(
+        f"/api/ap/items/{item['id']}/field-review/resolve?organization_id=default",
+        headers=_auth_headers("default"),
+        json={
+            "field": "amount",
+            "source": "email",
+            "auto_resume": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "resolved_and_resumed"
+    assert payload["auto_resumed"] is True
+    assert payload["auto_resume_result"]["status"] == "ready_to_post"
+    assert payload["ap_item"]["state"] == "ready_to_post"
+
+
+def test_bulk_field_review_resolution_endpoint_updates_multiple_items(client, db):
+    first = db.create_ap_item(
+        _item_payload(
+            "bulk-resolve-1",
+            "default",
+            amount=100.0,
+            state="received",
+            extra={
+                "metadata": {
+                    "requires_field_review": True,
+                    "source_conflicts": [
+                        {
+                            "field": "vendor",
+                            "blocking": True,
+                            "reason": "source_value_mismatch",
+                            "preferred_source": "email",
+                            "values": {"email": "Northwind", "attachment": "North Wind Ltd"},
+                        }
+                    ],
+                    "field_evidence": {
+                        "vendor": {
+                            "source": "email",
+                            "selected_value": "Northwind",
+                            "email_value": "Northwind",
+                            "attachment_value": "North Wind Ltd",
+                        }
+                    },
+                    "confidence_blockers": [
+                        {"field": "vendor", "reason": "source_value_mismatch", "severity": "high"}
+                    ],
+                },
+            },
+        )
+    )
+    second = db.create_ap_item(
+        _item_payload(
+            "bulk-resolve-2",
+            "default",
+            amount=200.0,
+            state="received",
+            extra={
+                "metadata": {
+                    "requires_field_review": True,
+                    "source_conflicts": [
+                        {
+                            "field": "vendor",
+                            "blocking": True,
+                            "reason": "source_value_mismatch",
+                            "preferred_source": "email",
+                            "values": {"email": "Northwind", "attachment": "Northwind BV"},
+                        }
+                    ],
+                    "field_evidence": {
+                        "vendor": {
+                            "source": "email",
+                            "selected_value": "Northwind",
+                            "email_value": "Northwind",
+                            "attachment_value": "Northwind BV",
+                        }
+                    },
+                    "confidence_blockers": [
+                        {"field": "vendor", "reason": "source_value_mismatch", "severity": "high"}
+                    ],
+                },
+            },
+        )
+    )
+
+    response = client.post(
+        "/api/ap/items/field-review/bulk-resolve?organization_id=default",
+        headers=_auth_headers("default"),
+        json={
+            "ap_item_ids": [first["id"], second["id"]],
+            "field": "vendor",
+            "source": "email",
+            "auto_resume": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["success_count"] == 2
+    assert payload["failed_count"] == 0
+
+    refreshed_first = db.get_ap_item(first["id"])
+    refreshed_second = db.get_ap_item(second["id"])
+    assert refreshed_first["vendor_name"] == "Northwind"
+    assert refreshed_second["vendor_name"] == "Northwind"
+
+    first_meta = refreshed_first["metadata"] if isinstance(refreshed_first["metadata"], dict) else json.loads(refreshed_first["metadata"])
+    second_meta = refreshed_second["metadata"] if isinstance(refreshed_second["metadata"], dict) else json.loads(refreshed_second["metadata"])
+    assert first_meta["field_review_resolutions"]["vendor"]["selected_source"] == "email"
+    assert second_meta["field_review_resolutions"]["vendor"]["selected_source"] == "email"
+
+
+def test_non_invoice_resolution_endpoint_closes_credit_note_with_reference(client, db):
+    item = db.create_ap_item(
+        _item_payload(
+            "credit-note-1",
+            "default",
+            state="received",
+            extra={
+                "invoice_number": "CN-001",
+                "metadata": {
+                    "document_type": "credit_note",
+                    "email_type": "credit_note",
+                },
+            },
+        )
+    )
+
+    response = client.post(
+        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=default",
+        headers=_auth_headers("default"),
+        json={
+            "outcome": "apply_to_invoice",
+            "related_reference": "INV-12345",
+            "close_record": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "resolved"
+    assert payload["document_type"] == "credit_note"
+    assert payload["state"] == "received"
+    assert payload["ap_item"]["state"] == "received"
+    assert payload["ap_item"]["next_action"] == "none"
+    assert payload["ap_item"]["non_invoice_review_required"] is False
+
+    stored = db.get_ap_item(item["id"])
+    metadata = stored["metadata"] if isinstance(stored["metadata"], dict) else json.loads(stored["metadata"])
+    assert metadata["non_invoice_resolution"]["outcome"] == "apply_to_invoice"
+    assert metadata["non_invoice_resolution"]["related_reference"] == "INV-12345"
+    assert metadata["non_invoice_resolution"]["closed_record"] is True
+
+    audit_events = db.list_ap_audit_events(item["id"])
+    assert any(event["event_type"] == "non_invoice_review_resolved" for event in audit_events)
 
 
 def test_vendor_record_endpoint_returns_shared_vendor_context(client, db):
