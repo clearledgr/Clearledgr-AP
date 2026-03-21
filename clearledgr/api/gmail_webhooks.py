@@ -1304,6 +1304,8 @@ async def process_invoice_email(
         "message_id": message.id,
         "gmail_thread_id": getattr(message, "thread_id", None) or message.id,
         "gmail_message_id": message.id,
+        "snippet": message.snippet or "",
+        "body": (message.body_text or "")[:4000],
         "document_type": extracted_document_type,
         "email_type": extracted_document_type,
         "intake_source": "gmail_autopilot" if run_runtime else "gmail_replay_refresh",

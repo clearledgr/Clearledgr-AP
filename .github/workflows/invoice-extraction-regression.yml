@@ -8,11 +8,15 @@ on:
       - "clearledgr/services/llm_multimodal.py"
       - "clearledgr/workflows/gmail_activities.py"
       - "scripts/evaluate_invoice_extraction.py"
+      - "scripts/export_reviewed_extraction_cases.py"
       - "tests/test_invoice_extraction_golden.py"
       - "tests/test_invoice_extraction_eval_harness.py"
+      - "tests/test_correction_learning.py"
       - "tests/test_email_parser_amount_selection.py"
       - "tests/fixtures/invoice_extraction_golden.json"
+      - "tests/fixtures/reviewed_production_invoice_truth.json"
       - "tests/test_data/invoice_extraction_eval_cases.json"
+      - "tests/test_data/invoice_extraction_vendor_packs.json"
       - ".github/workflows/invoice-extraction-regression.yml"
   push:
     branches:
@@ -25,11 +29,15 @@ on:
       - "clearledgr/services/llm_multimodal.py"
       - "clearledgr/workflows/gmail_activities.py"
       - "scripts/evaluate_invoice_extraction.py"
+      - "scripts/export_reviewed_extraction_cases.py"
       - "tests/test_invoice_extraction_golden.py"
       - "tests/test_invoice_extraction_eval_harness.py"
+      - "tests/test_correction_learning.py"
       - "tests/test_email_parser_amount_selection.py"
       - "tests/fixtures/invoice_extraction_golden.json"
+      - "tests/fixtures/reviewed_production_invoice_truth.json"
       - "tests/test_data/invoice_extraction_eval_cases.json"
+      - "tests/test_data/invoice_extraction_vendor_packs.json"
       - ".github/workflows/invoice-extraction-regression.yml"
 
 jobs:
@@ -56,6 +64,7 @@ jobs:
       - name: Enforce extraction quality gates
         run: |
           pytest -q \
+            tests/test_correction_learning.py \
             tests/test_invoice_extraction_golden.py \
             tests/test_invoice_extraction_eval_harness.py \
             tests/test_email_parser_amount_selection.py

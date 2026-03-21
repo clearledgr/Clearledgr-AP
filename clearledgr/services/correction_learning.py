@@ -18,7 +18,11 @@ Changelog:
 - 2026-01-23: Initial implementation
 """
 
+import json
 import logging
+import os
+import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -36,6 +40,10 @@ class CorrectionType(str, Enum):
     GL_CODE = "gl_code"
     VENDOR = "vendor"
     AMOUNT = "amount"
+    CURRENCY = "currency"
+    INVOICE_NUMBER = "invoice_number"
+    DOCUMENT_TYPE = "document_type"
+    DUE_DATE = "due_date"
     CLASSIFICATION = "classification"
     APPROVAL = "approval"
 
@@ -144,6 +152,68 @@ class CorrectionLearningService:
                         success_rate REAL DEFAULT 1.0
                     )
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_correction_events (
+                        id TEXT PRIMARY KEY,
+                        organization_id TEXT NOT NULL,
+                        ap_item_id TEXT,
+                        invoice_id TEXT,
+                        field_name TEXT NOT NULL,
+                        correction_type TEXT NOT NULL,
+                        original_value TEXT,
+                        corrected_value TEXT,
+                        selected_source TEXT,
+                        source_channel TEXT,
+                        event_source TEXT,
+                        user_id TEXT,
+                        vendor_name TEXT,
+                        sender TEXT,
+                        sender_domain TEXT,
+                        subject TEXT,
+                        document_type TEXT,
+                        layout_key TEXT,
+                        attachment_names_json TEXT,
+                        expected_fields_json TEXT,
+                        input_payload_json TEXT,
+                        created_at TEXT NOT NULL
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS vendor_layout_error_stats (
+                        id TEXT PRIMARY KEY,
+                        organization_id TEXT NOT NULL,
+                        vendor_name TEXT NOT NULL,
+                        sender_domain TEXT,
+                        layout_key TEXT NOT NULL,
+                        document_type TEXT,
+                        field_name TEXT NOT NULL,
+                        correction_count INTEGER NOT NULL DEFAULT 0,
+                        first_corrected_at TEXT,
+                        last_corrected_at TEXT,
+                        last_ap_item_id TEXT,
+                        last_original_value TEXT,
+                        last_corrected_value TEXT,
+                        UNIQUE(organization_id, vendor_name, layout_key, field_name)
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS reviewed_extraction_cases (
+                        id TEXT PRIMARY KEY,
+                        organization_id TEXT NOT NULL,
+                        ap_item_id TEXT NOT NULL,
+                        vendor_name TEXT,
+                        sender_domain TEXT,
+                        layout_key TEXT,
+                        document_type TEXT,
+                        correction_fields_json TEXT,
+                        input_payload_json TEXT NOT NULL,
+                        expected_fields_json TEXT NOT NULL,
+                        source_event_id TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        UNIQUE(organization_id, ap_item_id)
+                    )
+                """)
                 conn.commit()
         except Exception as e:
             logger.warning(f"Could not init correction tables: {e}")
@@ -241,6 +311,434 @@ class CorrectionLearningService:
         except Exception as e:
             logger.error("Could not persist rule: %s", e)
 
+    @staticmethod
+    def _normalize_field_name(raw: Any) -> str:
+        token = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "vendor_name": "vendor",
+            "primary_amount": "amount",
+            "total_amount": "amount",
+            "primary_invoice": "invoice_number",
+            "email_type": "document_type",
+            "classification": "document_type",
+        }
+        return aliases.get(token, token or "unknown")
+
+    @staticmethod
+    def _normalize_document_type(raw: Any) -> str:
+        token = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "credit_memo": "credit_note",
+            "bank_statement": "statement",
+        }
+        return aliases.get(token, token or "invoice")
+
+    @staticmethod
+    def _normalize_vendor_name(raw: Any) -> str:
+        return " ".join(str(raw or "").strip().split())
+
+    @staticmethod
+    def _sender_domain(raw: Any) -> str:
+        sender = str(raw or "").strip().lower()
+        if "@" not in sender:
+            return ""
+        return sender.rsplit("@", 1)[-1]
+
+    @staticmethod
+    def _normalize_attachment_names(raw: Any) -> List[str]:
+        if not isinstance(raw, list):
+            return []
+        names: List[str] = []
+        for value in raw:
+            token = str(value or "").strip()
+            if token and token not in names:
+                names.append(token)
+        return names[:10]
+
+    @staticmethod
+    def _subject_pattern(raw: Any) -> str:
+        subject = str(raw or "").strip().lower()
+        if not subject:
+            return ""
+        subject = re.sub(r"\d+", "#", subject)
+        subject = re.sub(r"[^a-z0-9# ]+", " ", subject)
+        return " ".join(subject.split())[:120]
+
+    def _derive_layout_key(self, context: Dict[str, Any]) -> str:
+        sender_domain = self._sender_domain(context.get("sender") or context.get("sender_email"))
+        document_type = self._normalize_document_type(context.get("document_type") or context.get("email_type"))
+        attachment_names = self._normalize_attachment_names(context.get("attachment_names") or [])
+        attachment_basis = "|".join(
+            re.sub(r"\d+", "#", Path(name).stem.lower())[:24]
+            for name in attachment_names[:3]
+        )
+        subject_basis = self._subject_pattern(context.get("subject"))
+        basis = attachment_basis or subject_basis or "generic"
+        return "::".join(part for part in (sender_domain or "unknown", document_type, basis) if part)
+
+    def _normalize_input_payload(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        attachment_names = self._normalize_attachment_names(context.get("attachment_names") or [])
+        attachments = []
+        for name in attachment_names:
+            attachments.append({"filename": name})
+        body = str(
+            context.get("body")
+            or context.get("body_excerpt")
+            or context.get("snippet")
+            or ""
+        )
+        return {
+            "subject": str(context.get("subject") or "").strip(),
+            "body": body,
+            "sender": str(context.get("sender") or context.get("sender_email") or "").strip(),
+            "attachments": attachments,
+        }
+
+    def _normalize_expected_fields(
+        self,
+        *,
+        correction_type: str,
+        corrected_value: Any,
+        context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        expected = context.get("expected_fields")
+        expected_fields = dict(expected) if isinstance(expected, dict) else {}
+        corrected_map = {
+            "vendor": "vendor",
+            "amount": "primary_amount",
+            "currency": "currency",
+            "invoice_number": "primary_invoice",
+            "document_type": "email_type",
+            "due_date": "due_date",
+        }
+        corrected_key = corrected_map.get(correction_type)
+        if corrected_key:
+            expected_fields[corrected_key] = corrected_value
+        vendor_name = self._normalize_vendor_name(
+            expected_fields.get("vendor") or context.get("vendor")
+        )
+        if vendor_name:
+            expected_fields["vendor"] = vendor_name
+        document_type = self._normalize_document_type(
+            expected_fields.get("email_type")
+            or expected_fields.get("document_type")
+            or context.get("document_type")
+        )
+        if document_type:
+            expected_fields["email_type"] = document_type
+        return expected_fields
+
+    def _normalize_correction_event(
+        self,
+        *,
+        correction: Correction,
+    ) -> Dict[str, Any]:
+        context = correction.context if isinstance(correction.context, dict) else {}
+        field_name = self._normalize_field_name(correction.correction_type)
+        vendor_name = self._normalize_vendor_name(context.get("vendor") or correction.vendor)
+        sender = str(context.get("sender") or context.get("sender_email") or "").strip()
+        sender_domain = self._sender_domain(sender)
+        document_type = self._normalize_document_type(
+            context.get("document_type") or context.get("email_type")
+        )
+        attachment_names = self._normalize_attachment_names(context.get("attachment_names") or [])
+        expected_fields = self._normalize_expected_fields(
+            correction_type=field_name,
+            corrected_value=correction.corrected_value,
+            context=context,
+        )
+        input_payload = self._normalize_input_payload(context)
+        return {
+            "event_id": f"cevt_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+            "ap_item_id": str(context.get("ap_item_id") or "").strip() or None,
+            "invoice_id": correction.invoice_id,
+            "field_name": field_name,
+            "correction_type": field_name,
+            "original_value": correction.original_value,
+            "corrected_value": correction.corrected_value,
+            "selected_source": str(context.get("selected_source") or context.get("source") or "").strip() or None,
+            "source_channel": str(context.get("source_channel") or "gmail").strip() or "gmail",
+            "event_source": str(context.get("event_source") or "operator_review").strip() or "operator_review",
+            "user_id": correction.user_id,
+            "vendor_name": vendor_name or None,
+            "sender": sender or None,
+            "sender_domain": sender_domain or None,
+            "subject": str(context.get("subject") or "").strip() or None,
+            "document_type": document_type or None,
+            "layout_key": str(context.get("layout_key") or self._derive_layout_key(context)).strip(),
+            "attachment_names": attachment_names,
+            "expected_fields": expected_fields,
+            "input_payload": input_payload,
+            "created_at": correction.timestamp,
+        }
+
+    def _persist_normalized_correction_event(self, normalized: Dict[str, Any]) -> str:
+        event_id = str(normalized.get("event_id") or f"cevt_{datetime.now().strftime('%Y%m%d%H%M%S%f')}")
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT OR REPLACE INTO agent_correction_events
+                    (id, organization_id, ap_item_id, invoice_id, field_name, correction_type,
+                     original_value, corrected_value, selected_source, source_channel, event_source,
+                     user_id, vendor_name, sender, sender_domain, subject, document_type, layout_key,
+                     attachment_names_json, expected_fields_json, input_payload_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        self.organization_id,
+                        normalized.get("ap_item_id"),
+                        normalized.get("invoice_id"),
+                        normalized.get("field_name"),
+                        normalized.get("correction_type"),
+                        json.dumps(normalized.get("original_value")),
+                        json.dumps(normalized.get("corrected_value")),
+                        normalized.get("selected_source"),
+                        normalized.get("source_channel"),
+                        normalized.get("event_source"),
+                        normalized.get("user_id"),
+                        normalized.get("vendor_name"),
+                        normalized.get("sender"),
+                        normalized.get("sender_domain"),
+                        normalized.get("subject"),
+                        normalized.get("document_type"),
+                        normalized.get("layout_key"),
+                        json.dumps(normalized.get("attachment_names") or []),
+                        json.dumps(normalized.get("expected_fields") or {}),
+                        json.dumps(normalized.get("input_payload") or {}),
+                        normalized.get("created_at"),
+                    ),
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.error("Could not persist normalized correction event: %s", exc)
+        return event_id
+
+    def _update_vendor_layout_error_stats(self, normalized: Dict[str, Any]) -> Optional[str]:
+        vendor_name = self._normalize_vendor_name(normalized.get("vendor_name"))
+        layout_key = str(normalized.get("layout_key") or "").strip()
+        field_name = self._normalize_field_name(normalized.get("field_name"))
+        if not vendor_name or not layout_key or not field_name:
+            return None
+        stat_id = f"vles_{self.organization_id}_{vendor_name}_{layout_key}_{field_name}"
+        stat_id = re.sub(r"[^a-zA-Z0-9_:-]+", "_", stat_id)[:180]
+        now = str(normalized.get("created_at") or datetime.now().isoformat())
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT INTO vendor_layout_error_stats
+                    (id, organization_id, vendor_name, sender_domain, layout_key, document_type,
+                     field_name, correction_count, first_corrected_at, last_corrected_at, last_ap_item_id,
+                     last_original_value, last_corrected_value)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+                    ON CONFLICT(organization_id, vendor_name, layout_key, field_name)
+                    DO UPDATE SET
+                        correction_count = correction_count + 1,
+                        last_corrected_at = excluded.last_corrected_at,
+                        last_ap_item_id = excluded.last_ap_item_id,
+                        last_original_value = excluded.last_original_value,
+                        last_corrected_value = excluded.last_corrected_value,
+                        sender_domain = excluded.sender_domain,
+                        document_type = excluded.document_type
+                    """,
+                    (
+                        stat_id,
+                        self.organization_id,
+                        vendor_name,
+                        normalized.get("sender_domain"),
+                        layout_key,
+                        normalized.get("document_type"),
+                        field_name,
+                        now,
+                        now,
+                        normalized.get("ap_item_id"),
+                        json.dumps(normalized.get("original_value")),
+                        json.dumps(normalized.get("corrected_value")),
+                    ),
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.error("Could not update vendor/layout error stats: %s", exc)
+            return None
+        return stat_id
+
+    def _upsert_reviewed_extraction_case(
+        self,
+        normalized: Dict[str, Any],
+        *,
+        source_event_id: str,
+    ) -> Optional[str]:
+        ap_item_id = str(normalized.get("ap_item_id") or "").strip()
+        input_payload = normalized.get("input_payload") if isinstance(normalized.get("input_payload"), dict) else {}
+        expected_fields = normalized.get("expected_fields") if isinstance(normalized.get("expected_fields"), dict) else {}
+        if not ap_item_id or not input_payload or not expected_fields:
+            return None
+        sender = str(input_payload.get("sender") or "").strip()
+        subject = str(input_payload.get("subject") or "").strip()
+        if not sender or not subject:
+            return None
+
+        case_id = f"reviewed_{ap_item_id}"
+        now = str(normalized.get("created_at") or datetime.now().isoformat())
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT correction_fields_json FROM reviewed_extraction_cases
+                    WHERE organization_id = ? AND ap_item_id = ?
+                    LIMIT 1
+                    """,
+                    (self.organization_id, ap_item_id),
+                )
+                row = cur.fetchone()
+                existing_fields: List[str] = []
+                if row and row[0]:
+                    try:
+                        existing_fields = json.loads(row[0]) or []
+                    except Exception:
+                        existing_fields = []
+                correction_fields = sorted(
+                    {
+                        *(str(value or "").strip() for value in existing_fields),
+                        str(normalized.get("field_name") or "").strip(),
+                    }
+                )
+                cur.execute(
+                    """
+                    INSERT INTO reviewed_extraction_cases
+                    (id, organization_id, ap_item_id, vendor_name, sender_domain, layout_key, document_type,
+                     correction_fields_json, input_payload_json, expected_fields_json, source_event_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(organization_id, ap_item_id)
+                    DO UPDATE SET
+                        vendor_name = excluded.vendor_name,
+                        sender_domain = excluded.sender_domain,
+                        layout_key = excluded.layout_key,
+                        document_type = excluded.document_type,
+                        correction_fields_json = excluded.correction_fields_json,
+                        input_payload_json = excluded.input_payload_json,
+                        expected_fields_json = excluded.expected_fields_json,
+                        source_event_id = excluded.source_event_id,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        case_id,
+                        self.organization_id,
+                        ap_item_id,
+                        normalized.get("vendor_name"),
+                        normalized.get("sender_domain"),
+                        normalized.get("layout_key"),
+                        normalized.get("document_type"),
+                        json.dumps(correction_fields),
+                        json.dumps(input_payload),
+                        json.dumps(expected_fields),
+                        source_event_id,
+                        now,
+                        now,
+                    ),
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.error("Could not upsert reviewed extraction case: %s", exc)
+            return None
+        return case_id
+
+    def list_reviewed_extraction_cases(self, limit: int = 500) -> List[Dict[str, Any]]:
+        cases: List[Dict[str, Any]] = []
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM reviewed_extraction_cases
+                    WHERE organization_id = ?
+                    ORDER BY updated_at DESC, created_at DESC
+                    LIMIT ?
+                    """,
+                    (self.organization_id, max(1, int(limit))),
+                )
+                rows = cur.fetchall()
+        except Exception as exc:
+            logger.error("Could not load reviewed extraction cases: %s", exc)
+            return cases
+
+        for row in rows:
+            record = dict(row)
+            input_payload = json.loads(record.get("input_payload_json") or "{}")
+            expected_fields = json.loads(record.get("expected_fields_json") or "{}")
+            correction_fields = json.loads(record.get("correction_fields_json") or "[]")
+            case_id = str(record.get("id") or "").strip()
+            cases.append(
+                {
+                    "id": case_id,
+                    "input": input_payload,
+                    "expected": expected_fields,
+                    "metadata": {
+                        "source": "reviewed_production_case",
+                        "organization_id": self.organization_id,
+                        "ap_item_id": record.get("ap_item_id"),
+                        "vendor_name": record.get("vendor_name"),
+                        "sender_domain": record.get("sender_domain"),
+                        "layout_key": record.get("layout_key"),
+                        "document_type": record.get("document_type"),
+                        "correction_fields": correction_fields,
+                        "reviewed_at": record.get("updated_at") or record.get("created_at"),
+                    },
+                }
+            )
+        return cases
+
+    def list_vendor_layout_error_stats(self, limit: int = 500) -> List[Dict[str, Any]]:
+        stats: List[Dict[str, Any]] = []
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM vendor_layout_error_stats
+                    WHERE organization_id = ?
+                    ORDER BY correction_count DESC, last_corrected_at DESC
+                    LIMIT ?
+                    """,
+                    (self.organization_id, max(1, int(limit))),
+                )
+                rows = cur.fetchall()
+        except Exception as exc:
+            logger.error("Could not load vendor/layout error stats: %s", exc)
+            return stats
+
+        for row in rows:
+            record = dict(row)
+            for field in ("last_original_value", "last_corrected_value"):
+                try:
+                    record[field] = json.loads(record.get(field) or "null")
+                except Exception:
+                    record[field] = record.get(field)
+            stats.append(record)
+        return stats
+
+    def export_reviewed_extraction_cases(self, output_path: Path | str) -> Dict[str, Any]:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cases = self.list_reviewed_extraction_cases()
+        payload = {
+            "generated_at": datetime.now().isoformat(),
+            "organization_id": self.organization_id,
+            "cases": cases,
+        }
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        return {
+            "path": str(path),
+            "case_count": len(cases),
+        }
+
     # ------------------------------------------------------------------
     # Core methods
     # ------------------------------------------------------------------
@@ -275,6 +773,20 @@ class CorrectionLearningService:
         
         self._corrections.append(correction)
         self._persist_correction(correction)
+        normalized_event = self._normalize_correction_event(correction=correction)
+        normalized_event_id = self._persist_normalized_correction_event(normalized_event)
+        stat_id = self._update_vendor_layout_error_stats(normalized_event)
+        reviewed_case_id = self._upsert_reviewed_extraction_case(
+            normalized_event,
+            source_event_id=normalized_event_id,
+        )
+        export_result = None
+        export_path = str(os.getenv("CLEARLEDGR_REVIEWED_EXTRACTION_EXPORT_PATH") or "").strip()
+        if export_path:
+            try:
+                export_result = self.export_reviewed_extraction_cases(export_path)
+            except Exception as exc:
+                logger.error("Could not auto-export reviewed extraction cases: %s", exc)
 
         # Learn from the correction
         learned = self._learn_from_correction(correction)
@@ -287,6 +799,10 @@ class CorrectionLearningService:
         
         return {
             "correction_id": correction.correction_id,
+            "normalized_event_id": normalized_event_id,
+            "vendor_layout_stat_id": stat_id,
+            "reviewed_case_id": reviewed_case_id,
+            "reviewed_case_export": export_result,
             "learned": learned,
             "message": self._generate_learning_message(correction, learned),
         }

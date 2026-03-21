@@ -1,0 +1,119 @@
+{
+  "vendor_packs": [
+    {
+      "id": "google_cloud_attachment_invoices",
+      "vendor": "Google Cloud EMEA Limited",
+      "description": "Attachment-heavy Google Cloud invoices must preserve invoice number, amount, currency, and invoice classification.",
+      "case_ids": [
+        "google_workspace_attachment_invoice",
+        "google_cloud_zero_amount_attachment_invoice",
+        "scanned_ocr_style_attachment_invoice"
+      ],
+      "minimum_overall_score": 0.99,
+      "critical_field_thresholds": {
+        "amount": 1.0,
+        "currency": 1.0,
+        "invoice_number": 1.0,
+        "vendor": 1.0,
+        "document_type": 1.0
+      },
+      "known_bad_patterns": [
+        "google_cloud_attachment_total_selection"
+      ]
+    },
+    {
+      "id": "freelance_payment_requests",
+      "vendor": "Freelance",
+      "description": "Freelance payment requests must remain payment requests and not drift into invoice classification.",
+      "case_ids": [
+        "payment_request_not_invoice",
+        "payment_request_generated_01",
+        "contractor_payment_request"
+      ],
+      "minimum_overall_score": 0.99,
+      "critical_field_thresholds": {
+        "amount": 1.0,
+        "currency": 1.0,
+        "vendor": 1.0,
+        "document_type": 1.0
+      },
+      "known_bad_patterns": [
+        "freelance_payment_request_classification"
+      ]
+    },
+    {
+      "id": "designco_total_due_selection",
+      "vendor": "Designco",
+      "description": "Designco invoices with subtotal plus total due must resolve to the final amount due.",
+      "case_ids": [
+        "subtotal_and_total_due_choose_total",
+        "table_total_outweighs_subtotal"
+      ],
+      "minimum_overall_score": 0.99,
+      "critical_field_thresholds": {
+        "amount": 1.0,
+        "currency": 1.0,
+        "invoice_number": 1.0,
+        "vendor": 1.0,
+        "document_type": 1.0
+      },
+      "known_bad_patterns": [
+        "designco_subtotal_vs_total_due"
+      ]
+    }
+  ],
+  "known_bad_patterns": [
+    {
+      "id": "google_cloud_attachment_total_selection",
+      "vendor": "Google Cloud EMEA Limited",
+      "description": "Google Cloud attachment invoices must take the PDF total and invoice number, not thinner email text.",
+      "case_ids": [
+        "google_workspace_attachment_invoice",
+        "google_cloud_zero_amount_attachment_invoice",
+        "scanned_ocr_style_attachment_invoice"
+      ],
+      "minimum_overall_score": 0.99,
+      "critical_field_thresholds": {
+        "amount": 1.0,
+        "currency": 1.0,
+        "invoice_number": 1.0,
+        "vendor": 1.0,
+        "document_type": 1.0
+      }
+    },
+    {
+      "id": "freelance_payment_request_classification",
+      "vendor": "Freelance",
+      "description": "Freelance contractor asks should stay payment requests, with correct amount/currency extraction.",
+      "case_ids": [
+        "payment_request_not_invoice",
+        "payment_request_generated_01",
+        "contractor_payment_request"
+      ],
+      "minimum_overall_score": 0.99,
+      "critical_field_thresholds": {
+        "amount": 1.0,
+        "currency": 1.0,
+        "vendor": 1.0,
+        "document_type": 1.0
+      }
+    },
+    {
+      "id": "designco_subtotal_vs_total_due",
+      "vendor": "Designco",
+      "description": "Designco total-due layouts must not regress to subtotal extraction.",
+      "case_ids": [
+        "subtotal_and_total_due_choose_total",
+        "table_total_outweighs_subtotal"
+      ],
+      "minimum_overall_score": 0.99,
+      "critical_field_thresholds": {
+        "amount": 1.0,
+        "currency": 1.0,
+        "invoice_number": 1.0,
+        "vendor": 1.0,
+        "document_type": 1.0
+      }
+    }
+  ]
+}

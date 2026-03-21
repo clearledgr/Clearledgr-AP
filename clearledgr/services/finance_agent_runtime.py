@@ -145,6 +145,13 @@ class FinanceAgentRuntime:
             return ""
         return vendor
 
+    @staticmethod
+    def _sender_domain(value: Any) -> str:
+        sender = str(value or "").strip().lower()
+        if "@" not in sender:
+            return ""
+        return sender.rsplit("@", 1)[-1]
+
     @classmethod
     def _vendor_from_sender(cls, sender: Any) -> str:
         raw = str(sender or "").strip()
@@ -384,6 +391,9 @@ class FinanceAgentRuntime:
             "intake_source": invoice.get("intake_source") or "gmail_autopilot",
             "document_type": invoice.get("document_type") or invoice.get("email_type") or "invoice",
             "email_type": invoice.get("email_type") or "invoice",
+            "source_snippet": str(invoice.get("snippet") or "").strip() or None,
+            "source_body_excerpt": str(invoice.get("body") or invoice.get("body_excerpt") or "").strip()[:4000] or None,
+            "source_sender_domain": self._sender_domain(sender) or None,
             "has_attachment": has_attachment,
             "attachment_count": attachment_count,
         }
@@ -536,6 +546,9 @@ class FinanceAgentRuntime:
                                 "attachment_count": attachment_count,
                                 "attachment_names": attachment_names,
                                 "attachment_url": attachment_url,
+                                "snippet": str(invoice.get("snippet") or "").strip() or None,
+                                "body_excerpt": str(invoice.get("body") or invoice.get("body_excerpt") or "").strip()[:4000] or None,
+                                "sender_domain": self._sender_domain(sender) or None,
                             },
                         }
                     )
@@ -556,6 +569,9 @@ class FinanceAgentRuntime:
                                 "attachment_count": attachment_count,
                                 "attachment_names": attachment_names,
                                 "attachment_url": attachment_url,
+                                "snippet": str(invoice.get("snippet") or "").strip() or None,
+                                "body_excerpt": str(invoice.get("body") or invoice.get("body_excerpt") or "").strip()[:4000] or None,
+                                "sender_domain": self._sender_domain(sender) or None,
                             },
                         }
                     )
@@ -2314,6 +2330,42 @@ class FinanceAgentRuntime:
         resolved_ap_item_id = str(ap_item.get("id") or ap_item_id).strip() or str(ap_item_id)
         correlation_id = self._correlation_id_for_item(ap_item)
         resolved_actor = str(actor_id or self.actor_email or self.actor_id or "operator").strip() or "operator"
+        metadata = self._parse_json_dict(ap_item.get("metadata"))
+        sources = []
+        if hasattr(self.db, "list_ap_item_sources"):
+            try:
+                sources = self.db.list_ap_item_sources(resolved_ap_item_id) or []
+            except Exception:
+                sources = []
+        primary_source_meta = {}
+        for source in sources:
+            source_meta = self._parse_json_dict((source or {}).get("metadata"))
+            if source_meta:
+                primary_source_meta = source_meta
+                break
+        attachment_names = metadata.get("attachment_names")
+        if not isinstance(attachment_names, list):
+            attachment_names = primary_source_meta.get("attachment_names")
+        expected_fields = {
+            "vendor": ap_item.get("vendor_name") or ap_item.get("vendor"),
+            "primary_amount": ap_item.get("amount"),
+            "currency": ap_item.get("currency"),
+            "primary_invoice": ap_item.get("invoice_number"),
+            "due_date": ap_item.get("due_date"),
+            "email_type": metadata.get("document_type") or metadata.get("email_type"),
+        }
+        if field == "vendor":
+            expected_fields["vendor"] = corrected_value
+        elif field == "amount":
+            expected_fields["primary_amount"] = corrected_value
+        elif field == "currency":
+            expected_fields["currency"] = corrected_value
+        elif field == "invoice_number":
+            expected_fields["primary_invoice"] = corrected_value
+        elif field == "due_date":
+            expected_fields["due_date"] = corrected_value
+        elif field == "document_type":
+            expected_fields["email_type"] = corrected_value
 
         learning_svc = CorrectionLearningService(self.organization_id)
         try:
@@ -2325,6 +2377,15 @@ class FinanceAgentRuntime:
                     "ap_item_id": resolved_ap_item_id,
                     "field": field,
                     "vendor": ap_item.get("vendor_name"),
+                    "sender": ap_item.get("sender"),
+                    "subject": ap_item.get("subject"),
+                    "snippet": metadata.get("source_snippet") or primary_source_meta.get("snippet"),
+                    "body_excerpt": metadata.get("source_body_excerpt") or primary_source_meta.get("body_excerpt"),
+                    "attachment_names": attachment_names if isinstance(attachment_names, list) else [],
+                    "document_type": metadata.get("document_type") or metadata.get("email_type"),
+                    "source_channel": "gmail_extension",
+                    "event_source": "runtime_record_field_correction",
+                    "expected_fields": expected_fields,
                 },
                 user_id=resolved_actor,
                 invoice_id=ap_item.get("thread_id"),

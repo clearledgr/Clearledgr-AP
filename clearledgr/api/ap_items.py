@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections import Counter
 from datetime import datetime, timezone, timedelta
@@ -22,6 +23,7 @@ from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
 
 router = APIRouter(prefix="/api/ap/items", tags=["ap-items"])
+logger = logging.getLogger(__name__)
 
 
 class LinkSourceRequest(BaseModel):
@@ -325,6 +327,46 @@ def _filter_allowed_ap_item_updates(db: ClearledgrDB, updates: Dict[str, Any]) -
         else:
             serialized[key] = value
     return serialized
+
+
+def _build_operator_truth_context(
+    db: ClearledgrDB,
+    *,
+    item: Dict[str, Any],
+    metadata: Dict[str, Any],
+    field: str,
+    selected_source: str,
+    blocker: Optional[Dict[str, Any]] = None,
+    expected_fields: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    source_rows = db.list_ap_item_sources(str(item.get("id") or "").strip()) if hasattr(db, "list_ap_item_sources") else []
+    primary_source_meta: Dict[str, Any] = {}
+    if isinstance(source_rows, list):
+        for row in source_rows:
+            source_meta = _parse_json((row or {}).get("metadata"))
+            if source_meta:
+                primary_source_meta = source_meta
+                break
+    attachment_names = metadata.get("attachment_names")
+    if not isinstance(attachment_names, list):
+        attachment_names = primary_source_meta.get("attachment_names")
+    document_type = metadata.get("document_type") or metadata.get("email_type") or item.get("document_type")
+    return {
+        "ap_item_id": item.get("id"),
+        "field": field,
+        "vendor": item.get("vendor_name") or item.get("vendor"),
+        "sender": item.get("sender"),
+        "subject": item.get("subject"),
+        "snippet": metadata.get("source_snippet") or primary_source_meta.get("snippet"),
+        "body_excerpt": metadata.get("source_body_excerpt") or primary_source_meta.get("body_excerpt"),
+        "attachment_names": attachment_names if isinstance(attachment_names, list) else [],
+        "document_type": document_type,
+        "selected_source": selected_source,
+        "source_channel": "gmail_route",
+        "event_source": "field_review_resolution",
+        "expected_fields": expected_fields or {},
+        "blocker": blocker or {},
+    }
 
 
 def _should_auto_resume_after_field_resolution(item: Dict[str, Any]) -> bool:
@@ -2119,6 +2161,44 @@ async def _execute_field_review_resolution(
             },
         }
     )
+
+    try:
+        from clearledgr.services.correction_learning import CorrectionLearningService
+
+        preview_metadata = _parse_json(preview["column_payload"].get("metadata"))
+        expected_fields = {
+            "vendor": preview["column_payload"].get("vendor_name") or item.get("vendor_name") or item.get("vendor"),
+            "primary_amount": preview["column_payload"].get("amount", item.get("amount")),
+            "currency": preview["column_payload"].get("currency", item.get("currency")),
+            "primary_invoice": preview["column_payload"].get("invoice_number", item.get("invoice_number")),
+            "due_date": preview["column_payload"].get("due_date", item.get("due_date")),
+            "email_type": (
+                preview_metadata.get("document_type")
+                or preview_metadata.get("email_type")
+                or metadata.get("document_type")
+                or metadata.get("email_type")
+            ),
+        }
+        learning_svc = CorrectionLearningService(str(item.get("organization_id") or organization_id or "default"))
+        learning_svc.record_correction(
+            correction_type=normalized_field,
+            original_value=blocker.get("selected_value") if isinstance(blocker, dict) else item.get(normalized_field),
+            corrected_value=resolved_value,
+            context=_build_operator_truth_context(
+                db,
+                item=item,
+                metadata=metadata,
+                field=normalized_field,
+                selected_source=normalized_source,
+                blocker=blocker,
+                expected_fields=expected_fields,
+            ),
+            user_id=actor_id,
+            invoice_id=item.get("thread_id") or item.get("message_id"),
+            feedback=str(request.note or "").strip() or None,
+        )
+    except Exception:
+        logger.exception("field review correction learning capture failed for %s", ap_item_id)
 
     refreshed = _require_item(db, ap_item_id)
     normalized_item = build_worklist_item(db, refreshed)
