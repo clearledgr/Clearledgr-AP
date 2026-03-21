@@ -219,6 +219,64 @@ export function parseJsonObject(value) {
 export function getSourceThreadId(item) { return String(item?.thread_id || item?.threadId || '').trim(); }
 export function getSourceMessageId(item) { return String(item?.message_id || item?.messageId || '').trim(); }
 
+export function getEvidenceChecklistEntries(item = {}, state = '', contextPayload = {}) {
+  const approvals = contextPayload?.approvals || {};
+  const erp = contextPayload?.erp || {};
+  const hasEmail = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item?.subject);
+  const attachmentCount = Number(item?.attachment_count || 0);
+  const attachmentNames = Array.isArray(item?.attachment_names) ? item.attachment_names.filter(Boolean) : [];
+  const hasAttachment = Boolean(item?.has_attachment || attachmentCount > 0 || attachmentNames.length > 0);
+  const hasApproval = Boolean(
+    Number(approvals.count || 0) > 0
+    || ['needs_approval', 'approved', 'ready_to_post', 'posted_to_erp', 'closed'].includes(String(state || '').trim().toLowerCase())
+  );
+  const hasErpLink = Boolean(item?.erp_reference || item?.erp_bill_id || erp.erp_reference || erp.connector_available || erp.state);
+  const attachmentLabel = hasAttachment
+    ? (attachmentNames[0]
+        ? trimText(attachmentNames[0], 42)
+        : `${Math.max(attachmentCount, 1)} ${Math.max(attachmentCount, 1) === 1 ? 'file' : 'files'}`)
+    : 'No file linked';
+
+  return [
+    {
+      key: 'email',
+      label: 'Email',
+      status: hasEmail ? 'ok' : 'missing',
+      text: hasEmail ? 'Linked' : 'Not linked',
+      detail: hasEmail
+        ? trimText(item?.subject || 'Gmail thread linked', 48)
+        : 'No Gmail thread or source message is attached yet.',
+    },
+    {
+      key: 'attachment',
+      label: 'Attachment',
+      status: hasAttachment ? 'ok' : 'missing',
+      text: hasAttachment ? 'Attached' : 'No file',
+      detail: attachmentLabel,
+    },
+    {
+      key: 'approval',
+      label: 'Approval',
+      status: hasApproval ? 'ok' : 'missing',
+      text: hasApproval ? (String(state || '').trim().toLowerCase() === 'needs_approval' ? 'Routed' : 'Available') : 'Not routed',
+      detail: hasApproval
+        ? (String(state || '').trim().toLowerCase() === 'needs_approval'
+            ? 'Approval request is already in flight.'
+            : 'Approval evidence is available on this record.')
+        : 'No approval trail is attached yet.',
+    },
+    {
+      key: 'erp',
+      label: 'ERP',
+      status: hasErpLink ? 'ok' : 'missing',
+      text: hasErpLink
+        ? (item?.erp_reference || erp.erp_reference ? 'Linked' : 'Connected')
+        : 'Not connected',
+      detail: item?.erp_reference || erp?.erp_reference || (erp?.connector_available ? 'Connector active, no posted reference yet.' : 'No ERP link on this record.'),
+    },
+  ];
+}
+
 export function openSourceEmail(item) {
   const threadId = getSourceThreadId(item);
   if (threadId) { window.location.hash = `#inbox/${encodeURIComponent(threadId)}`; return true; }

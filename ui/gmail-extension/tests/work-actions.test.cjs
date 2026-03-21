@@ -23,6 +23,14 @@ test('non-invoice finance documents do not expose invoice-only actions', async (
     getWorkStateNotice('received', 'credit_note'),
     /non-invoice finance document/i,
   );
+  assert.match(
+    getWorkStateNotice('received', 'payment'),
+    /money already moved/i,
+  );
+  assert.match(
+    getWorkStateNotice('received', 'statement'),
+    /reconciliation work/i,
+  );
 });
 
 test('resume workflow is only offered for invoice posting states with prior field-review blockers', async () => {

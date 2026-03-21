@@ -28,6 +28,13 @@ function addReasonTokens(target, value) {
     .forEach((entry) => target.add(entry));
 }
 
+function humanizeToken(value) {
+  return String(value || '')
+    .trim()
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function getAuditReasonTokens(event) {
   const payload = parseJsonObject(event?.payload_json || event?.payloadJson || event?.payload) || {};
   const response = payload?.response && typeof payload.response === 'object' ? payload.response : {};
@@ -95,15 +102,46 @@ export function getPrimaryActionConfig(state, actorRole = 'operator', documentTy
   return null;
 }
 
-export function getWorkStateNotice(state, documentType = 'invoice') {
+export function getWorkStateNotice(state, documentType = 'invoice', item = null) {
   const normalized = normalizeWorkState(state);
   if (!isInvoiceDocumentType(documentType)) {
     const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
+    const resolution = item && typeof item === 'object' && item.non_invoice_resolution && typeof item.non_invoice_resolution === 'object'
+      ? item.non_invoice_resolution
+      : {};
+    const accountingTreatment = String(
+      item?.non_invoice_accounting_treatment
+      || resolution?.accounting_treatment
+      || ''
+    ).trim();
+    const downstreamQueue = String(
+      item?.non_invoice_downstream_queue
+      || resolution?.downstream_queue
+      || ''
+    ).trim();
+    const resolved = Boolean(resolution?.resolved_at);
+    if (resolved && accountingTreatment) {
+      const treatmentText = humanizeToken(accountingTreatment).replace(/^Finance Document Reviewed$/i, 'Review recorded');
+      const queueText = downstreamQueue ? ` Next queue: ${humanizeToken(downstreamQueue).toLowerCase()}.` : '';
+      return `This ${documentLabel} has been resolved. ${treatmentText}.${queueText}`;
+    }
     if (normalized === 'rejected') {
       return `This ${documentLabel} has been rejected.`;
     }
     if (normalized === 'closed') {
       return `This ${documentLabel} has been closed.`;
+    }
+    if (documentType === 'statement') {
+      return 'This bank statement is routed to reconciliation work, not AP approval or ERP posting.';
+    }
+    if (documentType === 'payment_request') {
+      return 'This payment request is routed outside the invoice workflow. AP approval and ERP posting are disabled.';
+    }
+    if (documentType === 'payment') {
+      return 'This payment confirmation proves money already moved. It is tracked outside the AP payable workflow.';
+    }
+    if (documentType === 'receipt') {
+      return 'This receipt is supporting evidence for a completed payment, not an open payable.';
     }
     return `This ${documentLabel} is tracked as a non-invoice finance document. Invoice approval and ERP posting are disabled.`;
   }

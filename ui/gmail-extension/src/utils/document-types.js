@@ -1,6 +1,9 @@
 const DOCUMENT_TYPE_ALIASES = {
   invoice: 'invoice',
   invoices: 'invoice',
+  payment: 'payment',
+  payments: 'payment',
+  payment_confirmation: 'payment',
   receipt: 'receipt',
   receipts: 'receipt',
   refund: 'refund',
@@ -23,6 +26,7 @@ const DOCUMENT_TYPE_ALIASES = {
 
 const DOCUMENT_TYPE_LABELS = {
   invoice: 'Invoice',
+  payment: 'Payment confirmation',
   receipt: 'Receipt',
   refund: 'Refund',
   credit_note: 'Credit note',
@@ -33,6 +37,7 @@ const DOCUMENT_TYPE_LABELS = {
 
 const DOCUMENT_TYPE_PLURAL_LABELS = {
   invoice: 'Invoices',
+  payment: 'Payment confirmations',
   receipt: 'Receipts',
   refund: 'Refunds',
   credit_note: 'Credit notes',
@@ -78,14 +83,16 @@ export function getNonInvoiceWorkflowGuidance(value) {
   switch (normalizeDocumentType(value)) {
     case 'credit_note':
       return 'Review this credit note and link it to the related invoice before any downstream action.';
+    case 'payment':
+      return 'Review this payment confirmation and link it to the related payment ledger activity.';
     case 'refund':
       return 'Review this refund and link it to the related payment or vendor balance activity.';
     case 'receipt':
-      return 'Review this receipt and link it to the related payment activity.';
+      return 'Review this receipt as supporting evidence for a completed expense or purchase.';
     case 'payment_request':
-      return 'Review this payment request before routing it outside the invoice workflow.';
+      return 'Review this payment request before routing it outside the invoice workflow. It is not an AP invoice.';
     case 'statement':
-      return 'Review this bank statement before reconciliation or follow-up.';
+      return 'Review this bank statement before sending it to reconciliation. It is not an AP work item.';
     default:
       return 'Review this finance document before any downstream action.';
   }

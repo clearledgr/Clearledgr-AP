@@ -154,9 +154,14 @@ class EmailParser:
 
     RECEIPT_KEYWORDS = [
         'your receipt', 'payment receipt', 'receipt from', 'receipt for',
-        'payment confirmation', 'payment received', 'payment processed',
         'thank you for your payment', 'thank you for your purchase',
         'order confirmation', 'subscription receipt', 'order receipt',
+    ]
+
+    PAYMENT_KEYWORDS = [
+        'payment confirmation', 'payment confirmed', 'payment received',
+        'payment processed', 'payment successful', 'payment completed',
+        'invoice paid', 'paid successfully',
     ]
 
     REFUND_KEYWORDS = [
@@ -167,6 +172,11 @@ class EmailParser:
     CREDIT_NOTE_KEYWORDS = [
         'credit note', 'credit memo', 'vendor credit',
         'credit applied', 'credit issued',
+    ]
+
+    STATEMENT_KEYWORDS = [
+        'bank statement', 'card statement', 'account statement',
+        'monthly statement', 'billing statement',
     ]
 
     # Domains that act as payment processors / billing platforms.
@@ -646,7 +656,7 @@ class EmailParser:
         payee = self._extract_party(text, 'to')
         
         return {
-            "type": "payment_confirmation",
+            "type": "payment",
             "transaction_id": txn_id,
             "amount": amounts[0] if amounts else None,
             "currency": self._detect_currency(text),
@@ -671,6 +681,12 @@ class EmailParser:
         if any(kw in text for kw in self.REFUND_KEYWORDS):
             return "refund"
 
+        if any(kw in text for kw in self.STATEMENT_KEYWORDS):
+            return "statement"
+
+        if any(kw in text for kw in self.PAYMENT_KEYWORDS):
+            return "payment"
+
         # Receipts must be detected before invoice keywords to avoid misclassification.
         if any(kw in text for kw in self.RECEIPT_KEYWORDS):
             return "receipt"
@@ -692,12 +708,12 @@ class EmailParser:
         """
         import re
         patterns = [
-            # "receipt from X #123" or "credit note from Acme Corp"
-            r'(?:receipt|refund|invoice|bill|statement|credit\s+note|credit\s+memo)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|\s+for\b|[,\.]|$)',
-            # "Your receipt from X" at the start of the subject
-            r'^(?:your\s+)?(?:receipt|refund|invoice|bill|statement|order|credit\s+note|credit\s+memo)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|[,\.]|$)',
-            # "Acme invoice", "Acme receipt", "Acme credit note"
-            r'^([A-Z][A-Za-z0-9\s&\.\-]+?)\s+(?:invoice|receipt|bill|refund|credit\s+note|credit\s+memo)\b',
+            # "receipt from X #123" / "payment confirmation from X" / "credit note from Acme Corp"
+            r'(?:receipt|payment(?:\s+confirmation)?|refund|invoice|bill|statement|credit\s+note|credit\s+memo)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|\s+for\b|[,\.]|$)',
+            # "Your receipt from X" / "Your payment confirmation from X"
+            r'^(?:your\s+)?(?:receipt|payment(?:\s+confirmation)?|refund|invoice|bill|statement|order|credit\s+note|credit\s+memo)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|[,\.]|$)',
+            # "Acme invoice", "Acme receipt", "Acme payment confirmation"
+            r'^([A-Z][A-Za-z0-9\s&\.\-]+?)\s+(?:invoice|receipt|payment(?:\s+confirmation)?|bill|refund|credit\s+note|credit\s+memo)\b',
         ]
         for text in [subject, (body or '')[:300]]:
             for pattern in patterns:

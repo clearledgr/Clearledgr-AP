@@ -49,7 +49,19 @@ def test_finance_label_keys_for_receipt():
 
     keys = finance_label_keys(finance_email=finance_email)
 
-    assert keys == {"processed", "receipts", "payments"}
+    assert keys == {"processed", "receipts"}
+
+
+def test_finance_label_keys_for_payment_confirmation():
+    finance_email = SimpleNamespace(
+        email_type="payment_confirmation",
+        status="processed",
+        metadata={},
+    )
+
+    keys = finance_label_keys(finance_email=finance_email)
+
+    assert keys == {"processed", "payments"}
 
 
 def test_finance_label_keys_for_refund():
@@ -86,7 +98,7 @@ def test_finance_label_keys_prefers_metadata_document_type_over_stale_email_type
     keys = finance_label_keys(finance_email=finance_email)
 
     assert "invoices" not in keys
-    assert keys == {"processed", "receipts", "payments"}
+    assert keys == {"processed", "receipts"}
 
 
 def test_finance_label_keys_uses_refund_subject_hint_when_document_type_is_stale():

@@ -283,7 +283,7 @@ DOCUMENT:
 TASK: Extract invoice data and explain your reasoning.
 
 Think through these steps:
-1. IDENTIFY: What type of document is this? (Invoice, Receipt, Statement, Other)
+1. IDENTIFY: What type of document is this? (Invoice, Payment, Receipt, Refund, Credit Note, Payment Request, Statement, Other)
 2. VENDOR: Who is the sender/vendor? Look for company name, logo, letterhead.
 3. AMOUNT: What is the total amount due? Look for "Total", "Amount Due", "Balance".
 4. DATES: What are the invoice date and due date?
@@ -292,7 +292,7 @@ Think through these steps:
 
 Return JSON with this structure:
 {{
-  "document_type": "invoice|receipt|statement|other",
+  "document_type": "invoice|payment|receipt|refund|credit_note|payment_request|statement|other",
   "vendor": "Company Name",
   "total_amount": 123.45,
   "currency": "USD",

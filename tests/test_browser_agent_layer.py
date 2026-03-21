@@ -1194,6 +1194,8 @@ def test_autopilot_status_includes_agent_runtime_truth_claims(client, monkeypatc
     autonomy_gate = payload["agent_runtime"]["ap_autonomy_gate"]
     assert autonomy_gate["mode"] in {"manual", "assisted"}
     assert "failing_gates" in autonomy_gate
+    assert "action_thresholds" in autonomy_gate
+    assert "vendor_promotion_status" in autonomy_gate
     surface = payload.get("runtime_surface") or {}
     assert surface.get("profile") == "strict"
     assert surface.get("strict_effective") is True
@@ -1230,6 +1232,8 @@ def test_autopilot_status_keeps_durable_retry_enabled_in_production(client, monk
     assert "legacy_fallback_forced_off_in_production" in contract["warnings"]
     autonomy_gate = runtime_status["ap_autonomy_gate"]
     assert autonomy_gate["mode"] in {"manual", "assisted"}
+    assert "action_thresholds" in autonomy_gate
+    assert "vendor_promotion_status" in autonomy_gate
     surface = autopilot.get("runtime_surface") or {}
     assert surface.get("production_like") is True
     assert surface.get("legacy_override_requested") is True

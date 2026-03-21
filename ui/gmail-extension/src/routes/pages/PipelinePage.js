@@ -699,7 +699,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                 ${!focusedItemVisible
                   ? html`<button class="alt" onClick=${revealFocusedItem}>Show in pipeline</button>`
                   : null}
-                <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open detail</button>
+                <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open record</button>
                 <button class="alt" onClick=${clearFocus}>Clear focus</button>
               </div>
             </div>
@@ -965,8 +965,10 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                         ${routeable
                           ? html`<button onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected}>${routingSelected ? 'Routing…' : 'Route approval'}</button>`
                           : null}
-                        <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Open detail</button>
-                        <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }} disabled=${!item.thread_id && !item.message_id}>Open thread</button>
+                        <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Open record</button>
+                        ${(item.thread_id || item.message_id) && html`
+                          <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }}>Open email</button>
+                        `}
                       </div>
                     </div>
                   `;
@@ -1040,8 +1042,10 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                               ${routeable
                                 ? html`<button onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected}>${routingSelected ? 'Routing…' : 'Route'}</button>`
                                 : null}
-                              <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Detail</button>
-                              <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }} disabled=${!item.thread_id && !item.message_id}>Thread</button>
+                              <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Open record</button>
+                              ${(item.thread_id || item.message_id) && html`
+                                <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }}>Open email</button>
+                              `}
                             </div>
                           </td>
                         </tr>

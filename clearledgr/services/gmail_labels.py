@@ -119,8 +119,10 @@ def _normalize_document_type(value: Any) -> str:
         "bill": "invoice",
         "payment_request": "payment_request",
         "paymentrequest": "payment_request",
+        "payment": "payment",
+        "payment_confirmation": "payment",
+        "paymentconfirmed": "payment",
         "receipt": "receipt",
-        "payment_confirmation": "receipt",
         "refund": "refund",
         "credit_note": "credit_note",
         "creditnote": "credit_note",
@@ -142,7 +144,9 @@ def _subject_document_type_hint(record: Any) -> str:
         return "credit_note"
     if re.search(r"\brefund\b", subject):
         return "refund"
-    if re.search(r"\b(receipt|payment confirmation)\b", subject):
+    if re.search(r"\b(payment confirmation|payment received|payment processed|payment successful|payment completed)\b", subject):
+        return "payment"
+    if re.search(r"\b(receipt|order confirmation)\b", subject):
         return "receipt"
     if re.search(r"\b(bank|card|account)\s+statement\b", subject):
         return "statement"
@@ -159,8 +163,10 @@ def _document_label_keys(document_type: str) -> Set[str]:
         return {"invoices"}
     if normalized == "payment_request":
         return {"payment_requests"}
+    if normalized == "payment":
+        return {"payments"}
     if normalized == "receipt":
-        return {"receipts", "payments"}
+        return {"receipts"}
     if normalized == "refund":
         return {"refunds"}
     if normalized == "credit_note":

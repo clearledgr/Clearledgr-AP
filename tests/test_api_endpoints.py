@@ -650,7 +650,7 @@ class TestGmailWebhooks:
                 return email
 
         fake_db = _FakeDB()
-        sync_labels = AsyncMock(return_value={"processed", "receipts", "payments"})
+        sync_labels = AsyncMock(return_value={"processed", "receipts"})
 
         with patch.object(
             gmail_webhooks_module,
@@ -681,6 +681,69 @@ class TestGmailWebhooks:
 
         assert len(fake_db.saved) == 1
         assert fake_db.saved[0].email_type == "receipt"
+        assert fake_db.saved[0].status == "processed"
+        sync_labels.assert_awaited_once()
+
+    def test_process_single_email_labels_payment_confirmation_without_ap_workflow(self):
+        class _FakeClient:
+            async def get_message(self, _message_id):
+                return SimpleNamespace(
+                    id="msg-payment-1",
+                    thread_id="thread-payment-1",
+                    subject="Payment confirmation for invoice INV-2048",
+                    sender="billing@acme.com",
+                    recipient="ap@company.test",
+                    date=datetime.now(timezone.utc),
+                    snippet="Payment processed",
+                    body_text="Payment processed successfully for your prior invoice.",
+                    body_html="",
+                    labels=[],
+                    attachments=[],
+                )
+
+        class _FakeDB:
+            def __init__(self):
+                self.saved = []
+
+            def get_finance_email_by_gmail_id(self, _gmail_id):
+                return None
+
+            def save_finance_email(self, email):
+                self.saved.append(email)
+                return email
+
+        fake_db = _FakeDB()
+        sync_labels = AsyncMock(return_value={"processed", "payments"})
+
+        with patch.object(
+            gmail_webhooks_module,
+            "classify_email_with_llm",
+            AsyncMock(return_value={"type": "NOISE", "confidence": 0.91}),
+        ):
+            with patch.object(
+                gmail_webhooks_module,
+                "_label_only_document_parse",
+                return_value={
+                    "email_type": "payment",
+                    "vendor": "Acme Corp",
+                    "amount": 42.0,
+                    "currency": "usd",
+                    "confidence": 0.91,
+                },
+            ):
+                with patch.object(gmail_webhooks_module, "sync_finance_labels", sync_labels):
+                    with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
+                        asyncio.run(
+                            gmail_webhooks_module.process_single_email(
+                                client=_FakeClient(),
+                                message_id="msg-payment-1",
+                                user_id="gmail-user-1",
+                                organization_id="tenant-42",
+                            )
+                        )
+
+        assert len(fake_db.saved) == 1
+        assert fake_db.saved[0].email_type == "payment"
         assert fake_db.saved[0].status == "processed"
         sync_labels.assert_awaited_once()
 

@@ -540,9 +540,89 @@ def test_non_invoice_resolution_endpoint_closes_credit_note_with_reference(clien
     assert metadata["non_invoice_resolution"]["outcome"] == "apply_to_invoice"
     assert metadata["non_invoice_resolution"]["related_reference"] == "INV-12345"
     assert metadata["non_invoice_resolution"]["closed_record"] is True
+    assert metadata["non_invoice_resolution"]["accounting_treatment"] == "vendor_credit_applied"
+    assert metadata["non_invoice_resolution"]["downstream_queue"] == "vendor_credit_ledger"
 
     audit_events = db.list_ap_audit_events(item["id"])
     assert any(event["event_type"] == "non_invoice_review_resolved" for event in audit_events)
+
+
+def test_non_invoice_resolution_endpoint_records_payment_confirmation(client, db):
+    item = db.create_ap_item(
+        _item_payload(
+            "payment-doc-1",
+            "default",
+            state="received",
+            extra={
+                "invoice_number": "PAY-001",
+                "metadata": {
+                    "document_type": "payment_confirmation",
+                    "email_type": "payment_confirmation",
+                },
+            },
+        )
+    )
+
+    response = client.post(
+        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=default",
+        headers=_auth_headers("default"),
+        json={
+            "outcome": "record_payment_confirmation",
+            "close_record": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["document_type"] == "payment"
+    assert payload["ap_item"]["document_type"] == "payment"
+    assert payload["ap_item"]["next_action"] == "none"
+    assert payload["ap_item"]["non_invoice_review_required"] is False
+
+    stored = db.get_ap_item(item["id"])
+    metadata = stored["metadata"] if isinstance(stored["metadata"], dict) else json.loads(stored["metadata"])
+    assert metadata["non_invoice_resolution"]["outcome"] == "record_payment_confirmation"
+    assert metadata["non_invoice_resolution"]["accounting_treatment"] == "payment_confirmation_recorded"
+    assert metadata["non_invoice_resolution"]["downstream_queue"] == "cash_disbursements"
+
+
+def test_non_invoice_resolution_endpoint_sends_bank_statement_to_reconciliation(client, db):
+    item = db.create_ap_item(
+        _item_payload(
+            "statement-doc-1",
+            "default",
+            state="received",
+            extra={
+                "invoice_number": "STMT-001",
+                "metadata": {
+                    "document_type": "bank_statement",
+                    "email_type": "bank_statement",
+                },
+            },
+        )
+    )
+
+    response = client.post(
+        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=default",
+        headers=_auth_headers("default"),
+        json={
+            "outcome": "send_to_reconciliation",
+            "close_record": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["document_type"] == "statement"
+    assert payload["ap_item"]["document_type"] == "statement"
+    assert payload["ap_item"]["next_action"] == "none"
+    assert payload["ap_item"]["non_invoice_review_required"] is False
+
+    stored = db.get_ap_item(item["id"])
+    metadata = stored["metadata"] if isinstance(stored["metadata"], dict) else json.loads(stored["metadata"])
+    assert metadata["non_invoice_resolution"]["outcome"] == "send_to_reconciliation"
+    assert metadata["non_invoice_resolution"]["accounting_treatment"] == "queued_for_reconciliation"
+    assert metadata["non_invoice_resolution"]["downstream_queue"] == "reconciliation"
 
 
 def test_vendor_record_endpoint_returns_shared_vendor_context(client, db):

@@ -27,6 +27,31 @@ def test_llm_result_maps_credit_note_document_type():
     assert parsed["document_type"] == "credit_note"
 
 
+def test_llm_result_maps_payment_document_type():
+    parsed = llm_email_parser_module._llm_result_to_parse_email_dict(
+        {
+            "document_type": "payment",
+            "vendor": "Acme Corp",
+            "payment_processor": None,
+            "amount": 42.0,
+            "currency": "USD",
+            "invoice_number": "INV-42",
+            "invoice_date": None,
+            "due_date": None,
+            "field_confidences": {},
+            "confidence": 0.88,
+            "reasoning": "Payment confirmation detected.",
+        },
+        sender="billing@acme.com",
+        subject="Payment confirmation",
+        attachments=[],
+        model="test-model",
+    )
+
+    assert parsed["email_type"] == "payment"
+    assert parsed["document_type"] == "payment"
+
+
 def test_attachment_evidence_promotes_missing_llm_fields():
     llm_result = {
         "email_type": "invoice",

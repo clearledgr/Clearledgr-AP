@@ -201,7 +201,7 @@ export default function UpcomingPage({ api, toast, orgId, userEmail, navigate })
                   <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
                     <button class="alt" onClick=${() => openPipelineTask(task)}>Open slice</button>
                     <button class="alt" onClick=${() => openRecord(task)}>Open record</button>
-                    <button class="alt" onClick=${() => openEmail(task)} disabled=${!task.thread_id && !task.message_id}>Open email</button>
+                    ${(task.thread_id || task.message_id) && html`<button class="alt" onClick=${() => openEmail(task)}>Open email</button>`}
                   </div>
                 </div>
               </div>

@@ -101,7 +101,7 @@ BODY:
 Return exactly this JSON shape (use null for any field you cannot determine with confidence):
 
 {{
-  "document_type": "<invoice|receipt|refund|credit_note|payment_request|statement|other>",
+  "document_type": "<invoice|payment|receipt|refund|credit_note|payment_request|statement|other>",
   "vendor": "<exact merchant/vendor name — NOT the payment processor>",
   "payment_processor": "<platform routing this email, e.g. Stripe, PayPal — or null>",
   "amount": <number or null>,
@@ -123,7 +123,8 @@ Return exactly this JSON shape (use null for any field you cannot determine with
 
 Classification rules:
 - "invoice"         — a request for payment that has NOT yet been paid
-- "receipt"         — a confirmation that payment HAS already been made
+- "payment"         — a payment confirmation or settlement notice from a bank, processor, or billing system proving money moved
+- "receipt"         — a merchant receipt or proof-of-purchase document for a completed expense, not an open payable
 - "refund"          — a reversal where money was returned after a prior payment
 - "credit_note"     — a vendor-issued credit against an invoice or account balance
 - "payment_request" — informal payment request (expense, contractor, wire)
@@ -281,7 +282,7 @@ def _llm_result_to_parse_email_dict(
 
     # Normalise document_type → email_type (existing consumer key)
     doc_type = str(llm.get("document_type") or "invoice").lower().strip()
-    valid_types = {"invoice", "receipt", "refund", "credit_note", "payment_request", "statement", "other"}
+    valid_types = {"invoice", "payment", "receipt", "refund", "credit_note", "payment_request", "statement", "other"}
     email_type = doc_type if doc_type in valid_types else "invoice"
 
     parsed_attachments = [{"type": "document", "parsed": False} for _ in attachments]
@@ -404,7 +405,7 @@ def _merge_attachment_evidence(
 
     local_type = str(local_result.get("email_type") or "").strip().lower()
     llm_type = str(merged.get("email_type") or "").strip().lower()
-    if local_type in {"invoice", "receipt", "refund", "credit_note", "payment_request", "statement"} and llm_type == "other":
+    if local_type in {"invoice", "payment", "receipt", "refund", "credit_note", "payment_request", "statement"} and llm_type == "other":
         merged["email_type"] = local_type
         merged["document_type"] = local_type
         promoted_fields.append("document_type")
@@ -573,7 +574,7 @@ def _attachment_authority_score(local_result: Dict[str, Any]) -> int:
 
     score = 0
     email_type = str(local_result.get("email_type") or "").strip().lower()
-    if email_type in {"invoice", "receipt", "refund", "credit_note", "statement", "payment_request"}:
+    if email_type in {"invoice", "payment", "receipt", "refund", "credit_note", "statement", "payment_request"}:
         score += 1
 
     if local_result.get("has_invoice_attachment") or local_result.get("has_statement_attachment"):

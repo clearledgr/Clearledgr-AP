@@ -14,6 +14,7 @@ import {
   formatAmount,
   getExceptionReason,
   getFieldReviewBlockers,
+  getEvidenceChecklistEntries,
   getIssueSummary,
   getSourceMessageId,
   getSourceThreadId,
@@ -95,10 +96,29 @@ function getNonInvoiceActions(item) {
       { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
     ];
   }
+  if (documentType === 'payment') {
+    return [
+      { id: 'link_to_payment', label: 'Link to payment', requiresReference: true, referenceLabel: 'Payment reference' },
+      { id: 'record_payment_confirmation', label: 'Record payment confirmation', requiresReference: false },
+      { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
+    ];
+  }
   if (documentType === 'receipt') {
     return [
       { id: 'link_to_payment', label: 'Link to payment', requiresReference: true, referenceLabel: 'Payment reference' },
       { id: 'archive_receipt', label: 'Archive receipt', requiresReference: false },
+      { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
+    ];
+  }
+  if (documentType === 'statement') {
+    return [
+      { id: 'send_to_reconciliation', label: 'Send to reconciliation', requiresReference: false },
+      { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
+    ];
+  }
+  if (documentType === 'payment_request') {
+    return [
+      { id: 'route_outside_invoice_workflow', label: 'Route outside invoice workflow', requiresReference: false },
       { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
     ];
   }
@@ -174,25 +194,6 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
     );
   }
   return blockers.slice(0, 5);
-}
-
-function getEvidenceChecklist(item, state, contextPayload) {
-  const approvals = contextPayload?.approvals || {};
-  const erp = contextPayload?.erp || {};
-  const hasEmail = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item?.subject);
-  const hasAttachment = Boolean(item?.has_attachment || Number(item?.attachment_count || 0) > 0);
-  const hasApproval = Boolean(
-    Number(approvals.count || 0) > 0
-      || ['needs_approval', 'approved', 'ready_to_post', 'posted_to_erp', 'closed'].includes(state)
-  );
-  const hasErpLink = Boolean(item?.erp_reference || item?.erp_bill_id || erp.erp_reference || erp.connector_available || erp.state);
-
-  return [
-    { key: 'email', label: 'Email', text: hasEmail ? 'Linked' : 'Not linked', ok: hasEmail },
-    { key: 'attachment', label: 'Attachment', text: hasAttachment ? 'Attached' : 'No file', ok: hasAttachment },
-    { key: 'approval', label: 'Approval', text: hasApproval ? (state === 'needs_approval' ? 'Routed' : 'Available') : 'Not routed', ok: hasApproval },
-    { key: 'erp', label: 'ERP', text: hasErpLink ? (item?.erp_reference || erp.erp_reference ? 'Linked' : 'Connected') : 'Not connected', ok: hasErpLink },
-  ];
 }
 
 function FieldReviewRows({ blockers, pauseReason, onResolve = null, resolvingField = '' }) {
@@ -424,7 +425,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
   const budgetContext = normalizeBudgetContext(context || {}, item);
   const blockers = useMemo(() => getBlockers(item, state, budgetContext, documentType), [item, state, budgetContext, documentType]);
   const fieldReviewBlockers = useMemo(() => getFieldReviewBlockers(item), [item]);
-  const evidence = useMemo(() => getEvidenceChecklist(item, state, context), [item, state, context]);
+  const evidence = useMemo(() => getEvidenceChecklistEntries(item, state, context), [item, state, context]);
   const auditSections = useMemo(() => partitionAuditEvents(auditEvents), [auditEvents]);
   const pauseReason = useMemo(() => getWorkflowPauseReason(item), [item]);
   const resumeWorkflowEligible = useMemo(
@@ -433,7 +434,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
   );
   const stateNotice = resumeWorkflowEligible
     ? 'Field review is cleared. Resume workflow to continue the posting step.'
-    : getWorkStateNotice(state, documentType);
+    : getWorkStateNotice(state, documentType, item);
   const basePrimaryAction = pauseReason ? null : getPrimaryActionConfig(state, actorRole, documentType);
   const primaryAction = resumeWorkflowEligible && ['preview_erp_post', 'retry_erp_post'].includes(basePrimaryAction?.id)
     ? { id: 'resume_workflow', label: 'Resume workflow' }
@@ -853,9 +854,12 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
           <h3 style="margin-top:0">Evidence checklist</h3>
           <div style="display:flex;flex-direction:column;gap:10px">
             ${evidence.map((entry) => html`
-              <div key=${entry.key} style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-                <span>${entry.label}</span>
-                <span style="font-size:12px;font-weight:700;color:${entry.ok ? 'var(--brand-muted)' : 'var(--ink-muted)'}">${entry.text}</span>
+              <div key=${entry.key} style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+                <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+                  <span>${entry.label}</span>
+                  ${entry.detail && html`<span class="muted" style="font-size:12px;line-height:1.4">${entry.detail}</span>`}
+                </div>
+                <span style="font-size:12px;font-weight:700;color:${entry.status === 'ok' ? 'var(--brand-muted)' : 'var(--ink-muted)'}">${entry.text}</span>
               </div>
             `)}
           </div>
@@ -881,7 +885,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
               <h3 style="margin:0 0 4px">Linked records</h3>
               <p class="muted" style="margin:0">Related invoices and superseded records linked to this AP item.</p>
             </div>
-            ${(item?.vendor_name || item?.vendor) && html`<button class="alt" onClick=${openVendorRecord} style="padding:8px 12px;font-size:12px">Vendor record</button>`}
+            ${(item?.vendor_name || item?.vendor) && html`<button class="alt" onClick=${openVendorRecord} style="padding:8px 12px;font-size:12px">Open vendor record</button>`}
           </div>
           <div style="display:flex;flex-direction:column;gap:10px">
             ${(relatedRecords?.supersession?.previous_item || relatedRecords?.supersession?.next_item || (relatedRecords?.same_invoice_number_items || []).length || (relatedRecords?.vendor_recent_items || []).length)

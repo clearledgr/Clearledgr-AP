@@ -375,7 +375,7 @@ def test_ap_autonomy_policy_assisted_when_vendor_is_unscored():
     assert "vendor_unscored" in policy["reason_codes"]
 
 
-def test_ap_autonomy_policy_auto_for_stable_vendor_when_readiness_is_ready():
+def test_ap_autonomy_policy_assisted_when_vendor_has_only_earned_autonomous_routing():
     db = _FakeDB()
     db.ap_kpis["agentic_telemetry"]["extraction_drift"]["summary"] = {
         "vendors_monitored": 1,
@@ -392,6 +392,15 @@ def test_ap_autonomy_policy_auto_for_stable_vendor_when_readiness_is_ready():
             "source_shift_fields": [],
         }
     ]
+    db.ap_kpis["agentic_telemetry"]["shadow_decision_scoring"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "scored_item_count": 3,
+            "action_match_rate": 0.86,
+            "critical_field_match_rate": 0.94,
+            "disagreement_count": 0,
+        }
+    ]
     runtime = _runtime(db)
     readiness = {
         "status": "ready",
@@ -406,8 +415,69 @@ def test_ap_autonomy_policy_auto_for_stable_vendor_when_readiness_is_ready():
             autonomous_requested=True,
         )
 
+    assert policy["mode"] == "assisted"
+    assert policy["autonomous_allowed"] is True
+    assert "route_low_risk_for_approval" in policy["earned_actions"]
+    assert "auto_approve" in policy["blocked_actions"]
+    assert "post_to_erp" in policy["blocked_actions"]
+
+
+def test_ap_autonomy_policy_auto_when_vendor_has_earned_approval_and_post():
+    db = _FakeDB()
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["summary"] = {
+        "vendors_monitored": 1,
+        "vendors_at_risk": 0,
+        "high_risk_vendors": 0,
+        "recent_open_blocked_items": 0,
+    }
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "drift_risk": "stable",
+            "recent_invoice_count": 6,
+            "sample_recommended_count": 0,
+            "source_shift_fields": [],
+        }
+    ]
+    db.ap_kpis["agentic_telemetry"]["shadow_decision_scoring"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "scored_item_count": 6,
+            "action_match_rate": 0.97,
+            "critical_field_match_rate": 0.99,
+            "disagreement_count": 0,
+        }
+    ]
+    db.ap_kpis["agentic_telemetry"]["post_action_verification"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "attempted_count": 3,
+            "verified_count": 3,
+            "mismatch_count": 0,
+            "verification_rate": 1.0,
+        }
+    ]
+    runtime = _runtime(db)
+    readiness = {
+        "status": "ready",
+        "gates": [],
+        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+    }
+
+    with patch.object(runtime, "skill_readiness", return_value=readiness):
+        policy = runtime.ap_autonomy_policy(
+            vendor_name="Runtime Co",
+            action="auto_approve_post",
+            autonomous_requested=True,
+        )
+
     assert policy["mode"] == "auto"
     assert policy["autonomous_allowed"] is True
+    assert set(policy["earned_actions"]) == {
+        "route_low_risk_for_approval",
+        "auto_approve",
+        "post_to_erp",
+    }
     assert policy["reason_codes"] == []
 
 
@@ -453,7 +523,7 @@ def test_ap_autonomy_policy_manual_when_vendor_shadow_quality_is_low():
 
     assert policy["mode"] == "manual"
     assert policy["autonomous_allowed"] is False
-    assert "vendor_shadow_quality_low" in policy["reason_codes"]
+    assert "vendor_shadow_action_match_low" in policy["reason_codes"] or "vendor_shadow_critical_field_match_low" in policy["reason_codes"]
 
 
 def test_ap_autonomy_policy_manual_when_vendor_post_verification_is_low():
@@ -498,7 +568,53 @@ def test_ap_autonomy_policy_manual_when_vendor_post_verification_is_low():
 
     assert policy["mode"] == "manual"
     assert policy["autonomous_allowed"] is False
-    assert "vendor_post_verification_low" in policy["reason_codes"]
+    assert "vendor_post_verification_low" in policy["reason_codes"] or "vendor_post_verification_mismatch_present" in policy["reason_codes"]
+
+
+def test_ap_autonomy_summary_surfaces_vendor_block_reasons_by_action():
+    db = _FakeDB()
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["summary"] = {
+        "vendors_monitored": 1,
+        "vendors_at_risk": 1,
+        "high_risk_vendors": 0,
+        "recent_open_blocked_items": 0,
+    }
+    db.ap_kpis["agentic_telemetry"]["extraction_drift"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "drift_risk": "stable",
+            "recent_invoice_count": 5,
+            "sample_recommended_count": 0,
+            "source_shift_fields": [],
+        }
+    ]
+    db.ap_kpis["agentic_telemetry"]["shadow_decision_scoring"]["vendor_scorecards"] = [
+        {
+            "vendor_name": "Runtime Co",
+            "scored_item_count": 4,
+            "action_match_rate": 0.92,
+            "critical_field_match_rate": 0.96,
+            "disagreement_count": 0,
+        }
+    ]
+    runtime = _runtime(db)
+    readiness = {
+        "status": "ready",
+        "gates": [],
+        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+    }
+
+    with patch.object(runtime, "skill_readiness", return_value=readiness):
+        summary = runtime.ap_autonomy_summary()
+
+    assert "action_thresholds" in summary
+    assert "vendor_promotion_status" in summary
+    vendor = summary["vendor_promotion_status"][0]
+    assert vendor["vendor_name"] == "Runtime Co"
+    assert vendor["mode"] == "assisted"
+    assert vendor["action_policies"]["route_low_risk_for_approval"]["autonomous_allowed"] is True
+    assert vendor["action_policies"]["post_to_erp"]["autonomous_allowed"] is False
+    assert "vendor_post_verification_observation_mode" in vendor["blocked_actions"]["post_to_erp"]
 
 
 def test_preview_route_low_risk_for_approval_returns_precheck():

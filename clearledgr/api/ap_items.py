@@ -217,7 +217,7 @@ _NON_INVOICE_ALLOWED_OUTCOMES = {
     "credit_note": {"apply_to_invoice", "record_vendor_credit", "needs_followup"},
     "refund": {"link_to_payment", "record_vendor_refund", "needs_followup"},
     "receipt": {"link_to_payment", "archive_receipt", "needs_followup"},
-    "payment": {"link_to_payment", "needs_followup"},
+    "payment": {"link_to_payment", "record_payment_confirmation", "needs_followup"},
     "payment_request": {"route_outside_invoice_workflow", "needs_followup"},
     "statement": {"send_to_reconciliation", "needs_followup"},
     "bank_statement": {"send_to_reconciliation", "needs_followup"},
@@ -242,6 +242,8 @@ def _normalize_document_type_token(raw: Any) -> str:
     token = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
     if token == "credit_memo":
         return "credit_note"
+    if token == "payment_confirmation":
+        return "payment"
     if token == "bank_statement":
         return "statement"
     return token or "invoice"
@@ -292,7 +294,11 @@ def _coerce_field_review_value(field: str, value: Any) -> Any:
         resolved = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
         if resolved == "credit_memo":
             resolved = "credit_note"
-        if resolved not in {"invoice", "receipt", "payment_request", "payment", "refund", "credit_note", "bank_statement"}:
+        if resolved == "bank_statement":
+            resolved = "statement"
+        if resolved == "payment_confirmation":
+            resolved = "payment"
+        if resolved not in {"invoice", "receipt", "payment_request", "payment", "refund", "credit_note", "statement"}:
             raise HTTPException(status_code=400, detail="invalid_document_type_resolution")
         return resolved
 
@@ -388,6 +394,64 @@ def _non_invoice_resolution_state(
     if outcome == "needs_followup":
         return APState.NEEDS_INFO.value
     return current_state
+
+
+def _non_invoice_resolution_semantics(
+    *,
+    document_type: str,
+    outcome: str,
+    close_record: bool,
+) -> Dict[str, Any]:
+    normalized_type = _normalize_document_type_token(document_type)
+    normalized_outcome = _normalize_non_invoice_outcome(outcome)
+
+    semantics = {
+        "document_type": normalized_type,
+        "accounting_treatment": "finance_document_reviewed",
+        "downstream_queue": "finance_review",
+        "review_status": "resolved" if close_record and normalized_outcome != "needs_followup" else "open",
+        "blocks_invoice_workflow": normalized_type != "invoice",
+    }
+
+    if normalized_type == "credit_note":
+        semantics.update(
+            accounting_treatment="vendor_credit_applied" if normalized_outcome == "apply_to_invoice" else "vendor_credit_recorded",
+            downstream_queue="vendor_credit_ledger",
+        )
+    elif normalized_type == "refund":
+        semantics.update(
+            accounting_treatment="vendor_refund_linked" if normalized_outcome == "link_to_payment" else "vendor_refund_recorded",
+            downstream_queue="cash_application",
+        )
+    elif normalized_type == "receipt":
+        semantics.update(
+            accounting_treatment="expense_receipt_linked" if normalized_outcome == "link_to_payment" else "expense_receipt_archived",
+            downstream_queue="expense_evidence",
+        )
+    elif normalized_type == "payment":
+        semantics.update(
+            accounting_treatment="payment_confirmation_linked" if normalized_outcome == "link_to_payment" else "payment_confirmation_recorded",
+            downstream_queue="cash_disbursements",
+        )
+    elif normalized_type in {"statement", "bank_statement"}:
+        semantics.update(
+            accounting_treatment="queued_for_reconciliation",
+            downstream_queue="reconciliation",
+        )
+    elif normalized_type == "payment_request":
+        semantics.update(
+            accounting_treatment="routed_outside_invoice_workflow",
+            downstream_queue="payment_operations",
+        )
+
+    if normalized_outcome == "needs_followup":
+        semantics.update(
+            accounting_treatment=f"{normalized_type}_needs_followup",
+            downstream_queue="operator_followup",
+            review_status="open",
+        )
+
+    return semantics
 
 
 def _derive_attachment_summary(
@@ -1047,20 +1111,29 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
     payload["source_ranking"] = metadata.get("source_ranking") or {}
     payload["navigator"] = metadata.get("navigator") or {}
     # Document type: use stored value from ingestion, or infer from subject.
-    # Receipts are payment confirmations — they should not be routed through AP approval.
+    # Non-invoice finance docs should stay out of AP payable routing.
     _doc_type = metadata.get("email_type") or metadata.get("document_type")
     if not _doc_type:
         _subject_lc = str(payload.get("subject") or "").lower()
-        _receipt_kw = {"receipt", "payment confirmation", "payment received", "payment processed", "order confirmation"}
+        _receipt_kw = {"receipt", "order confirmation", "order receipt", "subscription receipt", "payment receipt"}
+        _payment_kw = {"payment confirmation", "payment received", "payment processed", "payment successful", "payment completed"}
         _refund_kw = {"refund"}
         _credit_note_kw = {"credit note", "credit memo"}
+        _statement_kw = {"bank statement", "card statement", "account statement", "billing statement"}
+        _payment_request_kw = {"payment request", "requesting payment", "please pay"}
         if any(kw in _subject_lc for kw in _credit_note_kw):
             _doc_type = "credit_note"
         elif any(kw in _subject_lc for kw in _refund_kw):
             _doc_type = "refund"
+        elif any(kw in _subject_lc for kw in _statement_kw):
+            _doc_type = "statement"
+        elif any(kw in _subject_lc for kw in _payment_request_kw):
+            _doc_type = "payment_request"
+        elif any(kw in _subject_lc for kw in _payment_kw):
+            _doc_type = "payment"
         else:
             _doc_type = "receipt" if any(kw in _subject_lc for kw in _receipt_kw) else "invoice"
-    payload["document_type"] = _doc_type
+    payload["document_type"] = _normalize_document_type_token(_doc_type)
     payload["conflict_actions"] = metadata.get("conflict_actions") if isinstance(metadata.get("conflict_actions"), list) else []
     payload.update(_build_field_review_surface(payload))
     if metadata.get("priority_score") is not None:
@@ -1107,6 +1180,8 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
     state_token = str(payload.get("state") or "").strip().lower()
     non_invoice_resolution = metadata.get("non_invoice_resolution")
     payload["non_invoice_resolution"] = non_invoice_resolution if isinstance(non_invoice_resolution, dict) else {}
+    payload["non_invoice_accounting_treatment"] = payload["non_invoice_resolution"].get("accounting_treatment")
+    payload["non_invoice_downstream_queue"] = payload["non_invoice_resolution"].get("downstream_queue")
     payload["non_invoice_review_required"] = bool(
         _normalize_document_type_token(payload.get("document_type")) != "invoice"
         and state_token not in {APState.CLOSED.value, APState.REJECTED.value}
@@ -2367,6 +2442,13 @@ def resolve_non_invoice_review(
         "resolved_by": actor_id,
         "closed_record": bool(request.close_record),
     }
+    resolution.update(
+        _non_invoice_resolution_semantics(
+            document_type=document_type,
+            outcome=outcome,
+            close_record=bool(request.close_record),
+        )
+    )
     metadata["non_invoice_resolution"] = resolution
     metadata["non_invoice_review_required"] = False
 

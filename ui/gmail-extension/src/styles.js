@@ -40,7 +40,7 @@ export const SIDEBAR_CSS = `
         --cl-transition: 0.15s ease;
         --cl-shell-pad-y: 10px;
         --cl-shell-pad-x: 8px;
-        --cl-surface-pad: 10px;
+        --cl-surface-pad: 9px;
         --cl-panel-pad: 10px;
         font-family: var(--cl-font-body);
         -webkit-font-smoothing: antialiased;
@@ -49,7 +49,7 @@ export const SIDEBAR_CSS = `
         padding: var(--cl-shell-pad-y) var(--cl-shell-pad-x);
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 7px;
         height: 100%;
         width: 100%;
         min-width: 0;
@@ -392,7 +392,7 @@ export const SIDEBAR_CSS = `
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
         background: var(--cl-bg);
-        padding: 9px 10px;
+        padding: 8px 9px;
         display: flex;
         flex-direction: column;
         gap: 3px;
@@ -414,13 +414,13 @@ export const SIDEBAR_CSS = `
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
         background: var(--cl-surface);
-        padding: 9px 10px;
+        padding: 8px 9px;
       }
       .cl-review-panel {
         border: 1px solid #fcd34d;
         border-radius: var(--cl-radius-sm);
         background: var(--cl-amber-soft);
-        padding: 9px 10px;
+        padding: 8px 9px;
         display: flex;
         flex-direction: column;
         gap: 7px;
@@ -434,7 +434,7 @@ export const SIDEBAR_CSS = `
         border: 1px solid rgba(180, 83, 9, 0.16);
         border-radius: var(--cl-radius-sm);
         background: rgba(255, 255, 255, 0.82);
-        padding: 9px 10px;
+        padding: 8px 9px;
         display: flex;
         flex-direction: column;
         gap: 5px;
@@ -480,17 +480,29 @@ export const SIDEBAR_CSS = `
       }
       .cl-evidence-row {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 10px;
         font-size: 12px;
       }
+      .cl-evidence-main {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
       .cl-evidence-label {
         color: var(--cl-secondary);
+      }
+      .cl-evidence-detail {
+        font-size: 11px;
+        color: var(--cl-muted);
+        line-height: 1.35;
       }
       .cl-evidence-status {
         font-weight: 600;
         color: var(--cl-primary);
+        flex-shrink: 0;
       }
       .cl-evidence-status[data-status="ok"] {
         color: var(--cl-green);
@@ -708,8 +720,8 @@ export const SIDEBAR_CSS = `
         color: white !important;
       }
       .cl-btn-small {
-        font-size: 12px;
-        padding: 5px 10px;
+        font-size: 11.5px;
+        padding: 4px 9px;
       }
       .cl-primary-cta {
         margin-top: 4px;
@@ -725,8 +737,8 @@ export const SIDEBAR_CSS = `
 
       .cl-thread-actions {
         display: flex;
-        gap: 6px;
-        margin-top: 4px;
+        gap: 5px;
+        margin-top: 2px;
         flex-wrap: wrap;
       }
       .cl-auth-copy {

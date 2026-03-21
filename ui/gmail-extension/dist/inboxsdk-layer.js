@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:8ce5324e68ffb89e26276cf5836a96d90f2a4b511cbffccf05b8724f8cad0e92 */
+/* clearledgr-source-fingerprint:182d27290928f4e0b6366112a422d825c4c90b6e5ace01c08fb55e784d87784d */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -55455,7 +55455,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         --cl-transition: 0.15s ease;
         --cl-shell-pad-y: 10px;
         --cl-shell-pad-x: 8px;
-        --cl-surface-pad: 10px;
+        --cl-surface-pad: 9px;
         --cl-panel-pad: 10px;
         font-family: var(--cl-font-body);
         -webkit-font-smoothing: antialiased;
@@ -55464,7 +55464,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         padding: var(--cl-shell-pad-y) var(--cl-shell-pad-x);
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 7px;
         height: 100%;
         width: 100%;
         min-width: 0;
@@ -55807,7 +55807,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
         background: var(--cl-bg);
-        padding: 9px 10px;
+        padding: 8px 9px;
         display: flex;
         flex-direction: column;
         gap: 3px;
@@ -55829,13 +55829,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
         background: var(--cl-surface);
-        padding: 9px 10px;
+        padding: 8px 9px;
       }
       .cl-review-panel {
         border: 1px solid #fcd34d;
         border-radius: var(--cl-radius-sm);
         background: var(--cl-amber-soft);
-        padding: 9px 10px;
+        padding: 8px 9px;
         display: flex;
         flex-direction: column;
         gap: 7px;
@@ -55849,7 +55849,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         border: 1px solid rgba(180, 83, 9, 0.16);
         border-radius: var(--cl-radius-sm);
         background: rgba(255, 255, 255, 0.82);
-        padding: 9px 10px;
+        padding: 8px 9px;
         display: flex;
         flex-direction: column;
         gap: 5px;
@@ -55895,17 +55895,29 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       .cl-evidence-row {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 10px;
         font-size: 12px;
       }
+      .cl-evidence-main {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
       .cl-evidence-label {
         color: var(--cl-secondary);
+      }
+      .cl-evidence-detail {
+        font-size: 11px;
+        color: var(--cl-muted);
+        line-height: 1.35;
       }
       .cl-evidence-status {
         font-weight: 600;
         color: var(--cl-primary);
+        flex-shrink: 0;
       }
       .cl-evidence-status[data-status="ok"] {
         color: var(--cl-green);
@@ -56123,8 +56135,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         color: white !important;
       }
       .cl-btn-small {
-        font-size: 12px;
-        padding: 5px 10px;
+        font-size: 11.5px;
+        padding: 4px 9px;
       }
       .cl-primary-cta {
         margin-top: 4px;
@@ -56140,8 +56152,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
       .cl-thread-actions {
         display: flex;
-        gap: 6px;
-        margin-top: 4px;
+        gap: 5px;
+        margin-top: 2px;
         flex-wrap: wrap;
       }
       .cl-auth-copy {
@@ -57676,6 +57688,47 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function getSourceMessageId(item) {
     return String(item?.message_id || item?.messageId || "").trim();
   }
+  function getEvidenceChecklistEntries(item = {}, state = "", contextPayload = {}) {
+    const approvals = contextPayload?.approvals || {};
+    const erp = contextPayload?.erp || {};
+    const hasEmail = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item?.subject);
+    const attachmentCount = Number(item?.attachment_count || 0);
+    const attachmentNames = Array.isArray(item?.attachment_names) ? item.attachment_names.filter(Boolean) : [];
+    const hasAttachment = Boolean(item?.has_attachment || attachmentCount > 0 || attachmentNames.length > 0);
+    const hasApproval = Boolean(Number(approvals.count || 0) > 0 || ["needs_approval", "approved", "ready_to_post", "posted_to_erp", "closed"].includes(String(state || "").trim().toLowerCase()));
+    const hasErpLink = Boolean(item?.erp_reference || item?.erp_bill_id || erp.erp_reference || erp.connector_available || erp.state);
+    const attachmentLabel = hasAttachment ? attachmentNames[0] ? trimText(attachmentNames[0], 42) : `${Math.max(attachmentCount, 1)} ${Math.max(attachmentCount, 1) === 1 ? "file" : "files"}` : "No file linked";
+    return [
+      {
+        key: "email",
+        label: "Email",
+        status: hasEmail ? "ok" : "missing",
+        text: hasEmail ? "Linked" : "Not linked",
+        detail: hasEmail ? trimText(item?.subject || "Gmail thread linked", 48) : "No Gmail thread or source message is attached yet."
+      },
+      {
+        key: "attachment",
+        label: "Attachment",
+        status: hasAttachment ? "ok" : "missing",
+        text: hasAttachment ? "Attached" : "No file",
+        detail: attachmentLabel
+      },
+      {
+        key: "approval",
+        label: "Approval",
+        status: hasApproval ? "ok" : "missing",
+        text: hasApproval ? String(state || "").trim().toLowerCase() === "needs_approval" ? "Routed" : "Available" : "Not routed",
+        detail: hasApproval ? String(state || "").trim().toLowerCase() === "needs_approval" ? "Approval request is already in flight." : "Approval evidence is available on this record." : "No approval trail is attached yet."
+      },
+      {
+        key: "erp",
+        label: "ERP",
+        status: hasErpLink ? "ok" : "missing",
+        text: hasErpLink ? item?.erp_reference || erp.erp_reference ? "Linked" : "Connected" : "Not connected",
+        detail: item?.erp_reference || erp?.erp_reference || (erp?.connector_available ? "Connector active, no posted reference yet." : "No ERP link on this record.")
+      }
+    ];
+  }
   function openSourceEmail(item) {
     const threadId = getSourceThreadId(item);
     if (threadId) {
@@ -58009,6 +58062,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var DOCUMENT_TYPE_ALIASES = {
     invoice: "invoice",
     invoices: "invoice",
+    payment: "payment",
+    payments: "payment",
+    payment_confirmation: "payment",
     receipt: "receipt",
     receipts: "receipt",
     refund: "refund",
@@ -58030,6 +58086,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   };
   var DOCUMENT_TYPE_LABELS = {
     invoice: "Invoice",
+    payment: "Payment confirmation",
     receipt: "Receipt",
     refund: "Refund",
     credit_note: "Credit note",
@@ -58039,6 +58096,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   };
   var DOCUMENT_TYPE_PLURAL_LABELS = {
     invoice: "Invoices",
+    payment: "Payment confirmations",
     receipt: "Receipts",
     refund: "Refunds",
     credit_note: "Credit notes",
@@ -58080,14 +58138,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     switch (normalizeDocumentType(value)) {
       case "credit_note":
         return "Review this credit note and link it to the related invoice before any downstream action.";
+      case "payment":
+        return "Review this payment confirmation and link it to the related payment ledger activity.";
       case "refund":
         return "Review this refund and link it to the related payment or vendor balance activity.";
       case "receipt":
-        return "Review this receipt and link it to the related payment activity.";
+        return "Review this receipt as supporting evidence for a completed expense or purchase.";
       case "payment_request":
-        return "Review this payment request before routing it outside the invoice workflow.";
+        return "Review this payment request before routing it outside the invoice workflow. It is not an AP invoice.";
       case "statement":
-        return "Review this bank statement before reconciliation or follow-up.";
+        return "Review this bank statement before sending it to reconciliation. It is not an AP work item.";
       default:
         return "Review this finance document before any downstream action.";
     }
@@ -58110,6 +58170,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return;
     }
     String(value).split(",").map((entry) => normalizeAuditToken(entry)).filter(Boolean).forEach((entry) => target.add(entry));
+  }
+  function humanizeToken(value) {
+    return String(value || "").trim().replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
   }
   function getAuditReasonTokens(event) {
     const payload = parseJsonObject(event?.payload_json || event?.payloadJson || event?.payload) || {};
@@ -58178,15 +58241,36 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     return null;
   }
-  function getWorkStateNotice(state, documentType = "invoice") {
+  function getWorkStateNotice(state, documentType = "invoice", item = null) {
     const normalized = normalizeWorkState(state);
     if (!isInvoiceDocumentType(documentType)) {
       const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
+      const resolution = item && typeof item === "object" && item.non_invoice_resolution && typeof item.non_invoice_resolution === "object" ? item.non_invoice_resolution : {};
+      const accountingTreatment = String(item?.non_invoice_accounting_treatment || resolution?.accounting_treatment || "").trim();
+      const downstreamQueue = String(item?.non_invoice_downstream_queue || resolution?.downstream_queue || "").trim();
+      const resolved = Boolean(resolution?.resolved_at);
+      if (resolved && accountingTreatment) {
+        const treatmentText = humanizeToken(accountingTreatment).replace(/^Finance Document Reviewed$/i, "Review recorded");
+        const queueText = downstreamQueue ? ` Next queue: ${humanizeToken(downstreamQueue).toLowerCase()}.` : "";
+        return `This ${documentLabel} has been resolved. ${treatmentText}.${queueText}`;
+      }
       if (normalized === "rejected") {
         return `This ${documentLabel} has been rejected.`;
       }
       if (normalized === "closed") {
         return `This ${documentLabel} has been closed.`;
+      }
+      if (documentType === "statement") {
+        return "This bank statement is routed to reconciliation work, not AP approval or ERP posting.";
+      }
+      if (documentType === "payment_request") {
+        return "This payment request is routed outside the invoice workflow. AP approval and ERP posting are disabled.";
+      }
+      if (documentType === "payment") {
+        return "This payment confirmation proves money already moved. It is tracked outside the AP payable workflow.";
+      }
+      if (documentType === "receipt") {
+        return "This receipt is supporting evidence for a completed payment, not an open payable.";
       }
       return `This ${documentLabel} is tracked as a non-invoice finance document. Invoice approval and ERP posting are disabled.`;
     }
@@ -59179,40 +59263,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     return blockers.slice(0, 4);
   }
-  function getEvidenceChecklist(item, state, contextPayload) {
-    const approvals = contextPayload?.approvals || {};
-    const erp = contextPayload?.erp || {};
-    const hasEmail = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item?.subject);
-    const hasAttachment = Boolean(item?.has_attachment || Number(item?.attachment_count || 0) > 0);
-    const hasApproval = Boolean(Number(approvals.count || 0) > 0 || ["needs_approval", "approved", "ready_to_post", "posted_to_erp", "closed"].includes(state));
-    const hasErpLink = Boolean(item?.erp_reference || item?.erp_bill_id || erp.erp_reference || erp.connector_available || erp.state);
-    return [
-      {
-        key: "email",
-        label: "Email",
-        status: hasEmail ? "ok" : "missing",
-        text: hasEmail ? "Linked" : "Not linked"
-      },
-      {
-        key: "attachment",
-        label: "Attachment",
-        status: hasAttachment ? "ok" : "missing",
-        text: hasAttachment ? "Attached" : "No file"
-      },
-      {
-        key: "approval",
-        label: "Approval",
-        status: hasApproval ? "ok" : "missing",
-        text: hasApproval ? state === "needs_approval" ? "Routed" : "Available" : "Not routed"
-      },
-      {
-        key: "erp",
-        label: "ERP",
-        status: hasErpLink ? "ok" : "missing",
-        text: hasErpLink ? item?.erp_reference || erp.erp_reference ? "Linked" : "Connected" : "Not connected"
-      }
-    ];
-  }
   function EvidenceChecklist({ entries }) {
     return html2`
     <div class="cl-evidence-section" aria-label="Evidence checklist">
@@ -59220,7 +59270,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="cl-evidence-list">
         ${entries.map((entry) => html2`
           <div key=${entry.key} class="cl-evidence-row">
-            <span class="cl-evidence-label">${entry.label}</span>
+            <div class="cl-evidence-main">
+              <span class="cl-evidence-label">${entry.label}</span>
+              ${entry.detail && html2`<span class="cl-evidence-detail">${entry.detail}</span>`}
+            </div>
             <span class="cl-evidence-status" data-status=${entry.status}>${entry.text}</span>
           </div>
         `)}
@@ -59401,11 +59454,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const budgetContext = normalizeBudgetContext(contextPayload || {}, item);
     const blockers = getBlockers(item, state, budgetContext, documentType);
     const fieldReviewBlockers = getFieldReviewBlockers(item);
-    const evidence = getEvidenceChecklist(item, state, contextPayload);
+    const evidence = getEvidenceChecklistEntries(item, state, contextPayload);
     const auditEvents = s3.auditState.itemId === item.id && Array.isArray(s3.auditState.events) ? s3.auditState.events : [];
     const pauseReason = getWorkflowPauseReason(item);
     const resumeWorkflowEligible = !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType);
-    const stateNotice = resumeWorkflowEligible ? "Field review is cleared. Resume workflow to continue the posting step." : getWorkStateNotice(state, documentType);
+    const stateNotice = resumeWorkflowEligible ? "Field review is cleared. Resume workflow to continue the posting step." : getWorkStateNotice(state, documentType, item);
     const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : "";
     const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
     const [optimisticState, setOptimisticState] = d2(null);
@@ -59653,9 +59706,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
       <div id="cl-agent-actions" class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open in pipeline</button>
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource} disabled=${!canOpenSource}>Open email</button>
+        ${canOpenSource && html2`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource}>Open email</button>
+        `}
         ${(item?.vendor_name || item?.vendor) && html2`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openVendorRecord}>Vendor record</button>
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openVendorRecord}>Open vendor record</button>
         `}
         ${canRejectWorkItem(displayState, actorRole, documentType) && html2`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
@@ -60983,8 +61038,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       sliceId: "blocked_exception"
     },
     non_invoice: {
-      title: "Refunds and credit notes",
-      detail: "Handle non-invoice finance documents with explicit link-and-close workflows.",
+      title: "Non-invoice finance docs",
+      detail: "Handle payment confirmations, receipts, refunds, credit notes, bank statements, and payment requests with explicit downstream treatment.",
       sliceId: "all_open"
     },
     needs_info: {
@@ -61039,10 +61094,29 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         { id: "needs_followup", label: "Needs follow-up", requiresReference: false }
       ];
     }
+    if (documentType === "payment") {
+      return [
+        { id: "link_to_payment", label: "Link to payment", requiresReference: true, referenceLabel: "Payment reference" },
+        { id: "record_payment_confirmation", label: "Record payment confirmation", requiresReference: false },
+        { id: "needs_followup", label: "Needs follow-up", requiresReference: false }
+      ];
+    }
     if (documentType === "receipt") {
       return [
         { id: "link_to_payment", label: "Link to payment", requiresReference: true, referenceLabel: "Payment reference" },
         { id: "archive_receipt", label: "Archive receipt", requiresReference: false },
+        { id: "needs_followup", label: "Needs follow-up", requiresReference: false }
+      ];
+    }
+    if (documentType === "statement") {
+      return [
+        { id: "send_to_reconciliation", label: "Send to reconciliation", requiresReference: false },
+        { id: "needs_followup", label: "Needs follow-up", requiresReference: false }
+      ];
+    }
+    if (documentType === "payment_request") {
+      return [
+        { id: "route_outside_invoice_workflow", label: "Route outside invoice workflow", requiresReference: false },
         { id: "needs_followup", label: "Needs follow-up", requiresReference: false }
       ];
     }
@@ -61237,6 +61311,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const amountLabel = formatAmount(item?.amount, item?.currency);
     const summary = buildReviewSummary(item);
     const dueLabel = item?.due_date ? fmtDate(item.due_date) : "N/A";
+    const evidence = getEvidenceChecklistEntries(item, item?.state, {});
+    const evidenceSummary = evidence.filter((entry) => entry.key === "email" || entry.key === "attachment").map((entry) => `${entry.label} ${entry.text.toLowerCase()}`).join(" · ");
     const referenceSummary = item?.invoice_number ? `${referenceLabel} ${referenceValue}` : getDocumentTypeLabel(documentType);
     const lastUpdated = fmtDateTime(item?.updated_at || item?.created_at);
     const nonInvoiceActions = sectionId === "non_invoice" ? getNonInvoiceActions(item) : [];
@@ -61277,6 +61353,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           ${sectionId === "field_review" ? html5`<div style="margin-top:12px"><${FieldReviewCard} item=${item} blockers=${blockers} onResolve=${onResolve} resolvingField=${resolvingField} /></div>` : html5`<div style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
                 ${summary}
               </div>`}
+          ${evidenceSummary && html5`
+            <div class="muted" style="margin-top:8px;font-size:12px;line-height:1.45">
+              ${evidenceSummary}
+            </div>
+          `}
           ${nonInvoiceActions.length > 0 && html5`
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
               ${nonInvoiceActions.map((action) => html5`
@@ -61305,10 +61386,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       event.stopPropagation();
       onOpenRecord(item);
     }} style="padding:8px 12px;font-size:12px">Open record</button>
-          <button class="alt" onClick=${(event) => {
+          ${(item.thread_id || item.message_id) && html5`
+            <button class="alt" onClick=${(event) => {
       event.stopPropagation();
       onOpenEmail(item);
-    }} disabled=${!item.thread_id && !item.message_id} style="padding:8px 12px;font-size:12px">Open email</button>
+    }} style="padding:8px 12px;font-size:12px">Open email</button>
+          `}
         </div>
       </div>
     </div>
@@ -61656,7 +61739,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <div>
           <h3 style="margin:0 0 6px">Review workbench</h3>
           <p class="muted" style="margin:0;max-width:680px">
-            Resolve blocked fields, work open exceptions, handle posting retries, and close refunds or credit notes from one finance-focused surface.
+            Resolve blocked fields, work open exceptions, handle posting retries, and clear non-invoice finance documents from one finance-focused surface.
           </p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -61669,7 +61752,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <div class="kpi-row" style="grid-template-columns:repeat(5,1fr)">
       <${SummaryCard} label="Open review items" value=${overallSummary.total} />
       <${SummaryCard} label="Paused field review" value=${overallSummary.fieldReview} tone="warning" />
-      <${SummaryCard} label="Refunds / credits" value=${overallSummary.nonInvoice} tone="success" />
+      <${SummaryCard} label="Non-invoice docs" value=${overallSummary.nonInvoice} tone="success" />
       <${SummaryCard} label="Needs info" value=${overallSummary.needsInfo} />
       <${SummaryCard} label="Posting retries" value=${overallSummary.failedPost} tone="danger" />
     </div>
@@ -61959,7 +62042,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
                     <button class="alt" onClick=${() => openPipelineTask(task)}>Open slice</button>
                     <button class="alt" onClick=${() => openRecord(task)}>Open record</button>
-                    <button class="alt" onClick=${() => openEmail(task)} disabled=${!task.thread_id && !task.message_id}>Open email</button>
+                    ${(task.thread_id || task.message_id) && html6`<button class="alt" onClick=${() => openEmail(task)}>Open email</button>`}
                   </div>
                 </div>
               </div>
@@ -63090,7 +63173,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 ${!focusedItemVisible ? html15`<button class="alt" onClick=${revealFocusedItem}>Show in pipeline</button>` : null}
-                <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open detail</button>
+                <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open record</button>
                 <button class="alt" onClick=${clearFocus}>Clear focus</button>
               </div>
             </div>
@@ -63348,11 +63431,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                         <button class="alt" onClick=${(event) => {
         event.stopPropagation();
         openItemDetail(navigate, pipelineScope, item);
-      }}>Open detail</button>
-                        <button class="alt" onClick=${(event) => {
+      }}>Open record</button>
+                        ${(item.thread_id || item.message_id) && html15`
+                          <button class="alt" onClick=${(event) => {
         event.stopPropagation();
         openItemEmail(pipelineScope, item);
-      }} disabled=${!item.thread_id && !item.message_id}>Open thread</button>
+      }}>Open email</button>
+                        `}
                       </div>
                     </div>
                   `;
@@ -63428,11 +63513,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                               <button class="alt" onClick=${(event) => {
         event.stopPropagation();
         openItemDetail(navigate, pipelineScope, item);
-      }}>Detail</button>
-                              <button class="alt" onClick=${(event) => {
+      }}>Open record</button>
+                              ${(item.thread_id || item.message_id) && html15`
+                                <button class="alt" onClick=${(event) => {
         event.stopPropagation();
         openItemEmail(pipelineScope, item);
-      }} disabled=${!item.thread_id && !item.message_id}>Thread</button>
+      }}>Open email</button>
+                              `}
                             </div>
                           </td>
                         </tr>
@@ -63758,10 +63845,29 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         { id: "needs_followup", label: "Needs follow-up", requiresReference: false }
       ];
     }
+    if (documentType === "payment") {
+      return [
+        { id: "link_to_payment", label: "Link to payment", requiresReference: true, referenceLabel: "Payment reference" },
+        { id: "record_payment_confirmation", label: "Record payment confirmation", requiresReference: false },
+        { id: "needs_followup", label: "Needs follow-up", requiresReference: false }
+      ];
+    }
     if (documentType === "receipt") {
       return [
         { id: "link_to_payment", label: "Link to payment", requiresReference: true, referenceLabel: "Payment reference" },
         { id: "archive_receipt", label: "Archive receipt", requiresReference: false },
+        { id: "needs_followup", label: "Needs follow-up", requiresReference: false }
+      ];
+    }
+    if (documentType === "statement") {
+      return [
+        { id: "send_to_reconciliation", label: "Send to reconciliation", requiresReference: false },
+        { id: "needs_followup", label: "Needs follow-up", requiresReference: false }
+      ];
+    }
+    if (documentType === "payment_request") {
+      return [
+        { id: "route_outside_invoice_workflow", label: "Route outside invoice workflow", requiresReference: false },
         { id: "needs_followup", label: "Needs follow-up", requiresReference: false }
       ];
     }
@@ -63812,20 +63918,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       push("validated", isInvoiceDocument ? "Ready for approval" : `Ready to review ${documentLabel}`, isInvoiceDocument ? "Checks are complete and the invoice can be routed to approval." : getNonInvoiceWorkflowGuidance(documentType));
     }
     return blockers.slice(0, 5);
-  }
-  function getEvidenceChecklist2(item, state, contextPayload) {
-    const approvals = contextPayload?.approvals || {};
-    const erp = contextPayload?.erp || {};
-    const hasEmail = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item?.subject);
-    const hasAttachment = Boolean(item?.has_attachment || Number(item?.attachment_count || 0) > 0);
-    const hasApproval = Boolean(Number(approvals.count || 0) > 0 || ["needs_approval", "approved", "ready_to_post", "posted_to_erp", "closed"].includes(state));
-    const hasErpLink = Boolean(item?.erp_reference || item?.erp_bill_id || erp.erp_reference || erp.connector_available || erp.state);
-    return [
-      { key: "email", label: "Email", text: hasEmail ? "Linked" : "Not linked", ok: hasEmail },
-      { key: "attachment", label: "Attachment", text: hasAttachment ? "Attached" : "No file", ok: hasAttachment },
-      { key: "approval", label: "Approval", text: hasApproval ? state === "needs_approval" ? "Routed" : "Available" : "Not routed", ok: hasApproval },
-      { key: "erp", label: "ERP", text: hasErpLink ? item?.erp_reference || erp.erp_reference ? "Linked" : "Connected" : "Not connected", ok: hasErpLink }
-    ];
   }
   function FieldReviewRows({ blockers, pauseReason, onResolve = null, resolvingField = "" }) {
     if ((!Array.isArray(blockers) || blockers.length === 0) && !pauseReason) {
@@ -64048,11 +64140,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const budgetContext = normalizeBudgetContext(context || {}, item);
     const blockers = T2(() => getBlockers2(item, state, budgetContext, documentType), [item, state, budgetContext, documentType]);
     const fieldReviewBlockers = T2(() => getFieldReviewBlockers(item), [item]);
-    const evidence = T2(() => getEvidenceChecklist2(item, state, context), [item, state, context]);
+    const evidence = T2(() => getEvidenceChecklistEntries(item, state, context), [item, state, context]);
     const auditSections = T2(() => partitionAuditEvents(auditEvents), [auditEvents]);
     const pauseReason = T2(() => getWorkflowPauseReason(item), [item]);
     const resumeWorkflowEligible = T2(() => !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType), [auditEvents, documentType, item, pauseReason]);
-    const stateNotice = resumeWorkflowEligible ? "Field review is cleared. Resume workflow to continue the posting step." : getWorkStateNotice(state, documentType);
+    const stateNotice = resumeWorkflowEligible ? "Field review is cleared. Resume workflow to continue the posting step." : getWorkStateNotice(state, documentType, item);
     const basePrimaryAction = pauseReason ? null : getPrimaryActionConfig(state, actorRole, documentType);
     const primaryAction = resumeWorkflowEligible && ["preview_erp_post", "retry_erp_post"].includes(basePrimaryAction?.id) ? { id: "resume_workflow", label: "Resume workflow" } : basePrimaryAction;
     const canOpenEmail = Boolean(item && (getSourceThreadId(item) || getSourceMessageId(item) || item.subject));
@@ -64441,9 +64533,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <h3 style="margin-top:0">Evidence checklist</h3>
           <div style="display:flex;flex-direction:column;gap:10px">
             ${evidence.map((entry) => html16`
-              <div key=${entry.key} style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-                <span>${entry.label}</span>
-                <span style="font-size:12px;font-weight:700;color:${entry.ok ? "var(--brand-muted)" : "var(--ink-muted)"}">${entry.text}</span>
+              <div key=${entry.key} style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+                <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+                  <span>${entry.label}</span>
+                  ${entry.detail && html16`<span class="muted" style="font-size:12px;line-height:1.4">${entry.detail}</span>`}
+                </div>
+                <span style="font-size:12px;font-weight:700;color:${entry.status === "ok" ? "var(--brand-muted)" : "var(--ink-muted)"}">${entry.text}</span>
               </div>
             `)}
           </div>
@@ -64469,7 +64564,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <h3 style="margin:0 0 4px">Linked records</h3>
               <p class="muted" style="margin:0">Related invoices and superseded records linked to this AP item.</p>
             </div>
-            ${(item?.vendor_name || item?.vendor) && html16`<button class="alt" onClick=${openVendorRecord} style="padding:8px 12px;font-size:12px">Vendor record</button>`}
+            ${(item?.vendor_name || item?.vendor) && html16`<button class="alt" onClick=${openVendorRecord} style="padding:8px 12px;font-size:12px">Open vendor record</button>`}
           </div>
           <div style="display:flex;flex-direction:column;gap:10px">
             ${relatedRecords?.supersession?.previous_item || relatedRecords?.supersession?.next_item || (relatedRecords?.same_invoice_number_items || []).length || (relatedRecords?.vendor_recent_items || []).length ? html16`

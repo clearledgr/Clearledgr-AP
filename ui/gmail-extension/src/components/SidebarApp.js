@@ -14,6 +14,7 @@ import {
   normalizeBudgetContext,
   getIssueSummary,
   getExceptionReason,
+  getEvidenceChecklistEntries,
   getSourceThreadId,
   getSourceMessageId,
   getWorkflowPauseReason,
@@ -250,47 +251,6 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   return blockers.slice(0, 4);
 }
 
-function getEvidenceChecklist(item, state, contextPayload) {
-  const approvals = contextPayload?.approvals || {};
-  const erp = contextPayload?.erp || {};
-  const hasEmail = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item?.subject);
-  const hasAttachment = Boolean(item?.has_attachment || Number(item?.attachment_count || 0) > 0);
-  const hasApproval = Boolean(
-    Number(approvals.count || 0) > 0
-    || ['needs_approval', 'approved', 'ready_to_post', 'posted_to_erp', 'closed'].includes(state)
-  );
-  const hasErpLink = Boolean(item?.erp_reference || item?.erp_bill_id || erp.erp_reference || erp.connector_available || erp.state);
-
-  return [
-    {
-      key: 'email',
-      label: 'Email',
-      status: hasEmail ? 'ok' : 'missing',
-      text: hasEmail ? 'Linked' : 'Not linked',
-    },
-    {
-      key: 'attachment',
-      label: 'Attachment',
-      status: hasAttachment ? 'ok' : 'missing',
-      text: hasAttachment ? 'Attached' : 'No file',
-    },
-    {
-      key: 'approval',
-      label: 'Approval',
-      status: hasApproval ? 'ok' : 'missing',
-      text: hasApproval ? (state === 'needs_approval' ? 'Routed' : 'Available') : 'Not routed',
-    },
-    {
-      key: 'erp',
-      label: 'ERP',
-      status: hasErpLink ? 'ok' : 'missing',
-      text: hasErpLink
-        ? (item?.erp_reference || erp.erp_reference ? 'Linked' : 'Connected')
-        : 'Not connected',
-    },
-  ];
-}
-
 function EvidenceChecklist({ entries }) {
   return html`
     <div class="cl-evidence-section" aria-label="Evidence checklist">
@@ -298,7 +258,10 @@ function EvidenceChecklist({ entries }) {
       <div class="cl-evidence-list">
         ${entries.map((entry) => html`
           <div key=${entry.key} class="cl-evidence-row">
-            <span class="cl-evidence-label">${entry.label}</span>
+            <div class="cl-evidence-main">
+              <span class="cl-evidence-label">${entry.label}</span>
+              ${entry.detail && html`<span class="cl-evidence-detail">${entry.detail}</span>`}
+            </div>
             <span class="cl-evidence-status" data-status=${entry.status}>${entry.text}</span>
           </div>
         `)}
@@ -485,13 +448,13 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   const budgetContext = normalizeBudgetContext(contextPayload || {}, item);
   const blockers = getBlockers(item, state, budgetContext, documentType);
   const fieldReviewBlockers = getFieldReviewBlockers(item);
-  const evidence = getEvidenceChecklist(item, state, contextPayload);
+  const evidence = getEvidenceChecklistEntries(item, state, contextPayload);
   const auditEvents = s.auditState.itemId === item.id && Array.isArray(s.auditState.events) ? s.auditState.events : [];
   const pauseReason = getWorkflowPauseReason(item);
   const resumeWorkflowEligible = !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType);
   const stateNotice = resumeWorkflowEligible
     ? 'Field review is cleared. Resume workflow to continue the posting step.'
-    : getWorkStateNotice(state, documentType);
+    : getWorkStateNotice(state, documentType, item);
   const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : '';
   const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
 
@@ -755,9 +718,11 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
 
       <div id="cl-agent-actions" class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open in pipeline</button>
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource} disabled=${!canOpenSource}>Open email</button>
+        ${canOpenSource && html`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource}>Open email</button>
+        `}
         ${(item?.vendor_name || item?.vendor) && html`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openVendorRecord}>Vendor record</button>
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openVendorRecord}>Open vendor record</button>
         `}
         ${canRejectWorkItem(displayState, actorRole, documentType) && html`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>

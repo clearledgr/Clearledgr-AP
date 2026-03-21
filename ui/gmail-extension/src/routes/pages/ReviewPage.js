@@ -9,6 +9,7 @@ import ActionDialog, { useActionDialog } from '../../components/ActionDialog.js'
 import { navigateToRecordDetail } from '../../utils/record-route.js';
 import {
   formatAmount,
+  getEvidenceChecklistEntries,
   getExceptionReason,
   getFieldReviewBlockers,
   getIssueSummary,
@@ -39,8 +40,8 @@ const SECTION_CONFIG = {
     sliceId: 'blocked_exception',
   },
   non_invoice: {
-    title: 'Refunds and credit notes',
-    detail: 'Handle non-invoice finance documents with explicit link-and-close workflows.',
+    title: 'Non-invoice finance docs',
+    detail: 'Handle payment confirmations, receipts, refunds, credit notes, bank statements, and payment requests with explicit downstream treatment.',
     sliceId: 'all_open',
   },
   needs_info: {
@@ -97,10 +98,29 @@ function getNonInvoiceActions(item) {
       { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
     ];
   }
+  if (documentType === 'payment') {
+    return [
+      { id: 'link_to_payment', label: 'Link to payment', requiresReference: true, referenceLabel: 'Payment reference' },
+      { id: 'record_payment_confirmation', label: 'Record payment confirmation', requiresReference: false },
+      { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
+    ];
+  }
   if (documentType === 'receipt') {
     return [
       { id: 'link_to_payment', label: 'Link to payment', requiresReference: true, referenceLabel: 'Payment reference' },
       { id: 'archive_receipt', label: 'Archive receipt', requiresReference: false },
+      { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
+    ];
+  }
+  if (documentType === 'statement') {
+    return [
+      { id: 'send_to_reconciliation', label: 'Send to reconciliation', requiresReference: false },
+      { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
+    ];
+  }
+  if (documentType === 'payment_request') {
+    return [
+      { id: 'route_outside_invoice_workflow', label: 'Route outside invoice workflow', requiresReference: false },
       { id: 'needs_followup', label: 'Needs follow-up', requiresReference: false },
     ];
   }
@@ -311,6 +331,11 @@ function ReviewCard({
   const amountLabel = formatAmount(item?.amount, item?.currency);
   const summary = buildReviewSummary(item);
   const dueLabel = item?.due_date ? fmtDate(item.due_date) : 'N/A';
+  const evidence = getEvidenceChecklistEntries(item, item?.state, {});
+  const evidenceSummary = evidence
+    .filter((entry) => entry.key === 'email' || entry.key === 'attachment')
+    .map((entry) => `${entry.label} ${entry.text.toLowerCase()}`)
+    .join(' · ');
   const referenceSummary = item?.invoice_number
     ? `${referenceLabel} ${referenceValue}`
     : getDocumentTypeLabel(documentType);
@@ -356,6 +381,11 @@ function ReviewCard({
             : html`<div style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
                 ${summary}
               </div>`}
+          ${evidenceSummary && html`
+            <div class="muted" style="margin-top:8px;font-size:12px;line-height:1.45">
+              ${evidenceSummary}
+            </div>
+          `}
           ${nonInvoiceActions.length > 0 && html`
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
               ${nonInvoiceActions.map((action) => html`
@@ -378,7 +408,9 @@ function ReviewCard({
         <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
           <button class="alt" onClick=${(event) => { event.stopPropagation(); onOpenSlice(item); }} style="padding:8px 12px;font-size:12px">Open slice</button>
           <button class="alt" onClick=${(event) => { event.stopPropagation(); onOpenRecord(item); }} style="padding:8px 12px;font-size:12px">Open record</button>
-          <button class="alt" onClick=${(event) => { event.stopPropagation(); onOpenEmail(item); }} disabled=${!item.thread_id && !item.message_id} style="padding:8px 12px;font-size:12px">Open email</button>
+          ${(item.thread_id || item.message_id) && html`
+            <button class="alt" onClick=${(event) => { event.stopPropagation(); onOpenEmail(item); }} style="padding:8px 12px;font-size:12px">Open email</button>
+          `}
         </div>
       </div>
     </div>
@@ -772,7 +804,7 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
         <div>
           <h3 style="margin:0 0 6px">Review workbench</h3>
           <p class="muted" style="margin:0;max-width:680px">
-            Resolve blocked fields, work open exceptions, handle posting retries, and close refunds or credit notes from one finance-focused surface.
+            Resolve blocked fields, work open exceptions, handle posting retries, and clear non-invoice finance documents from one finance-focused surface.
           </p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -785,7 +817,7 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
     <div class="kpi-row" style="grid-template-columns:repeat(5,1fr)">
       <${SummaryCard} label="Open review items" value=${overallSummary.total} />
       <${SummaryCard} label="Paused field review" value=${overallSummary.fieldReview} tone="warning" />
-      <${SummaryCard} label="Refunds / credits" value=${overallSummary.nonInvoice} tone="success" />
+      <${SummaryCard} label="Non-invoice docs" value=${overallSummary.nonInvoice} tone="success" />
       <${SummaryCard} label="Needs info" value=${overallSummary.needsInfo} />
       <${SummaryCard} label="Posting retries" value=${overallSummary.failedPost} tone="danger" />
     </div>

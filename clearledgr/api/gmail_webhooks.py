@@ -191,8 +191,10 @@ def _label_only_document_type(message: Any, parsed: Optional[Dict[str, Any]] = N
         return "credit_note"
     if re.search(r"\brefund\b", subject_only):
         return "refund"
+    if re.search(r"\b(payment confirmation|payment received|payment processed|payment successful|payment completed)\b", subject_only):
+        return "payment"
     parsed_type = str(parsed.get("email_type") or "").strip().lower()
-    if parsed_type in {"receipt", "refund", "credit_note", "invoice", "payment_request"}:
+    if parsed_type in {"payment", "receipt", "refund", "credit_note", "invoice", "payment_request", "statement"}:
         return parsed_type
 
     subject_and_body = " ".join(
@@ -212,6 +214,8 @@ def _label_only_document_type(message: Any, parsed: Optional[Dict[str, Any]] = N
         return "credit_note"
     if re.search(r"\brefund\b", subject_and_body):
         return "refund"
+    if re.search(r"\b(payment confirmation|payment received|payment processed|payment successful|payment completed)\b", subject_and_body):
+        return "payment"
     if parsed.get("has_statement_attachment"):
         return "statement"
     if re.search(r"\b(bank|card|account)\s+statement\b", subject_and_body):
@@ -937,7 +941,7 @@ async def process_single_email(
     # Non-AP finance docs still need to be labeled in Gmail even when they do
     # not enter the AP workflow.
     if classification.get("type") == "NOISE" or classification.get("confidence", 0) < 0.7:
-        if label_only_category in {"receipt", "refund", "credit_note", "statement"}:
+        if label_only_category in {"payment", "receipt", "refund", "credit_note", "statement"}:
             finance_email = _save_label_only_finance_email(
                 db,
                 message=message,
@@ -961,7 +965,7 @@ async def process_single_email(
         return
 
     if category not in {"invoice", "payment_request"}:
-        if label_only_category in {"receipt", "refund", "credit_note", "statement"}:
+        if label_only_category in {"payment", "receipt", "refund", "credit_note", "statement"}:
             finance_email = _save_label_only_finance_email(
                 db,
                 message=message,
@@ -1160,7 +1164,9 @@ async def process_invoice_email(
         extracted_document_type = "credit_note"
     elif re.search(r"\brefund\b", subject_only):
         extracted_document_type = "refund"
-    if extracted_document_type not in {"invoice", "receipt", "refund", "credit_note", "payment_request", "statement", "other"}:
+    elif re.search(r"\b(payment confirmation|payment received|payment processed|payment successful|payment completed)\b", subject_only):
+        extracted_document_type = "payment"
+    if extracted_document_type not in {"invoice", "payment", "receipt", "refund", "credit_note", "payment_request", "statement", "other"}:
         extracted_document_type = "invoice"
     try:
         extracted_amount = float(

@@ -329,6 +329,7 @@ class CorrectionLearningService:
         token = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
         aliases = {
             "credit_memo": "credit_note",
+            "payment_confirmation": "payment",
             "bank_statement": "statement",
         }
         return aliases.get(token, token or "invoice")
