@@ -26,6 +26,19 @@ class BrowserAgentStore:
     # Browser agent sessions
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _deserialize_agent_session_row(row: Any) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+        data = dict(row)
+        metadata = data.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                data["metadata"] = json.loads(metadata)
+            except json.JSONDecodeError:
+                data["metadata"] = {}
+        return data
+
     def create_agent_session(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         self.initialize()
         import uuid
@@ -86,16 +99,7 @@ class BrowserAgentStore:
             cur = conn.cursor()
             cur.execute(sql, (session_id,))
             row = cur.fetchone()
-        if not row:
-            return None
-        data = dict(row)
-        metadata = data.get("metadata")
-        if isinstance(metadata, str):
-            try:
-                data["metadata"] = json.loads(metadata)
-            except json.JSONDecodeError:
-                data["metadata"] = {}
-        return data
+        return self._deserialize_agent_session_row(row)
 
     def get_agent_session_by_item(self, organization_id: str, ap_item_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
@@ -106,9 +110,40 @@ class BrowserAgentStore:
             cur = conn.cursor()
             cur.execute(sql, (organization_id, ap_item_id))
             row = cur.fetchone()
-        if not row:
-            return None
-        return self.get_agent_session(str(dict(row).get("id")))
+        return self._deserialize_agent_session_row(row)
+
+    def list_agent_sessions(
+        self,
+        *,
+        organization_id: Optional[str] = None,
+        states: Optional[List[str]] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        self.initialize()
+        clauses: List[str] = []
+        values: List[Any] = []
+
+        if organization_id:
+            clauses.append("organization_id = ?")
+            values.append(organization_id)
+
+        normalized_states = [str(state or "").strip() for state in (states or []) if str(state or "").strip()]
+        if normalized_states:
+            placeholders = ", ".join("?" for _ in normalized_states)
+            clauses.append(f"state IN ({placeholders})")
+            values.extend(normalized_states)
+
+        sql = "SELECT * FROM agent_sessions"
+        if clauses:
+            sql += f" WHERE {' AND '.join(clauses)}"
+        sql += " ORDER BY updated_at ASC LIMIT ?"
+        values.append(max(1, int(limit or 100)))
+
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(self._prepare_sql(sql), tuple(values))
+            rows = cur.fetchall() or []
+        return [session for session in (self._deserialize_agent_session_row(row) for row in rows) if session]
 
     # ------------------------------------------------------------------
     # Browser action events

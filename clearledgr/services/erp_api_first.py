@@ -32,6 +32,7 @@ from clearledgr.services.erp.contracts import (
 )
 from clearledgr.services.browser_agent import BrowserAgentService, get_browser_agent_service
 from clearledgr.services.erp_connector_strategy import get_erp_connector_strategy
+from clearledgr.services.erp_follow_on_result import _apply_erp_follow_on_result
 
 
 def _utcnow() -> str:
@@ -375,8 +376,6 @@ def _reconcile_finance_follow_on_completion(
             "macro_name": normalized_macro,
         },
     }
-
-    from clearledgr.api.ap_items import _apply_erp_follow_on_result  # local import avoids circular startup import
 
     persisted = _apply_erp_follow_on_result(
         resolved_db,

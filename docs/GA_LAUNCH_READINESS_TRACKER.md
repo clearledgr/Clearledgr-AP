@@ -11,6 +11,19 @@ Implementation baseline (completed and archived):
 Latest validation baseline:
 - AP v1 regression slice + durable retry tests: `114 passed` (recorded in remaining-gaps tracker archive)
 
+## Implementation Snapshot
+
+AP v1 is already implemented in code and test-covered beyond the archived remediation trackers.
+
+- Gmail autopilot exists as a backend service with catch-up and background polling.
+- Gmail is a real embedded product surface with thread execution UX plus routed pages for setup, pipeline, activity, health, and related operations.
+- Slack and Teams approval flows are implemented with authenticated callback handling, duplicate-safe behavior, and workflow dispatch contracts.
+- ERP execution is API-primary across QuickBooks, Xero, NetSuite, and SAP, with browser fallback, rollback controls, and connector-readiness evaluation.
+- Workspace and ops APIs expose tenant health, AP KPIs, autopilot status, rollback controls, GA-readiness metadata, and connector readiness.
+
+This tracker is for launch execution, live-environment evidence, and operational proof on top of that implementation baseline.
+Do not use `/Users/mombalam/Desktop/Clearledgr.v1/TODOS.md` as a proxy for product completeness.
+
 ## Scope and Doctrine Guardrails
 
 This tracker is for launch execution and evidence collection after implementation remediation.
@@ -53,20 +66,22 @@ python3 /Users/mombalam/Desktop/Clearledgr.v1/scripts/validate_launch_evidence.p
 | P2 | 4 | 3 | 0 | 0 | 1 | 0 |
 | **All** | **16** | **3** | **0** | **0** | **13** | **0** |
 
+The remaining open items are launch-operations tasks, not missing core AP v1 product implementation.
+
 ## Release Context
 
 - Target release id: `ap-v1-2026-02-25-pilot-rc1` (format: `ap-v1-<yyyy-mm-dd>-<pilot|ga>-<tag>`)
 - Current target mode: `pilot` (switch to `ga` when signoff scope expands)
 - Enabled surfaces in scope:
   - Gmail: `enabled`, runtime evidence passed (`2026-02-28T16:16Z`)
-  - Slack: `enabled_in_code`, staging callback validation pending
-  - Teams: `enabled_in_code`, staging callback validation pending
-  - Browser fallback: `enabled_in_code`, staging validation pending
+  - Slack: `implemented_in_code` (authenticated callback handler + approval contract tests), staging callback validation pending
+  - Teams: `implemented_in_code` (authenticated callback handler + approval contract tests), staging callback validation pending
+  - Browser fallback: `implemented_in_code` (preview/confirmation/audit/completion flow), staging validation pending
 - Enabled ERP connectors in scope:
-  - QuickBooks: `adapter_ready_in_code`, sandbox parity evidence pending
-  - Xero: `adapter_ready_in_code`, sandbox parity evidence pending
-  - NetSuite: `adapter_ready_in_code`, sandbox parity evidence pending
-  - SAP: `adapter_ready_in_code`, sandbox parity evidence pending
+  - QuickBooks: `implemented_in_code` (API-primary bill posting + standard credit/settlement follow-ons), sandbox parity evidence pending
+  - Xero: `implemented_in_code` (API-primary bill posting + standard credit/settlement follow-ons), sandbox parity evidence pending
+  - NetSuite: `implemented_in_code` (API-primary bill posting + standard credit/settlement follow-ons), sandbox parity evidence pending
+  - SAP: `implemented_in_code` (API-primary bill posting + standard credit/settlement follow-ons), sandbox parity evidence pending
 
 ## Milestone Checklist
 

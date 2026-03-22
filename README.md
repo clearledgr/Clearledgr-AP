@@ -16,6 +16,20 @@ Use these documents as source of truth:
 
 If any document conflicts with `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `PLAN.md` wins.
 
+## Current Status (2026-03-22)
+
+AP v1 is already implemented as a real product surface in this codebase. The shipped code includes:
+
+- Gmail-first AP intake with a backend autopilot loop, Gmail-native thread/work surfaces, and routed setup/ops pages.
+- Deterministic invoice validation, policy/confidence gates, approval routing, and audit/event recording.
+- Slack and Teams approval handlers with authenticated callbacks, duplicate-safe handling, and workflow dispatch.
+- ERP execution across NetSuite, QuickBooks, Xero, and SAP, including API-primary posting paths and standard follow-on credit/settlement operations behind readiness gates.
+- Workspace and ops control surfaces for health, KPIs, rollback controls, connector readiness, and GA-readiness evidence metadata.
+
+The main remaining gap to launch is not core product implementation. It is live-environment proof and operating discipline: staging/sandbox verification, deployment/config freeze, post-launch monitoring ownership, and continued product polish.
+
+Use this README plus `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_LAUNCH_READINESS_TRACKER.md` for current product and launch posture. Treat `/Users/mombalam/Desktop/Clearledgr.v1/TODOS.md` as deferred work only, not as an implementation-completeness ledger.
+
 ## Product Direction (Locked)
 
 1. One Clearledgr finance execution agent runtime.

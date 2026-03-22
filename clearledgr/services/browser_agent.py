@@ -1033,6 +1033,18 @@ class BrowserAgentService:
         queued = len([event for event in events if event.get("status") == "queued"])
         blocked = len([event for event in events if event.get("status") == "blocked_for_approval"])
         denied = len([event for event in events if event.get("status") == "denied_policy"])
+        session_metadata = _parse_metadata(session.get("metadata"))
+        session_metadata.update(
+            {
+                "dispatched_at": _utcnow(),
+                "last_macro_name": macro_name,
+            }
+        )
+        if workflow_id:
+            session_metadata["workflow_id"] = workflow_id
+        if correlation_id:
+            session_metadata["correlation_id"] = correlation_id
+        self.db.update_agent_session(session_id, metadata=session_metadata)
         self.db.append_ap_audit_event(
             {
                 "ap_item_id": ap_item_id,

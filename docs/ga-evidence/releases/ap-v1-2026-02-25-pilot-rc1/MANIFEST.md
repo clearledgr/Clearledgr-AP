@@ -14,6 +14,17 @@ Implementation baseline (completed):
 - `/Users/mombalam/Desktop/Clearledgr.v1/docs/archive/PLAN_IMPLEMENTATION_GAP_TRACKER_2026-02-25_COMPLETE.md`
 - `/Users/mombalam/Desktop/Clearledgr.v1/docs/archive/PLAN_REMAINING_GAPS_TRACKER_2026-02-25_COMPLETE.md`
 
+## Implementation Snapshot
+
+This manifest records pilot evidence collection on top of an implemented AP v1 codebase, not a partially built product.
+
+- Gmail is the primary embedded operator surface with a thread workspace and Gmail-native routed pages.
+- Backend Gmail autopilot, invoice validation/workflow, approval routing, audit capture, and ops/readiness APIs are implemented.
+- Slack and Teams approval callbacks are implemented and covered by handler-path tests.
+- ERP execution is API-primary across QuickBooks, Xero, NetSuite, and SAP, with browser fallback controls for unsupported or staged paths.
+
+Pending items in this manifest are live-environment capture and operational proof gaps, not absence of the core AP product.
+
 ## Release Scope
 
 - Target mode: `pilot`
@@ -21,14 +32,14 @@ Implementation baseline (completed):
 - Tenant scope: `default` (pilot), partner tenant assignment pending
 - Channel scope:
   - Gmail: `enabled`
-  - Slack: `enabled_in_code`, `staging_verify_pending`
-  - Teams: `enabled_in_code`, `staging_verify_pending`
-  - Browser fallback: `enabled_in_code`, `staging_verify_pending`
+  - Slack: `implemented_in_code`, `staging_verify_pending`
+  - Teams: `implemented_in_code`, `staging_verify_pending`
+  - Browser fallback: `implemented_in_code`, `staging_verify_pending`
 - ERP connector scope (enabled in this release):
-  - QuickBooks: `adapter_ready_in_code`, `sandbox_verify_pending`
-  - Xero: `adapter_ready_in_code`, `sandbox_verify_pending`
-  - NetSuite: `adapter_ready_in_code`, `sandbox_verify_pending`
-  - SAP: `adapter_ready_in_code`, `sandbox_verify_pending`
+  - QuickBooks: `implemented_in_code`, `sandbox_verify_pending`
+  - Xero: `implemented_in_code`, `sandbox_verify_pending`
+  - NetSuite: `implemented_in_code`, `sandbox_verify_pending`
+  - SAP: `implemented_in_code`, `sandbox_verify_pending`
 
 ## Evidence Artifacts (Repository Pointers + External Links)
 
@@ -77,16 +88,18 @@ External artifact system-of-record links (fill in):
 
 ## Readiness Summary (to update)
 
+Repository-local evidence is stronger than live-environment verification. Where broad-launch claims still require staging or sandbox proof, that is called out in the notes below and in the release scope above.
+
 | Category | Status | Evidence link | Notes |
 |---|---|---|---|
-| ERP parity matrix | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ERP_PARITY_MATRIX.md` | Verified for release package |
-| Failure-mode matrix | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/FAILURE_MODE_MATRIX.md` | Required scenarios evidenced for release package |
-| Runbook validation | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/RUNBOOK_VALIDATIONS.md` | Validation records complete |
-| Rollback controls verification | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ROLLBACK_CONTROLS_VERIFICATION.md` | Controls validated with evidence |
+| ERP parity matrix | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ERP_PARITY_MATRIX.md` | Release-package baseline verified; live sandbox parity capture still pending for broader launch claims |
+| Failure-mode matrix | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/FAILURE_MODE_MATRIX.md` | Required repository scenarios evidenced; live staging replay still pending where noted |
+| Runbook validation | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/RUNBOOK_VALIDATIONS.md` | Validation records complete for release package; live-window revalidation remains part of launch execution |
+| Rollback controls verification | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/ROLLBACK_CONTROLS_VERIFICATION.md` | Automated local-ci verification complete; staging verification still pending |
 | Gmail runtime E2E | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/GMAIL_RUNTIME_E2E.md` | Authenticated runtime evidence passed on `2026-02-28T16:16Z` |
 | Pilot signoffs | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/SIGNOFFS.md` | Approvals recorded |
 | Canary rollout | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/CANARY_ROLLOUT_REPORT.md` | Canary observations and decision captured |
-| Correlation-ID observability trace | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/OBSERVABILITY_TRACE_WALKTHROUGH.md` | End-to-end trace walkthrough captured |
+| Correlation-ID observability trace | DONE | `/Users/mombalam/Desktop/Clearledgr.v1/docs/ga-evidence/releases/ap-v1-2026-02-25-pilot-rc1/OBSERVABILITY_TRACE_WALKTHROUGH.md` | Repository-local trace walkthrough captured; live staging walkthrough still pending for broad-launch claims |
 
 ## Signoff Table (Pilot)
 
