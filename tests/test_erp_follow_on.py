@@ -557,8 +557,8 @@ class TestExecuteNonInvoiceERPFollowOn:
 class TestERPConnectorStrategyBuildRoutePlan:
     """Tests for the connector strategy route plan builder."""
 
-    def test_apply_credit_returns_api_not_supported(self):
-        """action='apply_credit' currently returns api_supported=False for all ERPs."""
+    def test_apply_credit_returns_api_mode_for_quickbooks(self):
+        """QuickBooks credit applications should prefer the native API path."""
         strategy = ERPConnectorStrategy()
         plan = strategy.build_route_plan(
             erp_type="quickbooks",
@@ -566,14 +566,38 @@ class TestERPConnectorStrategyBuildRoutePlan:
             action="apply_credit",
         )
         assert plan["action"] == "apply_credit"
-        assert plan["api_supported"] is False
-        # Since API is not supported, falls back to browser
-        assert plan["primary_mode"] == "browser_fallback"
+        assert plan["api_supported"] is True
+        assert plan["primary_mode"] == "api"
         assert plan["erp_type"] == "quickbooks"
+
+    def test_apply_settlement_returns_api_mode_for_quickbooks(self):
+        """QuickBooks settlements should prefer the native API path."""
+        strategy = ERPConnectorStrategy()
+        plan = strategy.build_route_plan(
+            erp_type="quickbooks",
+            connection_present=True,
+            action="apply_settlement",
+        )
+        assert plan["action"] == "apply_settlement"
+        assert plan["api_supported"] is True
+        assert plan["primary_mode"] == "api"
+
+    def test_apply_credit_returns_api_mode_for_xero(self):
+        """Xero credit applications should prefer the native API path."""
+        strategy = ERPConnectorStrategy()
+        plan = strategy.build_route_plan(
+            erp_type="xero",
+            connection_present=True,
+            action="apply_credit",
+        )
+        assert plan["action"] == "apply_credit"
+        assert plan["api_supported"] is True
+        assert plan["primary_mode"] == "api"
+        assert plan["erp_type"] == "xero"
         assert plan["connection_present"] is True
 
-    def test_apply_settlement_returns_api_not_supported(self):
-        """action='apply_settlement' currently returns api_supported=False for all ERPs."""
+    def test_apply_settlement_returns_api_mode_for_xero(self):
+        """Xero settlements should prefer the native API path."""
         strategy = ERPConnectorStrategy()
         plan = strategy.build_route_plan(
             erp_type="xero",
@@ -581,8 +605,58 @@ class TestERPConnectorStrategyBuildRoutePlan:
             action="apply_settlement",
         )
         assert plan["action"] == "apply_settlement"
-        assert plan["api_supported"] is False
-        assert plan["primary_mode"] == "browser_fallback"
+        assert plan["api_supported"] is True
+        assert plan["primary_mode"] == "api"
+
+    def test_apply_credit_returns_api_mode_for_netsuite(self):
+        """NetSuite credit applications should prefer the native API path."""
+        strategy = ERPConnectorStrategy()
+        plan = strategy.build_route_plan(
+            erp_type="netsuite",
+            connection_present=True,
+            action="apply_credit",
+        )
+        assert plan["action"] == "apply_credit"
+        assert plan["api_supported"] is True
+        assert plan["primary_mode"] == "api"
+        assert plan["erp_type"] == "netsuite"
+
+    def test_apply_settlement_returns_api_mode_for_netsuite(self):
+        """NetSuite settlements should prefer the native API path."""
+        strategy = ERPConnectorStrategy()
+        plan = strategy.build_route_plan(
+            erp_type="netsuite",
+            connection_present=True,
+            action="apply_settlement",
+        )
+        assert plan["action"] == "apply_settlement"
+        assert plan["api_supported"] is True
+        assert plan["primary_mode"] == "api"
+
+    def test_apply_credit_returns_api_mode_for_sap(self):
+        """SAP credit applications should prefer the native API path."""
+        strategy = ERPConnectorStrategy()
+        plan = strategy.build_route_plan(
+            erp_type="sap",
+            connection_present=True,
+            action="apply_credit",
+        )
+        assert plan["action"] == "apply_credit"
+        assert plan["api_supported"] is True
+        assert plan["primary_mode"] == "api"
+        assert plan["erp_type"] == "sap"
+
+    def test_apply_settlement_returns_api_mode_for_sap(self):
+        """SAP settlements should prefer the native API path."""
+        strategy = ERPConnectorStrategy()
+        plan = strategy.build_route_plan(
+            erp_type="sap",
+            connection_present=True,
+            action="apply_settlement",
+        )
+        assert plan["action"] == "apply_settlement"
+        assert plan["api_supported"] is True
+        assert plan["primary_mode"] == "api"
 
     def test_post_bill_with_connection_returns_api_mode(self):
         """action='post_bill' with connection_present=True returns api mode for QBO."""
@@ -633,8 +707,8 @@ class TestERPConnectorStrategyBuildRoutePlan:
         assert plan["fallback_enabled"] is False
         assert plan["primary_mode"] == "manual_review"
 
-    def test_apply_credit_all_erps_not_supported(self):
-        """apply_credit is not API-supported for any declared ERP type."""
+    def test_all_configured_erps_support_credit_application_api(self):
+        """All first-party connectors now expose a native credit-application path."""
         strategy = ERPConnectorStrategy()
         for erp_type in ("quickbooks", "xero", "netsuite", "sap"):
             plan = strategy.build_route_plan(
@@ -642,7 +716,20 @@ class TestERPConnectorStrategyBuildRoutePlan:
                 connection_present=True,
                 action="apply_credit",
             )
-            assert plan["api_supported"] is False, f"Expected api_supported=False for {erp_type}"
+            assert plan["api_supported"] is True, f"Expected api_supported=True for {erp_type}"
+            assert plan["primary_mode"] == "api"
+
+    def test_all_configured_erps_support_settlement_application_api(self):
+        """All first-party connectors now expose a native settlement path."""
+        strategy = ERPConnectorStrategy()
+        for erp_type in ("quickbooks", "xero", "netsuite", "sap"):
+            plan = strategy.build_route_plan(
+                erp_type=erp_type,
+                connection_present=True,
+                action="apply_settlement",
+            )
+            assert plan["api_supported"] is True, f"Expected api_supported=True for {erp_type}"
+            assert plan["primary_mode"] == "api"
 
 
 # ===================================================================

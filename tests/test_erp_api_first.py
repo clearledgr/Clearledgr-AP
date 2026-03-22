@@ -282,6 +282,479 @@ def test_post_bill_api_first_propagates_explicit_idempotency_key(db, monkeypatch
     assert result["error_code"] is None
 
 
+def test_apply_credit_note_api_first_prefers_quickbooks_api_and_records_success(db, monkeypatch):
+    item = _create_item(db)
+
+    monkeypatch.setattr(
+        erp_api_first_module,
+        "get_erp_connection",
+        lambda organization_id: ERPConnection(type="quickbooks"),
+    )
+
+    async def _fake_apply_credit_note(
+        organization_id: str,
+        application,
+        **kwargs,
+    ) -> Dict[str, str]:
+        return {
+            "status": "success",
+            "erp": "quickbooks",
+            "erp_reference": "bp-qb-10",
+            "target_erp_reference": application.target_erp_reference,
+            "idempotency_key": kwargs.get("idempotency_key"),
+        }
+
+    monkeypatch.setattr(erp_api_first_module, "apply_credit_note", _fake_apply_credit_note)
+
+    result = asyncio.run(
+        erp_api_first_module.apply_credit_note_api_first(
+            organization_id="default",
+            target_ap_item_id=str(item["id"]),
+            source_ap_item_id="source-credit-qb-10",
+            actor_id="tester",
+            target_erp_reference="bill-qb-10",
+            target_invoice_number=str(item["invoice_number"]),
+            credit_note_number="VC-QB-10",
+            amount=25.0,
+            currency="USD",
+            note="Vendor credit",
+            email_id=str(item["message_id"]),
+            db=db,
+        )
+    )
+
+    assert result["status"] == "success"
+    assert result["execution_mode"] == "api"
+    assert result["erp_type"] == "quickbooks"
+    assert result["erp_reference"] == "bp-qb-10"
+    assert result["fallback"]["requested"] is False
+    assert result["routing"]["primary_mode"] == "api"
+    event_types = _event_types(db, str(item["id"]))
+    assert "erp_credit_application_attempt" in event_types
+    assert "erp_credit_application_success" in event_types
+
+
+def test_apply_settlement_api_first_quickbooks_refund_still_requests_browser_fallback(db, monkeypatch):
+    item = _create_item(db)
+
+    monkeypatch.setattr(
+        erp_api_first_module,
+        "get_erp_connection",
+        lambda organization_id: ERPConnection(type="quickbooks"),
+    )
+
+    async def _fake_apply_settlement(
+        organization_id: str,
+        application,
+        **kwargs,
+    ) -> Dict[str, str]:
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "refund_settlement_api_not_available_for_connector",
+            "idempotency_key": kwargs.get("idempotency_key"),
+        }
+
+    async def _fake_dispatch_browser_follow_on(**kwargs) -> Dict[str, str]:
+        return {
+            "requested": True,
+            "eligible": True,
+            "reason": "fallback_dispatched",
+            "ap_item_id": str(item["id"]),
+            "session_id": "AGS-qb-refund-fallback-1",
+            "macro_name": "apply_settlement_in_erp",
+            "dispatch_status": "dispatched",
+            "queued": 1,
+            "blocked": 0,
+            "denied": 0,
+        }
+
+    monkeypatch.setattr(erp_api_first_module, "apply_settlement", _fake_apply_settlement)
+    monkeypatch.setattr(erp_api_first_module, "_dispatch_browser_follow_on", _fake_dispatch_browser_follow_on)
+
+    result = asyncio.run(
+        erp_api_first_module.apply_settlement_api_first(
+            organization_id="default",
+            target_ap_item_id=str(item["id"]),
+            source_ap_item_id="source-refund-qb-10",
+            actor_id="tester",
+            source_document_type="refund",
+            target_erp_reference="bill-qb-11",
+            target_invoice_number=str(item["invoice_number"]),
+            source_reference="REF-QB-10",
+            amount=10.0,
+            currency="USD",
+            note="Refund",
+            email_id=str(item["message_id"]),
+            db=db,
+        )
+    )
+
+    assert result["status"] == "pending_browser_fallback"
+    assert result["execution_mode"] == "browser_fallback"
+    assert result["erp_type"] == "quickbooks"
+    assert result["fallback"]["requested"] is True
+    assert result["routing"]["primary_mode"] == "api"
+    event_types = _event_types(db, str(item["id"]))
+    assert "erp_settlement_application_attempt" in event_types
+    assert "erp_settlement_application_fallback_requested" in event_types
+
+
+def test_apply_credit_note_api_first_prefers_xero_api_and_records_success(db, monkeypatch):
+    item = _create_item(db)
+
+    monkeypatch.setattr(
+        erp_api_first_module,
+        "get_erp_connection",
+        lambda organization_id: ERPConnection(type="xero"),
+    )
+
+    async def _fake_apply_credit_note(
+        organization_id: str,
+        application,
+        **kwargs,
+    ) -> Dict[str, str]:
+        return {
+            "status": "success",
+            "erp": "xero",
+            "erp_reference": "allocation-xero-10",
+            "target_erp_reference": application.target_erp_reference,
+            "idempotency_key": kwargs.get("idempotency_key"),
+        }
+
+    monkeypatch.setattr(erp_api_first_module, "apply_credit_note", _fake_apply_credit_note)
+
+    result = asyncio.run(
+        erp_api_first_module.apply_credit_note_api_first(
+            organization_id="default",
+            target_ap_item_id=str(item["id"]),
+            source_ap_item_id="source-credit-10",
+            actor_id="tester",
+            target_erp_reference="bill-xero-10",
+            target_invoice_number=str(item["invoice_number"]),
+            credit_note_number="CN-10",
+            amount=25.0,
+            currency="USD",
+            note="Credit note",
+            email_id=str(item["message_id"]),
+            db=db,
+        )
+    )
+
+    assert result["status"] == "success"
+    assert result["execution_mode"] == "api"
+    assert result["erp_type"] == "xero"
+    assert result["erp_reference"] == "allocation-xero-10"
+    assert result["fallback"]["requested"] is False
+    assert result["routing"]["primary_mode"] == "api"
+    event_types = _event_types(db, str(item["id"]))
+    assert "erp_credit_application_attempt" in event_types
+    assert "erp_credit_application_success" in event_types
+    assert "erp_credit_application_fallback_requested" not in event_types
+
+
+def test_apply_settlement_api_first_refund_still_requests_browser_fallback(db, monkeypatch):
+    item = _create_item(db)
+
+    monkeypatch.setattr(
+        erp_api_first_module,
+        "get_erp_connection",
+        lambda organization_id: ERPConnection(type="xero"),
+    )
+
+    async def _fake_apply_settlement(
+        organization_id: str,
+        application,
+        **kwargs,
+    ) -> Dict[str, str]:
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reason": "refund_settlement_api_not_available_for_connector",
+            "idempotency_key": kwargs.get("idempotency_key"),
+        }
+
+    async def _fake_dispatch_browser_follow_on(**kwargs) -> Dict[str, str]:
+        return {
+            "requested": True,
+            "eligible": True,
+            "reason": "fallback_dispatched",
+            "ap_item_id": str(item["id"]),
+            "session_id": "AGS-refund-fallback-1",
+            "macro_name": "apply_settlement_in_erp",
+            "dispatch_status": "dispatched",
+            "queued": 1,
+            "blocked": 0,
+            "denied": 0,
+        }
+
+    monkeypatch.setattr(erp_api_first_module, "apply_settlement", _fake_apply_settlement)
+    monkeypatch.setattr(erp_api_first_module, "_dispatch_browser_follow_on", _fake_dispatch_browser_follow_on)
+
+    result = asyncio.run(
+        erp_api_first_module.apply_settlement_api_first(
+            organization_id="default",
+            target_ap_item_id=str(item["id"]),
+            source_ap_item_id="source-refund-10",
+            actor_id="tester",
+            source_document_type="refund",
+            target_erp_reference="bill-xero-11",
+            target_invoice_number=str(item["invoice_number"]),
+            source_reference="REF-10",
+            amount=10.0,
+            currency="USD",
+            note="Refund",
+            email_id=str(item["message_id"]),
+            db=db,
+        )
+    )
+
+    assert result["status"] == "pending_browser_fallback"
+    assert result["execution_mode"] == "browser_fallback"
+    assert result["erp_type"] == "xero"
+    assert result["fallback"]["requested"] is True
+    assert result["routing"]["primary_mode"] == "api"
+    event_types = _event_types(db, str(item["id"]))
+    assert "erp_settlement_application_attempt" in event_types
+    assert "erp_settlement_application_fallback_requested" in event_types
+
+
+def test_apply_credit_note_api_first_prefers_netsuite_api_and_records_success(db, monkeypatch):
+    item = _create_item(db)
+
+    monkeypatch.setattr(
+        erp_api_first_module,
+        "get_erp_connection",
+        lambda organization_id: ERPConnection(type="netsuite"),
+    )
+
+    async def _fake_apply_credit_note(
+        organization_id: str,
+        application,
+        **kwargs,
+    ) -> Dict[str, str]:
+        return {
+            "status": "success",
+            "erp": "netsuite",
+            "erp_reference": "credit-ns-10:bill-ns-10",
+            "target_erp_reference": application.target_erp_reference,
+            "idempotency_key": kwargs.get("idempotency_key"),
+        }
+
+    monkeypatch.setattr(erp_api_first_module, "apply_credit_note", _fake_apply_credit_note)
+
+    result = asyncio.run(
+        erp_api_first_module.apply_credit_note_api_first(
+            organization_id="default",
+            target_ap_item_id=str(item["id"]),
+            source_ap_item_id="source-credit-ns-10",
+            actor_id="tester",
+            target_erp_reference="bill-ns-10",
+            target_invoice_number=str(item["invoice_number"]),
+            credit_note_number="VC-10",
+            amount=25.0,
+            currency="USD",
+            note="Vendor credit",
+            email_id=str(item["message_id"]),
+            db=db,
+        )
+    )
+
+    assert result["status"] == "success"
+    assert result["execution_mode"] == "api"
+    assert result["erp_type"] == "netsuite"
+    assert result["erp_reference"] == "credit-ns-10:bill-ns-10"
+    assert result["fallback"]["requested"] is False
+    assert result["routing"]["primary_mode"] == "api"
+    event_types = _event_types(db, str(item["id"]))
+    assert "erp_credit_application_attempt" in event_types
+    assert "erp_credit_application_success" in event_types
+
+
+def test_apply_settlement_api_first_netsuite_refund_still_requests_browser_fallback(db, monkeypatch):
+    item = _create_item(db)
+
+    monkeypatch.setattr(
+        erp_api_first_module,
+        "get_erp_connection",
+        lambda organization_id: ERPConnection(type="netsuite"),
+    )
+
+    async def _fake_apply_settlement(
+        organization_id: str,
+        application,
+        **kwargs,
+    ) -> Dict[str, str]:
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": "refund_settlement_api_not_available_for_connector",
+            "idempotency_key": kwargs.get("idempotency_key"),
+        }
+
+    async def _fake_dispatch_browser_follow_on(**kwargs) -> Dict[str, str]:
+        return {
+            "requested": True,
+            "eligible": True,
+            "reason": "fallback_dispatched",
+            "ap_item_id": str(item["id"]),
+            "session_id": "AGS-netsuite-refund-fallback-1",
+            "macro_name": "apply_settlement_in_erp",
+            "dispatch_status": "dispatched",
+            "queued": 1,
+            "blocked": 0,
+            "denied": 0,
+        }
+
+    monkeypatch.setattr(erp_api_first_module, "apply_settlement", _fake_apply_settlement)
+    monkeypatch.setattr(erp_api_first_module, "_dispatch_browser_follow_on", _fake_dispatch_browser_follow_on)
+
+    result = asyncio.run(
+        erp_api_first_module.apply_settlement_api_first(
+            organization_id="default",
+            target_ap_item_id=str(item["id"]),
+            source_ap_item_id="source-refund-ns-10",
+            actor_id="tester",
+            source_document_type="refund",
+            target_erp_reference="bill-ns-11",
+            target_invoice_number=str(item["invoice_number"]),
+            source_reference="REF-10",
+            amount=10.0,
+            currency="USD",
+            note="Refund",
+            email_id=str(item["message_id"]),
+            db=db,
+        )
+    )
+
+    assert result["status"] == "pending_browser_fallback"
+    assert result["execution_mode"] == "browser_fallback"
+    assert result["erp_type"] == "netsuite"
+    assert result["fallback"]["requested"] is True
+    assert result["routing"]["primary_mode"] == "api"
+    event_types = _event_types(db, str(item["id"]))
+    assert "erp_settlement_application_attempt" in event_types
+    assert "erp_settlement_application_fallback_requested" in event_types
+
+
+def test_apply_credit_note_api_first_prefers_sap_api_and_records_success(db, monkeypatch):
+    item = _create_item(db)
+
+    monkeypatch.setattr(
+        erp_api_first_module,
+        "get_erp_connection",
+        lambda organization_id: ERPConnection(type="sap"),
+    )
+
+    async def _fake_apply_credit_note(
+        organization_id: str,
+        application,
+        **kwargs,
+    ) -> Dict[str, str]:
+        return {
+            "status": "success",
+            "erp": "sap",
+            "erp_reference": "credit-sap-10",
+            "target_erp_reference": application.target_erp_reference,
+            "idempotency_key": kwargs.get("idempotency_key"),
+        }
+
+    monkeypatch.setattr(erp_api_first_module, "apply_credit_note", _fake_apply_credit_note)
+
+    result = asyncio.run(
+        erp_api_first_module.apply_credit_note_api_first(
+            organization_id="default",
+            target_ap_item_id=str(item["id"]),
+            source_ap_item_id="source-credit-sap-10",
+            actor_id="tester",
+            target_erp_reference="123",
+            target_invoice_number=str(item["invoice_number"]),
+            credit_note_number="CN-SAP-10",
+            amount=25.0,
+            currency="USD",
+            note="SAP credit note",
+            email_id=str(item["message_id"]),
+            db=db,
+        )
+    )
+
+    assert result["status"] == "success"
+    assert result["execution_mode"] == "api"
+    assert result["erp_type"] == "sap"
+    assert result["erp_reference"] == "credit-sap-10"
+    assert result["fallback"]["requested"] is False
+    assert result["routing"]["primary_mode"] == "api"
+    event_types = _event_types(db, str(item["id"]))
+    assert "erp_credit_application_attempt" in event_types
+    assert "erp_credit_application_success" in event_types
+
+
+def test_apply_settlement_api_first_sap_refund_still_requests_browser_fallback(db, monkeypatch):
+    item = _create_item(db)
+
+    monkeypatch.setattr(
+        erp_api_first_module,
+        "get_erp_connection",
+        lambda organization_id: ERPConnection(type="sap"),
+    )
+
+    async def _fake_apply_settlement(
+        organization_id: str,
+        application,
+        **kwargs,
+    ) -> Dict[str, str]:
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": "refund_settlement_api_not_available_for_connector",
+            "idempotency_key": kwargs.get("idempotency_key"),
+        }
+
+    async def _fake_dispatch_browser_follow_on(**kwargs) -> Dict[str, str]:
+        return {
+            "requested": True,
+            "eligible": True,
+            "reason": "fallback_dispatched",
+            "ap_item_id": str(item["id"]),
+            "session_id": "AGS-sap-refund-fallback-1",
+            "macro_name": "apply_settlement_in_erp",
+            "dispatch_status": "dispatched",
+            "queued": 1,
+            "blocked": 0,
+            "denied": 0,
+        }
+
+    monkeypatch.setattr(erp_api_first_module, "apply_settlement", _fake_apply_settlement)
+    monkeypatch.setattr(erp_api_first_module, "_dispatch_browser_follow_on", _fake_dispatch_browser_follow_on)
+
+    result = asyncio.run(
+        erp_api_first_module.apply_settlement_api_first(
+            organization_id="default",
+            target_ap_item_id=str(item["id"]),
+            source_ap_item_id="source-refund-sap-10",
+            actor_id="tester",
+            source_document_type="refund",
+            target_erp_reference="123",
+            target_invoice_number=str(item["invoice_number"]),
+            source_reference="REF-SAP-10",
+            amount=10.0,
+            currency="USD",
+            note="SAP refund",
+            email_id=str(item["message_id"]),
+            db=db,
+        )
+    )
+
+    assert result["status"] == "pending_browser_fallback"
+    assert result["execution_mode"] == "browser_fallback"
+    assert result["erp_type"] == "sap"
+    assert result["fallback"]["requested"] is True
+    assert result["routing"]["primary_mode"] == "api"
+    event_types = _event_types(db, str(item["id"]))
+    assert "erp_settlement_application_attempt" in event_types
+    assert "erp_settlement_application_fallback_requested" in event_types
+
+
 def test_dispatch_browser_fallback_emits_preview_and_confirmation_audit_sequence(db):
     item = _create_item(db)
 

@@ -117,6 +117,16 @@ def _build_quickbooks_vendor_lookup_query(
     return None
 
 
+def _build_quickbooks_vendor_credit_lookup_query(*, credit_note_operand: Optional[str]) -> Optional[str]:
+    if not credit_note_operand:
+        return None
+    literal = _escape_query_literal(credit_note_operand)
+    return (
+        "SELECT Id, DocNumber, TotalAmt, Balance, VendorRef FROM VendorCredit "
+        f"WHERE DocNumber = '{literal}'"
+    )
+
+
 def _build_netsuite_vendor_lookup_query(
     *,
     name_operand: Optional[str],
@@ -1004,14 +1014,77 @@ async def apply_credit_note(
             "ap_item_id": ap_item_id,
         }
 
-    return {
-        "status": "error",
-        "erp": connection.type,
-        "reason": "credit_application_api_not_available_for_connector",
-        "idempotency_key": idempotency_key,
-        "erp_reference": application.target_erp_reference,
-        "ap_item_id": ap_item_id,
-    }
+    if connection.type == "xero":
+        result = await apply_credit_note_to_xero(
+            connection,
+            application,
+            idempotency_key=idempotency_key,
+        )
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            new_token = await refresh_xero_token(connection)
+            if new_token:
+                set_erp_connection(organization_id, connection)
+                result = await apply_credit_note_to_xero(
+                    connection,
+                    application,
+                    idempotency_key=idempotency_key,
+                )
+    elif connection.type == "quickbooks":
+        gl_map = _get_org_gl_map(organization_id)
+        result = await apply_credit_note_to_quickbooks(
+            connection,
+            application,
+            gl_map=gl_map,
+            idempotency_key=idempotency_key,
+        )
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            new_token = await refresh_quickbooks_token(connection)
+            if new_token:
+                set_erp_connection(organization_id, connection)
+                result = await apply_credit_note_to_quickbooks(
+                    connection,
+                    application,
+                    gl_map=gl_map,
+                    idempotency_key=idempotency_key,
+                )
+    elif connection.type == "netsuite":
+        result = await apply_credit_note_to_netsuite(
+            connection,
+            application,
+            idempotency_key=idempotency_key,
+        )
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            logger.warning("NetSuite 401 during credit application for org %s; retrying once", organization_id)
+            result = await apply_credit_note_to_netsuite(
+                connection,
+                application,
+                idempotency_key=idempotency_key,
+            )
+    elif connection.type == "sap":
+        result = await apply_credit_note_to_sap(
+            connection,
+            application,
+            idempotency_key=idempotency_key,
+        )
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            logger.warning("SAP 401 during credit application for org %s; retrying with fresh session", organization_id)
+            result = await apply_credit_note_to_sap(
+                connection,
+                application,
+                idempotency_key=idempotency_key,
+            )
+    else:
+        result = {
+            "status": "error",
+            "erp": connection.type,
+            "reason": "credit_application_api_not_available_for_connector",
+        }
+
+    if isinstance(result, dict) and idempotency_key and not result.get("idempotency_key"):
+        result = {**result, "idempotency_key": idempotency_key}
+    if isinstance(result, dict) and ap_item_id and not result.get("ap_item_id"):
+        result = {**result, "ap_item_id": ap_item_id}
+    return result
 
 
 async def apply_settlement(
@@ -1032,14 +1105,1226 @@ async def apply_settlement(
             "ap_item_id": ap_item_id,
         }
 
-    return {
-        "status": "error",
-        "erp": connection.type,
-        "reason": "settlement_application_api_not_available_for_connector",
-        "idempotency_key": idempotency_key,
-        "erp_reference": application.target_erp_reference,
-        "ap_item_id": ap_item_id,
+    if connection.type == "quickbooks":
+        gl_map = _get_org_gl_map(organization_id)
+        result = await apply_settlement_to_quickbooks(
+            connection,
+            application,
+            gl_map=gl_map,
+            idempotency_key=idempotency_key,
+        )
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            new_token = await refresh_quickbooks_token(connection)
+            if new_token:
+                set_erp_connection(organization_id, connection)
+                result = await apply_settlement_to_quickbooks(
+                    connection,
+                    application,
+                    gl_map=gl_map,
+                    idempotency_key=idempotency_key,
+                )
+    elif connection.type == "xero":
+        gl_map = _get_org_gl_map(organization_id)
+        result = await apply_settlement_to_xero(
+            connection,
+            application,
+            gl_map=gl_map,
+            idempotency_key=idempotency_key,
+        )
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            new_token = await refresh_xero_token(connection)
+            if new_token:
+                set_erp_connection(organization_id, connection)
+                result = await apply_settlement_to_xero(
+                    connection,
+                    application,
+                    gl_map=gl_map,
+                    idempotency_key=idempotency_key,
+                )
+    elif connection.type == "netsuite":
+        gl_map = _get_org_gl_map(organization_id)
+        result = await apply_settlement_to_netsuite(
+            connection,
+            application,
+            gl_map=gl_map,
+            idempotency_key=idempotency_key,
+        )
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            logger.warning("NetSuite 401 during settlement application for org %s; retrying once", organization_id)
+            result = await apply_settlement_to_netsuite(
+                connection,
+                application,
+                gl_map=gl_map,
+                idempotency_key=idempotency_key,
+            )
+    elif connection.type == "sap":
+        gl_map = _get_org_gl_map(organization_id)
+        result = await apply_settlement_to_sap(
+            connection,
+            application,
+            gl_map=gl_map,
+            idempotency_key=idempotency_key,
+        )
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            logger.warning("SAP 401 during settlement application for org %s; retrying with fresh session", organization_id)
+            result = await apply_settlement_to_sap(
+                connection,
+                application,
+                gl_map=gl_map,
+                idempotency_key=idempotency_key,
+            )
+    else:
+        result = {
+            "status": "error",
+            "erp": connection.type,
+            "reason": "settlement_application_api_not_available_for_connector",
+        }
+
+    if isinstance(result, dict) and idempotency_key and not result.get("idempotency_key"):
+        result = {**result, "idempotency_key": idempotency_key}
+    if isinstance(result, dict) and ap_item_id and not result.get("ap_item_id"):
+        result = {**result, "ap_item_id": ap_item_id}
+    return result
+
+
+def _xero_headers(
+    connection: ERPConnection,
+    *,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {connection.access_token}",
+        "Content-Type": "application/json",
+        "xero-tenant-id": str(connection.tenant_id or ""),
     }
+    if idempotency_key:
+        headers["Idempotency-Key"] = str(idempotency_key)[:128]
+    return headers
+
+
+def _quickbooks_headers(connection: ERPConnection) -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {connection.access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def _extract_quickbooks_fault_message(payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    fault = payload.get("Fault")
+    if isinstance(fault, dict):
+        errors = fault.get("Error")
+        if isinstance(errors, list):
+            for error in errors:
+                if not isinstance(error, dict):
+                    continue
+                for key in ("Detail", "Message", "code"):
+                    detail = str(error.get(key) or "").strip()
+                    if detail:
+                        return detail
+    for key in ("fault", "error", "message"):
+        detail = str(payload.get(key) or "").strip()
+        if detail:
+            return detail
+    return None
+
+
+async def get_bill_quickbooks(
+    connection: ERPConnection,
+    bill_id: str,
+) -> Dict[str, Any]:
+    """Fetch a QuickBooks bill with enough context for follow-on actions."""
+    if not connection.access_token or not connection.realm_id:
+        return {"status": "error", "erp": "quickbooks", "reason": "QuickBooks not properly configured"}
+
+    safe_id = _sanitize_quickbooks_like_operand(bill_id)
+    if not safe_id:
+        return {"status": "error", "erp": "quickbooks", "reason": "invalid_bill_reference"}
+    literal = _escape_query_literal(safe_id)
+    query = (
+        "SELECT Id, DocNumber, TotalAmt, Balance, VendorRef, APAccountRef "
+        f"FROM Bill WHERE Id = '{literal}'"
+    )
+    url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                params={"query": query},
+                headers={"Authorization": f"Bearer {connection.access_token}"},
+                timeout=30,
+            )
+            if response.status_code == 401:
+                return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
+
+            response.raise_for_status()
+            bills = response.json().get("QueryResponse", {}).get("Bill", [])
+            if not bills:
+                return {
+                    "status": "error",
+                    "erp": "quickbooks",
+                    "reason": "bill_not_found",
+                    "target_erp_reference": bill_id,
+                }
+            bill = bills[0]
+            vendor_ref = bill.get("VendorRef") if isinstance(bill.get("VendorRef"), dict) else {}
+            ap_account_ref = bill.get("APAccountRef") if isinstance(bill.get("APAccountRef"), dict) else {}
+            return {
+                "status": "success",
+                "erp": "quickbooks",
+                "bill_id": bill.get("Id"),
+                "doc_number": bill.get("DocNumber"),
+                "total_amt": bill.get("TotalAmt"),
+                "balance": bill.get("Balance"),
+                "vendor_id": vendor_ref.get("value"),
+                "vendor_name": vendor_ref.get("name"),
+                "ap_account_id": ap_account_ref.get("value"),
+            }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("QuickBooks bill GET HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            payload = e.response.json()
+        except Exception:
+            payload = None
+        fault = _extract_quickbooks_fault_message(payload)
+        if fault:
+            reason = fault
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("QuickBooks bill GET error: %s", type(e).__name__)
+        return {"status": "error", "erp": "quickbooks", "reason": "bill_lookup_failed"}
+
+
+async def find_vendor_credit_quickbooks(
+    connection: ERPConnection,
+    credit_note_number: str,
+) -> Optional[Dict[str, Any]]:
+    """Find a QuickBooks vendor credit by document number."""
+    if not connection.access_token or not connection.realm_id:
+        return None
+    safe_number = _sanitize_quickbooks_like_operand(credit_note_number)
+    query = _build_quickbooks_vendor_credit_lookup_query(credit_note_operand=safe_number)
+    if not query:
+        return None
+    url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                params={"query": query},
+                headers={"Authorization": f"Bearer {connection.access_token}"},
+                timeout=30,
+            )
+            response.raise_for_status()
+            credits = response.json().get("QueryResponse", {}).get("VendorCredit", [])
+            if credits:
+                credit = credits[0]
+                vendor_ref = credit.get("VendorRef") if isinstance(credit.get("VendorRef"), dict) else {}
+                return {
+                    "credit_note_id": credit.get("Id"),
+                    "credit_note_number": credit.get("DocNumber"),
+                    "remaining_credit": credit.get("Balance", credit.get("TotalAmt")),
+                    "vendor_id": vendor_ref.get("value"),
+                    "erp": "quickbooks",
+                }
+    except Exception as e:
+        logger.error("QuickBooks vendor credit lookup error: %s", e)
+    return None
+
+
+async def apply_credit_note_to_quickbooks(
+    connection: ERPConnection,
+    application: CreditApplication,
+    *,
+    gl_map: Optional[Dict[str, str]] = None,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create/apply a QuickBooks vendor credit against a posted bill."""
+    if not connection.access_token or not connection.realm_id:
+        return {"status": "error", "erp": "quickbooks", "reason": "QuickBooks not properly configured"}
+
+    missing_fields = []
+    target_ref = str(application.target_erp_reference or "").strip()
+    if not target_ref:
+        missing_fields.append("target_erp_reference")
+    credit_note_number = str(application.credit_note_number or "").strip()
+    if not credit_note_number:
+        missing_fields.append("credit_note_number")
+    if float(application.amount or 0.0) <= 0:
+        missing_fields.append("amount")
+    if missing_fields:
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "quickbooks_credit_application_validation_failed",
+            "missing_fields": missing_fields,
+        }
+
+    bill = await get_bill_quickbooks(connection, target_ref)
+    if bill.get("status") != "success":
+        return bill
+    if not bill.get("vendor_id"):
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "bill_vendor_not_resolved",
+            "target_erp_reference": target_ref,
+        }
+    if not bill.get("ap_account_id"):
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "bill_ap_account_not_resolved",
+            "target_erp_reference": target_ref,
+        }
+
+    vendor_credit = await find_vendor_credit_quickbooks(connection, credit_note_number)
+    if vendor_credit and vendor_credit.get("vendor_id") and str(vendor_credit.get("vendor_id")) != str(bill["vendor_id"]):
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "credit_note_vendor_mismatch",
+            "credit_note_number": credit_note_number,
+        }
+
+    try:
+        remaining_credit = float(
+            (vendor_credit or {}).get("remaining_credit")
+            if (vendor_credit or {}).get("remaining_credit") is not None
+            else application.amount
+        )
+        if vendor_credit and round(float(application.amount or 0.0), 2) > round(remaining_credit, 2):
+            return {
+                "status": "error",
+                "erp": "quickbooks",
+                "reason": "credit_amount_exceeds_remaining_credit",
+                "credit_note_number": credit_note_number,
+                "remaining_credit": round(remaining_credit, 2),
+            }
+    except (TypeError, ValueError):
+        pass
+
+    vendor_credit_id = str((vendor_credit or {}).get("credit_note_id") or "").strip()
+    expense_account = get_account_code("quickbooks", "expenses", gl_map)
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            if not vendor_credit_id:
+                credit_url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/vendorcredit"
+                credit_payload = {
+                    "VendorRef": {"value": bill["vendor_id"]},
+                    "APAccountRef": {"value": bill["ap_account_id"]},
+                    "TxnDate": datetime.now().strftime("%Y-%m-%d"),
+                    "DocNumber": credit_note_number[:21],
+                    "PrivateNote": str(
+                        application.note or f"Vendor credit {credit_note_number} for bill {bill.get('doc_number') or target_ref}"
+                    )[:4000],
+                    "Line": [
+                        {
+                            "Amount": round(float(application.amount or 0.0), 2),
+                            "DetailType": "AccountBasedExpenseLineDetail",
+                            "AccountBasedExpenseLineDetail": {
+                                "AccountRef": {"value": expense_account},
+                            },
+                        }
+                    ],
+                }
+                credit_response = await client.post(
+                    credit_url,
+                    json=credit_payload,
+                    headers=_quickbooks_headers(connection),
+                    timeout=30,
+                )
+                if credit_response.status_code == 401:
+                    return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
+                credit_response.raise_for_status()
+                credit_result = credit_response.json().get("VendorCredit", {})
+                vendor_credit_id = str(credit_result.get("Id") or "").strip()
+                if not vendor_credit_id:
+                    return {"status": "error", "erp": "quickbooks", "reason": "no_vendor_credit_returned"}
+
+            payment_url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/billpayment"
+            payment_payload = {
+                "VendorRef": {"value": bill["vendor_id"]},
+                "TotalAmt": round(float(application.amount or 0.0), 2),
+                "Line": [
+                    {
+                        "Amount": round(float(application.amount or 0.0), 2),
+                        "LinkedTxn": [
+                            {"TxnId": target_ref, "TxnType": "Bill"},
+                            {"TxnId": vendor_credit_id, "TxnType": "VendorCredit"},
+                        ],
+                    }
+                ],
+            }
+            payment_response = await client.post(
+                payment_url,
+                json=payment_payload,
+                headers=_quickbooks_headers(connection),
+                timeout=30,
+            )
+            if payment_response.status_code == 401:
+                return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
+            payment_response.raise_for_status()
+            bill_payment = payment_response.json().get("BillPayment", {})
+            payment_id = bill_payment.get("Id")
+            if not payment_id:
+                return {"status": "error", "erp": "quickbooks", "reason": "no_bill_payment_returned"}
+            return {
+                "status": "success",
+                "erp": "quickbooks",
+                "erp_reference": payment_id,
+                "payment_id": payment_id,
+                "target_erp_reference": target_ref,
+                "credit_note_reference": vendor_credit_id,
+                "credit_note_number": credit_note_number,
+                "amount": round(float(application.amount or 0.0), 2),
+                "idempotency_key": idempotency_key,
+            }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("QuickBooks credit application HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            payload = e.response.json()
+        except Exception:
+            payload = None
+        fault = _extract_quickbooks_fault_message(payload)
+        if fault:
+            reason = fault
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("QuickBooks credit application error: %s", type(e).__name__)
+        return {"status": "error", "erp": "quickbooks", "reason": "credit_application_failed"}
+
+
+async def apply_settlement_to_quickbooks(
+    connection: ERPConnection,
+    application: SettlementApplication,
+    *,
+    gl_map: Optional[Dict[str, str]] = None,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a QuickBooks bill payment against a posted bill."""
+    if not connection.access_token or not connection.realm_id:
+        return {"status": "error", "erp": "quickbooks", "reason": "QuickBooks not properly configured"}
+
+    source_document_type = str(application.source_document_type or "").strip().lower()
+    if source_document_type == "refund":
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "refund_settlement_api_not_available_for_connector",
+        }
+
+    missing_fields = []
+    target_ref = str(application.target_erp_reference or "").strip()
+    if not target_ref:
+        missing_fields.append("target_erp_reference")
+    if float(application.amount or 0.0) <= 0:
+        missing_fields.append("amount")
+    if missing_fields:
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "quickbooks_settlement_validation_failed",
+            "missing_fields": missing_fields,
+        }
+
+    bill = await get_bill_quickbooks(connection, target_ref)
+    if bill.get("status") != "success":
+        return bill
+    if not bill.get("vendor_id"):
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "bill_vendor_not_resolved",
+            "target_erp_reference": target_ref,
+        }
+
+    payment_payload = {
+        "VendorRef": {"value": bill["vendor_id"]},
+        "PayType": "Check",
+        "CheckPayment": {
+            "BankAccountRef": {"value": get_account_code("quickbooks", "cash", gl_map)},
+        },
+        "TotalAmt": round(float(application.amount or 0.0), 2),
+        "Line": [
+            {
+                "Amount": round(float(application.amount or 0.0), 2),
+                "LinkedTxn": [{"TxnId": target_ref, "TxnType": "Bill"}],
+            }
+        ],
+    }
+    if application.source_reference:
+        payment_payload["PrivateNote"] = str(application.source_reference)[:4000]
+
+    url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/billpayment"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.post(
+                url,
+                json=payment_payload,
+                headers=_quickbooks_headers(connection),
+                timeout=30,
+            )
+            if response.status_code == 401:
+                return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
+
+            response.raise_for_status()
+            bill_payment = response.json().get("BillPayment", {})
+            payment_id = bill_payment.get("Id")
+            if not payment_id:
+                return {"status": "error", "erp": "quickbooks", "reason": "no_bill_payment_returned"}
+            return {
+                "status": "success",
+                "erp": "quickbooks",
+                "erp_reference": payment_id,
+                "payment_id": payment_id,
+                "target_erp_reference": target_ref,
+                "amount": round(float(application.amount or 0.0), 2),
+                "source_reference": application.source_reference,
+                "idempotency_key": idempotency_key,
+            }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("QuickBooks settlement payment HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            payload = e.response.json()
+        except Exception:
+            payload = None
+        fault = _extract_quickbooks_fault_message(payload)
+        if fault:
+            reason = fault
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("QuickBooks settlement payment error: %s", type(e).__name__)
+        return {"status": "error", "erp": "quickbooks", "reason": "settlement_application_failed"}
+
+
+def _extract_xero_validation_message(payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    message = str(payload.get("Message") or "").strip()
+    if message:
+        return message
+    for key in ("Allocations", "Payments", "CreditNotes"):
+        rows = payload.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            errors = row.get("ValidationErrors")
+            if isinstance(errors, list) and errors:
+                for err in errors:
+                    if isinstance(err, dict):
+                        detail = str(err.get("Message") or "").strip()
+                        if detail:
+                            return detail
+    return None
+
+
+async def find_credit_note_xero(
+    connection: ERPConnection,
+    credit_note_number: str,
+) -> Optional[Dict[str, Any]]:
+    """Find an AP credit note in Xero by document number."""
+    if not connection.access_token or not connection.tenant_id:
+        return None
+    safe_number = _sanitize_xero_where_operand(credit_note_number)
+    if not safe_number:
+        return None
+    literal = _escape_query_literal(safe_number)
+    where_clause = f'Type=="ACCPAYCREDIT" AND CreditNoteNumber=="{literal}"'
+    url = "https://api.xero.com/api.xro/2.0/CreditNotes"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                params={"where": where_clause},
+                headers={
+                    "Authorization": f"Bearer {connection.access_token}",
+                    "xero-tenant-id": connection.tenant_id,
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            credit_notes = response.json().get("CreditNotes", [])
+            if credit_notes:
+                note = credit_notes[0]
+                return {
+                    "credit_note_id": note.get("CreditNoteID"),
+                    "credit_note_number": note.get("CreditNoteNumber"),
+                    "remaining_credit": note.get("RemainingCredit"),
+                    "status": note.get("Status"),
+                    "currency": note.get("CurrencyCode"),
+                    "erp": "xero",
+                }
+    except Exception as e:
+        logger.error("Xero credit note lookup error: %s", e)
+    return None
+
+
+async def apply_credit_note_to_xero(
+    connection: ERPConnection,
+    application: CreditApplication,
+    *,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Allocate an existing Xero AP credit note against a posted bill."""
+    if not connection.access_token or not connection.tenant_id:
+        return {"status": "error", "erp": "xero", "reason": "Xero not properly configured"}
+
+    missing_fields = []
+    if not str(application.target_erp_reference or "").strip():
+        missing_fields.append("target_erp_reference")
+    if not str(application.credit_note_number or "").strip():
+        missing_fields.append("credit_note_number")
+    if float(application.amount or 0.0) <= 0:
+        missing_fields.append("amount")
+    if missing_fields:
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reason": "xero_credit_application_validation_failed",
+            "missing_fields": missing_fields,
+        }
+
+    credit_note = await find_credit_note_xero(connection, str(application.credit_note_number or ""))
+    if not credit_note or not credit_note.get("credit_note_id"):
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reason": "credit_note_not_found",
+            "credit_note_number": application.credit_note_number,
+        }
+
+    remaining_credit = credit_note.get("remaining_credit")
+    try:
+        if remaining_credit is not None and round(float(application.amount or 0.0), 2) > round(float(remaining_credit), 2):
+            return {
+                "status": "error",
+                "erp": "xero",
+                "reason": "credit_amount_exceeds_remaining_credit",
+                "credit_note_number": application.credit_note_number,
+                "remaining_credit": round(float(remaining_credit), 2),
+            }
+    except (TypeError, ValueError):
+        pass
+
+    allocation_request = {
+        "Allocations": [
+            {
+                "Invoice": {"InvoiceID": str(application.target_erp_reference).strip()},
+                "Amount": round(float(application.amount or 0.0), 2),
+                "Date": datetime.now().strftime("%Y-%m-%d"),
+            }
+        ]
+    }
+    url = f"https://api.xero.com/api.xro/2.0/CreditNotes/{credit_note['credit_note_id']}/Allocations"
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.put(
+                url,
+                params={"summarizeErrors": "true"},
+                json=allocation_request,
+                headers=_xero_headers(connection, idempotency_key=idempotency_key),
+                timeout=30,
+            )
+            if response.status_code == 401:
+                return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
+
+            response.raise_for_status()
+            payload = response.json()
+            validation_message = _extract_xero_validation_message(payload)
+            if validation_message:
+                return {
+                    "status": "error",
+                    "erp": "xero",
+                    "reason": validation_message,
+                    "credit_note_number": application.credit_note_number,
+                }
+
+            allocations = payload.get("Allocations", [])
+            if allocations:
+                allocation = allocations[0]
+                application_reference = (
+                    allocation.get("AllocationID")
+                    or f"{credit_note['credit_note_id']}:{str(application.target_erp_reference).strip()}"
+                )
+                return {
+                    "status": "success",
+                    "erp": "xero",
+                    "erp_reference": application_reference,
+                    "target_erp_reference": str(application.target_erp_reference).strip(),
+                    "credit_note_reference": credit_note.get("credit_note_id"),
+                    "credit_note_number": credit_note.get("credit_note_number"),
+                    "amount": allocation.get("Amount"),
+                }
+
+            return {"status": "error", "erp": "xero", "reason": "no_allocation_returned"}
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("Xero credit allocation HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            payload = e.response.json()
+        except Exception:
+            payload = None
+        validation_message = _extract_xero_validation_message(payload)
+        if validation_message:
+            reason = validation_message
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("Xero credit allocation error: %s", type(e).__name__)
+        return {"status": "error", "erp": "xero", "reason": "credit_application_failed"}
+
+
+async def apply_settlement_to_xero(
+    connection: ERPConnection,
+    application: SettlementApplication,
+    *,
+    gl_map: Optional[Dict[str, str]] = None,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a Xero bill payment against a posted payable invoice."""
+    if not connection.access_token or not connection.tenant_id:
+        return {"status": "error", "erp": "xero", "reason": "Xero not properly configured"}
+
+    source_document_type = str(application.source_document_type or "").strip().lower()
+    if source_document_type == "refund":
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reason": "refund_settlement_api_not_available_for_connector",
+        }
+
+    missing_fields = []
+    if not str(application.target_erp_reference or "").strip():
+        missing_fields.append("target_erp_reference")
+    if float(application.amount or 0.0) <= 0:
+        missing_fields.append("amount")
+    if missing_fields:
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reason": "xero_settlement_validation_failed",
+            "missing_fields": missing_fields,
+        }
+
+    payment_request = {
+        "Payments": [
+            {
+                "Invoice": {"InvoiceID": str(application.target_erp_reference).strip()},
+                "Account": {"Code": get_account_code("xero", "cash", gl_map)},
+                "Date": datetime.now().strftime("%Y-%m-%d"),
+                "Amount": round(float(application.amount or 0.0), 2),
+            }
+        ]
+    }
+    payment = payment_request["Payments"][0]
+    if application.source_reference:
+        payment["Reference"] = str(application.source_reference).strip()[:255]
+
+    url = "https://api.xero.com/api.xro/2.0/Payments"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.put(
+                url,
+                params={"summarizeErrors": "true"},
+                json=payment_request,
+                headers=_xero_headers(connection, idempotency_key=idempotency_key),
+                timeout=30,
+            )
+            if response.status_code == 401:
+                return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
+
+            response.raise_for_status()
+            payload = response.json()
+            validation_message = _extract_xero_validation_message(payload)
+            if validation_message:
+                return {
+                    "status": "error",
+                    "erp": "xero",
+                    "reason": validation_message,
+                    "source_reference": application.source_reference,
+                }
+
+            payments = payload.get("Payments", [])
+            if payments:
+                payment_result = payments[0]
+                return {
+                    "status": "success",
+                    "erp": "xero",
+                    "erp_reference": payment_result.get("PaymentID"),
+                    "payment_id": payment_result.get("PaymentID"),
+                    "target_erp_reference": str(application.target_erp_reference).strip(),
+                    "amount": payment_result.get("Amount"),
+                    "source_reference": payment_result.get("Reference") or application.source_reference,
+                }
+
+            return {"status": "error", "erp": "xero", "reason": "no_payment_returned"}
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("Xero settlement payment HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            payload = e.response.json()
+        except Exception:
+            payload = None
+        validation_message = _extract_xero_validation_message(payload)
+        if validation_message:
+            reason = validation_message
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("Xero settlement payment error: %s", type(e).__name__)
+        return {"status": "error", "erp": "xero", "reason": "settlement_application_failed"}
+
+
+def _extract_netsuite_validation_message(payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("o:errorMessage", "error", "message", "title"):
+        message = str(payload.get(key) or "").strip()
+        if message:
+            return message
+    for key in ("o:errorDetails", "errorDetails", "details", "errors"):
+        details = payload.get(key)
+        if not isinstance(details, list):
+            continue
+        for entry in details:
+            if not isinstance(entry, dict):
+                continue
+            for detail_key in ("detail", "message", "o:errorDetail", "title"):
+                detail = str(entry.get(detail_key) or "").strip()
+                if detail:
+                    return detail
+    return None
+
+
+async def find_credit_note_netsuite(
+    connection: ERPConnection,
+    credit_note_number: str,
+) -> Optional[Dict[str, Any]]:
+    """Find a vendor credit in NetSuite by transaction number."""
+    if not connection.account_id:
+        return None
+    safe_number = _sanitize_netsuite_like_operand(credit_note_number)
+    if not safe_number:
+        return None
+    literal = _escape_query_literal(safe_number)
+    query = (
+        f"SELECT id, tranid, amountremaining, entity FROM transaction "
+        f"WHERE tranid = '{literal}' AND type = 'VendCred' "
+        f"FETCH FIRST 1 ROWS ONLY"
+    )
+    url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/query/v1/suiteql"
+    auth_header = build_netsuite_oauth_header(connection, "POST", url)
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.post(
+                url,
+                json={"q": query},
+                headers={
+                    "Authorization": auth_header,
+                    "Content-Type": "application/json",
+                    "Prefer": "transient",
+                },
+                timeout=60,
+            )
+            response.raise_for_status()
+            items = response.json().get("items", [])
+            if items:
+                row = items[0]
+                return {
+                    "credit_note_id": str(row.get("id")),
+                    "credit_note_number": row.get("tranid"),
+                    "amount_remaining": row.get("amountremaining"),
+                    "vendor_id": (
+                        str(row.get("entity"))
+                        if row.get("entity") is not None
+                        else None
+                    ),
+                    "erp": "netsuite",
+                }
+    except Exception as e:
+        logger.error("NetSuite credit note lookup error: %s", e)
+    return None
+
+
+async def get_vendor_bill_netsuite(
+    connection: ERPConnection,
+    bill_id: str,
+) -> Dict[str, Any]:
+    """Fetch a vendor bill record from NetSuite to resolve settlement context."""
+    if not connection.account_id:
+        return {"status": "error", "erp": "netsuite", "reason": "NetSuite account ID not configured"}
+    bill_ref = str(bill_id or "").strip()
+    if not bill_ref:
+        return {"status": "error", "erp": "netsuite", "reason": "missing_bill_id"}
+
+    url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/vendorBill/{bill_ref}"
+    auth_header = build_netsuite_oauth_header(connection, "GET", url)
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "Authorization": auth_header,
+                    "Content-Type": "application/json",
+                },
+                timeout=60,
+            )
+            if response.status_code == 401:
+                return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
+
+            response.raise_for_status()
+            payload = response.json()
+            entity = payload.get("entity") if isinstance(payload.get("entity"), dict) else {}
+            return {
+                "status": "success",
+                "erp": "netsuite",
+                "bill_id": str(payload.get("id") or bill_ref),
+                "vendor_id": str(entity.get("id") or "").strip() or None,
+                "tran_id": payload.get("tranId"),
+                "currency": (
+                    str((payload.get("currency") or {}).get("id") or "").strip()
+                    if isinstance(payload.get("currency"), dict)
+                    else None
+                ),
+            }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("NetSuite vendor bill GET HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            payload = e.response.json()
+        except Exception:
+            payload = None
+        validation_message = _extract_netsuite_validation_message(payload)
+        if validation_message:
+            reason = validation_message
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("NetSuite vendor bill GET error: %s", type(e).__name__)
+        return {"status": "error", "erp": "netsuite", "reason": "bill_lookup_failed"}
+
+
+async def _poll_netsuite_async_result(
+    client: httpx.AsyncClient,
+    *,
+    auth_header: str,
+    location: str,
+) -> Optional[Dict[str, Any]]:
+    import asyncio as _asyncio
+
+    for _attempt in range(5):
+        await _asyncio.sleep(2)
+        poll_resp = await client.get(
+            location,
+            headers={"Authorization": auth_header},
+            timeout=30,
+        )
+        if poll_resp.status_code == 200:
+            return poll_resp.json()
+        if poll_resp.status_code != 202:
+            break
+    return None
+
+
+async def apply_credit_note_to_netsuite(
+    connection: ERPConnection,
+    application: CreditApplication,
+    *,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Apply a NetSuite vendor credit to an existing vendor bill."""
+    if not connection.account_id:
+        return {"status": "error", "erp": "netsuite", "reason": "NetSuite account ID not configured"}
+
+    missing_fields = []
+    if not str(application.target_erp_reference or "").strip():
+        missing_fields.append("target_erp_reference")
+    if not str(application.credit_note_number or "").strip():
+        missing_fields.append("credit_note_number")
+    if float(application.amount or 0.0) <= 0:
+        missing_fields.append("amount")
+    if missing_fields:
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": "netsuite_credit_application_validation_failed",
+            "missing_fields": missing_fields,
+        }
+
+    credit_note = await find_credit_note_netsuite(connection, str(application.credit_note_number or ""))
+    if not credit_note or not credit_note.get("credit_note_id"):
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": "credit_note_not_found",
+            "credit_note_number": application.credit_note_number,
+        }
+
+    remaining_credit = credit_note.get("amount_remaining")
+    try:
+        if remaining_credit is not None and round(float(application.amount or 0.0), 2) > round(float(remaining_credit), 2):
+            return {
+                "status": "error",
+                "erp": "netsuite",
+                "reason": "credit_amount_exceeds_remaining_credit",
+                "credit_note_number": application.credit_note_number,
+                "remaining_credit": round(float(remaining_credit), 2),
+            }
+    except (TypeError, ValueError):
+        pass
+
+    credit_id = str(credit_note["credit_note_id"]).strip()
+    target_ref = str(application.target_erp_reference or "").strip()
+    url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/vendorCredit/{credit_id}"
+    auth_header = build_netsuite_oauth_header(connection, "PATCH", url)
+    payload = {
+        "apply": {
+            "items": [
+                {
+                    "doc": {"id": target_ref},
+                    "apply": True,
+                    "amount": round(float(application.amount or 0.0), 2),
+                }
+            ]
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.patch(
+                url,
+                json=payload,
+                headers={
+                    "Authorization": auth_header,
+                    "Content-Type": "application/json",
+                    "Prefer": "respond-async",
+                },
+                timeout=60,
+            )
+            if response.status_code == 401:
+                return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
+
+            response.raise_for_status()
+            if response.status_code == 202:
+                location = response.headers.get("Location", "").strip()
+                if location:
+                    poll_result = await _poll_netsuite_async_result(
+                        client,
+                        auth_header=auth_header,
+                        location=location,
+                    )
+                    if poll_result is None:
+                        return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
+            return {
+                "status": "success",
+                "erp": "netsuite",
+                "erp_reference": f"{credit_id}:{target_ref}",
+                "credit_note_reference": credit_id,
+                "credit_note_number": credit_note.get("credit_note_number"),
+                "target_erp_reference": target_ref,
+                "amount": round(float(application.amount or 0.0), 2),
+                "idempotency_key": idempotency_key,
+            }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("NetSuite credit application HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            response_payload = e.response.json()
+        except Exception:
+            response_payload = None
+        validation_message = _extract_netsuite_validation_message(response_payload)
+        if validation_message:
+            reason = validation_message
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("NetSuite credit application error: %s", type(e).__name__)
+        return {"status": "error", "erp": "netsuite", "reason": "credit_application_failed"}
+
+
+async def apply_settlement_to_netsuite(
+    connection: ERPConnection,
+    application: SettlementApplication,
+    *,
+    gl_map: Optional[Dict[str, str]] = None,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a NetSuite vendor payment against a posted vendor bill."""
+    if not connection.account_id:
+        return {"status": "error", "erp": "netsuite", "reason": "NetSuite account ID not configured"}
+
+    source_document_type = str(application.source_document_type or "").strip().lower()
+    if source_document_type == "refund":
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": "refund_settlement_api_not_available_for_connector",
+        }
+
+    missing_fields = []
+    if not str(application.target_erp_reference or "").strip():
+        missing_fields.append("target_erp_reference")
+    if float(application.amount or 0.0) <= 0:
+        missing_fields.append("amount")
+    if missing_fields:
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": "netsuite_settlement_validation_failed",
+            "missing_fields": missing_fields,
+        }
+
+    bill = await get_vendor_bill_netsuite(connection, str(application.target_erp_reference or ""))
+    if bill.get("status") != "success":
+        return bill
+    if not bill.get("vendor_id"):
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": "bill_vendor_not_resolved",
+            "target_erp_reference": application.target_erp_reference,
+        }
+
+    url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/vendorPayment"
+    auth_header = build_netsuite_oauth_header(connection, "POST", url)
+    payload = {
+        "entity": {"id": bill["vendor_id"]},
+        "account": {"id": get_account_code("netsuite", "cash", gl_map)},
+        "tranDate": datetime.now().strftime("%Y-%m-%d"),
+        "memo": (
+            str(application.note or application.source_reference or f"Settlement for {bill.get('tran_id') or application.target_erp_reference}")
+            [:300]
+        ),
+        "apply": {
+            "items": [
+                {
+                    "doc": {"id": str(application.target_erp_reference).strip()},
+                    "apply": True,
+                    "amount": round(float(application.amount or 0.0), 2),
+                }
+            ]
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.post(
+                url,
+                json=payload,
+                headers={
+                    "Authorization": auth_header,
+                    "Content-Type": "application/json",
+                    "Prefer": "respond-async",
+                },
+                timeout=60,
+            )
+            if response.status_code == 401:
+                return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
+
+            response.raise_for_status()
+
+            if response.status_code == 202:
+                location = response.headers.get("Location", "").strip()
+                if location:
+                    poll_result = await _poll_netsuite_async_result(
+                        client,
+                        auth_header=auth_header,
+                        location=location,
+                    )
+                    if poll_result is None:
+                        return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
+                    payment_id = poll_result.get("id") or poll_result.get("internalId")
+                    return {
+                        "status": "success",
+                        "erp": "netsuite",
+                        "erp_reference": payment_id,
+                        "payment_id": payment_id,
+                        "target_erp_reference": str(application.target_erp_reference).strip(),
+                        "amount": round(float(application.amount or 0.0), 2),
+                        "source_reference": application.source_reference,
+                        "idempotency_key": idempotency_key,
+                    }
+                return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
+
+            result = response.json()
+            payment_id = result.get("id") or result.get("internalId")
+            return {
+                "status": "success",
+                "erp": "netsuite",
+                "erp_reference": payment_id,
+                "payment_id": payment_id,
+                "target_erp_reference": str(application.target_erp_reference).strip(),
+                "amount": round(float(application.amount or 0.0), 2),
+                "source_reference": application.source_reference,
+                "idempotency_key": idempotency_key,
+            }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("NetSuite settlement payment HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            response_payload = e.response.json()
+        except Exception:
+            response_payload = None
+        validation_message = _extract_netsuite_validation_message(response_payload)
+        if validation_message:
+            reason = validation_message
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("NetSuite settlement payment error: %s", type(e).__name__)
+        return {"status": "error", "erp": "netsuite", "reason": "settlement_application_failed"}
 
 
 async def post_bill_to_quickbooks(
@@ -1350,6 +2635,545 @@ async def post_bill_to_netsuite(
         return {"status": "error", "erp": "netsuite", "reason": "bill_posting_failed"}
 
 
+def _extract_sap_validation_message(payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, dict):
+            detail = str(message.get("value") or message.get("Message") or "").strip()
+            if detail:
+                return detail
+        detail = str(message or "").strip()
+        if detail:
+            return detail
+        for key in ("code", "reason"):
+            detail = str(error.get(key) or "").strip()
+            if detail:
+                return detail
+        inner = error.get("innererror")
+        if isinstance(inner, dict):
+            for key in ("message", "detail"):
+                detail = str(inner.get(key) or "").strip()
+                if detail:
+                    return detail
+    for key in ("Message", "message", "reason", "error"):
+        detail = str(payload.get(key) or "").strip()
+        if detail:
+            return detail
+    return None
+
+
+def _decode_sap_login_credentials(access_token: Optional[str]) -> tuple[str, str]:
+    token = str(access_token or "").strip()
+    if not token:
+        return "", ""
+    try:
+        import base64
+
+        decoded = base64.b64decode(token).decode("utf-8")
+    except Exception:
+        return "", ""
+    if ":" not in decoded:
+        return "", ""
+    username, password = decoded.split(":", 1)
+    return username, password
+
+
+def _normalize_sap_doc_entry(reference: Optional[Any]) -> Optional[str]:
+    token = str(reference or "").strip()
+    if token.isdigit():
+        return token
+    return None
+
+
+def _sap_session_headers(
+    session_cookie: str,
+    *,
+    csrf_token: Optional[str] = None,
+) -> Dict[str, str]:
+    headers = {"Cookie": f"B1SESSION={session_cookie}"}
+    if csrf_token:
+        headers["X-CSRF-Token"] = csrf_token
+    return headers
+
+
+async def _open_sap_service_layer_session(
+    connection: ERPConnection,
+    client: httpx.AsyncClient,
+    *,
+    fetch_csrf_for: Optional[str] = None,
+) -> Dict[str, Any]:
+    if not connection.access_token or not connection.base_url:
+        return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
+
+    try:
+        username, password = _decode_sap_login_credentials(connection.access_token)
+        session_cookie = ""
+        if username:
+            login_url = f"{connection.base_url}/Login"
+            login_payload = {
+                "CompanyDB": connection.company_code or "",
+                "UserName": username,
+                "Password": password,
+            }
+            login_resp = await client.post(login_url, json=login_payload, timeout=30)
+            if login_resp.status_code == 401:
+                return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
+            login_resp.raise_for_status()
+            session_cookie = str(login_resp.cookies.get("B1SESSION") or "").strip()
+        else:
+            session_cookie = str(connection.access_token or "").strip()
+
+        if not session_cookie:
+            return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
+
+        headers = _sap_session_headers(session_cookie)
+        csrf_token = None
+        if fetch_csrf_for:
+            csrf_resp = await client.get(
+                fetch_csrf_for,
+                headers={**headers, "X-CSRF-Token": "Fetch"},
+                timeout=30,
+            )
+            if csrf_resp.status_code == 401:
+                return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
+            csrf_resp.raise_for_status()
+            csrf_token = str(csrf_resp.headers.get("x-csrf-token") or "").strip()
+            headers = _sap_session_headers(session_cookie, csrf_token=csrf_token)
+
+        return {
+            "status": "success",
+            "erp": "sap",
+            "session_cookie": session_cookie,
+            "csrf_token": csrf_token,
+            "headers": headers,
+        }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("SAP session setup HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            payload = e.response.json()
+        except Exception:
+            payload = None
+        validation_message = _extract_sap_validation_message(payload)
+        if validation_message:
+            reason = validation_message
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("SAP session setup error: %s", type(e).__name__)
+        return {"status": "error", "erp": "sap", "reason": "sap_session_setup_failed"}
+
+
+async def find_credit_note_sap(
+    connection: ERPConnection,
+    credit_note_number: str,
+) -> Optional[Dict[str, Any]]:
+    """Find a SAP A/P credit memo by vendor reference number."""
+    if not connection.access_token or not connection.base_url:
+        return None
+    safe_number = _sanitize_odata_value(credit_note_number)
+    if not safe_number:
+        return None
+
+    url = f"{connection.base_url}/PurchaseCreditNotes"
+    params = {
+        "$filter": f"NumAtCard eq '{safe_number}'",
+        "$top": "1",
+        "$select": "DocEntry,DocNum,NumAtCard,DocTotal",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            session = await _open_sap_service_layer_session(connection, client)
+            if session.get("status") != "success":
+                return None
+            response = await client.get(
+                url,
+                params=params,
+                headers=session["headers"],
+                timeout=60,
+            )
+            response.raise_for_status()
+            items = response.json().get("value", [])
+            if items:
+                row = items[0]
+                return {
+                    "credit_note_id": str(row.get("DocEntry") or ""),
+                    "credit_note_number": row.get("NumAtCard"),
+                    "doc_num": row.get("DocNum"),
+                    "amount": row.get("DocTotal"),
+                    "erp": "sap",
+                }
+    except Exception as e:
+        logger.error("SAP credit note lookup error: %s", e)
+    return None
+
+
+async def get_purchase_invoice_sap(
+    connection: ERPConnection,
+    bill_id: str,
+) -> Dict[str, Any]:
+    """Fetch a SAP purchase invoice with enough context for credit/payment follow-ons."""
+    if not connection.access_token or not connection.base_url:
+        return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
+
+    bill_ref = _normalize_sap_doc_entry(bill_id)
+    if not bill_ref:
+        return {"status": "error", "erp": "sap", "reason": "invalid_bill_reference"}
+
+    url = f"{connection.base_url}/PurchaseInvoices({bill_ref})"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            session = await _open_sap_service_layer_session(connection, client)
+            if session.get("status") != "success":
+                return session
+            response = await client.get(
+                url,
+                headers=session["headers"],
+                timeout=60,
+            )
+            if response.status_code == 401:
+                return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
+            response.raise_for_status()
+            payload = response.json()
+            document_lines = payload.get("DocumentLines")
+            return {
+                "status": "success",
+                "erp": "sap",
+                "bill_id": str(payload.get("DocEntry") or bill_ref),
+                "vendor_id": str(payload.get("CardCode") or "").strip() or None,
+                "doc_num": payload.get("DocNum"),
+                "doc_currency": payload.get("DocCurrency"),
+                "doc_total": payload.get("DocTotal"),
+                "document_lines": document_lines if isinstance(document_lines, list) else [],
+            }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("SAP purchase invoice GET HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            payload = e.response.json()
+        except Exception:
+            payload = None
+        validation_message = _extract_sap_validation_message(payload)
+        if validation_message:
+            reason = validation_message
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("SAP purchase invoice GET error: %s", type(e).__name__)
+        return {"status": "error", "erp": "sap", "reason": "bill_lookup_failed"}
+
+
+def _build_sap_credit_note_lines(
+    bill: Dict[str, Any],
+    amount: float,
+) -> Dict[str, Any]:
+    bill_ref = _normalize_sap_doc_entry(bill.get("bill_id"))
+    if not bill_ref:
+        return {"lines": [], "available_amount": 0.0}
+
+    target_amount = round(float(amount or 0.0), 2)
+    line_entries: List[tuple[Dict[str, Any], float]] = []
+    for line in bill.get("document_lines") or []:
+        if not isinstance(line, dict):
+            continue
+        try:
+            line_total = round(abs(float(line.get("LineTotal") or 0.0)), 2)
+        except (TypeError, ValueError):
+            continue
+        if line_total <= 0:
+            continue
+        line_entries.append((line, line_total))
+
+    available_amount = round(sum(entry[1] for entry in line_entries), 2)
+    remaining = target_amount
+    lines: List[Dict[str, Any]] = []
+    for line, line_total in line_entries:
+        applied = round(min(line_total, remaining), 2)
+        if applied <= 0:
+            continue
+        line_payload: Dict[str, Any] = {
+            "BaseType": 18,
+            "BaseEntry": int(bill_ref),
+            "BaseLine": int(line.get("LineNum") or 0),
+            "LineTotal": applied,
+        }
+        if line.get("AccountCode"):
+            line_payload["AccountCode"] = line.get("AccountCode")
+        if line.get("TaxCode"):
+            line_payload["TaxCode"] = line.get("TaxCode")
+        lines.append(line_payload)
+        remaining = round(remaining - applied, 2)
+        if remaining <= 0:
+            break
+
+    return {
+        "lines": lines if remaining <= 0 else [],
+        "available_amount": available_amount,
+    }
+
+
+async def apply_credit_note_to_sap(
+    connection: ERPConnection,
+    application: CreditApplication,
+    *,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a SAP A/P credit memo against a posted purchase invoice."""
+    if not connection.access_token or not connection.base_url:
+        return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
+
+    missing_fields = []
+    target_ref = _normalize_sap_doc_entry(application.target_erp_reference)
+    if not target_ref:
+        missing_fields.append("target_erp_reference")
+    if not str(application.credit_note_number or "").strip():
+        missing_fields.append("credit_note_number")
+    if float(application.amount or 0.0) <= 0:
+        missing_fields.append("amount")
+    if missing_fields:
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": "sap_credit_application_validation_failed",
+            "missing_fields": missing_fields,
+        }
+
+    existing_credit = await find_credit_note_sap(connection, str(application.credit_note_number or ""))
+    if existing_credit and existing_credit.get("credit_note_id"):
+        existing_ref = str(existing_credit.get("credit_note_id") or "").strip()
+        return {
+            "status": "already_applied",
+            "erp": "sap",
+            "erp_reference": existing_ref,
+            "credit_note_reference": existing_ref,
+            "credit_note_number": existing_credit.get("credit_note_number") or application.credit_note_number,
+            "target_erp_reference": target_ref,
+            "amount": round(float(application.amount or 0.0), 2),
+            "idempotency_key": idempotency_key,
+        }
+
+    bill = await get_purchase_invoice_sap(connection, target_ref or "")
+    if bill.get("status") != "success":
+        return bill
+    if not bill.get("vendor_id"):
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": "bill_vendor_not_resolved",
+            "target_erp_reference": application.target_erp_reference,
+        }
+
+    line_plan = _build_sap_credit_note_lines(bill, float(application.amount or 0.0))
+    available_amount = float(line_plan.get("available_amount") or 0.0)
+    if available_amount and round(float(application.amount or 0.0), 2) > available_amount:
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": "credit_amount_exceeds_bill_total",
+            "available_amount": available_amount,
+            "target_erp_reference": target_ref,
+        }
+    if not line_plan.get("lines"):
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": "sap_credit_lines_not_resolved",
+            "target_erp_reference": target_ref,
+        }
+
+    url = f"{connection.base_url}/PurchaseCreditNotes"
+    payload = {
+        "CardCode": bill["vendor_id"],
+        "DocDate": datetime.now().strftime("%Y-%m-%d"),
+        "NumAtCard": str(application.credit_note_number or "").strip()[:100],
+        "Comments": str(
+            application.note
+            or f"Credit note {application.credit_note_number} for invoice {bill.get('doc_num') or target_ref}"
+        )[:254],
+        "DocumentLines": line_plan["lines"],
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            session = await _open_sap_service_layer_session(connection, client, fetch_csrf_for=url)
+            if session.get("status") != "success":
+                return session
+            response = await client.post(
+                url,
+                json=payload,
+                headers={**session["headers"], "Content-Type": "application/json"},
+                timeout=60,
+            )
+            if response.status_code == 401:
+                return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
+            response.raise_for_status()
+            try:
+                result = response.json()
+            except Exception:
+                result = {}
+            credit_id = result.get("DocEntry") or result.get("DocNum") or application.credit_note_number
+            return {
+                "status": "success",
+                "erp": "sap",
+                "erp_reference": str(credit_id),
+                "credit_note_reference": str(result.get("DocEntry") or credit_id),
+                "credit_note_number": application.credit_note_number,
+                "target_erp_reference": target_ref,
+                "amount": round(float(application.amount or 0.0), 2),
+                "idempotency_key": idempotency_key,
+            }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("SAP credit memo HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            payload = e.response.json()
+        except Exception:
+            payload = None
+        validation_message = _extract_sap_validation_message(payload)
+        if validation_message:
+            reason = validation_message
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("SAP credit memo error: %s", type(e).__name__)
+        return {"status": "error", "erp": "sap", "reason": "credit_application_failed"}
+
+
+async def apply_settlement_to_sap(
+    connection: ERPConnection,
+    application: SettlementApplication,
+    *,
+    gl_map: Optional[Dict[str, str]] = None,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a SAP vendor payment against a posted purchase invoice."""
+    if not connection.access_token or not connection.base_url:
+        return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
+
+    source_document_type = str(application.source_document_type or "").strip().lower()
+    if source_document_type == "refund":
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": "refund_settlement_api_not_available_for_connector",
+        }
+
+    missing_fields = []
+    target_ref = _normalize_sap_doc_entry(application.target_erp_reference)
+    if not target_ref:
+        missing_fields.append("target_erp_reference")
+    if float(application.amount or 0.0) <= 0:
+        missing_fields.append("amount")
+    if missing_fields:
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": "sap_settlement_validation_failed",
+            "missing_fields": missing_fields,
+        }
+
+    bill = await get_purchase_invoice_sap(connection, target_ref or "")
+    if bill.get("status") != "success":
+        return bill
+    if not bill.get("vendor_id"):
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": "bill_vendor_not_resolved",
+            "target_erp_reference": application.target_erp_reference,
+        }
+
+    url = f"{connection.base_url}/VendorPayments"
+    payload = {
+        "CardCode": bill["vendor_id"],
+        "DocType": "rSupplier",
+        "DocDate": datetime.now().strftime("%Y-%m-%d"),
+        "Remarks": str(
+            application.note
+            or application.source_reference
+            or f"Settlement for invoice {bill.get('doc_num') or target_ref}"
+        )[:254],
+        "TransferAccount": get_account_code("sap", "cash", gl_map),
+        "TransferDate": datetime.now().strftime("%Y-%m-%d"),
+        "TransferSum": round(float(application.amount or 0.0), 2),
+        "Invoices": [
+            {
+                "DocEntry": int(target_ref),
+                "InvoiceType": "it_PurchaseInvoice",
+                "SumApplied": round(float(application.amount or 0.0), 2),
+            }
+        ],
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            session = await _open_sap_service_layer_session(connection, client, fetch_csrf_for=url)
+            if session.get("status") != "success":
+                return session
+            response = await client.post(
+                url,
+                json=payload,
+                headers={**session["headers"], "Content-Type": "application/json"},
+                timeout=60,
+            )
+            if response.status_code == 401:
+                return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
+            response.raise_for_status()
+            try:
+                result = response.json()
+            except Exception:
+                result = {}
+            payment_id = result.get("DocEntry") or result.get("DocNum") or application.source_reference or target_ref
+            return {
+                "status": "success",
+                "erp": "sap",
+                "erp_reference": str(payment_id),
+                "payment_id": str(payment_id),
+                "target_erp_reference": target_ref,
+                "amount": round(float(application.amount or 0.0), 2),
+                "source_reference": application.source_reference,
+                "idempotency_key": idempotency_key,
+            }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("SAP vendor payment HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            payload = e.response.json()
+        except Exception:
+            payload = None
+        validation_message = _extract_sap_validation_message(payload)
+        if validation_message:
+            reason = validation_message
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": reason,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as e:
+        logger.error("SAP vendor payment error: %s", type(e).__name__)
+        return {"status": "error", "erp": "sap", "reason": "settlement_application_failed"}
+
+
 async def post_bill_to_sap(
     connection: ERPConnection,
     bill: Bill,
@@ -1412,58 +3236,18 @@ async def post_bill_to_sap(
     
     url = f"{connection.base_url}/PurchaseInvoices"
     
-    # B5: SAP B1 Service Layer uses session auth + CSRF token for mutations.
-    # Step 1: Establish session (POST /Login) if needed.
-    # Step 2: Fetch CSRF token (GET with X-CSRF-Token: Fetch header).
-    # Step 3: POST /PurchaseInvoices with session cookie + CSRF token.
     try:
         async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            # SAP B1 session login
-            login_url = f"{connection.base_url}/Login"
-            login_payload = {
-                "CompanyDB": connection.company_code or "",
-                "UserName": "",
-                "Password": "",
-            }
-            # Decode stored credentials (base64-encoded username:password)
-            try:
-                import base64
-                decoded = base64.b64decode(connection.access_token).decode("utf-8")
-                if ":" in decoded:
-                    login_payload["UserName"], login_payload["Password"] = decoded.split(":", 1)
-            except Exception:
-                # Fallback: treat access_token as session cookie directly
-                pass
+            session = await _open_sap_service_layer_session(connection, client, fetch_csrf_for=url)
+            if session.get("status") != "success":
+                return session
 
-            session_cookie = None
-            csrf_token = None
-
-            if login_payload["UserName"]:
-                login_resp = await client.post(login_url, json=login_payload, timeout=30)
-                if login_resp.status_code == 200:
-                    session_cookie = login_resp.cookies.get("B1SESSION")
-                else:
-                    return {"status": "error", "erp": "sap", "reason": "sap_login_failed", "needs_reauth": True}
-            else:
-                # Legacy path: use access_token as session cookie
-                session_cookie = connection.access_token
-
-            # Fetch CSRF token
-            headers = {"X-CSRF-Token": "Fetch"}
-            if session_cookie:
-                headers["Cookie"] = f"B1SESSION={session_cookie}"
-            csrf_resp = await client.get(url, headers=headers, timeout=30)
-            csrf_token = csrf_resp.headers.get("x-csrf-token", "")
-
-            # Post the invoice
-            post_headers = {
-                "Content-Type": "application/json",
-                "X-CSRF-Token": csrf_token,
-            }
-            if session_cookie:
-                post_headers["Cookie"] = f"B1SESSION={session_cookie}"
-
-            response = await client.post(url, json=sap_bill, headers=post_headers, timeout=60)
+            response = await client.post(
+                url,
+                json=sap_bill,
+                headers={**session["headers"], "Content-Type": "application/json"},
+                timeout=60,
+            )
 
             if response.status_code == 401:
                 return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
@@ -1483,10 +3267,18 @@ async def post_bill_to_sap(
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("SAP A/P Invoice HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        try:
+            payload = e.response.json()
+        except Exception:
+            payload = None
+        validation_message = _extract_sap_validation_message(payload)
+        if validation_message:
+            reason = validation_message
         return {
             "status": "error",
             "erp": "sap",
-            "reason": f"http_{status_code}",
+            "reason": reason,
             "needs_reauth": status_code == 401,
         }
     except Exception as e:
