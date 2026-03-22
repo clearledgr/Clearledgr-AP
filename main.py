@@ -102,6 +102,18 @@ async def _deferred_startup(app):
     except Exception as e:
         logger.warning(f"Agent planning engine not started: {e}")
 
+    try:
+        from clearledgr.services.erp_follow_on_reconciliation import (
+            run_erp_follow_on_reconciliation_check,
+        )
+
+        checked = await asyncio.wait_for(run_erp_follow_on_reconciliation_check(), timeout=10.0)
+        logger.info("ERP follow-on reconciliation check completed (%d items checked)", checked)
+    except asyncio.TimeoutError:
+        logger.warning("ERP follow-on reconciliation check timed out (10s) — skipping")
+    except Exception as e:
+        logger.warning(f"ERP follow-on reconciliation check not started: {e}")
+
 
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):

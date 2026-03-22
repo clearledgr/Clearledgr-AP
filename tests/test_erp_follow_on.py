@@ -874,3 +874,182 @@ class TestERPFollowOnStatusSets:
     def test_supported_macros_include_finance_follow_ons(self):
         assert "apply_credit_note_in_erp" in SUPPORTED_MACROS
         assert "apply_settlement_in_erp" in SUPPORTED_MACROS
+
+
+# ===================================================================
+# Category 7: reconcile_erp_follow_on_state() tests
+# ===================================================================
+
+
+from clearledgr.services.erp_follow_on_reconciliation import reconcile_erp_follow_on_state
+
+
+class TestERPFollowOnReconciliation:
+    """Tests for the reconciliation check that detects and repairs
+    split-brain state between source follow-on status and related
+    item summaries."""
+
+    def test_no_items_returns_zero(self, db):
+        """Empty DB returns checked=0."""
+        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        assert result["checked"] == 0
+        assert result["mismatches"] == 0
+        assert result["repaired"] == 0
+        assert result["errors"] == 0
+
+    def test_no_follow_on_items_skipped(self, db):
+        """Items without non_invoice_resolution.erp_follow_on are skipped."""
+        # Item with no metadata at all
+        _create_ap_item(db, item_id="PLAIN-1")
+        # Item with metadata but no non_invoice_resolution
+        _create_ap_item(db, item_id="PLAIN-2", metadata={"some_key": "val"})
+        # Item with non_invoice_resolution but no erp_follow_on
+        _create_ap_item(db, item_id="PLAIN-3", metadata={
+            "non_invoice_resolution": {"outcome": "mark_as_duplicate"},
+        })
+
+        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        assert result["checked"] == 0
+        assert result["mismatches"] == 0
+
+    def test_matching_statuses_no_repair(self, db):
+        """Source status matches related status — no repair needed."""
+        # Create the related item with matching credit summary
+        _create_ap_item(db, item_id="REL-MATCH", state="posted_to_erp", metadata={
+            "vendor_credit_summary": {
+                "erp_application_status": "applied",
+            },
+        })
+        # Create source item with follow-on pointing to the related item
+        _create_ap_item(db, item_id="SRC-MATCH", state="posted_to_erp", metadata={
+            "non_invoice_resolution": {
+                "related_ap_item_id": "REL-MATCH",
+                "erp_follow_on": {
+                    "status": "applied",
+                    "action_type": "apply_credit_note",
+                },
+            },
+        })
+
+        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        assert result["checked"] == 1
+        assert result["mismatches"] == 0
+        assert result["repaired"] == 0
+
+    def test_credit_mismatch_repaired(self, db):
+        """Source has 'applied' but related has 'pending' — repair propagates
+        source status to related's vendor_credit_summary.erp_application_status."""
+        _create_ap_item(db, item_id="REL-CREDIT", state="posted_to_erp", metadata={
+            "vendor_credit_summary": {
+                "erp_application_status": "pending",
+            },
+        })
+        _create_ap_item(db, item_id="SRC-CREDIT", state="posted_to_erp", metadata={
+            "non_invoice_resolution": {
+                "related_ap_item_id": "REL-CREDIT",
+                "erp_follow_on": {
+                    "status": "applied",
+                    "action_type": "apply_credit_note",
+                    "execution_mode": "api",
+                    "erp_reference": "CR-999",
+                },
+            },
+        })
+
+        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        assert result["checked"] == 1
+        assert result["mismatches"] == 1
+        assert result["repaired"] == 1
+        assert result["errors"] == 0
+
+        # Verify the related item's metadata was updated
+        related = db.get_ap_item("REL-CREDIT")
+        related_meta = json.loads(related["metadata"]) if isinstance(related["metadata"], str) else related["metadata"]
+        credit_summary = related_meta["vendor_credit_summary"]
+        assert credit_summary["erp_application_status"] == "applied"
+        assert credit_summary["erp_application_mode"] == "api"
+        assert credit_summary["erp_application_reference"] == "CR-999"
+        assert "erp_reconciled_at" in credit_summary
+
+    def test_settlement_mismatch_repaired(self, db):
+        """Source has 'applied' but related has 'pending' — repair propagates
+        source status to related's cash_application_summary.erp_settlement_status."""
+        _create_ap_item(db, item_id="REL-SETTLE", state="posted_to_erp", metadata={
+            "cash_application_summary": {
+                "erp_settlement_status": "pending",
+            },
+        })
+        _create_ap_item(db, item_id="SRC-SETTLE", state="posted_to_erp", metadata={
+            "non_invoice_resolution": {
+                "related_ap_item_id": "REL-SETTLE",
+                "erp_follow_on": {
+                    "status": "completed",
+                    "action_type": "apply_settlement",
+                    "execution_mode": "browser_fallback",
+                    "erp_reference": "SET-888",
+                },
+            },
+        })
+
+        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        assert result["checked"] == 1
+        assert result["mismatches"] == 1
+        assert result["repaired"] == 1
+
+        related = db.get_ap_item("REL-SETTLE")
+        related_meta = json.loads(related["metadata"]) if isinstance(related["metadata"], str) else related["metadata"]
+        cash_summary = related_meta["cash_application_summary"]
+        assert cash_summary["erp_settlement_status"] == "completed"
+        assert cash_summary["erp_settlement_mode"] == "browser_fallback"
+        assert cash_summary["erp_settlement_reference"] == "SET-888"
+        assert "erp_reconciled_at" in cash_summary
+
+    def test_missing_related_item_skipped(self, db):
+        """related_ap_item_id points to nonexistent item — gracefully skipped."""
+        _create_ap_item(db, item_id="SRC-ORPHAN", state="posted_to_erp", metadata={
+            "non_invoice_resolution": {
+                "related_ap_item_id": "DOES-NOT-EXIST",
+                "erp_follow_on": {
+                    "status": "applied",
+                    "action_type": "apply_credit_note",
+                },
+            },
+        })
+
+        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        assert result["checked"] == 1
+        assert result["mismatches"] == 0
+        assert result["repaired"] == 0
+        assert result["errors"] == 0
+
+    def test_audit_event_recorded(self, db):
+        """When a repair is made, an audit event with
+        erp_follow_on_reconciliation_repair event_type is appended."""
+        _create_ap_item(db, item_id="REL-AUDIT", state="posted_to_erp", metadata={
+            "vendor_credit_summary": {
+                "erp_application_status": "pending",
+            },
+        })
+        _create_ap_item(db, item_id="SRC-AUDIT", state="posted_to_erp", metadata={
+            "non_invoice_resolution": {
+                "related_ap_item_id": "REL-AUDIT",
+                "erp_follow_on": {
+                    "status": "applied",
+                    "action_type": "apply_credit_note",
+                },
+            },
+        })
+
+        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        assert result["repaired"] == 1
+
+        # Check audit events for the related item
+        events = db.list_ap_audit_events("REL-AUDIT")
+        repair_events = [
+            e for e in events
+            if e.get("event_type") == "erp_follow_on_reconciliation_repair"
+        ]
+        assert len(repair_events) == 1
+        evt = repair_events[0]
+        assert evt["actor_type"] == "system"
+        assert evt["actor_id"] == "erp_follow_on_reconciliation"
