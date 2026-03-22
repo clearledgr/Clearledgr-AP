@@ -22,6 +22,27 @@ test('interactive auth attempts are debounced by cooldown', async () => {
   assert.ok(Number(result.retry_after_seconds || 0) >= 1);
 });
 
+test('interactive Gmail auth waits longer than the default runtime message timeout', async () => {
+  const ClearledgrQueueManager = await loadQueueManager();
+  const manager = new ClearledgrQueueManager();
+
+  const calls = [];
+  manager.safeSendMessage = async (message, options = {}) => {
+    calls.push({ message, options });
+    return { success: false, error: 'auth_required' };
+  };
+
+  await manager.ensureGmailAuth(true);
+  await manager.ensureGmailAuth(false);
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].message.action, 'ensureGmailAuth');
+  assert.equal(calls[0].message.interactive, true);
+  assert.equal(calls[0].options.timeoutMs, 180000);
+  assert.equal(calls[1].message.interactive, false);
+  assert.equal(calls[1].options.timeoutMs, 6000);
+});
+
 test('auth result mapper returns operator-safe copy', async () => {
   const ClearledgrQueueManager = await loadQueueManager();
   const manager = new ClearledgrQueueManager();

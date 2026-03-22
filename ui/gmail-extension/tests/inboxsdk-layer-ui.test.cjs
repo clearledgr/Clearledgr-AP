@@ -221,6 +221,35 @@ test('admin bootstrap adapter preserves backend current user role instead of har
   assert.deepEqual(bootstrap.required_actions, ['connect_erp']);
 });
 
+test('routed setup pages request fresh OAuth URLs instead of bootstrap auth fields', () => {
+  const homeSource = fs.readFileSync(
+    path.resolve(__dirname, '..', 'src/routes/pages/HomePage.js'),
+    'utf8',
+  );
+  const connectionsSource = fs.readFileSync(
+    path.resolve(__dirname, '..', 'src/routes/pages/ConnectionsPage.js'),
+    'utf8',
+  );
+
+  assert.equal(homeSource.includes("bootstrap?.gmail_auth_url"), false);
+  assert.equal(homeSource.includes("bootstrap?.slack_auth_url"), false);
+  assert.equal(homeSource.includes('/api/workspace/integrations/gmail/connect/start'), true);
+  assert.equal(homeSource.includes('/api/workspace/integrations/slack/install/start'), true);
+  assert.equal(connectionsSource.includes("bootstrap?.gmail_auth_url"), false);
+  assert.equal(connectionsSource.includes('/api/workspace/integrations/gmail/connect/start'), true);
+});
+
+test('oauth completion rehydrates bootstrap so app menu access can refresh', () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '..', 'src/inboxsdk-layer.js'),
+    'utf8',
+  );
+
+  assert.equal(source.includes('void getBootstrap();'), true);
+  assert.equal(source.includes('routeAccessResolved = true;'), true);
+  assert.equal(source.includes('currentRouteAccess = { includeAdmin: false, includeOps: false };'), true);
+});
+
 test('invoice detail page stays on the canonical AP action contract', () => {
   const source = fs.readFileSync(
     path.resolve(__dirname, '..', 'src/routes/pages/InvoiceDetailPage.js'),
@@ -382,7 +411,8 @@ test('gmail auth stays explicit and never opens OAuth during startup bootstrap',
   assert.equal(queueSource.includes('Automatic retries (e.g. 401 recovery) must stay non-interactive.'), true);
   assert.equal(sidebarSource.includes('authorizeGmailNow?.()'), true);
   assert.equal(sidebarSource.includes('Connect Gmail'), true);
-  assert.equal(homeSource.includes("oauthBridge.startOAuth(authUrl, 'gmail');"), true);
+  assert.equal(homeSource.includes('/api/workspace/integrations/gmail/connect/start'), true);
+  assert.equal(homeSource.includes("oauthBridge.startOAuth(payload.auth_url, 'gmail');"), true);
 });
 
 test('sidebar audit rendering falls back to safe generic copy instead of raw event names', () => {

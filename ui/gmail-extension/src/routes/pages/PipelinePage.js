@@ -241,6 +241,7 @@ function getPipelineTimeline(item, erpStatus) {
 }
 
 function isRouteableInvoiceItem(item) {
+  if (!item) return false;
   if (!isInvoiceDocumentType(item?.document_type)) return false;
   const state = normalizePipelineState(item?.state);
   if (!['received', 'validated'].includes(state)) return false;

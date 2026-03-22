@@ -485,7 +485,7 @@ class ClearledgrQueueManager {
     }
   }
 
-  async safeSendMessage(message) {
+  async safeSendMessage(message, { timeoutMs = 6000 } = {}) {
     if (!chrome.runtime?.id || typeof chrome.runtime.sendMessage !== 'function') {
       return { success: false, error: 'runtime_unavailable' };
     }
@@ -500,7 +500,7 @@ class ClearledgrQueueManager {
 
       const timeoutId = setTimeout(() => {
         finish({ success: false, error: 'runtime_message_timeout' });
-      }, 6000);
+      }, Math.max(1000, Number(timeoutMs) || 6000));
 
       try {
         chrome.runtime.sendMessage(message, (response) => {
@@ -523,6 +523,8 @@ class ClearledgrQueueManager {
     const result = await this.safeSendMessage({
       action: 'ensureGmailAuth',
       interactive: !!interactive
+    }, {
+      timeoutMs: interactive ? 180000 : 6000
     });
     if (!result && attempt < 2) {
       await new Promise((resolve) => setTimeout(resolve, 500));

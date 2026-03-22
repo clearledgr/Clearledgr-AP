@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:eb4b8786228ee7671025074b8f68a72cbcafcf748f3d7a1c10a001639067c106 */
+/* clearledgr-source-fingerprint:79e426bbf83cfc40d3b9cd378203912192aa86d9d6f2103fba1dede67275ee92 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -53776,7 +53776,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         await this.scanNow("debug");
       }
     }
-    async safeSendMessage(message) {
+    async safeSendMessage(message, { timeoutMs = 6000 } = {}) {
       if (!chrome.runtime?.id || typeof chrome.runtime.sendMessage !== "function") {
         return { success: false, error: "runtime_unavailable" };
       }
@@ -53790,7 +53790,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         };
         const timeoutId = setTimeout(() => {
           finish({ success: false, error: "runtime_message_timeout" });
-        }, 6000);
+        }, Math.max(1000, Number(timeoutMs) || 6000));
         try {
           chrome.runtime.sendMessage(message, (response) => {
             clearTimeout(timeoutId);
@@ -53811,6 +53811,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const result = await this.safeSendMessage({
         action: "ensureGmailAuth",
         interactive: !!interactive
+      }, {
+        timeoutMs: interactive ? 180000 : 6000
       });
       if (!result && attempt < 2) {
         await new Promise((resolve) => setTimeout(resolve, 500));
@@ -58952,6 +58954,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return "not_connected";
   }
   function getPipelineBlockerKinds(item = {}) {
+    item = item || {};
     const blockers = new Set;
     const state = normalizePipelineState(item.state);
     const exceptionCode = normalizeText(item?.exception_code).toLowerCase();
@@ -59459,6 +59462,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function AuthPrompt({ queueManager }) {
     const s3 = useStore();
     const gmail = s3.gmailIntegration || {};
+    const canOpenConnections = hasAdminAccessRole(s3.currentUserRole);
     const goConnections = q2(() => store_default.sdk?.Router?.goto?.("clearledgr/connections"), []);
     const [authorize, pending] = useAction(async () => {
       const result = await queueManager?.authorizeGmailNow?.();
@@ -59478,7 +59482,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <button class="cl-btn cl-primary-cta" onClick=${authorize} disabled=${pending}>
           ${pending ? "Connecting…" : gmail?.requires_reconnect ? "Reconnect Gmail" : "Connect Gmail"}
         </button>
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${goConnections}>Connections</button>
+        ${canOpenConnections && html2`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${goConnections}>Connections</button>
+        `}
       </div>
     </div>
   `;
@@ -60846,17 +60852,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const workflowSupportRoutes = availableRoutes.filter((route) => WORKFLOW_SURFACE_ROUTE_IDS.includes(route.id)).filter((route) => !route.adminOnly || adminAccess);
     const customizableRoutes = availableRoutes;
     const [connectGmail, gmailPending] = useAction2(async () => {
-      const authUrl = bootstrap?.gmail_auth_url || bootstrap?.integrations?.find?.((it) => it.type === "gmail")?.auth_url;
-      if (authUrl) {
-        oauthBridge.startOAuth(authUrl, "gmail");
+      const payload = await api("/api/workspace/integrations/gmail/connect/start", {
+        method: "POST",
+        body: JSON.stringify({ organization_id: orgId, redirect_path: "/workspace" })
+      });
+      if (payload?.auth_url) {
+        oauthBridge.startOAuth(payload.auth_url, "gmail");
         return;
       }
       navigate("clearledgr/connections");
     });
     const [connectSlack, slackPending] = useAction2(async () => {
-      const authUrl = bootstrap?.slack_auth_url || bootstrap?.integrations?.find?.((it) => it.type === "slack")?.auth_url;
-      if (authUrl) {
-        oauthBridge.startOAuth(authUrl, "slack");
+      const payload = await api("/api/workspace/integrations/slack/install/start", {
+        method: "POST",
+        body: JSON.stringify({ organization_id: orgId, mode: "per_org", redirect_path: "/workspace" })
+      });
+      if (payload?.auth_url) {
+        oauthBridge.startOAuth(payload.auth_url, "slack");
         return;
       }
       navigate("clearledgr/connections");
@@ -62242,9 +62254,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const teams = integrationByName(bootstrap, "teams");
     const gmailReconnectRequired = Boolean(gmail.connected && (gmail.requires_reconnect || gmail.durable === false));
     const [connectGmail, gmailPending] = useAction2(async () => {
-      const authUrl = bootstrap?.gmail_auth_url || bootstrap?.integrations?.find?.((it) => it.type === "gmail")?.auth_url;
-      if (authUrl) {
-        oauthBridge.startOAuth(authUrl, "gmail");
+      const payload = await api("/api/workspace/integrations/gmail/connect/start", {
+        method: "POST",
+        body: JSON.stringify({ organization_id: orgId, redirect_path: "/workspace" })
+      });
+      if (payload?.auth_url) {
+        oauthBridge.startOAuth(payload.auth_url, "gmail");
         return;
       }
       navigate?.("clearledgr/home");
@@ -62867,6 +62882,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return parts.join(" · ");
   }
   function isRouteableInvoiceItem(item) {
+    if (!item)
+      return false;
     if (!isInvoiceDocumentType(item?.document_type))
       return false;
     const state = normalizePipelineState(item?.state);
@@ -66540,6 +66557,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const oauthBridge = createOAuthBridge(() => {
       bootstrapCache = null;
       queueManager?.scanNow?.();
+      getBootstrap();
     });
     store_default.sdk = sdk;
     store_default.openComposeWithPrefill = openComposeWithPrefill;
@@ -66586,6 +66604,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return data;
       }).catch(() => {
         bootstrapPromise = null;
+        routeAccessResolved = true;
+        currentRouteAccess = { includeAdmin: false, includeOps: false };
+        if (appMenuNavItemViews.length === 0 && fallbackNavItemViews.length === 0) {
+          rebuildMenuNavigation();
+        }
         return {};
       });
       return bootstrapPromise;

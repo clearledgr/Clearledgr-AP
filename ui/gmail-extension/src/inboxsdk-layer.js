@@ -734,6 +734,7 @@ function registerAppMenuAndRoutes() {
   const oauthBridge = createOAuthBridge(() => {
     bootstrapCache = null;
     queueManager?.scanNow?.();
+    void getBootstrap();
   });
 
   store.sdk = sdk;
@@ -789,6 +790,11 @@ function registerAppMenuAndRoutes() {
       return data;
     }).catch(() => {
       bootstrapPromise = null;
+      routeAccessResolved = true;
+      currentRouteAccess = { includeAdmin: false, includeOps: false };
+      if (appMenuNavItemViews.length === 0 && fallbackNavItemViews.length === 0) {
+        rebuildMenuNavigation();
+      }
       return {};
     });
     return bootstrapPromise;

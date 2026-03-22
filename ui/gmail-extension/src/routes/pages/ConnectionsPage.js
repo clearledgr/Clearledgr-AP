@@ -47,9 +47,12 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
   const gmailReconnectRequired = Boolean(gmail.connected && (gmail.requires_reconnect || gmail.durable === false));
 
   const [connectGmail, gmailPending] = useAction(async () => {
-    const authUrl = bootstrap?.gmail_auth_url || bootstrap?.integrations?.find?.((it) => it.type === 'gmail')?.auth_url;
-    if (authUrl) {
-      oauthBridge.startOAuth(authUrl, 'gmail');
+    const payload = await api('/api/workspace/integrations/gmail/connect/start', {
+      method: 'POST',
+      body: JSON.stringify({ organization_id: orgId, redirect_path: '/workspace' }),
+    });
+    if (payload?.auth_url) {
+      oauthBridge.startOAuth(payload.auth_url, 'gmail');
       return;
     }
     navigate?.('clearledgr/home');

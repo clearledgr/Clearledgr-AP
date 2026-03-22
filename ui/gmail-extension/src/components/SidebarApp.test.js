@@ -73,6 +73,14 @@ describe('SidebarApp', () => {
     store.scanStatus = { state: 'auth_required' };
     render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
     expect(screen.getByText(/Connect Gmail/)).toBeTruthy();
+    expect(screen.queryByText('Connections')).toBeNull();
+  });
+
+  it('shows Connections shortcut for admins in auth required state', () => {
+    store.currentUserRole = 'admin';
+    store.scanStatus = { state: 'auth_required' };
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+    expect(screen.getByText('Connections')).toBeTruthy();
   });
 
   it('renders scanning state', () => {

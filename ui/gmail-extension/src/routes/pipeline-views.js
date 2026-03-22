@@ -654,6 +654,7 @@ export function getErpStatus(item = {}) {
 }
 
 export function getPipelineBlockerKinds(item = {}) {
+  item = item || {};
   const blockers = new Set();
   const state = normalizePipelineState(item.state);
   const exceptionCode = normalizeText(item?.exception_code).toLowerCase();

@@ -5,7 +5,7 @@ import htm from 'htm';
 import store from '../utils/store.js';
 import { SIDEBAR_CSS, STATE_PILL_CSS } from '../styles.js';
 import ActionDialog, { useActionDialog } from './ActionDialog.js';
-import { hasOpsAccessRole } from '../utils/roles.js';
+import { hasAdminAccessRole, hasOpsAccessRole } from '../utils/roles.js';
 import {
   getStateLabel,
   formatAmount,
@@ -409,6 +409,7 @@ function AuditDisclosure({ events, loading }) {
 function AuthPrompt({ queueManager }) {
   const s = useStore();
   const gmail = s.gmailIntegration || {};
+  const canOpenConnections = hasAdminAccessRole(s.currentUserRole);
   const goConnections = useCallback(() => store.sdk?.Router?.goto?.('clearledgr/connections'), []);
   const [authorize, pending] = useAction(async () => {
     const result = await queueManager?.authorizeGmailNow?.();
@@ -431,7 +432,9 @@ function AuthPrompt({ queueManager }) {
         <button class="cl-btn cl-primary-cta" onClick=${authorize} disabled=${pending}>
           ${pending ? 'Connecting…' : (gmail?.requires_reconnect ? 'Reconnect Gmail' : 'Connect Gmail')}
         </button>
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${goConnections}>Connections</button>
+        ${canOpenConnections && html`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${goConnections}>Connections</button>
+        `}
       </div>
     </div>
   `;

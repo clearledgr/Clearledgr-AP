@@ -37,6 +37,7 @@ test('pipeline slices classify AP queue items into AP-first queue views', async 
   assert.equal(countItemsForSlice(items, 'overdue', now), 1);
   assert.equal(matchesPipelineSlice(items[7], 'all_open', now), false);
   assert.deepEqual(getPipelineBlockerKinds(items[4]), ['exception', 'po']);
+  assert.deepEqual(getPipelineBlockerKinds(null), []);
   assert.equal(getSuggestedPipelineSlice(items[3]), 'failed_post');
 });
 

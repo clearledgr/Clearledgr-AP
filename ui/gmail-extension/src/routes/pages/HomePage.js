@@ -288,17 +288,23 @@ export default function HomePage({
   const customizableRoutes = availableRoutes;
 
   const [connectGmail, gmailPending] = useAction(async () => {
-    const authUrl = bootstrap?.gmail_auth_url || bootstrap?.integrations?.find?.((it) => it.type === 'gmail')?.auth_url;
-    if (authUrl) {
-      oauthBridge.startOAuth(authUrl, 'gmail');
+    const payload = await api('/api/workspace/integrations/gmail/connect/start', {
+      method: 'POST',
+      body: JSON.stringify({ organization_id: orgId, redirect_path: '/workspace' }),
+    });
+    if (payload?.auth_url) {
+      oauthBridge.startOAuth(payload.auth_url, 'gmail');
       return;
     }
     navigate('clearledgr/connections');
   });
   const [connectSlack, slackPending] = useAction(async () => {
-    const authUrl = bootstrap?.slack_auth_url || bootstrap?.integrations?.find?.((it) => it.type === 'slack')?.auth_url;
-    if (authUrl) {
-      oauthBridge.startOAuth(authUrl, 'slack');
+    const payload = await api('/api/workspace/integrations/slack/install/start', {
+      method: 'POST',
+      body: JSON.stringify({ organization_id: orgId, mode: 'per_org', redirect_path: '/workspace' }),
+    });
+    if (payload?.auth_url) {
+      oauthBridge.startOAuth(payload.auth_url, 'slack');
       return;
     }
     navigate('clearledgr/connections');

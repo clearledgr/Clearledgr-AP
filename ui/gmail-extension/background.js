@@ -157,13 +157,19 @@ function classifyAuthErrorCode(raw) {
   return normalized.replace(/\s+/g, '_');
 }
 
-async function getAuthToken(interactive = true) {
-  if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) return cachedToken;
-  const stored = await chrome.storage.local.get(['gmail_token', 'gmail_token_expiry']);
-  if (stored.gmail_token && stored.gmail_token_expiry && Date.now() < stored.gmail_token_expiry) {
+async function getAuthToken(interactive = true, options = {}) {
+  const forceFresh = options?.forceFresh === true;
+  if (!forceFresh && cachedToken && tokenExpiry && Date.now() < tokenExpiry) return cachedToken;
+  const stored = forceFresh
+    ? {}
+    : await chrome.storage.local.get(['gmail_token', 'gmail_token_expiry']);
+  if (!forceFresh && stored.gmail_token && stored.gmail_token_expiry && Date.now() < stored.gmail_token_expiry) {
     cachedToken = stored.gmail_token;
     tokenExpiry = stored.gmail_token_expiry;
     return cachedToken;
+  }
+  if (forceFresh) {
+    await clearCachedAuthToken();
   }
   if (!interactive) throw new Error('No valid token');
   return launchWebAuthFlow();
@@ -330,7 +336,9 @@ async function ensureGmailAuthWithBackend(interactive = true) {
     let attemptedFreshToken = false;
     while (true) {
       codeExchangeResult = null;
-      const token = await getAuthToken(wantsInteractive);
+      // Explicit user reconnects must run a fresh OAuth code exchange so the
+      // backend receives a refresh token, not just another short-lived access token.
+      const token = await getAuthToken(wantsInteractive, { forceFresh: wantsInteractive });
       // If token came from code exchange, backend already has it (with refresh token)
       if (codeExchangeResult) {
         const result = codeExchangeResult;
