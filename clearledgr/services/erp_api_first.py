@@ -17,8 +17,19 @@ from clearledgr.core.launch_controls import (
     get_browser_fallback_block_reason,
     get_erp_posting_block_reason,
 )
-from clearledgr.integrations.erp_router import Bill, get_erp_connection, post_bill
-from clearledgr.services.erp.contracts import get_erp_bill_adapter
+from clearledgr.integrations.erp_router import (
+    Bill,
+    CreditApplication,
+    SettlementApplication,
+    apply_credit_note,
+    apply_settlement,
+    get_erp_connection,
+    post_bill,
+)
+from clearledgr.services.erp.contracts import (
+    get_erp_bill_adapter,
+    get_erp_finance_action_adapter,
+)
 from clearledgr.services.browser_agent import BrowserAgentService, get_browser_agent_service
 from clearledgr.services.erp_connector_strategy import get_erp_connector_strategy
 
@@ -204,6 +215,72 @@ def _normalize_error_code(payload: Dict[str, Any]) -> Optional[str]:
     return "erp_post_failed"
 
 
+def _normalize_follow_on_error_code(payload: Dict[str, Any], *, action_key: str) -> Optional[str]:
+    status = str(payload.get("status") or "").strip().lower()
+    if status in {"success", "already_applied", "completed"}:
+        return None
+    reason = str(payload.get("reason") or payload.get("error_message") or "").strip().lower()
+    fallback = payload.get("fallback") if isinstance(payload.get("fallback"), dict) else {}
+    fallback_reason = str(fallback.get("reason") or "").strip().lower()
+
+    if status == "blocked":
+        return f"{action_key}_blocked"
+    if status == "pending_browser_fallback":
+        return f"{action_key}_fallback_pending"
+    if "target_not_posted_to_erp" in reason:
+        return f"{action_key}_target_not_posted"
+    if "not_available_for_connector" in reason:
+        return f"{action_key}_api_unavailable"
+    if "no erp connected" in reason:
+        return "erp_not_connected"
+    if "not configured" in reason:
+        return "erp_not_configured"
+    if "timeout" in reason:
+        return "api_timeout"
+    if "fallback_disabled" in fallback_reason:
+        return "fallback_disabled"
+    if status == "skipped":
+        return f"{action_key}_skipped"
+    return f"{action_key}_failed"
+
+
+def _finalize_follow_on_response_contract(
+    response: Dict[str, Any],
+    *,
+    detected_erp_type: str,
+    route_plan: Dict[str, Any],
+    action_key: str,
+    raw_result: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload = dict(response or {})
+    candidate = str(payload.get("erp_type") or payload.get("erp") or "").strip().lower()
+    if not candidate or candidate in {"unknown", "unconfigured"}:
+        route_candidate = str(route_plan.get("erp_type") or "").strip().lower()
+        detected_candidate = str(detected_erp_type or "").strip().lower()
+        if detected_candidate and detected_candidate not in {"unknown", "unconfigured"}:
+            candidate = detected_candidate
+        elif route_candidate:
+            candidate = route_candidate
+    payload["erp_type"] = candidate or "unconfigured"
+    payload["erp_reference"] = (
+        payload.get("erp_reference")
+        or payload.get("reference_id")
+        or payload.get("target_erp_reference")
+        or _derive_erp_reference(raw_result)
+    )
+    payload["error_code"] = payload.get("error_code") or _normalize_follow_on_error_code(
+        payload,
+        action_key=action_key,
+    )
+    payload["error_message"] = (
+        None
+        if payload.get("error_code") is None
+        else payload.get("error_message") or str(payload.get("reason") or "") or None
+    )
+    payload["raw_response_redacted"] = payload.get("raw_response_redacted") or _redact_raw_response(raw_result or payload)
+    return payload
+
+
 def _finalize_erp_response_contract(
     response: Dict[str, Any],
     *,
@@ -234,6 +311,138 @@ def _finalize_erp_response_contract(
         payload["error_message"] = payload.get("error_message") or str(payload.get("reason") or "") or None
     payload["raw_response_redacted"] = payload.get("raw_response_redacted") or _redact_raw_response(raw_result or payload)
     return payload
+
+
+def _reconcile_finance_follow_on_completion(
+    *,
+    resolved_db: ClearledgrDB,
+    session: Dict[str, Any],
+    session_id: str,
+    workflow_id: str,
+    normalized_macro: str,
+    normalized_status: str,
+    actor_id: str,
+    erp_reference: Optional[str],
+    evidence: Optional[Dict[str, Any]],
+    error_code: Optional[str],
+    error_message_redacted: Optional[str],
+    idempotency_key: Optional[str],
+    correlation_id: Optional[str],
+) -> Dict[str, Any]:
+    session_metadata = _parse_json_dict(session.get("metadata"))
+    source_ap_item_id = str(session_metadata.get("source_ap_item_id") or "").strip()
+    related_ap_item_id = str(session_metadata.get("related_ap_item_id") or session.get("ap_item_id") or "").strip()
+    organization_id = str(session.get("organization_id") or "default")
+    if not source_ap_item_id or not related_ap_item_id:
+        raise ValueError("fallback_ap_item_not_found")
+
+    action_type = (
+        "apply_credit_note"
+        if workflow_id == "erp_credit_application_fallback"
+        else "apply_settlement"
+    )
+    completion_key = (
+        idempotency_key
+        or f"browser_fallback_completion:{session_id}:{normalized_macro}:{normalized_status}:{erp_reference or ''}"
+    )
+    existing_completion = resolved_db.get_ap_audit_event_by_key(completion_key)
+    if existing_completion:
+        return {
+            "status": normalized_status,
+            "duplicate": True,
+            "session_id": session_id,
+            "ap_item_id": related_ap_item_id,
+            "erp_reference": erp_reference,
+            "idempotency_key": completion_key,
+        }
+
+    result = {
+        "status": "success" if normalized_status == "success" else "error",
+        "execution_mode": "browser_fallback",
+        "erp_reference": erp_reference,
+        "target_erp_reference": str(session_metadata.get("target_erp_reference") or "").strip() or None,
+        "erp_type": str(session_metadata.get("erp_type") or "").strip() or None,
+        "reason": (
+            "browser_fallback_completed"
+            if normalized_status == "success"
+            else (error_code or "browser_fallback_failed")
+        ),
+        "error_code": None if normalized_status == "success" else error_code,
+        "error_message": None if normalized_status == "success" else error_message_redacted,
+        "fallback": {
+            "requested": True,
+            "session_id": session_id,
+            "macro_name": normalized_macro,
+        },
+    }
+
+    from clearledgr.api.ap_items import _apply_erp_follow_on_result  # local import avoids circular startup import
+
+    persisted = _apply_erp_follow_on_result(
+        resolved_db,
+        source_ap_item_id=source_ap_item_id,
+        related_ap_item_id=related_ap_item_id,
+        action_type=action_type,
+        result=result,
+        actor_id=actor_id,
+        organization_id=organization_id,
+    )
+
+    _merge_session_metadata(
+        resolved_db,
+        session_id=session_id,
+        patch={
+            "fallback_completion": {
+                "status": normalized_status,
+                "macro_name": normalized_macro,
+                "erp_reference": erp_reference,
+                "completed_at": _utcnow(),
+                "completed_by": actor_id,
+                "error_code": error_code,
+                "error_message_redacted": error_message_redacted,
+                "evidence": evidence or {},
+                "correlation_id": correlation_id,
+            }
+        },
+    )
+    resolved_db.update_agent_session(session_id, state="completed" if normalized_status == "success" else "failed")
+    _audit(
+        resolved_db,
+        ap_item_id=related_ap_item_id,
+        organization_id=organization_id,
+        event_type=(
+            "erp_credit_application_browser_fallback_completed"
+            if action_type == "apply_credit_note" and normalized_status == "success"
+            else "erp_credit_application_browser_fallback_failed"
+            if action_type == "apply_credit_note"
+            else "erp_settlement_browser_fallback_completed"
+            if normalized_status == "success"
+            else "erp_settlement_browser_fallback_failed"
+        ),
+        actor_id=actor_id,
+        reason="fallback_completed" if normalized_status == "success" else (error_code or "fallback_failed"),
+        payload={
+            "session_id": session_id,
+            "macro_name": normalized_macro,
+            "status": normalized_status,
+            "erp_reference": erp_reference,
+            "evidence": evidence or {},
+            "correlation_id": correlation_id,
+            "source_ap_item_id": source_ap_item_id,
+        },
+        idempotency_key=completion_key,
+        correlation_id=correlation_id,
+    )
+    return {
+        "status": normalized_status,
+        "duplicate": False,
+        "session_id": session_id,
+        "ap_item_id": related_ap_item_id,
+        "source_ap_item_id": source_ap_item_id,
+        "erp_reference": erp_reference,
+        "idempotency_key": completion_key,
+        "related_item": persisted.get("related_item"),
+    }
 
 
 def reconcile_browser_fallback_completion(
@@ -276,6 +485,25 @@ def reconcile_browser_fallback_completion(
     correlation_id = correlation_id or (str(session_metadata.get("correlation_id") or "").strip() or None)
     workflow_id = str(session_metadata.get("workflow_id") or "").strip().lower()
     normalized_macro = str(macro_name or "").strip() or "post_invoice_to_erp"
+    normalized_status = _normalize_completion_status(status)
+
+    if workflow_id in {"erp_credit_application_fallback", "erp_settlement_application_fallback"}:
+        return _reconcile_finance_follow_on_completion(
+            resolved_db=resolved_db,
+            session=session,
+            session_id=session_id,
+            workflow_id=workflow_id,
+            normalized_macro=normalized_macro,
+            normalized_status=normalized_status,
+            actor_id=actor_id,
+            erp_reference=erp_reference,
+            evidence=evidence,
+            error_code=error_code,
+            error_message_redacted=error_message_redacted,
+            idempotency_key=idempotency_key,
+            correlation_id=correlation_id,
+        )
+
     if workflow_id and workflow_id != "erp_posting_fallback":
         raise ValueError("not_fallback_session")
     if normalized_macro != "post_invoice_to_erp":
@@ -285,7 +513,6 @@ def reconcile_browser_fallback_completion(
     if not ap_item:
         raise ValueError("fallback_ap_item_not_found")
 
-    normalized_status = _normalize_completion_status(status)
     current_state = normalize_state(str(ap_item.get("state") or ""))
     now = _utcnow()
     completion_key = (
@@ -660,6 +887,142 @@ async def _dispatch_browser_fallback(
         }
 
 
+async def _dispatch_browser_follow_on(
+    *,
+    db: ClearledgrDB,
+    service: BrowserAgentService,
+    organization_id: str,
+    actor_id: str,
+    ap_item_id: str,
+    macro_name: str,
+    workflow_id: str,
+    params: Dict[str, Any],
+    session_metadata: Dict[str, Any],
+    correlation_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        session = service.create_session(
+            organization_id=organization_id,
+            ap_item_id=ap_item_id,
+            created_by=actor_id,
+            metadata={
+                **(session_metadata or {}),
+                "workflow_id": workflow_id,
+                "actor_role": "ap_operator",
+                "correlation_id": correlation_id,
+            },
+        )
+        session_id = str(session.get("id"))
+        preview = service.dispatch_macro(
+            session_id=session_id,
+            macro_name=macro_name,
+            actor_id=actor_id,
+            actor_role="ap_operator",
+            workflow_id=workflow_id,
+            correlation_id=correlation_id,
+            params=params,
+            dry_run=True,
+        )
+        preview_commands = [
+            entry for entry in (preview.get("commands") or []) if isinstance(entry, dict)
+        ]
+        requires_confirmation_count = 0
+        preview_command_map: Dict[str, Dict[str, Any]] = {}
+        for entry in preview_commands:
+            decision = entry.get("decision") if isinstance(entry.get("decision"), dict) else {}
+            command = entry.get("command") if isinstance(entry.get("command"), dict) else {}
+            command_id = str(command.get("command_id") or "").strip()
+            if command_id:
+                preview_command_map[command_id] = command
+            if bool(decision.get("requires_confirmation")):
+                requires_confirmation_count += 1
+
+        macro = service.dispatch_macro(
+            session_id=session_id,
+            macro_name=macro_name,
+            actor_id=actor_id,
+            actor_role="ap_operator",
+            workflow_id=workflow_id,
+            correlation_id=correlation_id,
+            params=params,
+            dry_run=False,
+        )
+        dispatch_events = [entry for entry in (macro.get("events") or []) if isinstance(entry, dict)]
+        status_by_command_id: Dict[str, str] = {}
+        for event in dispatch_events:
+            command_id = str(event.get("command_id") or "").strip()
+            if command_id:
+                status_by_command_id[command_id] = str(event.get("status") or "")
+
+        confirmed_commands: List[str] = []
+        for event in dispatch_events:
+            if str(event.get("status") or "") != "blocked_for_approval":
+                continue
+            command_id = str(event.get("command_id") or "").strip()
+            command_payload = preview_command_map.get(command_id)
+            if not command_payload:
+                continue
+            try:
+                if correlation_id and isinstance(command_payload, dict) and not command_payload.get("correlation_id"):
+                    command_payload = dict(command_payload)
+                    command_payload["correlation_id"] = correlation_id
+                confirmed = service.enqueue_command(
+                    session_id=session_id,
+                    command=command_payload,
+                    actor_id=actor_id,
+                    confirm=True,
+                    confirmed_by=actor_id,
+                    actor_role="ap_operator",
+                    workflow_id=workflow_id,
+                )
+                if isinstance(confirmed, dict):
+                    status_by_command_id[command_id] = str(confirmed.get("status") or status_by_command_id.get(command_id) or "")
+                    if str(confirmed.get("status") or "").lower() == "queued":
+                        confirmed_commands.append(command_id)
+            except Exception:
+                continue
+
+        final_statuses = list(status_by_command_id.values()) or [
+            str(event.get("status") or "") for event in dispatch_events
+        ]
+        queued_count = len([status for status in final_statuses if status == "queued"])
+        blocked_count = len([status for status in final_statuses if status == "blocked_for_approval"])
+        denied_count = len([status for status in final_statuses if status == "denied_policy"])
+        return {
+            "requested": True,
+            "eligible": True,
+            "reason": "fallback_preview_confirmed_and_dispatched",
+            "ap_item_id": ap_item_id,
+            "session_id": session.get("id"),
+            "macro_name": macro_name,
+            "dispatch_status": macro.get("status"),
+            "queued": int(queued_count),
+            "blocked": int(blocked_count),
+            "denied": int(denied_count),
+            "preview": {
+                "status": preview.get("status"),
+                "command_count": len(preview_commands),
+                "requires_confirmation_count": requires_confirmation_count,
+            },
+            "confirmation": {
+                "required_count": requires_confirmation_count,
+                "confirmed_count": len(confirmed_commands),
+                "pending_count": max(0, blocked_count),
+                "confirmed_command_ids": confirmed_commands,
+                "actor_id": actor_id,
+            },
+            "correlation_id": correlation_id,
+        }
+    except Exception as exc:  # pragma: no cover - defensive
+        return {
+            "requested": False,
+            "eligible": True,
+            "reason": f"fallback_dispatch_error:{exc}",
+            "ap_item_id": ap_item_id,
+            "macro_name": macro_name,
+        }
+
+
 async def post_bill_api_first(
     *,
     organization_id: str,
@@ -1015,4 +1378,415 @@ async def post_bill_api_first(
         detected_erp_type=detected_erp_type,
         route_plan=route_plan,
         raw_result=api_result,
+    )
+
+
+async def _erp_follow_on_api_first(
+    *,
+    action_key: str,
+    organization_id: str,
+    actor_id: str,
+    target_ap_item_id: str,
+    source_ap_item_id: str,
+    target_erp_reference: str,
+    target_invoice_number: Optional[str],
+    amount: float,
+    currency: str,
+    source_reference: Optional[str],
+    source_document_type: Optional[str],
+    note: Optional[str],
+    email_id: Optional[str],
+    correlation_id: Optional[str],
+    db: Optional[ClearledgrDB] = None,
+    browser_service: Optional[BrowserAgentService] = None,
+) -> Dict[str, Any]:
+    resolved_db = db or get_db()
+    resolved_service = browser_service or get_browser_agent_service()
+    strategy = get_erp_connector_strategy()
+
+    connection = get_erp_connection(organization_id)
+    connection_present = connection is not None
+    detected_erp_type = str((connection.type if connection else "unconfigured") or "unconfigured").strip().lower()
+    route_action = "apply_credit" if action_key == "apply_credit_note" else "apply_settlement"
+    route_plan = strategy.build_route_plan(
+        erp_type=detected_erp_type,
+        connection_present=connection_present,
+        action=route_action,
+    )
+    connector_capability = strategy.resolve(str(route_plan.get("erp_type") or detected_erp_type))
+    adapter = get_erp_finance_action_adapter(
+        erp_type=str(route_plan.get("erp_type") or detected_erp_type),
+        credit_handler=apply_credit_note,
+        settlement_handler=apply_settlement,
+    )
+
+    target_erp_reference = str(target_erp_reference or "").strip()
+    amount = round(float(amount or 0.0), 2)
+    attempt_key_seed = {
+        "organization_id": organization_id,
+        "target_ap_item_id": target_ap_item_id,
+        "source_ap_item_id": source_ap_item_id,
+        "target_erp_reference": target_erp_reference,
+        "source_reference": source_reference,
+        "source_document_type": source_document_type,
+        "action": action_key,
+        "timestamp_bucket": _utcnow()[:16],
+    }
+    attempt_key = f"{action_key}_attempt:{_stable_hash(attempt_key_seed)}"
+    event_prefix = "erp_credit_application" if action_key == "apply_credit_note" else "erp_settlement_application"
+
+    _audit(
+        resolved_db,
+        ap_item_id=target_ap_item_id,
+        organization_id=organization_id,
+        event_type=f"{event_prefix}_attempt",
+        actor_id=actor_id,
+        reason="api_first_attempt",
+        payload={
+            "source_ap_item_id": source_ap_item_id,
+            "target_erp_reference": target_erp_reference,
+            "target_invoice_number": target_invoice_number,
+            "source_reference": source_reference,
+            "source_document_type": source_document_type,
+            "amount": amount,
+            "currency": currency,
+            "email_id": email_id,
+            "route_plan": route_plan,
+        },
+        idempotency_key=attempt_key,
+        correlation_id=correlation_id,
+    )
+
+    if action_key == "apply_credit_note":
+        validation = adapter.validate_credit(
+            {
+                "target_erp_reference": target_erp_reference,
+                "amount": amount,
+                "currency": currency,
+            }
+        )
+        if connector_capability.supports_api_apply_credit and connection_present and validation.get("ok"):
+            api_result = await adapter.apply_credit(
+                organization_id,
+                CreditApplication(
+                    target_erp_reference=target_erp_reference,
+                    amount=amount,
+                    currency=currency,
+                    credit_note_number=source_reference,
+                    target_invoice_number=target_invoice_number,
+                    note=note,
+                    source_ap_item_id=source_ap_item_id,
+                    related_ap_item_id=target_ap_item_id,
+                ),
+                ap_item_id=target_ap_item_id,
+                idempotency_key=attempt_key,
+            )
+        elif not validation.get("ok"):
+            api_result = {
+                "status": "error",
+                "reason": str(validation.get("reason") or "validation_failed"),
+                "validation": validation,
+                "idempotency_key": attempt_key,
+                "target_erp_reference": target_erp_reference,
+            }
+        else:
+            api_result = {
+                "status": "skipped",
+                "reason": "api_not_available_for_connector",
+                "idempotency_key": attempt_key,
+                "target_erp_reference": target_erp_reference,
+            }
+        macro_name = "apply_credit_note_in_erp"
+        workflow_id = "erp_credit_application_fallback"
+    else:
+        validation = adapter.validate_settlement(
+            {
+                "target_erp_reference": target_erp_reference,
+                "amount": amount,
+                "currency": currency,
+            }
+        )
+        if connector_capability.supports_api_apply_settlement and connection_present and validation.get("ok"):
+            api_result = await adapter.apply_settlement(
+                organization_id,
+                SettlementApplication(
+                    target_erp_reference=target_erp_reference,
+                    amount=amount,
+                    currency=currency,
+                    source_reference=source_reference,
+                    source_document_type=source_document_type,
+                    target_invoice_number=target_invoice_number,
+                    note=note,
+                    source_ap_item_id=source_ap_item_id,
+                    related_ap_item_id=target_ap_item_id,
+                ),
+                ap_item_id=target_ap_item_id,
+                idempotency_key=attempt_key,
+            )
+        elif not validation.get("ok"):
+            api_result = {
+                "status": "error",
+                "reason": str(validation.get("reason") or "validation_failed"),
+                "validation": validation,
+                "idempotency_key": attempt_key,
+                "target_erp_reference": target_erp_reference,
+            }
+        else:
+            api_result = {
+                "status": "skipped",
+                "reason": "api_not_available_for_connector",
+                "idempotency_key": attempt_key,
+                "target_erp_reference": target_erp_reference,
+            }
+        macro_name = "apply_settlement_in_erp"
+        workflow_id = "erp_settlement_application_fallback"
+
+    api_status = str(api_result.get("status") or "")
+    if api_status in {"success", "already_applied"}:
+        _audit(
+            resolved_db,
+            ap_item_id=target_ap_item_id,
+            organization_id=organization_id,
+            event_type=f"{event_prefix}_success",
+            actor_id=actor_id,
+            reason="api_applied",
+            payload={
+                "api_status": api_status,
+                "source_ap_item_id": source_ap_item_id,
+                "target_erp_reference": target_erp_reference,
+                "erp_reference": api_result.get("erp_reference"),
+                "route_plan": route_plan,
+            },
+            idempotency_key=f"{event_prefix}_success:{_stable_hash({**attempt_key_seed, 'erp_reference': api_result.get('erp_reference')})}",
+            correlation_id=correlation_id,
+        )
+        return _finalize_follow_on_response_contract(
+            {
+                **api_result,
+                "execution_mode": "api",
+                "routing": route_plan,
+                "fallback": {"requested": False, "eligible": False, "reason": "not_needed", "ap_item_id": target_ap_item_id},
+                "target_erp_reference": target_erp_reference,
+            },
+            detected_erp_type=detected_erp_type,
+            route_plan=route_plan,
+            action_key=action_key,
+            raw_result=api_result,
+        )
+
+    if not connector_capability.browser_fallback_enabled:
+        fallback_disabled = {
+            "requested": False,
+            "eligible": False,
+            "reason": "fallback_disabled_for_connector",
+            "ap_item_id": target_ap_item_id,
+        }
+        return _finalize_follow_on_response_contract(
+            {
+                **api_result,
+                "execution_mode": "api_failed",
+                "routing": route_plan,
+                "fallback": fallback_disabled,
+                "target_erp_reference": target_erp_reference,
+            },
+            detected_erp_type=detected_erp_type,
+            route_plan=route_plan,
+            action_key=action_key,
+            raw_result=api_result,
+        )
+
+    fallback_rollout_block_reason = get_browser_fallback_block_reason(
+        organization_id,
+        db=resolved_db,
+    )
+    if fallback_rollout_block_reason:
+        return _finalize_follow_on_response_contract(
+            {
+                **api_result,
+                "execution_mode": "api_failed",
+                "routing": route_plan,
+                "fallback": {
+                    "requested": False,
+                    "eligible": False,
+                    "reason": "fallback_disabled_by_rollout_control",
+                    "control_reason": fallback_rollout_block_reason,
+                    "ap_item_id": target_ap_item_id,
+                },
+                "target_erp_reference": target_erp_reference,
+            },
+            detected_erp_type=detected_erp_type,
+            route_plan=route_plan,
+            action_key=action_key,
+            raw_result=api_result,
+        )
+
+    fallback = await _dispatch_browser_follow_on(
+        db=resolved_db,
+        service=resolved_service,
+        organization_id=organization_id,
+        actor_id=actor_id,
+        ap_item_id=target_ap_item_id,
+        macro_name=macro_name,
+        workflow_id=workflow_id,
+        params={
+            "target_erp_reference": target_erp_reference,
+            "source_reference": source_reference,
+            "credit_note_number": source_reference,
+            "target_invoice_number": target_invoice_number,
+            "amount": amount,
+            "currency": currency,
+            "erp_url": getattr(connection, "base_url", None) if connection else None,
+            "source_document_type": source_document_type,
+        },
+        session_metadata={
+            "source_ap_item_id": source_ap_item_id,
+            "related_ap_item_id": target_ap_item_id,
+            "target_erp_reference": target_erp_reference,
+            "source_reference": source_reference,
+            "source_document_type": source_document_type,
+            "target_invoice_number": target_invoice_number,
+            "erp_type": detected_erp_type,
+        },
+        correlation_id=correlation_id,
+    )
+
+    if fallback.get("requested"):
+        _audit(
+            resolved_db,
+            ap_item_id=target_ap_item_id,
+            organization_id=organization_id,
+            event_type=f"{event_prefix}_fallback_requested",
+            actor_id=actor_id,
+            reason=fallback.get("reason") or "fallback_requested",
+            payload={
+                "api_status": api_status,
+                "api_reason": api_result.get("reason"),
+                "fallback": fallback,
+                "route_plan": route_plan,
+                "source_ap_item_id": source_ap_item_id,
+                "target_erp_reference": target_erp_reference,
+            },
+            idempotency_key=f"{event_prefix}_fallback:{_stable_hash({**attempt_key_seed, 'session_id': fallback.get('session_id')})}",
+            correlation_id=correlation_id,
+        )
+        return _finalize_follow_on_response_contract(
+            {
+                **api_result,
+                "status": "pending_browser_fallback",
+                "execution_mode": "browser_fallback",
+                "routing": route_plan,
+                "fallback": fallback,
+                "target_erp_reference": target_erp_reference,
+            },
+            detected_erp_type=detected_erp_type,
+            route_plan=route_plan,
+            action_key=action_key,
+            raw_result=api_result,
+        )
+
+    _audit(
+        resolved_db,
+        ap_item_id=target_ap_item_id,
+        organization_id=organization_id,
+        event_type=f"{event_prefix}_failed",
+        actor_id=actor_id,
+        reason=fallback.get("reason") or "api_failed_no_fallback",
+        payload={
+            "api_status": api_status,
+            "api_reason": api_result.get("reason"),
+            "fallback": fallback,
+            "route_plan": route_plan,
+            "source_ap_item_id": source_ap_item_id,
+            "target_erp_reference": target_erp_reference,
+        },
+        idempotency_key=f"{event_prefix}_failed:{_stable_hash(attempt_key_seed)}",
+        correlation_id=correlation_id,
+    )
+    return _finalize_follow_on_response_contract(
+        {
+            **api_result,
+            "execution_mode": "api_failed",
+            "routing": route_plan,
+            "fallback": fallback,
+            "target_erp_reference": target_erp_reference,
+        },
+        detected_erp_type=detected_erp_type,
+        route_plan=route_plan,
+        action_key=action_key,
+        raw_result=api_result,
+    )
+
+
+async def apply_credit_note_api_first(
+    *,
+    organization_id: str,
+    target_ap_item_id: str,
+    source_ap_item_id: str,
+    actor_id: str = "erp_router",
+    target_erp_reference: str,
+    target_invoice_number: Optional[str] = None,
+    credit_note_number: Optional[str] = None,
+    amount: float,
+    currency: str,
+    note: Optional[str] = None,
+    email_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    db: Optional[ClearledgrDB] = None,
+    browser_service: Optional[BrowserAgentService] = None,
+) -> Dict[str, Any]:
+    return await _erp_follow_on_api_first(
+        action_key="apply_credit_note",
+        organization_id=organization_id,
+        actor_id=actor_id,
+        target_ap_item_id=target_ap_item_id,
+        source_ap_item_id=source_ap_item_id,
+        target_erp_reference=target_erp_reference,
+        target_invoice_number=target_invoice_number,
+        amount=amount,
+        currency=currency,
+        source_reference=credit_note_number,
+        source_document_type="credit_note",
+        note=note,
+        email_id=email_id,
+        correlation_id=correlation_id,
+        db=db,
+        browser_service=browser_service,
+    )
+
+
+async def apply_settlement_api_first(
+    *,
+    organization_id: str,
+    target_ap_item_id: str,
+    source_ap_item_id: str,
+    actor_id: str = "erp_router",
+    source_document_type: str,
+    target_erp_reference: str,
+    target_invoice_number: Optional[str] = None,
+    source_reference: Optional[str] = None,
+    amount: float,
+    currency: str,
+    note: Optional[str] = None,
+    email_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    db: Optional[ClearledgrDB] = None,
+    browser_service: Optional[BrowserAgentService] = None,
+) -> Dict[str, Any]:
+    return await _erp_follow_on_api_first(
+        action_key="apply_settlement",
+        organization_id=organization_id,
+        actor_id=actor_id,
+        target_ap_item_id=target_ap_item_id,
+        source_ap_item_id=source_ap_item_id,
+        target_erp_reference=target_erp_reference,
+        target_invoice_number=target_invoice_number,
+        amount=amount,
+        currency=currency,
+        source_reference=source_reference,
+        source_document_type=source_document_type,
+        note=note,
+        email_id=email_id,
+        correlation_id=correlation_id,
+        db=db,
+        browser_service=browser_service,
     )

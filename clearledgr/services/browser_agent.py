@@ -54,6 +54,8 @@ SUPPORTED_MACROS = {
     "ingest_invoice_match_po",
     "collect_w9",
     "post_invoice_to_erp",
+    "apply_credit_note_in_erp",
+    "apply_settlement_in_erp",
 }
 
 
@@ -743,6 +745,230 @@ class BrowserAgentService:
                     "params": {"selector": "body"},
                     "depends_on": ["macro_post_submit"],
                     "step": "Capture ERP post confirmation evidence",
+                },
+            ]
+        elif macro == "apply_credit_note_in_erp":
+            erp_url = (
+                _normalize_text(parameters.get("erp_url"))
+                or portal_url
+                or source_url
+            )
+            target_erp_reference = _normalize_text(parameters.get("target_erp_reference"))
+            credit_note_number = _normalize_text(parameters.get("credit_note_number"))
+            amount = parameters.get("amount")
+            currency = _normalize_text(parameters.get("currency")) or "USD"
+
+            commands = [
+                {
+                    "tool_name": "open_tab",
+                    "command_id": "macro_credit_open_erp",
+                    "target": {"url": erp_url},
+                    "params": {"background": False},
+                    "depends_on": [],
+                    "step": "Open ERP payable for credit application",
+                },
+                {
+                    "tool_name": "type",
+                    "command_id": "macro_credit_target_ref",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "input[name='search']",
+                        "selector_candidates": [
+                            "input[name='search']",
+                            "input[aria-label*='Search']",
+                            "input[placeholder*='Reference']",
+                            "input[placeholder*='Invoice']",
+                        ],
+                        "value": target_erp_reference,
+                    },
+                    "depends_on": ["macro_credit_open_erp"],
+                    "step": "Find target ERP invoice or bill",
+                },
+                {
+                    "tool_name": "click",
+                    "command_id": "macro_credit_open_apply",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "button[aria-label*='Apply Credit']",
+                        "selector_candidates": [
+                            "button[aria-label*='Apply Credit']",
+                            "button[aria-label*='Credit Memo']",
+                            "button[aria-label*='Apply Adjustment']",
+                            "button[aria-label*='Credit Note']",
+                        ],
+                    },
+                    "depends_on": ["macro_credit_target_ref"],
+                    "step": "Open credit application flow",
+                },
+                {
+                    "tool_name": "type",
+                    "command_id": "macro_credit_number",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "input[name='credit_note_number']",
+                        "selector_candidates": [
+                            "input[name='credit_note_number']",
+                            "input[aria-label*='Credit']",
+                            "input[placeholder*='Credit note']",
+                            "input[placeholder*='Credit memo']",
+                        ],
+                        "value": credit_note_number,
+                    },
+                    "depends_on": ["macro_credit_open_apply"],
+                    "step": "Fill credit note reference",
+                },
+                {
+                    "tool_name": "type",
+                    "command_id": "macro_credit_amount",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "input[name='amount']",
+                        "selector_candidates": [
+                            "input[name='amount']",
+                            "input[aria-label*='Amount']",
+                            "input[placeholder*='Amount']",
+                            "input[placeholder*='Credit']",
+                        ],
+                        "value": f"{amount or ''}",
+                    },
+                    "depends_on": ["macro_credit_open_apply"],
+                    "step": f"Fill applied credit amount ({currency})",
+                },
+                {
+                    "tool_name": "click",
+                    "command_id": "macro_credit_submit",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "button[type='submit']",
+                        "selector_candidates": [
+                            "button[type='submit']",
+                            "button[aria-label*='Apply Credit']",
+                            "button[aria-label*='Save']",
+                            "button[aria-label*='Post']",
+                        ],
+                    },
+                    "depends_on": ["macro_credit_number", "macro_credit_amount"],
+                    "step": "Apply vendor credit in ERP",
+                },
+                {
+                    "tool_name": "capture_evidence",
+                    "command_id": "macro_credit_capture_result",
+                    "target": {"url": erp_url},
+                    "params": {"selector": "body"},
+                    "depends_on": ["macro_credit_submit"],
+                    "step": "Capture ERP credit application evidence",
+                },
+            ]
+        elif macro == "apply_settlement_in_erp":
+            erp_url = (
+                _normalize_text(parameters.get("erp_url"))
+                or portal_url
+                or source_url
+            )
+            target_erp_reference = _normalize_text(parameters.get("target_erp_reference"))
+            source_reference = _normalize_text(parameters.get("source_reference"))
+            amount = parameters.get("amount")
+            currency = _normalize_text(parameters.get("currency")) or "USD"
+
+            commands = [
+                {
+                    "tool_name": "open_tab",
+                    "command_id": "macro_settlement_open_erp",
+                    "target": {"url": erp_url},
+                    "params": {"background": False},
+                    "depends_on": [],
+                    "step": "Open ERP payable for settlement application",
+                },
+                {
+                    "tool_name": "type",
+                    "command_id": "macro_settlement_target_ref",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "input[name='search']",
+                        "selector_candidates": [
+                            "input[name='search']",
+                            "input[aria-label*='Search']",
+                            "input[placeholder*='Reference']",
+                            "input[placeholder*='Invoice']",
+                        ],
+                        "value": target_erp_reference,
+                    },
+                    "depends_on": ["macro_settlement_open_erp"],
+                    "step": "Find target ERP invoice or bill",
+                },
+                {
+                    "tool_name": "click",
+                    "command_id": "macro_settlement_open_apply",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "button[aria-label*='Apply Payment']",
+                        "selector_candidates": [
+                            "button[aria-label*='Apply Payment']",
+                            "button[aria-label*='Settle']",
+                            "button[aria-label*='Record Payment']",
+                            "button[aria-label*='Apply Refund']",
+                        ],
+                    },
+                    "depends_on": ["macro_settlement_target_ref"],
+                    "step": "Open settlement application flow",
+                },
+                {
+                    "tool_name": "type",
+                    "command_id": "macro_settlement_source_ref",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "input[name='payment_reference']",
+                        "selector_candidates": [
+                            "input[name='payment_reference']",
+                            "input[aria-label*='Payment']",
+                            "input[aria-label*='Reference']",
+                            "input[placeholder*='Receipt']",
+                        ],
+                        "value": source_reference,
+                    },
+                    "depends_on": ["macro_settlement_open_apply"],
+                    "step": "Fill settlement reference",
+                },
+                {
+                    "tool_name": "type",
+                    "command_id": "macro_settlement_amount",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "input[name='amount']",
+                        "selector_candidates": [
+                            "input[name='amount']",
+                            "input[aria-label*='Amount']",
+                            "input[placeholder*='Amount']",
+                            "input[placeholder*='Payment']",
+                        ],
+                        "value": f"{amount or ''}",
+                    },
+                    "depends_on": ["macro_settlement_open_apply"],
+                    "step": f"Fill settlement amount ({currency})",
+                },
+                {
+                    "tool_name": "click",
+                    "command_id": "macro_settlement_submit",
+                    "target": {"url": erp_url},
+                    "params": {
+                        "selector": "button[type='submit']",
+                        "selector_candidates": [
+                            "button[type='submit']",
+                            "button[aria-label*='Apply Payment']",
+                            "button[aria-label*='Settle']",
+                            "button[aria-label*='Save']",
+                        ],
+                    },
+                    "depends_on": ["macro_settlement_source_ref", "macro_settlement_amount"],
+                    "step": "Apply settlement in ERP",
+                },
+                {
+                    "tool_name": "capture_evidence",
+                    "command_id": "macro_settlement_capture_result",
+                    "target": {"url": erp_url},
+                    "params": {"selector": "body"},
+                    "depends_on": ["macro_settlement_submit"],
+                    "step": "Capture ERP settlement evidence",
                 },
             ]
 

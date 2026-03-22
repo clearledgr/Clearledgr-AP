@@ -19,6 +19,10 @@ from clearledgr.core.errors import safe_error
 from clearledgr.api.deps import verify_org_access
 from clearledgr.services.ap_context_connectors import build_multi_system_context
 from clearledgr.services.ap_operator_audit import normalize_operator_audit_events
+from clearledgr.services.erp_api_first import (
+    apply_credit_note_api_first,
+    apply_settlement_api_first,
+)
 from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
 
@@ -222,6 +226,15 @@ _NON_INVOICE_ALLOWED_OUTCOMES = {
     "statement": {"send_to_reconciliation", "needs_followup"},
     "bank_statement": {"send_to_reconciliation", "needs_followup"},
     "other": {"mark_reviewed", "needs_followup"},
+}
+
+_ERP_FOLLOW_ON_APPLIED_STATUSES = {"applied", "success", "completed", "already_applied"}
+_ERP_FOLLOW_ON_PENDING_STATUSES = {
+    "pending",
+    "queued",
+    "requested",
+    "pending_browser_fallback",
+    "pending_target_post",
 }
 
 
@@ -606,6 +619,8 @@ def _finance_effect_review_blockers(
     refund_total: float,
     over_credit_amount: float,
     overpayment_amount: float,
+    credit_erp_status: str,
+    cash_erp_status: str,
 ) -> List[Dict[str, Any]]:
     blockers: List[Dict[str, Any]] = []
     is_active_invoice = (
@@ -631,15 +646,27 @@ def _finance_effect_review_blockers(
             "Linked finance effects point at a non-invoice record and need operator review before AP automation continues.",
         )
     if is_active_invoice and applied_credit_total > 0:
-        _push(
-            "linked_credit_adjustment_present",
-            "A linked credit note changes the payable amount and should be reviewed before invoice routing or posting.",
-        )
+        if credit_erp_status in _ERP_FOLLOW_ON_PENDING_STATUSES:
+            _push(
+                "linked_credit_application_pending",
+                "The linked credit note is waiting on downstream ERP application before invoice routing or posting can continue.",
+            )
+        elif credit_erp_status not in _ERP_FOLLOW_ON_APPLIED_STATUSES:
+            _push(
+                "linked_credit_adjustment_present",
+                "A linked credit note changes the payable amount and should be reviewed before invoice routing or posting.",
+            )
     if is_active_invoice and (gross_cash_out_total > 0 or refund_total > 0):
-        _push(
-            "linked_cash_application_present",
-            "A linked payment, receipt, or refund changes settlement context and should be reviewed before invoice routing or posting.",
-        )
+        if cash_erp_status in _ERP_FOLLOW_ON_PENDING_STATUSES:
+            _push(
+                "linked_settlement_application_pending",
+                "The linked payment, receipt, or refund is waiting on downstream ERP settlement before invoice routing or posting can continue.",
+            )
+        elif cash_erp_status not in _ERP_FOLLOW_ON_APPLIED_STATUSES:
+            _push(
+                "linked_cash_application_present",
+                "A linked payment, receipt, or refund changes settlement context and should be reviewed before invoice routing or posting.",
+            )
     if over_credit_amount > 0:
         _push(
             "linked_over_credit",
@@ -663,6 +690,8 @@ def _build_finance_effect_summary(
     related_item: Dict[str, Any],
     entries: List[Dict[str, Any]],
     summary: Dict[str, Any],
+    existing_vendor_credit_summary: Optional[Dict[str, Any]] = None,
+    existing_cash_application_summary: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     related_document_type = _related_item_document_type(related_item)
     related_state = str(related_item.get("state") or "").strip().lower()
@@ -720,6 +749,27 @@ def _build_finance_effect_summary(
         elif document_type == "receipt" and source_id not in receipt_ids:
             receipt_ids.append(source_id)
 
+    vendor_credit_summary = (
+        existing_vendor_credit_summary
+        if isinstance(existing_vendor_credit_summary, dict)
+        else {}
+    )
+    cash_application_summary = (
+        existing_cash_application_summary
+        if isinstance(existing_cash_application_summary, dict)
+        else {}
+    )
+    credit_erp_status = str(vendor_credit_summary.get("erp_application_status") or "").strip().lower()
+    cash_erp_status = str(cash_application_summary.get("erp_settlement_status") or "").strip().lower()
+    if not credit_erp_status:
+        credit_erp_status = "not_requested" if applied_credit_total > 0 else "not_applicable"
+    if not cash_erp_status:
+        cash_erp_status = (
+            "not_requested"
+            if gross_cash_out_total > 0 or refund_total > 0
+            else "not_applicable"
+        )
+
     blockers = _finance_effect_review_blockers(
         related_document_type=related_document_type,
         related_state=related_state,
@@ -729,6 +779,8 @@ def _build_finance_effect_summary(
         refund_total=refund_total,
         over_credit_amount=over_credit_amount,
         overpayment_amount=overpayment_amount,
+        credit_erp_status=credit_erp_status,
+        cash_erp_status=cash_erp_status,
     )
 
     return {
@@ -753,10 +805,87 @@ def _build_finance_effect_summary(
         "payment_ids": payment_ids,
         "receipt_ids": receipt_ids,
         "latest_linked_at": summary.get("latest_linked_at"),
+        "credit_erp_application_status": credit_erp_status,
+        "credit_erp_application_mode": vendor_credit_summary.get("erp_application_mode"),
+        "credit_erp_application_reference": vendor_credit_summary.get("erp_application_reference"),
+        "cash_erp_settlement_status": cash_erp_status,
+        "cash_erp_settlement_mode": cash_application_summary.get("erp_settlement_mode"),
+        "cash_erp_settlement_reference": cash_application_summary.get("erp_settlement_reference"),
         "blocked_reason_codes": [str(blocker.get("code") or "").strip() for blocker in blockers if str(blocker.get("code") or "").strip()],
         "blockers": blockers,
         "requires_review": bool(blockers),
     }
+
+
+def _refresh_linked_finance_metadata(
+    metadata: Dict[str, Any],
+    *,
+    related_item: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    existing_entries = metadata.get("linked_finance_documents")
+    entries = list(existing_entries) if isinstance(existing_entries, list) else []
+    summary = _summarize_linked_finance_documents(entries)
+    metadata["linked_finance_documents"] = entries
+    metadata["linked_finance_summary"] = summary
+
+    existing_vendor_credit = (
+        metadata.get("vendor_credit_summary")
+        if isinstance(metadata.get("vendor_credit_summary"), dict)
+        else {}
+    )
+    existing_cash_application = (
+        metadata.get("cash_application_summary")
+        if isinstance(metadata.get("cash_application_summary"), dict)
+        else {}
+    )
+    finance_effect_summary = (
+        _build_finance_effect_summary(
+            related_item=related_item,
+            entries=entries,
+            summary=summary,
+            existing_vendor_credit_summary=existing_vendor_credit,
+            existing_cash_application_summary=existing_cash_application,
+        )
+        if related_item
+        else {}
+    )
+    if finance_effect_summary:
+        metadata["finance_effect_summary"] = finance_effect_summary
+        metadata["finance_effect_blockers"] = finance_effect_summary.get("blockers") or []
+        metadata["finance_effect_review_required"] = bool(finance_effect_summary.get("requires_review"))
+
+    vendor_credit_summary = dict(existing_vendor_credit)
+    vendor_credit_summary.update(
+        {
+            "count": summary["credit_note_count"],
+            "applied_total": summary["credit_note_total"],
+            "latest_linked_at": summary["latest_linked_at"],
+            "application_state": finance_effect_summary.get("credit_application_state"),
+            "remaining_payable_amount": finance_effect_summary.get("remaining_payable_amount"),
+            "over_credit_amount": finance_effect_summary.get("over_credit_amount"),
+        }
+    )
+    metadata["vendor_credit_summary"] = vendor_credit_summary
+
+    cash_application_summary = dict(existing_cash_application)
+    cash_application_summary.update(
+        {
+            "refund_count": summary["refund_count"],
+            "refund_total": summary["refund_total"],
+            "payment_count": summary["payment_count"],
+            "payment_total": summary["payment_total"],
+            "receipt_count": summary["receipt_count"],
+            "receipt_total": summary["receipt_total"],
+            "latest_linked_at": summary["latest_linked_at"],
+            "gross_cash_out_total": finance_effect_summary.get("gross_cash_out_total"),
+            "net_cash_applied_total": finance_effect_summary.get("net_cash_applied_total"),
+            "remaining_balance_amount": finance_effect_summary.get("remaining_balance_amount"),
+            "overpayment_amount": finance_effect_summary.get("overpayment_amount"),
+            "settlement_state": finance_effect_summary.get("settlement_state"),
+        }
+    )
+    metadata["cash_application_summary"] = cash_application_summary
+    return metadata
 
 
 def _upsert_linked_finance_document(
@@ -779,46 +908,8 @@ def _upsert_linked_finance_document(
     ]
     filtered.append(entry)
     filtered.sort(key=lambda row: _safe_sort_timestamp((row or {}).get("linked_at")), reverse=True)
-    trimmed = filtered[:25]
-    metadata["linked_finance_documents"] = trimmed
-    summary = _summarize_linked_finance_documents(trimmed)
-    metadata["linked_finance_summary"] = summary
-    finance_effect_summary = (
-        _build_finance_effect_summary(
-            related_item=related_item,
-            entries=trimmed,
-            summary=summary,
-        )
-        if related_item
-        else {}
-    )
-    if finance_effect_summary:
-        metadata["finance_effect_summary"] = finance_effect_summary
-        metadata["finance_effect_blockers"] = finance_effect_summary.get("blockers") or []
-        metadata["finance_effect_review_required"] = bool(finance_effect_summary.get("requires_review"))
-    metadata["vendor_credit_summary"] = {
-        "count": summary["credit_note_count"],
-        "applied_total": summary["credit_note_total"],
-        "latest_linked_at": summary["latest_linked_at"],
-        "application_state": finance_effect_summary.get("credit_application_state"),
-        "remaining_payable_amount": finance_effect_summary.get("remaining_payable_amount"),
-        "over_credit_amount": finance_effect_summary.get("over_credit_amount"),
-    }
-    metadata["cash_application_summary"] = {
-        "refund_count": summary["refund_count"],
-        "refund_total": summary["refund_total"],
-        "payment_count": summary["payment_count"],
-        "payment_total": summary["payment_total"],
-        "receipt_count": summary["receipt_count"],
-        "receipt_total": summary["receipt_total"],
-        "latest_linked_at": summary["latest_linked_at"],
-        "gross_cash_out_total": finance_effect_summary.get("gross_cash_out_total"),
-        "net_cash_applied_total": finance_effect_summary.get("net_cash_applied_total"),
-        "remaining_balance_amount": finance_effect_summary.get("remaining_balance_amount"),
-        "overpayment_amount": finance_effect_summary.get("overpayment_amount"),
-        "settlement_state": finance_effect_summary.get("settlement_state"),
-    }
-    return metadata
+    metadata["linked_finance_documents"] = filtered[:25]
+    return _refresh_linked_finance_metadata(metadata, related_item=related_item)
 
 
 def _create_statement_reconciliation_artifact(
@@ -931,6 +1022,268 @@ def _link_related_item_for_non_invoice_resolution(
     )
     refreshed_related = _require_item(db, str(related_item.get("id") or "").strip())
     return build_worklist_item(db, refreshed_related)
+
+
+def _normalize_erp_follow_on_status(result: Dict[str, Any]) -> str:
+    status = str(result.get("status") or "").strip().lower()
+    execution_mode = str(result.get("execution_mode") or "").strip().lower()
+    reason = str(result.get("reason") or "").strip().lower()
+    if status in {"success", "completed", "already_applied"}:
+        return "applied"
+    if status == "pending_browser_fallback":
+        return "pending_browser_fallback"
+    if execution_mode == "pending_target_post" or reason == "target_not_posted_to_erp":
+        return "pending_target_post"
+    if status == "blocked":
+        return "blocked"
+    if status == "skipped":
+        return "skipped"
+    return "failed"
+
+
+def _apply_erp_follow_on_result(
+    db: ClearledgrDB,
+    *,
+    source_ap_item_id: str,
+    related_ap_item_id: str,
+    action_type: str,
+    result: Dict[str, Any],
+    actor_id: str,
+    organization_id: str,
+) -> Dict[str, Any]:
+    source_item = _require_item(db, source_ap_item_id)
+    related_item = _require_item(db, related_ap_item_id)
+    source_metadata = _parse_json(source_item.get("metadata"))
+    related_metadata = _parse_json(related_item.get("metadata"))
+    resolution = source_metadata.get("non_invoice_resolution")
+    if not isinstance(resolution, dict):
+        resolution = {}
+
+    normalized_status = _normalize_erp_follow_on_status(result)
+    fallback = result.get("fallback") if isinstance(result.get("fallback"), dict) else {}
+    follow_on = {
+        "action_type": action_type,
+        "status": normalized_status,
+        "raw_status": str(result.get("status") or "").strip() or None,
+        "execution_mode": str(result.get("execution_mode") or "").strip() or None,
+        "erp_type": str(result.get("erp_type") or result.get("erp") or "").strip() or None,
+        "erp_reference": (
+            str(result.get("erp_reference") or "").strip()
+            or str(fallback.get("erp_reference") or "").strip()
+            or None
+        ),
+        "target_erp_reference": str(result.get("target_erp_reference") or "").strip() or None,
+        "reason": str(result.get("reason") or "").strip() or None,
+        "error_code": str(result.get("error_code") or "").strip() or None,
+        "error_message": str(result.get("error_message") or "").strip() or None,
+        "session_id": str(fallback.get("session_id") or "").strip() or None,
+        "macro_name": str(fallback.get("macro_name") or "").strip() or None,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    resolution["erp_follow_on"] = follow_on
+    source_metadata["non_invoice_resolution"] = resolution
+
+    if action_type == "apply_credit_note":
+        vendor_credit_summary = (
+            related_metadata.get("vendor_credit_summary")
+            if isinstance(related_metadata.get("vendor_credit_summary"), dict)
+            else {}
+        )
+        vendor_credit_summary.update(
+            {
+                "erp_application_status": normalized_status,
+                "erp_application_mode": follow_on.get("execution_mode"),
+                "erp_application_reference": follow_on.get("erp_reference"),
+                "erp_application_session_id": follow_on.get("session_id"),
+                "erp_last_applied_at": follow_on.get("updated_at"),
+                "erp_pending_reason": follow_on.get("reason"),
+                "erp_target_reference": follow_on.get("target_erp_reference"),
+            }
+        )
+        related_metadata["vendor_credit_summary"] = vendor_credit_summary
+        event_prefix = "erp_credit_application"
+    else:
+        cash_application_summary = (
+            related_metadata.get("cash_application_summary")
+            if isinstance(related_metadata.get("cash_application_summary"), dict)
+            else {}
+        )
+        cash_application_summary.update(
+            {
+                "erp_settlement_status": normalized_status,
+                "erp_settlement_mode": follow_on.get("execution_mode"),
+                "erp_settlement_reference": follow_on.get("erp_reference"),
+                "erp_settlement_session_id": follow_on.get("session_id"),
+                "erp_last_settled_at": follow_on.get("updated_at"),
+                "erp_pending_reason": follow_on.get("reason"),
+                "erp_target_reference": follow_on.get("target_erp_reference"),
+            }
+        )
+        related_metadata["cash_application_summary"] = cash_application_summary
+        event_prefix = "erp_settlement_application"
+
+    refreshed_related_metadata = _refresh_linked_finance_metadata(
+        related_metadata,
+        related_item={**related_item, "metadata": related_metadata},
+    )
+
+    db.update_ap_item(
+        source_ap_item_id,
+        **_filter_allowed_ap_item_updates(db, {"metadata": source_metadata}),
+        _actor_type="user",
+        _actor_id=actor_id,
+        _source="non_invoice_erp_follow_on",
+        _decision_reason=action_type,
+    )
+    db.update_ap_item(
+        related_ap_item_id,
+        **_filter_allowed_ap_item_updates(db, {"metadata": refreshed_related_metadata}),
+        _actor_type="user",
+        _actor_id=actor_id,
+        _source="non_invoice_erp_follow_on",
+        _decision_reason=action_type,
+    )
+
+    event_suffix = (
+        "completed"
+        if normalized_status == "applied"
+        else "requested"
+        if normalized_status in _ERP_FOLLOW_ON_PENDING_STATUSES
+        else "failed"
+    )
+    for ap_item_id in (source_ap_item_id, related_ap_item_id):
+        db.append_ap_audit_event(
+            {
+                "ap_item_id": ap_item_id,
+                "event_type": f"{event_prefix}_{event_suffix}",
+                "actor_type": "user",
+                "actor_id": actor_id,
+                "organization_id": organization_id,
+                "source": "ap_item_non_invoice_erp_follow_on",
+                "reason": normalized_status,
+                "metadata": {
+                    "action_type": action_type,
+                    "source_ap_item_id": source_ap_item_id,
+                    "related_ap_item_id": related_ap_item_id,
+                    "erp_follow_on": follow_on,
+                },
+            }
+        )
+
+    return {
+        "source_item": build_worklist_item(db, _require_item(db, source_ap_item_id)),
+        "related_item": build_worklist_item(db, _require_item(db, related_ap_item_id)),
+        "follow_on": follow_on,
+    }
+
+
+async def _execute_non_invoice_erp_follow_on(
+    db: ClearledgrDB,
+    *,
+    source_item: Dict[str, Any],
+    related_item: Dict[str, Any],
+    document_type: str,
+    outcome: str,
+    actor_id: str,
+    organization_id: str,
+) -> Optional[Dict[str, Any]]:
+    normalized_type = _normalize_document_type_token(document_type)
+    normalized_outcome = _normalize_non_invoice_outcome(outcome)
+    related_reference = str(
+        related_item.get("erp_reference")
+        or _parse_json(related_item.get("metadata")).get("erp_reference")
+        or ""
+    ).strip()
+    related_state = str(related_item.get("state") or "").strip().lower()
+    target_invoice_number = str(related_item.get("invoice_number") or "").strip() or None
+
+    source_currency = str(source_item.get("currency") or "").strip().upper()
+    related_currency = str(related_item.get("currency") or "").strip().upper()
+    resolved_currency = source_currency or related_currency or "USD"
+
+    if source_currency and related_currency and source_currency != related_currency:
+        return {
+            "status": "error",
+            "reason": "currency_mismatch",
+            "source_currency": source_currency,
+            "target_currency": related_currency,
+            "source_ap_item_id": str(source_item.get("id") or "").strip(),
+            "related_ap_item_id": str(related_item.get("id") or "").strip(),
+        }
+
+    if normalized_type == "credit_note" and normalized_outcome == "apply_to_invoice":
+        action_type = "apply_credit_note"
+        if related_state not in {APState.POSTED_TO_ERP.value, APState.CLOSED.value} or not related_reference:
+            result = {
+                "status": "skipped",
+                "reason": "target_not_posted_to_erp",
+                "execution_mode": "pending_target_post",
+                "target_erp_reference": related_reference or target_invoice_number,
+            }
+        else:
+            try:
+                result = await apply_credit_note_api_first(
+                    organization_id=organization_id,
+                    target_ap_item_id=str(related_item.get("id") or "").strip(),
+                    source_ap_item_id=str(source_item.get("id") or "").strip(),
+                    actor_id=actor_id,
+                    target_erp_reference=related_reference,
+                    target_invoice_number=target_invoice_number,
+                    credit_note_number=str(source_item.get("invoice_number") or "").strip() or None,
+                    amount=_money_amount(source_item.get("amount")),
+                    currency=resolved_currency,
+                    note=str(source_item.get("subject") or "").strip() or None,
+                    email_id=str(source_item.get("message_id") or "").strip() or None,
+                    correlation_id=str(_parse_json(source_item.get("metadata")).get("correlation_id") or "").strip() or None,
+                )
+            except Exception:
+                logger.exception("apply_credit_note_api_first failed for source=%s related=%s",
+                                 source_item.get("id"), related_item.get("id"))
+                result = {"status": "error", "reason": "internal_error", "error_code": "apply_credit_note_internal_error"}
+    elif normalized_type in {"refund", "receipt", "payment"} and normalized_outcome == "link_to_payment":
+        action_type = "apply_settlement"
+        if related_state not in {APState.POSTED_TO_ERP.value, APState.CLOSED.value} or not related_reference:
+            result = {
+                "status": "skipped",
+                "reason": "target_not_posted_to_erp",
+                "execution_mode": "pending_target_post",
+                "target_erp_reference": related_reference or target_invoice_number,
+            }
+        else:
+            try:
+                result = await apply_settlement_api_first(
+                    organization_id=organization_id,
+                    target_ap_item_id=str(related_item.get("id") or "").strip(),
+                    source_ap_item_id=str(source_item.get("id") or "").strip(),
+                    actor_id=actor_id,
+                    source_document_type=normalized_type,
+                    target_erp_reference=related_reference,
+                    target_invoice_number=target_invoice_number,
+                    source_reference=str(source_item.get("invoice_number") or "").strip() or None,
+                    amount=_money_amount(source_item.get("amount")),
+                    currency=resolved_currency,
+                    note=str(source_item.get("subject") or "").strip() or None,
+                    email_id=str(source_item.get("message_id") or "").strip() or None,
+                    correlation_id=str(_parse_json(source_item.get("metadata")).get("correlation_id") or "").strip() or None,
+                )
+            except Exception:
+                logger.exception("apply_settlement_api_first failed for source=%s related=%s",
+                                 source_item.get("id"), related_item.get("id"))
+                result = {"status": "error", "reason": "internal_error", "error_code": "apply_settlement_internal_error"}
+    else:
+        logger.info("Skipping ERP follow-on: unrecognized type=%s outcome=%s source=%s",
+                     normalized_type, normalized_outcome, source_item.get("id"))
+        return None
+
+    return _apply_erp_follow_on_result(
+        db,
+        source_ap_item_id=str(source_item.get("id") or "").strip(),
+        related_ap_item_id=str(related_item.get("id") or "").strip(),
+        action_type=action_type,
+        result=result,
+        actor_id=actor_id,
+        organization_id=organization_id,
+    )
 
 
 def _derive_attachment_summary(
@@ -1661,6 +2014,11 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
     state_token = str(payload.get("state") or "").strip().lower()
     non_invoice_resolution = metadata.get("non_invoice_resolution")
     payload["non_invoice_resolution"] = non_invoice_resolution if isinstance(non_invoice_resolution, dict) else {}
+    payload["erp_follow_on"] = (
+        payload["non_invoice_resolution"].get("erp_follow_on")
+        if isinstance(payload["non_invoice_resolution"].get("erp_follow_on"), dict)
+        else {}
+    )
     payload["non_invoice_accounting_treatment"] = payload["non_invoice_resolution"].get("accounting_treatment")
     payload["non_invoice_downstream_queue"] = payload["non_invoice_resolution"].get("downstream_queue")
     payload["linked_record"] = (
@@ -2917,7 +3275,7 @@ async def bulk_resolve_ap_item_field_review(
 
 
 @router.post("/{ap_item_id}/non-invoice/resolve")
-def resolve_non_invoice_review(
+async def resolve_non_invoice_review(
     ap_item_id: str,
     request: ResolveNonInvoiceReviewRequest,
     organization_id: str = Query(default="default"),
@@ -3040,6 +3398,17 @@ def resolve_non_invoice_review(
             actor_id=actor_id,
             organization_id=str(item.get("organization_id") or organization_id or "default"),
         )
+        follow_on_result = await _execute_non_invoice_erp_follow_on(
+            db,
+            source_item={**item, "document_type": document_type},
+            related_item=resolved_related_item,
+            document_type=document_type,
+            outcome=outcome,
+            actor_id=actor_id,
+            organization_id=str(item.get("organization_id") or organization_id or "default"),
+        )
+        if isinstance(follow_on_result, dict) and isinstance(follow_on_result.get("related_item"), dict):
+            linked_related = follow_on_result.get("related_item")
         metadata = _parse_json((_require_item(db, ap_item_id)).get("metadata"))
         non_invoice_resolution = metadata.get("non_invoice_resolution")
         if isinstance(non_invoice_resolution, dict):

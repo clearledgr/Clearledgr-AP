@@ -9,6 +9,8 @@ from typing import Any, Dict, List
 class ConnectorCapability:
     erp_type: str
     supports_api_post_bill: bool
+    supports_api_apply_credit: bool
+    supports_api_apply_settlement: bool
     browser_fallback_enabled: bool
     api_priority: int
     rollout_stage: str
@@ -24,6 +26,8 @@ class ERPConnectorStrategy:
             "quickbooks": ConnectorCapability(
                 erp_type="quickbooks",
                 supports_api_post_bill=True,
+                supports_api_apply_credit=False,
+                supports_api_apply_settlement=False,
                 browser_fallback_enabled=True,
                 api_priority=100,
                 rollout_stage="api_primary",
@@ -32,6 +36,8 @@ class ERPConnectorStrategy:
             "xero": ConnectorCapability(
                 erp_type="xero",
                 supports_api_post_bill=True,
+                supports_api_apply_credit=False,
+                supports_api_apply_settlement=False,
                 browser_fallback_enabled=True,
                 api_priority=100,
                 rollout_stage="api_primary",
@@ -40,6 +46,8 @@ class ERPConnectorStrategy:
             "netsuite": ConnectorCapability(
                 erp_type="netsuite",
                 supports_api_post_bill=True,
+                supports_api_apply_credit=False,
+                supports_api_apply_settlement=False,
                 browser_fallback_enabled=True,
                 api_priority=95,
                 rollout_stage="api_primary",
@@ -48,6 +56,8 @@ class ERPConnectorStrategy:
             "sap": ConnectorCapability(
                 erp_type="sap",
                 supports_api_post_bill=True,
+                supports_api_apply_credit=False,
+                supports_api_apply_settlement=False,
                 browser_fallback_enabled=True,
                 api_priority=90,
                 rollout_stage="api_primary",
@@ -56,6 +66,8 @@ class ERPConnectorStrategy:
             "unconfigured": ConnectorCapability(
                 erp_type="unconfigured",
                 supports_api_post_bill=False,
+                supports_api_apply_credit=False,
+                supports_api_apply_settlement=False,
                 browser_fallback_enabled=True,
                 api_priority=0,
                 rollout_stage="fallback_only",
@@ -64,6 +76,8 @@ class ERPConnectorStrategy:
             "unknown": ConnectorCapability(
                 erp_type="unknown",
                 supports_api_post_bill=False,
+                supports_api_apply_credit=False,
+                supports_api_apply_settlement=False,
                 browser_fallback_enabled=False,
                 api_priority=0,
                 rollout_stage="disabled",
@@ -79,9 +93,24 @@ class ERPConnectorStrategy:
         rows = [cap.as_dict() for cap in self._capabilities.values()]
         return sorted(rows, key=lambda row: (-int(row.get("api_priority") or 0), str(row.get("erp_type") or "")))
 
-    def build_route_plan(self, *, erp_type: str, connection_present: bool) -> Dict[str, Any]:
+    def build_route_plan(
+        self,
+        *,
+        erp_type: str,
+        connection_present: bool,
+        action: str = "post_bill",
+    ) -> Dict[str, Any]:
         capability = self.resolve(erp_type if connection_present else "unconfigured")
-        if capability.supports_api_post_bill and connection_present:
+        normalized_action = str(action or "post_bill").strip().lower() or "post_bill"
+        api_supported = False
+        if normalized_action == "post_bill":
+            api_supported = bool(capability.supports_api_post_bill)
+        elif normalized_action == "apply_credit":
+            api_supported = bool(capability.supports_api_apply_credit)
+        elif normalized_action == "apply_settlement":
+            api_supported = bool(capability.supports_api_apply_settlement)
+
+        if api_supported and connection_present:
             primary_mode = "api"
         elif capability.browser_fallback_enabled:
             primary_mode = "browser_fallback"
@@ -89,11 +118,12 @@ class ERPConnectorStrategy:
             primary_mode = "manual_review"
         return {
             "erp_type": capability.erp_type,
+            "action": normalized_action,
             "connection_present": bool(connection_present),
             "rollout_stage": capability.rollout_stage,
             "primary_mode": primary_mode,
             "fallback_enabled": bool(capability.browser_fallback_enabled),
-            "api_supported": bool(capability.supports_api_post_bill),
+            "api_supported": bool(api_supported),
             "api_priority": int(capability.api_priority),
             "notes": capability.notes,
         }

@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, Optional, Protocol
 
 from clearledgr.core.database import get_db
-from clearledgr.integrations.erp_router import Bill, get_erp_connection
+from clearledgr.integrations.erp_router import (
+    Bill,
+    CreditApplication,
+    SettlementApplication,
+    get_erp_connection,
+)
 
 
 class ERPBillAdapter(Protocol):
@@ -46,6 +51,38 @@ class ERPBillAdapter(Protocol):
         self,
         organization_id: str,
         entity_id: str,
+    ) -> Dict[str, Any]:
+        ...
+
+
+class ERPFinanceActionAdapter(Protocol):
+    """Canonical credit and settlement application contract for ERP follow-on work."""
+
+    erp_type: str
+
+    def validate_credit(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        ...
+
+    def validate_settlement(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        ...
+
+    async def apply_credit(
+        self,
+        organization_id: str,
+        application: CreditApplication,
+        *,
+        ap_item_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        ...
+
+    async def apply_settlement(
+        self,
+        organization_id: str,
+        application: SettlementApplication,
+        *,
+        ap_item_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         ...
 
@@ -215,6 +252,79 @@ class RouterBackedERPBillAdapter:
         }
 
 
+@dataclass
+class RouterBackedERPFinanceActionAdapter:
+    """Adapter that delegates finance-effect application to the ERP router."""
+
+    erp_type: str
+    credit_handler: Callable[..., Awaitable[Dict[str, Any]]]
+    settlement_handler: Callable[..., Awaitable[Dict[str, Any]]]
+
+    def validate_credit(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        required = ("target_erp_reference", "amount", "currency")
+        missing = [key for key in required if payload.get(key) in (None, "")]
+        if missing:
+            return {
+                "ok": False,
+                "reason": "missing_required_fields",
+                "missing_fields": missing,
+                "erp_type": self.erp_type,
+            }
+        return {
+            "ok": True,
+            "reason": "ok",
+            "missing_fields": [],
+            "erp_type": self.erp_type,
+        }
+
+    def validate_settlement(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        required = ("target_erp_reference", "amount", "currency")
+        missing = [key for key in required if payload.get(key) in (None, "")]
+        if missing:
+            return {
+                "ok": False,
+                "reason": "missing_required_fields",
+                "missing_fields": missing,
+                "erp_type": self.erp_type,
+            }
+        return {
+            "ok": True,
+            "reason": "ok",
+            "missing_fields": [],
+            "erp_type": self.erp_type,
+        }
+
+    async def apply_credit(
+        self,
+        organization_id: str,
+        application: CreditApplication,
+        *,
+        ap_item_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return await self.credit_handler(
+            organization_id,
+            application,
+            ap_item_id=ap_item_id,
+            idempotency_key=idempotency_key,
+        )
+
+    async def apply_settlement(
+        self,
+        organization_id: str,
+        application: SettlementApplication,
+        *,
+        ap_item_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return await self.settlement_handler(
+            organization_id,
+            application,
+            ap_item_id=ap_item_id,
+            idempotency_key=idempotency_key,
+        )
+
+
 def get_erp_bill_adapter(
     *,
     erp_type: str,
@@ -228,3 +338,17 @@ def get_erp_bill_adapter(
 
     token = str(erp_type or "unconfigured").strip().lower() or "unconfigured"
     return RouterBackedERPBillAdapter(erp_type=token, post_handler=post_handler)
+
+
+def get_erp_finance_action_adapter(
+    *,
+    erp_type: str,
+    credit_handler: Callable[..., Awaitable[Dict[str, Any]]],
+    settlement_handler: Callable[..., Awaitable[Dict[str, Any]]],
+) -> ERPFinanceActionAdapter:
+    token = str(erp_type or "unconfigured").strip().lower() or "unconfigured"
+    return RouterBackedERPFinanceActionAdapter(
+        erp_type=token,
+        credit_handler=credit_handler,
+        settlement_handler=settlement_handler,
+    )

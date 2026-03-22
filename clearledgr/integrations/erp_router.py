@@ -832,6 +832,35 @@ class Bill:
     po_number: Optional[str] = None
 
 
+@dataclass
+class CreditApplication:
+    """Represents a vendor credit application against an ERP payable."""
+
+    target_erp_reference: str
+    amount: float
+    currency: str = "USD"
+    credit_note_number: Optional[str] = None
+    target_invoice_number: Optional[str] = None
+    note: Optional[str] = None
+    source_ap_item_id: Optional[str] = None
+    related_ap_item_id: Optional[str] = None
+
+
+@dataclass
+class SettlementApplication:
+    """Represents a cash settlement application against an ERP payable."""
+
+    target_erp_reference: str
+    amount: float
+    currency: str = "USD"
+    source_reference: Optional[str] = None
+    source_document_type: Optional[str] = None
+    target_invoice_number: Optional[str] = None
+    note: Optional[str] = None
+    source_ap_item_id: Optional[str] = None
+    related_ap_item_id: Optional[str] = None
+
+
 async def post_bill(
     organization_id: str,
     bill: Bill,
@@ -950,6 +979,67 @@ async def post_bill(
                 logger.warning("Attachment forwarding failed (non-fatal)")
 
     return result
+
+
+async def apply_credit_note(
+    organization_id: str,
+    application: CreditApplication,
+    *,
+    ap_item_id: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Apply a credit note to an existing ERP payable.
+
+    Current GA connectors still use browser fallback for this path. The API
+    seam exists so connector-specific credit application can ship incrementally
+    without changing AP-item workflow code again.
+    """
+    connection = get_erp_connection(organization_id)
+    if not connection:
+        return {
+            "status": "skipped",
+            "reason": "No ERP Connected",
+            "idempotency_key": idempotency_key,
+            "erp_reference": application.target_erp_reference,
+            "ap_item_id": ap_item_id,
+        }
+
+    return {
+        "status": "error",
+        "erp": connection.type,
+        "reason": "credit_application_api_not_available_for_connector",
+        "idempotency_key": idempotency_key,
+        "erp_reference": application.target_erp_reference,
+        "ap_item_id": ap_item_id,
+    }
+
+
+async def apply_settlement(
+    organization_id: str,
+    application: SettlementApplication,
+    *,
+    ap_item_id: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Apply a payment, receipt, or refund settlement to an ERP payable."""
+    connection = get_erp_connection(organization_id)
+    if not connection:
+        return {
+            "status": "skipped",
+            "reason": "No ERP Connected",
+            "idempotency_key": idempotency_key,
+            "erp_reference": application.target_erp_reference,
+            "ap_item_id": ap_item_id,
+        }
+
+    return {
+        "status": "error",
+        "erp": connection.type,
+        "reason": "settlement_application_api_not_available_for_connector",
+        "idempotency_key": idempotency_key,
+        "erp_reference": application.target_erp_reference,
+        "ap_item_id": ap_item_id,
+    }
 
 
 async def post_bill_to_quickbooks(

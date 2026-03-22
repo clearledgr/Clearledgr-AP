@@ -47,6 +47,28 @@
 - **Effort:** S
 - **Depends on:** Nothing — standalone hook script
 
+## P1 — ERP Follow-On Hardening
+
+### Reconciliation check for split-brain follow-on state
+- **What:** Periodic background check comparing source item `erp_follow_on.status` against related item's `vendor_credit_summary.erp_application_status` (or `cash_application_summary.erp_settlement_status`). If mismatched, auto-repair the related item's metadata to match.
+- **Why:** Source and related AP item updates in `_apply_erp_follow_on_result()` are two sequential DB calls, not atomic. Process crash between them leaves inconsistent state — credit note says "applied" but invoice still shows "credit pending" and stays blocked from routing.
+- **Effort:** S
+- **Depends on:** Existing metadata fields — reads `non_invoice_resolution.erp_follow_on` and `vendor_credit_summary`/`cash_application_summary`
+
+### Session TTL reaper for stale browser fallback sessions
+- **What:** Background task that finds browser fallback sessions in `pending_browser_fallback` state older than a configurable TTL (default 4 hours). Marks them as `timed_out`, updates related AP item metadata to unblock the linked invoice.
+- **Why:** Browser macros can hang, fail silently, or be abandoned. Without a reaper, the related invoice is permanently blocked from routing — no timeout, no expiry, no auto-recovery.
+- **Effort:** S
+- **Depends on:** Session metadata already tracks `dispatched_at` timestamp
+
+## P2 — ERP Follow-On Refactoring
+
+### Extract circular import into shared module
+- **What:** Move `_apply_erp_follow_on_result()` and `_refresh_linked_finance_metadata()` from `clearledgr/api/ap_items.py` to a new `clearledgr/services/erp_follow_on_result.py`. Both `ap_items.py` and `erp_api_first.py` import from it cleanly — no runtime import hack needed.
+- **Why:** `erp_api_first.py` currently uses a runtime import (`from clearledgr.api.ap_items import _apply_erp_follow_on_result` inside a function body) to avoid circular startup import. Works but is fragile — makes testing harder, IDE navigation breaks, could cause subtle import-order bugs.
+- **Effort:** S
+- **Depends on:** Nothing — pure refactor
+
 ## P3 — Operational
 
 ### Staging E2E drill automation
