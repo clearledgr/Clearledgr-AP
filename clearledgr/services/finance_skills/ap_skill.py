@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -211,10 +212,14 @@ class APFinanceSkill(FinanceSkill):
     ) -> Dict[str, Any]:
         normalized_intent = str(intent or "").strip().lower()
         payload = input_payload if isinstance(input_payload, dict) else {}
-        reference = runtime._item_reference(payload)
-        ap_item = runtime._resolve_ap_item(reference)
+        reference, ap_item = runtime._resolve_ap_item_from_payload(payload)
         ap_item_id = str(ap_item.get("id") or reference)
-        email_id = str(ap_item.get("thread_id") or reference)
+        email_id = str(
+            ap_item.get("thread_id")
+            or ap_item.get("message_id")
+            or payload.get("email_id")
+            or reference
+        )
 
         if normalized_intent == "prepare_vendor_followups":
             precheck = runtime._evaluate_prepare_vendor_followup(
@@ -919,8 +924,21 @@ class APFinanceSkill(FinanceSkill):
                 return response
 
             invoice = workflow.build_invoice_data_from_ap_item(ap_item, actor_id=runtime.actor_email)
-            if not invoice.gmail_id:
+            resolved_gmail_id = str(
+                getattr(invoice, "gmail_id", "")
+                or email_id
+                or ap_item.get("thread_id")
+                or ap_item.get("message_id")
+                or ap_item_id
+                or ""
+            ).strip()
+            if not resolved_gmail_id:
                 raise ValueError("missing_gmail_reference")
+            if resolved_gmail_id != str(getattr(invoice, "gmail_id", "") or "").strip():
+                try:
+                    invoice = replace(invoice, gmail_id=resolved_gmail_id)
+                except TypeError:
+                    setattr(invoice, "gmail_id", resolved_gmail_id)
             workflow_result = await workflow._send_for_approval(
                 invoice,
                 extra_context={
@@ -1467,8 +1485,21 @@ class APFinanceSkill(FinanceSkill):
                 return response
 
             invoice = workflow.build_invoice_data_from_ap_item(ap_item, actor_id=runtime.actor_email)
-            if not invoice.gmail_id:
+            resolved_gmail_id = str(
+                getattr(invoice, "gmail_id", "")
+                or email_id
+                or ap_item.get("thread_id")
+                or ap_item.get("message_id")
+                or ap_item_id
+                or ""
+            ).strip()
+            if not resolved_gmail_id:
                 raise ValueError("missing_gmail_reference")
+            if resolved_gmail_id != str(getattr(invoice, "gmail_id", "") or "").strip():
+                try:
+                    invoice = replace(invoice, gmail_id=resolved_gmail_id)
+                except TypeError:
+                    setattr(invoice, "gmail_id", resolved_gmail_id)
             workflow_result = await workflow._send_for_approval(
                 invoice,
                 extra_context={

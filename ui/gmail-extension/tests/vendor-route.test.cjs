@@ -8,7 +8,7 @@ async function importModule(relativePath) {
   return import(`${pathToFileURL(absolute).href}?t=${Date.now()}`);
 }
 
-test('vendor route remembers the selected vendor and resolves it from storage', async () => {
+test('vendor route navigates with the explicit vendor name and keeps storage as fallback', async () => {
   const storage = new Map();
   global.window = {
     localStorage: {
@@ -28,9 +28,10 @@ test('vendor route remembers the selected vendor and resolves it from storage', 
   const ok = navigateToVendorRecord((routeId) => { navigatedTo = routeId; }, 'Google Cloud EMEA Limited');
 
   assert.equal(ok, true);
-  assert.equal(navigatedTo, 'clearledgr/vendor');
+  assert.equal(navigatedTo, 'clearledgr/vendor/Google%20Cloud%20EMEA%20Limited');
   assert.equal(storage.get(ACTIVE_VENDOR_NAME_STORAGE_KEY), 'Google Cloud EMEA Limited');
   assert.equal(resolveVendorRouteName({}, ''), 'Google Cloud EMEA Limited');
+  assert.equal(resolveVendorRouteName({}, '#clearledgr/vendor/Google%20Cloud%20EMEA%20Limited'), 'Google Cloud EMEA Limited');
 
   delete global.window;
 });

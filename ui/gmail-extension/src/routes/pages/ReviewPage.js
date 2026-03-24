@@ -35,8 +35,8 @@ const html = htm.bind(h);
 
 const SECTION_CONFIG = {
   field_review: {
-    title: 'Paused field review',
-    detail: 'Resolve conflicting or low-confidence extracted fields directly from Gmail.',
+    title: 'Field checks',
+    detail: 'Resolve conflicting or uncertain extracted fields directly from Gmail.',
     sliceId: 'blocked_exception',
   },
   non_invoice: {
@@ -149,7 +149,7 @@ function buildReviewSummary(item) {
   const section = classifyReviewSection(item);
   const documentType = normalizeDocumentType(item?.document_type);
   if (section === 'field_review') {
-    return getWorkflowPauseReason(item) || 'Resolve the blocked extracted fields before workflow can continue.';
+    return getWorkflowPauseReason(item) || 'Check the blocked fields before continuing.';
   }
   if (section === 'failed_post') {
     return getIssueSummary(item) || 'ERP posting failed and needs operator follow-up.';
@@ -238,7 +238,7 @@ function SectionHeader({ title, detail, count, onOpenSlice }) {
         </div>
         <p class="muted" style="margin:0">${detail}</p>
       </div>
-      <button class="alt" onClick=${onOpenSlice} style="padding:8px 12px;font-size:12px">Open slice</button>
+      <button class="btn-secondary btn-sm" onClick=${onOpenSlice}>Open slice</button>
     </div>
   `;
 }
@@ -246,62 +246,87 @@ function SectionHeader({ title, detail, count, onOpenSlice }) {
 function FieldReviewCard({ item, blockers, onResolve, resolvingField }) {
   const pauseReason = getWorkflowPauseReason(item);
   return html`
-    <div style="display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;flex-direction:column;gap:10px;width:100%">
       <div style="padding:10px 12px;border:1px solid #fcd34d;border-radius:var(--radius-sm);background:#FEFCE8;color:#78350f;font-size:13px;line-height:1.45">
-        ${pauseReason || 'Workflow is paused until the blocked fields are resolved.'}
+        ${pauseReason || 'This record is waiting for these fields to be checked.'}
       </div>
       ${blockers.map((blocker) => html`
-        <div key=${`${item.id}-${blocker.field || 'field'}`} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);display:flex;flex-direction:column;gap:6px">
-          <div style="font-weight:700;font-size:13px">${blocker.field_label || 'Field'} blocked</div>
-          ${blocker.email_value_display && html`
-            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-              <span class="muted" style="font-size:12px">Email said</span>
-              <span style="font-size:13px;font-weight:600;text-align:right">${blocker.email_value_display}</span>
+        <div key=${`${item.id}-${blocker.field || 'field'}`} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);width:100%">
+          <div class="review-block-layout">
+            <div class="review-block-main">
+              <div style="font-weight:700;font-size:13px;margin-bottom:10px">
+                ${blocker.kind === 'confidence'
+                  ? `Confirm ${(blocker.field_label || 'field').toLowerCase()}`
+                  : `Choose the correct ${(blocker.field_label || 'field').toLowerCase()}`}
+              </div>
+              <div class="review-block-facts">
+                ${blocker.kind === 'confidence' && html`
+                  <>
+                    <span class="review-block-fact-label">Clearledgr read</span>
+                    <span class="review-block-fact-value">${blocker.current_value_display || 'Not found'}</span>
+                  </>
+                `}
+                ${blocker.kind === 'confidence' && blocker.current_source_label && html`
+                  <>
+                    <span class="review-block-fact-label">Read from</span>
+                    <span class="review-block-fact-value">${blocker.current_source_label}</span>
+                  </>
+                `}
+                ${blocker.email_value !== null && blocker.email_value !== undefined && html`
+                  <>
+                    <span class="review-block-fact-label">Email says</span>
+                    <span class="review-block-fact-value">${blocker.email_value_display}</span>
+                  </>
+                `}
+                ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html`
+                  <>
+                    <span class="review-block-fact-label">Attachment says</span>
+                    <span class="review-block-fact-value">${blocker.attachment_value_display}</span>
+                  </>
+                `}
+                ${blocker.kind === 'source_conflict' && html`
+                  <>
+                    <span class="review-block-fact-label">Current choice</span>
+                    <span class="review-block-fact-value">
+                      ${blocker.winning_source_label || 'Needs review'}
+                      ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ''}
+                    </span>
+                  </>
+                `}
+              </div>
             </div>
-          `}
-          ${blocker.attachment_value_display && html`
-            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-              <span class="muted" style="font-size:12px">Attachment said</span>
-              <span style="font-size:13px;font-weight:600;text-align:right">${blocker.attachment_value_display}</span>
+            <div class="review-block-side">
+              <div class="review-block-heading">Why it stopped</div>
+              <div class="review-block-copy">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
+              ${blocker.auto_check_note && html`<div class="review-block-note">${blocker.auto_check_note}</div>`}
+              <div class="review-block-actions">
+                ${blocker.email_value !== null && blocker.email_value !== undefined && html`
+                  <button
+                    class="btn-secondary btn-sm"
+                    onClick=${() => onResolve(item, blocker, 'email')}
+                    disabled=${Boolean(resolvingField === `${item.id}:${blocker.field}:email`)}
+                  >
+                    ${resolvingField === `${item.id}:${blocker.field}:email` ? 'Saving...' : 'Use email'}
+                  </button>
+                `}
+                ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html`
+                  <button
+                    class="btn-secondary btn-sm"
+                    onClick=${() => onResolve(item, blocker, 'attachment')}
+                    disabled=${Boolean(resolvingField === `${item.id}:${blocker.field}:attachment`)}
+                  >
+                    ${resolvingField === `${item.id}:${blocker.field}:attachment` ? 'Saving...' : 'Use attachment'}
+                  </button>
+                `}
+                <button
+                  class="btn-secondary btn-sm"
+                  onClick=${() => onResolve(item, blocker, 'manual')}
+                  disabled=${Boolean(resolvingField === `${item.id}:${blocker.field}:manual`)}
+                >
+                  ${resolvingField === `${item.id}:${blocker.field}:manual` ? 'Saving...' : 'Enter manually'}
+                </button>
+              </div>
             </div>
-          `}
-          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-            <span class="muted" style="font-size:12px">Current winner</span>
-            <span style="font-size:13px;font-weight:600;text-align:right">
-              ${blocker.winning_source_label || 'Review required'}
-              ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ''}
-            </span>
-          </div>
-          <div class="muted" style="font-size:12px;line-height:1.45">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-            ${blocker.email_value !== null && blocker.email_value !== undefined && html`
-              <button
-                class="alt"
-                onClick=${() => onResolve(item, blocker, 'email')}
-                disabled=${Boolean(resolvingField === `${item.id}:${blocker.field}:email`)}
-                style="padding:8px 12px;font-size:12px"
-              >
-                ${resolvingField === `${item.id}:${blocker.field}:email` ? 'Saving...' : 'Use email'}
-              </button>
-            `}
-            ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html`
-              <button
-                class="alt"
-                onClick=${() => onResolve(item, blocker, 'attachment')}
-                disabled=${Boolean(resolvingField === `${item.id}:${blocker.field}:attachment`)}
-                style="padding:8px 12px;font-size:12px"
-              >
-                ${resolvingField === `${item.id}:${blocker.field}:attachment` ? 'Saving...' : 'Use attachment'}
-              </button>
-            `}
-            <button
-              class="alt"
-              onClick=${() => onResolve(item, blocker, 'manual')}
-              disabled=${Boolean(resolvingField === `${item.id}:${blocker.field}:manual`)}
-              style="padding:8px 12px;font-size:12px"
-            >
-              ${resolvingField === `${item.id}:${blocker.field}:manual` ? 'Saving...' : 'Enter manually'}
-            </button>
           </div>
         </div>
       `)}
@@ -376,43 +401,42 @@ function ReviewCard({
             ${isInvoiceDocumentType(documentType) ? ` · Due ${dueLabel}` : ''}
             ${lastUpdated ? ` · Updated ${lastUpdated}` : ''}
           </div>
-          ${sectionId === 'field_review'
-            ? html`<div style="margin-top:12px"><${FieldReviewCard} item=${item} blockers=${blockers} onResolve=${onResolve} resolvingField=${resolvingField} /></div>`
-            : html`<div style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
-                ${summary}
-              </div>`}
-          ${evidenceSummary && html`
-            <div class="muted" style="margin-top:8px;font-size:12px;line-height:1.45">
-              ${evidenceSummary}
-            </div>
-          `}
-          ${nonInvoiceActions.length > 0 && html`
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-              ${nonInvoiceActions.map((action) => html`
-                <button
-                  key=${action.id}
-                  class="alt"
-                  onClick=${(event) => {
-                    event.stopPropagation();
-                    onResolveNonInvoice(item, action);
-                  }}
-                  disabled=${Boolean(resolvingNonInvoiceKey === `${item.id}:${action.id}`)}
-                  style="padding:8px 12px;font-size:12px"
-                >
-                  ${resolvingNonInvoiceKey === `${item.id}:${action.id}` ? 'Saving...' : action.label}
-                </button>
-              `)}
-            </div>
-          `}
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-          <button class="alt" onClick=${(event) => { event.stopPropagation(); onOpenSlice(item); }} style="padding:8px 12px;font-size:12px">Open slice</button>
-          <button class="alt" onClick=${(event) => { event.stopPropagation(); onOpenRecord(item); }} style="padding:8px 12px;font-size:12px">Open record</button>
+        <div class="row-actions">
+          <button class="btn-secondary btn-sm" onClick=${(event) => { event.stopPropagation(); onOpenRecord(item); }}>Open record</button>
+          <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); onOpenSlice(item); }}>Open slice</button>
           ${(item.thread_id || item.message_id) && html`
-            <button class="alt" onClick=${(event) => { event.stopPropagation(); onOpenEmail(item); }} style="padding:8px 12px;font-size:12px">Open email</button>
+            <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); onOpenEmail(item); }}>Open email</button>
           `}
         </div>
       </div>
+      ${sectionId === 'field_review'
+        ? html`<div style="margin-top:12px"><${FieldReviewCard} item=${item} blockers=${blockers} onResolve=${onResolve} resolvingField=${resolvingField} /></div>`
+        : html`<div style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
+            ${summary}
+          </div>`}
+      ${evidenceSummary && html`
+        <div class="muted" style="margin-top:8px;font-size:12px;line-height:1.45">
+          ${evidenceSummary}
+        </div>
+      `}
+      ${nonInvoiceActions.length > 0 && html`
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+          ${nonInvoiceActions.map((action) => html`
+            <button
+              key=${action.id}
+              class="btn-secondary btn-sm"
+              onClick=${(event) => {
+                event.stopPropagation();
+                onResolveNonInvoice(item, action);
+              }}
+              disabled=${Boolean(resolvingNonInvoiceKey === `${item.id}:${action.id}`)}
+            >
+              ${resolvingNonInvoiceKey === `${item.id}:${action.id}` ? 'Saving...' : action.label}
+            </button>
+          `)}
+        </div>
+      `}
     </div>
   `;
 }
@@ -436,7 +460,7 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
       setItems(nextItems.filter((item) => Boolean(classifyReviewSection(item))));
     } catch {
       setItems([]);
-      if (!silent) toast?.('Could not load the review workbench.', 'error');
+      if (!silent) toast?.('Could not load the review queue.', 'error');
     } finally {
       setLoading(false);
     }
@@ -448,7 +472,7 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
 
   const [refresh, refreshing] = useAction(async () => {
     await loadItems();
-    toast?.('Review workbench refreshed.', 'success');
+    toast?.('Review queue refreshed.', 'success');
   });
 
   const filtered = useMemo(() => {
@@ -795,28 +819,28 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
   ]);
 
   if (loading) {
-    return html`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading review workbench...</p></div>`;
+    return html`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading review queue...</p></div>`;
   }
 
   return html`
     <div class="panel">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
         <div>
-          <h3 style="margin:0 0 6px">Review workbench</h3>
+          <h3 style="margin:0 0 6px">Review queue</h3>
           <p class="muted" style="margin:0;max-width:680px">
-            Resolve blocked fields, work open exceptions, handle posting retries, and clear non-invoice finance documents from one finance-focused surface.
+            Handle records that need a closer look, from blocked fields to posting retries and non-invoice documents.
           </p>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing...' : 'Refresh'}</button>
-          <button onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
+        <div class="toolbar-actions">
+          <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing...' : 'Refresh'}</button>
+          <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
         </div>
       </div>
     </div>
 
     <div class="kpi-row" style="grid-template-columns:repeat(5,1fr)">
       <${SummaryCard} label="Open review items" value=${overallSummary.total} />
-      <${SummaryCard} label="Paused field review" value=${overallSummary.fieldReview} tone="warning" />
+      <${SummaryCard} label="Field checks" value=${overallSummary.fieldReview} tone="warning" />
       <${SummaryCard} label="Non-invoice docs" value=${overallSummary.nonInvoice} tone="success" />
       <${SummaryCard} label="Needs info" value=${overallSummary.needsInfo} />
       <${SummaryCard} label="Posting retries" value=${overallSummary.failedPost} tone="danger" />
@@ -866,21 +890,21 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
                 : 'Current selection does not share a single blocked field.'}
             </p>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="alt" onClick=${selectVisible}>Select visible</button>
-            <button class="alt" onClick=${clearSelection}>Clear selection</button>
+          <div class="toolbar-actions">
+            <button class="btn-secondary btn-sm" onClick=${selectVisible}>Select visible</button>
+            <button class="btn-ghost btn-sm" onClick=${clearSelection}>Clear selection</button>
             ${bulkFieldTarget?.canUseEmail && html`
-              <button class="alt" onClick=${() => bulkResolveField('email')} disabled=${bulkResolvingField}>
+              <button class="btn-secondary btn-sm" onClick=${() => bulkResolveField('email')} disabled=${bulkResolvingField}>
                 ${bulkResolvingField ? 'Saving...' : 'Bulk use email'}
               </button>
             `}
             ${bulkFieldTarget?.canUseAttachment && html`
-              <button class="alt" onClick=${() => bulkResolveField('attachment')} disabled=${bulkResolvingField}>
+              <button class="btn-secondary btn-sm" onClick=${() => bulkResolveField('attachment')} disabled=${bulkResolvingField}>
                 ${bulkResolvingField ? 'Saving...' : 'Bulk use attachment'}
               </button>
             `}
             ${bulkFieldTarget && html`
-              <button class="alt" onClick=${() => bulkResolveField('manual')} disabled=${bulkResolvingField}>
+              <button class="btn-secondary btn-sm" onClick=${() => bulkResolveField('manual')} disabled=${bulkResolvingField}>
                 ${bulkResolvingField ? 'Saving...' : 'Bulk enter manually'}
               </button>
             `}
@@ -927,7 +951,7 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
     ${overallSummary.total === 0 && html`
       <div class="panel">
         <h3 style="margin:0 0 6px">Nothing blocked right now</h3>
-        <p class="muted" style="margin:0">Clearledgr will surface field review, non-invoice review, needs-info, posting retry, and policy exception work here as it appears.</p>
+        <p class="muted" style="margin:0">Clearledgr will show anything that needs review here as it appears.</p>
       </div>
     `}
 

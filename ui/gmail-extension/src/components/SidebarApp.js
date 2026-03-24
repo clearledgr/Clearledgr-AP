@@ -116,6 +116,20 @@ export function showToast(message, tone = 'info') {
   }, 3000);
 }
 
+function humanizeActionFailure(reason) {
+  const token = String(reason || '').trim();
+  if (!token) return '';
+  const map = {
+    missing_gmail_reference: 'Clearledgr could not find the Gmail thread for this invoice.',
+    missing_item_reference: 'Clearledgr could not identify this invoice record.',
+    ap_item_not_found: 'Clearledgr could not find this invoice record.',
+    state_not_ready_for_approval: 'This invoice is not ready to send for approval yet.',
+    field_review_required: 'Finish the required field checks before sending this invoice for approval.',
+    organization_mismatch: 'This invoice belongs to a different workspace.',
+  };
+  return map[token] || token.replace(/_/g, ' ');
+}
+
 function Toast() {
   const ref = useRef(null);
   useEffect(() => {
@@ -136,21 +150,21 @@ function ScanStatus() {
   let text = '';
   let tone = '';
 
-  if (state === 'initializing') text = 'Preparing invoice monitoring.';
-  else if (state === 'scanning') text = 'Scanning inbox for invoices.';
+  if (state === 'initializing') text = 'Getting ready.';
+  else if (state === 'scanning') text = 'Scanning this inbox.';
   else if (state === 'auth_required') {
-    text = 'Connect Gmail to continue monitoring.';
+    text = 'Connect Gmail to keep Clearledgr working here.';
     tone = 'warning';
   } else if (state === 'blocked') {
-    text = 'Finish setup before monitoring can continue.';
+    text = 'Finish setup to keep Clearledgr working here.';
     tone = 'warning';
   } else if (state === 'error') {
     const err = String(status?.error || '');
-    if (err.includes('backend')) text = 'Backend unreachable.';
-    else if (err.includes('temporal')) text = 'Processing is temporarily unavailable.';
+    if (err.includes('backend')) text = "Can't reach Clearledgr.";
+    else if (err.includes('temporal')) text = 'Clearledgr is temporarily unavailable.';
     else if (err.includes('processing')) {
       const failedCount = Number(status?.failedCount || 0);
-      text = failedCount > 0 ? `${failedCount} email(s) need another processing attempt.` : 'Processing issue. Retrying.';
+      text = failedCount > 0 ? `${failedCount} email(s) need another try.` : 'Something needs another try.';
     } else text = 'Inbox sync issue. Retrying.';
     tone = 'error';
   } else {
@@ -161,7 +175,7 @@ function ScanStatus() {
   }
 
   if (state !== 'auth_required' && gmail?.requires_reconnect) {
-    text = 'Reconnect Gmail to keep background monitoring durable.';
+    text = 'Reconnect Gmail to keep this inbox connected.';
     tone = 'warning';
   }
 
@@ -209,16 +223,16 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   if ((item?.requires_field_review || (Number.isFinite(confidence) && confidence < 0.95)) && !['posted_to_erp', 'closed', 'rejected'].includes(state)) {
     add(
       'confidence',
-      fieldReviewBlockers.length ? 'Workflow paused for field review' : 'Review extracted fields',
+      fieldReviewBlockers.length ? 'Needs a quick field check' : 'Check extracted fields',
       fieldReviewBlockers.length
         ? null
         : (pauseReason || `Current confidence is ${Math.round(confidence * 100)}%, so a quick field check is still required.`),
     );
   }
   if (item?.finance_effect_review_required) {
-    push(
+    add(
       'finance_effect',
-      financeEffectBlockers[0]?.label || 'Accounting linkage needs review',
+      financeEffectBlockers[0]?.label || 'Credits or payments need review',
       financeEffectBlockers[0]?.detail || financeEffectNotice || 'Linked finance documents changed the payable or settlement balance.',
     );
   }
@@ -242,9 +256,9 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   if (blockers.length === 0 && state === 'received') {
     add(
       'received',
-      isInvoiceDocument ? 'Ready for review' : 'Needs finance review',
+      isInvoiceDocument ? 'Ready for approval' : 'Needs finance review',
       isInvoiceDocument
-        ? 'This invoice is ready for AP validation and approval routing.'
+        ? 'This invoice is ready to send for approval.'
         : getNonInvoiceWorkflowGuidance(documentType),
     );
   }
@@ -254,7 +268,7 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
       'validated',
       isInvoiceDocument ? 'Ready for approval' : `Ready to review ${documentLabel}`,
       isInvoiceDocument
-        ? 'Checks are complete and the invoice can be routed to approval.'
+        ? 'Checks are complete and the invoice is ready to send for approval.'
         : getNonInvoiceWorkflowGuidance(documentType),
     );
   }
@@ -284,32 +298,51 @@ function EvidenceChecklist({ entries }) {
 function FieldReviewPanel({ blockers, pauseReason, onResolve = null, resolvingField = '' }) {
   if ((!Array.isArray(blockers) || blockers.length === 0) && !pauseReason) return null;
   return html`
-    <div class="cl-review-panel" aria-label="Paused field review">
-      <div class="cl-section-title">Paused field review</div>
+    <div class="cl-review-panel" aria-label="Field review">
+      <div class="cl-section-title">Check these fields</div>
       ${pauseReason && html`<div class="cl-review-copy">${pauseReason}</div>`}
       ${(blockers || []).map((blocker) => html`
         <div key=${`${blocker.field || 'field'}-${blocker.kind || 'review'}`} class="cl-review-card">
-          <div class="cl-review-card-title">${blocker.field_label || 'Field'} blocked</div>
-          ${blocker.email_value_display && html`
+          <div class="cl-review-card-title">
+            ${blocker.kind === 'confidence'
+              ? `Confirm ${(blocker.field_label || 'field').toLowerCase()}`
+              : `Choose the correct ${(blocker.field_label || 'field').toLowerCase()}`}
+          </div>
+          ${blocker.kind === 'confidence' && html`
             <div class="cl-review-row">
-              <span class="cl-review-label">Email said</span>
+              <span class="cl-review-label">Clearledgr read</span>
+              <span class="cl-review-value">${blocker.current_value_display || 'Not found'}</span>
+            </div>
+          `}
+          ${blocker.kind === 'confidence' && blocker.current_source_label && html`
+            <div class="cl-review-row">
+              <span class="cl-review-label">Read from</span>
+              <span class="cl-review-value">${blocker.current_source_label}</span>
+            </div>
+          `}
+          ${blocker.email_value !== null && blocker.email_value !== undefined && html`
+            <div class="cl-review-row">
+              <span class="cl-review-label">Email says</span>
               <span class="cl-review-value">${blocker.email_value_display}</span>
             </div>
           `}
-          ${blocker.attachment_value_display && html`
+          ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html`
             <div class="cl-review-row">
-              <span class="cl-review-label">Attachment said</span>
+              <span class="cl-review-label">Attachment says</span>
               <span class="cl-review-value">${blocker.attachment_value_display}</span>
             </div>
           `}
-          <div class="cl-review-row">
-            <span class="cl-review-label">Source selected</span>
-            <span class="cl-review-value">
-              ${blocker.winning_source_label || 'Review required'}
-              ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ''}
-            </span>
-          </div>
+          ${blocker.kind === 'source_conflict' && html`
+            <div class="cl-review-row">
+              <span class="cl-review-label">Current choice</span>
+              <span class="cl-review-value">
+                ${blocker.winning_source_label || 'Needs review'}
+                ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ''}
+              </span>
+            </div>
+          `}
           <div class="cl-review-why">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
+          ${blocker.auto_check_note && html`<div class="cl-review-why">${blocker.auto_check_note}</div>`}
           ${typeof onResolve === 'function' && html`
             <div class="cl-thread-actions" style="margin-top:8px">
               ${blocker.email_value !== null && blocker.email_value !== undefined && html`
@@ -363,7 +396,7 @@ function AuditRowCard({ row }) {
       ${(row.evidenceLabel || row.evidenceDetail) && html`
         <div class="cl-audit-evidence">
           ${row.evidenceLabel && html`<span class="cl-audit-evidence-label">${row.evidenceLabel}</span>`}
-          <span>${row.evidenceDetail || 'Recorded on the shared AP record.'}</span>
+          <span>${row.evidenceDetail || 'Saved on the record.'}</span>
         </div>
       `}
       ${row.actionHint && !row.isBackground && html`<div class="cl-audit-hint">Next: ${row.actionHint}</div>`}
@@ -414,7 +447,17 @@ function AuthPrompt({ queueManager }) {
   const [authorize, pending] = useAction(async () => {
     const result = await queueManager?.authorizeGmailNow?.();
     const ok = Boolean(result?.success || result?.authorized || result?.status === 'ok');
-    showToast(ok ? 'Gmail connected' : 'Authorization failed', ok ? 'success' : 'error');
+    const started = String(result?.status || '').toLowerCase() === 'started';
+    if (started) {
+      showToast('Gmail authorization started.', 'info');
+      return;
+    }
+    if (ok) {
+      showToast('Gmail connected', 'success');
+    } else {
+      const authMessage = queueManager?.describeAuthResult?.(result) || {};
+      showToast(authMessage.toast || result?.error || 'Authorization failed', authMessage.severity || 'error');
+    }
     if (ok && queueManager?.refreshQueue) {
       await queueManager.refreshQueue();
     }
@@ -422,11 +465,11 @@ function AuthPrompt({ queueManager }) {
 
   return html`
     <div class="cl-section cl-auth-panel">
-      <div class="cl-section-title">Action required</div>
+      <div class="cl-section-title">Connect Gmail</div>
       <div class="cl-auth-copy">
         ${gmail?.requires_reconnect
-          ? 'Reconnect Gmail so Clearledgr can keep monitoring this mailbox after the current session expires.'
-          : 'Connect Gmail once so Clearledgr can keep monitoring invoices in this mailbox.'}
+          ? 'Reconnect Gmail to keep this inbox connected.'
+          : 'Connect Gmail once so Clearledgr can keep working in this inbox.'}
       </div>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-primary-cta" onClick=${authorize} disabled=${pending}>
@@ -491,9 +534,11 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     setOptimisticState('needs_approval');
     const result = await queueManager.requestApproval(item);
     const ok = ['needs_approval', 'pending_approval'].includes(String(result?.status || '').toLowerCase());
-    showToast(ok ? 'Approval request sent' : 'Unable to route approval', ok ? 'success' : 'error');
+    showToast(
+      ok ? 'Approval request sent' : (humanizeActionFailure(result?.reason) || 'Unable to route approval'),
+      ok ? 'success' : 'error'
+    );
     if (!ok) setOptimisticState(null);
-    await queueManager.refreshQueue();
     setOptimisticState(null);
   });
 
@@ -728,7 +773,7 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
       ${pauseReason && fieldReviewBlockers.length === 0 && html`<div class="cl-state-note">${pauseReason}</div>`}
       ${!pauseReason && stateNotice && html`<div class="cl-state-note">${stateNotice}</div>`}
       ${readOnlyMode && html`
-        <div class="cl-state-note">Read-only view. Queue actions are reserved for AP operators.</div>
+        <div class="cl-state-note">Read-only view. You can review this record here, but only operators can take action.</div>
       `}
 
       ${primaryAction?.label && primaryHandler && html`
@@ -759,9 +804,9 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
         onResolve=${readOnlyMode ? null : doResolveFieldReview}
         resolvingField=${resolvePending ? resolvingFieldKey : ''}
       />
-      ${(financeEffectNotice || Object.keys(financeEffectSummary).length) && html`
-        <div class="cl-section" aria-label="Accounting linkage">
-          <div class="cl-section-title">Accounting linkage</div>
+      ${Boolean(financeEffectNotice || Object.keys(financeEffectSummary).length > 0) && html`
+        <div class="cl-section" aria-label="Credits and payments">
+          <div class="cl-section-title">Credits and payments</div>
           ${financeEffectNotice && html`<div class="cl-review-copy">${financeEffectNotice}</div>`}
           <div style="display:flex;flex-direction:column;gap:8px">
             ${Object.keys(financeEffectSummary).length > 0 && html`
@@ -813,8 +858,8 @@ function EmptyState({ queueCount }) {
 
   if (threadSelected) {
     return html`<div class="cl-section"><div class="cl-empty">
-      <p>No finance document is linked to this thread.</p>
-      <p class="cl-muted">Open the pipeline to work records that Clearledgr has already detected.</p>
+      <p>No record is linked to this email yet.</p>
+      <p class="cl-muted">Open the queue to work records Clearledgr has already found.</p>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
       </div>
@@ -823,8 +868,8 @@ function EmptyState({ queueCount }) {
 
   if (queueCount > 0) {
     return html`<div class="cl-section"><div class="cl-empty">
-      <p>${queueCount} record${queueCount !== 1 ? 's are' : ' is'} ready in the pipeline.</p>
-      <p class="cl-muted">Open a thread to work a specific finance document, or review the queue in Pipeline.</p>
+      <p>${queueCount} record${queueCount !== 1 ? 's are' : ' is'} ready in the queue.</p>
+      <p class="cl-muted">Open an email to work one record, or open Pipeline to see the full queue.</p>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
@@ -833,8 +878,8 @@ function EmptyState({ queueCount }) {
   }
 
   return html`<div class="cl-section"><div class="cl-empty">
-    <p>No finance documents in queue.</p>
-    <p class="cl-muted">Clearledgr is monitoring this mailbox and will surface finance work here as records arrive.</p>
+    <p>Nothing is waiting right now.</p>
+    <p class="cl-muted">Clearledgr will show new work here when it arrives.</p>
     <div class="cl-thread-actions">
       <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
     </div>

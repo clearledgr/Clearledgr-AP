@@ -1417,6 +1417,7 @@ class TestGmailWebhooks:
         assert response.status_code == 200
         payload = response.json()
         assert payload["has_refresh_token"] is True
+        assert payload["backend_expires_in"] == gmail_extension_module.EXTENSION_BACKEND_TOKEN_TTL_SECONDS
         assert stored["token"].refresh_token == "preserved-refresh-token"
 
 
@@ -1840,6 +1841,7 @@ class TestExtensionEndpoints:
         data = response.json()
         assert data["success"] is True
         assert data["email"] == "mo@clearledgr.com"
+        assert data["backend_expires_in"] == gmail_extension_module.EXTENSION_BACKEND_TOKEN_TTL_SECONDS
         assert stored["token"].email == "mo@clearledgr.com"
         assert stored["token"].access_token == "test-access-token"
         assert state_calls and state_calls[0]["email"] == "mo@clearledgr.com"

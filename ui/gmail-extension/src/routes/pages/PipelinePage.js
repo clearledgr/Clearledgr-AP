@@ -6,7 +6,7 @@ import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDate, fmtDateTime, useAction } from '../route-helpers.js';
-import { getFieldReviewBlockers, getWorkflowPauseReason, openSourceEmail } from '../../utils/formatters.js';
+import { openSourceEmail } from '../../utils/formatters.js';
 import { navigateToRecordDetail } from '../../utils/record-route.js';
 import {
   getDocumentReferenceText,
@@ -28,6 +28,7 @@ import {
   getBootstrappedPipelinePreferences,
   getApprovalWaitMinutes,
   getErpStatus,
+  getPipelineBlockers,
   getPersonalPipelineViews,
   getPinnedPipelineViews,
   getPipelineBlockerKinds,
@@ -73,6 +74,7 @@ const BLOCKER_LABELS = {
   confidence: 'Field review',
   budget: 'Budget review',
   po: 'PO / GR issue',
+  processing: 'Processing issue',
 };
 
 const ERP_STATUS_LABELS = {
@@ -126,18 +128,24 @@ function SliceChip({ slice, count, active, onClick }) {
   </button>`;
 }
 
-function BlockerChip({ kind }) {
+function BlockerChip({ blocker }) {
+  const kind = String(blocker?.kind || '').trim().toLowerCase();
+  const label = blocker?.chip_label || BLOCKER_LABELS[kind] || kind;
   return html`<span style="
     font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;
     background:#FFF7ED;border:1px solid #FED7AA;color:#9A3412;
-  ">${BLOCKER_LABELS[kind] || kind}</span>`;
+  ">${label}</span>`;
 }
 
-function FieldReviewSummary({ item, compact = false }) {
-  const blockers = getFieldReviewBlockers(item);
-  const pauseReason = getWorkflowPauseReason(item);
-  const first = blockers[0];
-  if (!first && !pauseReason) return null;
+function PipelineBlockerSummary({ item, compact = false }) {
+  const blockers = getPipelineBlockers(item);
+  const primary = blockers[0];
+  if (!primary) return null;
+  const primaryDetail = String(primary?.detail || '').trim();
+  const extraCount = blockers.length - 1;
+  const secondaryDetail = extraCount > 0
+    ? (String(item?.workflow_paused_reason || '').trim() || `+${extraCount} more blocker${extraCount === 1 ? '' : 's'}.`)
+    : '';
 
   return html`
     <div style="
@@ -150,14 +158,15 @@ function FieldReviewSummary({ item, compact = false }) {
       flex-direction:column;
       gap:4px;
     ">
-      ${first && html`<div style="font-size:12px;font-weight:700;color:#9A3412">
-        ${first.field_label || 'Field'} blocked
-        ${first.winning_source_label ? ` · ${first.winning_source_label} wins` : ''}
+      ${primary.title && html`<div style="font-size:12px;font-weight:700;color:#9A3412">
+        ${primary.title}
       </div>`}
-      ${first && html`<div class="muted" style="font-size:12px;line-height:1.45">
-        Email ${first.email_value_display || 'Not found'} · Attachment ${first.attachment_value_display || 'Not found'}
+      ${primaryDetail && html`<div class="muted" style="font-size:12px;line-height:1.45">
+        ${primaryDetail}
       </div>`}
-      ${pauseReason && html`<div class="muted" style="font-size:12px;line-height:1.45">${pauseReason}</div>`}
+      ${secondaryDetail && secondaryDetail !== primaryDetail
+        ? html`<div class="muted" style="font-size:12px;line-height:1.45">${secondaryDetail}</div>`
+        : null}
     </div>
   `;
 }
@@ -170,18 +179,20 @@ function SavedViewChip({ view, active, onOpen, onTogglePin, onDelete }) {
       border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};
       background:${active ? 'var(--accent-soft)' : 'var(--bg)'};
     ">
-      <button class="alt" onClick=${onOpen} style="padding:6px 10px;font-size:12px">${view.name}</button>
+      <button class="btn-secondary btn-xs" onClick=${onOpen}>${view.name}</button>
       <span class="muted" style="font-size:11px;font-weight:700">${scopeLabel}</span>
       <button
+        class="btn-ghost btn-xs"
         aria-label=${view.pinned ? 'Unpin saved view' : 'Pin saved view'}
         onClick=${onTogglePin}
-        style="border:none;background:transparent;color:${view.pinned ? 'var(--accent-ink)' : 'var(--ink-muted)'};cursor:pointer;padding:0 2px;font-size:12px;font-weight:700"
+        style="color:${view.pinned ? 'var(--accent-ink)' : 'var(--ink-muted)'}"
       >${view.pinned ? 'Pinned' : 'Pin'}</button>
       ${typeof onDelete === 'function'
         ? html`<button
+            class="btn-ghost btn-xs"
             aria-label="Delete saved view"
             onClick=${onDelete}
-            style="border:none;background:transparent;color:var(--ink-muted);cursor:pointer;padding:0 2px"
+            style="color:var(--ink-muted)"
           >×</button>`
         : null}
     </div>
@@ -247,7 +258,7 @@ function isRouteableInvoiceItem(item) {
   if (!['received', 'validated'].includes(state)) return false;
   if (Boolean(item?.requires_field_review)) return false;
   const blockers = getPipelineBlockerKinds(item);
-  return !blockers.some((kind) => ['confidence', 'exception', 'budget', 'po', 'erp'].includes(kind));
+  return !blockers.some((kind) => ['confidence', 'exception', 'budget', 'po', 'erp', 'processing'].includes(kind));
 }
 
 function getSavedViewLabel(view) {
@@ -651,7 +662,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
   }, [activeItemId, displayed, navigate, pipelineScope, routeSelected, selectedItems.length]);
 
   if (loading) {
-    return html`<div class="panel" style="padding:48px;text-align:center"><p class="muted">Loading AP pipeline…</p></div>`;
+    return html`<div class="panel" style="padding:48px;text-align:center"><p class="muted">Loading queue…</p></div>`;
   }
 
   return html`
@@ -693,15 +704,15 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                 <div class="muted" style="font-size:12px;margin-top:4px">
                   ${focusedItemVisible
                     ? 'The current item is visible in this pipeline view.'
-                    : 'The current item is outside the active slice or filters. Open its AP slice to keep queue context intact.'}
+                    : 'The current item is outside the active slice or filters. Open its matching slice to keep queue context intact.'}
                 </div>
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 ${!focusedItemVisible
-                  ? html`<button class="alt" onClick=${revealFocusedItem}>Show in pipeline</button>`
+                  ? html`<button class="btn-primary btn-sm" onClick=${revealFocusedItem}>Show in pipeline</button>`
                   : null}
-                <button class="alt" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open record</button>
-                <button class="alt" onClick=${clearFocus}>Clear focus</button>
+                <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open record</button>
+                <button class="btn-ghost btn-sm" onClick=${clearFocus}>Clear focus</button>
               </div>
             </div>
           </div>
@@ -712,11 +723,11 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px">
         <div>
           <h3 style="margin:0 0 4px">Pipeline views</h3>
-          <p class="muted" style="margin:0">Work AP by queue slice, then save and pin the views you reopen every day.</p>
+          <p class="muted" style="margin:0">Work the queue by slice, then save and pin the views you reopen most often.</p>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="alt" onClick=${() => navigate('clearledgr/home')}>Back to Home</button>
-          <button class="alt" onClick=${doRefresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
+        <div class="toolbar-actions">
+          <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/home')}>Back to Home</button>
+          <button class="btn-secondary btn-sm" onClick=${doRefresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
         </div>
       </div>
       <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:4px">
@@ -733,8 +744,8 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
       <div style="display:flex;flex-direction:column;gap:14px;margin-top:14px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <div>
-            <strong style="font-size:13px">Starter views</strong>
-            <div class="muted" style="font-size:12px">Finance-native defaults you can pin to Home.</div>
+                  <strong style="font-size:13px">Starter views</strong>
+                  <div class="muted" style="font-size:12px">Default views you can pin to Home.</div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             ${starterViews.map((view) => html`
@@ -834,6 +845,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
             <option value="confidence">Field review</option>
             <option value="budget">Budget</option>
             <option value="po">PO / GR</option>
+            <option value="processing">Processing</option>
           </select>
         </label>
         <label style="display:flex;flex-direction:column;gap:6px">
@@ -859,7 +871,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
         </label>
         <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
           <button
-            class="alt"
+            class="segmented-button btn-sm"
             onClick=${() => persistPrefs({ ...viewPrefs, viewMode: viewPrefs.viewMode === 'table' ? 'cards' : 'table' })}
           >${viewPrefs.viewMode === 'table' ? 'Cards' : 'Table'}</button>
         </div>
@@ -872,11 +884,11 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
           placeholder="Save current view as a personal view…"
           style="min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
         />
-        <button class="alt" onClick=${saveView} disabled=${savingView}>${savingView ? 'Saving…' : 'Save personal view'}</button>
+        <button class="btn-secondary btn-sm" onClick=${saveView} disabled=${savingView}>${savingView ? 'Saving…' : 'Save personal view'}</button>
         ${activeSavedView?.scope === 'user'
-          ? html`<button class="alt" onClick=${updateView} disabled=${updatingView}>${updatingView ? 'Updating…' : 'Update active view'}</button>`
+          ? html`<button class="btn-secondary btn-sm" onClick=${updateView} disabled=${updatingView}>${updatingView ? 'Updating…' : 'Update active view'}</button>`
           : null}
-        <button class="alt" onClick=${resetFiltersAndSearch}>Reset filters</button>
+        <button class="btn-ghost btn-sm" onClick=${resetFiltersAndSearch}>Reset filters</button>
         <span class="muted" style="font-size:12px">
           Sort ${viewPrefs.sortDir === 'desc' ? 'descending' : 'ascending'} by ${viewPrefs.sortCol.replace(/_/g, ' ')}.
         </span>
@@ -887,13 +899,14 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
           Keyboard: J/K move · X select · O open detail · E open thread · A route selected/current invoice
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="alt" onClick=${selectVisible}>Select visible</button>
-          <button class="alt" onClick=${clearSelection} disabled=${selectedIds.length === 0}>Clear selection</button>
+          <button class="btn-secondary btn-sm" onClick=${selectVisible}>Select visible</button>
+          <button class="btn-ghost btn-sm" onClick=${clearSelection} disabled=${selectedIds.length === 0}>Clear selection</button>
           <span class="muted" style="font-size:12px;align-self:center">
             ${selectedItems.length ? `${selectedItems.length} selected` : 'No selection'}
             ${routeableSelectedItems.length ? ` · ${routeableSelectedItems.length} routeable` : ''}
           </span>
           <button
+            class="btn-primary btn-sm"
             onClick=${() => routeSelected()}
             disabled=${routingSelected || (!routeableSelectedItems.length && !isRouteableInvoiceItem(activeItem))}
           >
@@ -911,7 +924,10 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
             ${displayed.length === 0
               ? html`<div class="panel" style="grid-column:1/-1;text-align:center;padding:32px"><p class="muted">No records match this view.</p></div>`
               : displayed.map((item) => {
-                  const blockers = getPipelineBlockerKinds(item);
+                  const pipelineBlockers = getPipelineBlockers(item);
+                  const blockerChips = pipelineBlockers.filter((blocker, index, collection) => (
+                    collection.findIndex((candidate) => candidate.kind === blocker.kind) === index
+                  ));
                   const focused = String(navState.focusItemId || '') === String(item.id || '');
                   const active = String(activeItemId || '') === String(item.id || '');
                   const approvalWait = getApprovalWaitMinutes(item);
@@ -954,21 +970,21 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                         </div>
                       </div>
                       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-                        ${blockers.length
-                          ? blockers.slice(0, 3).map((kind) => html`<${BlockerChip} key=${kind} kind=${kind} />`)
+                        ${blockerChips.length
+                          ? blockerChips.slice(0, 3).map((blocker) => html`<${BlockerChip} key=${`${blocker.kind}:${blocker.type}:${blocker.field || ''}`} blocker=${blocker} />`)
                           : html`<span class="muted" style="font-size:12px">No blocking signals</span>`}
                       </div>
-                      <${FieldReviewSummary} item=${item} />
+                      <${PipelineBlockerSummary} item=${item} />
                       <div class="muted" style="font-size:12px;line-height:1.5;margin-bottom:12px">
                         ${getPipelineTimeline(item, erpStatus)}
                       </div>
                       <div style="display:flex;gap:8px;flex-wrap:wrap">
                         ${routeable
-                          ? html`<button onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected}>${routingSelected ? 'Routing…' : 'Route approval'}</button>`
+                          ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected}>${routingSelected ? 'Routing…' : 'Route approval'}</button>`
                           : null}
-                        <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Open record</button>
+                        <button class="btn-secondary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Open record</button>
                         ${(item.thread_id || item.message_id) && html`
-                          <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }}>Open email</button>
+                          <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }}>Open email</button>
                         `}
                       </div>
                     </div>
@@ -978,7 +994,21 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
         `
       : html`
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);overflow-x:auto">
-            <table class="table" style="min-width:1320px">
+            <table class="table" style="min-width:1320px;table-layout:fixed">
+              <colgroup>
+                <col style="width:58px" />
+                <col style="width:136px" />
+                <col style="width:122px" />
+                <col style="width:86px" />
+                <col style="width:60px" />
+                <col style="width:102px" />
+                <col style="width:78px" />
+                <col style="width:94px" />
+                <col style="width:98px" />
+                <col style="width:318px" />
+                <col style="width:102px" />
+                <col style="width:96px" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Select</th>
@@ -999,7 +1029,10 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                 ${displayed.length === 0
                   ? html`<tr><td colspan="12" class="muted" style="text-align:center;padding:32px">No records match this view.</td></tr>`
                   : displayed.map((item) => {
-                      const blockers = getPipelineBlockerKinds(item);
+                      const pipelineBlockers = getPipelineBlockers(item);
+                      const blockerChips = pipelineBlockers.filter((blocker, index, collection) => (
+                        collection.findIndex((candidate) => candidate.kind === blocker.kind) === index
+                      ));
                       const focused = String(navState.focusItemId || '') === String(item.id || '');
                       const active = String(activeItemId || '') === String(item.id || '');
                       const approvalWait = getApprovalWaitMinutes(item);
@@ -1030,22 +1063,22 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                           <td>${isInvoiceDocument && approvalWait ? formatDurationMinutes(approvalWait) : '—'}</td>
                           <td>${isInvoiceDocument ? (ERP_STATUS_LABELS[erpStatus] || erpStatus) : 'N/A'}</td>
                           <td>
-                            <div style="display:flex;gap:6px;flex-wrap:wrap">
-                              ${blockers.length
-                                ? blockers.slice(0, 2).map((kind) => html`<${BlockerChip} key=${kind} kind=${kind} />`)
+                            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                              ${blockerChips.length
+                                ? blockerChips.slice(0, 2).map((blocker) => html`<${BlockerChip} key=${`${blocker.kind}:${blocker.type}:${blocker.field || ''}`} blocker=${blocker} />`)
                                 : html`<span class="muted" style="font-size:12px">Clear</span>`}
                             </div>
-                            <${FieldReviewSummary} item=${item} compact=${true} />
+                            <${PipelineBlockerSummary} item=${item} compact=${true} />
                           </td>
                           <td class="muted" style="font-size:12px">${fmtDateTime(item.updated_at || item.created_at)}</td>
                           <td style="text-align:right">
-                            <div style="display:flex;gap:8px;justify-content:flex-end">
+                            <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
                               ${routeable
-                                ? html`<button onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected}>${routingSelected ? 'Routing…' : 'Route'}</button>`
+                                ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected} style="min-width:72px">${routingSelected ? 'Routing…' : 'Route'}</button>`
                                 : null}
-                              <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Open record</button>
+                              <button class="btn-secondary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }} style="min-width:72px">Open</button>
                               ${(item.thread_id || item.message_id) && html`
-                                <button class="alt" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }}>Open email</button>
+                                <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }} style="min-width:72px">Email</button>
                               `}
                             </div>
                           </td>

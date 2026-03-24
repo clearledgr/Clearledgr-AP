@@ -3,9 +3,9 @@
  * Each route renders as a full-page view in Gmail's content area via InboxSDK Router.
  *
  * Streak-style doctrine:
- * - Keep Home support cards intentionally small.
- * - Let the Gmail AppMenu expose every eligible page for the current role.
- * - Let Home quick-access cards stay personalized without hiding core pages from nav.
+ * - Keep the always-visible left nav sparse and work-first.
+ * - Let AppMenu expose the broader Gmail route catalog.
+ * - Keep the Gmail surface work-first instead of settings-first.
  */
 
 export const NAV_PREFS_STORAGE_KEY = 'clearledgr_nav_preferences_v1';
@@ -14,157 +14,148 @@ export const ROUTES = [
   {
     id: 'clearledgr/home',
     title: 'Home',
-    subtitle: 'Your AP launch hub inside Gmail.',
+    subtitle: 'Your Clearledgr start page in Gmail.',
     icon: 'home',
     navOrder: 10,
     defaultPinned: true,
     canHide: false,
+    menuGroup: 'primary',
+    hideTopbar: true,
+    viewCapability: 'view_home',
   },
   {
     id: 'clearledgr/pipeline',
     title: 'Pipeline',
-    subtitle: 'Work the AP queue.',
+    subtitle: 'See and work the invoice queue.',
     icon: 'pipeline',
     navOrder: 20,
     defaultPinned: true,
     canHide: false,
+    menuGroup: 'primary',
+    viewCapability: 'view_pipeline',
   },
   {
     id: 'clearledgr/review',
     title: 'Review',
-    subtitle: 'Resolve blocked fields, exceptions, and posting retries.',
+    subtitle: 'Handle records that need a closer look.',
     icon: 'review',
     navOrder: 22,
     defaultPinned: false,
     canHide: true,
-    opsOnly: true,
+    menuGroup: 'primary',
+    viewCapability: 'view_review',
   },
   {
     id: 'clearledgr/upcoming',
     title: 'Upcoming',
-    subtitle: 'Due follow-ups across approvals, vendor replies, and posting.',
+    subtitle: 'See what needs attention next.',
     icon: 'activity',
     navOrder: 25,
     defaultPinned: false,
     canHide: true,
-    opsOnly: true,
+    menuGroup: 'primary',
+    viewCapability: 'view_upcoming',
   },
   {
     id: 'clearledgr/connections',
     title: 'Connections',
-    subtitle: 'Fix Gmail, approval, or ERP setup when AP work is blocked.',
+    subtitle: 'Connect Gmail, approvals, and your ERP.',
     icon: 'connections',
     navOrder: 30,
-    defaultPinned: true,
+    defaultPinned: false,
     canHide: true,
-    opsOnly: true,
-    adminOnly: true,
+    menuGroup: 'secondary',
+    viewCapability: 'view_connections',
+    manageCapability: 'manage_connections',
   },
   {
     id: 'clearledgr/activity',
     title: 'Activity',
-    subtitle: 'Recent AP record movement.',
+    subtitle: 'See recent changes.',
     icon: 'activity',
     navOrder: 40,
     defaultPinned: false,
     canHide: true,
-    opsOnly: true,
+    menuGroup: 'secondary',
+    viewCapability: 'view_activity',
   },
   {
     id: 'clearledgr/vendors',
     title: 'Vendors',
-    subtitle: 'Vendor context for AP follow-up.',
+    subtitle: 'Vendor history and context.',
     icon: 'vendors',
     navOrder: 50,
     defaultPinned: false,
     canHide: true,
-    opsOnly: true,
+    menuGroup: 'secondary',
+    viewCapability: 'view_vendors',
   },
   {
     id: 'clearledgr/templates',
     title: 'Templates',
-    subtitle: 'Reusable AP reply templates for vendors and approvers.',
+    subtitle: 'Reusable email drafts.',
     icon: 'activity',
     navOrder: 55,
     defaultPinned: false,
     canHide: true,
-    opsOnly: true,
+    menuGroup: 'secondary',
+    viewCapability: 'view_templates',
   },
   {
     id: 'clearledgr/rules',
     title: 'Approval Rules',
-    subtitle: 'Admin controls for approval routing.',
+    subtitle: 'Rules for when invoices auto-approve or wait.',
     icon: 'rules',
     navOrder: 60,
     defaultPinned: false,
     canHide: true,
-    opsOnly: true,
-    adminOnly: true,
+    menuGroup: 'secondary',
+    viewCapability: 'view_rules',
+    manageCapability: 'manage_rules',
   },
   {
-    id: 'clearledgr/team',
-    title: 'Team',
-    subtitle: 'Invite and manage Gmail workspace access.',
-    icon: 'team',
+    id: 'clearledgr/settings',
+    title: 'Settings',
+    subtitle: 'Team, workspace, and billing.',
+    icon: 'settings',
     navOrder: 70,
     defaultPinned: false,
     canHide: true,
-    opsOnly: true,
-    adminOnly: true,
-  },
-  {
-    id: 'clearledgr/company',
-    title: 'Company',
-    subtitle: 'Workspace identity and AP defaults.',
-    icon: 'company',
-    navOrder: 80,
-    defaultPinned: false,
-    canHide: true,
-    opsOnly: true,
-    adminOnly: true,
-  },
-  {
-    id: 'clearledgr/plan',
-    title: 'Plan',
-    subtitle: 'Workspace plan summary.',
-    icon: 'plan',
-    navOrder: 90,
-    defaultPinned: false,
-    canHide: true,
-    opsOnly: true,
-    adminOnly: true,
+    menuGroup: 'secondary',
+    viewCapability: 'view_settings',
   },
   {
     id: 'clearledgr/reconciliation',
     title: 'Reconciliation',
-    subtitle: 'Future reconciliation groundwork.',
+    subtitle: 'Early reconciliation tools.',
     icon: 'recon',
     navOrder: 100,
     defaultPinned: false,
     canHide: true,
-    opsOnly: true,
+    menuGroup: 'secondary',
+    viewCapability: 'view_reconciliation',
   },
   {
     id: 'clearledgr/health',
     title: 'System Status',
-    subtitle: 'Admin diagnostics and status.',
+    subtitle: 'Check what is connected and what needs attention.',
     icon: 'health',
     navOrder: 110,
     defaultPinned: false,
     canHide: true,
-    opsOnly: true,
-    adminOnly: true,
+    menuGroup: 'secondary',
+    viewCapability: 'view_system_status',
   },
   {
     id: 'clearledgr/reports',
     title: 'Reports',
-    subtitle: 'Lightweight AP reporting tied to queue views.',
+    subtitle: 'A quick view of volume, spend, and risk.',
     icon: 'activity',
     navOrder: 115,
     defaultPinned: false,
     canHide: true,
-    opsOnly: true,
-    adminOnly: true,
+    menuGroup: 'secondary',
+    viewCapability: 'view_reports',
   },
 ];
 
@@ -181,20 +172,64 @@ export function getRouteById(id) {
   return ROUTES.find((route) => route.id === id) || null;
 }
 
-export function getNavEligibleRoutes({ includeAdmin = false, includeOps = true } = {}) {
+function resolveCapabilities(options = {}) {
+  if (options?.capabilities && typeof options.capabilities === 'object') {
+    return options.capabilities;
+  }
+  if ('includeAdmin' in options || 'includeOps' in options) {
+    const includeAdmin = Boolean(options.includeAdmin);
+    const includeOps = options.includeOps !== false;
+    return {
+      view_home: true,
+      view_pipeline: true,
+      view_review: includeOps,
+      view_upcoming: includeOps,
+      view_connections: includeAdmin,
+      view_activity: includeOps,
+      view_vendors: includeOps,
+      view_templates: includeOps,
+      view_rules: includeAdmin,
+      view_settings: includeAdmin,
+      view_reconciliation: includeOps,
+      view_system_status: includeAdmin,
+      view_reports: includeAdmin,
+      manage_connections: includeAdmin,
+      manage_rules: includeAdmin,
+      manage_admin_pages: includeAdmin,
+    };
+  }
+  return null;
+}
+
+export function canViewRoute(route, options = {}) {
+  const capabilities = resolveCapabilities(options);
+  if (!route) return false;
+  if (!capabilities || !route.viewCapability) return true;
+  return capabilities[route.viewCapability] !== false;
+}
+
+export function canManageRoute(route, options = {}) {
+  const capabilities = resolveCapabilities(options);
+  if (!route) return false;
+  if (!route.manageCapability) return true;
+  if (!capabilities) return false;
+  return capabilities[route.manageCapability] !== false;
+}
+
+export function getNavEligibleRoutes(options = {}) {
   return ROUTES
-    .filter((route) => (includeOps || !route.opsOnly) && (includeAdmin || !route.adminOnly))
+    .filter((route) => canViewRoute(route, options))
     .sort((left, right) => Number(left.navOrder || 0) - Number(right.navOrder || 0));
 }
 
-export function getDefaultPinnedRouteIds({ includeAdmin = false, includeOps = true } = {}) {
-  return getNavEligibleRoutes({ includeAdmin, includeOps })
+export function getDefaultPinnedRouteIds(options = {}) {
+  return getNavEligibleRoutes(options)
     .filter((route) => route.defaultPinned)
     .map((route) => route.id);
 }
 
-export function normalizeRoutePreferences(value = {}, { includeAdmin = false, includeOps = true } = {}) {
-  const allowedRouteIds = new Set(getNavEligibleRoutes({ includeAdmin, includeOps }).map((route) => route.id));
+export function normalizeRoutePreferences(value = {}, options = {}) {
+  const allowedRouteIds = new Set(getNavEligibleRoutes(options).map((route) => route.id));
   const routeMap = new Map(ROUTES.map((route) => [route.id, route]));
 
   const normalizeList = (items) => [...new Set(
@@ -249,8 +284,9 @@ export function getRoutePreferenceState(routeId, preferences = {}, options = {})
       hidden: false,
       defaultPinned: false,
       canHide: false,
-      adminOnly: false,
-      opsOnly: false,
+      viewCapability: '',
+      manageCapability: '',
+      canManage: false,
     };
   }
 
@@ -266,8 +302,9 @@ export function getRoutePreferenceState(routeId, preferences = {}, options = {})
     hidden,
     defaultPinned,
     canHide: route.canHide !== false,
-    adminOnly: Boolean(route.adminOnly),
-    opsOnly: Boolean(route.opsOnly),
+    viewCapability: route.viewCapability || '',
+    manageCapability: route.manageCapability || '',
+    canManage: canManageRoute(route, options),
   };
 }
 
@@ -280,7 +317,13 @@ export function getVisibleNavRoutes(preferences = {}, options = {}) {
 }
 
 export function getMenuNavRoutes(preferences = {}, options = {}) {
-  return getNavEligibleRoutes(options);
+  const groupWeight = { primary: 0, secondary: 1 };
+  return getNavEligibleRoutes(options).slice().sort((left, right) => {
+    const leftWeight = groupWeight[left.menuGroup] ?? 9;
+    const rightWeight = groupWeight[right.menuGroup] ?? 9;
+    if (leftWeight !== rightWeight) return leftWeight - rightWeight;
+    return Number(left.navOrder || 0) - Number(right.navOrder || 0);
+  });
 }
 
 export function pinRoute(routeId, preferences = {}, options = {}) {

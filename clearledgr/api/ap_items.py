@@ -855,12 +855,7 @@ def _derive_attachment_summary(
 
 def _derive_confidence_gate(payload: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
     raw_gate = metadata.get("confidence_gate")
-    if isinstance(raw_gate, dict) and "requires_field_review" in raw_gate:
-        gate = dict(raw_gate)
-        blockers = gate.get("confidence_blockers")
-        gate["confidence_blockers"] = blockers if isinstance(blockers, list) else []
-        gate["requires_field_review"] = bool(gate.get("requires_field_review"))
-        return gate
+    threshold_override = raw_gate.get("threshold") if isinstance(raw_gate, dict) else None
 
     # Prefer first-class column value over metadata blob for field confidences
     raw_fc = payload.get("field_confidences") or metadata.get("field_confidences")
@@ -869,6 +864,28 @@ def _derive_confidence_gate(payload: Dict[str, Any], metadata: Dict[str, Any]) -
             raw_fc = json.loads(raw_fc)
         except (json.JSONDecodeError, TypeError):
             raw_fc = None
+
+    learned_threshold_overrides = None
+    learned_profile_id = None
+    learned_signal_count = 0
+    organization_id = payload.get("organization_id") or metadata.get("organization_id")
+    vendor_name = payload.get("vendor_name") or payload.get("vendor")
+    if organization_id and vendor_name:
+        try:
+            from clearledgr.services.correction_learning import get_correction_learning_service
+
+            learned_adjustments = get_correction_learning_service(str(organization_id)).get_extraction_confidence_adjustments(
+                vendor_name=vendor_name,
+                sender_domain=metadata.get("source_sender_domain") or payload.get("sender"),
+                document_type=payload.get("document_type") or metadata.get("document_type") or metadata.get("email_type"),
+            )
+            learned_threshold_overrides = learned_adjustments.get("threshold_overrides") or None
+            learned_profile_id = learned_adjustments.get("profile_id")
+            learned_signal_count = int(learned_adjustments.get("signal_count") or 0)
+        except Exception:
+            learned_threshold_overrides = None
+            learned_profile_id = None
+            learned_signal_count = 0
 
     return evaluate_critical_field_confidence(
         overall_confidence=payload.get("confidence"),
@@ -879,6 +896,16 @@ def _derive_confidence_gate(payload: Dict[str, Any], metadata: Dict[str, Any]) -
             "due_date": payload.get("due_date"),
         },
         field_confidences=raw_fc,
+        threshold=threshold_override,
+        vendor_name=payload.get("vendor_name") or payload.get("vendor"),
+        sender=payload.get("sender"),
+        document_type=payload.get("document_type") or metadata.get("document_type") or metadata.get("email_type"),
+        primary_source=metadata.get("primary_source"),
+        has_attachment=bool(payload.get("has_attachment") or metadata.get("has_attachment")),
+        sender_domain=metadata.get("source_sender_domain"),
+        learned_threshold_overrides=learned_threshold_overrides,
+        learned_profile_id=learned_profile_id,
+        learned_signal_count=learned_signal_count,
     )
 
 
@@ -1111,8 +1138,11 @@ _FIELD_REVIEW_LABELS = {
 
 _FIELD_REVIEW_SOURCE_LABELS = {
     "email": "Email",
-    "attachment": "Attachment",
-    "llm": "Model",
+    "attachment": "Invoice attachment",
+    "llm": "Current invoice parse",
+    "parser": "Current invoice parse",
+    "current_parse": "Current invoice parse",
+    "ocr": "Current invoice parse",
 }
 
 _FIELD_REVIEW_REASON_LABELS = {
@@ -1160,11 +1190,40 @@ def _join_human_list(values: List[str]) -> str:
     return f"{', '.join(cleaned[:-1])}, and {cleaned[-1]}"
 
 
+def _current_field_review_value(payload: Dict[str, Any], field: str) -> Any:
+    token = str(field or "").strip().lower()
+    if token == "vendor":
+        return payload.get("vendor_name") or payload.get("vendor")
+    if token == "document_type":
+        return payload.get("document_type")
+    return payload.get(token)
+
+
+def _infer_field_review_source(current_value: Any, email_value: Any, attachment_value: Any) -> Optional[str]:
+    if current_value not in (None, ""):
+        if attachment_value not in (None, "") and current_value == attachment_value:
+            return "attachment"
+        if email_value not in (None, "") and current_value == email_value:
+            return "email"
+    return None
+
+
 def _build_field_review_surface(payload: Dict[str, Any]) -> Dict[str, Any]:
     field_provenance = payload.get("field_provenance") if isinstance(payload.get("field_provenance"), dict) else {}
     field_evidence = payload.get("field_evidence") if isinstance(payload.get("field_evidence"), dict) else {}
     source_conflicts = payload.get("source_conflicts") if isinstance(payload.get("source_conflicts"), list) else []
     confidence_blockers = payload.get("confidence_blockers") if isinstance(payload.get("confidence_blockers"), list) else []
+    confidence_gate = payload.get("confidence_gate") if isinstance(payload.get("confidence_gate"), dict) else {}
+    field_confidences = (
+        payload.get("field_confidences")
+        if isinstance(payload.get("field_confidences"), dict)
+        else confidence_gate.get("field_confidences")
+    )
+    if not isinstance(field_confidences, dict):
+        field_confidences = {}
+    threshold_pct = confidence_gate.get("threshold_pct")
+    if threshold_pct is None:
+        threshold_pct = 95
 
     blockers: List[Dict[str, Any]] = []
     blocked_fields: List[str] = []
@@ -1251,6 +1310,61 @@ def _build_field_review_surface(payload: Dict[str, Any]) -> Dict[str, Any]:
         if not field or field in seen_fields:
             continue
         field_label = _field_review_label(field)
+        provenance_entry = field_provenance.get(field) if isinstance(field_provenance.get(field), dict) else {}
+        evidence_entry = field_evidence.get(field) if isinstance(field_evidence.get(field), dict) else {}
+        candidate_values = provenance_entry.get("candidates") if isinstance(provenance_entry.get("candidates"), dict) else {}
+        confidence_value = blocker.get("confidence") if isinstance(blocker, dict) else None
+        if confidence_value in (None, ""):
+            confidence_value = field_confidences.get(field)
+        confidence_pct = blocker.get("confidence_pct") if isinstance(blocker, dict) else None
+        if confidence_pct in (None, "") and confidence_value not in (None, ""):
+            try:
+                confidence_pct = round(float(confidence_value) * 100)
+            except (TypeError, ValueError):
+                confidence_pct = None
+        blocker_threshold_pct = blocker.get("threshold_pct") if isinstance(blocker, dict) else None
+        if blocker_threshold_pct in (None, ""):
+            blocker_threshold_pct = threshold_pct
+        current_source = (
+            str(provenance_entry.get("source") or "").strip().lower()
+            or str(evidence_entry.get("source") or "").strip().lower()
+            or None
+        )
+        current_value = provenance_entry.get("value")
+        if current_value in (None, ""):
+            current_value = evidence_entry.get("selected_value")
+        if current_value in (None, ""):
+            current_value = _current_field_review_value(payload, field)
+        email_value = candidate_values.get("email")
+        if email_value in (None, ""):
+            email_value = evidence_entry.get("email_value")
+        attachment_value = candidate_values.get("attachment")
+        if attachment_value in (None, ""):
+            attachment_value = evidence_entry.get("attachment_value")
+        inferred_source = _infer_field_review_source(current_value, email_value, attachment_value)
+        if not current_source:
+            current_source = inferred_source
+        current_source_label = _field_review_source_label(current_source) if current_source else None
+        current_value_display = _format_field_review_value(field, current_value, payload)
+        if confidence_pct not in (None, "") and blocker_threshold_pct not in (None, ""):
+            paused_reason = (
+                f"Review {field_label.lower()} before this invoice moves forward."
+            )
+            winner_reason = (
+                f"Clearledgr read {current_value_display}"
+                f"{f' from the {current_source_label.lower()}' if current_source_label else ''}. "
+                f"Because {field_label.lower()} is a critical field, a person needs to confirm it before approval continues."
+            )
+            auto_check_note = (
+                f"Auto-pass rule: {blocker_threshold_pct}% minimum. "
+                f"This read scored {confidence_pct}%."
+            )
+        else:
+            paused_reason = f"Review {field_label.lower()} before this invoice moves forward."
+            winner_reason = (
+                f"Clearledgr needs the {field_label.lower()} confirmed before this invoice can continue."
+            )
+            auto_check_note = None
         blockers.append(
             {
                 "kind": "confidence",
@@ -1258,8 +1372,21 @@ def _build_field_review_surface(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "field_label": field_label,
                 "blocking": True,
                 "reason": reason,
-                "reason_label": "Critical extracted field needs review.",
-                "paused_reason": f"Workflow paused until {field_label.lower()} is reviewed.",
+                "reason_label": "This field did not clear the automatic check.",
+                "paused_reason": paused_reason,
+                "current_value": current_value,
+                "current_value_display": current_value_display,
+                "current_source": current_source,
+                "current_source_label": current_source_label,
+                "email_value": email_value,
+                "email_value_display": _format_field_review_value(field, email_value, payload),
+                "attachment_value": attachment_value,
+                "attachment_value_display": _format_field_review_value(field, attachment_value, payload),
+                "confidence": confidence_value,
+                "confidence_pct": confidence_pct,
+                "threshold_pct": blocker_threshold_pct,
+                "winner_reason": winner_reason,
+                "auto_check_note": auto_check_note,
             }
         )
         seen_fields.add(field)
@@ -1269,22 +1396,236 @@ def _build_field_review_surface(payload: Dict[str, Any]) -> Dict[str, Any]:
     pause_reason = ""
     if blocked_field_labels:
         pause_reason = (
-            f"Workflow paused until {_join_human_list(blocked_field_labels)} "
-            f"{'is' if len(blocked_field_labels) == 1 else 'are'} reviewed."
+            f"Review {_join_human_list(blocked_field_labels)} "
+            f"before this invoice moves forward."
         )
         if any(str(entry.get("kind") or "") == "source_conflict" for entry in blockers):
             pause_reason = (
-                f"Workflow paused until {_join_human_list(blocked_field_labels)} "
-                f"{'is' if len(blocked_field_labels) == 1 else 'are'} confirmed because the email and attachment disagree."
+                f"Review {_join_human_list(blocked_field_labels)} "
+                f"before this invoice moves forward because the email and attachment disagree."
             )
     elif bool(payload.get("requires_field_review")):
-        pause_reason = "Workflow paused until extracted fields are reviewed."
+        pause_reason = "Review the extracted fields before this invoice moves forward."
 
     return {
         "field_review_blockers": blockers,
         "blocked_fields": blocked_fields,
         "workflow_paused_reason": pause_reason or None,
     }
+
+
+_PIPELINE_EXCEPTION_BLOCKER_MAP = {
+    "policy_validation_failed": {
+        "kind": "exception",
+        "chip_label": "Policy block",
+        "title": "Policy review required",
+        "detail": "Approval or policy rules need review before this invoice can move forward.",
+    },
+    "po_missing_reference": {
+        "kind": "po",
+        "chip_label": "PO / GR issue",
+        "title": "PO reference missing",
+        "detail": "Add or confirm the purchase order reference before continuing.",
+    },
+    "po_amount_mismatch": {
+        "kind": "po",
+        "chip_label": "PO / GR issue",
+        "title": "PO amount mismatch",
+        "detail": "The invoice does not match the linked purchase order or goods receipt.",
+    },
+    "budget_overrun": {
+        "kind": "budget",
+        "chip_label": "Budget review",
+        "title": "Budget review required",
+        "detail": "This invoice exceeds the current budget guardrails.",
+    },
+    "missing_budget_context": {
+        "kind": "budget",
+        "chip_label": "Budget review",
+        "title": "Budget context missing",
+        "detail": "Budget context is missing and needs review before the invoice can continue.",
+    },
+}
+
+
+def _humanize_pipeline_token(value: Any, fallback: str) -> str:
+    token = str(value or "").strip().lower()
+    if not token:
+        return fallback
+    return token.replace("_", " ").strip().capitalize()
+
+
+def _build_budget_blocker_detail(summary: Dict[str, Any]) -> str:
+    exceeded = _safe_int(summary.get("exceeded_count"), 0)
+    critical = _safe_int(summary.get("critical_count"), 0)
+    warning = _safe_int(summary.get("warning_count"), 0)
+    if exceeded > 0:
+        return f"{exceeded} budget check{'s' if exceeded != 1 else ''} exceeded the approved threshold."
+    if critical > 0:
+        return f"{critical} budget check{'s' if critical != 1 else ''} require immediate review."
+    if warning > 0:
+        return f"{warning} budget check{'s' if warning != 1 else ''} are close to the limit."
+    return "Budget review is required before this invoice can continue."
+
+
+def _build_pipeline_blockers(payload: Dict[str, Any], budget_summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+    blockers: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def append_blocker(
+        *,
+        kind: str,
+        blocker_type: str,
+        chip_label: str,
+        title: str,
+        detail: str,
+        field: Optional[str] = None,
+        severity: Optional[str] = None,
+        code: Optional[str] = None,
+    ) -> None:
+        normalized_kind = str(kind or "").strip().lower()
+        normalized_type = str(blocker_type or "").strip().lower()
+        normalized_field = str(field or "").strip().lower()
+        dedupe_key = (normalized_kind, normalized_type, normalized_field or str(code or "").strip().lower())
+        if not normalized_kind or not normalized_type or dedupe_key in seen:
+            return
+        seen.add(dedupe_key)
+        blockers.append(
+            {
+                "kind": normalized_kind,
+                "type": normalized_type,
+                "chip_label": str(chip_label or "").strip() or _humanize_pipeline_token(normalized_kind, "Blocker"),
+                "title": str(title or "").strip() or "Blocker",
+                "detail": str(detail or "").strip(),
+                "field": normalized_field or None,
+                "severity": str(severity or "").strip().lower() or None,
+                "code": str(code or "").strip().lower() or None,
+            }
+        )
+
+    field_review_blockers = (
+        payload.get("field_review_blockers")
+        if isinstance(payload.get("field_review_blockers"), list)
+        else []
+    )
+    for blocker in field_review_blockers:
+        if not isinstance(blocker, dict):
+            continue
+        field = str(blocker.get("field") or "").strip().lower()
+        field_label = str(blocker.get("field_label") or _field_review_label(field)).strip() or "Field"
+        blocker_kind = str(blocker.get("kind") or "").strip().lower()
+        if blocker_kind == "source_conflict":
+            email_value = blocker.get("email_value_display") or "Not found"
+            attachment_value = blocker.get("attachment_value_display") or "Not found"
+            append_blocker(
+                kind="confidence",
+                blocker_type="source_conflict",
+                chip_label="Field review",
+                title=f"{field_label} blocked",
+                detail=f"Email {email_value} · Attachment {attachment_value}",
+                field=field,
+                severity="high",
+                code=str(blocker.get("reason") or "source_conflict"),
+            )
+            continue
+
+        confidence_pct = blocker.get("confidence_pct")
+        threshold_pct = blocker.get("threshold_pct")
+        if confidence_pct not in (None, "") and threshold_pct not in (None, ""):
+            detail = (
+                f"{field_label} confidence is {confidence_pct}%, below the {threshold_pct}% review threshold."
+            )
+        else:
+            detail = str(blocker.get("reason_label") or "Critical extracted field needs review.").strip()
+        append_blocker(
+            kind="confidence",
+            blocker_type="confidence_review",
+            chip_label="Field review",
+            title=f"{field_label} needs review",
+            detail=detail,
+            field=field,
+            severity="high",
+            code=str(blocker.get("reason") or "critical_field_review_required"),
+        )
+
+    state = str(payload.get("state") or "").strip().lower()
+    if state == APState.NEEDS_APPROVAL.value:
+        append_blocker(
+            kind="approval",
+            blocker_type="approval_waiting",
+            chip_label="Approval waiting",
+            title="Waiting on approval",
+            detail="This invoice has been routed to an approver and is still waiting.",
+        )
+    if state == APState.NEEDS_INFO.value:
+        append_blocker(
+            kind="info",
+            blocker_type="needs_info",
+            chip_label="Needs info",
+            title="Needs follow-up",
+            detail="Vendor or field follow-up is still needed before the invoice can continue.",
+        )
+    if state == APState.FAILED_POST.value:
+        append_blocker(
+            kind="erp",
+            blocker_type="posting_failed",
+            chip_label="ERP retry",
+            title="ERP posting failed",
+            detail="Posting to the ERP needs retry or recovery.",
+        )
+
+    budget_status = str(payload.get("budget_status") or budget_summary.get("status") or "").strip().lower()
+    if bool(payload.get("budget_requires_decision")) or budget_status in {"critical", "exceeded"}:
+        append_blocker(
+            kind="budget",
+            blocker_type="budget_review",
+            chip_label="Budget review",
+            title="Budget review required",
+            detail=_build_budget_blocker_detail(budget_summary),
+            severity="critical" if budget_status == "exceeded" else "high",
+            code=budget_status or "budget_review",
+        )
+
+    exception_code = _normalize_exception_code(payload.get("exception_code"))
+    if exception_code in {"field_conflict", "field_review_required"}:
+        exception_code = None
+    if exception_code == "planner_failed":
+        if not any(blocker.get("kind") == "confidence" for blocker in blockers):
+            append_blocker(
+                kind="processing",
+                blocker_type="processing_issue",
+                chip_label="Processing issue",
+                title="Processing issue",
+                detail="Invoice processing needs retry or refresh before it can continue.",
+                severity="medium",
+                code=exception_code,
+            )
+        exception_code = None
+
+    if exception_code:
+        mapped = _PIPELINE_EXCEPTION_BLOCKER_MAP.get(exception_code)
+        if mapped:
+            append_blocker(
+                kind=mapped["kind"],
+                blocker_type=exception_code,
+                chip_label=mapped["chip_label"],
+                title=mapped["title"],
+                detail=mapped["detail"],
+                severity=payload.get("exception_severity"),
+                code=exception_code,
+            )
+        else:
+            append_blocker(
+                kind="exception",
+                blocker_type=exception_code,
+                chip_label="Policy block",
+                title=_humanize_pipeline_token(exception_code, "Policy issue"),
+                detail="This invoice is blocked and needs manual review before it can continue.",
+                severity=payload.get("exception_severity"),
+                code=exception_code,
+            )
+
+    return blockers
 
 
 def _summarize_budget_context(metadata: Dict[str, Any], approvals: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
@@ -1440,18 +1781,16 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         except (json.JSONDecodeError, TypeError):
             raw_fc = {}
     payload["field_confidences"] = raw_fc or confidence_gate.get("field_confidences") or {}
+    source_conflicts = metadata.get("source_conflicts") if isinstance(metadata.get("source_conflicts"), list) else []
     payload["requires_field_review"] = bool(
-        metadata.get("requires_field_review") or confidence_gate.get("requires_field_review")
+        any(isinstance(conflict, dict) and bool(conflict.get("blocking")) for conflict in source_conflicts)
+        or confidence_gate.get("requires_field_review")
     )
     payload["requires_extraction_review"] = bool(metadata.get("requires_extraction_review"))
-    confidence_blockers = metadata.get("confidence_blockers")
-    if isinstance(confidence_blockers, list):
-        payload["confidence_blockers"] = confidence_blockers
-    else:
-        payload["confidence_blockers"] = confidence_gate.get("confidence_blockers") or []
+    payload["confidence_blockers"] = confidence_gate.get("confidence_blockers") or []
     payload["field_provenance"] = metadata.get("field_provenance") if isinstance(metadata.get("field_provenance"), dict) else {}
     payload["field_evidence"] = metadata.get("field_evidence") if isinstance(metadata.get("field_evidence"), dict) else {}
-    payload["source_conflicts"] = metadata.get("source_conflicts") if isinstance(metadata.get("source_conflicts"), list) else []
+    payload["source_conflicts"] = source_conflicts
     payload["risk_signals"] = metadata.get("risk_signals") or {}
     payload["source_ranking"] = metadata.get("source_ranking") or {}
     payload["navigator"] = metadata.get("navigator") or {}
@@ -1481,6 +1820,7 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
     payload["document_type"] = _normalize_document_type_token(_doc_type)
     payload["conflict_actions"] = metadata.get("conflict_actions") if isinstance(metadata.get("conflict_actions"), list) else []
     payload.update(_build_field_review_surface(payload))
+    payload["pipeline_blockers"] = _build_pipeline_blockers(payload, budget_summary)
     if metadata.get("priority_score") is not None:
         payload["priority_score"] = metadata.get("priority_score")
     elif hasattr(db, "_worklist_priority_score"):
@@ -2038,6 +2378,41 @@ def _require_item(db: ClearledgrDB, ap_item_id: str) -> Dict[str, Any]:
     return item
 
 
+def _resolve_item_for_detail(
+    db: ClearledgrDB,
+    *,
+    organization_id: str,
+    ap_item_ref: str,
+) -> Dict[str, Any]:
+    reference = str(ap_item_ref or "").strip()
+    if not reference:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+
+    direct_candidate = db.get_ap_item(reference)
+    if direct_candidate and str(direct_candidate.get("organization_id") or "").strip() == str(organization_id or "").strip():
+        return direct_candidate
+
+    lookup_methods = (
+        getattr(db, "get_ap_item_by_invoice_number", None),
+        getattr(db, "get_ap_item_by_erp_reference", None),
+        getattr(db, "get_ap_item_by_invoice_key", None),
+        getattr(db, "get_ap_item_by_workflow_id", None),
+        getattr(db, "get_ap_item_by_thread", None),
+        getattr(db, "get_ap_item_by_message_id", None),
+    )
+    for getter in lookup_methods:
+        if not callable(getter):
+            continue
+        try:
+            candidate = getter(organization_id, reference)
+        except TypeError:
+            continue
+        if candidate:
+            return candidate
+
+    raise HTTPException(status_code=404, detail="ap_item_not_found")
+
+
 def _preview_field_review_resolution(
     db: ClearledgrDB,
     item: Dict[str, Any],
@@ -2202,6 +2577,71 @@ def _preview_field_review_resolution(
         "resolved_at": now,
         "preview_worklist": preview_worklist,
         "unresolved": unresolved,
+    }
+
+
+def _field_review_value_equals(left: Any, right: Any) -> bool:
+    if left == right:
+        return True
+    try:
+        return abs(float(left) - float(right)) < 1e-9
+    except (TypeError, ValueError):
+        return str(left or "").strip() == str(right or "").strip()
+
+
+def _current_field_review_value(item: Dict[str, Any], field_token: str) -> Any:
+    if field_token == "vendor":
+        return item.get("vendor_name") or item.get("vendor")
+    if field_token == "invoice_number":
+        return item.get("invoice_number")
+    if field_token == "document_type":
+        metadata = _parse_json(item.get("metadata"))
+        return metadata.get("document_type") or metadata.get("email_type") or item.get("document_type")
+    return item.get(field_token)
+
+
+def _derive_field_review_outcome(
+    *,
+    item: Dict[str, Any],
+    field_token: str,
+    blocker: Optional[Dict[str, Any]],
+    resolved_value: Any,
+    resolved_source: str,
+) -> Dict[str, Any]:
+    previous_source = str((blocker or {}).get("winning_source") or "").strip().lower()
+    previous_value = (blocker or {}).get("winning_value")
+    current_value = _current_field_review_value(item, field_token)
+    tags = set()
+
+    if resolved_source == "email":
+        tags.add("resolved_with_email")
+    elif resolved_source == "attachment":
+        tags.add("resolved_with_attachment")
+    elif resolved_source == "manual":
+        tags.add("manual_entry")
+
+    if previous_source and previous_source != resolved_source:
+        tags.add("rejected_source")
+
+    if resolved_source == "manual":
+        outcome_type = "corrected"
+    elif previous_source:
+        outcome_type = (
+            "confirmed_correct"
+            if previous_source == resolved_source and _field_review_value_equals(previous_value, resolved_value)
+            else "corrected"
+        )
+    else:
+        outcome_type = (
+            "confirmed_correct"
+            if _field_review_value_equals(current_value, resolved_value)
+            else "corrected"
+        )
+
+    tags.add(outcome_type)
+    return {
+        "outcome_type": outcome_type,
+        "outcome_tags": sorted(tags),
     }
 
 
@@ -2520,6 +2960,22 @@ def get_ap_aggregation_metrics(
     return {"metrics": metrics}
 
 
+@router.get("/{ap_item_id}")
+def get_ap_item_detail(
+    ap_item_id: str,
+    organization_id: str = Query(default="default"),
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    verify_org_access(organization_id, _user)
+    db = get_db()
+    item = _resolve_item_for_detail(
+        db,
+        organization_id=organization_id,
+        ap_item_ref=ap_item_id,
+    )
+    return build_worklist_item(db, item)
+
+
 @router.get("/{ap_item_id}/audit")
 def get_ap_item_audit(
     ap_item_id: str,
@@ -2599,6 +3055,13 @@ async def _execute_field_review_resolution(
         blocker=blocker,
         note=request.note,
     )
+    review_outcome = _derive_field_review_outcome(
+        item=item,
+        field_token=normalized_field,
+        blocker=blocker,
+        resolved_value=resolved_value,
+        resolved_source=normalized_source,
+    )
 
     db.update_ap_item(
         ap_item_id,
@@ -2629,7 +3092,7 @@ async def _execute_field_review_resolution(
     )
 
     try:
-        from clearledgr.services.correction_learning import CorrectionLearningService
+        from clearledgr.services.correction_learning import get_correction_learning_service
 
         preview_metadata = _parse_json(preview["column_payload"].get("metadata"))
         expected_fields = {
@@ -2645,23 +3108,38 @@ async def _execute_field_review_resolution(
                 or metadata.get("email_type")
             ),
         }
-        learning_svc = CorrectionLearningService(str(item.get("organization_id") or organization_id or "default"))
+        confidence_profile_id = (
+            ((worklist_item.get("confidence_gate") or {}).get("profile_id"))
+            or ((worklist_item.get("confidence_gate") or {}).get("learned_profile_id"))
+        )
+        truth_context = _build_operator_truth_context(
+            db,
+            item=item,
+            metadata=metadata,
+            field=normalized_field,
+            selected_source=normalized_source,
+            blocker=blocker,
+            expected_fields=expected_fields,
+        )
+        truth_context["confidence_profile_id"] = confidence_profile_id
+        learning_svc = get_correction_learning_service(str(item.get("organization_id") or organization_id or "default"))
         learning_svc.record_correction(
             correction_type=normalized_field,
             original_value=blocker.get("selected_value") if isinstance(blocker, dict) else item.get(normalized_field),
             corrected_value=resolved_value,
-            context=_build_operator_truth_context(
-                db,
-                item=item,
-                metadata=metadata,
-                field=normalized_field,
-                selected_source=normalized_source,
-                blocker=blocker,
-                expected_fields=expected_fields,
-            ),
+            context=truth_context,
             user_id=actor_id,
             invoice_id=item.get("thread_id") or item.get("message_id"),
             feedback=str(request.note or "").strip() or None,
+        )
+        learning_svc.record_review_outcome(
+            field_name=normalized_field,
+            outcome_type=review_outcome["outcome_type"],
+            context=truth_context,
+            user_id=actor_id,
+            selected_source=normalized_source,
+            outcome_tags=review_outcome["outcome_tags"],
+            created_at=preview["resolved_at"],
         )
     except Exception:
         logger.exception("field review correction learning capture failed for %s", ap_item_id)

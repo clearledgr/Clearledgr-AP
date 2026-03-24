@@ -320,6 +320,42 @@ def test_approve_invoice_success_transitions_through_ready_to_post(service, db, 
     assert row["erp_reference"] == "BILL-123"
 
 
+def test_send_for_approval_promotes_received_items_before_needs_approval(service, db, monkeypatch):
+    item = _create_ap_item(db, gmail_id="gmail-route-from-received", state="received")
+
+    monkeypatch.setattr(
+        db,
+        "get_slack_thread",
+        lambda _gmail_id: {
+            "channel_id": "C-APPROVALS",
+            "thread_ts": "1710000000.999",
+            "thread_id": "1710000000.999",
+        },
+    )
+
+    invoice = InvoiceData(
+        gmail_id="gmail-route-from-received",
+        subject="Invoice",
+        sender="billing@vendor.test",
+        vendor_name="Vendor Test",
+        amount=125.0,
+        confidence=0.91,
+        invoice_number="INV-GMAIL-ROUTE-FROM-RECEIVED",
+    )
+
+    result = asyncio.run(service._send_for_approval(invoice))
+
+    assert result["status"] == "pending_approval"
+    assert result["existing"] is True
+
+    row = db.get_invoice_status("gmail-route-from-received")
+    assert row["state"] == "needs_approval"
+
+    transitions = _transition_pairs(db, item["id"])
+    assert ("received", "validated") in transitions
+    assert ("validated", "needs_approval") in transitions
+
+
 def test_reject_invoice_updates_slack_thread_with_gmail_id(service, db, monkeypatch):
     item = _create_ap_item(db, gmail_id="gmail-reject-slack", state="needs_approval")
 

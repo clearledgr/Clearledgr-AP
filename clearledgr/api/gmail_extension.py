@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/extension", tags=["gmail-extension"])
 
 _ADMIN_ROLES = {"admin", "owner"}
+EXTENSION_BACKEND_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60
 
 
 def _is_admin_user(user: Any) -> bool:
@@ -1231,7 +1232,7 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
         last_error=None,
     )
 
-    backend_token_ttl_seconds = max(300, min(expires_in, 3600))
+    backend_token_ttl_seconds = EXTENSION_BACKEND_TOKEN_TTL_SECONDS
     backend_access_token = create_access_token(
         user_id=user_id,
         email=str(getattr(user, "email", profile_email) or profile_email),
@@ -1335,7 +1336,7 @@ async def exchange_gmail_code(request: ExchangeCodeRequest):
     )
 
     # Create backend session token for the extension
-    backend_token_ttl = max(300, min(expires_in, 3600))
+    backend_token_ttl = EXTENSION_BACKEND_TOKEN_TTL_SECONDS
     backend_access_token = create_access_token(
         user_id=user_id,
         email=str(getattr(user, "email", profile_email) or profile_email),
@@ -1490,6 +1491,33 @@ async def verify_confidence(
                 "severity": metadata.get("exception_severity", "medium"),
             })
 
+        learned_threshold_overrides = None
+        learned_profile_id = None
+        learned_signal_count = 0
+        organization_id = ap_item.get("organization_id") or metadata.get("organization_id")
+        vendor_name = extraction.get("vendor") or ap_item.get("vendor_name")
+        if organization_id and vendor_name:
+            try:
+                from clearledgr.services.correction_learning import get_correction_learning_service
+
+                learned_adjustments = get_correction_learning_service(str(organization_id)).get_extraction_confidence_adjustments(
+                    vendor_name=vendor_name,
+                    sender_domain=metadata.get("source_sender_domain") or ap_item.get("sender"),
+                    document_type=(
+                        extraction.get("document_type")
+                        or ap_item.get("document_type")
+                        or metadata.get("document_type")
+                        or metadata.get("email_type")
+                    ),
+                )
+                learned_threshold_overrides = learned_adjustments.get("threshold_overrides") or None
+                learned_profile_id = learned_adjustments.get("profile_id")
+                learned_signal_count = int(learned_adjustments.get("signal_count") or 0)
+            except Exception:
+                learned_threshold_overrides = None
+                learned_profile_id = None
+                learned_signal_count = 0
+
         confidence_gate = evaluate_critical_field_confidence(
             overall_confidence=ap_item.get("confidence"),
             field_values={
@@ -1500,6 +1528,25 @@ async def verify_confidence(
                 "due_date": extraction.get("due_date") or ap_item.get("due_date"),
             },
             field_confidences=request_field_confidences or metadata.get("field_confidences"),
+            vendor_name=extraction.get("vendor") or ap_item.get("vendor_name"),
+            sender=ap_item.get("sender"),
+            document_type=(
+                extraction.get("document_type")
+                or ap_item.get("document_type")
+                or metadata.get("document_type")
+                or metadata.get("email_type")
+            ),
+            primary_source=extraction.get("primary_source") or metadata.get("primary_source"),
+            has_attachment=bool(
+                extraction.get("has_invoice_attachment")
+                or extraction.get("attachment_url")
+                or ap_item.get("has_attachment")
+                or metadata.get("has_attachment")
+            ),
+            sender_domain=metadata.get("source_sender_domain"),
+            learned_threshold_overrides=learned_threshold_overrides,
+            learned_profile_id=learned_profile_id,
+            learned_signal_count=learned_signal_count,
         )
     else:
         # No AP item found — report as low confidence
@@ -1508,6 +1555,12 @@ async def verify_confidence(
             overall_confidence=0,
             field_values=request.extraction or {},
             field_confidences=extract_field_confidences(request.extraction or {}),
+            document_type=(request.extraction or {}).get("document_type"),
+            primary_source=(request.extraction or {}).get("primary_source"),
+            has_attachment=bool(
+                (request.extraction or {}).get("has_invoice_attachment")
+                or (request.extraction or {}).get("attachment_url")
+            ),
         )
 
     return {

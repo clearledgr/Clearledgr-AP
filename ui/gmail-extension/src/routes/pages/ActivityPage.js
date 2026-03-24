@@ -14,32 +14,27 @@ export default function ActivityPage({ bootstrap, onRefresh, navigate }) {
   const [refresh, refreshing] = useAction(onRefresh);
 
   return html`
-    <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <div>
-          <h3 style="margin:0 0 6px">AP activity</h3>
-          <p class="muted" style="margin:0">Use this page to check recent movement, then go back to Pipeline. It should not feel like a separate dashboard.</p>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
-          <button onClick=${() => navigate?.('clearledgr/pipeline')}>Open pipeline</button>
-        </div>
+    <div class="secondary-banner">
+      <div class="secondary-banner-copy">
+        <h3>Recent activity</h3>
+        <p class="muted">See what changed recently, then jump back into the queue when you need to act.</p>
+      </div>
+      <div class="secondary-banner-actions">
+        <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate?.('clearledgr/pipeline')}>Open pipeline</button>
       </div>
     </div>
 
-    <div class="panel">
-      <h3 style="margin-top:0">What matters now</h3>
-      <div class="readiness-list" style="margin-top:12px">
-        <div class="readiness-item"><strong>Awaiting approval:</strong> ${Number(dash.pending_approval || 0).toLocaleString()}</div>
-        <div class="readiness-item"><strong>Posted today:</strong> ${Number(dash.posted_today || 0).toLocaleString()}</div>
-        <div class="readiness-item"><strong>Rejected today:</strong> ${Number(dash.rejected_today || 0).toLocaleString()}</div>
-        <div class="readiness-item"><strong>Total processed:</strong> ${Number(dash.total_invoices || 0).toLocaleString()}</div>
-      </div>
+    <div class="secondary-chip-row" style="margin:0 0 18px">
+      <span class="secondary-chip">Awaiting approval ${Number(dash.pending_approval || 0).toLocaleString()}</span>
+      <span class="secondary-chip">Posted today ${Number(dash.posted_today || 0).toLocaleString()}</span>
+      <span class="secondary-chip">Rejected today ${Number(dash.rejected_today || 0).toLocaleString()}</span>
+      <span class="secondary-chip">Total processed ${Number(dash.total_invoices || 0).toLocaleString()}</span>
     </div>
 
     <div class="panel">
-      <h3 style="margin-top:0">Recent finance activity</h3>
-      <p class="muted" style="margin-top:0">Recent events across approval, posting, and exception handling.</p>
+      <h3 style="margin-top:0">Recent updates</h3>
+      <p class="muted" style="margin-top:0">Recent changes across approvals, posting, and exceptions.</p>
       ${events.length === 0
         ? html`<p class="muted" style="margin:0">No recent activity yet.</p>`
         : html`<div style="display:flex;flex-direction:column;gap:10px">
@@ -63,11 +58,6 @@ export default function ActivityPage({ bootstrap, onRefresh, navigate }) {
               `;
             })}
           </div>`}
-    </div>
-
-    <div class="panel">
-      <h3 style="margin-top:0">Use this page sparingly</h3>
-      <p class="muted" style="margin:0">Recent activity is useful for orientation, but queue decisions still belong in Pipeline and on the shared AP record.</p>
     </div>
   `;
 }

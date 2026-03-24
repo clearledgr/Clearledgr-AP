@@ -1,6 +1,6 @@
 import { h } from 'preact';
 import htm from 'htm';
-import { useAction } from '../route-helpers.js';
+import { hasCapability, useAction } from '../route-helpers.js';
 
 const html = htm.bind(h);
 
@@ -23,8 +23,10 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
     ?? 0
   );
   const requirePO = configJson.require_po !== false;
+  const canManageRules = hasCapability(bootstrap, 'manage_rules');
 
   const [savePolicy, saving] = useAction(async () => {
+    if (!canManageRules) return;
     const nextConfidence = parseThreshold(document.getElementById('cl-policy-confidence')?.value, confidenceThreshold);
     const nextMaxAmount = parseThreshold(document.getElementById('cl-policy-max-amount')?.value, maxAutoAmount);
     const nextRequirePO = Boolean(document.getElementById('cl-policy-require-po')?.checked);
@@ -51,38 +53,71 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
   });
 
   return html`
-    <div class="panel">
-      <h3>Only keep daily AP controls here</h3>
-      <p class="muted" style="margin-top:0">This page should answer one question: when does an invoice stay in Gmail, route for approval, or stop for PO review? Detailed policy authoring stays outside Gmail.</p>
-      <div style="display:flex;flex-direction:column;gap:16px;margin-top:8px">
-        <div>
-          <label>Auto-approval confidence threshold</label>
-          <input id="cl-policy-confidence" type="number" min="0" max="1" step="0.01" value=${String(confidenceThreshold)} />
-          <div class="muted" style="margin-top:6px">Invoices below this confidence stay with an operator before approval or posting.</div>
-        </div>
-        <div>
-          <label>Maximum auto-approve amount</label>
-          <input id="cl-policy-max-amount" type="number" min="0" step="1" value=${String(maxAutoAmount)} />
-          <div class="muted" style="margin-top:6px">Invoices above this amount always wait for human approval.</div>
-        </div>
-        <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500">
-          <input id="cl-policy-require-po" type="checkbox" checked=${requirePO} />
-          Require PO match before approval routing
-        </label>
+    <div class=${`secondary-banner ${canManageRules ? '' : 'warning'}`}>
+      <div class="secondary-banner-copy">
+        <h3>${canManageRules ? 'Control when invoices move automatically' : 'Approval behavior is visible here'}</h3>
+        <p class="muted">${canManageRules ? 'Set the confidence, amount, and PO rules that decide when work keeps moving on its own.' : 'You can review the current approval rules here, but only admins can change them.'}</p>
       </div>
-      <div class="row" style="margin-top:20px">
-        <button onClick=${savePolicy} disabled=${saving}>${saving ? 'Saving…' : 'Save rules'}</button>
+      <div class="secondary-banner-actions">
+        <button class="btn-primary" onClick=${savePolicy} disabled=${saving || !canManageRules}>${saving ? 'Saving…' : 'Save rules'}</button>
       </div>
     </div>
 
-    <div class="panel">
-      <h3 style="margin-top:0">Current approval behavior</h3>
-      <p class="muted" style="margin-top:0">A compact summary of the rules operators will feel in the queue.</p>
-      <div class="readiness-list" style="margin-top:12px">
-        <div class="readiness-item"><strong>Policy name:</strong> ${policy.policy_name || 'Default AP policy'}</div>
-        <div class="readiness-item"><strong>Confidence threshold:</strong> ${confidenceThreshold}</div>
-        <div class="readiness-item"><strong>Max auto-approve amount:</strong> ${maxAutoAmount > 0 ? `$${maxAutoAmount.toLocaleString()}` : 'No limit set'}</div>
-        <div class="readiness-item"><strong>PO required:</strong> ${requirePO ? 'Yes' : 'No'}</div>
+    <div class="secondary-shell">
+      <div class="secondary-main">
+        <div class="panel">
+          <h3 style="margin-top:0">Approval rules</h3>
+          <p class="muted" style="margin:0 0 14px">These settings decide when an invoice keeps moving, waits for approval, or pauses for a PO check.</p>
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div>
+              <label>Auto-approval confidence threshold</label>
+              <input id="cl-policy-confidence" type="number" min="0" max="1" step="0.01" value=${String(confidenceThreshold)} disabled=${!canManageRules} />
+              <div class="muted" style="margin-top:6px">Invoices below this confidence wait for a person to review them before approval or posting.</div>
+            </div>
+            <div>
+              <label>Maximum auto-approve amount</label>
+              <input id="cl-policy-max-amount" type="number" min="0" step="1" value=${String(maxAutoAmount)} disabled=${!canManageRules} />
+              <div class="muted" style="margin-top:6px">Invoices above this amount always wait for human approval.</div>
+            </div>
+            <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500">
+              <input id="cl-policy-require-po" type="checkbox" checked=${requirePO} disabled=${!canManageRules} />
+              Require PO match before approval routing
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="secondary-side">
+        <div class="panel">
+          <h3 style="margin-top:0">Current behavior</h3>
+          <div class="secondary-stat-grid" style="margin-top:12px">
+            <div class="secondary-stat-card">
+              <strong>Policy</strong>
+              <span>${policy.policy_name || 'Default AP policy'}</span>
+            </div>
+            <div class="secondary-stat-card">
+              <strong>Confidence</strong>
+              <span>${confidenceThreshold}</span>
+            </div>
+            <div class="secondary-stat-card">
+              <strong>Auto-approve cap</strong>
+              <span>${maxAutoAmount > 0 ? `$${maxAutoAmount.toLocaleString()}` : 'No limit set'}</span>
+            </div>
+            <div class="secondary-stat-card">
+              <strong>PO required</strong>
+              <span>${requirePO ? 'Yes' : 'No'}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Editing access</h3>
+          <div class="secondary-note">
+            ${canManageRules
+              ? 'You can change the rule thresholds from this page.'
+              : 'This page stays readable for operators, but only admins can change the policy.'}
+          </div>
+        </div>
       </div>
     </div>
   `;

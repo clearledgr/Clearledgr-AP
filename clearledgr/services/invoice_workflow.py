@@ -816,6 +816,20 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             vendor_name=invoice.vendor_name,
             invoice_number=invoice.invoice_number,
         )
+        correlation_id = self._ensure_ap_item_correlation_id(
+            ap_item_id=ap_item_id,
+            gmail_id=invoice.gmail_id,
+            preferred=invoice.correlation_id,
+        )
+        invoice.correlation_id = correlation_id
+
+        current_state = self._canonical_invoice_state(self.db.get_invoice_status(invoice.gmail_id))
+        if current_state == "received":
+            self._transition_invoice_state(
+                gmail_id=invoice.gmail_id,
+                target_state="validated",
+                correlation_id=correlation_id,
+            )
 
         existing_thread = self.db.get_slack_thread(invoice.gmail_id)
         if existing_thread:
@@ -824,6 +838,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 gmail_id=invoice.gmail_id,
                 target_state="needs_approval",
                 slack_thread_id=existing_thread.get("thread_id") or existing_thread.get("thread_ts"),
+                correlation_id=correlation_id,
             )
             self._record_approval_snapshot(
                 ap_item_id=ap_item_id,
@@ -884,6 +899,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         self._transition_invoice_state(
             gmail_id=invoice.gmail_id,
             target_state="needs_approval",
+            correlation_id=correlation_id,
         )
 
         # Create approval chain record for audit and multi-step tracking
@@ -951,6 +967,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 gmail_id=invoice.gmail_id,
                 target_state="needs_approval",
                 slack_thread_id=thread_id,
+                correlation_id=correlation_id,
             )
             self._record_approval_snapshot(
                 ap_item_id=ap_item_id,

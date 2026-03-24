@@ -57,7 +57,7 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
       setMetrics(data?.metrics || null);
     } catch {
       setMetrics(null);
-      if (!silent) toast?.('Could not load AP reporting.', 'error');
+      if (!silent) toast?.('Could not load reports.', 'error');
     } finally {
       setLoading(false);
     }
@@ -69,7 +69,7 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
 
   const [refresh, refreshing] = useAction(async () => {
     await loadMetrics();
-    toast?.('AP reporting refreshed.', 'success');
+    toast?.('Reports refreshed.', 'success');
   });
 
   const openStarterView = (view) => {
@@ -88,22 +88,18 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
   const sourceTypes = Object.entries(sources.link_count_by_type || {}).sort((left, right) => right[1] - left[1]).slice(0, 6);
 
   if (loading) {
-    return html`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading AP reporting…</p></div>`;
+    return html`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading reports…</p></div>`;
   }
 
   return html`
-    <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
-        <div>
-          <h3 style="margin:0 0 6px">AP reporting</h3>
-          <p class="muted" style="margin:0;max-width:620px">
-            Keep reporting narrow: queue health, spend concentration, source coverage, and duplicate risk. Pipeline remains the operational surface.
-          </p>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
-          <button onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
-        </div>
+    <div class="secondary-banner">
+      <div class="secondary-banner-copy">
+        <h3>Reports</h3>
+        <p class="muted">Get a quick view of queue health, spend, coverage, and duplicate risk, then jump back into the work.</p>
+      </div>
+      <div class="secondary-banner-actions">
+        <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
       </div>
     </div>
 
@@ -141,7 +137,7 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
             <${ReportRow}
               label="Average links per invoice"
               value=${Number(sources.avg_links_per_item || 0).toFixed(2)}
-              detail="Across all tracked AP items"
+              detail="Across all tracked records"
             />
             <${ReportRow}
               label="Average links per linked invoice"
@@ -169,7 +165,7 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
         <div class="panel">
           <h3 style="margin-top:0">Autonomy quality</h3>
           <p class="muted" style="margin:0 0 12px">
-            Keep autonomy honest: show whether live vendor decisions and ERP outcomes are matching what the agent proposed.
+            See how often the final outcome matched what Clearledgr suggested.
           </p>
           <div style="display:flex;flex-direction:column;gap:8px">
             <${ReportRow}
@@ -191,8 +187,8 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Start from the right queue view</h3>
-          <p class="muted" style="margin:0 0 12px">Reports should send you back into queue work, not trap you in a dashboard.</p>
+          <h3 style="margin-top:0">Start from the right view</h3>
+          <p class="muted" style="margin:0 0 12px">Use reports to spot a problem, then jump into the matching queue view.</p>
           <div style="display:flex;flex-direction:column;gap:10px">
             ${starterViews.slice(0, 4).map((view) => html`
               <div key=${view.id} style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
@@ -200,17 +196,10 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
                   <strong style="display:block;font-size:13px">${view.name}</strong>
                   <span class="muted" style="font-size:12px">${view.description}</span>
                 </div>
-                <button class="alt" onClick=${() => openStarterView(view)} style="padding:8px 12px;font-size:12px">Open view</button>
+                <button class="btn-secondary btn-sm" onClick=${() => openStarterView(view)}>Open view</button>
               </div>
             `)}
           </div>
-        </div>
-
-        <div class="panel">
-          <h3 style="margin-top:0">Keep this page secondary</h3>
-          <p class="muted" style="margin:0">
-            Use this page to orient spend, evidence coverage, and duplicate risk. Operators should still work approvals, vendor replies, and posting from Pipeline and the shared AP record.
-          </p>
         </div>
       </div>
     </div>

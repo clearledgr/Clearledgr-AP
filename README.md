@@ -3,6 +3,7 @@
 Clearledgr is the execution layer for finance operations, embedding AI agents into the tools finance teams already use.
 
 AP v1 is the first production skill domain: Gmail-first intake, Slack/Teams approvals, ERP write-back, and full audit traceability.
+It is the current wedge, not the full product boundary.
 
 ## Canonical Doctrine
 
@@ -33,8 +34,8 @@ Use this README plus `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_LAUNCH_READI
 ## Product Direction (Locked)
 
 1. One Clearledgr finance execution agent runtime.
-2. AP is the first production skill domain.
-3. Gmail is the primary AP operator surface.
+2. AP is the first production skill domain, not the terminal product scope.
+3. Gmail is the primary AP operator surface in the current wedge, not the entire product.
 4. Gmail default pinned navigation stays intentionally small: `Home`, `Pipeline`, `Connections`.
 5. Slack and Teams are approval/decision surfaces.
 6. ERP is the system of record.
@@ -59,7 +60,7 @@ Clearledgr is not a generic automation builder and not a dashboard-first AP tool
 
 ## Gmail Operator Surface
 
-Gmail is the primary Clearledgr product surface, following a Streak-style model:
+For AP v1, Gmail is the primary operator surface. The Gmail/AP wedge is built as Streak for finance ops:
 
 1. `Clearledgr AP` thread panel is the daily execution workspace.
    - Focused invoice identity strip (vendor, amount, due date, invoice number, PO status).
@@ -68,10 +69,11 @@ Gmail is the primary Clearledgr product surface, following a Streak-style model:
    - Evidence checklist + collapsed audit disclosure.
    - Audit copy is backend-owned via `/api/ap/items/{ap_item_id}/audit` `operator_*` fields (UI renders backend operator wording, not local reason-code phrase maps).
 2. Gmail-native page routes handle setup, pipeline views, monitoring, policy management, team access, and plan/health pages.
-   - Default pinned nav is `Home`, `Pipeline`, and `Connections`.
-   - `Activity` and other secondary pages stay available from Home or via pinning, but are not pinned by default.
+   - The core Gmail work path is `Home`, `Pipeline`, `Review`, and `Upcoming`.
+   - Default pinned nav stays intentionally sparse at `Home` and `Pipeline`; `Review` / `Upcoming` remain part of the core work path without bloating the default left nav.
    - `Pipeline` is the default AP queue/process surface with AP-first slices, finance-native filters/sorts, and direct thread-to-pipeline / pipeline-to-thread reopening.
-   - Saved pipeline views are persisted per authenticated user and organization; `Home` surfaces pinned views first, then finance-native starter views.
+   - `Home` is a Streak-style hub: welcome, quick access, recent work, upcoming work, and secondary tools.
+   - Saved pipeline views are persisted per authenticated user and organization; `Home` surfaces saved views and finance-native starter views before secondary admin tools.
    - `Health` and comparable admin pages are role-gated secondary pages.
    - These pages are still inside Gmail and do not require a separate operating console for normal use.
    - Ops/telemetry/batch/debug content remains out of the thread panel itself and is role-gated in Gmail-native routed pages.
@@ -92,7 +94,7 @@ Clearledgr onboarding and account management still follows an admin-first model,
 
 1. Gmail routed pages own onboarding for Gmail, Slack/Teams, and ERP setup.
 2. Team roles/invites are managed through the same authenticated backend APIs (`/api/workspace/team/*` + `/auth/invites/*`).
-3. `Home` is a lightweight launch hub for readiness, recent activity, and navigation, not a dashboard-heavy control center.
+3. `Home` is a Streak-like launch hub for quick access, recent activity, upcoming work, and secondary tools, not a dashboard-heavy control center.
 4. The thread panel stays execution-focused; setup/config flows live in Gmail-native pages rather than a separate dashboard.
 5. OAuth entry points for setup are launched from authenticated backend endpoints and surfaced inside the Gmail product shell.
 
@@ -247,7 +249,7 @@ GitHub workflows:
 
 Doctrine tests must explicitly enforce:
 
-1. Sparse default Gmail nav (`Home`, `Pipeline`, `Connections` for admins; lighter by default for non-admins).
+1. Sparse default Gmail nav (`Home` and `Pipeline` by default; `Review` / `Upcoming` in the core work path; admin/setup routes secondary and role-gated).
 2. Thread card content limits: one focused work panel, evidence checklist, collapsed audit memory, no KPI/debug/dashboard clutter.
 3. No startup Gmail OAuth auto-popup; auth opens only from explicit operator/admin CTAs.
 4. Role-gated admin routes and secondary pages.
@@ -258,7 +260,7 @@ Manual product review checklist for each release candidate:
 
 1. Thread card: identity strip, status, blockers, one primary CTA, evidence checklist, collapsed key history/background activity.
 2. Pipeline slices: waiting on approval, ready to post, needs info, failed post, blocked/exception, due soon, overdue.
-3. Home lightness: launch hub only, not a dashboard competing with Pipeline or the thread card.
+3. Home lightness: Streak-style hub only, not a dashboard competing with Pipeline or the thread card.
 4. Route gating: admin/setup pages remain secondary and unavailable to non-admin users.
 5. Gmail auth flow: no startup popup; `Connect Gmail` stays user-initiated.
 6. Slack/Teams to Gmail roundtrip: approval/reject/request-info decisions update the same AP item and Gmail record state.

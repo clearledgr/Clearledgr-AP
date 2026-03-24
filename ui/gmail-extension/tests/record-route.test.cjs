@@ -8,7 +8,7 @@ async function importModule(relativePath) {
   return import(`${pathToFileURL(absolute).href}?t=${Date.now()}`);
 }
 
-test('record route remembers the selected AP item and resolves it from storage', async () => {
+test('record route navigates with the explicit AP item id and keeps storage as fallback', async () => {
   const storage = new Map();
   global.window = {
     localStorage: {
@@ -28,9 +28,10 @@ test('record route remembers the selected AP item and resolves it from storage',
   const ok = navigateToRecordDetail((routeId) => { navigatedTo = routeId; }, 'ap-item-123');
 
   assert.equal(ok, true);
-  assert.equal(navigatedTo, 'clearledgr/invoice');
+  assert.equal(navigatedTo, 'clearledgr/invoice/ap-item-123');
   assert.equal(storage.get(ACTIVE_RECORD_ID_STORAGE_KEY), 'ap-item-123');
   assert.equal(resolveRecordRouteId({}, ''), 'ap-item-123');
+  assert.equal(resolveRecordRouteId({}, '#clearledgr/invoice/ap-item-123'), 'ap-item-123');
 
   delete global.window;
 });

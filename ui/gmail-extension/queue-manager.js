@@ -30,6 +30,7 @@ class ClearledgrQueueManager {
     this.backendAuthOrgId = null;
     this.backendAuthRequired = false;
     this.lastBackendAuthFailureAt = 0;
+    this.backendAuthRetryCooldownMs = 30000;
     this.interactiveAuthCooldownMs = 60000;
     this.lastInteractiveAuthAttemptAt = 0;
     this.debugManualScan = false;
@@ -111,8 +112,17 @@ class ClearledgrQueueManager {
   }
 
   buildItemLocator(item) {
+    const primary = item?.primary_source || {};
     const apItemId = String(item?.id || item?.ap_item_id || '').trim();
-    const emailId = String(item?.thread_id || item?.threadId || item?.message_id || item?.messageId || apItemId).trim();
+    const emailId = String(
+      item?.thread_id
+      || item?.threadId
+      || item?.message_id
+      || item?.messageId
+      || primary?.thread_id
+      || primary?.message_id
+      || apItemId
+    ).trim();
     return {
       ap_item_id: apItemId || undefined,
       email_id: emailId || undefined,
@@ -520,13 +530,15 @@ class ClearledgrQueueManager {
   }
 
   async ensureGmailAuth(interactive = true, attempt = 0) {
+    const authTimeoutMs = interactive ? 180000 : 30000;
     const result = await this.safeSendMessage({
       action: 'ensureGmailAuth',
       interactive: !!interactive
     }, {
-      timeoutMs: interactive ? 180000 : 6000
+      timeoutMs: authTimeoutMs
     });
-    if (!result && attempt < 2) {
+    const retryableRuntimeFailure = String(result?.error || '').startsWith('runtime_message_');
+    if ((!result || retryableRuntimeFailure) && attempt < 2) {
       await new Promise((resolve) => setTimeout(resolve, 500));
       return this.ensureGmailAuth(interactive, attempt + 1);
     }
@@ -708,7 +720,12 @@ class ClearledgrQueueManager {
   async backendFetch(url, init = {}, options = {}) {
     const retryOnAuth = options?.retryOnAuth !== false;
     const suppressRefresh = options?.suppressRefresh === true;
-    if (!suppressRefresh && !this.hasBackendCredential() && !this.authInFlight) {
+    if (
+      !suppressRefresh
+      && !this.hasBackendCredential()
+      && !this.authInFlight
+      && !this.isBackendAuthCoolingDown()
+    ) {
       await this.ensureBackendAuth({ force: false, interactive: false });
     }
     const rawHeaders = (init && typeof init === 'object' && init.headers) ? init.headers : {};
@@ -727,6 +744,10 @@ class ClearledgrQueueManager {
     this.clearBackendAuthToken();
 
     if (!retryOnAuth || suppressRefresh || this.authInFlight) {
+      return response;
+    }
+
+    if (this.isBackendAuthCoolingDown()) {
       return response;
     }
 
@@ -1007,6 +1028,17 @@ class ClearledgrQueueManager {
     return Math.ceil(retryAfterMs / 1000);
   }
 
+  getBackendAuthRetryAfterSeconds(now = Date.now()) {
+    const nextAllowedAt = this.lastBackendAuthFailureAt + this.backendAuthRetryCooldownMs;
+    const retryAfterMs = Math.max(0, nextAllowedAt - now);
+    return Math.ceil(retryAfterMs / 1000);
+  }
+
+  isBackendAuthCoolingDown(now = Date.now()) {
+    if (!this.lastBackendAuthFailureAt) return false;
+    return (now - this.lastBackendAuthFailureAt) < this.backendAuthRetryCooldownMs;
+  }
+
   isInteractiveAuthCoolingDown(now = Date.now()) {
     if (!this.lastInteractiveAuthAttemptAt) return false;
     return (now - this.lastInteractiveAuthAttemptAt) < this.interactiveAuthCooldownMs;
@@ -1021,6 +1053,13 @@ class ClearledgrQueueManager {
       const retryAfter = Number(result?.retry_after_seconds || this.getInteractiveAuthRetryAfterSeconds());
       return {
         toast: `Authorization already started. Try again in ${Math.max(1, retryAfter)}s.`,
+        severity: 'warning',
+      };
+    }
+    if (code === 'backend_auth_cooldown') {
+      const retryAfter = Number(result?.retry_after_seconds || this.getBackendAuthRetryAfterSeconds());
+      return {
+        toast: `Clearledgr sign-in is cooling down after repeated failures. Try again in ${Math.max(1, retryAfter)}s.`,
         severity: 'warning',
       };
     }
@@ -1049,6 +1088,13 @@ class ClearledgrQueueManager {
     if (!this.runtimeConfig?.valid) return { success: false, error: 'auth_unavailable' };
     if (this.authInFlight) return { success: false, error: 'auth_in_progress' };
     const now = Date.now();
+    if (!interactive && this.isBackendAuthCoolingDown(now)) {
+      return {
+        success: false,
+        error: 'backend_auth_cooldown',
+        retry_after_seconds: this.getBackendAuthRetryAfterSeconds(now),
+      };
+    }
     if (interactive && this.isInteractiveAuthCoolingDown(now)) {
       return {
         success: false,

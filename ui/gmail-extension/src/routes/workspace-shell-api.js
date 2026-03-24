@@ -53,6 +53,7 @@ export function createWorkspaceShellApi(queueManager) {
     const health = bootstrapPayload.health || {};
     const subscription = bootstrapPayload.subscription || {};
     const currentUser = bootstrapPayload.current_user || {};
+    const capabilities = bootstrapPayload.capabilities || currentUser.capabilities || {};
 
     return {
       dashboard,
@@ -64,6 +65,7 @@ export function createWorkspaceShellApi(queueManager) {
       subscription,
       recentActivity: dashboard.recent_activity || [],
       required_actions: Array.isArray(bootstrapPayload.required_actions) ? bootstrapPayload.required_actions : [],
+      capabilities,
       current_user: currentUser,
     };
   }

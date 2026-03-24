@@ -16,6 +16,7 @@ from main import _apply_runtime_surface_profile, app  # noqa: E402
 from clearledgr.core import database as db_module  # noqa: E402
 from clearledgr.core.auth import create_access_token  # noqa: E402
 from clearledgr.api.ap_items import build_worklist_item  # noqa: E402
+from clearledgr.services.correction_learning import CorrectionLearningService  # noqa: E402
 
 
 def _item_payload(
@@ -148,6 +149,51 @@ def test_upcoming_and_vendor_directory_endpoints_are_org_scoped(client, db):
     assert northwind["profile"]["payment_terms"] == "Net 30"
 
 
+def test_detail_endpoint_returns_canonical_ap_item(client, db):
+    item = db.create_ap_item(
+        _item_payload(
+            "detail-alpha",
+            "default",
+            vendor_name="Google Payments",
+            invoice_number="5499678906",
+            state="received",
+        )
+    )
+
+    response = client.get(
+        f"/api/ap/items/{item['id']}?organization_id=default",
+        headers=_auth_headers("default"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == item["id"]
+    assert payload["invoice_number"] == "5499678906"
+    assert payload["vendor_name"] == "Google Payments"
+
+
+def test_detail_endpoint_resolves_invoice_number_alias(client, db):
+    item = db.create_ap_item(
+        _item_payload(
+            "detail-beta",
+            "default",
+            vendor_name="Google Payments",
+            invoice_number="INV-GOOGLE-2026-02",
+            state="received",
+        )
+    )
+
+    response = client.get(
+        "/api/ap/items/INV-GOOGLE-2026-02?organization_id=default",
+        headers=_auth_headers("default"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == item["id"]
+    assert payload["invoice_number"] == "INV-GOOGLE-2026-02"
+
+
 def test_build_worklist_item_surfaces_attachment_metadata_from_sources(db):
     item = db.create_ap_item(
         _item_payload(
@@ -259,6 +305,155 @@ def test_build_worklist_item_surfaces_extraction_conflicts_and_provenance(db):
     assert normalized["field_review_blockers"][0]["email_value_display"] == "USD 400.00"
     assert normalized["field_review_blockers"][0]["attachment_value_display"] == "USD 440.00"
     assert normalized["field_review_blockers"][0]["winning_source_label"] == "Attachment"
+    assert normalized["pipeline_blockers"][0]["kind"] == "confidence"
+    assert normalized["pipeline_blockers"][0]["type"] == "source_conflict"
+    assert normalized["pipeline_blockers"][0]["chip_label"] == "Field review"
+    assert normalized["pipeline_blockers"][0]["title"] == "Amount blocked"
+    assert normalized["pipeline_blockers"][0]["detail"] == "Email USD 400.00 · Attachment USD 440.00"
+
+
+def test_build_worklist_item_surfaces_confidence_threshold_in_pipeline_blockers(db):
+    item = db.create_ap_item(
+        _item_payload(
+            "confidence-review-1",
+            "default",
+            state="received",
+            extra={"due_date": "2026-04-01",
+                "confidence": 0.91,
+                "field_confidences": {
+                    "vendor": 0.94,
+                    "amount": 0.95,
+                    "invoice_number": 0.94,
+                    "due_date": 0.89,
+                },
+                "metadata": {
+                    "requires_field_review": True,
+                    "confidence_blockers": [
+                        {"field": "vendor", "reason": "critical_field_low_confidence"},
+                        {"field": "invoice_number", "reason": "critical_field_low_confidence"},
+                        {"field": "due_date", "reason": "critical_field_low_confidence"},
+                    ],
+                },
+            },
+        )
+    )
+
+    normalized = build_worklist_item(db, item)
+
+    assert [row["type"] for row in normalized["pipeline_blockers"][:3]] == [
+        "confidence_review",
+        "confidence_review",
+        "confidence_review",
+    ]
+    assert normalized["pipeline_blockers"][0]["title"] == "Vendor needs review"
+    assert normalized["pipeline_blockers"][0]["detail"] == (
+        "Vendor confidence is 94%, below the 95% review threshold."
+    )
+    assert normalized["pipeline_blockers"][2]["title"] == "Due date needs review"
+    assert normalized["pipeline_blockers"][2]["detail"] == (
+        "Due date confidence is 89%, below the 95% review threshold."
+    )
+
+
+def test_build_worklist_item_recalibrates_google_sender_confidence_gate(db):
+    item = db.create_ap_item(
+        _item_payload(
+            "google-calibration-1",
+            "default",
+            vendor_name="Google Cloud EMEA Limited",
+            state="received",
+            extra={
+                "sender": "Google Payments <payments-noreply@google.com>",
+                "confidence": 0.91,
+                "field_confidences": {
+                    "vendor": 0.94,
+                    "amount": 0.95,
+                    "invoice_number": 0.94,
+                    "due_date": 0.89,
+                },
+                "metadata": {
+                    "document_type": "invoice",
+                    "primary_source": "attachment",
+                    "has_attachment": True,
+                    "source_sender_domain": "google.com",
+                    "requires_field_review": True,
+                    "confidence_blockers": [
+                        {"field": "vendor", "reason": "critical_field_low_confidence"},
+                        {"field": "invoice_number", "reason": "critical_field_low_confidence"},
+                        {"field": "due_date", "reason": "critical_field_low_confidence"},
+                    ],
+                },
+            },
+        )
+    )
+
+    normalized = build_worklist_item(db, item)
+
+    assert normalized["confidence_gate"]["profile_id"] == "known_billing_attachment_invoice"
+    assert normalized["requires_field_review"] is False
+    assert normalized["confidence_blockers"] == []
+    assert normalized["pipeline_blockers"] == []
+
+
+def test_build_worklist_item_hides_planner_failed_behind_field_review_blockers(db):
+    item = db.create_ap_item(
+        _item_payload(
+            "planner-failed-1",
+            "default",
+            state="received",
+            extra={
+                "field_confidences": {
+                    "vendor": 0.94,
+                    "amount": 0.99,
+                    "invoice_number": 0.99,
+                    "due_date": 0.99,
+                },
+                "metadata": {
+                    "exception_code": "planner_failed",
+                    "requires_field_review": True,
+                    "confidence_blockers": [
+                        {"field": "vendor", "reason": "critical_field_low_confidence", "confidence_pct": 94, "threshold_pct": 95}
+                    ],
+                },
+            },
+        )
+    )
+
+    normalized = build_worklist_item(db, item)
+
+    assert [row["kind"] for row in normalized["pipeline_blockers"]] == ["confidence"]
+
+
+def test_build_worklist_item_surfaces_planner_failed_as_processing_issue_without_user_blockers(db):
+    item = db.create_ap_item(
+        _item_payload(
+            "planner-failed-2",
+            "default",
+            state="received",
+            extra={
+                "metadata": {
+                    "exception_code": "planner_failed",
+                    "requires_field_review": False,
+                    "confidence_blockers": [],
+                },
+            },
+        )
+    )
+
+    normalized = build_worklist_item(db, item)
+
+    assert normalized["pipeline_blockers"] == [
+        {
+            "kind": "processing",
+            "type": "processing_issue",
+            "chip_label": "Processing issue",
+            "title": "Processing issue",
+            "detail": "Invoice processing needs retry or refresh before it can continue.",
+            "field": None,
+            "severity": "medium",
+            "code": "planner_failed",
+        }
+    ]
 
 
 def test_field_review_resolution_endpoint_updates_canonical_record_and_clears_blocker(client, db):
@@ -337,6 +532,16 @@ def test_field_review_resolution_endpoint_updates_canonical_record_and_clears_bl
 
     audit_events = db.list_ap_audit_events(item["id"])
     assert any(event["event_type"] == "field_correction" for event in audit_events)
+
+    snapshot = CorrectionLearningService("default").get_extraction_review_calibration_snapshot(
+        vendor_name="Acme",
+        sender_domain="ap@acme.example",
+        document_type="invoice",
+    )
+    assert snapshot["status"] == "available"
+    assert snapshot["fields"]["amount"]["review_count"] == 1
+    assert snapshot["fields"]["amount"]["confirmed_count"] == 1
+    assert snapshot["fields"]["amount"]["source_win_rates"]["attachment"] == 1.0
 
 
 def test_field_review_resolution_endpoint_auto_resumes_retry_path_when_last_blocker_clears(client, db, monkeypatch):

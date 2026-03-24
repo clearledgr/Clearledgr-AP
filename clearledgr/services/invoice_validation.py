@@ -76,6 +76,26 @@ class InvoiceValidationMixin:
         return DEFAULT_CRITICAL_FIELD_CONFIDENCE_THRESHOLD
 
     def _evaluate_invoice_confidence_gate(self, invoice: InvoiceData) -> Dict[str, Any]:
+        learned_threshold_overrides = None
+        learned_profile_id = None
+        learned_signal_count = 0
+        if invoice.organization_id and invoice.vendor_name:
+            try:
+                from clearledgr.services.correction_learning import get_correction_learning_service
+
+                learned_adjustments = get_correction_learning_service(str(invoice.organization_id)).get_extraction_confidence_adjustments(
+                    vendor_name=invoice.vendor_name,
+                    sender_domain=invoice.sender,
+                    document_type="invoice",
+                )
+                learned_threshold_overrides = learned_adjustments.get("threshold_overrides") or None
+                learned_profile_id = learned_adjustments.get("profile_id")
+                learned_signal_count = int(learned_adjustments.get("signal_count") or 0)
+            except Exception:
+                learned_threshold_overrides = None
+                learned_profile_id = None
+                learned_signal_count = 0
+
         return evaluate_critical_field_confidence(
             overall_confidence=invoice.confidence,
             field_values={
@@ -86,6 +106,14 @@ class InvoiceValidationMixin:
             },
             field_confidences=invoice.field_confidences,
             threshold=self._critical_field_confidence_threshold(),
+            vendor_name=invoice.vendor_name,
+            sender=invoice.sender,
+            document_type="invoice",
+            primary_source="attachment" if invoice.attachment_url else "email",
+            has_attachment=bool(invoice.attachment_url),
+            learned_threshold_overrides=learned_threshold_overrides,
+            learned_profile_id=learned_profile_id,
+            learned_signal_count=learned_signal_count,
         )
 
     def _evaluate_invoice_row_confidence_gate(
@@ -105,6 +133,28 @@ class InvoiceValidationMixin:
             metadata = {}
 
         field_confidences = field_confidences_override or metadata.get("field_confidences")
+        learned_threshold_overrides = None
+        learned_profile_id = None
+        learned_signal_count = 0
+        organization_id = invoice_row.get("organization_id") or metadata.get("organization_id")
+        vendor_name = invoice_row.get("vendor") or invoice_row.get("vendor_name")
+        if organization_id and vendor_name:
+            try:
+                from clearledgr.services.correction_learning import get_correction_learning_service
+
+                learned_adjustments = get_correction_learning_service(str(organization_id)).get_extraction_confidence_adjustments(
+                    vendor_name=vendor_name,
+                    sender_domain=metadata.get("source_sender_domain") or invoice_row.get("sender"),
+                    document_type=invoice_row.get("document_type") or metadata.get("document_type") or metadata.get("email_type"),
+                )
+                learned_threshold_overrides = learned_adjustments.get("threshold_overrides") or None
+                learned_profile_id = learned_adjustments.get("profile_id")
+                learned_signal_count = int(learned_adjustments.get("signal_count") or 0)
+            except Exception:
+                learned_threshold_overrides = None
+                learned_profile_id = None
+                learned_signal_count = 0
+
         return evaluate_critical_field_confidence(
             overall_confidence=invoice_row.get("confidence"),
             field_values={
@@ -115,6 +165,19 @@ class InvoiceValidationMixin:
             },
             field_confidences=field_confidences,
             threshold=self._critical_field_confidence_threshold(),
+            vendor_name=invoice_row.get("vendor") or invoice_row.get("vendor_name"),
+            sender=invoice_row.get("sender"),
+            document_type=invoice_row.get("document_type") or metadata.get("document_type") or metadata.get("email_type"),
+            primary_source=metadata.get("primary_source"),
+            has_attachment=bool(
+                invoice_row.get("attachment_url")
+                or invoice_row.get("has_attachment")
+                or metadata.get("has_attachment")
+            ),
+            sender_domain=metadata.get("source_sender_domain"),
+            learned_threshold_overrides=learned_threshold_overrides,
+            learned_profile_id=learned_profile_id,
+            learned_signal_count=learned_signal_count,
         )
 
     # High-severity PO exception types that block approval without override.

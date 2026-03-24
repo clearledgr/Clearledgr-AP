@@ -73,28 +73,25 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
   }
 
   return html`
-    <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
-        <div>
-          <h3 style="margin:0 0 6px">Vendor directory</h3>
-          <p class="muted" style="margin:0;max-width:620px">
-            Use vendor records for shared supplier memory, then jump back into Pipeline for the actual queue work.
-          </p>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
-          <button onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
-        </div>
+    <div class="secondary-banner">
+      <div class="secondary-banner-copy">
+        <h3>Vendor directory</h3>
+        <p class="muted">See past invoices, open issues, and recent activity for each vendor, then jump back into the queue when you need to act.</p>
+      </div>
+      <div class="secondary-banner-actions">
+        <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
       </div>
     </div>
 
+    <div class="secondary-chip-row" style="margin:0 0 18px">
+      <span class="secondary-chip">Vendors tracked ${vendors.length}</span>
+      <span class="secondary-chip">Open invoices ${vendors.reduce((sum, vendor) => sum + Number(vendor.open_count || 0), 0).toLocaleString()}</span>
+      <span class="secondary-chip">Total spend ${fmtDollar(vendors.reduce((sum, vendor) => sum + Number(vendor.total_amount || 0), 0))}</span>
+      <span class="secondary-chip">Needs info ${vendors.reduce((sum, vendor) => sum + Number(vendor.needs_info_count || 0), 0).toLocaleString()}</span>
+    </div>
+
     <div class="panel">
-      <div class="readiness-list" style="margin:0 0 14px">
-        <div class="readiness-item"><strong>Vendors tracked:</strong> ${vendors.length}</div>
-        <div class="readiness-item"><strong>Open invoices:</strong> ${vendors.reduce((sum, vendor) => sum + Number(vendor.open_count || 0), 0).toLocaleString()}</div>
-        <div class="readiness-item"><strong>Total spend:</strong> ${fmtDollar(vendors.reduce((sum, vendor) => sum + Number(vendor.total_amount || 0), 0))}</div>
-        <div class="readiness-item"><strong>Needs info:</strong> ${vendors.reduce((sum, vendor) => sum + Number(vendor.needs_info_count || 0), 0).toLocaleString()}</div>
-      </div>
 
       <div style="position:relative">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%)"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
@@ -137,9 +134,9 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
                     <div class="muted" style="font-size:12px;margin-top:4px">${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</div>
                   </div>
                 </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-                  <button class="alt" onClick=${() => openVendorRecord(vendor)} style="padding:8px 12px;font-size:12px">Open vendor record</button>
-                  <button class="alt" onClick=${() => openVendorPipeline(vendor)} style="padding:8px 12px;font-size:12px">Open in pipeline</button>
+                <div class="row-actions" style="margin-top:12px">
+                  <button class="btn-secondary btn-sm" onClick=${() => openVendorRecord(vendor)}>Open vendor record</button>
+                  <button class="btn-ghost btn-sm" onClick=${() => openVendorPipeline(vendor)}>Open in pipeline</button>
                 </div>
               </div>
             `)}

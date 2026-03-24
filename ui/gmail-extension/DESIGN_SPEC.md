@@ -1,11 +1,18 @@
-# Clearledgr Gmail Extension - Design Specification v1.1
+# Clearledgr Gmail Extension - Design Specification v1.2
 
-> **Update (Feb 4, 2026):** Gmail v1 is **InboxSDK-only** (Streak-style routes + InboxSDK sidebar panels).  
-> The legacy **custom DOM sidebar + FAB** approach and **Dark Mode** have been removed.  
-> Sections referencing FAB/overlay sidebars/dark mode are deprecated and should be ignored.
+> **Update (Mar 23, 2026):** Clearledgr is an embedded finance-ops execution layer. The **Gmail/AP wedge** is designed as **Streak for finance ops**. [`DESIGN.md`](/Users/mombalam/Desktop/Clearledgr.v1/DESIGN.md) is the primary source of truth for overall product design doctrine, while this file remains the Gmail-extension-specific spec.
 
-> **Purpose:** Automate finance workflows from inbox to ledger within Gmail.  
-> **Philosophy:** Finance teams shouldn't hunt for invoices. Clearledgr finds them.
+> **Current Gmail doctrine:**  
+> - the `Clearledgr AP` thread panel is the daily execution surface  
+> - `Home` is the start page and hub  
+> - `Pipeline` is the hero queue/work surface  
+> - `Review` and `Upcoming` are focused follow-up surfaces  
+> - `Connections` and admin tools are secondary pages, not peers in the main work path
+
+> **Historical note:** Part A FAB/batch-queue ideas and any dark-mode references below are legacy exploration. They should not guide new implementation unless explicitly revived.
+
+> **Purpose:** Run finance work from inbox to ledger within Gmail.  
+> **Philosophy:** Finance teams should work from the inbox, not leave it.
 
 ---
 

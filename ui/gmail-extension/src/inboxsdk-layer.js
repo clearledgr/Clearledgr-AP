@@ -25,6 +25,8 @@ import { resolveVendorRouteName } from './utils/vendor-route.js';
 import {
   ROUTES,
   DEFAULT_ROUTE,
+  canViewRoute,
+  getVisibleNavRoutes,
   getNavEligibleRoutes,
   getMenuNavRoutes,
   readRoutePreferences,
@@ -40,9 +42,7 @@ import UpcomingPage from './routes/pages/UpcomingPage.js';
 import ActivityPage from './routes/pages/ActivityPage.js';
 import ConnectionsPage from './routes/pages/ConnectionsPage.js';
 import RulesPage from './routes/pages/RulesPage.js';
-import TeamPage from './routes/pages/TeamPage.js';
-import CompanyPage from './routes/pages/CompanyPage.js';
-import PlanPage from './routes/pages/PlanPage.js';
+import SettingsPage from './routes/pages/SettingsPage.js';
 import ReconciliationPage from './routes/pages/ReconciliationPage.js';
 import HealthPage from './routes/pages/HealthPage.js';
 import PipelinePage from './routes/pages/PipelinePage.js';
@@ -51,7 +51,7 @@ import VendorsPage from './routes/pages/VendorsPage.js';
 import VendorDetailPage from './routes/pages/VendorDetailPage.js';
 import TemplatesPage from './routes/pages/TemplatesPage.js';
 import ReportsPage from './routes/pages/ReportsPage.js';
-import { hasAdminAccess, hasOpsAccess } from './routes/route-helpers.js';
+import { getCapabilities } from './routes/route-helpers.js';
 import {
   clearPipelineNavigation,
   focusPipelineItem,
@@ -648,11 +648,15 @@ function registerAppMenuAndRoutes() {
     'clearledgr/reports': ReportsPage,
     'clearledgr/connections': ConnectionsPage,
     'clearledgr/rules': RulesPage,
-    'clearledgr/team': TeamPage,
-    'clearledgr/company': CompanyPage,
-    'clearledgr/plan': PlanPage,
+    'clearledgr/settings': SettingsPage,
     'clearledgr/reconciliation': ReconciliationPage,
     'clearledgr/health': HealthPage,
+  };
+  const settingsRoute = ROUTES.find((route) => route.id === 'clearledgr/settings') || null;
+  const LEGACY_PAGE_MAP = {
+    'clearledgr/team': PAGE_MAP['clearledgr/settings'],
+    'clearledgr/company': PAGE_MAP['clearledgr/settings'],
+    'clearledgr/plan': PAGE_MAP['clearledgr/settings'],
   };
 
   function clearNavItemViews(handles) {
@@ -665,7 +669,9 @@ function registerAppMenuAndRoutes() {
   function rebuildMenuNavigation() {
     if (!routeAccessResolved) return;
     const routeOptions = currentRouteAccess;
-    const menuRoutes = getMenuNavRoutes(readRoutePreferences(routeOptions), routeOptions);
+    const routePreferences = readRoutePreferences(routeOptions);
+    const menuRoutes = getMenuNavRoutes(routePreferences, routeOptions);
+    const visibleRoutes = getVisibleNavRoutes(routePreferences, routeOptions);
     const pipelineScope = {
       orgId: queueManager?.runtimeConfig?.organizationId || 'default',
       userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
@@ -701,7 +707,7 @@ function registerAppMenuAndRoutes() {
     }
 
     if (sdk.NavMenu && typeof sdk.NavMenu.addNavItem === 'function') {
-      menuRoutes.forEach((route) => {
+      visibleRoutes.forEach((route) => {
         const navHandle = sdk.NavMenu.addNavItem({
           name: route.title,
           routeID: route.id,
@@ -742,7 +748,7 @@ function registerAppMenuAndRoutes() {
 
   let bootstrapCache = null;
   let bootstrapPromise = null;
-  let currentRouteAccess = { includeAdmin: false, includeOps: false };
+  let currentRouteAccess = { capabilities: {} };
   let routeAccessResolved = false;
 
   async function getBootstrap() {
@@ -771,17 +777,14 @@ function registerAppMenuAndRoutes() {
         }
       }
       const nextRouteAccess = {
-        includeAdmin: hasAdminAccess(data),
-        includeOps: hasOpsAccess(data),
+        capabilities: getCapabilities(data),
       };
       const hadResolvedRouteAccess = routeAccessResolved;
       routeAccessResolved = true;
       if (
         !hadResolvedRouteAccess
         || appMenuNavItemViews.length === 0
-        || 
-        nextRouteAccess.includeAdmin !== currentRouteAccess.includeAdmin
-        || nextRouteAccess.includeOps !== currentRouteAccess.includeOps
+        || JSON.stringify(nextRouteAccess.capabilities) !== JSON.stringify(currentRouteAccess.capabilities)
       ) {
         currentRouteAccess = nextRouteAccess;
         rebuildMenuNavigation();
@@ -791,7 +794,7 @@ function registerAppMenuAndRoutes() {
     }).catch(() => {
       bootstrapPromise = null;
       routeAccessResolved = true;
-      currentRouteAccess = { includeAdmin: false, includeOps: false };
+      currentRouteAccess = { capabilities: getCapabilities({}) };
       if (appMenuNavItemViews.length === 0 && fallbackNavItemViews.length === 0) {
         rebuildMenuNavigation();
       }
@@ -917,7 +920,9 @@ function registerAppMenuAndRoutes() {
       const topbar = document.createElement('div');
       topbar.className = 'topbar';
       topbar.innerHTML = `<h2>${route.title}</h2><p>${route.subtitle}</p>`;
-      container.appendChild(topbar);
+      if (route.hideTopbar !== true) {
+        container.appendChild(topbar);
+      }
 
       const pageMount = document.createElement('div');
       container.appendChild(pageMount);
@@ -931,10 +936,7 @@ function registerAppMenuAndRoutes() {
       let renderCurrentPage = async () => {};
       const updateRoutePreferences = async (nextPreferences) => {
         const bootstrap = await getBootstrap();
-        const routeOptions = {
-          includeAdmin: hasAdminAccess(bootstrap),
-          includeOps: hasOpsAccess(bootstrap),
-        };
+        const routeOptions = { capabilities: getCapabilities(bootstrap) };
         const normalized = writeRoutePreferences(nextPreferences, routeOptions);
         rebuildMenuNavigation();
         await renderCurrentPage();
@@ -943,18 +945,12 @@ function registerAppMenuAndRoutes() {
 
       renderCurrentPage = async () => {
         const bootstrap = await getBootstrap();
-        const routeOptions = {
-          includeAdmin: hasAdminAccess(bootstrap),
-          includeOps: hasOpsAccess(bootstrap),
-        };
-        if ((route.opsOnly && !routeOptions.includeOps) || (route.adminOnly && !routeOptions.includeAdmin)) {
-          const restrictionCopy = route.adminOnly
-            ? 'This page is only available to operators with admin access.'
-            : 'This page is only available to AP operators.';
+        const routeOptions = { capabilities: getCapabilities(bootstrap) };
+        if (!canViewRoute(route, routeOptions)) {
           render(html`
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
-              <p class="muted" style="margin:0 0 12px">${restrictionCopy}</p>
+              <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
               <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Home</button>
             </div>
           `, pageMount);
@@ -973,6 +969,68 @@ function registerAppMenuAndRoutes() {
           routePreferences=${routePreferences}
           availableRoutes=${getNavEligibleRoutes(routeOptions)}
           updateRoutePreferences=${updateRoutePreferences}
+          routeId=${route.id}
+        />`, pageMount);
+      };
+
+      await renderCurrentPage();
+    });
+  }
+
+  for (const [routeId, PageComponent] of Object.entries(LEGACY_PAGE_MAP)) {
+    sdk.Router.handleCustomRoute(routeId, async (customRouteView) => {
+      const container = document.createElement('div');
+      container.className = 'cl-route';
+
+      const style = document.createElement('style');
+      style.textContent = ROUTE_CSS;
+      container.appendChild(style);
+
+      const topbar = document.createElement('div');
+      topbar.className = 'topbar';
+      topbar.innerHTML = '<h2>Settings</h2><p>Team, workspace, and billing.</p>';
+      container.appendChild(topbar);
+
+      const pageMount = document.createElement('div');
+      container.appendChild(pageMount);
+      customRouteView.getElement().appendChild(container);
+
+      const orgId = workspaceShellApi.orgId();
+      const navigate = (nextRouteId) => sdk.Router.goto(nextRouteId);
+      const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
+
+      const renderCurrentPage = async () => {
+        const bootstrap = await getBootstrap();
+        const routeOptions = { capabilities: getCapabilities(bootstrap) };
+        if (settingsRoute && !canViewRoute(settingsRoute, routeOptions)) {
+          render(html`
+            <div class="panel">
+              <h3 style="margin:0 0 8px">Access restricted</h3>
+              <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
+              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Home</button>
+            </div>
+          `, pageMount);
+          return;
+        }
+        const routePreferences = readRoutePreferences(routeOptions);
+        render(html`<${PageComponent}
+          bootstrap=${bootstrap}
+          api=${workspaceShellApi.api}
+          toast=${workspaceShellApi.toast}
+          orgId=${orgId}
+          userEmail=${userEmail}
+          onRefresh=${async () => { onRefresh(); await renderCurrentPage(); }}
+          oauthBridge=${oauthBridge}
+          navigate=${navigate}
+          routePreferences=${routePreferences}
+          availableRoutes=${getNavEligibleRoutes(routeOptions)}
+          updateRoutePreferences=${async (nextPreferences) => {
+            const normalized = writeRoutePreferences(nextPreferences, routeOptions);
+            rebuildMenuNavigation();
+            await renderCurrentPage();
+            return normalized;
+          }}
+          routeId=${routeId}
         />`, pageMount);
       };
 

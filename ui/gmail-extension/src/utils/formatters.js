@@ -73,8 +73,11 @@ const FIELD_LABELS = {
 
 const SOURCE_LABELS = {
   email: 'Email',
-  attachment: 'Attachment',
-  llm: 'Model',
+  attachment: 'Invoice attachment',
+  llm: 'Current invoice parse',
+  parser: 'Current invoice parse',
+  current_parse: 'Current invoice parse',
+  ocr: 'Current invoice parse',
 };
 
 const FINANCE_EFFECT_REASON_LABELS = {
@@ -108,6 +111,25 @@ function formatFieldReviewValue(field, value, currency = 'USD') {
   return String(value);
 }
 
+function getCurrentFieldReviewValue(item = {}, field = '') {
+  const token = String(field || '').trim().toLowerCase();
+  if (token === 'vendor') return item?.vendor_name || item?.vendor || null;
+  if (token === 'document_type') return item?.document_type || null;
+  return item?.[token] ?? null;
+}
+
+function inferFieldReviewSource(currentValue, emailValue, attachmentValue) {
+  if (currentValue !== null && currentValue !== undefined && currentValue !== '') {
+    if (attachmentValue !== null && attachmentValue !== undefined && attachmentValue !== '' && currentValue === attachmentValue) {
+      return 'attachment';
+    }
+    if (emailValue !== null && emailValue !== undefined && emailValue !== '' && currentValue === emailValue) {
+      return 'email';
+    }
+  }
+  return '';
+}
+
 export function getFieldReviewBlockers(item = {}) {
   const existing = Array.isArray(item?.field_review_blockers) ? item.field_review_blockers : [];
   if (existing.length > 0) return existing;
@@ -137,9 +159,9 @@ export function getFieldReviewBlockers(item = {}) {
     const fieldLabel = getFieldLabel(field);
     const winnerLabel = getSourceLabel(winningSource);
     const attachmentName = String(evidenceEntry.attachment_name || '').trim();
-    let winnerReason = `${winnerLabel} currently wins because Clearledgr selected that value as canonical.`;
+    let winnerReason = `${winnerLabel} is currently selected.`;
     if (winningSource === 'attachment' && attachmentName) {
-      winnerReason = `${winnerLabel} currently wins because Clearledgr selected the value from ${attachmentName} as canonical.`;
+      winnerReason = `${winnerLabel} is currently selected from ${attachmentName}.`;
     }
 
     blockers.push({
@@ -155,8 +177,8 @@ export function getFieldReviewBlockers(item = {}) {
       winning_value: winningValue,
       winning_value_display: formatFieldReviewValue(field, winningValue, currency),
       reason: String(conflict.reason || 'source_value_mismatch'),
-      reason_label: 'Email and attachment disagree.',
-      paused_reason: `Workflow paused until ${fieldLabel.toLowerCase()} is confirmed because the email and attachment disagree.`,
+      reason_label: 'Email and attachment do not match.',
+      paused_reason: `Check ${fieldLabel.toLowerCase()} because the email and attachment do not match.`,
       winner_reason: winnerReason,
     });
     seen.add(field);
@@ -171,13 +193,45 @@ export function getFieldReviewBlockers(item = {}) {
     ).trim().toLowerCase();
     if (!field || seen.has(field)) continue;
     const fieldLabel = getFieldLabel(field);
+    const provenanceEntry = provenance[field] && typeof provenance[field] === 'object' ? provenance[field] : {};
+    const evidenceEntry = evidence[field] && typeof evidence[field] === 'object' ? evidence[field] : {};
+    const candidateValues = provenanceEntry.candidates && typeof provenanceEntry.candidates === 'object' ? provenanceEntry.candidates : {};
+    const confidenceValue = typeof blocker === 'object' ? blocker?.confidence : null;
+    const confidencePct = typeof blocker === 'object'
+      ? (blocker?.confidence_pct ?? (confidenceValue !== null && confidenceValue !== undefined && confidenceValue !== '' ? Math.round(Number(confidenceValue) * 100) : null))
+      : null;
+    const thresholdPct = typeof blocker === 'object' ? blocker?.threshold_pct ?? 95 : 95;
+    let currentSource = String(provenanceEntry.source || evidenceEntry.source || '').trim().toLowerCase();
+    const currentValue = provenanceEntry.value ?? evidenceEntry.selected_value ?? getCurrentFieldReviewValue(item, field);
+    const emailValue = candidateValues.email ?? evidenceEntry.email_value ?? null;
+    const attachmentValue = candidateValues.attachment ?? evidenceEntry.attachment_value ?? null;
+    if (!currentSource) currentSource = inferFieldReviewSource(currentValue, emailValue, attachmentValue);
     blockers.push({
       kind: 'confidence',
       field,
       field_label: fieldLabel,
       reason: String(typeof blocker === 'object' ? blocker?.reason || blocker?.code || 'critical_field_review_required' : 'critical_field_review_required'),
-      reason_label: 'Critical extracted field needs review.',
-      paused_reason: `Workflow paused until ${fieldLabel.toLowerCase()} is reviewed.`,
+      reason_label: 'A person needs to confirm this field before the invoice can move forward.',
+      paused_reason: confidencePct !== null && confidencePct !== undefined && thresholdPct !== null && thresholdPct !== undefined
+        ? `Review ${fieldLabel.toLowerCase()} before this invoice moves forward.`
+        : `Review ${fieldLabel.toLowerCase()} before this invoice moves forward.`,
+      current_value: currentValue,
+      current_value_display: formatFieldReviewValue(field, currentValue, currency),
+      current_source: currentSource || null,
+      current_source_label: currentSource ? getSourceLabel(currentSource) : '',
+      email_value: emailValue,
+      email_value_display: formatFieldReviewValue(field, emailValue, currency),
+      attachment_value: attachmentValue,
+      attachment_value_display: formatFieldReviewValue(field, attachmentValue, currency),
+      confidence: confidenceValue,
+      confidence_pct: confidencePct,
+      threshold_pct: thresholdPct,
+      winner_reason: confidencePct !== null && confidencePct !== undefined && thresholdPct !== null && thresholdPct !== undefined
+        ? `Clearledgr read ${formatFieldReviewValue(field, currentValue, currency)}${currentSource ? ` from the ${getSourceLabel(currentSource).toLowerCase()}` : ''}. Because ${fieldLabel.toLowerCase()} is a critical field, a person needs to confirm it before approval continues.`
+        : `Clearledgr needs the ${fieldLabel.toLowerCase()} confirmed before this invoice can continue.`,
+      auto_check_note: confidencePct !== null && confidencePct !== undefined && thresholdPct !== null && thresholdPct !== undefined
+        ? `Auto-pass rule: ${thresholdPct}% minimum. This read scored ${confidencePct}%.`
+        : '',
     });
     seen.add(field);
   }
@@ -191,18 +245,18 @@ export function getWorkflowPauseReason(item = {}) {
   const blockers = getFieldReviewBlockers(item);
   if (blockers.length === 0 && !item?.requires_field_review) return '';
   const fieldLabels = blockers.map((blocker) => String(blocker?.field_label || '').trim().toLowerCase()).filter(Boolean);
-  if (fieldLabels.length === 0) return 'Workflow paused until extracted fields are reviewed.';
+  if (fieldLabels.length === 0) return 'Check the extracted fields before continuing.';
   if (fieldLabels.length === 1) {
     const hasSourceConflict = blockers.some((blocker) => blocker?.kind === 'source_conflict');
     return hasSourceConflict
-      ? `Workflow paused until ${fieldLabels[0]} is confirmed because the email and attachment disagree.`
-      : `Workflow paused until ${fieldLabels[0]} is reviewed.`;
+      ? `Review ${fieldLabels[0]} before this invoice moves forward because the email and attachment do not match.`
+      : `Review ${fieldLabels[0]} before this invoice moves forward.`;
   }
   const summary = `${fieldLabels.slice(0, -1).join(', ')} and ${fieldLabels[fieldLabels.length - 1]}`;
   const hasSourceConflict = blockers.some((blocker) => blocker?.kind === 'source_conflict');
   return hasSourceConflict
-    ? `Workflow paused until ${summary} are confirmed because the email and attachment disagree.`
-    : `Workflow paused until ${summary} are reviewed.`;
+    ? `Review ${summary} before this invoice moves forward because the email and attachment do not match.`
+    : `Review ${summary} before this invoice moves forward.`;
 }
 
 export function getFinanceEffectBlockers(item = {}) {
@@ -228,7 +282,7 @@ export function getFinanceEffectNotice(item = {}) {
   const blockers = getFinanceEffectBlockers(item);
   if (Boolean(item?.finance_effect_review_required)) {
     return blockers[0]?.detail
-      || 'Linked credits, payments, or refunds change the net payable amount. Review the accounting linkage before routing or posting.';
+      || 'Credits, payments, or refunds change the invoice balance. Review them before continuing.';
   }
   if (!summary || Object.keys(summary).length === 0) return '';
 
@@ -237,7 +291,7 @@ export function getFinanceEffectNotice(item = {}) {
   const remainingBalance = Number(summary.remaining_balance_amount || 0);
   if (!Number.isFinite(creditTotal) && !Number.isFinite(netCashTotal)) return '';
   if ((creditTotal > 0 || netCashTotal !== 0) && Number.isFinite(remainingBalance)) {
-    return `Net payable after linked finance documents: ${formatAmount(remainingBalance, summary.currency || item?.currency || 'USD')}.`;
+    return `Remaining balance after credits and payments: ${formatAmount(remainingBalance, summary.currency || item?.currency || 'USD')}.`;
   }
   return '';
 }
@@ -377,7 +431,24 @@ export function getExceptionReason(exceptionCode) {
   if (c === 'policy_validation_failed') return 'AP policy check failed — review required';
   if (c === 'duplicate_invoice') return 'Duplicate invoice detected for this vendor';
   if (c === 'confidence_low') return 'Extraction confidence too low for auto-posting';
+  if (c === 'planner_failed') return 'Automatic review could not continue for this invoice';
+  if (c === 'erp_post_failed') return 'Posting to the ERP failed and needs retry';
   return '';
+}
+
+export function getExceptionLabel(exceptionCode) {
+  const c = String(exceptionCode || '').trim().toLowerCase();
+  if (c === 'po_missing_reference') return 'PO required';
+  if (c === 'po_amount_mismatch') return 'PO amount mismatch';
+  if (c === 'receipt_missing') return 'Receipt missing';
+  if (c === 'budget_overrun') return 'Budget overrun';
+  if (c === 'missing_budget_context') return 'Missing budget context';
+  if (c === 'policy_validation_failed') return 'Policy review';
+  if (c === 'duplicate_invoice') return 'Duplicate invoice';
+  if (c === 'confidence_low') return 'Low confidence';
+  if (c === 'planner_failed') return 'Processing issue';
+  if (c === 'erp_post_failed') return 'ERP post failed';
+  return c ? humanizeSnakeText(c) : '';
 }
 
 export function getDueRiskLabel(dueDateValue) {

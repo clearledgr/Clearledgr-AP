@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
@@ -32,6 +33,8 @@ from enum import Enum
 from clearledgr.core.database import get_db
 
 logger = logging.getLogger(__name__)
+
+_correction_learning_services: Dict[str, "CorrectionLearningService"] = {}
 
 
 class CorrectionType(str, Enum):
@@ -110,6 +113,8 @@ class CorrectionLearningService:
         self._learned_rules: Dict[str, LearningRule] = {}
         self._vendor_preferences: Dict[str, Dict[str, Any]] = defaultdict(dict)
         self._rules_loaded_at: float = 0.0  # monotonic timestamp of last DB load
+        self._extraction_calibration_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
+        self._review_snapshot_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
 
         self._init_tables()
         self._load_rules()
@@ -212,6 +217,48 @@ class CorrectionLearningService:
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL,
                         UNIQUE(organization_id, ap_item_id)
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_review_outcomes (
+                        id TEXT PRIMARY KEY,
+                        organization_id TEXT NOT NULL,
+                        ap_item_id TEXT,
+                        field_name TEXT NOT NULL,
+                        outcome_type TEXT NOT NULL,
+                        outcome_tags_json TEXT,
+                        selected_source TEXT,
+                        user_id TEXT,
+                        vendor_name TEXT,
+                        sender TEXT,
+                        sender_domain TEXT,
+                        subject TEXT,
+                        document_type TEXT,
+                        layout_key TEXT,
+                        confidence_profile_id TEXT,
+                        created_at TEXT NOT NULL
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS vendor_layout_review_stats (
+                        id TEXT PRIMARY KEY,
+                        organization_id TEXT NOT NULL,
+                        vendor_name TEXT NOT NULL,
+                        sender_domain TEXT,
+                        layout_key TEXT NOT NULL,
+                        document_type TEXT,
+                        field_name TEXT NOT NULL,
+                        confidence_profile_id TEXT,
+                        review_count INTEGER NOT NULL DEFAULT 0,
+                        corrected_count INTEGER NOT NULL DEFAULT 0,
+                        confirmed_count INTEGER NOT NULL DEFAULT 0,
+                        email_selected_count INTEGER NOT NULL DEFAULT 0,
+                        attachment_selected_count INTEGER NOT NULL DEFAULT 0,
+                        manual_selected_count INTEGER NOT NULL DEFAULT 0,
+                        last_reviewed_at TEXT,
+                        last_outcome_type TEXT,
+                        last_ap_item_id TEXT,
+                        UNIQUE(organization_id, vendor_name, layout_key, field_name)
                     )
                 """)
                 conn.commit()
@@ -725,6 +772,354 @@ class CorrectionLearningService:
             stats.append(record)
         return stats
 
+    def _persist_review_outcome_event(self, normalized: Dict[str, Any]) -> str:
+        event_id = str(normalized.get("event_id") or f"review_{datetime.now().strftime('%Y%m%d%H%M%S%f')}")
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT OR REPLACE INTO agent_review_outcomes
+                    (id, organization_id, ap_item_id, field_name, outcome_type, outcome_tags_json,
+                     selected_source, user_id, vendor_name, sender, sender_domain, subject,
+                     document_type, layout_key, confidence_profile_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        self.organization_id,
+                        normalized.get("ap_item_id"),
+                        normalized.get("field_name"),
+                        normalized.get("outcome_type"),
+                        json.dumps(normalized.get("outcome_tags") or []),
+                        normalized.get("selected_source"),
+                        normalized.get("user_id"),
+                        normalized.get("vendor_name"),
+                        normalized.get("sender"),
+                        normalized.get("sender_domain"),
+                        normalized.get("subject"),
+                        normalized.get("document_type"),
+                        normalized.get("layout_key"),
+                        normalized.get("confidence_profile_id"),
+                        normalized.get("created_at"),
+                    ),
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.error("Could not persist review outcome event: %s", exc)
+        return event_id
+
+    def _update_vendor_layout_review_stats(self, normalized: Dict[str, Any]) -> Optional[str]:
+        vendor_name = self._normalize_vendor_name(normalized.get("vendor_name"))
+        layout_key = str(normalized.get("layout_key") or "").strip()
+        field_name = self._normalize_field_name(normalized.get("field_name"))
+        if not vendor_name or not layout_key or not field_name:
+            return None
+
+        stat_id = f"vlrs_{self.organization_id}_{vendor_name}_{layout_key}_{field_name}"
+        stat_id = re.sub(r"[^a-zA-Z0-9_:-]+", "_", stat_id)[:180]
+        selected_source = str(normalized.get("selected_source") or "").strip().lower()
+        outcome_type = str(normalized.get("outcome_type") or "").strip().lower()
+        corrected_increment = 1 if outcome_type == "corrected" else 0
+        confirmed_increment = 1 if outcome_type == "confirmed_correct" else 0
+        email_increment = 1 if selected_source == "email" else 0
+        attachment_increment = 1 if selected_source == "attachment" else 0
+        manual_increment = 1 if selected_source == "manual" else 0
+        now = str(normalized.get("created_at") or datetime.now().isoformat())
+
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT INTO vendor_layout_review_stats
+                    (id, organization_id, vendor_name, sender_domain, layout_key, document_type, field_name,
+                     confidence_profile_id, review_count, corrected_count, confirmed_count,
+                     email_selected_count, attachment_selected_count, manual_selected_count,
+                     last_reviewed_at, last_outcome_type, last_ap_item_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(organization_id, vendor_name, layout_key, field_name)
+                    DO UPDATE SET
+                        sender_domain = excluded.sender_domain,
+                        document_type = excluded.document_type,
+                        confidence_profile_id = excluded.confidence_profile_id,
+                        review_count = review_count + 1,
+                        corrected_count = corrected_count + excluded.corrected_count,
+                        confirmed_count = confirmed_count + excluded.confirmed_count,
+                        email_selected_count = email_selected_count + excluded.email_selected_count,
+                        attachment_selected_count = attachment_selected_count + excluded.attachment_selected_count,
+                        manual_selected_count = manual_selected_count + excluded.manual_selected_count,
+                        last_reviewed_at = excluded.last_reviewed_at,
+                        last_outcome_type = excluded.last_outcome_type,
+                        last_ap_item_id = excluded.last_ap_item_id
+                    """,
+                    (
+                        stat_id,
+                        self.organization_id,
+                        vendor_name,
+                        normalized.get("sender_domain"),
+                        layout_key,
+                        normalized.get("document_type"),
+                        field_name,
+                        normalized.get("confidence_profile_id"),
+                        corrected_increment,
+                        confirmed_increment,
+                        email_increment,
+                        attachment_increment,
+                        manual_increment,
+                        now,
+                        outcome_type or None,
+                        normalized.get("ap_item_id"),
+                    ),
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.error("Could not update vendor/layout review stats: %s", exc)
+            return None
+
+        self._review_snapshot_cache.clear()
+        self._extraction_calibration_cache.clear()
+        return stat_id
+
+    def record_review_outcome(
+        self,
+        *,
+        field_name: str,
+        outcome_type: str,
+        context: Dict[str, Any],
+        user_id: str,
+        selected_source: Optional[str] = None,
+        outcome_tags: Optional[List[str]] = None,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized_context = context if isinstance(context, dict) else {}
+        normalized_field = self._normalize_field_name(field_name)
+        normalized_outcome = str(outcome_type or "").strip().lower()
+        if normalized_outcome not in {"confirmed_correct", "corrected"}:
+            raise ValueError("unsupported_review_outcome_type")
+
+        sender = str(normalized_context.get("sender") or normalized_context.get("sender_email") or "").strip()
+        normalized = {
+            "event_id": f"review_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+            "ap_item_id": str(normalized_context.get("ap_item_id") or "").strip() or None,
+            "field_name": normalized_field,
+            "outcome_type": normalized_outcome,
+            "outcome_tags": sorted(
+                {
+                    normalized_outcome,
+                    *(str(value or "").strip().lower() for value in (outcome_tags or []) if str(value or "").strip()),
+                }
+            ),
+            "selected_source": str(selected_source or normalized_context.get("selected_source") or "").strip().lower() or None,
+            "user_id": str(user_id or "").strip() or None,
+            "vendor_name": self._normalize_vendor_name(normalized_context.get("vendor") or normalized_context.get("vendor_name")) or None,
+            "sender": sender or None,
+            "sender_domain": self._sender_domain(normalized_context.get("sender_domain") or sender) or None,
+            "subject": str(normalized_context.get("subject") or "").strip() or None,
+            "document_type": self._normalize_document_type(
+                normalized_context.get("document_type") or normalized_context.get("email_type")
+            ) or None,
+            "layout_key": str(normalized_context.get("layout_key") or self._derive_layout_key(normalized_context)).strip() or None,
+            "confidence_profile_id": str(normalized_context.get("confidence_profile_id") or "").strip() or None,
+            "created_at": str(created_at or datetime.now().isoformat()),
+        }
+        event_id = self._persist_review_outcome_event(normalized)
+        stat_id = self._update_vendor_layout_review_stats(normalized)
+        return {
+            "review_outcome_event_id": event_id,
+            "review_stat_id": stat_id,
+        }
+
+    def get_extraction_review_calibration_snapshot(
+        self,
+        *,
+        vendor_name: Any,
+        sender_domain: Any = None,
+        document_type: Any = None,
+        confidence_profile_id: Any = None,
+    ) -> Dict[str, Any]:
+        normalized_vendor = self._normalize_vendor_name(vendor_name)
+        normalized_sender_domain = self._sender_domain(sender_domain)
+        normalized_document_type = self._normalize_document_type(document_type)
+        normalized_profile = str(confidence_profile_id or "").strip() or None
+        if not normalized_vendor:
+            return {"status": "no_vendor", "summary": {"total_reviews": 0}, "fields": {}}
+
+        cache_key = (
+            normalized_vendor,
+            normalized_sender_domain,
+            normalized_document_type,
+            normalized_profile,
+        )
+        cached = self._review_snapshot_cache.get(cache_key)
+        now_mono = time.monotonic()
+        if cached and (now_mono - cached[0]) <= self._RULES_TTL_SECONDS:
+            return dict(cached[1])
+
+        params: List[Any] = [self.organization_id, normalized_vendor]
+        sql = (
+            "SELECT field_name, SUM(review_count) AS review_count, SUM(corrected_count) AS corrected_count, "
+            "SUM(confirmed_count) AS confirmed_count, SUM(email_selected_count) AS email_selected_count, "
+            "SUM(attachment_selected_count) AS attachment_selected_count, SUM(manual_selected_count) AS manual_selected_count "
+            "FROM vendor_layout_review_stats WHERE organization_id = ? AND vendor_name = ? "
+        )
+        if normalized_document_type:
+            sql += "AND document_type = ? "
+            params.append(normalized_document_type)
+        if normalized_sender_domain:
+            sql += "AND (sender_domain = ? OR sender_domain = '' OR sender_domain IS NULL) "
+            params.append(normalized_sender_domain)
+        if normalized_profile:
+            sql += "AND (confidence_profile_id = ? OR confidence_profile_id IS NULL) "
+            params.append(normalized_profile)
+        sql += "GROUP BY field_name"
+
+        rows: List[Dict[str, Any]] = []
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, tuple(params))
+                rows = [dict(row) for row in cur.fetchall()]
+        except Exception as exc:
+            logger.error("Could not load review calibration snapshot: %s", exc)
+            snapshot = {"status": "error", "summary": {"total_reviews": 0}, "fields": {}}
+            self._review_snapshot_cache[cache_key] = (now_mono, snapshot)
+            return dict(snapshot)
+
+        field_stats: Dict[str, Any] = {}
+        total_reviews = 0
+        for row in rows:
+            field_name = self._normalize_field_name(row.get("field_name"))
+            review_count = int(row.get("review_count") or 0)
+            corrected_count = int(row.get("corrected_count") or 0)
+            confirmed_count = int(row.get("confirmed_count") or 0)
+            email_count = int(row.get("email_selected_count") or 0)
+            attachment_count = int(row.get("attachment_selected_count") or 0)
+            manual_count = int(row.get("manual_selected_count") or 0)
+            total_reviews += review_count
+            field_stats[field_name] = {
+                "review_count": review_count,
+                "corrected_count": corrected_count,
+                "confirmed_count": confirmed_count,
+                "correction_rate": round(corrected_count / review_count, 4) if review_count else 0.0,
+                "confirmation_rate": round(confirmed_count / review_count, 4) if review_count else 0.0,
+                "source_win_rates": {
+                    "email": round(email_count / review_count, 4) if review_count else 0.0,
+                    "attachment": round(attachment_count / review_count, 4) if review_count else 0.0,
+                    "manual": round(manual_count / review_count, 4) if review_count else 0.0,
+                },
+            }
+
+        snapshot = {
+            "status": "available" if field_stats else "no_signal",
+            "summary": {"total_reviews": total_reviews, "field_count": len(field_stats)},
+            "fields": field_stats,
+        }
+        self._review_snapshot_cache[cache_key] = (now_mono, snapshot)
+        return dict(snapshot)
+
+    def get_extraction_confidence_adjustments(
+        self,
+        *,
+        vendor_name: Any,
+        sender_domain: Any = None,
+        document_type: Any = None,
+        min_corrections: int = 3,
+    ) -> Dict[str, Any]:
+        """Return tighten-only threshold overrides from reviewed correction history.
+
+        This uses production correction history conservatively: repeated operator
+        corrections for a field only ever *increase* the required confidence for
+        that field. It does not relax thresholds, because correction history does
+        not tell us when a reviewed field was actually a false positive.
+        """
+        normalized_vendor = self._normalize_vendor_name(vendor_name)
+        normalized_sender_domain = self._sender_domain(sender_domain)
+        normalized_document_type = self._normalize_document_type(document_type)
+        if not normalized_vendor:
+            return {"profile_id": None, "threshold_overrides": {}, "signal_count": 0}
+
+        cache_key = (
+            normalized_vendor,
+            normalized_sender_domain,
+            normalized_document_type,
+            int(max(1, min_corrections)),
+        )
+        cached = self._extraction_calibration_cache.get(cache_key)
+        now_mono = time.monotonic()
+        if cached and (now_mono - cached[0]) <= self._RULES_TTL_SECONDS:
+            return dict(cached[1])
+
+        review_snapshot = self.get_extraction_review_calibration_snapshot(
+            vendor_name=normalized_vendor,
+            sender_domain=normalized_sender_domain,
+            document_type=normalized_document_type,
+        )
+        threshold_overrides: Dict[str, float] = {}
+        signal_count = 0
+        for field_name, stats in (review_snapshot.get("fields") or {}).items():
+            review_count = int((stats or {}).get("review_count") or 0)
+            corrected_count = int((stats or {}).get("corrected_count") or 0)
+            correction_rate = float((stats or {}).get("correction_rate") or 0.0)
+            if corrected_count < int(max(1, min_corrections)):
+                continue
+            signal_count += corrected_count
+            if corrected_count >= 8 and correction_rate >= 0.85:
+                threshold_overrides[field_name] = 0.98
+            elif corrected_count >= 5 and correction_rate >= 0.75:
+                threshold_overrides[field_name] = 0.97
+            elif review_count >= 5 and correction_rate >= 0.6:
+                threshold_overrides[field_name] = 0.96
+
+        if not threshold_overrides:
+            params: List[Any] = [self.organization_id, normalized_vendor]
+            sql = (
+                "SELECT field_name, SUM(correction_count) AS correction_count "
+                "FROM vendor_layout_error_stats "
+                "WHERE organization_id = ? AND vendor_name = ? "
+            )
+            if normalized_document_type:
+                sql += "AND document_type = ? "
+                params.append(normalized_document_type)
+            if normalized_sender_domain:
+                sql += "AND (sender_domain = ? OR sender_domain = '' OR sender_domain IS NULL) "
+                params.append(normalized_sender_domain)
+            sql += "GROUP BY field_name"
+
+            try:
+                with self.db.connect() as conn:
+                    cur = conn.cursor()
+                    cur.execute(sql, tuple(params))
+                    rows = [dict(row) for row in cur.fetchall()]
+            except Exception as exc:
+                logger.error("Could not load extraction calibration stats: %s", exc)
+                rows = []
+
+            for row in rows:
+                field_name = self._normalize_field_name(row.get("field_name"))
+                try:
+                    correction_count = int(row.get("correction_count") or 0)
+                except (TypeError, ValueError):
+                    correction_count = 0
+                if correction_count < int(max(1, min_corrections)):
+                    continue
+                signal_count += correction_count
+                if correction_count >= 8:
+                    threshold_overrides[field_name] = 0.98
+                elif correction_count >= 5:
+                    threshold_overrides[field_name] = 0.97
+                else:
+                    threshold_overrides[field_name] = 0.96
+
+        result = {
+            "profile_id": "learned_review_history_tightening" if threshold_overrides else None,
+            "threshold_overrides": threshold_overrides,
+            "signal_count": signal_count,
+            "review_snapshot": review_snapshot,
+        }
+        self._extraction_calibration_cache[cache_key] = (now_mono, result)
+        return dict(result)
+
     def export_reviewed_extraction_cases(self, output_path: Path | str) -> Dict[str, Any]:
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1143,3 +1538,18 @@ class CorrectionLearningService:
 def get_correction_learning(organization_id: str = "default") -> CorrectionLearningService:
     """Get a correction learning service instance."""
     return CorrectionLearningService(organization_id=organization_id)
+
+
+def get_correction_learning_service(organization_id: str = "default") -> CorrectionLearningService:
+    """Get a cached correction learning service instance."""
+    normalized_org = str(organization_id or "default").strip() or "default"
+    service = _correction_learning_services.get(normalized_org)
+    current_db = get_db()
+    if (
+        service is None
+        or service.__class__ is not CorrectionLearningService
+        or getattr(service, "db", None) is not current_db
+    ):
+        service = CorrectionLearningService(organization_id=normalized_org)
+        _correction_learning_services[normalized_org] = service
+    return service

@@ -72,26 +72,15 @@ function buildDraft(editor = {}) {
 }
 
 function TemplateRow({ template, selected, onSelect }) {
-  return html`<button
-    class="alt"
-    onClick=${onSelect}
-    style="
-      display:block;width:100%;padding:12px 14px;text-align:left;
-      border-radius:var(--radius-md);
-      border:1px solid ${selected ? 'var(--accent)' : 'var(--border)'};
-      background:${selected ? 'var(--accent-soft)' : 'var(--surface)'};
-    "
-  >
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-      <strong style="font-size:13px">${template.name}</strong>
-      <span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.02em">
-        ${template.scope === 'starter' ? 'Starter' : 'Personal'}
-      </span>
-      <span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.02em">
-        ${template.audience === 'internal' ? 'Internal' : 'Vendor'}
-      </span>
+  return html`<button class=${`templates-row ${selected ? 'is-selected' : ''}`} onClick=${onSelect}>
+    <div class="templates-row-top">
+      <strong class="templates-row-title">${template.name}</strong>
+      <div class="templates-row-tags">
+        <span class="templates-pill">${template.scope === 'starter' ? 'Starter' : 'Personal'}</span>
+        <span class="templates-pill muted">${template.audience === 'internal' ? 'Internal' : 'Vendor'}</span>
+      </div>
     </div>
-    <div class="muted" style="font-size:12px;line-height:1.45">${template.description || 'No description'}</div>
+    <div class="templates-row-detail">${template.description || 'No description'}</div>
   </button>`;
 }
 
@@ -208,89 +197,113 @@ export default function TemplatesPage({ api, bootstrap, toast, orgId, userEmail,
   });
 
   return html`
-    <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
-        <div>
-          <h3 style="margin:0 0 6px">AP reply templates</h3>
-          <p class="muted" style="margin:0;max-width:620px">
-            Keep vendor info requests, approval nudges, rejection notes, and payment-status replies consistent without leaving Gmail.
-          </p>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="alt" onClick=${() => { setSelectedRef(''); setEditor(blankEditor()); }}>New personal template</button>
-          <button class="alt" onClick=${() => navigate('clearledgr/home')}>Back to Home</button>
-        </div>
+    <div class="templates-toolbar">
+      <p class="muted" style="margin:0">Start from a shared starter, then save your own version for this Gmail workspace.</p>
+      <div class="templates-toolbar-actions">
+        <button class="btn-secondary btn-sm" onClick=${() => { setSelectedRef(''); setEditor(blankEditor()); }}>New personal template</button>
+        <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/home')}>Back to Home</button>
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:minmax(260px,0.75fr) minmax(0,1.25fr);gap:20px">
-      <div style="display:flex;flex-direction:column;gap:20px">
-        <div class="panel">
-          <h3 style="margin-top:0">Starter templates</h3>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            ${starterTemplates.map((template) => html`
-              <${TemplateRow}
-                key=${templateRef(template)}
-                template=${template}
-                selected=${selectedRef === templateRef(template)}
-                onSelect=${() => setSelectedRef(templateRef(template))}
-              />
-            `)}
+    <div class="templates-shell">
+      <div class="templates-sidebar">
+        <div class="panel templates-library-card">
+          <div class="templates-section-head">
+            <div>
+              <h3 style="margin:0 0 4px">Template library</h3>
+              <p class="muted" style="margin:0">Start from a shared starter or edit one of your own.</p>
+            </div>
+          </div>
+
+          <div class="templates-library-section">
+            <div class="templates-section-kicker">
+              <span>Starter</span>
+              <span>${starterTemplates.length}</span>
+            </div>
+            <div class="templates-list">
+              ${starterTemplates.map((template) => html`
+                <${TemplateRow}
+                  key=${templateRef(template)}
+                  template=${template}
+                  selected=${selectedRef === templateRef(template)}
+                  onSelect=${() => setSelectedRef(templateRef(template))}
+                />
+              `)}
+            </div>
+          </div>
+
+          <div class="templates-library-divider"></div>
+
+          <div class="templates-library-section">
+            <div class="templates-section-kicker">
+              <span>Personal</span>
+              <span>${personalTemplates.length}</span>
+            </div>
+            ${personalTemplates.length === 0
+              ? html`<div class="templates-empty-copy">No personal templates yet. Save a starter or create one from scratch.</div>`
+              : html`<div class="templates-list">
+                  ${personalTemplates.map((template) => html`
+                    <${TemplateRow}
+                      key=${templateRef(template)}
+                      template=${template}
+                      selected=${selectedRef === templateRef(template)}
+                      onSelect=${() => setSelectedRef(templateRef(template))}
+                    />
+                  `)}
+                </div>`}
           </div>
         </div>
 
-        <div class="panel">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px">
-            <h3 style="margin:0">Personal templates</h3>
-            <span class="muted" style="font-size:12px">${personalTemplates.length} saved</span>
+        <div class="panel templates-fields-card">
+          <div class="templates-section-head compact">
+            <div>
+              <h3 style="margin:0 0 4px">Available fields</h3>
+              <p class="muted" style="margin:0">Use these placeholders in the subject or body.</p>
+            </div>
           </div>
-          ${personalTemplates.length === 0
-            ? html`<p class="muted" style="margin:0">No personal templates yet. Start from a starter template or create one from scratch.</p>`
-            : html`<div style="display:flex;flex-direction:column;gap:8px">
-                ${personalTemplates.map((template) => html`
-                  <${TemplateRow}
-                    key=${templateRef(template)}
-                    template=${template}
-                    selected=${selectedRef === templateRef(template)}
-                    onSelect=${() => setSelectedRef(templateRef(template))}
-                  />
-                `)}
-              </div>`}
-        </div>
-
-        <div class="panel">
-          <h3 style="margin-top:0">Available fields</h3>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div class="templates-token-cloud">
             ${['vendor_name', 'invoice_number', 'amount', 'due_date', 'po_number', 'state_label', 'next_action', 'issue_summary', 'subject'].map((token) => html`
-              <span key=${token} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px;font-family:var(--font-mono)">{{${token}}}</span>
+              <span key=${token} class="templates-token">{{${token}}}</span>
             `)}
           </div>
         </div>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:20px">
-        <div class="panel">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+      <div class="templates-main">
+        <div class="panel templates-editor-card">
+          <div class="templates-editor-head">
             <div>
-              <h3 style="margin:0 0 4px">${currentTemplate?.scope === 'user' ? 'Edit personal template' : currentTemplate ? 'Save starter as personal' : 'Create personal template'}</h3>
+              <div class="templates-editor-kicker">
+                ${currentTemplate?.scope === 'user'
+                  ? 'Personal template'
+                  : currentTemplate
+                    ? 'Starter template'
+                    : 'New personal template'}
+              </div>
+              <h3 style="margin:0 0 4px">${currentTemplate?.scope === 'user' ? 'Edit template' : currentTemplate ? 'Save starter as personal' : 'Create template'}</h3>
               <p class="muted" style="margin:0">
                 ${currentTemplate?.scope === 'user'
-                  ? 'Changes sync to your user preferences and stay available across Gmail sessions.'
-                  : 'Starter templates are read-only defaults. Save a personal copy before editing.'}
+                  ? 'Changes save to your personal template library for this Gmail workspace.'
+                  : 'Starter templates are read-only. Save a personal copy before editing.'}
               </p>
             </div>
             ${currentTemplate?.scope === 'user'
-              ? html`<button class="alt" onClick=${deleteTemplate} disabled=${deletingTemplate}>${deletingTemplate ? 'Deleting…' : 'Delete'}</button>`
+              ? html`<button class="btn-danger btn-sm" onClick=${deleteTemplate} disabled=${deletingTemplate}>${deletingTemplate ? 'Deleting…' : 'Delete'}</button>`
               : null}
           </div>
 
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-            <label style="display:flex;flex-direction:column;gap:6px">
-              <span class="muted" style="font-size:12px">Template name</span>
+          <div class="templates-meta-strip">
+            <span class="templates-pill">${currentTemplate?.scope === 'user' ? 'Personal' : currentTemplate ? 'Starter' : 'Draft'}</span>
+            <span class="templates-pill muted">${editor.audience === 'internal' ? 'Internal' : 'Vendor'}</span>
+          </div>
+
+          <div class="templates-form-grid">
+            <label class="templates-field">
+              <span class="templates-field-label">Template name</span>
               <input value=${editor.name} onInput=${(event) => setEditor((current) => ({ ...current, name: event.target.value }))} placeholder="Vendor PO request" />
             </label>
-            <label style="display:flex;flex-direction:column;gap:6px">
-              <span class="muted" style="font-size:12px">Audience</span>
+            <label class="templates-field">
+              <span class="templates-field-label">Audience</span>
               <select value=${editor.audience} onChange=${(event) => setEditor((current) => ({ ...current, audience: event.target.value }))}>
                 <option value="vendor">Vendor</option>
                 <option value="internal">Internal</option>
@@ -298,42 +311,46 @@ export default function TemplatesPage({ api, bootstrap, toast, orgId, userEmail,
             </label>
           </div>
 
-          <label style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
-            <span class="muted" style="font-size:12px">Description</span>
+          <label class="templates-field">
+            <span class="templates-field-label">Description</span>
             <input value=${editor.description} onInput=${(event) => setEditor((current) => ({ ...current, description: event.target.value }))} placeholder="When to use this template" />
           </label>
 
-          <label style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
-            <span class="muted" style="font-size:12px">Subject template</span>
+          <label class="templates-field">
+            <span class="templates-field-label">Subject template</span>
             <input value=${editor.subjectTemplate} onInput=${(event) => setEditor((current) => ({ ...current, subjectTemplate: event.target.value }))} placeholder="Re: {{subject}}" />
           </label>
 
-          <label style="display:flex;flex-direction:column;gap:6px">
-            <span class="muted" style="font-size:12px">Body template</span>
+          <label class="templates-field">
+            <span class="templates-field-label">Body template</span>
             <textarea value=${editor.bodyTemplate} onInput=${(event) => setEditor((current) => ({ ...current, bodyTemplate: event.target.value }))} placeholder="Hi {{vendor_name}},&#10;&#10;..." />
           </label>
 
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-            <button onClick=${saveTemplate} disabled=${savingTemplate}>${savingTemplate ? 'Saving…' : currentTemplate?.scope === 'user' ? 'Update template' : 'Save as personal'}</button>
-            <button class="alt" onClick=${openComposePreview} disabled=${previewingCompose}>${previewingCompose ? 'Opening…' : 'Open compose preview'}</button>
+          <div class="toolbar-actions" style="margin-top:14px">
+            <button class="btn-primary" onClick=${saveTemplate} disabled=${savingTemplate}>${savingTemplate ? 'Saving…' : currentTemplate?.scope === 'user' ? 'Update template' : 'Save as personal'}</button>
+            <button class="btn-secondary" onClick=${openComposePreview} disabled=${previewingCompose}>${previewingCompose ? 'Opening…' : 'Open compose preview'}</button>
           </div>
         </div>
 
-        <div class="panel">
-          <h3 style="margin-top:0">Preview</h3>
-          <p class="muted" style="margin:0 0 12px">Preview uses sample invoice context so you can check wording before using the template from a real record.</p>
-          <div style="display:flex;flex-direction:column;gap:10px">
-            <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg)">
-              <div class="muted" style="font-size:12px;margin-bottom:4px">To</div>
-              <div style="font-weight:600">${preview.to || '(set recipient when used)'}</div>
+        <div class="panel templates-preview-card">
+          <div class="templates-section-head compact">
+            <div>
+              <h3 style="margin:0 0 4px">Compose preview</h3>
+              <p class="muted" style="margin:0">Sample invoice context shows how the draft will read in Gmail.</p>
             </div>
-            <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg)">
-              <div class="muted" style="font-size:12px;margin-bottom:4px">Subject</div>
-              <div style="font-weight:600">${preview.subject || '—'}</div>
+          </div>
+
+          <div class="templates-mail-preview">
+            <div class="templates-mail-row">
+              <span class="templates-mail-label">To</span>
+              <span class="templates-mail-value">${preview.to || '(set recipient when used)'}</span>
             </div>
-            <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg)">
-              <div class="muted" style="font-size:12px;margin-bottom:6px">Body</div>
-              <pre style="margin:0;white-space:pre-wrap;font-family:var(--font);font-size:13px;line-height:1.6;color:var(--ink)">${preview.body || '—'}</pre>
+            <div class="templates-mail-row">
+              <span class="templates-mail-label">Subject</span>
+              <span class="templates-mail-value">${preview.subject || '—'}</span>
+            </div>
+            <div class="templates-mail-body">
+              <pre>${preview.body || '—'}</pre>
             </div>
           </div>
         </div>

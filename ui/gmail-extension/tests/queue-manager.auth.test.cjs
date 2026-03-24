@@ -22,6 +22,19 @@ test('interactive auth attempts are debounced by cooldown', async () => {
   assert.ok(Number(result.retry_after_seconds || 0) >= 1);
 });
 
+test('silent backend auth retries are debounced after a failure', async () => {
+  const ClearledgrQueueManager = await loadQueueManager();
+  const manager = new ClearledgrQueueManager();
+  manager.runtimeConfig = { valid: true, organizationId: 'default' };
+  manager.lastBackendAuthFailureAt = Date.now();
+
+  const result = await manager.ensureBackendAuthIfNeeded();
+
+  assert.equal(result.success, false);
+  assert.equal(result.error, 'backend_auth_cooldown');
+  assert.ok(Number(result.retry_after_seconds || 0) >= 1);
+});
+
 test('interactive Gmail auth waits longer than the default runtime message timeout', async () => {
   const ClearledgrQueueManager = await loadQueueManager();
   const manager = new ClearledgrQueueManager();
@@ -40,7 +53,23 @@ test('interactive Gmail auth waits longer than the default runtime message timeo
   assert.equal(calls[0].message.interactive, true);
   assert.equal(calls[0].options.timeoutMs, 180000);
   assert.equal(calls[1].message.interactive, false);
-  assert.equal(calls[1].options.timeoutMs, 6000);
+  assert.equal(calls[1].options.timeoutMs, 30000);
+});
+
+test('ensureGmailAuth retries runtime message failures', async () => {
+  const ClearledgrQueueManager = await loadQueueManager();
+  const manager = new ClearledgrQueueManager();
+  let attempts = 0;
+  manager.safeSendMessage = async () => {
+    attempts += 1;
+    if (attempts < 2) return { success: false, error: 'runtime_message_failed:Could not establish connection. Receiving end does not exist.' };
+    return { success: true };
+  };
+
+  const result = await manager.ensureGmailAuth(true);
+
+  assert.equal(result.success, true);
+  assert.equal(attempts, 2);
 });
 
 test('auth result mapper returns operator-safe copy', async () => {
@@ -55,6 +84,9 @@ test('auth result mapper returns operator-safe copy', async () => {
 
   const generic = manager.describeAuthResult({ error: 'authorization_failed' });
   assert.match(generic.toast, /authorization failed/i);
+
+  const backendCooldown = manager.describeAuthResult({ error: 'backend_auth_cooldown', retry_after_seconds: 19 });
+  assert.match(backendCooldown.toast, /try again in 19s/i);
 });
 
 test('refreshQueue does not poll ops endpoints in Gmail Work runtime', async () => {

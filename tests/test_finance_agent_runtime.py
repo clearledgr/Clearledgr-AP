@@ -744,6 +744,56 @@ def test_execute_route_low_risk_for_approval_success_and_idempotent_replay():
     assert len(db.audit_rows) == 1
 
 
+def test_execute_request_approval_falls_back_to_email_reference_when_ap_item_id_is_stale():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="gmail-thread-route-1")
+    workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "171.10"})
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        result = asyncio.run(
+            runtime.execute_intent(
+                "request_approval",
+                {
+                    "ap_item_id": "INV-RT-1",
+                    "email_id": "gmail-thread-route-1",
+                },
+                idempotency_key="idem-runtime-request-approval-fallback-1",
+            )
+        )
+
+    assert result["status"] == "pending_approval"
+    assert result["ap_item_id"] == "ap-route-1"
+    assert result["email_id"] == "gmail-thread-route-1"
+    workflow._send_for_approval.assert_awaited_once()
+
+
+def test_execute_request_approval_uses_resolved_email_reference_when_invoice_gmail_id_is_blank():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="")
+    workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "171.11"})
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        result = asyncio.run(
+            runtime.execute_intent(
+                "request_approval",
+                {
+                    "ap_item_id": "ap-route-1",
+                    "email_id": "gmail-thread-route-1",
+                },
+                idempotency_key="idem-runtime-request-approval-gmail-fallback-1",
+            )
+        )
+
+    assert result["status"] == "pending_approval"
+    workflow._send_for_approval.assert_awaited_once()
+    invoice = workflow._send_for_approval.await_args.args[0]
+    assert invoice.gmail_id == "gmail-thread-route-1"
+
+
 def test_execute_route_low_risk_for_approval_blocks_field_review_precheck():
     db = _FakeDB()
     runtime = _runtime(db)

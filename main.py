@@ -379,6 +379,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/agent/sessions/[^/]+/complete$",
         r"^/api/agent/sessions/[^/]+/macros/[^/]+$",
         r"^/api/agent/sessions/[^/]+/results$",
+        r"^/api/ap/items/[^/]+$",
         r"^/api/ap/items/[^/]+/audit$",
         r"^/api/ap/items/[^/]+/context$",
         r"^/api/ap/items/[^/]+/merge$",

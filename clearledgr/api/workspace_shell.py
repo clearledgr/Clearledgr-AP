@@ -85,6 +85,39 @@ def _require_ops_access(user: TokenData) -> None:
         raise HTTPException(status_code=403, detail="ops_role_required")
 
 
+def _workspace_capabilities(role: Optional[str]) -> Dict[str, bool]:
+    normalized_role = str(role or "").strip().lower()
+    has_workspace_role = bool(normalized_role)
+    is_admin = normalized_role in {"owner", "admin", "api"}
+    is_ops = normalized_role in {"owner", "admin", "operator", "api"}
+
+    return {
+        "view_home": True,
+        "view_pipeline": True,
+        "view_review": has_workspace_role,
+        "view_upcoming": has_workspace_role,
+        "view_activity": has_workspace_role,
+        "view_vendors": has_workspace_role,
+        "view_templates": has_workspace_role,
+        "view_connections": has_workspace_role,
+        "view_rules": has_workspace_role,
+        "view_team": has_workspace_role,
+        "view_company": has_workspace_role,
+        "view_plan": has_workspace_role,
+        "view_reconciliation": has_workspace_role,
+        "view_system_status": has_workspace_role,
+        "view_reports": has_workspace_role,
+        "view_ops_workspace": is_ops,
+        "operate_records": is_ops,
+        "manage_connections": is_admin,
+        "manage_rules": is_admin,
+        "manage_team": is_admin,
+        "manage_company": is_admin,
+        "manage_plan": is_admin,
+        "manage_admin_pages": is_admin,
+    }
+
+
 def _resolve_org_id(user: TokenData, organization_id: Optional[str]) -> str:
     resolved = (organization_id or user.organization_id or "default").strip()
     if not resolved:
@@ -525,6 +558,8 @@ def get_admin_bootstrap(
             {"id": 5, "name": "Review AP policy defaults"},
         ],
     }
+    current_role = current_user.get("role") or user.role
+    capabilities = _workspace_capabilities(current_role)
 
     return {
         "organization": {
@@ -538,10 +573,12 @@ def get_admin_bootstrap(
             "id": current_user.get("id") or user.user_id,
             "email": current_user.get("email") or user.email,
             "name": current_user.get("name") or user.email.split("@")[0],
-            "role": current_user.get("role") or user.role,
+            "role": current_role,
             "organization_id": org_id,
             "preferences": _load_user_preferences(current_user),
+            "capabilities": capabilities,
         },
+        "capabilities": capabilities,
         "integrations": integrations,
         "onboarding": onboarding,
         "subscription": subscription,

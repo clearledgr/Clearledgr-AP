@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDate, fmtDateTime, fmtDollar, useAction } from '../route-helpers.js';
 import { navigateToRecordDetail } from '../../utils/record-route.js';
+import { getExceptionLabel, getExceptionReason, getStateLabel } from '../../utils/formatters.js';
 import {
   clearPipelineNavigation,
   focusPipelineItem,
@@ -52,6 +53,10 @@ function formatMoney(amount, currency = 'USD') {
   const value = Number(amount);
   if (!Number.isFinite(value)) return '—';
   return `${currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function getRecordId(item) {
+  return String(item?.ap_item_id || item?.id || '').trim();
 }
 
 export default function VendorDetailPage({ api, orgId, userEmail, navigate, routeParams, toast }) {
@@ -113,9 +118,10 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
   };
 
   const openItemDetail = (item) => {
-    if (!item?.id) return;
-    focusPipelineItem(pipelineScope, item, 'vendor_record');
-    navigateToRecordDetail(navigate, item.id);
+    const recordId = getRecordId(item);
+    if (!recordId) return;
+    focusPipelineItem(pipelineScope, { ...item, id: recordId }, 'vendor_record');
+    navigateToRecordDetail(navigate, recordId);
   };
 
   if (loading) {
@@ -127,7 +133,7 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
       <div class="panel">
         <h3 style="margin-top:0">Vendor not found</h3>
         <p class="muted" style="margin:0 0 12px">This vendor does not have a shared AP record yet.</p>
-        <button class="alt" onClick=${() => navigate('clearledgr/vendors')}>Back to vendors</button>
+        <button class="btn-secondary" onClick=${() => navigate('clearledgr/vendors')}>Back to vendors</button>
       </div>
     `;
   }
@@ -142,10 +148,10 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
             Shared AP memory for this supplier: open invoices, recent outcomes, anomaly flags, and posting context.
           </p>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="alt" onClick=${() => navigate('clearledgr/vendors')}>Back to vendors</button>
-          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
-          <button onClick=${openVendorInPipeline}>Open vendor in pipeline</button>
+        <div class="toolbar-actions">
+          <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/vendors')}>Back to vendors</button>
+          <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
+          <button class="btn-primary btn-sm" onClick=${openVendorInPipeline}>Open vendor in pipeline</button>
         </div>
       </div>
     </div>
@@ -179,10 +185,10 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
                           ? html`<div class="muted" style="font-size:12px;margin-top:4px">ERP ${item.erp_reference}</div>`
                           : null}
                         ${item.exception_code
-                          ? html`<div class="muted" style="font-size:12px;margin-top:4px">Exception ${String(item.exception_code).replace(/_/g, ' ')}</div>`
+                          ? html`<div class="muted" style="font-size:12px;margin-top:4px">${getExceptionLabel(item.exception_code)}${getExceptionReason(item.exception_code) ? ` · ${getExceptionReason(item.exception_code)}` : ''}</div>`
                           : null}
                       </div>
-                      <button class="alt" onClick=${() => openItemDetail(item)} style="padding:8px 12px;font-size:12px">Open record</button>
+                      <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(item)}>Open record</button>
                     </div>
                   </div>
                 `)}
@@ -200,7 +206,7 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
                       <div>
                         <strong style="font-size:13px">${entry.invoice_number || entry.ap_item_id || 'Invoice outcome'}</strong>
                         <div class="muted" style="font-size:12px;margin-top:4px">
-                          ${formatMoney(entry.amount, entry.currency || 'USD')} · ${String(entry.final_state || 'unknown').replace(/_/g, ' ')}
+                          ${formatMoney(entry.amount, entry.currency || 'USD')} · ${getStateLabel(String(entry.final_state || 'received').trim().toLowerCase())}
                         </div>
                       </div>
                       <span class="muted" style="font-size:12px">${fmtDateTime(entry.created_at)}</span>
@@ -257,13 +263,13 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Common states</h3>
+          <h3 style="margin-top:0">Common workflow states</h3>
           ${topStates.length === 0
             ? html`<p class="muted" style="margin:0">No state history yet.</p>`
             : html`<div style="display:flex;flex-direction:column;gap:8px">
                 ${topStates.map((row) => html`
                   <div key=${row.state} style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-                    <span>${String(row.state || '').replace(/_/g, ' ')}</span>
+                    <span>${getStateLabel(String(row.state || 'received').trim().toLowerCase())}</span>
                     <strong>${Number(row.count || 0).toLocaleString()}</strong>
                   </div>
                 `)}
@@ -271,13 +277,13 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Recurring exception codes</h3>
+          <h3 style="margin-top:0">Recurring issues</h3>
           ${topExceptionCodes.length === 0
-            ? html`<p class="muted" style="margin:0">No recurring exception patterns yet.</p>`
+            ? html`<p class="muted" style="margin:0">No recurring issue patterns yet.</p>`
             : html`<div style="display:flex;flex-direction:column;gap:8px">
                 ${topExceptionCodes.map((row) => html`
                   <div key=${row.exception_code} style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-                    <span>${String(row.exception_code || '').replace(/_/g, ' ')}</span>
+                    <span>${getExceptionLabel(row.exception_code)}</span>
                     <strong>${Number(row.count || 0).toLocaleString()}</strong>
                   </div>
                 `)}

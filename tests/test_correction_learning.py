@@ -130,3 +130,82 @@ def test_record_correction_auto_exports_reviewed_cases(
     assert payload["cases"][0]["id"] == "reviewed_ap-456"
     assert payload["cases"][0]["expected"]["due_date"] == "2026-02-15"
     assert payload["cases"][0]["metadata"]["correction_fields"] == ["due_date"]
+
+
+def test_review_history_tightening_returns_threshold_overrides(
+    learning_service: CorrectionLearningService,
+):
+    for idx in range(3):
+        learning_service.record_correction(
+            correction_type="invoice_number",
+            original_value=f"INV-OLD-{idx}",
+            corrected_value=f"INV-NEW-{idx}",
+            context={
+                "ap_item_id": f"ap-tighten-{idx}",
+                "vendor": "Google Cloud EMEA Limited",
+                "sender": "payments-noreply@google.com",
+                "subject": "Google Workspace: Your invoice is available",
+                "snippet": "Invoice number needs correction.",
+                "attachment_names": ["5449235811.pdf"],
+                "document_type": "invoice",
+                "selected_source": "attachment",
+                "expected_fields": {
+                    "vendor": "Google Cloud EMEA Limited",
+                    "primary_amount": 40.23,
+                    "currency": "EUR",
+                    "primary_invoice": f"INV-NEW-{idx}",
+                    "email_type": "invoice",
+                },
+            },
+            user_id="mo@clearledgr.com",
+            invoice_id=f"thread-tighten-{idx}",
+        )
+
+    adjustments = learning_service.get_extraction_confidence_adjustments(
+        vendor_name="Google Cloud EMEA Limited",
+        sender_domain="google.com",
+        document_type="invoice",
+    )
+
+    assert adjustments["profile_id"] == "learned_review_history_tightening"
+    assert adjustments["threshold_overrides"]["invoice_number"] == 0.96
+    assert adjustments["signal_count"] == 3
+
+
+def test_record_review_outcome_builds_confirmation_snapshot(
+    learning_service: CorrectionLearningService,
+):
+    result = learning_service.record_review_outcome(
+        field_name="amount",
+        outcome_type="confirmed_correct",
+        context={
+            "ap_item_id": "ap-review-1",
+            "vendor": "Google Cloud EMEA Limited",
+            "sender": "payments-noreply@google.com",
+            "subject": "Google Workspace: Your invoice is available",
+            "document_type": "invoice",
+            "selected_source": "attachment",
+            "confidence_profile_id": "known_billing_attachment_invoice",
+            "attachment_names": ["5449235811.pdf"],
+        },
+        user_id="mo@clearledgr.com",
+        selected_source="attachment",
+        outcome_tags=["confirmed_correct", "resolved_with_attachment"],
+    )
+
+    assert result["review_outcome_event_id"]
+    assert result["review_stat_id"]
+
+    snapshot = learning_service.get_extraction_review_calibration_snapshot(
+        vendor_name="Google Cloud EMEA Limited",
+        sender_domain="google.com",
+        document_type="invoice",
+        confidence_profile_id="known_billing_attachment_invoice",
+    )
+
+    assert snapshot["status"] == "available"
+    assert snapshot["summary"]["total_reviews"] == 1
+    assert snapshot["fields"]["amount"]["review_count"] == 1
+    assert snapshot["fields"]["amount"]["confirmed_count"] == 1
+    assert snapshot["fields"]["amount"]["correction_rate"] == 0.0
+    assert snapshot["fields"]["amount"]["source_win_rates"]["attachment"] == 1.0

@@ -136,33 +136,29 @@ export default function UpcomingPage({ api, toast, orgId, userEmail, navigate })
   }
 
   return html`
-    <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
-        <div>
-          <h3 style="margin:0 0 6px">Upcoming follow-ups</h3>
-          <p class="muted" style="margin:0;max-width:620px">
-            Work due approvals, vendor replies, posting retries, and blocker reviews from one AP follow-up list, then jump straight back into Pipeline or the record.
-          </p>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="alt" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
-          <button onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
-        </div>
+    <div class="secondary-banner">
+      <div class="secondary-banner-copy">
+        <h3>Upcoming follow-ups</h3>
+        <p class="muted">See what needs attention next, then jump straight into the queue, the record, or the email.</p>
+      </div>
+      <div class="secondary-banner-actions">
+        <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
       </div>
     </div>
 
-    <div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
-      <${SummaryCard} label="Total follow-ups" value=${summary.total || 0} />
-      <${SummaryCard} label="Overdue" value=${summary.overdue || 0} tone="danger" />
-      <${SummaryCard} label="Today" value=${summary.today || 0} tone="warning" />
-      <${SummaryCard} label="This week" value=${summary.this_week || 0} tone="success" />
+    <div class="secondary-chip-row" style="margin:0 0 18px">
+      <span class="secondary-chip">Total follow-ups ${summary.total || 0}</span>
+      <span class="secondary-chip">Overdue ${summary.overdue || 0}</span>
+      <span class="secondary-chip">Today ${summary.today || 0}</span>
+      <span class="secondary-chip">This week ${summary.this_week || 0}</span>
     </div>
 
     <div class="panel">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
         <div>
           <h3 style="margin:0 0 4px">What is due</h3>
-          <p class="muted" style="margin:0">Clearledgr only shows follow-ups that can move AP work forward.</p>
+          <p class="muted" style="margin:0">Only the follow-ups that can move work forward show up here.</p>
         </div>
         ${groupedCounts.length > 0 && html`
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -177,14 +173,14 @@ export default function UpcomingPage({ api, toast, orgId, userEmail, navigate })
       </div>
 
       ${tasks.length === 0
-        ? html`<p class="muted" style="margin:0">No upcoming AP follow-ups are due right now.</p>`
+        ? html`<p class="muted" style="margin:0">Nothing is due right now.</p>`
         : html`<div style="display:flex;flex-direction:column;gap:12px">
             ${tasks.map((task) => html`
               <div key=${task.id} style="padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
                 <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
                   <div style="min-width:0;flex:1">
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-                      <strong style="font-size:14px">${task.title || 'AP follow-up'}</strong>
+                      <strong style="font-size:14px">${task.title || 'Follow-up'}</strong>
                       <${StatusPill} status=${task.status} />
                       <span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.02em">
                         ${KIND_LABELS[task.kind] || task.kind?.replace(/_/g, ' ') || 'Follow-up'}
@@ -198,10 +194,10 @@ export default function UpcomingPage({ api, toast, orgId, userEmail, navigate })
                       ${task.due_at ? `Due ${fmtDateTime(task.due_at)}` : 'No explicit follow-up time'}
                     </div>
                   </div>
-                  <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-                    <button class="alt" onClick=${() => openPipelineTask(task)}>Open slice</button>
-                    <button class="alt" onClick=${() => openRecord(task)}>Open record</button>
-                    ${(task.thread_id || task.message_id) && html`<button class="alt" onClick=${() => openEmail(task)}>Open email</button>`}
+                  <div class="row-actions">
+                    <button class="btn-secondary btn-sm" onClick=${() => openRecord(task)}>Open record</button>
+                    <button class="btn-ghost btn-sm" onClick=${() => openPipelineTask(task)}>Open slice</button>
+                    ${(task.thread_id || task.message_id) && html`<button class="btn-ghost btn-sm" onClick=${() => openEmail(task)}>Open email</button>`}
                   </div>
                 </div>
               </div>

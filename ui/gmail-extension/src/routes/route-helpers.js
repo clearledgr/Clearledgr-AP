@@ -6,7 +6,12 @@
 import { h } from 'preact';
 import { useState, useCallback } from 'preact/hooks';
 import htm from 'htm';
-import { hasAdminAccessRole, hasOpsAccessRole } from '../utils/roles.js';
+import {
+  getCapabilities,
+  hasAdminCapability,
+  hasCapability,
+  hasOpsCapability,
+} from '../utils/capabilities.js';
 
 const html = htm.bind(h);
 
@@ -41,12 +46,14 @@ export function fmtRate(v) { const n = Number(v); return isFinite(n) ? `${n.toFi
 export function fmtDollar(v) { return '$' + Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }); }
 
 export function hasOpsAccess(bootstrap) {
-  return hasOpsAccessRole(bootstrap?.current_user?.role);
+  return hasOpsCapability(bootstrap);
 }
 
 export function hasAdminAccess(bootstrap) {
-  return hasAdminAccessRole(bootstrap?.current_user?.role);
+  return hasAdminCapability(bootstrap);
 }
+
+export { getCapabilities, hasCapability };
 
 export function integrationByName(bootstrap, name) {
   return (bootstrap?.integrations || []).find(i => i.name === name) || {};

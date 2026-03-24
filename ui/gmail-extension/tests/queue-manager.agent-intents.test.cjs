@@ -112,6 +112,32 @@ test('requestApproval uses canonical approval intent', async () => {
   assert.equal(payload.idempotency_key, 'idem-approval-1');
 });
 
+test('requestApproval uses primary source gmail reference when top-level ids are missing', async () => {
+  const calls = [];
+  const manager = createManager(async (url, options) => {
+    calls.push({ url, options });
+    return createResponse(200, { status: 'pending_approval', audit_event_id: 'audit-approval-2' });
+  });
+
+  const result = await manager.requestApproval(
+    {
+      id: 'ap-approval-2',
+      primary_source: {
+        thread_id: 'gmail-thread-primary-2',
+      },
+    },
+    { idempotencyKey: 'idem-approval-2' }
+  );
+
+  assert.equal(result.status, 'pending_approval');
+  assert.equal(calls.length, 1);
+  const payload = JSON.parse(calls[0].options.body);
+  assert.equal(payload.intent, 'request_approval');
+  assert.equal(payload.input.ap_item_id, 'ap-approval-2');
+  assert.equal(payload.input.email_id, 'gmail-thread-primary-2');
+  assert.equal(payload.idempotency_key, 'idem-approval-2');
+});
+
 test('nudgeApproval uses canonical nudge intent', async () => {
   const calls = [];
   const manager = createManager(async (url, options) => {

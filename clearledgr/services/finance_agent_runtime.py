@@ -294,6 +294,17 @@ class FinanceAgentRuntime:
         ).strip()
 
     @staticmethod
+    def _item_reference_candidates(payload: Optional[Dict[str, Any]]) -> List[str]:
+        if not isinstance(payload, dict):
+            return []
+        candidates: List[str] = []
+        for key in ("ap_item_id", "item_id", "email_id", "thread_id", "message_id"):
+            token = str(payload.get(key) or "").strip()
+            if token and token not in candidates:
+                candidates.append(token)
+        return candidates
+
+    @staticmethod
     def _normalize_correlation_id(payload: Dict[str, Any]) -> str:
         if not isinstance(payload, dict):
             return ""
@@ -341,6 +352,13 @@ class FinanceAgentRuntime:
         normalized_intent = self._ensure_supported(intent)
         skill = self._skill_for_intent(normalized_intent)
         reference = self._item_reference(payload)
+        try:
+            _resolved_reference, resolved_item = self._resolve_ap_item_from_payload(payload)
+            canonical_reference = str((resolved_item or {}).get("id") or "").strip()
+            if canonical_reference:
+                reference = canonical_reference
+        except ValueError:
+            pass
         return SkillRequest.from_intent(
             org_id=self.organization_id,
             skill_id=skill.skill_id,
@@ -367,6 +385,28 @@ class FinanceAgentRuntime:
         if str(item.get("organization_id") or self.organization_id) != self.organization_id:
             raise PermissionError("organization_mismatch")
         return item
+
+    def _resolve_ap_item_from_payload(
+        self,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> tuple[str, Dict[str, Any]]:
+        candidates = self._item_reference_candidates(payload)
+        if not candidates:
+            raise ValueError("missing_item_reference")
+
+        last_error: Optional[Exception] = None
+        for reference in candidates:
+            try:
+                return reference, self._resolve_ap_item(reference)
+            except (ValueError, LookupError, PermissionError) as exc:
+                last_error = exc
+                continue
+
+        if isinstance(last_error, PermissionError):
+            raise last_error
+        if isinstance(last_error, LookupError):
+            raise last_error
+        raise ValueError("missing_item_reference")
 
     def _correlation_id_for_item(self, item: Dict[str, Any]) -> Optional[str]:
         metadata = self._parse_json_dict(item.get("metadata"))
@@ -2680,7 +2720,7 @@ class FinanceAgentRuntime:
         actor_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         from clearledgr.services.audit_trail import get_audit_trail
-        from clearledgr.services.correction_learning import CorrectionLearningService
+        from clearledgr.services.correction_learning import get_correction_learning_service
 
         ap_item = self._resolve_ap_item(ap_item_id)
         resolved_ap_item_id = str(ap_item.get("id") or ap_item_id).strip() or str(ap_item_id)
@@ -2723,7 +2763,8 @@ class FinanceAgentRuntime:
         elif field == "document_type":
             expected_fields["email_type"] = corrected_value
 
-        learning_svc = CorrectionLearningService(self.organization_id)
+        confidence_gate = metadata.get("confidence_gate") if isinstance(metadata.get("confidence_gate"), dict) else {}
+        learning_svc = get_correction_learning_service(self.organization_id)
         try:
             learning_result = learning_svc.record_correction(
                 correction_type=field,
@@ -2741,12 +2782,34 @@ class FinanceAgentRuntime:
                     "document_type": metadata.get("document_type") or metadata.get("email_type"),
                     "source_channel": "gmail_extension",
                     "event_source": "runtime_record_field_correction",
+                    "selected_source": "manual",
+                    "confidence_profile_id": confidence_gate.get("profile_id") or confidence_gate.get("learned_profile_id"),
                     "expected_fields": expected_fields,
                 },
                 user_id=resolved_actor,
                 invoice_id=ap_item.get("thread_id"),
                 feedback=feedback,
             )
+            if hasattr(learning_svc, "record_review_outcome"):
+                learning_svc.record_review_outcome(
+                    field_name=field,
+                    outcome_type="corrected",
+                    context={
+                        "ap_item_id": resolved_ap_item_id,
+                        "vendor": ap_item.get("vendor_name"),
+                        "sender": ap_item.get("sender"),
+                        "subject": ap_item.get("subject"),
+                        "attachment_names": attachment_names if isinstance(attachment_names, list) else [],
+                        "document_type": metadata.get("document_type") or metadata.get("email_type"),
+                        "selected_source": "manual",
+                        "source_channel": "gmail_extension",
+                        "event_source": "runtime_record_field_correction",
+                        "confidence_profile_id": confidence_gate.get("profile_id") or confidence_gate.get("learned_profile_id"),
+                    },
+                    user_id=resolved_actor,
+                    selected_source="manual",
+                    outcome_tags=["corrected", "manual_entry"],
+                )
         except Exception as exc:
             logger.warning("correction_learning.record_correction failed: %s", exc)
             learning_result = {}

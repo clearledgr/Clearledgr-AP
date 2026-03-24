@@ -26,7 +26,7 @@ export function rememberRecordRouteId(recordId) {
 export function navigateToRecordDetail(navigate, recordId) {
   const normalized = rememberRecordRouteId(recordId);
   if (!normalized || typeof navigate !== 'function') return false;
-  navigate('clearledgr/invoice');
+  navigate(`clearledgr/invoice/${encodeURIComponent(normalized)}`);
   return true;
 }
 

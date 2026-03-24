@@ -161,14 +161,14 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   if ((item?.requires_field_review || (Number.isFinite(confidence) && confidence < 0.95)) && !['posted_to_erp', 'closed', 'rejected'].includes(state)) {
     push(
       'confidence',
-      fieldReviewBlockers.length ? 'Workflow paused for field review' : 'Review extracted fields',
+      fieldReviewBlockers.length ? 'Needs a quick field check' : 'Check extracted fields',
       pauseReason || `Current confidence is ${Math.round(confidence * 100)}%, so a field check is still required.`,
     );
   }
   if (item?.finance_effect_review_required) {
     push(
       'finance_effect',
-      financeEffectBlockers[0]?.label || 'Accounting linkage needs review',
+      financeEffectBlockers[0]?.label || 'Credits or payments need review',
       financeEffectBlockers[0]?.detail || financeEffectNotice || 'Linked finance documents changed the payable or settlement balance.',
     );
   }
@@ -189,9 +189,9 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   if (blockers.length === 0 && state === 'received') {
     push(
       'received',
-      isInvoiceDocument ? 'Ready for review' : 'Needs finance review',
+      isInvoiceDocument ? 'Ready for approval' : 'Needs finance review',
       isInvoiceDocument
-        ? 'This invoice is ready for AP validation and approval routing.'
+        ? 'This invoice is ready to send for approval.'
         : getNonInvoiceWorkflowGuidance(documentType),
     );
   }
@@ -200,7 +200,7 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
       'validated',
       isInvoiceDocument ? 'Ready for approval' : `Ready to review ${documentLabel}`,
       isInvoiceDocument
-        ? 'Checks are complete and the invoice can be routed to approval.'
+        ? 'Checks are complete and the invoice is ready to send for approval.'
         : getNonInvoiceWorkflowGuidance(documentType),
     );
   }
@@ -209,7 +209,7 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
 
 function FieldReviewRows({ blockers, pauseReason, onResolve = null, resolvingField = '' }) {
   if ((!Array.isArray(blockers) || blockers.length === 0) && !pauseReason) {
-    return html`<p class="muted">No paused field review.</p>`;
+    return html`<p class="muted">No field checks are waiting.</p>`;
   }
 
   return html`
@@ -220,60 +220,85 @@ function FieldReviewRows({ blockers, pauseReason, onResolve = null, resolvingFie
         </div>
       `}
       ${(blockers || []).map((blocker) => html`
-        <div key=${`${blocker.field || 'field'}-${blocker.kind || 'review'}`} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);display:flex;flex-direction:column;gap:6px">
-          <div style="font-weight:700;font-size:13px">${blocker.field_label || 'Field'} blocked</div>
-          ${blocker.email_value_display && html`
-            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-              <span class="muted" style="font-size:12px">Email said</span>
-              <span style="font-size:13px;font-weight:600;text-align:right">${blocker.email_value_display}</span>
+        <div key=${`${blocker.field || 'field'}-${blocker.kind || 'review'}`} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
+          <div class="review-block-layout">
+            <div class="review-block-main">
+              <div style="font-weight:700;font-size:13px;margin-bottom:10px">
+                ${blocker.kind === 'confidence'
+                  ? `Confirm ${(blocker.field_label || 'field').toLowerCase()}`
+                  : `Choose the correct ${(blocker.field_label || 'field').toLowerCase()}`}
+              </div>
+              <div class="review-block-facts">
+                ${blocker.kind === 'confidence' && html`
+                  <>
+                    <span class="review-block-fact-label">Clearledgr read</span>
+                    <span class="review-block-fact-value">${blocker.current_value_display || 'Not found'}</span>
+                  </>
+                `}
+                ${blocker.kind === 'confidence' && blocker.current_source_label && html`
+                  <>
+                    <span class="review-block-fact-label">Read from</span>
+                    <span class="review-block-fact-value">${blocker.current_source_label}</span>
+                  </>
+                `}
+                ${blocker.email_value !== null && blocker.email_value !== undefined && html`
+                  <>
+                    <span class="review-block-fact-label">Email says</span>
+                    <span class="review-block-fact-value">${blocker.email_value_display}</span>
+                  </>
+                `}
+                ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html`
+                  <>
+                    <span class="review-block-fact-label">Attachment says</span>
+                    <span class="review-block-fact-value">${blocker.attachment_value_display}</span>
+                  </>
+                `}
+                ${blocker.kind === 'source_conflict' && html`
+                  <>
+                    <span class="review-block-fact-label">Current choice</span>
+                    <span class="review-block-fact-value">
+                      ${blocker.winning_source_label || 'Needs review'}
+                      ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ''}
+                    </span>
+                  </>
+                `}
+              </div>
             </div>
-          `}
-          ${blocker.attachment_value_display && html`
-            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-              <span class="muted" style="font-size:12px">Attachment said</span>
-              <span style="font-size:13px;font-weight:600;text-align:right">${blocker.attachment_value_display}</span>
+            <div class="review-block-side">
+              <div class="review-block-heading">Why it stopped</div>
+              <div class="review-block-copy">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
+              ${blocker.auto_check_note && html`<div class="review-block-note">${blocker.auto_check_note}</div>`}
+              ${typeof onResolve === 'function' && html`
+                <div class="review-block-actions">
+                  ${blocker.email_value !== null && blocker.email_value !== undefined && html`
+                    <button
+                      class="btn-secondary btn-sm"
+                      onClick=${() => onResolve(blocker, 'email')}
+                      disabled=${Boolean(resolvingField === `${blocker.field}:email`)}
+                    >
+                      ${resolvingField === `${blocker.field}:email` ? 'Saving…' : 'Use email'}
+                    </button>
+                  `}
+                  ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html`
+                    <button
+                      class="btn-secondary btn-sm"
+                      onClick=${() => onResolve(blocker, 'attachment')}
+                      disabled=${Boolean(resolvingField === `${blocker.field}:attachment`)}
+                    >
+                      ${resolvingField === `${blocker.field}:attachment` ? 'Saving…' : 'Use attachment'}
+                    </button>
+                  `}
+                  <button
+                    class="btn-secondary btn-sm"
+                    onClick=${() => onResolve(blocker, 'manual')}
+                    disabled=${Boolean(resolvingField === `${blocker.field}:manual`)}
+                  >
+                    ${resolvingField === `${blocker.field}:manual` ? 'Saving…' : 'Enter manually'}
+                  </button>
+                </div>
+              `}
             </div>
-          `}
-          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-            <span class="muted" style="font-size:12px">Source selected</span>
-            <span style="font-size:13px;font-weight:600;text-align:right">
-              ${blocker.winning_source_label || 'Review required'}
-              ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ''}
-            </span>
           </div>
-          <div class="muted" style="font-size:12px;line-height:1.45">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
-          ${typeof onResolve === 'function' && html`
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-              ${blocker.email_value !== null && blocker.email_value !== undefined && html`
-                <button
-                  class="alt"
-                  onClick=${() => onResolve(blocker, 'email')}
-                  disabled=${Boolean(resolvingField === `${blocker.field}:email`)}
-                  style="padding:8px 12px;font-size:12px"
-                >
-                  ${resolvingField === `${blocker.field}:email` ? 'Saving…' : 'Use email'}
-                </button>
-              `}
-              ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html`
-                <button
-                  class="alt"
-                  onClick=${() => onResolve(blocker, 'attachment')}
-                  disabled=${Boolean(resolvingField === `${blocker.field}:attachment`)}
-                  style="padding:8px 12px;font-size:12px"
-                >
-                  ${resolvingField === `${blocker.field}:attachment` ? 'Saving…' : 'Use attachment'}
-                </button>
-              `}
-              <button
-                class="alt"
-                onClick=${() => onResolve(blocker, 'manual')}
-                disabled=${Boolean(resolvingField === `${blocker.field}:manual`)}
-                style="padding:8px 12px;font-size:12px"
-              >
-                ${resolvingField === `${blocker.field}:manual` ? 'Saving…' : 'Enter manually'}
-              </button>
-            </div>
-          `}
         </div>
       `)}
     </div>
@@ -321,7 +346,7 @@ function AuditCard({ row }) {
       ${(row.evidenceLabel || row.evidenceDetail) && html`
         <div class="cl-audit-evidence">
           ${row.evidenceLabel && html`<span class="cl-audit-evidence-label">${row.evidenceLabel}</span>`}
-          <span>${row.evidenceDetail || 'Recorded on the shared AP record.'}</span>
+          <span>${row.evidenceDetail || 'Saved on the record.'}</span>
         </div>
       `}
       ${row.actionHint && !row.isBackground && html`<div class="cl-audit-hint">Next: ${row.actionHint}</div>`}
@@ -341,7 +366,7 @@ function RelatedRecordRow({ label, item, onOpen }) {
             ${formatAmount(item.amount, item.currency || 'USD')} · ${String(item.state || 'received').replace(/_/g, ' ')}
           </div>
         </div>
-        <button class="alt" onClick=${onOpen} style="padding:8px 12px;font-size:12px">Open</button>
+        <button class="btn-secondary btn-sm" onClick=${onOpen}>Open</button>
       </div>
     </div>
   `;
@@ -372,7 +397,7 @@ function TemplateActionRow({ template, onDraft }) {
         <strong style="display:block;font-size:13px">${template.name}</strong>
         <span class="muted" style="font-size:12px">${template.description || 'Reusable reply template.'}</span>
       </div>
-      <button class="alt" onClick=${onDraft} style="padding:8px 12px;font-size:12px">Draft</button>
+      <button class="btn-secondary btn-sm" onClick=${onDraft}>Draft</button>
     </div>
   `;
 }
@@ -395,9 +420,9 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
     setLoading(true);
     try {
       const [itemData, auditData, ctxData] = await Promise.all([
-        api(`/api/ap/items/${encodeURIComponent(itemId)}?organization_id=${encodeURIComponent(orgId)}`).catch(() => null),
-        api(`/api/ap/items/${encodeURIComponent(itemId)}/audit?organization_id=${encodeURIComponent(orgId)}`).catch(() => ({ events: [] })),
-        api(`/api/ap/items/${encodeURIComponent(itemId)}/context?organization_id=${encodeURIComponent(orgId)}`).catch(() => null),
+        api(`/api/ap/items/${encodeURIComponent(itemId)}?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).catch(() => null),
+        api(`/api/ap/items/${encodeURIComponent(itemId)}/audit?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).catch(() => ({ events: [] })),
+        api(`/api/ap/items/${encodeURIComponent(itemId)}/context?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).catch(() => null),
       ]);
       setItem(itemData);
       if (itemData?.id) selectActiveItem(itemData.id);
@@ -773,7 +798,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
     return html`
       <div class="panel">
         <p class="muted">Record not found.</p>
-        <button class="alt" onClick=${() => navigate('clearledgr/pipeline')}>Back to pipeline</button>
+        <button class="btn-secondary" onClick=${() => navigate('clearledgr/pipeline')}>Back to pipeline</button>
       </div>
     `;
   }
@@ -802,10 +827,10 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
 
   return html`
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="alt" style="padding:6px 14px;font-size:13px" onClick=${openInPipeline}>← Back to pipeline</button>
-        ${canOpenEmail && html`<button class="alt" onClick=${openEmail}>Open email</button>`}
-        ${(item?.vendor_name || item?.vendor) && html`<button class="alt" onClick=${openVendorRecord}>Open vendor record</button>`}
+      <div class="toolbar-actions">
+        <button class="btn-secondary btn-sm" onClick=${openInPipeline}>Back to pipeline</button>
+        ${canOpenEmail && html`<button class="btn-ghost btn-sm" onClick=${openEmail}>Open email</button>`}
+        ${(item?.vendor_name || item?.vendor) && html`<button class="btn-ghost btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
       </div>
     </div>
 
@@ -829,14 +854,14 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
 
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">
         ${primaryAction?.label && primaryHandler && html`
-          <button onClick=${primaryHandler} disabled=${primaryPending}>
+          <button class="btn-primary" onClick=${primaryHandler} disabled=${primaryPending}>
             ${primaryPending ? 'Processing…' : primaryAction.label}
           </button>
         `}
         ${!readOnlyMode && !isInvoiceDocument && nonInvoiceActions.map((action) => html`
           <button
             key=${action.id}
-            class="alt"
+            class="btn-secondary btn-sm"
             onClick=${() => doResolveNonInvoice(action)}
             disabled=${Boolean(resolvingNonInvoice && resolvingNonInvoiceKey === `${item.id}:${action.id}`)}
           >
@@ -844,13 +869,13 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
           </button>
         `)}
         ${readOnlyMode && html`
-          <div class="muted" style="width:100%">Read-only view. Queue actions are reserved for AP operators.</div>
+        <div class="muted" style="width:100%">Read-only view. You can review this record here, but only operators can take action.</div>
         `}
         ${canRejectWorkItem(state, actorRole, documentType) && html`
-          <button class="alt" onClick=${doReject} disabled=${rejecting}>Reject</button>
+          <button class="btn-danger btn-sm" onClick=${doReject} disabled=${rejecting}>Reject</button>
         `}
         ${canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== 'nudge_approver' && html`
-          <button class="alt" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
+          <button class="btn-secondary btn-sm" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
         `}
       </div>
     </div>
@@ -872,7 +897,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Paused field review</h3>
+          <h3 style="margin-top:0">Check these fields</h3>
           <${FieldReviewRows}
             blockers=${fieldReviewBlockers}
             pauseReason=${pauseReason}
@@ -912,7 +937,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
 
         ${hasAccountingLinkage && html`
           <div class="panel">
-            <h3 style="margin-top:0">Accounting linkage</h3>
+            <h3 style="margin-top:0">Credits and payments</h3>
             <div style="display:flex;flex-direction:column;gap:10px">
               ${financeEffectNotice
                 ? html`<div class="muted" style="font-size:13px;line-height:1.45">${financeEffectNotice}</div>`
@@ -986,7 +1011,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
               <h3 style="margin:0 0 4px">Linked records</h3>
               <p class="muted" style="margin:0">Related invoices and superseded records linked to this AP item.</p>
             </div>
-            ${(item?.vendor_name || item?.vendor) && html`<button class="alt" onClick=${openVendorRecord} style="padding:8px 12px;font-size:12px">Open vendor record</button>`}
+            ${(item?.vendor_name || item?.vendor) && html`<button class="btn-secondary btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
           </div>
           <div style="display:flex;flex-direction:column;gap:10px">
             ${(relatedRecords?.supersession?.previous_item || relatedRecords?.supersession?.next_item || (relatedRecords?.same_invoice_number_items || []).length || (relatedRecords?.vendor_recent_items || []).length)
@@ -1022,7 +1047,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
                     />
                   `)}
                 `
-              : html`<p class="muted" style="margin:0">No linked AP records yet.</p>`}
+              : html`<p class="muted" style="margin:0">No linked records yet.</p>`}
           </div>
         </div>
       </div>
@@ -1042,8 +1067,8 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
                   />
                 `)}
               </div>`}
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-            <button class="alt" onClick=${() => navigate('clearledgr/templates')} style="padding:8px 12px;font-size:12px">Manage templates</button>
+          <div class="toolbar-actions" style="margin-top:12px">
+            <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/templates')}>Manage templates</button>
             ${draftingReply && html`<span class="muted" style="font-size:12px;align-self:center">Opening compose…</span>`}
           </div>
         </div>

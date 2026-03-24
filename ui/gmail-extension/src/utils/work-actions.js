@@ -133,18 +133,18 @@ export function getWorkStateNotice(state, documentType = 'invoice', item = null)
       return `This ${documentLabel} has been closed.`;
     }
     if (documentType === 'statement') {
-      return 'This bank statement is routed to reconciliation work, not AP approval or ERP posting.';
+      return 'This bank statement goes to reconciliation, not invoice approval or ERP posting.';
     }
     if (documentType === 'payment_request') {
-      return 'This payment request is routed outside the invoice workflow. AP approval and ERP posting are disabled.';
+      return 'This payment request is handled outside the invoice flow. Approval and ERP posting are not available here.';
     }
     if (documentType === 'payment') {
-      return 'This payment confirmation proves money already moved. It is tracked outside the AP payable workflow.';
+      return 'This payment confirmation shows money already moved. It is tracked outside the invoice flow.';
     }
     if (documentType === 'receipt') {
-      return 'This receipt is supporting evidence for a completed payment, not an open payable.';
+      return 'This receipt is supporting evidence for a completed payment, not an open invoice.';
     }
-    return `This ${documentLabel} is tracked as a non-invoice finance document. Invoice approval and ERP posting are disabled.`;
+    return `This ${documentLabel} is tracked as a non-invoice record. Invoice approval and ERP posting are not available here.`;
   }
   if (financeEffectNotice) {
     return financeEffectNotice;
