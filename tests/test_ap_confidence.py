@@ -125,3 +125,30 @@ def test_known_billing_attachment_profile_applies_to_stripe_sender_family():
     assert gate["profile_id"] == "known_billing_attachment_invoice"
     assert gate["requires_field_review"] is False
     assert gate["confidence_blockers"] == []
+
+
+def test_confidence_gate_falls_back_to_default_fields_when_no_profile_matches():
+    gate = evaluate_critical_field_confidence(
+        overall_confidence=0.97,
+        field_values={
+            "vendor": "Unknown Vendor",
+            "amount": 38.46,
+            "invoice_number": "INV-404",
+            "due_date": "2026-02-01",
+        },
+        field_confidences={
+            "vendor": 0.98,
+            "amount": 0.99,
+            "invoice_number": 0.98,
+            "due_date": 0.97,
+        },
+        vendor_name="Unknown Vendor",
+        sender="billing@example.com",
+        document_type="memo",
+        primary_source="portal",
+        has_attachment=False,
+    )
+
+    assert gate["profile_id"] is None
+    assert gate["requires_field_review"] is False
+    assert gate["evaluated_fields"] == ["vendor", "amount", "invoice_number", "due_date"]

@@ -89,6 +89,25 @@ test('prepareVendorFollowup uses canonical agent intent execute endpoint', async
   assert.equal(payload.idempotency_key, 'idem-1');
 });
 
+test('prepareVendorFollowup preserves waiting_sla responses for the Gmail surface', async () => {
+  const manager = createManager(async () => (
+    createResponse(200, {
+      status: 'waiting_sla',
+      reason: 'waiting_for_sla_window',
+      followup_next_action: 'await_vendor_response',
+    })
+  ));
+
+  const result = await manager.prepareVendorFollowup(
+    { id: 'ap-1' },
+    { idempotencyKey: 'idem-followup-wait-1' }
+  );
+
+  assert.equal(result.status, 'waiting_sla');
+  assert.equal(result.reason, 'waiting_for_sla_window');
+  assert.equal(result.followup_next_action, 'await_vendor_response');
+});
+
 test('requestApproval uses canonical approval intent', async () => {
   const calls = [];
   const manager = createManager(async (url, options) => {
@@ -157,6 +176,26 @@ test('nudgeApproval uses canonical nudge intent', async () => {
   assert.equal(payload.input.ap_item_id, 'ap-nudge-1');
   assert.equal(payload.input.email_id, 'ap-nudge-1');
   assert.equal(payload.input.message, 'Reminder from finance ops');
+});
+
+test('nudgeApproval normalizes fallback delivery into nudged status', async () => {
+  const manager = createManager(async () => createResponse(200, {
+    status: 'error',
+    fallback: {
+      status: 'sent',
+      delivery: 'approval_reminder_fallback',
+      channel: 'cl-finance-ap',
+    },
+  }));
+  manager.syncQueueWithBackend = async () => false;
+
+  const result = await manager.nudgeApproval(
+    { id: 'ap-nudge-fallback-1' },
+    { idempotencyKey: 'idem-nudge-fallback-1' }
+  );
+
+  assert.equal(result.status, 'nudged');
+  assert.equal(result.fallback.status, 'sent');
 });
 
 test('rejectInvoice uses canonical reject intent', async () => {

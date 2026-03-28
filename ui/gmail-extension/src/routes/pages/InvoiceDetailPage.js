@@ -26,10 +26,13 @@ import {
   partitionAuditEvents,
 } from '../../utils/formatters.js';
 import {
+  canEscalateApproval,
+  canReassignApproval,
   canNudgeApprover,
   canRejectWorkItem,
   getPrimaryActionConfig,
   getWorkStateNotice,
+  needsEntityRouting,
   normalizeWorkState,
   shouldOfferResumeWorkflow,
 } from '../../utils/work-actions.js';
@@ -69,6 +72,17 @@ const STATE_STYLES = {
   rejected: { bg: '#FEF2F2', text: '#DC2626', label: 'Rejected' },
   failed_post: { bg: '#FEF2F2', text: '#DC2626', label: 'Failed post' },
 };
+
+function humanizePrepareInfoFailure(reason) {
+  const token = String(reason || '').trim();
+  if (!token) return '';
+  const map = {
+    waiting_for_sla_window: 'Follow-up already sent. Wait for the vendor response before nudging again.',
+    followup_attempt_limit_reached: 'Clearledgr reached the vendor follow-up limit. This now needs manual escalation.',
+    state_not_needs_info: 'This invoice is no longer waiting on vendor information.',
+  };
+  return map[token] || token.replace(/_/g, ' ');
+}
 
 function StatePill({ state }) {
   const tone = STATE_STYLES[state] || {
@@ -135,6 +149,9 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   const fieldReviewBlockers = getFieldReviewBlockers(item);
   const financeEffectBlockers = getFinanceEffectBlockers(item);
   const financeEffectNotice = getFinanceEffectNotice(item);
+  const approvalFollowup = item?.approval_followup && typeof item.approval_followup === 'object'
+    ? item.approval_followup
+    : {};
   const pauseReason = getWorkflowPauseReason(item);
   const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
   const isInvoiceDocument = isInvoiceDocumentType(documentType);
@@ -172,9 +189,29 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
       financeEffectBlockers[0]?.detail || financeEffectNotice || 'Linked finance documents changed the payable or settlement balance.',
     );
   }
+  if (needsEntityRouting(item, state, documentType)) {
+    push(
+      'entity',
+      'Entity route needs review',
+      item?.entity_route_reason || 'Choose the correct legal entity before approval routing can continue.',
+    );
+  }
 
   if (state === 'needs_approval') {
-    push('approval', 'Waiting on approver', 'The approval request is still pending.');
+    const pendingAssignees = Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees : [];
+    push(
+      'approval',
+      approvalFollowup?.escalation_due
+        ? 'Approval escalation due'
+        : (approvalFollowup?.sla_breached ? 'Approval follow-up due' : 'Waiting on approver'),
+      approvalFollowup?.escalation_due
+        ? 'Approval has been waiting past the escalation policy and should be escalated or reassigned.'
+        : (approvalFollowup?.sla_breached
+          ? 'Approval has been waiting past the reminder SLA and should be nudged.'
+        : (pendingAssignees.length
+          ? `Waiting on ${pendingAssignees.slice(0, 3).join(', ')}.`
+          : 'The approval request is still pending.')),
+    );
   }
   if (state === 'needs_info') {
     push(
@@ -198,9 +235,15 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   if (blockers.length === 0 && state === 'validated') {
     push(
       'validated',
-      isInvoiceDocument ? 'Ready for approval' : `Ready to review ${documentLabel}`,
+      isInvoiceDocument && needsEntityRouting(item, state, documentType)
+        ? 'Resolve entity route'
+        : (isInvoiceDocument ? 'Ready for approval' : `Ready to review ${documentLabel}`),
       isInvoiceDocument
-        ? 'Checks are complete and the invoice is ready to send for approval.'
+        ? (
+          needsEntityRouting(item, state, documentType)
+            ? 'Choose the correct legal entity before sending this invoice for approval.'
+            : 'Checks are complete and the invoice is ready to send for approval.'
+        )
         : getNonInvoiceWorkflowGuidance(documentType),
     );
   }
@@ -468,12 +511,22 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
     () => !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType),
     [auditEvents, documentType, item, pauseReason],
   );
+  const approvalFollowup = item?.approval_followup && typeof item.approval_followup === 'object'
+    ? item.approval_followup
+    : {};
+  const entityRouting = item?.entity_routing && typeof item.entity_routing === 'object'
+    ? item.entity_routing
+    : {};
+  const entityCandidates = Array.isArray(item?.entity_candidates)
+    ? item.entity_candidates
+    : (Array.isArray(entityRouting?.candidates) ? entityRouting.candidates : []);
+  const entityNeedsReview = needsEntityRouting(item, state, documentType);
   const stateNotice = resumeWorkflowEligible
     ? 'Field review is cleared. Resume workflow to continue the posting step.'
     : getWorkStateNotice(state, documentType, item);
   const basePrimaryAction = (pauseReason || item?.finance_effect_review_required)
     ? null
-    : getPrimaryActionConfig(state, actorRole, documentType);
+    : getPrimaryActionConfig(state, actorRole, documentType, item);
   const primaryAction = resumeWorkflowEligible && ['preview_erp_post', 'retry_erp_post'].includes(basePrimaryAction?.id)
     ? { id: 'resume_workflow', label: 'Resume workflow' }
     : basePrimaryAction;
@@ -528,8 +581,17 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
       email_id: item.thread_id || item.message_id || item.id,
       reason: 'Request missing invoice details from vendor',
     });
-    const ok = ['prepared', 'queued'].includes(String(result?.status || '').toLowerCase());
-    toast(ok ? 'Info request draft prepared.' : (result?.reason || 'Could not prepare info request.'), ok ? 'success' : 'error');
+    const status = String(result?.status || '').toLowerCase();
+    const ok = ['prepared', 'queued'].includes(status);
+    const informational = status === 'waiting_sla';
+    toast(
+      ok
+        ? 'Info request draft prepared.'
+        : informational
+        ? (humanizePrepareInfoFailure(result?.reason) || 'Follow-up already sent.')
+        : (humanizePrepareInfoFailure(result?.reason) || 'Could not prepare info request.'),
+      ok ? 'success' : informational ? 'info' : 'error',
+    );
     await refresh();
   });
 
@@ -543,6 +605,81 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
     });
     const ok = String(result?.status || '').toLowerCase() === 'nudged';
     toast(ok ? 'Approval reminder sent.' : (result?.reason || 'Could not send reminder.'), ok ? 'success' : 'error');
+    await refresh();
+  });
+
+  const [doEscalateApproval, escalatingApproval] = useAction(async () => {
+    const result = await executeIntent(api, orgId, 'escalate_approval', {
+      ap_item_id: item.id,
+      email_id: item.thread_id || item.message_id || item.id,
+      source_channel: 'gmail_route',
+      source_channel_id: 'gmail_route',
+      source_message_ref: item.thread_id || item.message_id || item.id,
+    });
+    const ok = String(result?.status || '').toLowerCase() === 'escalated';
+    toast(ok ? 'Approval escalated.' : (result?.reason || 'Could not escalate approval.'), ok ? 'success' : 'error');
+    await refresh();
+  });
+
+  const [doReassignApproval, reassigningApproval] = useAction(async () => {
+    const assignee = await openDialog({
+      actionType: 'generic',
+      title: 'Reassign approval',
+      label: 'New approver',
+      message: 'Enter the approver who should own this approval request now.',
+      placeholder: 'Approver email or Slack user',
+      confirmLabel: 'Reassign',
+      cancelLabel: 'Cancel',
+      required: true,
+      chips: Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees.slice(0, 4) : [],
+    });
+    if (!assignee) return;
+    const result = await executeIntent(api, orgId, 'reassign_approval', {
+      ap_item_id: item.id,
+      email_id: item.thread_id || item.message_id || item.id,
+      assignee,
+      source_channel: 'gmail_route',
+      source_channel_id: 'gmail_route',
+      source_message_ref: item.thread_id || item.message_id || item.id,
+    });
+    const ok = String(result?.status || '').toLowerCase() === 'reassigned';
+    toast(ok ? `Approval reassigned to ${assignee}.` : (result?.reason || 'Could not reassign approval.'), ok ? 'success' : 'error');
+    await refresh();
+  });
+
+  const [doResolveEntityRoute, resolvingEntityRoute] = useAction(async () => {
+    let selection = '';
+    if (entityCandidates.length > 1) {
+      selection = await openDialog({
+        actionType: 'generic',
+        title: 'Resolve entity route',
+        label: 'Entity code or name',
+        message: 'Choose the legal entity Clearledgr should use for this invoice.',
+        previewLines: entityCandidates.slice(0, 6).map((candidate) => (
+          candidate?.label || candidate?.entity_name || candidate?.entity_code || ''
+        )).filter(Boolean),
+        placeholder: 'e.g. US-01 or Cowrywise Inc US',
+        confirmLabel: 'Resolve entity',
+        cancelLabel: 'Cancel',
+        required: true,
+        chips: entityCandidates.slice(0, 4).map((candidate) => (
+          candidate?.entity_code || candidate?.entity_name || candidate?.label || ''
+        )).filter(Boolean),
+      });
+      if (!selection) return;
+    }
+    const candidate = entityCandidates.length === 1 ? entityCandidates[0] : null;
+    const result = await api(`/api/ap/items/${encodeURIComponent(item.id)}/entity-route/resolve?organization_id=${encodeURIComponent(orgId)}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        selection: selection || candidate?.entity_code || candidate?.entity_name,
+        entity_id: candidate?.entity_id,
+        entity_code: candidate?.entity_code,
+        entity_name: candidate?.entity_name,
+      }),
+    });
+    const ok = String(result?.status || '').toLowerCase() === 'resolved';
+    toast(ok ? 'Entity route resolved.' : (result?.reason || 'Could not resolve entity route.'), ok ? 'success' : 'error');
     await refresh();
   });
 
@@ -808,9 +945,15 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
   if (primaryAction?.id === 'request_approval') {
     primaryHandler = doRequestApproval;
     primaryPending = requestingApproval;
+  } else if (primaryAction?.id === 'resolve_entity_route') {
+    primaryHandler = doResolveEntityRoute;
+    primaryPending = resolvingEntityRoute;
   } else if (primaryAction?.id === 'prepare_info_request') {
     primaryHandler = doPrepareInfo;
     primaryPending = preparingInfo;
+  } else if (primaryAction?.id === 'escalate_approval') {
+    primaryHandler = doEscalateApproval;
+    primaryPending = escalatingApproval;
   } else if (primaryAction?.id === 'nudge_approver') {
     primaryHandler = doNudge;
     primaryPending = nudging;
@@ -874,6 +1017,21 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
         ${canRejectWorkItem(state, actorRole, documentType) && html`
           <button class="btn-danger btn-sm" onClick=${doReject} disabled=${rejecting}>Reject</button>
         `}
+        ${canReassignApproval(item, state, actorRole, documentType) && html`
+          <button class="btn-secondary btn-sm" onClick=${doReassignApproval} disabled=${reassigningApproval}>
+            ${reassigningApproval ? 'Reassigning…' : 'Reassign approver'}
+          </button>
+        `}
+        ${canEscalateApproval(item, state, actorRole, documentType) && primaryAction?.id !== 'escalate_approval' && html`
+          <button class="btn-secondary btn-sm" onClick=${doEscalateApproval} disabled=${escalatingApproval}>
+            ${escalatingApproval ? 'Escalating…' : 'Escalate approval'}
+          </button>
+        `}
+        ${entityNeedsReview && primaryAction?.id !== 'resolve_entity_route' && html`
+          <button class="btn-secondary btn-sm" onClick=${doResolveEntityRoute} disabled=${resolvingEntityRoute}>
+            ${resolvingEntityRoute ? 'Resolving…' : 'Resolve entity'}
+          </button>
+        `}
         ${canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== 'nudge_approver' && html`
           <button class="btn-secondary btn-sm" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
         `}
@@ -895,6 +1053,32 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
               </div>`
             : html`<p class="muted">No active blockers.</p>`}
         </div>
+
+        ${(state === 'needs_approval' || entityNeedsReview) && html`
+          <div class="panel">
+            <h3 style="margin-top:0">Follow-up and routing</h3>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              ${state === 'needs_approval' && html`
+                ${detailRow('Approval wait', approvalFollowup?.wait_minutes ? `${approvalFollowup.wait_minutes} minutes` : '—')}
+                ${detailRow('Pending approvers', Array.isArray(approvalFollowup?.pending_assignees) && approvalFollowup.pending_assignees.length ? approvalFollowup.pending_assignees.join(', ') : 'Not recorded')}
+                ${detailRow(
+                  'Approval SLA',
+                  approvalFollowup?.escalation_due
+                    ? 'Escalation due'
+                    : (approvalFollowup?.sla_breached ? 'Reminder due' : 'Within SLA'),
+                )}
+                ${detailRow('Escalations', String(approvalFollowup?.escalation_count || 0))}
+                ${detailRow('Reassignments', String(approvalFollowup?.reassignment_count || 0))}
+              `}
+              ${isInvoiceDocument && html`
+                ${detailRow('Entity route', entityNeedsReview ? 'Needs review' : (item?.entity_code || item?.entity_name || 'Not set'))}
+                ${entityCandidates.length
+                  ? detailRow('Entity candidates', entityCandidates.slice(0, 4).map((candidate) => candidate?.label || candidate?.entity_name || candidate?.entity_code).filter(Boolean).join(', '))
+                  : null}
+              `}
+            </div>
+          </div>
+        `}
 
         <div class="panel">
           <h3 style="margin-top:0">Check these fields</h3>

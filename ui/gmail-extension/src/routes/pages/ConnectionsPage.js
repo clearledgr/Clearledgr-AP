@@ -54,7 +54,7 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
       oauthBridge.startOAuth(payload.auth_url, 'gmail');
       return;
     }
-    navigate?.('clearledgr/home');
+    navigate?.('clearledgr/pipeline');
   });
 
   const [connectSlack, slackPending] = useAction(async () => {
@@ -70,7 +70,7 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
   const [testSlackMsg, testSlackPending] = useAction(async () => {
     if (!canManageConnections) return;
     await api('/api/workspace/integrations/slack/test', { method: 'POST', body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById('cl-slack-channel')?.value?.trim() }) });
-    toast('Test sent to Slack.');
+    toast('Slack connection verified.');
   });
   const [saveWebhook, saveWebhookPending] = useAction(async () => {
     if (!canManageConnections) return;
@@ -160,9 +160,9 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
             <button class="btn-primary btn-sm" onClick=${connectSlack} disabled=${slackPending || !canManageConnections}>${slackPending ? 'Working…' : 'Install to Slack'}</button>
             <input id="cl-slack-channel" placeholder="#finance-approvals" value=${slack.approval_channel || ''} disabled=${!canManageConnections} style="flex:1;min-width:160px" />
             <button class="btn-secondary btn-sm" onClick=${saveChannel} disabled=${saveChannelPending || !canManageConnections}>${saveChannelPending ? 'Saving…' : 'Save channel'}</button>
-            <button class="btn-ghost btn-sm" onClick=${testSlackMsg} disabled=${testSlackPending || !slack.connected || !canManageConnections}>${testSlackPending ? 'Sending…' : 'Send test'}</button>
+            <button class="btn-ghost btn-sm" onClick=${testSlackMsg} disabled=${testSlackPending || !slack.connected || !canManageConnections}>${testSlackPending ? 'Verifying…' : 'Verify Slack'}</button>
           </div>
-          <div class="muted" style="margin-top:10px">Mode: ${humanizeMode(slack.mode || '-')}</div>
+          <div class="muted" style="margin-top:10px">Mode: ${humanizeMode(slack.mode || '-')} · Verification checks access without posting into the approval channel.</div>
         </${ApprovalSurfaceCard}>
 
         <${ApprovalSurfaceCard}

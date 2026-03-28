@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import sys
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,10 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from main import _apply_runtime_surface_profile, app  # noqa: E402
+from main import _apply_runtime_surface_profile, _is_strict_profile_allowed_path, app  # noqa: E402
 from clearledgr.core import database as db_module  # noqa: E402
 from clearledgr.core.auth import create_access_token  # noqa: E402
-from clearledgr.api.ap_items import build_worklist_item  # noqa: E402
+from clearledgr.api.ap_items import (  # noqa: E402
+    ResolveEntityRouteRequest,
+    build_worklist_item,
+    resolve_ap_item_entity_route,
+)
 from clearledgr.services.correction_learning import CorrectionLearningService  # noqa: E402
 
 
@@ -301,15 +307,38 @@ def test_build_worklist_item_surfaces_extraction_conflicts_and_provenance(db):
     assert normalized["workflow_paused_reason"] == (
         "Workflow paused until amount is confirmed because the email and attachment disagree."
     )
+    assert normalized["field_review_blockers"][0]["paused_reason"] == (
+        "Workflow paused until amount is confirmed because the email and attachment disagree."
+    )
     assert normalized["field_review_blockers"][0]["field_label"] == "Amount"
     assert normalized["field_review_blockers"][0]["email_value_display"] == "USD 400.00"
     assert normalized["field_review_blockers"][0]["attachment_value_display"] == "USD 440.00"
-    assert normalized["field_review_blockers"][0]["winning_source_label"] == "Attachment"
+    assert normalized["field_review_blockers"][0]["winning_source_label"] == "Invoice attachment"
     assert normalized["pipeline_blockers"][0]["kind"] == "confidence"
     assert normalized["pipeline_blockers"][0]["type"] == "source_conflict"
     assert normalized["pipeline_blockers"][0]["chip_label"] == "Field review"
     assert normalized["pipeline_blockers"][0]["title"] == "Amount blocked"
     assert normalized["pipeline_blockers"][0]["detail"] == "Email USD 400.00 · Attachment USD 440.00"
+
+
+def test_build_worklist_item_surfaces_specific_failed_post_connector_reason(db):
+    item = db.create_ap_item(
+        _item_payload(
+            "failed-post-no-erp",
+            "default",
+            state="failed_post",
+            extra={
+                "last_error": "No ERP connected for organization",
+                "exception_code": "erp_not_connected",
+            },
+        )
+    )
+
+    normalized = build_worklist_item(db, item)
+
+    assert normalized["workflow_paused_reason"] == "Connect an ERP before this invoice can be posted."
+    assert normalized["exception_code"] == "erp_not_connected"
+    assert normalized["erp_status"] == "failed"
 
 
 def test_build_worklist_item_surfaces_confidence_threshold_in_pipeline_blockers(db):
@@ -779,7 +808,8 @@ def test_non_invoice_resolution_endpoint_closes_credit_note_with_reference(clien
     assert related_metadata["finance_effect_summary"]["remaining_payable_amount"] == 0.0
     assert related_metadata["finance_effect_summary"]["credit_application_state"] == "fully_credited"
     assert related_metadata["finance_effect_review_required"] is True
-    assert "linked_credit_adjustment_present" in related_metadata["finance_effect_summary"]["blocked_reason_codes"]
+    assert related_metadata["vendor_credit_summary"]["erp_application_status"] == "pending_target_post"
+    assert "linked_credit_application_pending" in related_metadata["finance_effect_summary"]["blocked_reason_codes"]
     assert related_metadata["linked_finance_documents"][0]["source_ap_item_id"] == item["id"]
     normalized_related = build_worklist_item(db, related_stored)
     assert normalized_related["finance_effect_review_required"] is True
@@ -1067,3 +1097,143 @@ def test_context_endpoint_includes_related_records_and_source_groups(client, db)
     assert related["supersession"]["previous_item"]["id"] == previous["id"]
     assert source_groups["count"] == 2
     assert {group["source_type"] for group in source_groups["groups"]} == {"email", "procurement"}
+
+
+def test_build_worklist_item_surfaces_entity_routing_and_approval_followup(db):
+    item = db.create_ap_item(
+        _item_payload(
+            "entity-approval-1",
+            "default",
+            state="needs_approval",
+            metadata={
+                "approval_requested_at": "2026-03-18T08:00:00+00:00",
+                "approval_sent_to": ["approver@clearledgr.com"],
+                "approval_escalation_count": 1,
+                "entity_candidates": [
+                    {"entity_code": "US-01", "entity_name": "Acme US"},
+                    {"entity_code": "GH-01", "entity_name": "Acme Ghana"},
+                ],
+            },
+        )
+    )
+
+    normalized = build_worklist_item(db, item)
+
+    assert normalized["entity_routing_status"] == "needs_review"
+    assert normalized["approval_followup"]["sla_breached"] is True
+    assert normalized["approval_followup"]["escalation_due"] is True
+    assert normalized["approval_followup"]["sla_minutes"] == 240
+    assert normalized["approval_followup"]["escalation_minutes"] == 1440
+    assert normalized["approval_pending_assignees"] == ["approver@clearledgr.com"]
+    assert normalized["next_action"] == "resolve_entity_route"
+    assert "entity" in {blocker["kind"] for blocker in normalized["pipeline_blockers"]}
+
+
+def test_entity_route_resolution_handler_clears_entity_blocker(db):
+    item = db.create_ap_item(
+        _item_payload(
+            "entity-route-1",
+            "default",
+            state="validated",
+            metadata={
+                "entity_candidates": [
+                    {"entity_code": "US-01", "entity_name": "Acme US"},
+                    {"entity_code": "GH-01", "entity_name": "Acme Ghana"},
+                ],
+            },
+        )
+    )
+
+    payload = asyncio.run(
+        resolve_ap_item_entity_route(
+            item["id"],
+            ResolveEntityRouteRequest(selection="GH-01"),
+            organization_id="default",
+            user=SimpleNamespace(
+                email="user-test@default.example",
+                user_id="user-test",
+                organization_id="default",
+                role="operator",
+            ),
+        )
+    )
+    assert payload["status"] == "resolved"
+    assert payload["entity_selection"]["entity_code"] == "GH-01"
+    assert payload["ap_item"]["entity_routing_status"] == "resolved"
+    assert payload["ap_item"]["entity_code"] == "GH-01"
+    assert payload["ap_item"]["next_action"] == "route_for_approval"
+    assert _is_strict_profile_allowed_path("/api/ap/items/entity-route-1/entity-route/resolve") is True
+
+
+def test_build_worklist_item_applies_org_entity_routing_rules(db):
+    if hasattr(db, "ensure_organization"):
+        db.ensure_organization("default", organization_name="default")
+    db.update_organization(
+        "default",
+        settings={
+            "entity_routing": {
+                "entities": [
+                    {"entity_code": "US-01", "entity_name": "Acme US"},
+                    {"entity_code": "GH-01", "entity_name": "Acme Ghana"},
+                ],
+                "rules": [
+                    {
+                        "entity_code": "GH-01",
+                        "sender_domains": ["ghana.vendor.example"],
+                        "currencies": ["USD"],
+                    }
+                ],
+            }
+        },
+    )
+    item = db.create_ap_item(
+        _item_payload(
+            "entity-org-rule-1",
+            "default",
+            state="validated",
+            extra={"sender": "billing@ghana.vendor.example"},
+        )
+    )
+
+    normalized = build_worklist_item(db, item)
+
+    assert normalized["entity_routing_status"] == "resolved"
+    assert normalized["entity_code"] == "GH-01"
+    assert normalized["entity_name"] == "Acme Ghana"
+
+
+def test_build_worklist_item_requires_manual_review_when_multi_entity_rules_do_not_match(db):
+    if hasattr(db, "ensure_organization"):
+        db.ensure_organization("default", organization_name="default")
+    db.update_organization(
+        "default",
+        settings={
+            "entity_routing": {
+                "entities": [
+                    {"entity_code": "US-01", "entity_name": "Acme US"},
+                    {"entity_code": "GH-01", "entity_name": "Acme Ghana"},
+                ],
+                "rules": [
+                    {
+                        "entity_code": "US-01",
+                        "sender_domains": ["us.vendor.example"],
+                    }
+                ],
+            }
+        },
+    )
+    item = db.create_ap_item(
+        _item_payload(
+            "entity-org-rule-2",
+            "default",
+            state="validated",
+            extra={"sender": "billing@unknown.vendor.example"},
+        )
+    )
+
+    normalized = build_worklist_item(db, item)
+
+    assert normalized["entity_routing_status"] == "needs_review"
+    assert len(normalized["entity_candidates"]) == 2
+    assert normalized["entity_route_reason"] == "No entity routing rule matched this invoice."
+    assert normalized["next_action"] == "resolve_entity_route"

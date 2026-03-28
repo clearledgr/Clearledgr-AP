@@ -162,7 +162,7 @@ These endpoints power the Gmail embedded AP experience.
 `GET /extension/worklist`
 
 Purpose:
-- invoice-centric AP worklist for the Gmail sidebar/workspace
+- invoice-centric AP worklist for the Gmail thread surface and `Pipeline` control plane
 
 Contract expectations (see canonical contract docs):
 - status, confidence, exceptions, next action, source linkage

@@ -6,14 +6,20 @@ const fs = require('node:fs');
 const EXTENSION_ROOT = path.resolve(__dirname, '..');
 const RUN_E2E = process.env.RUN_GMAIL_E2E === '1';
 const ASSERT_AUTH = process.env.GMAIL_E2E_ASSERT_AUTH === '1';
+const RUN_GMAIL_E2E_ACTION = process.env.RUN_GMAIL_E2E_ACTION === '1';
 const E2E_TIMEOUT_MS = Number(process.env.GMAIL_E2E_TIMEOUT_MS || 180000);
 const E2E_UI_SETTLE_MS = Number(process.env.GMAIL_E2E_UI_SETTLE_MS || 15000);
 const EXPECT_SELECTOR = process.env.GMAIL_E2E_EXPECT_SELECTOR || '#cl-scan-status';
 const E2E_EVIDENCE_JSON = process.env.GMAIL_E2E_EVIDENCE_JSON || '';
+const E2E_ACTION_EVIDENCE_JSON = process.env.GMAIL_E2E_ACTION_EVIDENCE_JSON || E2E_EVIDENCE_JSON;
 const E2E_EXECUTABLE_PATH = String(process.env.GMAIL_E2E_EXECUTABLE_PATH || '').trim();
 const E2E_PROFILE_DIRECTORY = String(process.env.GMAIL_E2E_PROFILE_DIRECTORY || '').trim();
+const ACTION_SELECTOR = String(process.env.GMAIL_E2E_ACTION_SELECTOR || '').trim();
+const ACTION_SUCCESS_SELECTOR = String(process.env.GMAIL_E2E_ACTION_SUCCESS_SELECTOR || '').trim();
+const ACTION_SUCCESS_TEXT = String(process.env.GMAIL_E2E_ACTION_SUCCESS_TEXT || '').trim();
+const ACTION_SETTLE_MS = Number(process.env.GMAIL_E2E_ACTION_SETTLE_MS || 12000);
 const UI_MARKERS = String(
-  process.env.GMAIL_E2E_UI_MARKERS || 'Clearledgr Home,Process with Clearledgr',
+  process.env.GMAIL_E2E_UI_MARKERS || 'Clearledgr Pipeline,Process with Clearledgr',
 )
   .split(',')
   .map((value) => String(value || '').trim())
@@ -110,6 +116,13 @@ async function _collectUiMarkerPresence(page, markers) {
 function _writeEvidence(payload) {
   if (!E2E_EVIDENCE_JSON) return;
   const outputPath = path.resolve(E2E_EVIDENCE_JSON);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+function _writeActionEvidence(payload) {
+  if (!E2E_ACTION_EVIDENCE_JSON) return;
+  const outputPath = path.resolve(E2E_ACTION_EVIDENCE_JSON);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
@@ -243,6 +256,107 @@ test('real Gmail/Chrome smoke scaffold is configured (manual-gated)', { skip: !R
 
 test('real Gmail/Chrome smoke stays opt-in unless RUN_GMAIL_E2E=1', () => {
   assert.ok(true);
+});
+
+test('real Gmail/Chrome canonical AP action can be executed (manual-gated)', { skip: !(RUN_E2E && RUN_GMAIL_E2E_ACTION) }, async () => {
+  let chromium;
+  try {
+    ({ chromium } = require('playwright'));
+  } catch (_) {
+    assert.fail(
+      'RUN_GMAIL_E2E_ACTION=1 requires playwright. Install with `npm i -D playwright` and run again.',
+    );
+  }
+
+  assert.ok(ACTION_SELECTOR, 'GMAIL_E2E_ACTION_SELECTOR is required when RUN_GMAIL_E2E_ACTION=1');
+
+  const manifestPath = path.join(EXTENSION_ROOT, 'manifest.json');
+  assert.ok(fs.existsSync(manifestPath), 'manifest.json must exist for extension load');
+
+  const userDataDir = process.env.GMAIL_E2E_PROFILE_DIR || path.resolve(EXTENSION_ROOT, '.e2e-profile');
+  let context;
+  let page = null;
+
+  const evidence = {
+    status: 'running',
+    started_at: new Date().toISOString(),
+    target_url: process.env.GMAIL_E2E_URL || 'https://mail.google.com/mail/u/0/#inbox',
+    action_selector: ACTION_SELECTOR,
+    action_success_selector: ACTION_SUCCESS_SELECTOR || null,
+    action_success_text: ACTION_SUCCESS_TEXT || null,
+    current_url: null,
+    page_title: null,
+    extension_worker_detected: false,
+    extension_worker_url: null,
+    action_clicked: false,
+    action_completed: false,
+    screenshot_path: process.env.GMAIL_E2E_CAPTURE_PATH || null,
+  };
+
+  try {
+    context = await chromium.launchPersistentContext(userDataDir, {
+      headless: false,
+      executablePath: E2E_EXECUTABLE_PATH || undefined,
+      ignoreDefaultArgs: ['--disable-extensions'],
+      args: [
+        `--disable-extensions-except=${EXTENSION_ROOT}`,
+        `--load-extension=${EXTENSION_ROOT}`,
+        ...(E2E_PROFILE_DIRECTORY ? [`--profile-directory=${E2E_PROFILE_DIRECTORY}`] : []),
+      ],
+    });
+
+    page = context.pages()[0] || await context.newPage();
+    await page.goto(evidence.target_url, { waitUntil: 'domcontentloaded', timeout: E2E_TIMEOUT_MS });
+    evidence.current_url = page.url();
+    evidence.page_title = await page.title();
+
+    const bodyText = await page.evaluate(() => document.body ? document.body.innerText || '' : '');
+    assert.ok(
+      _looksLikeAuthenticatedInbox(evidence.current_url, evidence.page_title, bodyText),
+      `RUN_GMAIL_E2E_ACTION=1 expects an authenticated Gmail inbox. Current URL: ${evidence.current_url}`,
+    );
+
+    const extensionWorker = await _findExtensionServiceWorker(context, Math.min(E2E_TIMEOUT_MS, 20000));
+    assert.ok(extensionWorker, 'Extension service worker not detected for Gmail action smoke.');
+    evidence.extension_worker_detected = true;
+    evidence.extension_worker_url = extensionWorker.url();
+
+    await page.waitForTimeout(E2E_UI_SETTLE_MS);
+    await page.locator(ACTION_SELECTOR).first().click({ timeout: E2E_TIMEOUT_MS });
+    evidence.action_clicked = true;
+    await page.waitForTimeout(ACTION_SETTLE_MS);
+
+    if (ACTION_SUCCESS_SELECTOR) {
+      await page.locator(ACTION_SUCCESS_SELECTOR).first().waitFor({ state: 'visible', timeout: E2E_TIMEOUT_MS });
+    }
+    if (ACTION_SUCCESS_TEXT) {
+      await page.locator(`text=${ACTION_SUCCESS_TEXT}`).first().waitFor({ state: 'visible', timeout: E2E_TIMEOUT_MS });
+    }
+    evidence.action_completed = true;
+    evidence.status = 'passed';
+  } catch (error) {
+    evidence.status = 'failed';
+    evidence.error = String(error?.message || error || 'unknown_gmail_action_error');
+    throw error;
+  } finally {
+    const screenshotPath = process.env.GMAIL_E2E_CAPTURE_PATH;
+    if (screenshotPath && page && !page.isClosed()) {
+      const resolved = path.resolve(screenshotPath);
+      try {
+        await page.screenshot({ path: resolved, fullPage: true });
+        if (fs.existsSync(resolved)) {
+          evidence.screenshot_path = resolved;
+        }
+      } catch (_) {
+        // best effort
+      }
+    }
+    evidence.finished_at = new Date().toISOString();
+    _writeActionEvidence(evidence);
+    if (context) {
+      await context.close();
+    }
+  }
 });
 
 test('_looksLikeLoginPage detects Google auth redirects', () => {

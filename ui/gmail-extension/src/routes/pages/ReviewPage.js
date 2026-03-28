@@ -30,6 +30,11 @@ import {
   focusPipelineItem,
   getPipelineBlockerKinds,
 } from '../pipeline-views.js';
+import {
+  clearReviewPreferences,
+  readReviewPreferences,
+  writeReviewPreferences,
+} from '../review-preferences.js';
 
 const html = htm.bind(h);
 
@@ -445,7 +450,7 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
   const pipelineScope = useMemo(() => getPipelineScope(orgId, userEmail), [orgId, userEmail]);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => readReviewPreferences(pipelineScope).searchQuery || '');
   const [selectedIds, setSelectedIds] = useState([]);
   const [activeItemId, setActiveItemId] = useState('');
   const [resolvingFieldKey, setResolvingFieldKey] = useState('');
@@ -469,6 +474,18 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
   useEffect(() => {
     void loadItems({ silent: true });
   }, [loadItems]);
+
+  useEffect(() => {
+    setSearch(readReviewPreferences(pipelineScope).searchQuery || '');
+  }, [pipelineScope]);
+
+  useEffect(() => {
+    if (String(search || '').trim()) {
+      writeReviewPreferences(pipelineScope, { searchQuery: search });
+      return;
+    }
+    clearReviewPreferences(pipelineScope);
+  }, [pipelineScope, search]);
 
   const [refresh, refreshing] = useAction(async () => {
     await loadItems();
@@ -874,6 +891,11 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
           style="width:100%;padding:8px 8px 8px 34px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;background:var(--bg)"
         />
       </div>
+      ${hasSearch && html`
+        <div style="display:flex;justify-content:flex-end;margin-top:10px">
+          <button class="btn-ghost btn-sm" onClick=${() => setSearch('')}>Clear search</button>
+        </div>
+      `}
       <div class="muted" style="font-size:12px;margin-top:10px">
         Keyboard: J/K move · X select · O open record · E open email · P open slice · 1/2/3 resolve current blocker · L apply primary non-invoice action · B bulk resolve selected blockers
       </div>

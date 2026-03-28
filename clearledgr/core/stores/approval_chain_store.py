@@ -170,6 +170,39 @@ class ApprovalChainStore:
             cur.execute(sql, (status, approved_by, approved_at, comments, rejection_reason, now, chain_id, step_index))
             conn.commit()
 
+    def db_reassign_pending_step_approvers(
+        self,
+        chain_id: str,
+        approvers: List[str],
+        *,
+        comments: str = "",
+    ) -> bool:
+        """Replace approvers on pending steps for the active approval chain."""
+        self.initialize()
+        normalized_approvers = [str(value).strip() for value in (approvers or []) if str(value).strip()]
+        if not chain_id or not normalized_approvers:
+            return False
+
+        now = datetime.now(timezone.utc).isoformat()
+        sql = self._prepare_sql("""
+            UPDATE approval_steps
+            SET approvers = ?, comments = ?, updated_at = ?
+            WHERE chain_id = ? AND status = 'pending'
+        """)
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                sql,
+                (
+                    json.dumps(normalized_approvers),
+                    str(comments or "").strip(),
+                    now,
+                    chain_id,
+                ),
+            )
+            conn.commit()
+            return bool(getattr(cur, "rowcount", 0))
+
     def db_update_chain_status(
         self,
         chain_id: str,

@@ -24,11 +24,16 @@ test('vendor route navigates with the explicit vendor name and keeps storage as 
     resolveVendorRouteName,
   } = await importModule('src/utils/vendor-route.js');
 
-  let navigatedTo = '';
-  const ok = navigateToVendorRecord((routeId) => { navigatedTo = routeId; }, 'Google Cloud EMEA Limited');
+  const navigations = [];
+  const ok = navigateToVendorRecord((routeId, params) => {
+    navigations.push({ routeId, params });
+  }, 'Google Cloud EMEA Limited');
 
   assert.equal(ok, true);
-  assert.equal(navigatedTo, 'clearledgr/vendor/Google%20Cloud%20EMEA%20Limited');
+  assert.deepEqual(navigations, [{
+    routeId: 'clearledgr/vendor/:name',
+    params: { name: 'Google Cloud EMEA Limited' },
+  }]);
   assert.equal(storage.get(ACTIVE_VENDOR_NAME_STORAGE_KEY), 'Google Cloud EMEA Limited');
   assert.equal(resolveVendorRouteName({}, ''), 'Google Cloud EMEA Limited');
   assert.equal(resolveVendorRouteName({}, '#clearledgr/vendor/Google%20Cloud%20EMEA%20Limited'), 'Google Cloud EMEA Limited');

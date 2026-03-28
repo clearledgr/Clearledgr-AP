@@ -33,6 +33,7 @@ from clearledgr.core.ap_item_resolution import resolve_ap_item_reference
 from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email
 from clearledgr.core.database import get_db
 from clearledgr.api.ap_items import build_worklist_item
+from clearledgr.services.ap_projection import build_worklist_items
 from clearledgr.services.gmail_api import (
     GmailAPIClient,
     GmailToken,
@@ -124,7 +125,7 @@ async def _recover_ap_item_for_thread(
         if not finance_email:
             continue
 
-        seeded = runtime._seed_ap_item_for_invoice_processing(  # noqa: SLF001 - shared internal recovery path
+        seeded = runtime.seed_ap_item_for_invoice_processing(
             {
                 "gmail_id": thread_id,
                 "thread_id": thread_id,
@@ -910,6 +911,11 @@ def _pipeline_bucket_for_state(state: Any) -> str:
 
 def _build_extension_pipeline(db, organization_id: str, limit: int = 1000) -> Dict[str, List[Dict[str, Any]]]:
     items = db.list_ap_items(organization_id, limit=limit, prioritized=True)
+    normalized_items = build_worklist_items(
+        db,
+        items,
+        build_item=build_worklist_item,
+    )
     groups: Dict[str, List[Dict[str, Any]]] = {
         "new": [],
         "pending_approval": [],
@@ -917,8 +923,7 @@ def _build_extension_pipeline(db, organization_id: str, limit: int = 1000) -> Di
         "posted": [],
         "rejected": [],
     }
-    for item in items:
-        normalized = build_worklist_item(db, item)
+    for normalized in normalized_items:
         bucket = _pipeline_bucket_for_state(normalized.get("state"))
         groups.setdefault(bucket, []).append(normalized)
     return groups
@@ -956,7 +961,11 @@ def get_extension_worklist(
 
     db = get_db()
     items = db.list_ap_items(org_id, limit=limit, prioritized=True)
-    normalized = [build_worklist_item(db, item) for item in items]
+    normalized = build_worklist_items(
+        db,
+        items,
+        build_item=build_worklist_item,
+    )
     return {
         "organization_id": org_id,
         "items": normalized,
@@ -1123,14 +1132,26 @@ async def get_ap_item_by_thread(
     organization_id: Optional[str] = None,
     user=Depends(get_current_user),
 ):
-    """Look up AP item by Gmail thread_id for contextual sidebar (Streak pattern).
-
-    When a user opens a Gmail thread, the sidebar fetches this endpoint to show
-    that thread's invoice data — even if the item isn't in the local queue yet.
-    """
+    """Read-only lookup of an AP item by Gmail thread_id for contextual sidebar."""
     org_id = _resolve_org_id_for_user(user, organization_id)
     db = get_db()
     item = db.get_ap_item_by_thread(org_id, thread_id)
+    if not item:
+        return {"found": False, "thread_id": thread_id, "item": None}
+    return {"found": True, "thread_id": thread_id, "item": build_worklist_item(db, item)}
+
+
+@router.post("/by-thread/{thread_id}/recover")
+async def recover_ap_item_by_thread(
+    thread_id: str,
+    organization_id: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Explicitly repair a missing AP item for a Gmail thread when lookup misses."""
+    org_id = _resolve_org_id_for_user(user, organization_id)
+    db = get_db()
+    item = db.get_ap_item_by_thread(org_id, thread_id)
+    recovered = False
     if not item:
         item = await _recover_ap_item_for_thread(
             db,
@@ -1138,9 +1159,15 @@ async def get_ap_item_by_thread(
             thread_id=thread_id,
             user=user,
         )
+        recovered = bool(item)
     if not item:
-        return {"found": False, "thread_id": thread_id, "item": None}
-    return {"found": True, "thread_id": thread_id, "item": build_worklist_item(db, item)}
+        return {"found": False, "recovered": False, "thread_id": thread_id, "item": None}
+    return {
+        "found": True,
+        "recovered": recovered,
+        "thread_id": thread_id,
+        "item": build_worklist_item(db, item),
+    }
 
 
 @router.post("/gmail/register-token")

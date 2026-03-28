@@ -14,6 +14,77 @@ from clearledgr.services.slack_api import resolve_slack_runtime
 logger = logging.getLogger(__name__)
 
 
+def _build_approval_followup_blocks(
+    *,
+    ap_item: Dict[str, Any],
+    vendor: str,
+    amount: float,
+    invoice_num: str,
+    hours_pending: int,
+    stage: str,
+) -> List[Dict[str, Any]]:
+    action_ref = str(ap_item.get("id") or invoice_num or "unknown").strip() or "unknown"
+    currency = str(ap_item.get("currency") or "USD").strip() or "USD"
+    details = {
+        "Vendor": vendor,
+        "Amount": f"{currency} {amount:,.2f}",
+        "Invoice": invoice_num,
+        "Waiting": f"{hours_pending}h",
+    }
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "Approval Escalation" if stage == "escalation" else "Approval Reminder",
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*{vendor}* invoice *#{invoice_num}* has been waiting for approval for *{hours_pending}h*.\n"
+                    "Approve, reject, or request more information directly from Slack."
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*{key}:*\n{value}"}
+                for key, value in details.items()
+            ],
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Approve"},
+                    "style": "primary",
+                    "action_id": f"approve_invoice_{action_ref}",
+                    "value": action_ref,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Reject"},
+                    "style": "danger",
+                    "action_id": f"reject_invoice_{action_ref}",
+                    "value": action_ref,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Request info"},
+                    "action_id": f"request_info_{action_ref}",
+                    "value": action_ref,
+                },
+            ],
+        },
+    ]
+    return blocks
+
+
 async def _post_slack_blocks(
     blocks: List[Dict[str, Any]],
     text: str,
@@ -883,20 +954,23 @@ async def send_approval_reminder(
     approver_ids: List[str],
     hours_pending: float,
     organization_id: Optional[str] = None,
+    stage: str = "reminder",
+    escalation_channel: Optional[str] = None,
 ) -> bool:
     """Send a reminder (or escalation) for an AP item stuck in needs_approval.
 
-    - < 24h: DM each pending approver via Slack DM
-    - >= 24h: post escalation to the approval channel in addition to DMs
+    - `stage="reminder"`: DM each pending approver
+    - `stage="escalation"`: DM each pending approver and post to the approval channel
     """
-    from clearledgr.services.slack_api import SlackAPIClient
+    from clearledgr.services.slack_api import get_slack_client
 
     vendor = ap_item.get("vendor_name") or "Unknown vendor"
     amount = ap_item.get("amount") or 0
     invoice_num = ap_item.get("invoice_number") or "N/A"
     org_id = organization_id or ap_item.get("organization_id") or os.getenv("DEFAULT_ORGANIZATION_ID", "default")
+    metadata = ap_item.get("metadata") if isinstance(ap_item.get("metadata"), dict) else {}
 
-    is_escalation = hours_pending >= 24
+    is_escalation = str(stage or "").strip().lower() == "escalation"
     verb = "ESCALATION" if is_escalation else "Reminder"
     icon = ":rotating_light:" if is_escalation else ":bell:"
     h = int(hours_pending)
@@ -905,31 +979,54 @@ async def send_approval_reminder(
         f"(${amount:,.2f}) has been waiting for approval for *{h}h*. "
         f"Please review and approve or reject."
     )
+    try:
+        amount_num = float(amount or 0)
+    except (TypeError, ValueError):
+        amount_num = 0.0
+
+    reminder_blocks = _build_approval_followup_blocks(
+        ap_item=ap_item,
+        vendor=vendor,
+        amount=amount_num,
+        invoice_num=str(invoice_num),
+        hours_pending=h,
+        stage="escalation" if is_escalation else "reminder",
+    )
 
     reminder_sent = False
     try:
-        client = SlackAPIClient(organization_id=org_id)
+        client = get_slack_client(organization_id=org_id)
         for uid in approver_ids:
             try:
-                await client.send_dm(uid, dm_text)
+                await client.send_dm(uid, dm_text, blocks=reminder_blocks)
                 reminder_sent = True
             except Exception as dm_err:
                 logger.error("Approval reminder DM to %s failed: %s", uid, dm_err)
 
+        fallback_channel = (
+            str(ap_item.get("slack_channel_id") or "").strip()
+            or str(metadata.get("approval_channel") or "").strip()
+            or str(escalation_channel or "").strip()
+            or os.getenv("SLACK_APPROVAL_CHANNEL")
+            or os.getenv("SLACK_DEFAULT_CHANNEL")
+            or "#finance"
+        )
+
+        if not approver_ids and fallback_channel:
+            reminder_sent = reminder_sent or bool(
+                await _post_slack_blocks(
+                    blocks=reminder_blocks,
+                    text=dm_text,
+                    preferred_channel=fallback_channel,
+                    organization_id=org_id,
+                )
+            )
+
         if is_escalation:
-            channel = (
-                os.getenv("SLACK_APPROVAL_CHANNEL")
-                or os.getenv("SLACK_DEFAULT_CHANNEL")
-                or "#finance"
-            )
-            escalation_text = (
-                f":rotating_light: *Approval Escalation* — {vendor} invoice #{invoice_num} "
-                f"(${amount:,.2f}) has been pending approval for *{h}h* with no response."
-            )
             escalation_sent = await _post_slack_blocks(
-                blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": escalation_text}}],
-                text=escalation_text,
-                preferred_channel=channel,
+                blocks=reminder_blocks,
+                text=dm_text,
+                preferred_channel=fallback_channel,
                 organization_id=org_id,
             )
             reminder_sent = reminder_sent or bool(escalation_sent)

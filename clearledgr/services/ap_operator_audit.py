@@ -35,6 +35,8 @@ _REASON_LABELS = {
     "approval_nudge": "Approval reminder was sent.",
     "approval_nudge_auto_4h": "Agent sent an automatic approval reminder after 4 hours pending.",
     "approval_nudge_auto_24h": "Agent escalated approval reminder after 24 hours pending.",
+    "entity_route_review_required": "Choose the legal entity before approval can continue.",
+    "assignee_required": "A new approver is required before approval can be reassigned.",
     "illegal_transition": "Requested action is not allowed from the current invoice status.",
     "browser_session_created": "Prepared secure ERP browser fallback session.",
     "state_not_ready_for_approval": "Invoice is not ready to request approval.",
@@ -56,10 +58,13 @@ _REASON_LABELS = {
     "runtime_request_info": "Clearledgr moved this invoice back to needs info.",
     "runtime_reject_invoice": "Clearledgr recorded the rejection decision.",
     "runtime_post_to_erp": "Clearledgr completed the ERP posting action.",
+    "runtime_escalate_approval": "Clearledgr escalated this approval request for finance review.",
+    "runtime_reassign_approval": "Clearledgr reassigned this approval request to a new approver.",
     "agent_runtime_route_low_risk_for_approval": "Clearledgr routed this low-risk invoice for approval.",
     "batch_retry_recoverable_failures": "Clearledgr retried the posting step for this invoice.",
     "runtime_escalate_invoice_review": "Clearledgr escalated this invoice for review.",
     "runtime_record_field_correction": "Recorded an operator correction on this invoice.",
+    "manual_entity_route_resolution": "The legal entity route was resolved for this invoice.",
 }
 
 
@@ -84,6 +89,11 @@ _HIGH_IMPORTANCE_EVENT_TYPES = {
     "erp_browser_fallback_failed",
     "erp_post_blocked",
     "invoice_escalated",
+    "approval_escalation_sent",
+    "approval_escalation_deduped",
+    "approval_escalation_failed",
+    "approval_reassigned",
+    "approval_reassignment_failed",
     "state_transition_rejected",
 }
 
@@ -140,12 +150,18 @@ def _reason_message(reason_raw: Any) -> str:
     text = str(reason_raw or "").strip()
     if not text:
         return ""
+    lowered = text.lower()
+    if lowered.startswith("approval_nudge_auto_") and lowered.endswith("h"):
+        hours = lowered[len("approval_nudge_auto_"):-1].replace("_", ".")
+        return f"Agent sent an automatic approval reminder after {hours} hours pending."
+    if lowered.startswith("approval_escalation_auto_") and lowered.endswith("h"):
+        hours = lowered[len("approval_escalation_auto_"):-1].replace("_", ".")
+        return f"Agent escalated the approval request after {hours} hours pending."
     direct = _REASON_LABELS.get(text.lower())
     if direct:
         return direct
     codes = _parse_reason_codes(text)
     if not codes:
-        lowered = text.lower()
         if _is_reason_code(lowered):
             return _REASON_LABELS.get(lowered, f"{_humanize_snake_text(lowered)}.")
         return text
@@ -578,6 +594,102 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
                 "message": reason or "Approval reminder was sent to the approver.",
                 "severity": "info",
                 "next_action": "Wait for approval callback.",
+            }
+        )
+        return operator
+
+    if event_type == "approval_escalation_blocked":
+        operator.update(
+            {
+                "code": "approval_escalation_blocked",
+                "title": "Escalation blocked",
+                "message": reason or "This invoice is no longer waiting on approval.",
+                "severity": "warning",
+                "next_action": "Refresh the invoice and use the allowed next step.",
+            }
+        )
+        return operator
+
+    if event_type == "approval_escalation_failed":
+        operator.update(
+            {
+                "code": "approval_escalation_failed",
+                "title": "Escalation failed",
+                "message": reason or "Clearledgr could not escalate this approval request.",
+                "severity": "warning",
+                "next_action": "Retry the escalation or reassign the approver.",
+            }
+        )
+        return operator
+
+    if event_type == "approval_escalation_sent":
+        operator.update(
+            {
+                "code": "approval_escalation_sent",
+                "title": "Approval escalated",
+                "message": reason or "Clearledgr escalated this approval request.",
+                "severity": "info",
+                "next_action": "Wait for the escalated review or reassign the approver.",
+            }
+        )
+        return operator
+
+    if event_type == "approval_escalation_deduped":
+        operator.update(
+            {
+                "code": "approval_escalation_deduped",
+                "title": "Escalation suppressed",
+                "message": reason or "Clearledgr skipped a duplicate escalation because the invoice was escalated recently.",
+                "severity": "info",
+                "next_action": "Wait for the existing escalation thread or reassign the approver.",
+            }
+        )
+        return operator
+
+    if event_type == "approval_reassignment_blocked":
+        operator.update(
+            {
+                "code": "approval_reassignment_blocked",
+                "title": "Reassignment blocked",
+                "message": reason or "This invoice cannot be reassigned from its current status.",
+                "severity": "warning",
+                "next_action": "Refresh the invoice and retry only if approval is still pending.",
+            }
+        )
+        return operator
+
+    if event_type == "approval_reassignment_failed":
+        operator.update(
+            {
+                "code": "approval_reassignment_failed",
+                "title": "Reassignment failed",
+                "message": reason or "Clearledgr could not reassign this approval request.",
+                "severity": "warning",
+                "next_action": "Retry with a valid approver or send an escalation.",
+            }
+        )
+        return operator
+
+    if event_type == "approval_reassigned":
+        operator.update(
+            {
+                "code": "approval_reassigned",
+                "title": "Approval reassigned",
+                "message": reason or "A new approver now owns this approval request.",
+                "severity": "info",
+                "next_action": "Wait for the new approver or send a reminder later.",
+            }
+        )
+        return operator
+
+    if event_type == "entity_route_resolved":
+        operator.update(
+            {
+                "code": "entity_route_resolved",
+                "title": "Entity route resolved",
+                "message": reason or "The legal entity was selected for this invoice.",
+                "severity": "info",
+                "next_action": "Continue approval routing from Pipeline.",
             }
         )
         return operator

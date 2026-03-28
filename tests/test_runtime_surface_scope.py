@@ -165,6 +165,33 @@ def test_strict_profile_allows_canonical_ap_item_detail_route(monkeypatch):
         assert response.json().get("detail") != "endpoint_disabled_in_ap_v1_profile"
 
 
+def test_strict_profile_allows_explicit_gmail_thread_recovery(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
+    monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
+    monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
+
+    with TestClient(app) as client:
+        response = client.post("/extension/by-thread/thread-surface-probe/recover?organization_id=default")
+        assert response.status_code in {401, 404}
+        assert response.json().get("detail") != "endpoint_disabled_in_ap_v1_profile"
+
+
+def test_strict_profile_allows_workspace_user_preferences_route(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
+    monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
+    monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
+
+    with TestClient(app) as client:
+        response = client.patch(
+            "/api/workspace/user/preferences",
+            json={"organization_id": "default", "patch": {"gmail_extension": {"probe": True}}},
+        )
+        assert response.status_code in {401, 403, 404}
+        assert response.json().get("detail") != "endpoint_disabled_in_ap_v1_profile"
+
+
 def test_ap_runtime_registers_sidebar_core_intents():
     runtime = FinanceAgentRuntime(
         organization_id="default",

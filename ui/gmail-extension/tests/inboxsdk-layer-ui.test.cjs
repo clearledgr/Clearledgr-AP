@@ -23,8 +23,12 @@ test('ghost pending_approval state is normalized to needs_approval semantics', a
 
 test('work-surface primary action map matches the current Gmail execution doctrine', async () => {
   const {
+    canEscalateApproval,
+    canReassignApproval,
     canRejectWorkItem,
     getPrimaryActionConfig,
+    getWorkStateNotice,
+    needsEntityRouting,
   } = await importModule('src/utils/work-actions.js');
 
   assert.deepEqual(getPrimaryActionConfig('received'), {
@@ -39,6 +43,18 @@ test('work-surface primary action map matches the current Gmail execution doctri
     id: 'prepare_info_request',
     label: 'Prepare info request',
   });
+  assert.equal(
+    getPrimaryActionConfig('needs_info', 'operator', 'invoice', {
+      followup_next_action: 'await_vendor_response',
+    }),
+    null,
+  );
+  assert.equal(
+    getPrimaryActionConfig('needs_info', 'operator', 'invoice', {
+      followup_next_action: 'manual_vendor_escalation',
+    }),
+    null,
+  );
   assert.deepEqual(getPrimaryActionConfig('needs_approval'), {
     id: 'nudge_approver',
     label: 'Nudge approver',
@@ -51,10 +67,54 @@ test('work-surface primary action map matches the current Gmail execution doctri
     id: 'retry_erp_post',
     label: 'Retry ERP post',
   });
+  assert.deepEqual(
+    getPrimaryActionConfig('validated', 'operator', 'invoice', {
+      entity_routing_status: 'needs_review',
+      entity_candidates: [{ entity_code: 'US-01' }, { entity_code: 'GH-01' }],
+    }),
+    {
+      id: 'resolve_entity_route',
+      label: 'Resolve entity',
+    },
+  );
+  assert.deepEqual(
+    getPrimaryActionConfig('needs_approval', 'operator', 'invoice', {
+      approval_followup: { escalation_due: true },
+    }),
+    {
+      id: 'escalate_approval',
+      label: 'Escalate approval',
+    },
+  );
+  assert.deepEqual(
+    getPrimaryActionConfig('needs_approval', 'operator', 'invoice', {
+      approval_followup: { sla_breached: true },
+    }),
+    {
+      id: 'nudge_approver',
+      label: 'Nudge approver',
+    },
+  );
   assert.equal(getPrimaryActionConfig('approved'), null);
   assert.equal(getPrimaryActionConfig('rejected'), null);
   assert.equal(getPrimaryActionConfig('needs_approval', 'viewer'), null);
+  assert.equal(
+    getWorkStateNotice('needs_info', 'invoice', {
+      followup_next_action: 'await_vendor_response',
+    }),
+    'Waiting for the vendor response. Clearledgr already prepared the follow-up.',
+  );
+  assert.equal(
+    getWorkStateNotice('needs_info', 'invoice', {
+      followup_next_action: 'manual_vendor_escalation',
+    }),
+    'Vendor follow-up reached the retry limit and now needs manual escalation.',
+  );
   assert.equal(canRejectWorkItem('needs_approval', 'viewer'), false);
+  assert.equal(needsEntityRouting({ entity_routing_status: 'needs_review' }, 'validated'), true);
+  assert.equal(canEscalateApproval({ approval_followup: { escalation_due: true } }, 'needs_approval'), true);
+  assert.equal(canEscalateApproval({ approval_followup: { sla_breached: true } }, 'needs_approval'), false);
+  assert.equal(canReassignApproval({}, 'needs_approval'), true);
 });
 
 test('route registry keeps left nav sparse while AppMenu exposes eligible routes', async () => {
@@ -93,7 +153,7 @@ test('route registry keeps left nav sparse while AppMenu exposes eligible routes
     { capabilities: operatorCapabilities },
   ).map((route) => route.id);
 
-  assert.equal(DEFAULT_ROUTE, 'clearledgr/home');
+  assert.equal(DEFAULT_ROUTE, 'clearledgr/pipeline');
   assert.ok(routeIds.includes('clearledgr/home'));
   assert.ok(routeIds.includes('clearledgr/pipeline'));
   assert.ok(routeIds.includes('clearledgr/review'));
@@ -103,26 +163,26 @@ test('route registry keeps left nav sparse while AppMenu exposes eligible routes
   assert.equal(routeIds.some((id) => /\bops\b/i.test(id)), false);
   assert.equal(routeIds.some((id) => /\bbatch\b/i.test(id)), false);
   assert.deepEqual(defaultNavRouteIds, [
-    'clearledgr/home',
     'clearledgr/pipeline',
+    'clearledgr/home',
   ]);
   assert.ok(customizedNavRouteIds.includes('clearledgr/vendors'));
   assert.equal(customizedNavRouteIds.includes('clearledgr/connections'), false);
   assert.equal(customizedNavRouteIds.includes('clearledgr/activity'), false);
   assert.equal(adminEligibleRouteIds.includes('clearledgr/health'), true);
   assert.deepEqual(adminDefaultNavRouteIds, [
-    'clearledgr/home',
     'clearledgr/pipeline',
+    'clearledgr/home',
   ]);
   assert.equal(defaultNavRouteIds.includes('clearledgr/health'), false);
   assert.equal(adminVisibleRouteIds.includes('clearledgr/health'), true);
   assert.deepEqual(approverVisibleRouteIds, [
-    'clearledgr/home',
     'clearledgr/pipeline',
+    'clearledgr/home',
   ]);
   assert.deepEqual(defaultMenuRouteIds, [
-    'clearledgr/home',
     'clearledgr/pipeline',
+    'clearledgr/home',
     'clearledgr/review',
     'clearledgr/upcoming',
     'clearledgr/connections',
@@ -175,6 +235,13 @@ test('pipeline blocker helpers prefer canonical backend blocker payloads', async
       confidence: 0.99,
     }),
     ['exception', 'po'],
+  );
+  assert.deepEqual(
+    getPipelineBlockerKinds({
+      state: 'validated',
+      entity_routing_status: 'needs_review',
+    }),
+    ['entity'],
   );
   assert.deepEqual(
     getPipelineBlockers({
@@ -383,7 +450,7 @@ test('invoice detail page stays on the canonical AP action contract', () => {
   );
 
   assert.equal(source.includes('/extension/approve-and-post'), false);
-  assert.equal(source.includes("getPrimaryActionConfig(state, actorRole, documentType)"), true);
+  assert.equal(source.includes("getPrimaryActionConfig(state, actorRole, documentType, item)"), true);
   assert.equal(source.includes("auditData?.events"), true);
   assert.equal(source.includes("executeIntent(api, orgId, 'post_to_erp'"), true);
   assert.equal(source.includes("executeIntent(api, orgId, 'request_approval'"), true);
@@ -427,8 +494,11 @@ test('pipeline page supports bulk routing and keyboard-first queue movement', ()
   );
 
   assert.equal(source.includes("/extension/route-low-risk-approval"), true);
+  assert.equal(source.includes("if (state !== 'validated') return false;"), true);
   assert.equal(source.includes('Select visible'), true);
   assert.equal(source.includes('Route selected'), true);
+  assert.equal(source.includes('First issue:'), true);
+  assert.equal(source.includes('Only validated invoices can be routed for approval.'), true);
   assert.equal(source.includes('Keyboard: J/K move'), true);
   assert.equal(source.includes("const [selectedIds, setSelectedIds] = useState([]);"), true);
 });
@@ -525,9 +595,12 @@ test('thread handler refreshes the canonical thread item so new evidence fields 
   );
 
   assert.equal(source.includes('Always refresh the canonical item for the open thread'), true);
+  assert.equal(source.includes('Lookup stays read-only; thread'), true);
   assert.equal(source.includes('queueManager.upsertQueueItem(item);'), true);
   assert.equal(source.includes('queueManager.emitQueueUpdated();'), true);
   assert.equal(source.includes('if (threadId && queueManager) {'), true);
+  assert.equal(source.includes("/extension/by-thread/${encodeURIComponent(threadId)}/recover"), true);
+  assert.equal(source.includes("{ method: 'POST' }"), true);
 });
 
 test('gmail auth stays explicit and never opens OAuth during startup bootstrap', () => {
@@ -673,6 +746,8 @@ test('secondary Gmail pages stay lightweight and avoid raw admin/dashboard surfa
   assert.equal(activitySource.includes('kpi-row'), false);
   assert.equal(connectionsSource.includes('<table class="table">'), false);
   assert.equal(companySource.includes('cl-org-json'), false);
+  assert.equal(companySource.includes('cl-entity-code-0'), true);
+  assert.equal(companySource.includes('cl-entity-rule-entity-code-0'), true);
   assert.equal(healthSource.includes('<table class="table">'), false);
   assert.equal(rulesSource.includes('cl-policy-json'), false);
   assert.equal(rulesSource.includes('cl-policy-confidence'), true);
@@ -682,8 +757,11 @@ test('secondary Gmail pages stay lightweight and avoid raw admin/dashboard surfa
   assert.equal(templatesSource.includes('Syncfusion'), false);
   assert.equal(reportsSource.includes('Get a quick view of queue health, spend, coverage, and duplicate risk, then jump back into the work.'), true);
   assert.equal(vendorsSource.includes('kpi-row'), false);
+  assert.equal(vendorsSource.includes('Review issues'), true);
+  assert.equal(vendorsSource.includes('top_exception_codes'), true);
   assert.equal(vendorDetailSource.includes('Recurring exception codes'), false);
   assert.equal(vendorDetailSource.includes('Common workflow states'), true);
+  assert.equal(vendorDetailSource.includes('Open issues and follow-up'), true);
   assert.equal(vendorDetailSource.includes('Recurring issues'), true);
   assert.equal(vendorDetailSource.includes('getExceptionLabel('), true);
   assert.equal(vendorDetailSource.includes('Exception ${String(item.exception_code)'), false);

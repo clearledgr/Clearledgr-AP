@@ -24,11 +24,16 @@ test('record route navigates with the explicit AP item id and keeps storage as f
     resolveRecordRouteId,
   } = await importModule('src/utils/record-route.js');
 
-  let navigatedTo = '';
-  const ok = navigateToRecordDetail((routeId) => { navigatedTo = routeId; }, 'ap-item-123');
+  const navigations = [];
+  const ok = navigateToRecordDetail((routeId, params) => {
+    navigations.push({ routeId, params });
+  }, 'ap-item-123');
 
   assert.equal(ok, true);
-  assert.equal(navigatedTo, 'clearledgr/invoice/ap-item-123');
+  assert.deepEqual(navigations, [{
+    routeId: 'clearledgr/invoice/:id',
+    params: { id: 'ap-item-123' },
+  }]);
   assert.equal(storage.get(ACTIVE_RECORD_ID_STORAGE_KEY), 'ap-item-123');
   assert.equal(resolveRecordRouteId({}, ''), 'ap-item-123');
   assert.equal(resolveRecordRouteId({}, '#clearledgr/invoice/ap-item-123'), 'ap-item-123');

@@ -478,3 +478,10 @@ class TestBatchRetryRecoverability:
             exception_code="duplicate",
         )
         assert verdict["recoverable"] is False
+
+    def test_retry_recoverability_blocks_connector_configuration_errors(self):
+        verdict = classify_post_failure_recoverability(
+            last_error="No ERP connected for organization",
+            exception_code="erp_not_connected",
+        )
+        assert verdict["recoverable"] is False

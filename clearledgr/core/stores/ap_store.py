@@ -78,8 +78,9 @@ class APStore:
              approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
              supersedes_ap_item_id, supersedes_invoice_key, superseded_by_ap_item_id, resubmission_reason, erp_reference,
              erp_posted_at, workflow_id, run_id, approval_surface, approval_policy_version, post_attempted_at,
-             last_error, po_number, attachment_url, organization_id, user_id, created_at, updated_at, metadata, field_confidences)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             last_error, po_number, attachment_url, exception_code, exception_severity,
+             organization_id, user_id, created_at, updated_at, metadata, field_confidences)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         values = (
             item_id,
@@ -116,6 +117,8 @@ class APStore:
             payload.get("last_error"),
             payload.get("po_number"),
             payload.get("attachment_url"),
+            payload.get("exception_code"),
+            payload.get("exception_severity"),
             payload.get("organization_id"),
             payload.get("user_id"),
             now,
@@ -857,16 +860,16 @@ class APStore:
     def get_overdue_approvals(self, organization_id: str, min_hours: float) -> List[Dict[str, Any]]:
         """Return ap_items stuck in needs_approval longer than min_hours.
 
-        Uses ``updated_at`` as a proxy for when approval was requested (set on
-        every state transition, so the value at state=needs_approval represents
-        the moment the item entered that state).
+        Prefer the explicit ``approval_requested_at`` timestamp stored in item
+        metadata and fall back to ``updated_at`` for legacy rows.
         """
         self.initialize()
         if self.use_postgres:
             sql = self._prepare_sql(
                 "SELECT * FROM ap_items "
                 "WHERE organization_id = ? AND state = 'needs_approval' "
-                "AND updated_at < NOW() - INTERVAL '? hours' "
+                "AND COALESCE(NULLIF(metadata->>'approval_requested_at', ''), updated_at) < "
+                "(NOW() - (? * INTERVAL '1 hour')) "
                 "ORDER BY updated_at ASC LIMIT 50"
             )
             params: tuple = (organization_id, min_hours)
@@ -874,7 +877,8 @@ class APStore:
             sql = self._prepare_sql(
                 "SELECT * FROM ap_items "
                 "WHERE organization_id = ? AND state = 'needs_approval' "
-                "AND datetime(updated_at) < datetime('now', ? || ' hours') "
+                "AND datetime(COALESCE(json_extract(metadata, '$.approval_requested_at'), updated_at)) "
+                "< datetime('now', ? || ' hours') "
                 "ORDER BY updated_at ASC LIMIT 50"
             )
             params = (organization_id, f"-{min_hours}")
@@ -887,8 +891,9 @@ class APStore:
     def get_pending_approver_ids(self, ap_item_id: str) -> List[str]:
         """Return Slack user IDs of pending approvers for an AP item.
 
-        Reads ``approval_sent_to`` from the item's JSON metadata — populated by
-        ``send_invoice_approval_notification`` when it dispatches the Slack DM.
+        Prefer ``approval_sent_to`` from the item's JSON metadata, then fall
+        back to any pending approval-chain step approvers stored in
+        ``approval_steps``.
         """
         self.initialize()
         sql = self._prepare_sql("SELECT metadata FROM ap_items WHERE id = ?")
@@ -898,15 +903,47 @@ class APStore:
             row = cur.fetchone()
         if not row:
             return []
+        meta: Dict[str, Any] = {}
         try:
             meta = json.loads(row[0] or "{}")
             sent_to = meta.get("approval_sent_to", [])
             if isinstance(sent_to, list):
-                return [str(uid) for uid in sent_to if uid]
+                direct = [str(uid) for uid in sent_to if uid]
+                if direct:
+                    return direct
             if isinstance(sent_to, str) and sent_to:
                 return [sent_to]
         except Exception:
-            pass
+            meta = {}
+        chain_id = str(meta.get("approval_chain_id") or "").strip()
+        if not chain_id:
+            return []
+        steps_sql = self._prepare_sql(
+            "SELECT approvers FROM approval_steps "
+            "WHERE chain_id = ? AND status = 'pending' "
+            "ORDER BY step_index ASC"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(steps_sql, (chain_id,))
+            rows = cur.fetchall()
+        pending: List[str] = []
+        for step_row in rows:
+            try:
+                raw_approvers = json.loads((step_row[0] if not isinstance(step_row, dict) else step_row.get("approvers")) or "[]")
+            except Exception:
+                raw_approvers = []
+            if isinstance(raw_approvers, list):
+                pending.extend(str(uid).strip() for uid in raw_approvers if str(uid).strip())
+        deduped: List[str] = []
+        seen = set()
+        for approver_id in pending:
+            if approver_id in seen:
+                continue
+            seen.add(approver_id)
+            deduped.append(approver_id)
+        if deduped:
+            return deduped
         return []
 
     def link_ap_item_source(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1015,6 +1052,46 @@ class APStore:
                     data["metadata"] = {}
             results.append(data)
         return results
+
+    def list_ap_item_sources_bulk(self, ap_item_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """Return source rows keyed by AP item id for a set of items.
+
+        This is the bulk companion to ``list_ap_item_sources`` and is meant for
+        list/read surfaces that would otherwise issue one source query per AP
+        item.
+        """
+        self.initialize()
+        normalized_ids = [
+            str(value or "").strip()
+            for value in (ap_item_ids or [])
+            if str(value or "").strip()
+        ]
+        if not normalized_ids:
+            return {}
+
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        sql = self._prepare_sql(
+            "SELECT * FROM ap_item_sources "
+            f"WHERE ap_item_id IN ({placeholders}) "
+            "ORDER BY ap_item_id ASC, detected_at ASC, created_at ASC"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, tuple(normalized_ids))
+            rows = cur.fetchall()
+
+        grouped: Dict[str, List[Dict[str, Any]]] = {item_id: [] for item_id in normalized_ids}
+        for row in rows:
+            data = dict(row)
+            meta = data.get("metadata")
+            if isinstance(meta, str):
+                try:
+                    data["metadata"] = json.loads(meta)
+                except json.JSONDecodeError:
+                    data["metadata"] = {}
+            item_id = str(data.get("ap_item_id") or "").strip()
+            grouped.setdefault(item_id, []).append(data)
+        return grouped
 
     def list_ap_item_sources_by_ref(self, source_type: str, source_ref: str) -> List[Dict[str, Any]]:
         self.initialize()

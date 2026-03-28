@@ -80,17 +80,58 @@ export function normalizeWorkState(state) {
   return normalized;
 }
 
-export function getPrimaryActionConfig(state, actorRole = 'operator', documentType = 'invoice') {
+export function needsEntityRouting(item = null, state = '', documentType = 'invoice') {
+  if (!isInvoiceDocumentType(documentType)) return false;
+  const normalizedState = normalizeWorkState(state || item?.state || '');
+  if (!['received', 'validated'].includes(normalizedState)) return false;
+  const status = String(
+    item?.entity_routing_status
+    || item?.entity_routing?.status
+    || ''
+  ).trim().toLowerCase();
+  if (status) return status === 'needs_review';
+  const candidates = Array.isArray(item?.entity_candidates)
+    ? item.entity_candidates
+    : (Array.isArray(item?.entity_routing?.candidates) ? item.entity_routing.candidates : []);
+  return candidates.length > 1;
+}
+
+export function canEscalateApproval(item = null, state = '', actorRole = 'operator', documentType = 'invoice') {
+  if (!hasOpsAccessRole(actorRole)) return false;
+  if (!isInvoiceDocumentType(documentType)) return false;
+  if (normalizeWorkState(state || item?.state || '') !== 'needs_approval') return false;
+  return Boolean(
+    item?.approval_followup?.escalation_due
+    || item?.approval_followup?.next_action === 'escalate_approval'
+  );
+}
+
+export function canReassignApproval(item = null, state = '', actorRole = 'operator', documentType = 'invoice') {
+  if (!hasOpsAccessRole(actorRole)) return false;
+  if (!isInvoiceDocumentType(documentType)) return false;
+  return normalizeWorkState(state || item?.state || '') === 'needs_approval';
+}
+
+export function getPrimaryActionConfig(state, actorRole = 'operator', documentType = 'invoice', item = null) {
   if (!hasOpsAccessRole(actorRole)) return null;
   if (!isInvoiceDocumentType(documentType)) return null;
   const normalized = normalizeWorkState(state);
   if (normalized === 'received' || normalized === 'validated') {
+    if (needsEntityRouting(item, normalized, documentType)) {
+      return { id: 'resolve_entity_route', label: 'Resolve entity' };
+    }
     return { id: 'request_approval', label: 'Request approval' };
   }
   if (normalized === 'needs_info') {
+    const followupNextAction = String(item?.followup_next_action || '').trim().toLowerCase();
+    if (followupNextAction === 'await_vendor_response') return null;
+    if (followupNextAction === 'manual_vendor_escalation') return null;
     return { id: 'prepare_info_request', label: 'Prepare info request' };
   }
   if (normalized === 'needs_approval') {
+    if (canEscalateApproval(item, normalized, actorRole, documentType)) {
+      return { id: 'escalate_approval', label: 'Escalate approval' };
+    }
     return { id: 'nudge_approver', label: 'Nudge approver' };
   }
   if (normalized === 'ready_to_post') {
@@ -148,6 +189,18 @@ export function getWorkStateNotice(state, documentType = 'invoice', item = null)
   }
   if (financeEffectNotice) {
     return financeEffectNotice;
+  }
+  if (normalized === 'needs_info') {
+    const followupNextAction = String(item?.followup_next_action || '').trim().toLowerCase();
+    if (followupNextAction === 'await_vendor_response') {
+      return 'Waiting for the vendor response. Clearledgr already prepared the follow-up.';
+    }
+    if (followupNextAction === 'manual_vendor_escalation') {
+      return 'Vendor follow-up reached the retry limit and now needs manual escalation.';
+    }
+    if (followupNextAction === 'nudge_vendor_followup') {
+      return 'The vendor has not replied yet. Send the next follow-up when you are ready.';
+    }
   }
   if (normalized === 'approved') {
     return 'Approval received. Clearledgr is preparing the posting step.';

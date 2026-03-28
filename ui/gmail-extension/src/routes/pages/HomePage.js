@@ -352,8 +352,8 @@ export default function HomePage({
         </h2>
         <p style="font-size:15px;color:var(--ink-secondary);margin:0 0 12px">
           ${allReady
-            ? 'Keep invoice work moving without leaving Gmail.'
-            : `${greeting}${firstName ? `, ${firstName}` : ''}. Finish setup, then pick up invoice work here.`}
+            ? 'Pipeline is your AP control plane. Use Gmail for the active record when context matters.'
+            : `${greeting}${firstName ? `, ${firstName}` : ''}. Finish setup, then use Pipeline to pick up invoice work.`}
         </p>
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
           <span style="font-size:12px;padding:4px 10px;border-radius:999px;background:${allReady ? '#ECFDF5' : '#FEFCE8'};color:${allReady ? '#047857' : '#A16207'}">

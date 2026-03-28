@@ -20,6 +20,7 @@ __pycache__/
 *.sqlite3-wal
 *.log
 *.pid
+ui/gmail-extension/clearledgr.pem
 .claude/
 Screenshot *.png
 Claude rules.jpeg

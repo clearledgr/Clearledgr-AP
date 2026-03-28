@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from clearledgr.core.auth import get_current_user, require_ops_user
-from clearledgr.core.database import get_db
 from clearledgr.core.finance_contracts import ActionExecution, SkillRequest
+from clearledgr.services.agent_command_dispatch import build_runtime_for_user
 from clearledgr.services.finance_agent_runtime import (
     FinanceAgentRuntime,
     IntentNotSupportedError,
@@ -17,7 +17,6 @@ from clearledgr.services.finance_agent_runtime import (
 
 
 router = APIRouter(prefix="/api/agent/intents", tags=["agent-intents"])
-_ORG_ADMIN_ROLES = {"admin", "owner", "api"}
 
 
 class AgentIntentPreviewRequest(BaseModel):
@@ -73,22 +72,11 @@ def _translate_runtime_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="agent_intent_runtime_error")
 
 
-def _resolve_org_id_for_user(user: Any, requested_org_id: Optional[str]) -> str:
-    org_id = str(requested_org_id or getattr(user, "organization_id", None) or "default")
-    role = str(getattr(user, "role", "") or "").strip().lower()
-    user_org = str(getattr(user, "organization_id", None) or "default")
-    if role not in _ORG_ADMIN_ROLES and org_id != user_org:
-        raise HTTPException(status_code=403, detail="org_mismatch")
-    return org_id
-
-
 def _runtime_for_request(user: Any, requested_org_id: Optional[str]) -> FinanceAgentRuntime:
-    org_id = _resolve_org_id_for_user(user, requested_org_id)
-    return FinanceAgentRuntime(
-        organization_id=org_id,
-        actor_id=getattr(user, "user_id", None) or getattr(user, "email", None) or "user",
-        actor_email=getattr(user, "email", None),
-        db=get_db(),
+    return build_runtime_for_user(
+        user,
+        requested_org_id,
+        fallback_actor="user",
     )
 
 

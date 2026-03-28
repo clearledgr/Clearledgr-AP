@@ -1,335 +1,297 @@
 # Clearledgr Fundraising Memo
 
-Date: 2026-03-23
+Date: 2026-03-25
 
 ## Raise Summary
 
-- Round: Pre-seed / seed-leaning SAFE
-- Target amount: $2.5M
+- Round: Pre-seed
+- Amount: $2M-$2.5M
 - Instrument: YC post-money SAFE
-- Target cap: $15M post-money
-- Stretch cap if the round is competitive: $17M-$18M
-- Discount: none
-- Intended runway: 18-24 months
+- Target cap: $15M
+- Stretch cap: $17M-$18M if the round is competitive
+- Target runway: 18-24 months
 
 ## One-Line Pitch
 
-Clearledgr is Streak for finance ops: an embedded execution layer that lets finance teams run work inside Gmail, route decisions in Slack or Teams, and write outcomes back to ERP with policy and audit built in.
+Clearledgr is the AI execution layer for finance teams. Its first production skill runs AP from Gmail: triage invoices, route approvals, validate against ERP, and write approved invoices back without manual approval chasing or duplicate data entry.
 
-## What Problem We Are Solving
+Longer term, Clearledgr will expand into adjacent finance workflows with the same manual coordination problem.
 
-Finance operations still happen across inbox, chat, spreadsheets, and ERP systems.
+## The Problem
 
-The ERP is the system of record, but it is not where the work actually starts or gets coordinated. The day-to-day work still lives in:
+Finance work still starts in email, gets coordinated in Slack, gets patched together in spreadsheets, and only gets recorded at the end in ERP.
 
-- Email threads
-- Slack or Teams approvals
-- exception chasing
-- vendor follow-up
-- manual ERP handoff
+That creates three persistent problems:
 
-That creates four persistent problems:
+1. AP work starts in the inbox, but finance teams still have to recreate the work somewhere else.
+2. The most painful operational bottleneck is chasing approvals, not just parsing invoices.
+3. Approved work still has to be keyed into ERP manually, which wastes time and creates errors.
 
-1. Work starts in the inbox but has to be re-created somewhere else.
-2. Approvals and follow-ups happen out of band.
-3. ERP updates are manual, fragile, and easy to lose track of.
-4. Auditability exists only after the fact, if at all.
+This is why finance teams do not need another dashboard. They need a system that runs the workflow where the work already starts.
 
-Finance teams do not need another static dashboard. They need a system of execution.
+## The Product Thesis
 
-## Product Thesis
+Clearledgr is not an AP suite. It is the execution layer for finance work.
 
-Clearledgr is an embedded finance execution layer.
+The right hierarchy is:
 
-The product thesis is:
+- The company: an AI execution layer for finance teams
+- The first production skill: accounts payable
+- The current wedge: run AP from Gmail without manual approval chasing or duplicate ERP entry
+- The expansion path: adjacent finance workflows like vendor issues, finance exceptions, reconciliation, and close coordination
 
-1. The best finance workflow product is not a new back office.
-2. Execution should happen inside the systems where finance already works.
-3. Gmail is the right initial wedge because invoice and AP work already starts there.
-4. If Clearledgr owns the execution layer for AP, it can expand into the broader finance operations stack.
+That hierarchy matters. The wedge has to be sharp enough to buy now. The company has to be broad enough to matter over time.
 
-The product promise is simple:
+## What Buyers Actually Buy First
 
-- no new dashboard
-- no context switching
-- just execution
+The first thing a finance team buys is not "finance automation" or "invoice processing."
 
-In the current wedge:
+They buy a much more specific outcome:
 
-- Gmail is the operator surface
-- Slack / Teams are decision surfaces
-- ERP is the system of record
-- Clearledgr is the orchestration, policy, execution, and audit layer
+- no manual approval chasing
+- no duplicate ERP entry
+- AP handled from Gmail instead of across 4-20 tools
+
+Invoice processing is part of the wedge. It is not the whole wedge.
+
+The strongest initial use case is multi-entity finance teams where invoices arrive in one inbox but need to be triaged, routed, approved, and written back across more than one entity or ERP context.
+
+## Why Gmail
+
+Gmail is the right starting surface because that is where the work already starts.
+
+- invoices already arrive in Gmail
+- finance teams already scan and forward AP mail there
+- entity and workflow context often starts in the thread
+- approvals spill into Slack, but the operator still starts in the inbox
+- ERP records the outcome, but it is not where the work begins
+
+The more important point is that the market already admits this workflow exists.
+
+- Ramp and BILL use dedicated AP inboxes and forwarding addresses to pull invoices out of email into their own systems
+- Tipalti supports approval by email, but email is still a side channel to the main product
+- Stampli explicitly frames fragmented email-thread coordination as the broken old way and centralizes it inside Stampli
+
+So the wedge is not based on an invented workflow. AP already runs through email in practice. The difference is that incumbents treat email as intake, notification, or something to escape from. Clearledgr treats Gmail as the operating surface.
+
+Clearledgr is not forcing finance into a new place. It is putting the workflow into the place they already work from and making that workflow actually run end to end.
+
+## What Clearledgr Is Not
+
+Clearledgr is not:
+
+- a generic OCR tool
+- another AP dashboard
+- a replacement for ERP
+- an "AI accounting" product
+
+The product wins if finance can stay in email while Clearledgr handles triage, approval routing, ERP checks, and writeback.
 
 ## Product Today
 
-The product is real and implemented in the codebase today.
+The product is real.
 
-Current AP v1 capabilities:
+Current shipped capabilities for the first production skill include:
 
-- Gmail-native intake and work surfaces
-- invoice classification and extraction
+- Gmail-native AP intake and work surfaces
+- invoice processing and extraction
 - deterministic validation and policy checks
 - confidence-gated human review
 - Slack and Teams approval routing
-- ERP write-back
-- audit trail and state transitions
-- API-primary ERP coverage across QuickBooks, Xero, NetSuite, and SAP
+- ERP validation and writeback
+- audit trail and canonical AP state transitions
 
-The product is not a prototype. The remaining work is mostly:
+This is not a prototype. The product risk is no longer "can this exist?" The next risk is turning a real wedge into repeatable customer proof.
 
-- product polish
-- live-environment proof
-- partner rollout discipline
-- expansion beyond the AP wedge
+## Why This Wedge
 
-## What Is Done vs. What Is Not
+AP is the right first skill because it is:
 
-### Done
+- frequent
+- painful
+- already inbox-native
+- operationally repetitive
+- directly tied to ERP outcomes
 
-- Gmail-first AP wedge exists
-- the workflow engine exists
-- approval routing exists
-- ERP posting exists
-- audit and policy controls exist
-- native routed Gmail pages exist for queue, review, follow-up, templates, vendors, setup, and health
+Most importantly, AP exposes the real bottlenecks clearly:
 
-### Not Done
+- approval chasing
+- duplicate ERP entry
+- fragmented work across email, chat, spreadsheets, and ERP
 
-- broad launch proof across staging / sandbox / partner environments
-- refined packaging for broad rollout
-- deeper product polish across every Gmail page
-- expansion beyond the AP wedge into the broader finance execution suite
+This is also why the positioning is clean. Everyone in AP acknowledges that email is part of the workflow. No one really chooses it as the control surface.
 
-This is important: we are not fundraising to discover whether the wedge can be built. We are fundraising to prove usage, land pilots, tighten the product, and expand the execution layer.
+Winning AP from Gmail is the fastest path to proving the broader finance execution thesis.
+
+## Demand Evidence
+
+We have real early signal, but we should describe it honestly.
+
+Current evidence:
+
+- 3 design partners
+- 1 committed pilot
+- pilot starts in May
+- real product, with the current wedge moving from design-partner use into pilot hardening
+
+The strongest current partner is Cowrywise.
+
+What matters about Cowrywise:
+
+- Current workflow: Excel, Gmail, NetSuite, Slack
+- Current burden: roughly 3 days per week spent on reconciliation and AP work
+- Buyer reaction after seeing the Gmail-native AP triage and approval-routing demo:
+  - "wow, I know how I'm already going to use this. we have different entities in Africa and US and the triage will be useful."
+  - "if you can do this without us hiring more people, we'd use it"
+- Pricing discussions are already underway
+
+Booking.com is useful validation of the market pain, but not yet equivalent buying signal:
+
+- Current environment: roughly 20 internal and external tools
+- Reaction: "if you can build this, every organisation would want it"
+
+That is strong category signal, not yet strong product commitment.
+
+## Status Quo
+
+For teams like Cowrywise, the status quo is:
+
+- invoices come into Gmail
+- finance manually triages which entity or workflow they belong to
+- finance manually routes and chases approvals
+- finance manually re-enters approved work into NetSuite
+
+For teams like Booking.com, the status quo is the same problem at larger scale:
+
+- fragmented execution across too many internal and external systems
+- unclear control surface
+- expensive manual coordination
+
+The real incumbent is not another startup. It is Gmail plus Slack plus Excel plus ERP plus human follow-up.
 
 ## Why Now
 
 Three things are true at once:
 
-1. AI finally makes inbox-native operational software viable.
-2. Finance teams still operate across fragmented host systems rather than one clean workflow layer.
-3. ERP remains necessary but insufficient as a work surface.
+1. LLMs make inbox-native finance workflow software viable.
+2. Finance teams are leaner and cannot keep adding headcount to manual coordination work.
+3. ERP systems are still necessary but still not where the work actually gets executed.
 
-The combination creates an opening for a new product category: embedded finance execution.
+The next useful finance software layer is the one that runs the workflow where the work already starts.
 
-Commercial timing matters too:
+## Go-To-Market
 
-- finance automation budgets are rising faster than broader IT budgets
-- ERP APIs are finally good enough for reliable write-back and orchestration
-- finance hiring pressure and burnout make headcount-heavy workflows harder to sustain
+The GTM has to stay narrow and operational.
 
-## Why We Win
+Initial target user:
 
-Most finance tooling falls into one of three buckets:
-
-1. Systems of record
-2. dashboards and analytics
-3. narrow automation tools
-
-Clearledgr is different because it is an execution layer.
-
-Our advantage is the combination of:
-
-- embedded surfaces instead of dashboard migration
-- policy-governed workflow execution
-- chat-native approvals
-- ERP write-back
-- auditability at the action level
-
-The closest interaction analogy is Streak, but applied to finance operations rather than CRM.
-
-## Wedge and Expansion
-
-### Initial wedge
-
-Accounts payable in Gmail
-
-Why AP:
-
-- frequent
-- painful
-- operationally repetitive
-- already inbox-native
-- directly tied to ERP outcomes
-
-### Expansion path
-
-Once Clearledgr owns AP execution, adjacent surfaces follow naturally:
-
-- exception handling
-- vendor issue resolution
-- credits, refunds, and settlements
-- reconciliation
-- close-task orchestration
-- broader finance team execution workflows
-
-The company is larger than AP. AP is the first credible beachhead.
-
-## Customer / GTM Strategy
-
-Initial GTM should stay narrow and opinionated.
-
-Target user:
-
-- finance lead or AP owner at a growing company
-- already running invoice operations through Gmail and chat
-- using ERP as record system but not as the daily execution surface
+- finance manager or AP owner
+- working inside Gmail today
+- collaborating in Slack
+- using ERP as system of record, not system of execution
 
 Initial deployment shape:
 
+- one finance team
 - one inbox
-- one team
 - one ERP
-- tight founder involvement
-- measurable workflow coverage
+- one in-scope AP workflow
+- high-touch founder involvement
 
 Near-term GTM objective:
 
-- 3-5 strong design partners
-- 2-3 paid or clearly payable pilots
-- repeat weekly operator usage
+- convert design-partner excitement into paid pilot motion
+- prove weekly usage by finance operators
+- prove measurable time and workflow savings
 
-Existing market signal already in hand:
+## Why Us
 
-- 20+ finance leader interviews
-- 85% citing manual close, FP&A, and vendor workflows as top-3 pain points
-- repeated demand for headcount reduction rather than another reporting layer
-- early validation around reconciliation, categorization, FP&A, and journal-entry workflows
-- enterprise co-creation interest from a Fortune 200 subsidiary
+Clearledgr is not being built by someone who discovered finance ops from the outside, and it is not being sold by a team that does not know how to win enterprise workflows.
 
-Representative customer language worth keeping in the narrative:
+The founding-team advantage is unusually direct:
 
-> "If you can do this without more headcount, we'll pay for it."
+- Mo Mbalam: currently Business Development Lead at Anchor (YC S'22), former Country Sales Manager at Paystack, former Accounting Associate at the University of Ghana finance directorate, and founder of an alternative credit scoring / microlending platform and a digital savings platform in Ghana
+- Joseph Isiramen: former account executive at Datadog and former sales manager at Plauti and SalesManago
+- Suleiman Mohammed: CTO, former engineering consultant, and Mo's co-founder on the digital savings platform
+
+That matters because the key insight is operational, not abstract:
+
+- the real bottleneck is chasing approvers
+- and then entering data again into ERP
+
+That is not the kind of insight most software founders start with. It comes from having lived close enough to the workflow to know what actually hurts and what is just software-category noise.
+
+The second advantage is execution speed. The product is already built far enough to demo the wedge credibly, support design partners, and move into committed pilot conversations. This is not a story deck without a product behind it.
+
+## Business Model
+
+Recommended commercial motion:
+
+- paid pilot first
+- then convert into recurring workflow software
+
+Working pricing thesis:
+
+- pilot fee: paid, scoped, and time-bound
+- production rollout: $10K-$15K per month for the first AP workflow
+- expansion through workflow depth, entity coverage, and adjacent finance workflows
+
+The core economic idea is that Clearledgr is bought to remove labor and coordination cost, not to add another layer of reporting.
 
 ## What This Round Must Buy
 
-This round should buy proof, not vanity.
+This round should buy proof.
 
-Milestones:
+By the end of this round, Clearledgr should have:
 
-1. 3-5 strong design partners live on the wedge
-2. 2-3 paid pilots or paid conversions from design partners
-3. repeat weekly usage by finance operators
+1. 3-5 strong design partners using the AP wedge
+2. 2-3 paid pilots or paid conversions
+3. repeat weekly operator usage
 4. measurable workflow throughput:
-   - invoices processed
+   - AP emails triaged
    - approvals routed
-   - exceptions resolved
-   - ERP posts completed
-5. a clear second product wedge beyond AP
-6. product polish good enough for repeated demos and partner trust
+   - invoices written back to ERP
+   - hours of manual work removed
+5. one clear post-AP expansion wedge
 
 ## Use of Funds
 
-Recommended planning assumption for $2.5M:
+Recommended use of $2M-$2.5M:
 
 - 50% product and engineering
-- 20% design and product polish
-- 15% partner deployment, support, and operations
-- 10% GTM / founder-led sales
-- 5% infrastructure, security, and legal
+- 20% product design and workflow polish
+- 15% partner deployment and support
+- 10% founder-led GTM
+- 5% security, infrastructure, and legal
 
-Suggested team shape this round:
-
-- founder-led product and sales
-- small engineering team focused on Gmail product quality, reliability, and ERP breadth
-- design support to make the Gmail surface consistently excellent
-- high-touch partner onboarding
-
-Commercial model to test this round:
-
-- land with one workflow at $10K-$15K per month
-- expand into multi-workflow accounts at $30K-$75K+ per month
-- grow through workflow depth, not seat-count expansion alone
-
-At full wedge traction, the model can become meaningful quickly:
-
-- 15 customers
-- 3 workflows each
-- $10K per workflow per month
-- $5.4M ARR
-
-## Why $2.5M
-
-$2.5M is the right amount because:
-
-1. It is large enough to build a serious company foundation.
-2. It is small enough to stay disciplined around the wedge.
-3. It fits the product’s current maturity better than either a tiny angel round or an oversized seed.
-4. It provides enough runway to get from “real product” to “repeatable proof.”
-
-It should be raised as a SAFE because:
-
-- it keeps the process simple
-- it matches the current maturity of the company
-- it avoids prematurely forcing a priced round before market proof is cleaner
-
-## Narrative To Use In The Raise
-
-The tight narrative is:
-
-1. Finance ops work starts in Gmail, chat, and spreadsheets, not ERP.
-2. ERP is the system of record, not the system of execution.
-3. Clearledgr is building the system of execution.
-4. The first wedge is Gmail-native AP.
-5. The long-term company is embedded finance ops, not AP software only.
-
-## What We Should Not Claim
-
-Do not pitch:
-
-- “full finance OS is already launched”
-- “fully autonomous finance”
-- “broad GA”
-- “all finance workflows are production-complete”
-
-Do pitch:
-
-- “the wedge is real”
-- “the product already works in production-like form”
-- “we know exactly where the expansion goes next”
+The company does not need to scale headcount broadly yet. It needs to get the wedge working repeatedly in live customer environments.
 
 ## Risks
 
-Primary risks:
+The real risks are not conceptual. They are execution risks:
 
-1. narrative fuzziness between the wedge and the full platform
-2. slow proof conversion from product reality into customer evidence
-3. product polish lagging behind product depth
-4. partner deployments becoming too bespoke
+- turning design partners into paid pilots
+- proving workflow reliability across real Gmail and ERP environments
+- avoiding a fuzzy "finance platform" story before the AP wedge is truly won
+- resisting premature expansion into too many finance workflows at once
 
-Mitigations:
+## Why $2M-$2.5M
 
-- keep the fundraising story narrow and clear
-- treat pilots as proof-generation, not consulting
-- prioritize wedge usage and throughput metrics
-- keep the product doctrine consistent: embedded execution layer, not dashboard software
+$2M-$2.5M is the right amount because it gives Clearledgr enough runway to:
 
-## Investor Fit
+- finish polishing the Gmail-native AP wedge
+- convert design-partner signal into paid pilot proof
+- build repeatable deployment confidence
+- identify and validate the second wedge
 
-Best-fit investors:
+It is large enough to matter and small enough to preserve discipline.
 
-- pre-seed / seed funds comfortable with workflow software
-- B2B SaaS investors who understand wedges
-- investors who believe in embedded AI execution, not just copilots
-- fintech / workflow investors who understand why systems of record are not enough
+## Closing
 
-Lower-fit investors:
+Clearledgr should be pitched now as:
 
-- investors looking for heavy near-term top-line proof before engaging
-- investors who want the company framed as “just AP automation”
-- investors who do not believe in inbox-native software as a real product surface
+- the company: the AI execution layer for finance teams
+- today: the first production skill is Gmail-native AP
+- over time: adjacent finance workflows with the same manual coordination problem
 
-## Ask
-
-We are raising $2.5M on a post-money SAFE at a $15M cap to turn a real Gmail-native AP wedge into repeatable proof and expand Clearledgr into the broader embedded finance execution layer.
-
-## Founder Fill-Ins Before Sending
-
-Complete these before circulating:
-
-1. Founder story and team slide narrative
-2. Current partner / pilot names and status
-3. Any usage or workflow throughput metrics already available
-4. Specific near-term milestones by quarter
-5. Exact hiring plan for the next 18-24 months
+That is sharp enough to sell, broad enough to matter, and consistent with the strongest evidence in hand.

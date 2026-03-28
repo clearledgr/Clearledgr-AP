@@ -11,9 +11,8 @@ from fastapi import APIRouter, HTTPException, Request
 from clearledgr.core.approval_action_contract import (
     ApprovalActionContractError,
     NormalizedApprovalAction,
-    is_stale_action,
     normalize_teams_action,
-    validate_action_state_preflight,
+    resolve_action_precedence,
 )
 from clearledgr.core.ap_item_resolution import (
     resolve_ap_context as resolve_shared_ap_context,
@@ -22,7 +21,10 @@ from clearledgr.core.ap_item_resolution import (
 from clearledgr.core.database import get_db
 from clearledgr.core.launch_controls import get_channel_action_block_reason
 from clearledgr.core.teams_verify import verify_teams_token
-from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+from clearledgr.services.agent_command_dispatch import (
+    build_channel_runtime,
+    dispatch_runtime_intent,
+)
 
 
 router = APIRouter(prefix="/teams/invoices", tags=["teams-invoices"])
@@ -135,15 +137,17 @@ def _resolve_correlation_id(db, organization_id: str, ap_item_id: Optional[str],
 
 
 async def _dispatch_teams_action(action: NormalizedApprovalAction) -> Dict[str, Any]:
-    runtime = FinanceAgentRuntime(
+    runtime = build_channel_runtime(
         organization_id=action.organization_id or "default",
         actor_id=action.actor_id or "teams_user",
         actor_email=action.actor_display or action.actor_id or "teams_user",
         db=get_db(),
+        fallback_actor="teams_user",
     )
 
     if action.action == "approve":
-        return await runtime.execute_intent(
+        return await dispatch_runtime_intent(
+            runtime,
             "approve_invoice",
             {
                 "ap_item_id": action.ap_item_id,
@@ -162,7 +166,8 @@ async def _dispatch_teams_action(action: NormalizedApprovalAction) -> Dict[str, 
             idempotency_key=action.idempotency_key,
         )
     if action.action == "request_info":
-        return await runtime.execute_intent(
+        return await dispatch_runtime_intent(
+            runtime,
             "request_info",
             {
                 "ap_item_id": action.ap_item_id,
@@ -181,7 +186,8 @@ async def _dispatch_teams_action(action: NormalizedApprovalAction) -> Dict[str, 
             idempotency_key=action.idempotency_key,
         )
     if action.action == "reject":
-        return await runtime.execute_intent(
+        return await dispatch_runtime_intent(
+            runtime,
             "reject_invoice",
             {
                 "ap_item_id": action.ap_item_id,
@@ -303,7 +309,39 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
             "reason": blocked_reason,
         }
 
-    if is_stale_action(normalized):
+    processed_key = f"{normalized.idempotency_key}:processed"
+    ap_item_row = None
+    if normalized.ap_item_id and hasattr(db, "get_ap_item"):
+        try:
+            ap_item_row = db.get_ap_item(normalized.ap_item_id)
+        except Exception:
+            pass
+
+    precedence = resolve_action_precedence(
+        normalized,
+        ap_item_row,
+        already_processed=bool(db.get_ap_audit_event_by_key(processed_key)),
+    )
+    if precedence.status == "duplicate":
+        _audit_callback_event(
+            db,
+            event_type="channel_action_duplicate",
+            organization_id=normalized.organization_id,
+            ap_item_id=normalized.ap_item_id,
+            actor_id=normalized.actor_id,
+            idempotency_key=f"{normalized.idempotency_key}:duplicate",
+            reason=precedence.reason,
+            metadata={"action": normalized.to_dict()},
+            correlation_id=normalized.correlation_id,
+        )
+        return {
+            "status": "duplicate",
+            "action": normalized.action,
+            "email_id": normalized.gmail_id,
+            "reason": precedence.reason,
+        }
+
+    if precedence.status == "stale":
         _audit_callback_event(
             db,
             event_type="channel_action_stale",
@@ -311,7 +349,7 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
             ap_item_id=normalized.ap_item_id,
             actor_id=normalized.actor_id,
             idempotency_key=f"{normalized.idempotency_key}:stale",
-            reason="stale_action",
+            reason=precedence.reason,
             metadata={"action": normalized.to_dict()},
             correlation_id=normalized.correlation_id,
         )
@@ -323,44 +361,16 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
             actor=normalized.actor_display,
             action=normalized.raw_action or normalized.action,
             status="stale",
-            reason="stale_action",
+            reason=precedence.reason,
         )
         return {
             "status": "stale",
             "action": normalized.action,
             "email_id": normalized.gmail_id,
-            "reason": "stale_action",
+            "reason": precedence.reason,
         }
 
-    processed_key = f"{normalized.idempotency_key}:processed"
-    if db.get_ap_audit_event_by_key(processed_key):
-        _audit_callback_event(
-            db,
-            event_type="channel_action_duplicate",
-            organization_id=normalized.organization_id,
-            ap_item_id=normalized.ap_item_id,
-            actor_id=normalized.actor_id,
-            idempotency_key=f"{normalized.idempotency_key}:duplicate",
-            reason="duplicate_callback",
-            metadata={"action": normalized.to_dict()},
-            correlation_id=normalized.correlation_id,
-        )
-        return {
-            "status": "duplicate",
-            "action": normalized.action,
-            "email_id": normalized.gmail_id,
-            "reason": "duplicate_callback",
-        }
-
-    # H18: Pre-flight state check — reject actions invalid for current AP state.
-    ap_item_row = None
-    if normalized.ap_item_id and hasattr(db, "get_ap_item"):
-        try:
-            ap_item_row = db.get_ap_item(normalized.ap_item_id)
-        except Exception:
-            pass
-    preflight_block = validate_action_state_preflight(normalized, ap_item_row)
-    if preflight_block:
+    if precedence.status == "blocked":
         _audit_callback_event(
             db,
             event_type="channel_action_blocked",
@@ -368,7 +378,7 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
             ap_item_id=normalized.ap_item_id,
             actor_id=normalized.actor_id,
             idempotency_key=f"{normalized.idempotency_key}:preflight_blocked",
-            reason=preflight_block,
+            reason=precedence.reason,
             metadata={"action": normalized.to_dict()},
             correlation_id=normalized.correlation_id,
         )
@@ -380,13 +390,13 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
             actor=normalized.actor_display,
             action=normalized.raw_action or normalized.action,
             status="blocked",
-            reason=preflight_block,
+            reason=precedence.reason,
         )
         return {
             "status": "blocked",
             "action": normalized.action,
             "email_id": normalized.gmail_id,
-            "reason": preflight_block,
+            "reason": precedence.reason,
         }
 
     _audit_callback_event(

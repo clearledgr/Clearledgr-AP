@@ -849,6 +849,19 @@ class ClearledgrQueueManager {
     normalized.exception_severity = normalized.exception_severity || null;
     normalized.budget_status = normalized.budget_status || null;
     normalized.budget_requires_decision = Boolean(normalized.budget_requires_decision);
+    normalized.entity_routing = normalized.entity_routing && typeof normalized.entity_routing === 'object'
+      ? normalized.entity_routing
+      : {};
+    normalized.entity_routing_status = normalized.entity_routing_status || normalized.entity_routing?.status || 'not_needed';
+    normalized.entity_candidates = Array.isArray(normalized.entity_candidates)
+      ? normalized.entity_candidates
+      : (Array.isArray(normalized.entity_routing?.candidates) ? normalized.entity_routing.candidates : []);
+    normalized.approval_followup = normalized.approval_followup && typeof normalized.approval_followup === 'object'
+      ? normalized.approval_followup
+      : {};
+    normalized.approval_pending_assignees = Array.isArray(normalized.approval_pending_assignees)
+      ? normalized.approval_pending_assignees
+      : (Array.isArray(normalized.approval_followup?.pending_assignees) ? normalized.approval_followup.pending_assignees : []);
     normalized.risk_signals = normalized.risk_signals || {};
     normalized.source_ranking = normalized.source_ranking || {};
     normalized.navigator = normalized.navigator || {};
@@ -1679,7 +1692,61 @@ class ClearledgrQueueManager {
       );
       await this.syncQueueWithBackend({ updateStatus: false });
       this.emitQueueUpdated();
-      return result || { status: 'nudged' };
+      const normalized = result && typeof result === 'object' ? { ...result } : {};
+      const delivered = ['slack', 'teams', 'fallback'].some((key) => (
+        String(normalized?.[key]?.status || '').toLowerCase() === 'sent'
+      ));
+      if (delivered && String(normalized.status || '').toLowerCase() !== 'nudged') {
+        normalized.status = 'nudged';
+      }
+      return normalized.status ? normalized : { status: 'nudged' };
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async escalateApproval(item, { message = '', idempotencyKey = '' } = {}) {
+    if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const locator = this.buildItemLocator(item);
+    try {
+      const result = await this.executeAgentIntent(
+        'escalate_approval',
+        {
+          ...locator,
+          message: message || undefined,
+        },
+        {
+          idempotencyKey,
+          defaultStatus: 'error',
+        }
+      );
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result || { status: 'escalated' };
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async reassignApproval(item, { assignee = '', note = '', idempotencyKey = '' } = {}) {
+    if (!item || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const locator = this.buildItemLocator(item);
+    try {
+      const result = await this.executeAgentIntent(
+        'reassign_approval',
+        {
+          ...locator,
+          assignee: assignee || undefined,
+          note: note || undefined,
+        },
+        {
+          idempotencyKey,
+          defaultStatus: 'error',
+        }
+      );
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result || { status: 'reassigned' };
     } catch (_) {
       return { status: 'error', reason: 'network_error' };
     }
@@ -1843,6 +1910,47 @@ class ClearledgrQueueManager {
       await this.syncQueueWithBackend({ updateStatus: false });
       this.emitQueueUpdated();
       return result || { status: 'error', reason: 'unknown_response' };
+    } catch (_) {
+      return { status: 'error', reason: 'network_error' };
+    }
+  }
+
+  async resolveEntityRoute(item, {
+    selection = '',
+    entityId = '',
+    entityCode = '',
+    entityName = '',
+    note = '',
+  } = {}) {
+    if (!item?.id || !this.runtimeConfig?.backendUrl) return { status: 'invalid', reason: 'invalid' };
+
+    try {
+      const url = new URL(
+        `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/entity-route/resolve`
+      );
+      url.searchParams.set('organization_id', this.runtimeConfig.organizationId || 'default');
+      const response = await this.backendFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          selection: selection || undefined,
+          entity_id: entityId || undefined,
+          entity_code: entityCode || undefined,
+          entity_name: entityName || undefined,
+          note: note || undefined,
+        }),
+      });
+      if (!response.ok) {
+        const detail = await this.readErrorDetail(response);
+        return { status: 'error', reason: detail || `http_${response.status}` };
+      }
+      const result = await response.json();
+      if (result?.ap_item) {
+        this.upsertQueueItem(result.ap_item);
+      }
+      await this.syncQueueWithBackend({ updateStatus: false });
+      this.emitQueueUpdated();
+      return result || { status: 'resolved' };
     } catch (_) {
       return { status: 'error', reason: 'network_error' };
     }

@@ -13,9 +13,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from clearledgr.core.approval_action_contract import (
     ApprovalActionContractError,
     NormalizedApprovalAction,
-    is_stale_action,
     normalize_slack_action,
-    validate_action_state_preflight,
+    resolve_action_precedence,
 )
 from clearledgr.core.ap_item_resolution import (
     resolve_ap_context as resolve_shared_ap_context,
@@ -24,7 +23,10 @@ from clearledgr.core.ap_item_resolution import (
 from clearledgr.core.database import get_db
 from clearledgr.core.launch_controls import get_channel_action_block_reason
 from clearledgr.core.slack_verify import require_slack_signature
-from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+from clearledgr.services.agent_command_dispatch import (
+    build_channel_runtime,
+    dispatch_runtime_intent,
+)
 
 router = APIRouter(prefix="/slack/invoices", tags=["slack-invoices"])
 logger = logging.getLogger(__name__)
@@ -130,15 +132,17 @@ def _slack_stale_response() -> Dict[str, str]:
 
 
 async def _dispatch_slack_action(action: NormalizedApprovalAction) -> Dict[str, Any]:
-    runtime = FinanceAgentRuntime(
+    runtime = build_channel_runtime(
         organization_id=action.organization_id or "default",
         actor_id=action.actor_id or "slack_user",
         actor_email=action.actor_display or action.actor_id or "slack_user",
         db=get_db(),
+        fallback_actor="slack_user",
     )
 
     if action.action == "approve":
-        result = await runtime.execute_intent(
+        result = await dispatch_runtime_intent(
+            runtime,
             "approve_invoice",
             {
                 "ap_item_id": action.ap_item_id,
@@ -187,7 +191,8 @@ async def _dispatch_slack_action(action: NormalizedApprovalAction) -> Dict[str, 
         return {"response_type": "ephemeral", "text": f"{prefix} {detail}", "result": result}
 
     if action.action == "request_info":
-        result = await runtime.execute_intent(
+        result = await dispatch_runtime_intent(
+            runtime,
             "request_info",
             {
                 "ap_item_id": action.ap_item_id,
@@ -219,7 +224,8 @@ async def _dispatch_slack_action(action: NormalizedApprovalAction) -> Dict[str, 
         }
 
     if action.action == "reject":
-        result = await runtime.execute_intent(
+        result = await dispatch_runtime_intent(
+            runtime,
             "reject_invoice",
             {
                 "ap_item_id": action.ap_item_id,
@@ -354,23 +360,20 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
             "text": f"Slack approval actions are temporarily disabled. Reason: {blocked_reason}",
         }
 
-    if is_stale_action(normalized):
-        _audit_callback_event(
-            db,
-            event_type="channel_action_stale",
-            source="slack",
-            organization_id=normalized.organization_id,
-            ap_item_id=normalized.ap_item_id,
-            actor_id=normalized.actor_id,
-            idempotency_key=f"{normalized.idempotency_key}:stale",
-            reason="stale_action",
-            metadata={"action": normalized.to_dict()},
-            correlation_id=normalized.correlation_id,
-        )
-        return _slack_stale_response()
-
     processed_key = f"{normalized.idempotency_key}:processed"
-    if db.get_ap_audit_event_by_key(processed_key):
+    ap_item_row = None
+    if normalized.ap_item_id and hasattr(db, "get_ap_item"):
+        try:
+            ap_item_row = db.get_ap_item(normalized.ap_item_id)
+        except Exception:
+            pass
+
+    precedence = resolve_action_precedence(
+        normalized,
+        ap_item_row,
+        already_processed=bool(db.get_ap_audit_event_by_key(processed_key)),
+    )
+    if precedence.status == "duplicate":
         _audit_callback_event(
             db,
             event_type="channel_action_duplicate",
@@ -379,21 +382,28 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
             ap_item_id=normalized.ap_item_id,
             actor_id=normalized.actor_id,
             idempotency_key=f"{normalized.idempotency_key}:duplicate",
-            reason="duplicate_callback",
+            reason=precedence.reason,
             metadata={"action": normalized.to_dict()},
             correlation_id=normalized.correlation_id,
         )
         return _slack_duplicate_response()
 
-    # H18: Pre-flight state check — reject actions invalid for current AP state.
-    ap_item_row = None
-    if normalized.ap_item_id and hasattr(db, "get_ap_item"):
-        try:
-            ap_item_row = db.get_ap_item(normalized.ap_item_id)
-        except Exception:
-            pass
-    preflight_block = validate_action_state_preflight(normalized, ap_item_row)
-    if preflight_block:
+    if precedence.status == "stale":
+        _audit_callback_event(
+            db,
+            event_type="channel_action_stale",
+            source="slack",
+            organization_id=normalized.organization_id,
+            ap_item_id=normalized.ap_item_id,
+            actor_id=normalized.actor_id,
+            idempotency_key=f"{normalized.idempotency_key}:stale",
+            reason=precedence.reason,
+            metadata={"action": normalized.to_dict()},
+            correlation_id=normalized.correlation_id,
+        )
+        return _slack_stale_response()
+
+    if precedence.status == "blocked":
         _audit_callback_event(
             db,
             event_type="channel_action_blocked",
@@ -402,13 +412,13 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
             ap_item_id=normalized.ap_item_id,
             actor_id=normalized.actor_id,
             idempotency_key=f"{normalized.idempotency_key}:preflight_blocked",
-            reason=preflight_block,
+            reason=precedence.reason,
             metadata={"action": normalized.to_dict()},
             correlation_id=normalized.correlation_id,
         )
         return {
             "response_type": "ephemeral",
-            "text": f"Action not allowed: {preflight_block}",
+            "text": f"Action not allowed: {precedence.reason}",
         }
 
     _audit_callback_event(

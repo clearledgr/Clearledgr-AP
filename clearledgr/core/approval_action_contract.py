@@ -61,12 +61,31 @@ class NormalizedApprovalAction:
         }
 
 
+@dataclass(frozen=True)
+class ApprovalActionPrecedenceResult:
+    status: str  # dispatch | duplicate | stale | blocked
+    reason: Optional[str] = None
+
+    @property
+    def should_dispatch(self) -> bool:
+        return self.status == "dispatch"
+
+
 # H18: Pre-flight policy check at approval action boundary (PLAN.md §B)
 # Maps action → set of valid AP item states the action may be dispatched from.
 _ACTION_VALID_STATES = {
     "approve": {"needs_approval"},
     "reject": {"needs_approval"},
     "request_info": {"needs_approval", "validated"},
+}
+
+_SUPERSEDED_STATES = {
+    "approved",
+    "ready_to_post",
+    "posted_to_erp",
+    "closed",
+    "rejected",
+    "failed_post",
 }
 
 
@@ -87,6 +106,49 @@ def validate_action_state_preflight(
     if valid_states and current_state and current_state not in valid_states:
         return f"action_{action.action}_invalid_for_state_{current_state}"
     return None
+
+
+def resolve_action_precedence(
+    action: NormalizedApprovalAction,
+    ap_item: Optional[Dict[str, Any]],
+    *,
+    already_processed: bool = False,
+    now_ts: Optional[int] = None,
+) -> ApprovalActionPrecedenceResult:
+    """Resolve the canonical callback precedence before dispatch.
+
+    The contract is intentionally explicit so Slack and Teams share one outcome
+    model instead of open-coding slightly different callback behavior.
+
+    Precedence order:
+    1. Duplicate of an already-processed callback -> duplicate
+    2. Expired callback window -> stale
+    3. Workflow already moved beyond the approval window -> stale
+    4. Illegal state for the action -> blocked
+    5. Otherwise -> dispatch
+    """
+
+    if already_processed:
+        return ApprovalActionPrecedenceResult("duplicate", "duplicate_callback")
+
+    if is_stale_action(action, now_ts=now_ts):
+        return ApprovalActionPrecedenceResult("stale", "stale_action")
+
+    if not ap_item:
+        return ApprovalActionPrecedenceResult("dispatch")
+
+    current_state = str(ap_item.get("state") or "").strip().lower()
+    preflight_block = validate_action_state_preflight(action, ap_item)
+    if not preflight_block:
+        return ApprovalActionPrecedenceResult("dispatch")
+
+    if current_state in _SUPERSEDED_STATES:
+        return ApprovalActionPrecedenceResult(
+            "stale",
+            f"superseded_by_state_{current_state}",
+        )
+
+    return ApprovalActionPrecedenceResult("blocked", preflight_block)
 
 
 def _epoch_from_any(value: Any) -> Optional[int]:

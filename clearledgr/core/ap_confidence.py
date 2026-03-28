@@ -302,7 +302,12 @@ def evaluate_critical_field_confidence(
     evaluated_fields: List[str] = []
     effective_confidences: Dict[str, float] = {}
     effective_thresholds: Dict[str, float] = {}
-    effective_critical_fields = list(profile.get("critical_fields") or critical_fields or DEFAULT_CRITICAL_FIELDS)
+    profile_critical_fields = (
+        profile.get("critical_fields")
+        if isinstance(profile, dict)
+        else None
+    )
+    effective_critical_fields = list(profile_critical_fields or critical_fields or DEFAULT_CRITICAL_FIELDS)
 
     for field in effective_critical_fields:
         raw_value = _field_value(field, values)

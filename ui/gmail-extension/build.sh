@@ -32,11 +32,12 @@ npm run build --silent
 
 # Copy extension files (InboxSDK-only implementation)
 echo "Copying extension files..."
-cp -r "$SCRIPT_DIR/icons" "$BUILD_DIR/"
-cp -r "$SCRIPT_DIR/clients" "$BUILD_DIR/" 2>/dev/null || true
-cp -r "$SCRIPT_DIR/workflows" "$BUILD_DIR/" 2>/dev/null || true
-cp -r "$SCRIPT_DIR/vendor" "$BUILD_DIR/" 2>/dev/null || true
-[ -d "$SCRIPT_DIR/engines" ] && cp -r "$SCRIPT_DIR/engines" "$BUILD_DIR/"
+mkdir -p "$BUILD_DIR/icons"
+cp -R "$SCRIPT_DIR/icons/." "$BUILD_DIR/icons/"
+[ -d "$SCRIPT_DIR/clients" ] && mkdir -p "$BUILD_DIR/clients" && cp -R "$SCRIPT_DIR/clients/." "$BUILD_DIR/clients/"
+[ -d "$SCRIPT_DIR/workflows" ] && mkdir -p "$BUILD_DIR/workflows" && cp -R "$SCRIPT_DIR/workflows/." "$BUILD_DIR/workflows/"
+[ -d "$SCRIPT_DIR/vendor" ] && mkdir -p "$BUILD_DIR/vendor" && cp -R "$SCRIPT_DIR/vendor/." "$BUILD_DIR/vendor/"
+[ -d "$SCRIPT_DIR/engines" ] && mkdir -p "$BUILD_DIR/engines" && cp -R "$SCRIPT_DIR/engines/." "$BUILD_DIR/engines/"
 cp "$SCRIPT_DIR/manifest.json" "$BUILD_DIR/"
 cp "$SCRIPT_DIR/background.js" "$BUILD_DIR/"
 
@@ -48,6 +49,7 @@ cp "$SCRIPT_DIR/content-script.js" "$BUILD_DIR/"
 mkdir -p "$BUILD_DIR/dist"
 cp "$SCRIPT_DIR/dist/inboxsdk-layer.js" "$BUILD_DIR/dist/"
 cp "$SCRIPT_DIR/dist/inboxsdk-layer.js.map" "$BUILD_DIR/dist/" 2>/dev/null || true
+cp "$SCRIPT_DIR/dist/inboxsdk-layer.meta.json" "$BUILD_DIR/dist/" 2>/dev/null || true
 cp "$SCRIPT_DIR/dist/pageWorld.js" "$BUILD_DIR/dist/"
 cp "$SCRIPT_DIR/dist/pageWorld.js.map" "$BUILD_DIR/dist/" 2>/dev/null || true
 
@@ -131,7 +133,7 @@ rm -f "$BUILD_DIR/background.js.bak"
 # Create ZIP for Chrome Web Store
 echo "Creating ZIP package..."
 cd "$BUILD_DIR"
-zip -r "../clearledgr-extension-$ENV.zip" . -x "*.DS_Store" -x "__MACOSX/*"
+zip -qr "../clearledgr-extension-$ENV.zip" . -x "*.DS_Store" -x "__MACOSX/*"
 cd "$SCRIPT_DIR"
 
 echo ""

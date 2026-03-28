@@ -85,6 +85,19 @@ def test_normalize_operator_audit_event_maps_nudge_sent_alias_and_auto_reason():
     assert row["operator_action_hint"] == "Wait for approval callback."
 
 
+def test_normalize_operator_audit_event_maps_auto_escalation_reason():
+    row = normalize_operator_audit_event(
+        {
+            "id": "evt-5b",
+            "event_type": "approval_escalation_sent",
+            "reason": "approval_escalation_auto_6h",
+        }
+    )
+    assert row["operator_code"] == "approval_escalation_sent"
+    assert row["operator_title"] == "Approval escalated"
+    assert "after 6 hours pending" in str(row["operator_message"]).lower()
+
+
 def test_normalize_operator_audit_event_maps_approval_nudge_failed_and_browser_fallback_prepared():
     nudge_failed = normalize_operator_audit_event(
         {

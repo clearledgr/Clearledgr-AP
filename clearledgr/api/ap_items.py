@@ -8,17 +8,17 @@ from collections import Counter
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException
 
 from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
-from clearledgr.core.auth import get_current_user, require_ops_user
+from clearledgr.core.ap_entity_routing import (
+    match_entity_candidate,
+    normalize_entity_candidate,
+    resolve_entity_routing,
+)
 from clearledgr.core.database import ClearledgrDB, get_db
 from clearledgr.core.ap_states import APState
-from clearledgr.core.errors import safe_error
-from clearledgr.api.deps import verify_org_access
 from clearledgr.services.ap_context_connectors import build_multi_system_context
-from clearledgr.services.ap_operator_audit import normalize_operator_audit_events
 from clearledgr.services.erp_api_first import (
     apply_credit_note_api_first,
     apply_settlement_api_first,
@@ -29,80 +29,42 @@ from clearledgr.services.erp_follow_on_result import (
     _apply_erp_follow_on_result,
     _refresh_linked_finance_metadata,
 )
-from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+from clearledgr.services.ap_projection import build_worklist_items
+from clearledgr.services.policy_compliance import get_approval_automation_policy
+from clearledgr.api.ap_item_contracts import (
+    BulkResolveFieldReviewRequest,
+    LinkSourceRequest,
+    MergeItemsRequest,
+    ResolveEntityRouteRequest,
+    ResolveFieldReviewRequest,
+    ResolveNonInvoiceReviewRequest,
+    ResubmitRejectedItemRequest,
+    SplitItemRequest,
+)
 
 
 router = APIRouter(prefix="/api/ap/items", tags=["ap-items"])
 logger = logging.getLogger(__name__)
 
 
-class LinkSourceRequest(BaseModel):
-    source_type: str = Field(..., min_length=1)
-    source_ref: str = Field(..., min_length=1)
-    subject: Optional[str] = None
-    sender: Optional[str] = None
-    detected_at: Optional[str] = None
-    metadata: Dict[str, Any] = {}
+def _load_org_settings_for_item(db: ClearledgrDB, organization_id: Any) -> Dict[str, Any]:
+    org_id = str(organization_id or "").strip()
+    if not org_id or not hasattr(db, "get_organization"):
+        return {}
+    org = db.get_organization(org_id) or {}
+    settings = org.get("settings_json") or org.get("settings") or {}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except Exception:
+            settings = {}
+    return settings if isinstance(settings, dict) else {}
 
 
-class MergeItemsRequest(BaseModel):
-    source_ap_item_id: str = Field(..., min_length=1)
-    actor_id: str = Field(default="system", min_length=1)
-    reason: str = Field(default="manual_merge", min_length=1)
+def _finance_agent_runtime_cls():
+    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
-
-class SplitSourceRequest(BaseModel):
-    source_type: str = Field(..., min_length=1)
-    source_ref: str = Field(..., min_length=1)
-
-
-class SplitItemRequest(BaseModel):
-    actor_id: str = Field(default="system", min_length=1)
-    reason: str = Field(default="manual_split", min_length=1)
-    sources: List[SplitSourceRequest] = []
-
-
-class ResubmitRejectedItemRequest(BaseModel):
-    actor_id: str = Field(default="system", min_length=1)
-    reason: str = Field(default="corrected_resubmission", min_length=1)
-    initial_state: str = Field(default="received", min_length=1)
-    copy_sources: bool = True
-    thread_id: Optional[str] = None
-    message_id: Optional[str] = None
-    subject: Optional[str] = None
-    sender: Optional[str] = None
-    vendor_name: Optional[str] = None
-    amount: Optional[float] = None
-    currency: Optional[str] = None
-    invoice_number: Optional[str] = None
-    invoice_date: Optional[str] = None
-    due_date: Optional[str] = None
-    metadata: Dict[str, Any] = {}
-
-
-class ResolveFieldReviewRequest(BaseModel):
-    field: str = Field(..., min_length=1)
-    source: str = Field(..., min_length=1, description="email, attachment, or manual")
-    manual_value: Optional[Any] = None
-    note: Optional[str] = None
-    auto_resume: bool = True
-
-
-class BulkResolveFieldReviewRequest(BaseModel):
-    ap_item_ids: List[str] = Field(..., min_length=1)
-    field: str = Field(..., min_length=1)
-    source: str = Field(..., min_length=1, description="email, attachment, or manual")
-    manual_value: Optional[Any] = None
-    note: Optional[str] = None
-    auto_resume: bool = True
-
-
-class ResolveNonInvoiceReviewRequest(BaseModel):
-    outcome: str = Field(..., min_length=1)
-    related_reference: Optional[str] = None
-    related_ap_item_id: Optional[str] = None
-    note: Optional[str] = None
-    close_record: bool = True
+    return FinanceAgentRuntime
 
 
 def _authenticated_actor(user: Any, fallback: str = "system") -> str:
@@ -172,6 +134,28 @@ def _vendor_followup_max_attempts() -> int:
     return max(1, min(attempts, 10))
 
 
+def _approval_followup_policy(organization_id: str) -> Dict[str, Any]:
+    return get_approval_automation_policy(organization_id=organization_id or "default")
+
+
+def _approval_followup_sla_minutes(approval_policy: Optional[Dict[str, Any]] = None) -> int:
+    policy = approval_policy if isinstance(approval_policy, dict) else {}
+    try:
+        reminder_hours = int(policy.get("reminder_hours") or 4)
+    except (TypeError, ValueError):
+        reminder_hours = 4
+    return max(60, min(reminder_hours * 60, 10080))
+
+
+def _approval_followup_escalation_minutes(approval_policy: Optional[Dict[str, Any]] = None) -> int:
+    policy = approval_policy if isinstance(approval_policy, dict) else {}
+    try:
+        escalation_hours = int(policy.get("escalation_hours") or 24)
+    except (TypeError, ValueError):
+        escalation_hours = 24
+    return max(60, min(escalation_hours * 60, 20160))
+
+
 def _derive_followup_next_action(
     *,
     state: str,
@@ -198,6 +182,90 @@ def _derive_followup_next_action(
     if attempts <= 0 and not str(metadata.get("needs_info_draft_id") or "").strip():
         return "prepare_vendor_followup_draft"
     return normalized or "await_vendor_response"
+
+
+def _pending_approver_ids(db: ClearledgrDB, ap_item_id: str, metadata: Dict[str, Any]) -> List[str]:
+    if ap_item_id and hasattr(db, "get_pending_approver_ids"):
+        try:
+            rows = db.get_pending_approver_ids(ap_item_id)
+            if isinstance(rows, list):
+                pending = [str(value).strip() for value in rows if str(value).strip()]
+                if pending:
+                    return pending
+        except Exception:
+            pass
+    raw = metadata.get("approval_sent_to")
+    if isinstance(raw, list):
+        return [str(value).strip() for value in raw if str(value).strip()]
+    token = str(raw or "").strip()
+    return [token] if token else []
+
+
+def _build_approval_followup(
+    db: ClearledgrDB,
+    payload: Dict[str, Any],
+    metadata: Dict[str, Any],
+    *,
+    now: Optional[datetime] = None,
+    approval_policy: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    state = str(payload.get("state") or "").strip().lower()
+    if state not in {APState.NEEDS_APPROVAL.value, "pending_approval"}:
+        return {}
+
+    now_utc = now or datetime.now(timezone.utc)
+    organization_id = str(payload.get("organization_id") or "default").strip() or "default"
+    policy = (
+        approval_policy
+        if isinstance(approval_policy, dict)
+        else _approval_followup_policy(organization_id)
+    )
+    requested_at_raw = (
+        payload.get("approval_requested_at")
+        or metadata.get("approval_requested_at")
+        or payload.get("updated_at")
+        or payload.get("created_at")
+    )
+    requested_at = _parse_iso(requested_at_raw)
+    wait_minutes = max(
+        0,
+        int((now_utc - requested_at).total_seconds() // 60),
+    ) if requested_at else 0
+    sla_minutes = _approval_followup_sla_minutes(policy)
+    escalation_minutes = _approval_followup_escalation_minutes(policy)
+    pending_assignees = _pending_approver_ids(db, str(payload.get("id") or "").strip(), metadata)
+    sla_breached = bool(requested_at and wait_minutes >= sla_minutes)
+    escalation_due = bool(requested_at and wait_minutes >= escalation_minutes)
+
+    next_action = str(metadata.get("approval_next_action") or "").strip().lower()
+    if not next_action:
+        if escalation_due:
+            next_action = "escalate_approval"
+        elif sla_breached:
+            next_action = "nudge_approval"
+        elif pending_assignees:
+            next_action = "wait_for_approval"
+        else:
+            next_action = "reassign_approval"
+
+    return {
+        "requested_at": requested_at.isoformat() if requested_at else None,
+        "wait_minutes": wait_minutes,
+        "sla_minutes": sla_minutes,
+        "escalation_minutes": escalation_minutes,
+        "sla_breached": sla_breached,
+        "escalation_due": escalation_due,
+        "pending_assignees": pending_assignees,
+        "nudge_count": max(0, _safe_int(metadata.get("approval_nudge_count"), 0)),
+        "escalation_count": max(0, _safe_int(metadata.get("approval_escalation_count"), 0)),
+        "reassignment_count": max(0, _safe_int(metadata.get("approval_reassignment_count"), 0)),
+        "last_nudged_at": str(metadata.get("approval_last_nudged_at") or "").strip() or None,
+        "last_escalated_at": str(metadata.get("approval_last_escalated_at") or "").strip() or None,
+        "last_reassigned_at": str(metadata.get("approval_last_reassigned_at") or "").strip() or None,
+        "last_reassigned_to": str(metadata.get("approval_last_reassigned_to") or "").strip() or None,
+        "escalation_channel": str(policy.get("escalation_channel") or "").strip() or None,
+        "next_action": next_action,
+    }
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -929,6 +997,8 @@ def _derive_next_action(payload: Dict[str, Any]) -> str:
         return "review_fields"
     if payload.get("finance_effect_review_required"):
         return "review_finance_effects"
+    if document_type == "invoice" and payload.get("entity_routing_status") == "needs_review":
+        return "resolve_entity_route"
     if state in {APState.NEEDS_INFO.value}:
         followup_next = str(payload.get("followup_next_action") or "").strip().lower()
         return followup_next or "request_info"
@@ -937,6 +1007,9 @@ def _derive_next_action(payload: Dict[str, Any]) -> str:
     if state in {APState.READY_TO_POST.value, APState.APPROVED.value}:
         return "post_to_erp"
     if state in {APState.NEEDS_APPROVAL.value, "pending_approval"}:
+        approval_followup = payload.get("approval_followup") if isinstance(payload.get("approval_followup"), dict) else {}
+        if approval_followup.get("sla_breached"):
+            return "escalate_approval"
         if payload.get("budget_requires_decision"):
             return "budget_decision"
         if payload.get("exception_code"):
@@ -1074,7 +1147,16 @@ def _default_severity_for_exception(code: Optional[str]) -> Optional[str]:
         return None
     if value in {"budget_overrun"}:
         return "critical"
-    if value in {"po_missing_reference", "po_amount_mismatch", "policy_validation_failed", "field_conflict"}:
+    if value in {
+        "po_missing_reference",
+        "po_amount_mismatch",
+        "policy_validation_failed",
+        "field_conflict",
+        "erp_not_connected",
+        "erp_not_configured",
+        "erp_type_unsupported",
+        "posting_blocked",
+    }:
         return "high"
     if value in {"missing_budget_context", "field_review_required"}:
         return "medium"
@@ -1394,17 +1476,19 @@ def _build_field_review_surface(payload: Dict[str, Any]) -> Dict[str, Any]:
         blocked_field_labels.append(field_label.lower())
 
     pause_reason = ""
-    if blocked_field_labels:
+    if len(blockers) == 1:
+        pause_reason = str(blockers[0].get("paused_reason") or "").strip()
+    if not pause_reason and blocked_field_labels:
         pause_reason = (
             f"Review {_join_human_list(blocked_field_labels)} "
             f"before this invoice moves forward."
         )
         if any(str(entry.get("kind") or "") == "source_conflict" for entry in blockers):
             pause_reason = (
-                f"Review {_join_human_list(blocked_field_labels)} "
-                f"before this invoice moves forward because the email and attachment disagree."
+                f"Workflow paused until {_join_human_list(blocked_field_labels)} "
+                f"is confirmed because the email and attachment disagree."
             )
-    elif bool(payload.get("requires_field_review")):
+    if not pause_reason and bool(payload.get("requires_field_review")):
         pause_reason = "Review the extracted fields before this invoice moves forward."
 
     return {
@@ -1466,6 +1550,25 @@ def _build_budget_blocker_detail(summary: Dict[str, Any]) -> str:
     if warning > 0:
         return f"{warning} budget check{'s' if warning != 1 else ''} are close to the limit."
     return "Budget review is required before this invoice can continue."
+
+
+_FAILED_POST_PAUSE_REASONS = {
+    "erp_not_connected": "Connect an ERP before this invoice can be posted.",
+    "erp_not_configured": "Finish ERP configuration before this invoice can be posted.",
+    "erp_type_unsupported": "This ERP connection does not support invoice posting yet.",
+    "posting_blocked": "ERP posting is paused by rollout controls right now.",
+}
+
+
+def _failed_post_pause_reason(item: Dict[str, Any]) -> Optional[str]:
+    state = str(item.get("state") or "").strip().lower()
+    if state != "failed_post":
+        return None
+    exception_code = str(item.get("exception_code") or "").strip().lower()
+    if exception_code in _FAILED_POST_PAUSE_REASONS:
+        return _FAILED_POST_PAUSE_REASONS[exception_code]
+    last_error = str(item.get("last_error") or "").strip()
+    return last_error or None
 
 
 def _build_pipeline_blockers(payload: Dict[str, Any], budget_summary: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1549,13 +1652,24 @@ def _build_pipeline_blockers(payload: Dict[str, Any], budget_summary: Dict[str, 
         )
 
     state = str(payload.get("state") or "").strip().lower()
+    entity_routing_status = str(payload.get("entity_routing_status") or "").strip().lower()
+    entity_routing = payload.get("entity_routing") if isinstance(payload.get("entity_routing"), dict) else {}
+    entity_reason = str(
+        payload.get("entity_route_reason")
+        or entity_routing.get("reason")
+        or ""
+    ).strip()
     if state == APState.NEEDS_APPROVAL.value:
         append_blocker(
             kind="approval",
             blocker_type="approval_waiting",
             chip_label="Approval waiting",
             title="Waiting on approval",
-            detail="This invoice has been routed to an approver and is still waiting.",
+            detail=(
+                "This invoice has been routed to an approver and is still waiting."
+                if not bool((payload.get("approval_followup") or {}).get("sla_breached"))
+                else "Approval is past the follow-up SLA and should be escalated or reassigned."
+            ),
         )
     if state == APState.NEEDS_INFO.value:
         append_blocker(
@@ -1572,6 +1686,19 @@ def _build_pipeline_blockers(payload: Dict[str, Any], budget_summary: Dict[str, 
             chip_label="ERP retry",
             title="ERP posting failed",
             detail="Posting to the ERP needs retry or recovery.",
+        )
+    if entity_routing_status == "needs_review":
+        append_blocker(
+            kind="entity",
+            blocker_type="entity_review",
+            chip_label="Entity review",
+            title="Entity route needs review",
+            detail=(
+                entity_reason
+                or "Choose the correct legal entity before approval routing can continue."
+            ),
+            severity="high",
+            code="entity_route_review_required",
         )
 
     budget_status = str(payload.get("budget_status") or budget_summary.get("status") or "").strip().lower()
@@ -1703,15 +1830,29 @@ def _build_primary_source(item: Dict[str, Any], sources: List[Dict[str, Any]]) -
     return {"thread_id": item.get("thread_id"), "message_id": item.get("message_id")}
 
 
-def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any]:
+def build_worklist_item(
+    db: ClearledgrDB,
+    item: Dict[str, Any],
+    *,
+    approval_policy: Optional[Dict[str, Any]] = None,
+    organization_settings: Optional[Dict[str, Any]] = None,
+    sources: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     payload = dict(item or {})
     metadata = _parse_json(payload.get("metadata"))
-    sources = db.list_ap_item_sources(payload.get("id"))
+    source_rows = list(sources or [])
+    if not source_rows:
+        source_rows = db.list_ap_item_sources(payload.get("id"))
+    org_settings = (
+        organization_settings
+        if isinstance(organization_settings, dict)
+        else _load_org_settings_for_item(db, payload.get("organization_id"))
+    )
 
     # Preserve legacy behavior when source links do not exist yet.
-    if not sources:
+    if not source_rows:
         if payload.get("thread_id"):
-            sources.append(
+            source_rows.append(
                 {
                     "source_type": "gmail_thread",
                     "source_ref": payload.get("thread_id"),
@@ -1722,7 +1863,7 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
                 }
             )
         if payload.get("message_id"):
-            sources.append(
+            source_rows.append(
                 {
                     "source_type": "gmail_message",
                     "source_ref": payload.get("message_id"),
@@ -1738,9 +1879,9 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         parsed_meta_source_count = int(meta_source_count) if meta_source_count is not None else 0
     except (TypeError, ValueError):
         parsed_meta_source_count = 0
-    payload["source_count"] = max(parsed_meta_source_count, len(sources))
-    payload["primary_source"] = _build_primary_source(payload, sources)
-    payload.update(_derive_attachment_summary(payload, metadata, sources))
+    payload["source_count"] = max(parsed_meta_source_count, len(source_rows))
+    payload["primary_source"] = _build_primary_source(payload, source_rows)
+    payload.update(_derive_attachment_summary(payload, metadata, source_rows))
     payload["supersedes_ap_item_id"] = payload.get("supersedes_ap_item_id") or metadata.get("supersedes_ap_item_id")
     payload["supersedes_invoice_key"] = payload.get("supersedes_invoice_key") or metadata.get("supersedes_invoice_key")
     payload["superseded_by_ap_item_id"] = payload.get("superseded_by_ap_item_id") or metadata.get("superseded_by_ap_item_id")
@@ -1818,9 +1959,32 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         else:
             _doc_type = "receipt" if any(kw in _subject_lc for kw in _receipt_kw) else "invoice"
     payload["document_type"] = _normalize_document_type_token(_doc_type)
+    entity_routing = resolve_entity_routing(metadata, payload, organization_settings=org_settings)
+    selected_entity = entity_routing.get("selected") if isinstance(entity_routing.get("selected"), dict) else {}
+    payload["entity_routing"] = entity_routing
+    payload["entity_routing_status"] = str(entity_routing.get("status") or "").strip() or "not_needed"
+    payload["entity_route_reason"] = str(entity_routing.get("reason") or "").strip() or None
+    payload["entity_candidates"] = entity_routing.get("candidates") if isinstance(entity_routing.get("candidates"), list) else []
+    payload["entity_id"] = (
+        payload.get("entity_id")
+        or selected_entity.get("entity_id")
+        or metadata.get("entity_id")
+        or None
+    )
+    payload["entity_code"] = (
+        payload.get("entity_code")
+        or selected_entity.get("entity_code")
+        or metadata.get("entity_code")
+        or None
+    )
+    payload["entity_name"] = (
+        payload.get("entity_name")
+        or selected_entity.get("entity_name")
+        or metadata.get("entity_name")
+        or None
+    )
     payload["conflict_actions"] = metadata.get("conflict_actions") if isinstance(metadata.get("conflict_actions"), list) else []
     payload.update(_build_field_review_surface(payload))
-    payload["pipeline_blockers"] = _build_pipeline_blockers(payload, budget_summary)
     if metadata.get("priority_score") is not None:
         payload["priority_score"] = metadata.get("priority_score")
     elif hasattr(db, "_worklist_priority_score"):
@@ -1918,11 +2082,23 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         and state_token not in {APState.CLOSED.value, APState.REJECTED.value}
         and not payload["non_invoice_resolution"].get("resolved_at")
     )
-    payload["next_action"] = _derive_next_action(payload)
     payload["approval_requested_at"] = (
         payload.get("approval_requested_at")
         or metadata.get("approval_requested_at")
         or (payload.get("updated_at") if state_token in {"needs_approval", "pending_approval"} else None)
+    )
+    approval_followup = _build_approval_followup(
+        db,
+        payload,
+        metadata,
+        approval_policy=approval_policy,
+    )
+    payload["approval_followup"] = approval_followup
+    payload["approval_wait_minutes"] = max(0, _safe_int(approval_followup.get("wait_minutes"), 0))
+    payload["approval_pending_assignees"] = (
+        approval_followup.get("pending_assignees")
+        if isinstance(approval_followup.get("pending_assignees"), list)
+        else []
     )
     erp_status = str(payload.get("erp_status") or "").strip().lower()
     if not erp_status:
@@ -1942,6 +2118,8 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         or metadata.get("erp_connector_available")
         or metadata.get("erp")
     )
+    if not str(payload.get("workflow_paused_reason") or "").strip():
+        payload["workflow_paused_reason"] = _failed_post_pause_reason(payload)
 
     # Correction learning: surface GL suggestion + previously-corrected fields.
     # suggest() is in-memory after rule load — fast per call.
@@ -1961,6 +2139,8 @@ def build_worklist_item(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any
         payload["gl_suggestion"] = None
         payload["vendor_suggestion"] = None
 
+    payload["next_action"] = _derive_next_action(payload)
+    payload["pipeline_blockers"] = _build_pipeline_blockers(payload, budget_summary)
     return payload
 
 
@@ -2097,6 +2277,84 @@ def _build_related_records_payload(
     }
 
 
+def _classify_vendor_issue(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    state = str(item.get("state") or "").strip().lower()
+    workflow_pause_reason = str(
+        item.get("workflow_paused_reason")
+        or _failed_post_pause_reason(item)
+        or ""
+    ).strip()
+    needs_info_question = str(item.get("needs_info_question") or "").strip()
+    field_review_blockers = item.get("field_review_blockers") if isinstance(item.get("field_review_blockers"), list) else []
+    entity_routing_status = str(item.get("entity_routing_status") or "").strip().lower()
+    entity_route_reason = str(item.get("entity_route_reason") or "").strip()
+    exception_code = str(item.get("exception_code") or "").strip().lower()
+
+    if entity_routing_status == "needs_review":
+        return {
+            "kind": "entity_route",
+            "label": "Entity routing",
+            "summary": entity_route_reason or "Choose the legal entity before the invoice can continue.",
+            "priority": 0,
+        }
+    if state == "failed_post":
+        return {
+            "kind": "failed_post",
+            "label": "Posting retry",
+            "summary": workflow_pause_reason or "ERP posting failed and needs a retry or connector review.",
+            "priority": 1,
+        }
+    if state == "needs_info":
+        return {
+            "kind": "needs_info",
+            "label": "Needs info",
+            "summary": needs_info_question or workflow_pause_reason or "Follow up with the vendor or finance team for the missing information.",
+            "priority": 2,
+        }
+    if bool(item.get("requires_field_review")) or field_review_blockers:
+        return {
+            "kind": "field_review",
+            "label": "Field review",
+            "summary": workflow_pause_reason or "Resolve the blocked invoice fields before continuing.",
+            "priority": 3,
+        }
+    if exception_code:
+        return {
+            "kind": "policy_exception",
+            "label": "Policy / exception",
+            "summary": workflow_pause_reason or f"Resolve the {exception_code.replace('_', ' ')} blocker before continuing.",
+            "priority": 4,
+        }
+    return None
+
+
+def _summarize_vendor_issue(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    issue = _classify_vendor_issue(item)
+    if not issue:
+        return None
+    return {
+        **_summarize_related_item(item),
+        "issue_kind": issue["kind"],
+        "issue_label": issue["label"],
+        "issue_summary": issue["summary"],
+        "entity_routing_status": item.get("entity_routing_status"),
+        "entity_route_reason": item.get("entity_route_reason"),
+        "requires_field_review": bool(item.get("requires_field_review")),
+        "next_action": item.get("next_action"),
+        "needs_info_question": item.get("needs_info_question"),
+    }
+
+
+def _sort_vendor_issue_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return sorted(
+        items,
+        key=lambda item: (
+            int((_classify_vendor_issue(item) or {}).get("priority") or 99),
+            -_safe_sort_timestamp(item.get("updated_at") or item.get("created_at")),
+        ),
+    )
+
+
 def _build_vendor_summary_rows(
     db: ClearledgrDB,
     organization_id: str,
@@ -2104,10 +2362,30 @@ def _build_vendor_summary_rows(
     search: str = "",
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
-    items = [build_worklist_item(db, row) for row in db.list_ap_items(organization_id, limit=5000)]
+    approval_policy = _approval_followup_policy(organization_id)
+    organization_settings = _load_org_settings_for_item(db, organization_id)
+    raw_rows = db.list_ap_items(organization_id, limit=5000)
+    items = build_worklist_items(
+        db,
+        raw_rows,
+        build_item=build_worklist_item,
+        approval_policy=approval_policy,
+        organization_settings=organization_settings,
+    )
+    vendor_profiles = (
+        db.get_vendor_profiles_bulk(
+            organization_id,
+            [
+                str(item.get("vendor_name") or item.get("vendor") or "Unknown").strip() or "Unknown"
+                for item in items
+            ],
+        )
+        if hasattr(db, "get_vendor_profiles_bulk")
+        else {}
+    )
     vendor_rows: Dict[str, Dict[str, Any]] = {}
 
-    for item in items:
+    for raw_item, item in zip(raw_rows, items):
         vendor_name = str(item.get("vendor_name") or item.get("vendor") or "Unknown").strip() or "Unknown"
         key = vendor_name.lower()
         row = vendor_rows.setdefault(
@@ -2120,6 +2398,9 @@ def _build_vendor_summary_rows(
                 "failed_count": 0,
                 "approval_count": 0,
                 "needs_info_count": 0,
+                "issue_count": 0,
+                "issue_kinds": Counter(),
+                "top_exception_codes": Counter(),
                 "total_amount": 0.0,
                 "last_activity_at": "",
                 "sender_emails": set(),
@@ -2140,6 +2421,17 @@ def _build_vendor_summary_rows(
             row["approval_count"] += 1
         if state == "needs_info":
             row["needs_info_count"] += 1
+        issue = _classify_vendor_issue(item)
+        if issue:
+            row["issue_count"] += 1
+            row["issue_kinds"][issue["kind"]] += 1
+        exception_code = str(
+            raw_item.get("exception_code")
+            or item.get("exception_code")
+            or ""
+        ).strip().lower()
+        if exception_code:
+            row["top_exception_codes"][exception_code] += 1
         updated_at = str(item.get("updated_at") or item.get("created_at") or "")
         if updated_at > str(row.get("last_activity_at") or ""):
             row["last_activity_at"] = updated_at
@@ -2153,7 +2445,11 @@ def _build_vendor_summary_rows(
         if search_lc and search_lc not in str(row.get("vendor_name") or "").lower():
             continue
         vendor_name = str(row.get("vendor_name") or "")
-        profile = db.get_vendor_profile(organization_id, vendor_name) if vendor_name else None
+        profile = (
+            vendor_profiles.get(vendor_name)
+            if isinstance(vendor_profiles, dict)
+            else None
+        ) or (db.get_vendor_profile(organization_id, vendor_name) if vendor_name else None)
         rows.append(
             {
                 "vendor_name": vendor_name,
@@ -2163,6 +2459,14 @@ def _build_vendor_summary_rows(
                 "failed_count": int(row.get("failed_count") or 0),
                 "approval_count": int(row.get("approval_count") or 0),
                 "needs_info_count": int(row.get("needs_info_count") or 0),
+                "issue_count": int(row.get("issue_count") or 0),
+                "issue_summary": {
+                    "field_review": int(Counter(row.get("issue_kinds") or {}).get("field_review") or 0),
+                    "entity_route": int(Counter(row.get("issue_kinds") or {}).get("entity_route") or 0),
+                    "needs_info": int(Counter(row.get("issue_kinds") or {}).get("needs_info") or 0),
+                    "failed_post": int(Counter(row.get("issue_kinds") or {}).get("failed_post") or 0),
+                    "policy_exception": int(Counter(row.get("issue_kinds") or {}).get("policy_exception") or 0),
+                },
                 "total_amount": round(_safe_float(row.get("total_amount")), 2),
                 "last_activity_at": row.get("last_activity_at") or None,
                 "primary_email": sorted(row.get("sender_emails") or [""])[0] if row.get("sender_emails") else None,
@@ -2170,6 +2474,10 @@ def _build_vendor_summary_rows(
                 "top_states": [
                     {"state": state, "count": count}
                     for state, count in Counter(row.get("top_states") or {}).most_common(4)
+                ],
+                "top_exception_codes": [
+                    {"exception_code": code, "count": count}
+                    for code, count in Counter(row.get("top_exception_codes") or {}).most_common(3)
                 ],
                 "profile": {
                     "requires_po": bool((profile or {}).get("requires_po")),
@@ -2183,6 +2491,7 @@ def _build_vendor_summary_rows(
 
     rows.sort(
         key=lambda row: (
+            int(row.get("issue_count") or 0),
             int(row.get("open_count") or 0),
             _safe_float(row.get("total_amount")),
             _safe_sort_timestamp(row.get("last_activity_at")),
@@ -2215,19 +2524,26 @@ def _build_vendor_detail_payload(
     canonical_vendor_name = str(summary.get("vendor_name") or vendor_name).strip()
     profile = db.get_vendor_profile(organization_id, canonical_vendor_name) or {}
     history = db.get_vendor_invoice_history(organization_id, canonical_vendor_name, limit=max(6, min(invoice_limit, 30)))
-    items = [
-        build_worklist_item(db, row)
-        for row in db.get_ap_items_by_vendor(
-            organization_id,
-            canonical_vendor_name,
-            days=max(30, min(days, 365)),
-            limit=max(6, min(invoice_limit, 30)),
-        )
-    ]
+    approval_policy = _approval_followup_policy(organization_id)
+    organization_settings = _load_org_settings_for_item(db, organization_id)
+    raw_vendor_rows = db.get_ap_items_by_vendor(
+        organization_id,
+        canonical_vendor_name,
+        days=max(30, min(days, 365)),
+        limit=max(6, min(invoice_limit, 30)),
+    )
+    items = build_worklist_items(
+        db,
+        raw_vendor_rows,
+        build_item=build_worklist_item,
+        approval_policy=approval_policy,
+        organization_settings=organization_settings,
+    )
+    open_issue_items = _sort_vendor_issue_items([item for item in items if _classify_vendor_issue(item)])
     exception_counts = Counter(
-        str(item.get("exception_code") or "").strip().lower()
-        for item in items
-        if str(item.get("exception_code") or "").strip()
+        str(raw_item.get("exception_code") or item.get("exception_code") or "").strip().lower()
+        for raw_item, item in zip(raw_vendor_rows, items)
+        if str(raw_item.get("exception_code") or item.get("exception_code") or "").strip()
     )
     linked_item_rows = [_summarize_related_item(item) for item in items[:12]]
 
@@ -2242,6 +2558,22 @@ def _build_vendor_detail_payload(
             "metadata": _parse_json(profile.get("metadata")),
         },
         "recent_items": linked_item_rows,
+        "open_issues": [
+            issue
+            for issue in (
+                _summarize_vendor_issue(item)
+                for item in open_issue_items[:12]
+            )
+            if issue
+        ],
+        "issue_summary": {
+            "total": len(open_issue_items),
+            "field_review": sum(1 for item in open_issue_items if (_classify_vendor_issue(item) or {}).get("kind") == "field_review"),
+            "entity_route": sum(1 for item in open_issue_items if (_classify_vendor_issue(item) or {}).get("kind") == "entity_route"),
+            "needs_info": sum(1 for item in open_issue_items if (_classify_vendor_issue(item) or {}).get("kind") == "needs_info"),
+            "failed_post": sum(1 for item in open_issue_items if (_classify_vendor_issue(item) or {}).get("kind") == "failed_post"),
+            "policy_exception": sum(1 for item in open_issue_items if (_classify_vendor_issue(item) or {}).get("kind") == "policy_exception"),
+        },
         "history": history,
         "top_exception_codes": [
             {"exception_code": code, "count": count}
@@ -2272,11 +2604,18 @@ def _build_upcoming_task(item: Dict[str, Any], now: datetime) -> Optional[Dict[s
 
     if state in {"needs_approval", "pending_approval"}:
         kind = "approval_follow_up"
-        title = "Follow up on approval"
+        approval_followup = item.get("approval_followup") if isinstance(item.get("approval_followup"), dict) else {}
+        title = "Escalate approval" if approval_followup.get("sla_breached") else "Follow up on approval"
         recommended_slice = "waiting_on_approval"
         requested_at = _parse_iso(item.get("approval_requested_at")) or _parse_iso(item.get("updated_at")) or _parse_iso(item.get("created_at"))
         due_at = requested_at + timedelta(hours=24) if requested_at else None
-        detail = "Approval is still outstanding and should be chased if it has gone quiet."
+        pending_assignees = approval_followup.get("pending_assignees") if isinstance(approval_followup.get("pending_assignees"), list) else []
+        if approval_followup.get("sla_breached"):
+            detail = "Approval is past the follow-up SLA and should be escalated or reassigned."
+        elif pending_assignees:
+            detail = f"Approval is still outstanding with {', '.join(str(value) for value in pending_assignees[:3])}."
+        else:
+            detail = "Approval is still outstanding and should be chased if it has gone quiet."
     elif state == "needs_info":
         kind = "vendor_follow_up"
         title = "Vendor follow-up"
@@ -2294,13 +2633,22 @@ def _build_upcoming_task(item: Dict[str, Any], now: datetime) -> Optional[Dict[s
         title = "Retry ERP posting"
         recommended_slice = "failed_post"
         due_at = (_parse_iso(item.get("updated_at")) or _parse_iso(item.get("created_at")) or now) + timedelta(hours=4)
-        detail = "ERP posting failed and should be retried or investigated."
+        detail = (
+            str(item.get("workflow_paused_reason") or _failed_post_pause_reason(item) or "").strip()
+            or "ERP posting failed and should be retried or investigated."
+        )
     elif state in {"approved", "ready_to_post"}:
         kind = "post_invoice"
         title = "Post approved invoice"
         recommended_slice = "ready_to_post"
         due_at = _parse_iso(item.get("due_date")) or (_parse_iso(item.get("updated_at")) or now) + timedelta(hours=8)
         detail = "The invoice is approved and ready to move into ERP."
+    elif state in {"received", "validated"} and str(item.get("entity_routing_status") or "").strip().lower() == "needs_review":
+        kind = "entity_route_review"
+        title = "Resolve entity route"
+        recommended_slice = "blocked_exception"
+        due_at = _parse_iso(item.get("updated_at")) or _parse_iso(item.get("created_at"))
+        detail = str(item.get("entity_route_reason") or "").strip() or "Choose the correct legal entity before approval routing can continue."
     elif state in {"received", "validated"} and (
         item.get("exception_code") or item.get("requires_field_review") or item.get("budget_requires_decision")
     ):
@@ -2342,7 +2690,15 @@ def _build_upcoming_task(item: Dict[str, Any], now: datetime) -> Optional[Dict[s
 
 def _build_upcoming_tasks_payload(db: ClearledgrDB, organization_id: str, *, limit: int = 50) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
-    items = [build_worklist_item(db, row) for row in db.list_ap_items(organization_id, limit=5000)]
+    approval_policy = _approval_followup_policy(organization_id)
+    organization_settings = _load_org_settings_for_item(db, organization_id)
+    items = build_worklist_items(
+        db,
+        db.list_ap_items(organization_id, limit=5000),
+        build_item=build_worklist_item,
+        approval_policy=approval_policy,
+        organization_settings=organization_settings,
+    )
     tasks = [
         task
         for task in (_build_upcoming_task(item, now) for item in items)
@@ -2895,114 +3251,6 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
     return context
 
 
-@router.get("/upcoming")
-def get_upcoming_ap_tasks(
-    organization_id: str = Query(default="default"),
-    limit: int = Query(default=50, ge=1, le=200),
-    _user=Depends(get_current_user),
-) -> Dict[str, Any]:
-    verify_org_access(organization_id, _user)
-    db = get_db()
-    return _build_upcoming_tasks_payload(db, organization_id, limit=limit)
-
-
-@router.get("/vendors")
-def get_vendor_directory(
-    organization_id: str = Query(default="default"),
-    search: str = Query(default=""),
-    limit: int = Query(default=50, ge=1, le=200),
-    _user=Depends(get_current_user),
-) -> Dict[str, Any]:
-    verify_org_access(organization_id, _user)
-    db = get_db()
-    rows = _build_vendor_summary_rows(db, organization_id, search=search, limit=limit)
-    return {
-        "organization_id": organization_id,
-        "vendors": rows,
-        "count": len(rows),
-    }
-
-
-@router.get("/vendors/{vendor_name}")
-def get_vendor_record(
-    vendor_name: str,
-    organization_id: str = Query(default="default"),
-    days: int = Query(default=180, ge=30, le=365),
-    invoice_limit: int = Query(default=20, ge=6, le=30),
-    _user=Depends(get_current_user),
-) -> Dict[str, Any]:
-    verify_org_access(organization_id, _user)
-    db = get_db()
-    return _build_vendor_detail_payload(
-        db,
-        organization_id,
-        vendor_name,
-        days=days,
-        invoice_limit=invoice_limit,
-    )
-
-
-@router.get("/metrics/aggregation")
-def get_ap_aggregation_metrics(
-    organization_id: str = Query(default="default"),
-    limit: int = Query(default=10000, ge=100, le=50000),
-    vendor_limit: int = Query(default=10, ge=1, le=50),
-    _user=Depends(get_current_user),
-) -> Dict[str, Any]:
-    """AP aggregation metrics for embedded approvals and ops consumers."""
-    verify_org_access(organization_id, _user)
-    db = get_db()
-    metrics = db.get_ap_aggregation_metrics(
-        organization_id=organization_id,
-        limit=limit,
-        vendor_limit=vendor_limit,
-    )
-    return {"metrics": metrics}
-
-
-@router.get("/{ap_item_id}")
-def get_ap_item_detail(
-    ap_item_id: str,
-    organization_id: str = Query(default="default"),
-    _user=Depends(get_current_user),
-) -> Dict[str, Any]:
-    verify_org_access(organization_id, _user)
-    db = get_db()
-    item = _resolve_item_for_detail(
-        db,
-        organization_id=organization_id,
-        ap_item_ref=ap_item_id,
-    )
-    return build_worklist_item(db, item)
-
-
-@router.get("/{ap_item_id}/audit")
-def get_ap_item_audit(
-    ap_item_id: str,
-    browser_only: bool = Query(False),
-    _user=Depends(get_current_user),
-) -> Dict[str, Any]:
-    db = get_db()
-    item = _require_item(db, ap_item_id)
-    verify_org_access(item.get("organization_id") or "default", _user)
-    events = db.list_ap_audit_events(ap_item_id)
-    if browser_only:
-        events = [event for event in events if str(event.get("event_type") or "").startswith("browser_")]
-    return {"events": normalize_operator_audit_events(events)}
-
-
-@router.get("/{ap_item_id}/sources")
-def get_ap_item_sources(
-    ap_item_id: str,
-    _user=Depends(get_current_user),
-) -> Dict[str, Any]:
-    db = get_db()
-    item = _require_item(db, ap_item_id)
-    verify_org_access(item.get("organization_id") or "default", _user)
-    sources = db.list_ap_item_sources(ap_item_id)
-    return {"sources": sources, "source_count": len(sources)}
-
-
 async def _execute_field_review_resolution(
     db: ClearledgrDB,
     *,
@@ -3150,7 +3398,7 @@ async def _execute_field_review_resolution(
     auto_resumed = False
 
     if request.auto_resume and _should_auto_resume_after_field_resolution(normalized_item):
-        runtime = FinanceAgentRuntime(
+        runtime = _finance_agent_runtime_cls()(
             organization_id=str(refreshed.get("organization_id") or organization_id or "default"),
             actor_id=actor_id,
             actor_email=getattr(user, "email", None),
@@ -3184,755 +3432,29 @@ async def _execute_field_review_resolution(
     }
 
 
-@router.post("/{ap_item_id}/field-review/resolve")
-async def resolve_ap_item_field_review(
-    ap_item_id: str,
-    request: ResolveFieldReviewRequest,
-    organization_id: str = Query(default="default"),
-    user=Depends(require_ops_user),
-) -> Dict[str, Any]:
-    db = get_db()
-    result = await _execute_field_review_resolution(
-        db,
-        ap_item_id=ap_item_id,
-        request=request,
-        organization_id=organization_id,
-        user=user,
-    )
-    result["requires_field_review"] = bool((result.get("ap_item") or {}).get("requires_field_review"))
-    return result
+from clearledgr.api.ap_items_action_routes import (
+    router as _action_router,
+    bulk_resolve_ap_item_field_review,
+    link_ap_item_source,
+    merge_ap_items,
+    resubmit_rejected_item,
+    resolve_ap_item_entity_route,
+    resolve_ap_item_field_review,
+    resolve_non_invoice_review,
+    retry_erp_post,
+    split_ap_item,
+)
+from clearledgr.api.ap_items_read_routes import (
+    router as _read_router,
+    get_ap_aggregation_metrics,
+    get_ap_item_audit,
+    get_ap_item_context,
+    get_ap_item_detail,
+    get_ap_item_sources,
+    get_upcoming_ap_tasks,
+    get_vendor_directory,
+    get_vendor_record,
+)
 
-
-@router.post("/field-review/bulk-resolve")
-async def bulk_resolve_ap_item_field_review(
-    request: BulkResolveFieldReviewRequest,
-    organization_id: str = Query(default="default"),
-    user=Depends(require_ops_user),
-) -> Dict[str, Any]:
-    db = get_db()
-    ap_item_ids = [
-        str(ap_item_id or "").strip()
-        for ap_item_id in (request.ap_item_ids or [])
-        if str(ap_item_id or "").strip()
-    ]
-    ap_item_ids = list(dict.fromkeys(ap_item_ids))[:50]
-    if not ap_item_ids:
-        raise HTTPException(status_code=400, detail="missing_ap_item_ids")
-
-    single_request = ResolveFieldReviewRequest(
-        field=request.field,
-        source=request.source,
-        manual_value=request.manual_value,
-        note=request.note,
-        auto_resume=request.auto_resume,
-    )
-    results: List[Dict[str, Any]] = []
-    success_count = 0
-    auto_resumed_count = 0
-
-    for ap_item_id in ap_item_ids:
-        try:
-            result = await _execute_field_review_resolution(
-                db,
-                ap_item_id=ap_item_id,
-                request=single_request,
-                organization_id=organization_id,
-                user=user,
-            )
-            result["requires_field_review"] = bool((result.get("ap_item") or {}).get("requires_field_review"))
-            success_count += 1
-            auto_resumed_count += int(bool(result.get("auto_resumed")))
-            results.append(result)
-        except HTTPException as exc:
-            results.append(
-                {
-                    "status": "error",
-                    "ap_item_id": ap_item_id,
-                    "reason": str(exc.detail),
-                    "http_status": exc.status_code,
-                }
-            )
-
-    return {
-        "status": "completed" if success_count == len(ap_item_ids) else ("partial" if success_count > 0 else "error"),
-        "requested_count": len(ap_item_ids),
-        "success_count": success_count,
-        "failed_count": len(ap_item_ids) - success_count,
-        "auto_resumed_count": auto_resumed_count,
-        "results": results,
-    }
-
-
-@router.post("/{ap_item_id}/non-invoice/resolve")
-async def resolve_non_invoice_review(
-    ap_item_id: str,
-    request: ResolveNonInvoiceReviewRequest,
-    organization_id: str = Query(default="default"),
-    user=Depends(require_ops_user),
-) -> Dict[str, Any]:
-    db = get_db()
-    item = _require_item(db, ap_item_id)
-    verify_org_access(item.get("organization_id") or organization_id or "default", user)
-
-    metadata = _parse_json(item.get("metadata"))
-    document_type = _normalize_document_type_token(
-        item.get("document_type")
-        or metadata.get("document_type")
-        or metadata.get("email_type")
-    )
-    if document_type == "invoice":
-        raise HTTPException(status_code=400, detail="invoice_document_not_supported")
-
-    outcome = _normalize_non_invoice_outcome(request.outcome)
-    allowed_outcomes = _NON_INVOICE_ALLOWED_OUTCOMES.get(document_type) or _NON_INVOICE_ALLOWED_OUTCOMES["other"]
-    if outcome not in allowed_outcomes:
-        raise HTTPException(status_code=400, detail="invalid_non_invoice_outcome")
-
-    related_reference = str(request.related_reference or "").strip() or None
-    related_ap_item_id = str(request.related_ap_item_id or "").strip() or None
-    if outcome in {"apply_to_invoice", "link_to_payment"} and not (related_reference or related_ap_item_id):
-        raise HTTPException(status_code=400, detail="related_reference_required")
-
-    resolved_related_item, link_status = _resolve_related_ap_item_for_non_invoice(
-        db,
-        organization_id=str(item.get("organization_id") or organization_id or "default"),
-        source_ap_item_id=ap_item_id,
-        related_ap_item_id=related_ap_item_id,
-        related_reference=related_reference,
-    )
-    if resolved_related_item and not related_ap_item_id:
-        related_ap_item_id = str(resolved_related_item.get("id") or "").strip() or related_ap_item_id
-
-    actor_id = _authenticated_actor(user)
-    resolved_at = datetime.now(timezone.utc).isoformat()
-    next_state = _non_invoice_resolution_state(
-        current_state=str(item.get("state") or "").strip().lower() or APState.RECEIVED.value,
-        outcome=outcome,
-        close_record=bool(request.close_record),
-    )
-
-    resolution = {
-        "document_type": document_type,
-        "outcome": outcome,
-        "related_reference": related_reference,
-        "related_ap_item_id": related_ap_item_id,
-        "note": str(request.note or "").strip() or None,
-        "resolved_at": resolved_at,
-        "resolved_by": actor_id,
-        "closed_record": bool(request.close_record),
-        "link_status": link_status,
-    }
-    resolution.update(
-        _non_invoice_resolution_semantics(
-            document_type=document_type,
-            outcome=outcome,
-            close_record=bool(request.close_record),
-        )
-    )
-    if resolved_related_item:
-        resolution["linked_record"] = _summarize_related_item(
-            build_worklist_item(db, resolved_related_item)
-        )
-    if document_type in {"statement", "bank_statement"} and outcome == "send_to_reconciliation":
-        resolution.update(
-            _create_statement_reconciliation_artifact(
-                db,
-                item=item,
-                document_type=document_type,
-                organization_id=str(item.get("organization_id") or organization_id or "default"),
-                resolution=resolution,
-                related_item=resolved_related_item,
-            )
-        )
-    metadata["non_invoice_resolution"] = resolution
-    metadata["non_invoice_review_required"] = False
-
-    current_state = str(item.get("state") or "").strip().lower() or APState.RECEIVED.value
-    update_payload: Dict[str, Any] = {
-        "metadata": metadata,
-    }
-    if next_state != current_state:
-        update_payload["state"] = next_state
-    if outcome != "needs_followup":
-        update_payload["exception_code"] = None
-        update_payload["exception_severity"] = None
-
-    db.update_ap_item(
-        ap_item_id,
-        **_filter_allowed_ap_item_updates(db, update_payload),
-        _actor_type="user",
-        _actor_id=actor_id,
-        _source="non_invoice_review_resolution",
-        _decision_reason=outcome,
-    )
-    db.append_ap_audit_event(
-        {
-            "ap_item_id": ap_item_id,
-            "event_type": "non_invoice_review_resolved",
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "organization_id": str(item.get("organization_id") or organization_id or "default"),
-            "source": "ap_item_non_invoice_review_resolution",
-            "reason": outcome,
-            "metadata": resolution,
-        }
-    )
-    if resolved_related_item:
-        linked_related = _link_related_item_for_non_invoice_resolution(
-            db,
-            source_item={**item, "document_type": document_type},
-            source_document_type=document_type,
-            resolution=resolution,
-            related_item=resolved_related_item,
-            actor_id=actor_id,
-            organization_id=str(item.get("organization_id") or organization_id or "default"),
-        )
-        follow_on_result = await _execute_non_invoice_erp_follow_on(
-            db,
-            source_item={**item, "document_type": document_type},
-            related_item=resolved_related_item,
-            document_type=document_type,
-            outcome=outcome,
-            actor_id=actor_id,
-            organization_id=str(item.get("organization_id") or organization_id or "default"),
-        )
-        if isinstance(follow_on_result, dict) and isinstance(follow_on_result.get("related_item"), dict):
-            linked_related = follow_on_result.get("related_item")
-        metadata = _parse_json((_require_item(db, ap_item_id)).get("metadata"))
-        non_invoice_resolution = metadata.get("non_invoice_resolution")
-        if isinstance(non_invoice_resolution, dict):
-            non_invoice_resolution["linked_record"] = _summarize_related_item(linked_related)
-            metadata["non_invoice_resolution"] = non_invoice_resolution
-            db.update_ap_item(
-                ap_item_id,
-                **_filter_allowed_ap_item_updates(db, {"metadata": metadata}),
-                _actor_type="user",
-                _actor_id=actor_id,
-                _source="non_invoice_link_refresh",
-                _decision_reason=outcome,
-            )
-
-    refreshed = _require_item(db, ap_item_id)
-    normalized_item = build_worklist_item(db, refreshed)
-    return {
-        "status": "resolved",
-        "ap_item_id": ap_item_id,
-        "document_type": document_type,
-        "outcome": outcome,
-        "state": next_state,
-        "ap_item": normalized_item,
-    }
-
-
-@router.post("/{ap_item_id}/sources/link")
-def link_ap_item_source(
-    ap_item_id: str,
-    request: LinkSourceRequest,
-    _user=Depends(require_ops_user),
-) -> Dict[str, Any]:
-    db = get_db()
-    item = _require_item(db, ap_item_id)
-    verify_org_access(item.get("organization_id") or "default", _user)
-    source = db.link_ap_item_source(
-        {
-            "ap_item_id": ap_item_id,
-            "source_type": request.source_type,
-            "source_ref": request.source_ref,
-            "subject": request.subject,
-            "sender": request.sender,
-            "detected_at": request.detected_at,
-            "metadata": request.metadata or {},
-        }
-    )
-    return {"source": source}
-
-
-@router.get("/{ap_item_id}/context")
-def get_ap_item_context(
-    ap_item_id: str,
-    refresh: bool = Query(False),
-    _user=Depends(get_current_user),
-) -> Dict[str, Any]:
-    db = get_db()
-    item = _require_item(db, ap_item_id)
-    verify_org_access(item.get("organization_id") or "default", _user)
-
-    if not refresh:
-        cached = db.get_ap_item_context_cache(ap_item_id)
-        if cached and isinstance(cached.get("context_json"), dict):
-            context = dict(cached.get("context_json") or {})
-            schema_version = str(context.get("schema_version") or "")
-            if not schema_version.startswith("2."):
-                context = {}
-            if context:
-                updated_at = _parse_iso(cached.get("updated_at"))
-                if updated_at:
-                    age_seconds = max(0, int((datetime.now(timezone.utc) - updated_at).total_seconds()))
-                    freshness = context.get("freshness") if isinstance(context.get("freshness"), dict) else {}
-                    freshness["age_seconds"] = age_seconds
-                    freshness["is_stale"] = age_seconds > 300
-                    context["freshness"] = freshness
-                return context
-
-    context = _build_context_payload(db, item)
-    db.upsert_ap_item_context_cache(ap_item_id, context)
-    return context
-
-
-@router.post("/{ap_item_id}/resubmit")
-def resubmit_rejected_item(
-    ap_item_id: str,
-    request: ResubmitRejectedItemRequest,
-    _user=Depends(require_ops_user),
-) -> Dict[str, Any]:
-    db = get_db()
-    actor_id = _authenticated_actor(_user)
-    source = _require_item(db, ap_item_id)
-    verify_org_access(source.get("organization_id") or "default", _user)
-    source_state = _normalized_state_value(source.get("state"))
-    if source_state != APState.REJECTED.value:
-        raise HTTPException(status_code=400, detail="resubmission_requires_rejected_state")
-
-    existing_child_id = str(source.get("superseded_by_ap_item_id") or "").strip()
-    if existing_child_id:
-        existing_child = db.get_ap_item(existing_child_id)
-        if existing_child:
-            return {
-                "status": "already_resubmitted",
-                "source_ap_item_id": source["id"],
-                "new_ap_item_id": existing_child_id,
-                "ap_item": build_worklist_item(db, existing_child),
-                "linkage": {
-                    "supersedes_ap_item_id": source["id"],
-                    "supersedes_invoice_key": existing_child.get("supersedes_invoice_key")
-                    or source.get("invoice_key"),
-                    "superseded_by_ap_item_id": existing_child_id,
-                },
-            }
-
-    initial_state = _normalized_state_value(request.initial_state)
-    if initial_state not in {APState.RECEIVED.value, APState.VALIDATED.value}:
-        raise HTTPException(status_code=400, detail="invalid_resubmission_initial_state")
-
-    source_meta = _parse_json(source.get("metadata"))
-    new_meta = dict(source_meta)
-    for stale_key in (
-        "merged_into",
-        "merge_reason",
-        "merge_status",
-        "suppressed_from_worklist",
-        "confidence_override",
-    ):
-        new_meta.pop(stale_key, None)
-    new_meta["supersedes_ap_item_id"] = source["id"]
-    new_meta["supersedes_invoice_key"] = _superseded_invoice_key(source, request)
-    new_meta["resubmission_reason"] = request.reason
-    new_meta["resubmission"] = {
-        "source_ap_item_id": source["id"],
-        "reason": request.reason,
-        "actor_id": actor_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    if request.actor_id and str(request.actor_id).strip() and str(request.actor_id).strip() != actor_id:
-        new_meta["requested_actor_id"] = str(request.actor_id).strip()
-    if request.metadata:
-        new_meta.update(request.metadata)
-
-    create_payload: Dict[str, Any] = {
-        "invoice_key": _resubmission_invoice_key(source, request),
-        "thread_id": request.thread_id or source.get("thread_id"),
-        "message_id": request.message_id or source.get("message_id"),
-        "subject": request.subject or source.get("subject"),
-        "sender": request.sender or source.get("sender"),
-        "vendor_name": request.vendor_name or source.get("vendor_name"),
-        "amount": request.amount if request.amount is not None else source.get("amount"),
-        "currency": request.currency or source.get("currency") or "USD",
-        "invoice_number": request.invoice_number or source.get("invoice_number"),
-        "invoice_date": request.invoice_date or source.get("invoice_date"),
-        "due_date": request.due_date or source.get("due_date"),
-        "state": initial_state,
-        "confidence": source.get("confidence"),
-        "approval_required": bool(source.get("approval_required", True)),
-        "workflow_id": source.get("workflow_id"),
-        "run_id": None,
-        "approval_surface": source.get("approval_surface") or "hybrid",
-        "approval_policy_version": source.get("approval_policy_version"),
-        "post_attempted_at": None,
-        "last_error": None,
-        "organization_id": source.get("organization_id"),
-        "user_id": source.get("user_id"),
-        "po_number": source.get("po_number"),
-        "attachment_url": source.get("attachment_url"),
-        "supersedes_ap_item_id": source["id"],
-        "supersedes_invoice_key": _superseded_invoice_key(source, request),
-        "superseded_by_ap_item_id": None,
-        "resubmission_reason": request.reason,
-        "metadata": new_meta,
-    }
-    created = db.create_ap_item(create_payload)
-
-    db.update_ap_item(
-        source["id"],
-        superseded_by_ap_item_id=created["id"],
-        _actor_type="user",
-        _actor_id=actor_id,
-    )
-    source_after = db.get_ap_item(source["id"]) or source
-    source_after_meta = _parse_json(source_after.get("metadata"))
-    source_after_meta["superseded_by_ap_item_id"] = created["id"]
-    source_after_meta["resubmission_reason"] = request.reason
-    db.update_ap_item(source["id"], metadata=source_after_meta, _actor_type="user", _actor_id=actor_id)
-
-    copied_sources = 0
-    if request.copy_sources:
-        copied_sources = _copy_item_sources_for_resubmission(
-            db,
-            source_ap_item_id=source["id"],
-            target_ap_item_id=created["id"],
-            actor_id=actor_id,
-        )
-
-    audit_key = f"ap_item_resubmission:{source['id']}:{created['id']}"
-    db.append_ap_audit_event(
-        {
-            "ap_item_id": source["id"],
-            "event_type": "ap_item_resubmitted",
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "payload_json": {
-                "source_ap_item_id": source["id"],
-                "new_ap_item_id": created["id"],
-                "reason": request.reason,
-                "copied_sources": copied_sources,
-            },
-            "organization_id": source.get("organization_id") or "default",
-            "source": "ap_items_api",
-            "decision_reason": request.reason,
-            "idempotency_key": audit_key,
-        }
-    )
-    db.append_ap_audit_event(
-        {
-            "ap_item_id": created["id"],
-            "event_type": "ap_item_resubmission_created",
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "payload_json": {
-                "source_ap_item_id": source["id"],
-                "new_ap_item_id": created["id"],
-                "reason": request.reason,
-                "copied_sources": copied_sources,
-            },
-            "organization_id": created.get("organization_id") or "default",
-            "source": "ap_items_api",
-            "decision_reason": request.reason,
-            "idempotency_key": f"{audit_key}:new",
-        }
-    )
-
-    return {
-        "status": "resubmitted",
-        "source_ap_item_id": source["id"],
-        "new_ap_item_id": created["id"],
-        "copied_sources": copied_sources,
-        "linkage": {
-            "supersedes_ap_item_id": source["id"],
-            "supersedes_invoice_key": created.get("supersedes_invoice_key")
-            or _superseded_invoice_key(source, request),
-            "superseded_by_ap_item_id": created["id"],
-            "resubmission_reason": request.reason,
-        },
-        "ap_item": build_worklist_item(db, created),
-    }
-
-
-@router.post("/{ap_item_id}/merge")
-def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(require_ops_user)) -> Dict[str, Any]:
-    db = get_db()
-    actor_id = _authenticated_actor(_user)
-    target = _require_item(db, ap_item_id)
-    verify_org_access(target.get("organization_id") or "default", _user)
-    source = _require_item(db, request.source_ap_item_id)
-
-    if target.get("id") == source.get("id"):
-        raise HTTPException(status_code=400, detail="cannot_merge_same_item")
-    if str(target.get("organization_id") or "default") != str(source.get("organization_id") or "default"):
-        raise HTTPException(status_code=400, detail="organization_mismatch")
-
-    moved_count = 0
-    for source_link in db.list_ap_item_sources(source["id"]):
-        moved = db.move_ap_item_source(
-            from_ap_item_id=source["id"],
-            to_ap_item_id=target["id"],
-            source_type=source_link.get("source_type"),
-            source_ref=source_link.get("source_ref"),
-        )
-        if moved:
-            moved_count += 1
-
-    # Preserve legacy source pointers as explicit links when present.
-    if source.get("thread_id"):
-        db.link_ap_item_source(
-            {
-                "ap_item_id": target["id"],
-                "source_type": "gmail_thread",
-                "source_ref": source.get("thread_id"),
-                "subject": source.get("subject"),
-                "sender": source.get("sender"),
-                "detected_at": source.get("created_at"),
-                "metadata": {"merge_origin": source.get("id")},
-            }
-        )
-    if source.get("message_id"):
-        db.link_ap_item_source(
-            {
-                "ap_item_id": target["id"],
-                "source_type": "gmail_message",
-                "source_ref": source.get("message_id"),
-                "subject": source.get("subject"),
-                "sender": source.get("sender"),
-                "detected_at": source.get("created_at"),
-                "metadata": {"merge_origin": source.get("id")},
-            }
-        )
-
-    target_meta = _parse_json(target.get("metadata"))
-    merge_history = target_meta.get("merge_history")
-    if not isinstance(merge_history, list):
-        merge_history = []
-    merged_at = datetime.now(timezone.utc).isoformat()
-    merge_history.append(
-        {
-            "source_ap_item_id": source["id"],
-            "reason": request.reason,
-            "actor_id": actor_id,
-            "merged_at": merged_at,
-        }
-    )
-    target_meta["merge_history"] = merge_history
-    target_meta["merge_reason"] = request.reason
-    target_meta["has_context_conflict"] = False
-    target_meta["source_count"] = len(db.list_ap_item_sources(target["id"]))
-    db.update_ap_item(target["id"], metadata=target_meta)
-
-    source_meta = _parse_json(source.get("metadata"))
-    source_meta["merged_into"] = target["id"]
-    source_meta["merge_reason"] = request.reason
-    source_meta["merged_at"] = merged_at
-    source_meta["merged_by"] = actor_id
-    source_meta["merge_status"] = "merged_source"
-    source_meta["source_count"] = 0
-    source_meta["suppressed_from_worklist"] = True
-    if source.get("state"):
-        source_meta["merge_source_state"] = source.get("state")
-    db.update_ap_item(source["id"], metadata=source_meta)
-
-    db.append_ap_audit_event(
-        {
-            "ap_item_id": target["id"],
-            "event_type": "ap_item_merged",
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "payload_json": {
-                "target_ap_item_id": target["id"],
-                "source_ap_item_id": source["id"],
-                "reason": request.reason,
-                "moved_sources": moved_count,
-            },
-            "organization_id": target.get("organization_id") or "default",
-            "source": "ap_items_api",
-            "decision_reason": request.reason,
-            "idempotency_key": f"merge:{target['id']}:{source['id']}",
-        }
-    )
-    db.append_ap_audit_event(
-        {
-            "ap_item_id": source["id"],
-            "event_type": "ap_item_merged_into",
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "payload_json": {
-                "source_ap_item_id": source["id"],
-                "target_ap_item_id": target["id"],
-                "reason": request.reason,
-            },
-            "organization_id": source.get("organization_id") or "default",
-            "source": "ap_items_api",
-            "decision_reason": request.reason,
-            "idempotency_key": f"merge-source:{source['id']}:{target['id']}",
-        }
-    )
-
-    return {
-        "status": "merged",
-        "target_ap_item_id": target["id"],
-        "source_ap_item_id": source["id"],
-        "moved_sources": moved_count,
-    }
-
-
-@router.post("/{ap_item_id}/split")
-def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(require_ops_user)) -> Dict[str, Any]:
-    db = get_db()
-    actor_id = _authenticated_actor(_user)
-    parent = _require_item(db, ap_item_id)
-    verify_org_access(parent.get("organization_id") or "default", _user)
-    if not request.sources:
-        raise HTTPException(status_code=400, detail="sources_required")
-
-    created_items: List[Dict[str, Any]] = []
-    parent_meta = _parse_json(parent.get("metadata"))
-    now = datetime.now(timezone.utc).isoformat()
-
-    for source in request.sources:
-        current_sources = db.list_ap_item_sources(parent["id"], source_type=source.source_type)
-        current = next((row for row in current_sources if row.get("source_ref") == source.source_ref), None)
-        if not current:
-            continue
-
-        split_payload = {
-            "invoice_key": f"{parent.get('invoice_key') or parent['id']}#split#{source.source_type}:{source.source_ref}",
-            "thread_id": parent.get("thread_id"),
-            "message_id": parent.get("message_id"),
-            "subject": current.get("subject") or parent.get("subject"),
-            "sender": current.get("sender") or parent.get("sender"),
-            "vendor_name": parent.get("vendor_name"),
-            "amount": parent.get("amount"),
-            "currency": parent.get("currency") or "USD",
-            "invoice_number": parent.get("invoice_number"),
-            "invoice_date": parent.get("invoice_date"),
-            "due_date": parent.get("due_date"),
-            "state": "needs_info",
-            "confidence": parent.get("confidence") or 0,
-            "approval_required": bool(parent.get("approval_required", True)),
-            "organization_id": parent.get("organization_id") or "default",
-            "user_id": parent.get("user_id"),
-            "metadata": {
-                **parent_meta,
-                "split_from_ap_item_id": parent["id"],
-                "split_reason": request.reason,
-                "split_actor_id": actor_id,
-                "split_source": {"source_type": source.source_type, "source_ref": source.source_ref},
-                "split_at": now,
-            },
-        }
-        child = db.create_ap_item(split_payload)
-        db.move_ap_item_source(
-            from_ap_item_id=parent["id"],
-            to_ap_item_id=child["id"],
-            source_type=source.source_type,
-            source_ref=source.source_ref,
-        )
-
-        if source.source_type == "gmail_thread":
-            db.update_ap_item(child["id"], thread_id=source.source_ref)
-        if source.source_type == "gmail_message":
-            db.update_ap_item(child["id"], message_id=source.source_ref)
-
-        db.append_ap_audit_event(
-            {
-                "ap_item_id": child["id"],
-                "event_type": "ap_item_split_created",
-                "actor_type": "user",
-                "actor_id": actor_id,
-                "payload_json": {
-                    "parent_ap_item_id": parent["id"],
-                    "source_type": source.source_type,
-                    "source_ref": source.source_ref,
-                    "reason": request.reason,
-                },
-                "organization_id": parent.get("organization_id") or "default",
-                "source": "ap_items_api",
-            }
-        )
-        created_items.append(child)
-
-    if not created_items:
-        raise HTTPException(status_code=400, detail="no_sources_split")
-
-    parent_meta["source_count"] = len(db.list_ap_item_sources(parent["id"]))
-    db.update_ap_item(parent["id"], metadata=parent_meta)
-
-    return {
-        "status": "split",
-        "parent_ap_item_id": parent["id"],
-        "created_items": [build_worklist_item(db, item) for item in created_items],
-    }
-
-
-@router.post("/{ap_item_id}/retry-post")
-async def retry_erp_post(
-    ap_item_id: str,
-    organization_id: str = "default",
-    _user=Depends(require_ops_user),
-):
-    """Retry posting an AP item through the canonical finance runtime."""
-    verify_org_access(organization_id, _user)
-    db = get_db()
-    item = db.get_ap_item(ap_item_id)
-    if not item:
-        raise HTTPException(status_code=404, detail="AP item not found")
-
-    if item.get("organization_id") != organization_id:
-        raise HTTPException(status_code=403, detail="Organization mismatch")
-
-    current_state = item.get("state") or item.get("status")
-    if current_state != APState.FAILED_POST:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Can only retry from failed_post state (current: {current_state})",
-        )
-
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
-
-    runtime = FinanceAgentRuntime(
-        organization_id=organization_id,
-        actor_id=getattr(_user, "user_id", None) or getattr(_user, "email", None) or "ap_retry",
-        actor_email=getattr(_user, "email", None) or getattr(_user, "user_id", None) or "ap_retry",
-        db=db,
-    )
-    try:
-        retry_result = await runtime.execute_intent(
-            "retry_recoverable_failures",
-            {
-                "ap_item_id": ap_item_id,
-                "email_id": str(item.get("thread_id") or ap_item_id),
-                "reason": "retry_post_api",
-            },
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=safe_error(exc, "ERP posting")) from exc
-
-    status = str((retry_result or {}).get("status") or "").strip().lower()
-    if status == "posted":
-        return {
-            "status": "posted",
-            "ap_item_id": ap_item_id,
-            "erp_reference": (retry_result or {}).get("erp_reference"),
-            "resume_result": retry_result.get("result") if isinstance(retry_result, dict) else None,
-            "retry_result": retry_result,
-        }
-    if status == "blocked":
-        reason = str((retry_result or {}).get("reason") or "retry_not_recoverable")
-        raise HTTPException(status_code=400, detail=reason)
-    if status == "ready_to_post":
-        return {
-            "status": "ready_to_post",
-            "ap_item_id": ap_item_id,
-            "erp_reference": (retry_result or {}).get("erp_reference"),
-            "resume_result": retry_result.get("result") if isinstance(retry_result, dict) else None,
-            "retry_result": retry_result,
-        }
-    if status == "error":
-        reason = str((retry_result or {}).get("reason") or "erp_post_failed")
-        raise HTTPException(
-            status_code=502,
-            detail=f"ERP posting failed: {reason}",
-        )
-    raise HTTPException(status_code=502, detail=f"ERP posting failed: {status or 'retry_failed'}")
-
-    return {
-        "status": status or "unknown",
-        "ap_item_id": ap_item_id,
-        "resume_result": resume_result,
-    }
+router.include_router(_read_router)
+router.include_router(_action_router)

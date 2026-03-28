@@ -27,7 +27,7 @@ export const PIPELINE_BUILTIN_SLICES = [
   { id: 'ready_to_post', label: 'Ready to post', description: 'Approved invoices ready for ERP posting.' },
   { id: 'needs_info', label: 'Needs info', description: 'Invoices blocked on vendor or field follow-up.' },
   { id: 'failed_post', label: 'Failed post', description: 'Invoices that need ERP retry or posting recovery.' },
-  { id: 'blocked_exception', label: 'Blocked / exception', description: 'Policy, budget, confidence, PO, or processing blockers.' },
+  { id: 'blocked_exception', label: 'Blocked / exception', description: 'Entity, policy, budget, confidence, PO, or processing blockers.' },
   { id: 'due_soon', label: 'Due soon', description: 'Open invoices due within the next 7 days.' },
   { id: 'overdue', label: 'Overdue', description: 'Open invoices already past due.' },
 ];
@@ -463,7 +463,7 @@ export function getSuggestedPipelineSlice(item = {}) {
   if (state === 'needs_info') return 'needs_info';
   if (state === 'failed_post') return 'failed_post';
   if (dueDate && !isClosedPipelineState(state) && diffInDays(dueDate, now) < 0) return 'overdue';
-  if (blockers.some((kind) => ['exception', 'confidence', 'budget', 'po', 'erp'].includes(kind))) {
+  if (blockers.some((kind) => ['entity', 'exception', 'confidence', 'budget', 'po', 'erp', 'processing'].includes(kind))) {
     return 'blocked_exception';
   }
   if (dueDate && !isClosedPipelineState(state) && diffInDays(dueDate, now) <= 7) return 'due_soon';
@@ -643,18 +643,20 @@ export function getApprovalWaitMinutes(item = {}, now = new Date()) {
 }
 
 export function getErpStatus(item = {}) {
-  const state = normalizePipelineState(item.state);
-  const normalizedStatus = normalizeText(item?.erp_status).toLowerCase();
+  const source = item && typeof item === 'object' ? item : {};
+  const state = normalizePipelineState(source.state);
+  const normalizedStatus = normalizeText(source?.erp_status).toLowerCase();
   if (normalizedStatus) return normalizedStatus;
-  if (state === 'posted_to_erp' || state === 'closed' || item?.erp_reference || item?.erp_bill_id) return 'posted';
+  if (state === 'posted_to_erp' || state === 'closed' || source?.erp_reference || source?.erp_bill_id) return 'posted';
   if (state === 'failed_post') return 'failed';
   if (state === 'ready_to_post' || state === 'approved') return 'ready';
-  if (item?.erp_connector_available || item?.connector_available) return 'connected';
+  if (source?.erp_connector_available || source?.connector_available) return 'connected';
   return 'not_connected';
 }
 
 export function getPipelineBlockers(item = {}) {
-  const existing = Array.isArray(item?.pipeline_blockers) ? item.pipeline_blockers : [];
+  const source = item && typeof item === 'object' ? item : {};
+  const existing = Array.isArray(source?.pipeline_blockers) ? source.pipeline_blockers : [];
   if (existing.length > 0) {
     return existing
       .map((blocker) => ({
@@ -672,10 +674,10 @@ export function getPipelineBlockers(item = {}) {
   }
 
   const blockers = [];
-  const state = normalizePipelineState(item.state);
-  const exceptionCode = normalizeText(item?.exception_code).toLowerCase();
-  const budgetStatus = normalizeText(item?.budget_status).toLowerCase();
-  const confidence = Number(item?.confidence);
+  const state = normalizePipelineState(source.state);
+  const exceptionCode = normalizeText(source?.exception_code).toLowerCase();
+  const budgetStatus = normalizeText(source?.budget_status).toLowerCase();
+  const confidence = Number(source?.confidence);
 
   if (state === 'needs_approval') {
     blockers.push({ kind: 'approval', type: 'approval_waiting' });
@@ -686,18 +688,21 @@ export function getPipelineBlockers(item = {}) {
   if (state === 'failed_post') {
     blockers.push({ kind: 'erp', type: 'posting_failed' });
   }
-  if (exceptionCode === 'planner_failed' && !item?.requires_field_review) {
+  if (String(source?.entity_routing_status || source?.entity_routing?.status || '').trim().toLowerCase() === 'needs_review') {
+    blockers.push({ kind: 'entity', type: 'entity_review' });
+  }
+  if (exceptionCode === 'planner_failed' && !source?.requires_field_review) {
     blockers.push({ kind: 'processing', type: 'processing_issue' });
   } else if (exceptionCode && exceptionCode !== 'planner_failed') {
     blockers.push({ kind: 'exception', type: exceptionCode });
   }
-  if (item?.requires_field_review || (Number.isFinite(confidence) && confidence < 0.95)) {
+  if (source?.requires_field_review || (Number.isFinite(confidence) && confidence < 0.95)) {
     blockers.push({ kind: 'confidence', type: 'confidence_review' });
   }
-  if (item?.budget_requires_decision || ['critical', 'exceeded'].includes(budgetStatus)) {
+  if (source?.budget_requires_decision || ['critical', 'exceeded'].includes(budgetStatus)) {
     blockers.push({ kind: 'budget', type: 'budget_review' });
   }
-  if (exceptionCode && exceptionCode !== 'planner_failed' && (exceptionCode.includes('po') || (!item?.po_number && exceptionCode))) {
+  if (exceptionCode && exceptionCode !== 'planner_failed' && (exceptionCode.includes('po') || (!source?.po_number && exceptionCode))) {
     blockers.push({ kind: 'po', type: exceptionCode });
   }
 
@@ -728,7 +733,7 @@ export function matchesPipelineSlice(item = {}, sliceId = 'all_open', now = new 
     case 'failed_post':
       return state === 'failed_post';
     case 'blocked_exception':
-      return blockers.some((kind) => ['exception', 'confidence', 'budget', 'po', 'erp', 'processing'].includes(kind));
+      return blockers.some((kind) => ['entity', 'exception', 'confidence', 'budget', 'po', 'erp', 'processing'].includes(kind));
     case 'due_soon':
       if (!dueDate || isClosedPipelineState(state)) return false;
       return diffInDays(dueDate, now) >= 0 && diffInDays(dueDate, now) <= 7;

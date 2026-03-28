@@ -103,7 +103,7 @@ Pilot may use staged connector/channel enablement. Pilot readiness does not impl
 
 ### 2.3 v1 GA definition (launch)
 v1 GA is the first generally available AP release and requires:
-1. Gmail AP workspace as the primary operator surface.
+1. `Pipeline` as the primary AP queue/control surface, with Gmail AP workspace as the primary current-record execution surface.
 2. Slack and Teams approval parity (co-equal channels).
 3. ERP posting is production-grade for the GA-supported ERP set (NetSuite, QuickBooks, Xero, SAP in current scope), with each connector enabled only once its adapter passes readiness gates.
 4. Reliability and trust gates in Section 7.
@@ -119,7 +119,7 @@ AP v1 does not include:
 6. Outlook inbox intake in GA scope (explicitly de-scoped; Gmail is the only inbox surface for AP v1 GA).
 
 ### 2.5 Gmail-native operations shell (release taxonomy context)
-Clearledgr uses Gmail as the primary product shell for AP v1. The thread panel remains the daily AP execution UI, while Gmail-native routed pages handle setup and operational administration.
+Clearledgr uses Gmail as the primary product shell for AP v1. Inside that shell, the thread panel remains the high-context current-record UI, while `Pipeline` is the queue/control plane and Gmail-native routed pages handle setup and operational administration.
 
 Gmail-native admin/operator responsibilities:
 1. Integration setup and diagnostics.
@@ -132,10 +132,10 @@ Onboarding spine decision (locked):
 1. Use an admin-first onboarding/account-management backbone for all tenant setup and reconnect flows.
 2. OAuth integration setup is initiated from authenticated backend APIs surfaced inside Gmail-native pages.
 3. Gmail thread work UI must not become a cluttered onboarding/configuration surface.
-4. Gmail shell default pinned nav remains intentionally sparse: `Home`, `Pipeline`, `Connections`.
+4. Gmail shell default pinned nav remains intentionally sparse: `Pipeline`, `Home`.
 5. `Activity` and other secondary pages remain available from Home or pinning, not as default clutter.
-6. `Pipeline` is the default AP queue/process surface with AP-first slices, finance-native filters/sorts, and direct thread <-> pipeline reopening.
-7. Saved pipeline views are persisted per authenticated user and organization; `Home` may surface pinned views and finance-native starter views.
+6. `Pipeline` is the default AP queue/process surface and control plane, with AP-first slices, finance-native filters/sorts, and direct thread <-> pipeline reopening.
+7. Saved pipeline views are persisted per authenticated user and organization; `Home` may surface pinned views and finance-native starter views, but it is not the default work surface.
 8. Gmail authorization is explicit from inline CTAs; the extension must not auto-launch Gmail OAuth at startup.
 
 ---
@@ -143,7 +143,7 @@ Onboarding spine decision (locked):
 ## 3. UX Doctrine and Operator Experience
 
 ### 3.1 Gmail thread card doctrine (primary AP operator experience)
-The Gmail thread is the AP workflow control surface. Each invoice thread (or grouped invoice entity) should present a compact AP card that shows:
+The Gmail thread is the AP current-record execution surface. Each invoice thread (or grouped invoice entity) should present a compact AP card that shows:
 1. **Invoice identity strip** (vendor, invoice number, amount, due date, PO status)
 2. **One status badge**
 3. **Plain-language blockers** (for example: waiting on approver, PO missing, review extracted fields)
@@ -192,7 +192,7 @@ They must provide:
 7. A lightweight `Home` launch hub for readiness, recent activity, and quick links
 
 Operational shell rules:
-1. `Home`, `Pipeline`, and `Connections` are the default pinned pages.
+1. `Pipeline` and `Home` are the default pinned pages.
 2. `Activity` is secondary and available from Home or user pinning.
 3. Health/debug/admin pages are role-gated and never default pinned.
 4. `Pipeline` must ship finance-native saved views: starter views by default, personal pinned views persisted per authenticated user/org, and Home shortcuts into those views.
@@ -322,8 +322,8 @@ Required audit coverage includes:
 
 ## 5. Channel Contracts (Gmail / Slack / Teams)
 
-### 5.1 Gmail contract (primary operator surface)
-Gmail is the intake and triage surface for AP v1.
+### 5.1 Gmail contract (intake + current-record surface)
+Gmail is the intake, triage, and current-record surface for AP v1.
 
 Gmail responsibilities:
 1. Thread-level AP status visibility
@@ -335,6 +335,8 @@ Gmail responsibilities:
 
 #### Gmail worklist/workspace contract (backend API)
 `GET /extension/worklist`
+
+This canonical worklist powers the Gmail active-record surface and the `Pipeline` control plane.
 
 Required item fields (minimum):
 1. `id`

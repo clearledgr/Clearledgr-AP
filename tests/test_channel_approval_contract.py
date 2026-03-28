@@ -82,6 +82,69 @@ class _RuntimeStub:
         return {"status": "error", "reason": "unsupported_intent"}
 
 
+def test_approval_action_precedence_prefers_duplicate_before_stale():
+    from clearledgr.core.approval_action_contract import (
+        NormalizedApprovalAction,
+        resolve_action_precedence,
+    )
+
+    action = NormalizedApprovalAction(
+        ap_item_id="ap-1",
+        run_id="run-1",
+        action="approve",
+        actor_id="approver-1",
+        actor_display="Approver",
+        reason=None,
+        source_channel="slack",
+        source_channel_id="channel-1",
+        source_message_ref="msg-1",
+        request_ts=str(int(time.time()) - 90_000),
+        idempotency_key="idem-1",
+        gmail_id="thread-1",
+        organization_id="default",
+    )
+
+    result = resolve_action_precedence(
+        action,
+        {"id": "ap-1", "state": "needs_approval"},
+        already_processed=True,
+    )
+
+    assert result.status == "duplicate"
+    assert result.reason == "duplicate_callback"
+
+
+def test_approval_action_precedence_marks_superseded_states_as_stale():
+    from clearledgr.core.approval_action_contract import (
+        NormalizedApprovalAction,
+        resolve_action_precedence,
+    )
+
+    action = NormalizedApprovalAction(
+        ap_item_id="ap-2",
+        run_id="run-2",
+        action="approve",
+        actor_id="approver-2",
+        actor_display="Approver",
+        reason=None,
+        source_channel="teams",
+        source_channel_id="channel-2",
+        source_message_ref="msg-2",
+        request_ts=str(int(time.time())),
+        idempotency_key="idem-2",
+        gmail_id="thread-2",
+        organization_id="default",
+    )
+
+    result = resolve_action_precedence(
+        action,
+        {"id": "ap-2", "state": "approved"},
+    )
+
+    assert result.status == "stale"
+    assert result.reason == "superseded_by_state_approved"
+
+
 def test_slack_and_teams_card_builders_include_request_info_action():
     from clearledgr.services.slack_api import SlackAPIClient
     from clearledgr.services.teams_api import TeamsAPIClient
@@ -656,6 +719,37 @@ def test_teams_interactive_common_contract_request_info_duplicate_invalid_and_st
     assert "channel_action_duplicate" in event_types
     assert "channel_action_invalid" in event_types
     assert "channel_action_stale" in event_types
+
+
+def test_teams_interactive_marks_superseded_approval_cards_as_stale(monkeypatch, client, db):
+    item = _create_ap_item(db, gmail_id="thread-teams-superseded")
+    db.update_ap_item(item["id"], state="approved")
+
+    monkeypatch.setattr(
+        "clearledgr.api.teams_invoices.verify_teams_token",
+        lambda _auth: {"appid": "bot-test", "iat": int(time.time())},
+    )
+
+    headers = {"Authorization": "Bearer test-token"}
+    payload = {
+        "action": "approve",
+        "email_id": "thread-teams-superseded",
+        "organization_id": "default",
+        "actor": "approver@clearledgr.com",
+        "conversation_id": "19:finance",
+        "message_id": "msg-superseded",
+        "request_ts": str(int(time.time())),
+    }
+
+    response = client.post("/teams/invoices/interactive", json=payload, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "stale"
+    assert response.json()["reason"] == "superseded_by_state_approved"
+
+    events = db.list_ap_audit_events(item["id"])
+    stale_events = [event for event in events if event.get("event_type") == "channel_action_stale"]
+    assert stale_events
+    assert stale_events[-1].get("reason") == "superseded_by_state_approved"
 
 
 def test_slack_interactive_blocks_actions_when_rollout_control_disables_slack(monkeypatch, client, db):

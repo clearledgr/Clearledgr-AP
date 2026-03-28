@@ -11,6 +11,7 @@ from clearledgr.core.database import get_db
 from clearledgr.integrations.erp_router import get_erp_connection
 from clearledgr.services.erp_connector_strategy import get_erp_connector_strategy
 from clearledgr.services.gmail_api import token_store
+from clearledgr.services.policy_compliance import get_approval_automation_policy
 from clearledgr.services.slack_api import SlackAPIClient
 try:
     from clearledgr.services.teams_api import TeamsAPIClient
@@ -86,12 +87,14 @@ def _build_slack_digest_blocks(kpis: Dict[str, Any], organization_id: str) -> Li
     ]
 
 
-def _approval_sla_minutes() -> int:
-    raw = os.getenv("AP_APPROVAL_SLA_MINUTES", "240")
+def _approval_sla_minutes(organization_id: str = "default") -> int:
     try:
-        return max(1, int(raw))
+        reminder_hours = int(
+            get_approval_automation_policy(organization_id=organization_id).get("reminder_hours") or 4
+        )
     except (TypeError, ValueError):
-        return 240
+        reminder_hours = 4
+    return max(60, min(reminder_hours * 60, 10080))
 
 
 def _workflow_stuck_minutes() -> int:
@@ -194,7 +197,7 @@ async def get_tenant_health(
     db = get_db()
     metrics = db.get_operational_metrics(
         organization_id,
-        approval_sla_minutes=_approval_sla_minutes(),
+        approval_sla_minutes=_approval_sla_minutes(organization_id),
         workflow_stuck_minutes=_workflow_stuck_minutes(),
     )
     return {"health": metrics}
@@ -209,7 +212,7 @@ async def get_ap_kpis(
     db = get_db()
     kpis = db.get_ap_kpis(
         organization_id,
-        approval_sla_minutes=_approval_sla_minutes(),
+        approval_sla_minutes=_approval_sla_minutes(organization_id),
     )
     return {"kpis": kpis}
 
@@ -224,7 +227,7 @@ async def get_ap_kpi_digest(
     db = get_db()
     kpis = db.get_ap_kpis(
         organization_id,
-        approval_sla_minutes=_approval_sla_minutes(),
+        approval_sla_minutes=_approval_sla_minutes(organization_id),
     )
     normalized_surface = str(surface or "all").strip().lower()
     payload: Dict[str, Any] = {"organization_id": organization_id, "kpis": kpis}
@@ -302,7 +305,7 @@ async def get_all_tenant_health(
     health = [
         db.get_operational_metrics(
             org_id,
-            approval_sla_minutes=_approval_sla_minutes(),
+            approval_sla_minutes=_approval_sla_minutes(org_id),
             workflow_stuck_minutes=_workflow_stuck_minutes(),
         )
         for org_id in orgs

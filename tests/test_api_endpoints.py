@@ -1369,13 +1369,19 @@ class TestGmailWebhooks:
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
                 with patch.object(gmail_extension_module, "GmailAPIClient", _FakeGmailAPIClient):
-                    response = client.get("/extension/by-thread/thread-1", params={"organization_id": "default"})
+                    lookup_response = client.get("/extension/by-thread/thread-1", params={"organization_id": "default"})
+                    recover_response = client.post("/extension/by-thread/thread-1/recover", params={"organization_id": "default"})
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
 
-        assert response.status_code == 200
-        payload = response.json()
+        assert lookup_response.status_code == 200
+        lookup_payload = lookup_response.json()
+        assert lookup_payload == {"found": False, "thread_id": "thread-1", "item": None}
+
+        assert recover_response.status_code == 200
+        payload = recover_response.json()
         assert payload["found"] is True
+        assert payload["recovered"] is True
         assert payload["item"]["thread_id"] == "thread-1"
         assert payload["item"]["message_id"] == "msg-thread-1"
         assert payload["item"]["vendor_name"] == "Acme Corp"
@@ -1516,6 +1522,125 @@ class TestAdminConsoleIntegrations:
         assert status["requires_reconnect"] is True
         assert status["status"] == "reconnect_required"
         assert status["watch_status"] == "reconnect_required"
+
+    def test_slack_status_requires_runtime_connection_not_channel_only_config(self):
+        fake_db = MagicMock()
+        fake_db.get_organization.return_value = {
+            "id": "default",
+            "integration_mode": "shared",
+            "settings_json": {"slack_channels": {"invoices": "cl-finance-ap"}},
+        }
+        fake_db.get_organization_integration.return_value = {
+            "status": "connected",
+            "mode": "shared",
+            "last_sync_at": "2026-03-18T16:15:33.253180+00:00",
+        }
+        fake_db.get_slack_installation.return_value = None
+
+        with patch.object(workspace_shell_module, "get_db", return_value=fake_db):
+            with patch.object(
+                workspace_shell_module,
+                "resolve_slack_runtime",
+                return_value={"connected": False, "source": "shared_env_unconfigured"},
+            ):
+                status = workspace_shell_module._slack_status_for_org("default")
+
+        assert status["connected"] is False
+        assert status["status"] == "disconnected"
+        assert status["approval_channel"] == "cl-finance-ap"
+        assert status["approval_channel_configured"] is True
+        assert status["install_recorded"] is False
+        assert status["source"] == "shared_env_unconfigured"
+
+    def test_set_slack_channel_does_not_mark_connected_without_runtime_token(self):
+        fake_db = MagicMock()
+        fake_db.ensure_organization.return_value = {
+            "id": "default",
+            "settings_json": {},
+        }
+        fake_db.get_organization.return_value = {
+            "id": "default",
+            "integration_mode": "shared",
+        }
+        fake_db.get_organization_integration.return_value = {
+            "status": "connected",
+            "mode": "shared",
+            "metadata": {"team_id": "T123"},
+        }
+
+        app.dependency_overrides[workspace_shell_module.get_current_user] = lambda: self._fake_user("admin")
+        try:
+            with patch.object(workspace_shell_module, "get_db", return_value=fake_db):
+                with patch.object(workspace_shell_module, "_save_org_settings") as save_settings:
+                    with patch.object(
+                        workspace_shell_module,
+                        "resolve_slack_runtime",
+                        return_value={"connected": False, "source": "shared_env_unconfigured"},
+                    ):
+                        response = client.post(
+                            "/api/workspace/integrations/slack/channel",
+                            json={"organization_id": "default", "channel_id": "cl-finance-ap"},
+                        )
+        finally:
+            app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["slack_connected"] is False
+        assert payload["slack_source"] == "shared_env_unconfigured"
+        save_settings.assert_called_once()
+        fake_db.upsert_organization_integration.assert_called_once()
+        kwargs = fake_db.upsert_organization_integration.call_args.kwargs
+        assert kwargs["organization_id"] == "default"
+        assert kwargs["integration_type"] == "slack"
+        assert kwargs["status"] == "disconnected"
+        assert kwargs["mode"] == "shared"
+        assert kwargs["metadata"] == {"team_id": "T123", "approval_channel": "cl-finance-ap"}
+        assert isinstance(kwargs["last_sync_at"], str) and kwargs["last_sync_at"]
+
+    def test_slack_test_endpoint_verifies_channel_without_posting_message(self):
+        class _FakeSlackClient:
+            def __init__(self, bot_token=None):
+                self.bot_token = bot_token
+                self.sent = False
+
+            async def auth_test(self):
+                return {"team": "Clearledgr", "user_id": "B123"}
+
+            async def resolve_channel(self, channel):
+                return {"id": "C123", "name": "cl-finance-ap"} if channel == "cl-finance-ap" else None
+
+            async def send_message(self, *args, **kwargs):  # pragma: no cover - defensive
+                self.sent = True
+                raise AssertionError("Slack verification must not post a message")
+
+        app.dependency_overrides[workspace_shell_module.get_current_user] = lambda: self._fake_user("admin")
+        try:
+            with patch.object(
+                workspace_shell_module,
+                "resolve_slack_runtime",
+                return_value={
+                    "bot_token": "xoxb-live",
+                    "mode": "per_org",
+                    "approval_channel": "cl-finance-ap",
+                },
+            ):
+                with patch.object(workspace_shell_module, "SlackAPIClient", _FakeSlackClient):
+                    response = client.post(
+                        "/api/workspace/integrations/slack/test",
+                        json={"organization_id": "default", "channel_id": "cl-finance-ap"},
+                    )
+        finally:
+            app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["success"] is True
+        assert payload["verification"] == "silent"
+        assert payload["message_posted"] is False
+        assert payload["channel_verified"] is True
+        assert payload["channel"] == "#cl-finance-ap"
+        assert payload["channel_id"] == "C123"
 
 
 class TestERPEndpoints:

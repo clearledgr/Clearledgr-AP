@@ -8,7 +8,11 @@ from pydantic import BaseModel, Field
 
 from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
-from clearledgr.services.policy_compliance import AP_POLICY_NAME, get_policy_compliance
+from clearledgr.services.policy_compliance import (
+    AP_POLICY_NAME,
+    get_approval_automation_policy,
+    get_policy_compliance,
+)
 
 
 router = APIRouter(prefix="/api/ap/policies", tags=["ap-policies"])
@@ -36,6 +40,10 @@ def _get_effective_payload(organization_id: str, policy_name: str) -> Dict[str, 
     return {
         "policy": service.get_policy_document(),
         "effective_policies": service.describe_effective_policies(),
+        "approval_automation": get_approval_automation_policy(
+            organization_id=organization_id,
+            policy_name=policy_name,
+        ),
     }
 
 
@@ -114,6 +122,7 @@ def upsert_ap_policy(
         "policy_name": policy_name,
         "policy": policy,
         "effective_policies": effective["effective_policies"],
+        "approval_automation": effective["approval_automation"],
     }
 
 

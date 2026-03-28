@@ -36,6 +36,11 @@ function metricPercent(value) {
   return Number.isFinite(numeric) ? `${numeric.toFixed(2)}%` : '0.00%';
 }
 
+function metricHours(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? `${numeric.toFixed(1)}h` : '0.0h';
+}
+
 function toneForPercent(value, { watchBelow = 95, dangerBelow = 90 } = {}) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return 'color:var(--text-muted);';
@@ -44,19 +49,83 @@ function toneForPercent(value, { watchBelow = 95, dangerBelow = 90 } = {}) {
   return 'color:#047857;';
 }
 
+function safeNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+export function getPilotScorecardSummary(kpis = {}, dashboard = {}) {
+  const pilot = kpis?.pilot_scorecard || {};
+  const summary = pilot?.summary || {};
+  const approval = pilot?.approval_workflow || {};
+  const routing = pilot?.entity_routing || {};
+  const bootstrap = dashboard?.pilot_snapshot || {};
+  const highlights = Array.isArray(pilot?.highlights) && pilot.highlights.length
+    ? pilot.highlights
+    : (Array.isArray(bootstrap?.highlights) ? bootstrap.highlights : []);
+
+  return {
+    touchlessRatePct: safeNumber(summary?.touchless_rate_pct, safeNumber(bootstrap?.touchless_rate_pct)),
+    avgCycleTimeHours: safeNumber(summary?.avg_cycle_time_hours, safeNumber(bootstrap?.avg_cycle_time_hours)),
+    onTimeApprovalsPct: safeNumber(summary?.on_time_approvals_pct, safeNumber(bootstrap?.on_time_approvals_pct)),
+    avgApprovalWaitHours: safeNumber(summary?.avg_approval_wait_hours, safeNumber(bootstrap?.avg_approval_wait_hours)),
+    approvalSlaBreachedOpenCount: safeNumber(summary?.approval_sla_breached_open_count, safeNumber(bootstrap?.approval_sla_breached_open_count)),
+    approvalEscalatedOpenCount: safeNumber(approval?.escalated_open_count, safeNumber(bootstrap?.approval_escalated_open_count)),
+    approvalReassignedOpenCount: safeNumber(approval?.reassigned_open_count, safeNumber(bootstrap?.approval_reassigned_open_count)),
+    entityRouteNeedsReviewCount: safeNumber(summary?.entity_route_needs_review_count, safeNumber(bootstrap?.entity_route_needs_review_count)),
+    entityRouteManualResolutionCount30d: safeNumber(routing?.manual_resolution_event_count_30d, safeNumber(bootstrap?.entity_route_manual_resolution_count_30d)),
+    highlights: highlights.map((entry) => String(entry || '').trim()).filter(Boolean).slice(0, 4),
+  };
+}
+
+export function getOperatorPressureSummary(kpis = {}) {
+  const operator = kpis?.operator_metrics || {};
+  const liveQueue = operator?.live_queue || {};
+  const queueRates = operator?.queue_rates || {};
+  const activity = operator?.activity || {};
+  return {
+    approvalQueueCount: safeNumber(liveQueue?.approval_queue_count),
+    approvalSlaBreachedOpenCount: safeNumber(liveQueue?.approval_sla_breached_open_count),
+    approvalEscalatedOpenCount: safeNumber(liveQueue?.approval_escalated_open_count),
+    approvalReassignedOpenCount: safeNumber(liveQueue?.approval_reassigned_open_count),
+    entityRouteNeedsReviewCount: safeNumber(liveQueue?.entity_route_needs_review_count),
+    fieldReviewOpenCount: safeNumber(liveQueue?.field_review_open_count),
+    approvalSlaBreachedOpenRatePct: safeNumber(queueRates?.approval_sla_breached_open_rate) * 100,
+    entityRouteNeedsReviewRatePct: safeNumber(queueRates?.entity_route_needs_review_rate) * 100,
+    approvalEscalationEventCount: safeNumber(activity?.approval_escalation_event_count),
+    approvalReassignmentEventCount: safeNumber(activity?.approval_reassignment_event_count),
+    entityRouteResolutionEventCount: safeNumber(activity?.entity_route_resolution_event_count),
+    activityWindowDays: safeNumber(operator?.activity_window_days, 30),
+  };
+}
+
 export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate, toast }) {
   const pipelineScope = useMemo(() => ({ orgId, userEmail }), [orgId, userEmail]);
-  const [metrics, setMetrics] = useState(null);
+  const [reportData, setReportData] = useState({ aggregation: null, kpis: null });
   const [loading, setLoading] = useState(true);
   const starterViews = useMemo(() => getStarterPipelineViews({}), []);
 
   const loadMetrics = async ({ silent = false } = {}) => {
     setLoading(true);
     try {
-      const data = await api(`/api/ap/items/metrics/aggregation?organization_id=${encodeURIComponent(orgId)}`, { silent });
-      setMetrics(data?.metrics || null);
+      const [aggregationResult, kpiResult] = await Promise.allSettled([
+        api(`/api/ap/items/metrics/aggregation?organization_id=${encodeURIComponent(orgId)}`, { silent }),
+        api(`/api/ops/ap-kpis?organization_id=${encodeURIComponent(orgId)}`, { silent }),
+      ]);
+
+      const aggregation = aggregationResult.status === 'fulfilled'
+        ? (aggregationResult.value?.metrics || null)
+        : null;
+      const kpis = kpiResult.status === 'fulfilled'
+        ? (kpiResult.value?.kpis || null)
+        : null;
+
+      setReportData({ aggregation, kpis });
+      if (!aggregation && !kpis && !silent) {
+        toast?.('Could not load reports.', 'error');
+      }
     } catch {
-      setMetrics(null);
+      setReportData({ aggregation: null, kpis: null });
       if (!silent) toast?.('Could not load reports.', 'error');
     } finally {
       setLoading(false);
@@ -81,11 +150,13 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
 
   const dashboard = bootstrap?.dashboard || {};
   const agenticSnapshot = dashboard?.agentic_snapshot || {};
-  const totals = metrics?.totals || {};
-  const sources = metrics?.sources || {};
-  const duplicates = metrics?.duplicates || {};
-  const topVendors = Array.isArray(metrics?.spend_by_vendor) ? metrics.spend_by_vendor.slice(0, 6) : [];
+  const totals = reportData?.aggregation?.totals || {};
+  const sources = reportData?.aggregation?.sources || {};
+  const duplicates = reportData?.aggregation?.duplicates || {};
+  const topVendors = Array.isArray(reportData?.aggregation?.spend_by_vendor) ? reportData.aggregation.spend_by_vendor.slice(0, 6) : [];
   const sourceTypes = Object.entries(sources.link_count_by_type || {}).sort((left, right) => right[1] - left[1]).slice(0, 6);
+  const pilotSummary = getPilotScorecardSummary(reportData?.kpis || {}, dashboard);
+  const operatorSummary = getOperatorPressureSummary(reportData?.kpis || {});
 
   if (loading) {
     return html`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading reports…</p></div>`;
@@ -162,6 +233,76 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
       </div>
 
       <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="panel">
+          <h3 style="margin-top:0">Pilot scorecard</h3>
+          <p class="muted" style="margin:0 0 12px">
+            Track whether Clearledgr is actually removing approval chasing and manual routing work.
+          </p>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+            <${MetricCard}
+              label="Touchless completed invoices"
+              value=${html`<span style=${toneForPercent(pilotSummary.touchlessRatePct, { watchBelow: 70, dangerBelow: 50 })}>${metricPercent(pilotSummary.touchlessRatePct)}</span>`}
+            />
+            <${MetricCard}
+              label="Average cycle time"
+              value=${metricHours(pilotSummary.avgCycleTimeHours)}
+            />
+            <${MetricCard}
+              label="On-time approvals"
+              value=${html`<span style=${toneForPercent(pilotSummary.onTimeApprovalsPct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(pilotSummary.onTimeApprovalsPct)}</span>`}
+            />
+            <${MetricCard}
+              label="Average approval wait"
+              value=${metricHours(pilotSummary.avgApprovalWaitHours)}
+            />
+          </div>
+
+          ${pilotSummary.highlights.length > 0 && html`
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Current readout</div>
+              <div class="secondary-list">
+                ${pilotSummary.highlights.map((line) => html`
+                  <div key=${line} class="secondary-note">${line}</div>
+                `)}
+              </div>
+            </div>
+          `}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Operator pressure</h3>
+          <p class="muted" style="margin:0 0 12px">
+            Watch the live queue pressure points that still create manual chasing or routing work.
+          </p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <${ReportRow}
+              label="Open approvals waiting"
+              value=${Number(operatorSummary.approvalQueueCount || 0).toLocaleString()}
+              detail=${`${Number(operatorSummary.approvalSlaBreachedOpenCount || 0).toLocaleString()} beyond SLA`}
+            />
+            <${ReportRow}
+              label="Escalated approvals"
+              value=${Number(operatorSummary.approvalEscalatedOpenCount || 0).toLocaleString()}
+              detail=${`${Number(operatorSummary.approvalEscalationEventCount || 0).toLocaleString()} escalations in the last ${Number(operatorSummary.activityWindowDays || 30).toLocaleString()} days`}
+            />
+            <${ReportRow}
+              label="Reassigned approvals"
+              value=${Number(operatorSummary.approvalReassignedOpenCount || 0).toLocaleString()}
+              detail=${`${Number(operatorSummary.approvalReassignmentEventCount || 0).toLocaleString()} reassignments in the last ${Number(operatorSummary.activityWindowDays || 30).toLocaleString()} days`}
+            />
+            <${ReportRow}
+              label="Entity routing review"
+              value=${Number(operatorSummary.entityRouteNeedsReviewCount || 0).toLocaleString()}
+              detail=${`${Number(pilotSummary.entityRouteManualResolutionCount30d || 0).toLocaleString()} manual resolutions in the last 30 days`}
+            />
+            <${ReportRow}
+              label="Field review queue"
+              value=${Number(operatorSummary.fieldReviewOpenCount || 0).toLocaleString()}
+              detail=${`Approval SLA breach rate ${metricPercent(operatorSummary.approvalSlaBreachedOpenRatePct)}`}
+            />
+          </div>
+        </div>
+
         <div class="panel">
           <h3 style="margin-top:0">Autonomy quality</h3>
           <p class="muted" style="margin:0 0 12px">

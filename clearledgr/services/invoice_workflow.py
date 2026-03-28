@@ -145,21 +145,49 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
     
     def get_approval_channel_for_amount(self, amount: float) -> str:
         """Get appropriate Slack channel based on amount thresholds."""
+        return str(self.get_approval_target_for_amount(amount).get("channel") or self.slack_channel)
+
+    def get_approval_target_for_amount(self, amount: float) -> Dict[str, Any]:
+        """Return the approval channel and any configured assignees for an amount."""
         self._load_settings()
-        
+
+        routing: Dict[str, Any] = {
+            "channel": self.slack_channel,
+            "approvers": [],
+        }
         if not self._settings:
-            return self.slack_channel
-        
+            return routing
+
         thresholds = self._settings.get("approval_thresholds", [])
-        
+
         for threshold in thresholds:
             min_amt = threshold.get("min_amount", 0)
             max_amt = threshold.get("max_amount")
-            
+
             if amount >= min_amt and (max_amt is None or amount < max_amt):
-                return threshold.get("approver_channel", self.slack_channel)
-        
-        return self.slack_channel
+                raw_approvers = (
+                    threshold.get("approvers")
+                    or threshold.get("required_approvers")
+                    or []
+                )
+                if not isinstance(raw_approvers, list):
+                    raw_approvers = [raw_approvers] if raw_approvers else []
+                routing["channel"] = (
+                    str(
+                        threshold.get("approver_channel")
+                        or threshold.get("channel")
+                        or self.slack_channel
+                    ).strip()
+                    or self.slack_channel
+                )
+                routing["approvers"] = [
+                    str(value).strip()
+                    for value in raw_approvers
+                    if str(value).strip()
+                ]
+                return routing
+
+        return routing
     
     @property
     def slack_client(self) -> SlackAPIClient:
@@ -822,6 +850,14 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             preferred=invoice.correlation_id,
         )
         invoice.correlation_id = correlation_id
+        approval_target = self.get_approval_target_for_amount(invoice.amount)
+        approval_channel = str(approval_target.get("channel") or self.slack_channel).strip() or self.slack_channel
+        approval_assignees = [
+            str(value).strip()
+            for value in (approval_target.get("approvers") or [])
+            if str(value).strip()
+        ]
+        approval_requested_at = datetime.now(timezone.utc).isoformat()
 
         current_state = self._canonical_invoice_state(self.db.get_invoice_status(invoice.gmail_id))
         if current_state == "received":
@@ -885,6 +921,15 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                             "approval_context": context_payload.get("approval_context"),
                         },
                     )
+            self._update_ap_item_metadata(
+                ap_item_id,
+                {
+                    "approval_requested_at": approval_requested_at,
+                    "approval_sent_to": approval_assignees,
+                    "approval_channel": str(existing_thread.get("channel_id") or approval_channel).strip() or approval_channel,
+                    "approval_next_action": "wait_for_approval",
+                },
+            )
             return {
                 "status": "pending_approval",
                 "invoice_id": invoice.gmail_id,
@@ -924,7 +969,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 steps=[SimpleNamespace(
                     step_id=f"step-{uuid.uuid4().hex[:12]}",
                     level="L1",
-                    approvers=[],
+                    approvers=approval_assignees,
                     approval_type="any",
                     status="pending",
                     approved_by=None,
@@ -934,17 +979,23 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 )],
             )
             self.db.db_create_approval_chain(chain)
-            self._update_ap_item_metadata(ap_item_id, {"approval_chain_id": chain_id})
+            self._update_ap_item_metadata(
+                ap_item_id,
+                {
+                    "approval_chain_id": chain_id,
+                    "approval_requested_at": approval_requested_at,
+                    "approval_sent_to": approval_assignees,
+                    "approval_channel": approval_channel,
+                    "approval_next_action": "wait_for_approval",
+                },
+            )
         except Exception as chain_exc:
             logger.debug("Approval chain creation failed (non-fatal): %s", chain_exc)
             chain_id = None
 
         # Build approval message
         blocks = self._build_approval_blocks(invoice, context_payload)
-        
-        # Get appropriate channel based on amount
-        approval_channel = self.get_approval_channel_for_amount(invoice.amount)
-        
+
         try:
             # Send to Slack
             message = await self.slack_client.send_message(
@@ -982,6 +1033,15 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     "budget_impact": budget_checks,
                     "validation_gate": context_payload.get("validation_gate"),
                     "approval_context": context_payload.get("approval_context"),
+                },
+            )
+            self._update_ap_item_metadata(
+                ap_item_id,
+                {
+                    "approval_requested_at": approval_requested_at,
+                    "approval_sent_to": approval_assignees,
+                    "approval_channel": message.channel,
+                    "approval_next_action": "wait_for_approval",
                 },
             )
             teams_status = self._send_teams_budget_card(invoice, budget_summary, context_payload)

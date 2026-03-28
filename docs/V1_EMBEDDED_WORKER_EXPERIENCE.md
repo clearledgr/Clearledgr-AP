@@ -22,7 +22,8 @@ Note: The current codebase already contains agent runtime, browser-agent tooling
 
 ## Product Shape (AP v1)
 
-- **Gmail** = context + status + exceptions + next action (primary operator surface)
+- **Gmail** = context + status + exceptions + next action for the active record
+- **Pipeline** = queue control, saved views, prioritization, and record reopening
 - **Slack / Teams** = approvals and escalation decisions
 - **ERP** = system of record
 - **Workspace Shell** = setup/ops only (not daily AP processing)
@@ -47,11 +48,11 @@ Note: The current codebase already contains agent runtime, browser-agent tooling
 5. **Consistent semantics across Slack and Teams**
    - Approval actions and outcomes should feel equivalent even if channel UI differs.
 
-## Gmail Experience (Primary Operator Surface)
+## Gmail Experience (Current-Record Surface)
 
 ### AP Workspace (Thread-Level)
 
-When Clearledgr identifies an AP item in a thread, Gmail should show a focused workspace with:
+When Clearledgr identifies an AP item in a thread, Gmail should show a focused workspace for the active record with:
 
 1. **Status**
    - Current AP state (for example `validating`, `needs_info`, `needs_approval`, `ready_to_post`, `posted`)
@@ -103,6 +104,16 @@ Allowed actions depend on state/policy:
 5. open source email / open linked source
 
 No action may bypass server-side state validation or policy enforcement.
+
+## Pipeline Experience (Queue Control Surface)
+
+`Pipeline` is where finance operators should:
+
+1. sort and filter the AP queue
+2. save views they reopen often
+3. prioritize across entities and states
+4. reopen the next active record in Gmail context
+5. watch approval backlog, exception backlog, and posting backlog without turning Gmail threads into dashboards
 
 ## Slack and Teams Experience (Approval/Decision Surfaces)
 

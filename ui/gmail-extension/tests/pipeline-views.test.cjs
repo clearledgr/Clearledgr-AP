@@ -23,6 +23,7 @@ test('pipeline slices classify AP queue items into AP-first queue views', async 
     { id: 'info-1', state: 'needs_info' },
     { id: 'failed-1', state: 'failed_post', due_date: '2026-03-22T00:00:00Z' },
     { id: 'exception-1', state: 'validated', exception_code: 'po_missing_reference' },
+    { id: 'entity-1', state: 'validated', entity_routing_status: 'needs_review' },
     { id: 'due-soon-1', state: 'validated', due_date: '2026-03-24T00:00:00Z' },
     { id: 'overdue-1', state: 'validated', due_date: '2026-03-18T00:00:00Z' },
     { id: 'posted-1', state: 'posted_to_erp', due_date: '2026-03-20T00:00:00Z' },
@@ -32,13 +33,14 @@ test('pipeline slices classify AP queue items into AP-first queue views', async 
   assert.equal(countItemsForSlice(items, 'ready_to_post', now), 1);
   assert.equal(countItemsForSlice(items, 'needs_info', now), 1);
   assert.equal(countItemsForSlice(items, 'failed_post', now), 1);
-  assert.equal(countItemsForSlice(items, 'blocked_exception', now), 2);
+  assert.equal(countItemsForSlice(items, 'blocked_exception', now), 3);
   assert.equal(countItemsForSlice(items, 'due_soon', now), 4);
   assert.equal(countItemsForSlice(items, 'overdue', now), 1);
-  assert.equal(matchesPipelineSlice(items[7], 'all_open', now), false);
+  assert.equal(matchesPipelineSlice(items[8], 'all_open', now), false);
   assert.deepEqual(getPipelineBlockerKinds(items[4]), ['exception', 'po']);
+  assert.deepEqual(getPipelineBlockerKinds(items[5]), ['entity']);
   assert.deepEqual(getPipelineBlockerKinds(null), []);
-  assert.equal(getSuggestedPipelineSlice(items[3]), 'failed_post');
+  assert.equal(getSuggestedPipelineSlice(items[5]), 'blocked_exception');
 });
 
 test('pipeline preferences persist pinned saved views and focused item state per user and org', async () => {

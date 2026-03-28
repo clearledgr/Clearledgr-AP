@@ -6,7 +6,7 @@
 - **Who it's for:** Finance teams at growing companies who need execution, follow-up, approvals, and system-of-record updates to happen across inbox, chat, ERP, and other finance surfaces.
 - **Primary product truth:** Clearledgr is broader than Gmail and broader than AP. Gmail-first AP is the first production wedge.
 - **Core promise:** Work gets identified, routed, executed, and audited where finance already operates.
-- **Primary surfaces today:** Gmail thread panel, Gmail Home, Pipeline, Review, Upcoming, and lightweight setup/admin pages.
+- **Primary surfaces today:** Gmail thread panel, Pipeline, Home, Review, Upcoming, and lightweight setup/admin pages.
 - **Broader surface model:** Slack/Teams, ERP-native follow-ons, reconciliation surfaces, and future finance workbenches should all inherit the same embedded-work doctrine.
 
 ## Core UX Doctrine
@@ -110,8 +110,8 @@
 ## Gmail/AP MVP Information Architecture
 
 ### Primary Work Path
-- `Home`
 - `Pipeline`
+- `Home`
 - `Review`
 - `Upcoming`
 
@@ -129,13 +129,13 @@
 - `Reports`
 
 ### Navigation Rules
-- Default pinned Gmail nav stays intentionally sparse: `Home` and `Pipeline`
+- Default pinned Gmail nav stays intentionally sparse: `Pipeline` and `Home`
 - `Review` and `Upcoming` are part of the core work path, but should not crowd the default left nav for every role
 - Secondary tools should live under Home, in secondary navigation, or behind role gates
 - Dynamic detail pages never appear as peers in the primary nav
 
 ## Home Pattern
-- Home is a **start page**, not a control center.
+- Home is a **lightweight foyer**, not the default control center.
 - It should use this order:
   1. centered welcome / identity
   2. thin setup or status banner if needed
@@ -152,6 +152,7 @@
 - Pipeline is the main operating surface for finance teams.
 - It should be denser than Home and optimized for sorting, filtering, batch work, and reopening records.
 - Queue slices and saved views should feel native, fast, and reusable.
+- Pipeline should be the default landing route for daily AP work.
 - If Home is the foyer, Pipeline is the factory floor.
 
 ## Thread Panel Pattern

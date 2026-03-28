@@ -81,6 +81,14 @@ class ClearledgrDB(
         self._fallback_warned = False
         self._pg_pool = None
 
+    def _postgres_connect_timeout_seconds(self) -> int:
+        raw_value = str(os.getenv("DB_CONNECT_TIMEOUT", "2")).strip()
+        try:
+            timeout_seconds = int(raw_value)
+        except (TypeError, ValueError):
+            timeout_seconds = 2
+        return max(1, timeout_seconds)
+
     def _sqlite_connection(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -90,6 +98,7 @@ class ClearledgrDB(
     def connect(self):
         if self.use_postgres:
             try:
+                connect_timeout = self._postgres_connect_timeout_seconds()
                 if self._pg_pool is None:
                     try:
                         from psycopg_pool import ConnectionPool
@@ -97,7 +106,10 @@ class ClearledgrDB(
                             self.dsn,
                             min_size=2,
                             max_size=int(os.getenv("DB_POOL_MAX_SIZE", "10")),
-                            kwargs={"row_factory": dict_row},
+                            kwargs={
+                                "row_factory": dict_row,
+                                "connect_timeout": connect_timeout,
+                            },
                         )
                         logger.info("Postgres connection pool initialized (max_size=%s)", os.getenv("DB_POOL_MAX_SIZE", "10"))
                     except ImportError:
@@ -105,7 +117,11 @@ class ClearledgrDB(
                 if self._pg_pool is not None:
                     conn = self._pg_pool.getconn()
                 else:
-                    conn = psycopg.connect(self.dsn, row_factory=dict_row)
+                    conn = psycopg.connect(
+                        self.dsn,
+                        row_factory=dict_row,
+                        connect_timeout=connect_timeout,
+                    )
             except Exception as exc:
                 if not self.allow_sqlite_fallback:
                     raise

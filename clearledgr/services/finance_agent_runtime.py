@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +22,7 @@ from clearledgr.core.finance_contracts import (
     AuditEvent,
     SkillRequest,
 )
+from clearledgr.services.policy_compliance import get_approval_automation_policy
 from clearledgr.services.finance_skills import (
     APFinanceSkill,
     FinanceSkill,
@@ -95,6 +97,16 @@ _AUTONOMY_ACTION_ALIASES: Dict[str, tuple[str, ...]] = {
 
 class IntentNotSupportedError(ValueError):
     """Raised when an unknown finance agent intent is requested."""
+
+
+@dataclass
+class APActionContext:
+    reference: str
+    ap_item: Dict[str, Any]
+    ap_item_id: str
+    email_id: str
+    metadata: Dict[str, Any]
+    correlation_id: Optional[str]
 
 
 class FinanceAgentRuntime:
@@ -179,11 +191,19 @@ class FinanceAgentRuntime:
         return {}
 
     @staticmethod
+    def parse_json_dict(raw: Any) -> Dict[str, Any]:
+        return FinanceAgentRuntime._parse_json_dict(raw)
+
+    @staticmethod
     def _safe_int(value: Any, default: int = 0) -> int:
         try:
             return int(value)
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def safe_int(value: Any, default: int = 0) -> int:
+        return FinanceAgentRuntime._safe_int(value, default)
 
     @staticmethod
     def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -231,13 +251,14 @@ class FinanceAgentRuntime:
             return sender_vendor
         return normalized_vendor or sender_vendor
 
-    @staticmethod
-    def _approval_sla_minutes() -> int:
-        raw = os.getenv("AP_APPROVAL_SLA_MINUTES", "240")
+    def _approval_sla_minutes(self) -> int:
         try:
-            return max(1, int(raw))
+            reminder_hours = int(
+                get_approval_automation_policy(organization_id=self.organization_id).get("reminder_hours") or 4
+            )
         except (TypeError, ValueError):
-            return 240
+            reminder_hours = 4
+        return max(60, min(reminder_hours * 60, 10080))
 
     @staticmethod
     def _workflow_stuck_minutes() -> int:
@@ -255,6 +276,10 @@ class FinanceAgentRuntime:
             return value != 0
         text = str(value or "").strip().lower()
         return text in {"1", "true", "yes", "y", "on"}
+
+    @staticmethod
+    def coerce_bool(value: Any) -> bool:
+        return FinanceAgentRuntime._as_bool(value)
 
     @staticmethod
     def _parse_iso_utc(raw: Any) -> Optional[datetime]:
@@ -275,6 +300,10 @@ class FinanceAgentRuntime:
         except (TypeError, ValueError):
             hours = 24
         return max(1, min(hours, 168))
+
+    @staticmethod
+    def vendor_followup_sla_hours() -> int:
+        return FinanceAgentRuntime._vendor_followup_sla_hours()
 
     @staticmethod
     def _vendor_followup_max_attempts() -> int:
@@ -408,10 +437,19 @@ class FinanceAgentRuntime:
             raise last_error
         raise ValueError("missing_item_reference")
 
+    def resolve_ap_item_from_payload(
+        self,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> tuple[str, Dict[str, Any]]:
+        return self._resolve_ap_item_from_payload(payload)
+
     def _correlation_id_for_item(self, item: Dict[str, Any]) -> Optional[str]:
         metadata = self._parse_json_dict(item.get("metadata"))
         correlation_id = str(item.get("correlation_id") or metadata.get("correlation_id") or "").strip()
         return correlation_id or None
+
+    def correlation_id_for_item(self, item: Dict[str, Any]) -> Optional[str]:
+        return self._correlation_id_for_item(item)
 
     def _organization_settings(self) -> Dict[str, Any]:
         if not hasattr(self.db, "get_organization"):
@@ -426,6 +464,9 @@ class FinanceAgentRuntime:
             or {}
         )
         return self._parse_json_dict(raw_settings)
+
+    def organization_settings(self) -> Dict[str, Any]:
+        return self._organization_settings()
 
     def _seed_ap_item_for_invoice_processing(
         self,
@@ -674,6 +715,17 @@ class FinanceAgentRuntime:
 
         return item
 
+    def seed_ap_item_for_invoice_processing(
+        self,
+        invoice: Dict[str, Any],
+        *,
+        correlation_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self._seed_ap_item_for_invoice_processing(
+            invoice,
+            correlation_id=correlation_id,
+        )
+
     def _merge_item_metadata(self, item: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
         metadata = self._parse_json_dict(item.get("metadata"))
         metadata.update(updates or {})
@@ -685,6 +737,9 @@ class FinanceAgentRuntime:
             except Exception:
                 pass
         return metadata
+
+    def merge_item_metadata(self, item: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+        return self._merge_item_metadata(item, updates)
 
     def _load_idempotent_response(self, idempotency_key: Optional[str]) -> Optional[Dict[str, Any]]:
         key = str(idempotency_key or "").strip()
@@ -764,6 +819,29 @@ class FinanceAgentRuntime:
             }
         )
 
+    def append_runtime_audit(
+        self,
+        *,
+        ap_item_id: str,
+        event_type: str,
+        reason: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        correlation_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        skill_id: Optional[str] = None,
+        evidence_refs: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self._append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type=event_type,
+            reason=reason,
+            metadata=metadata,
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+            skill_id=skill_id,
+            evidence_refs=evidence_refs,
+        )
+
     def _evaluate_prepare_vendor_followup(
         self,
         ap_item: Dict[str, Any],
@@ -800,6 +878,36 @@ class FinanceAgentRuntime:
             "followup_sla_due_at": next_due_at.isoformat() if next_due_at else None,
             "next_allowed_at": next_due_at.isoformat() if next_due_at else None,
         }
+
+    def evaluate_prepare_vendor_followup(
+        self,
+        ap_item: Dict[str, Any],
+        *,
+        force: bool,
+    ) -> Dict[str, Any]:
+        return self._evaluate_prepare_vendor_followup(ap_item, force=force)
+
+    def create_ap_action_context(
+        self,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> APActionContext:
+        reference, ap_item = self.resolve_ap_item_from_payload(payload)
+        email_id = str(
+            ap_item.get("thread_id")
+            or ap_item.get("message_id")
+            or (payload or {}).get("email_id")
+            or reference
+        )
+        ap_item_id = str(ap_item.get("id") or reference)
+        metadata = self.parse_json_dict(ap_item.get("metadata"))
+        return APActionContext(
+            reference=reference,
+            ap_item=ap_item,
+            ap_item_id=ap_item_id,
+            email_id=email_id,
+            metadata=metadata,
+            correlation_id=self.correlation_id_for_item(ap_item),
+        )
 
     def _list_ap_items(self, limit: int = 2000) -> List[Dict[str, Any]]:
         if not hasattr(self.db, "list_ap_items"):
@@ -1926,22 +2034,6 @@ class FinanceAgentRuntime:
         )
         confidence_value = self._safe_float(invoice.get("confidence"))
         amount_value = self._safe_float(invoice.get("amount"))
-        autonomy_threshold = self.ap_auto_approve_threshold()
-        autonomy_policy = self.ap_autonomy_policy(
-            vendor_name=vendor_name,
-            action="auto_approve_post",
-            autonomous_requested=True,
-            ap_item=seeded_item,
-        )
-        shadow_decision = self._build_shadow_decision_proposal(
-            invoice=invoice,
-            vendor_name=vendor_name,
-            amount=amount_value,
-            confidence=confidence_value,
-            requires_field_review=requires_field_review,
-            autonomy_policy=autonomy_policy,
-            auto_post_threshold=autonomy_threshold,
-        )
         if attachment_list:
             first_attachment = attachment_list[0] if isinstance(attachment_list[0], dict) else {}
             attachment_url = str(
@@ -1967,9 +2059,24 @@ class FinanceAgentRuntime:
                 "attachment_names": attachment_names,
                 "has_attachment": bool(attachment_list),
                 "requires_field_review": requires_field_review,
-                "shadow_decision": shadow_decision,
             },
             correlation_id=resolved_correlation_id,
+        )
+        autonomy_threshold = self.ap_auto_approve_threshold()
+        autonomy_policy = self.ap_autonomy_policy(
+            vendor_name=vendor_name,
+            action="auto_approve_post",
+            autonomous_requested=True,
+            ap_item=seeded_item,
+        )
+        shadow_decision = self._build_shadow_decision_proposal(
+            invoice=invoice,
+            vendor_name=vendor_name,
+            amount=amount_value,
+            confidence=confidence_value,
+            requires_field_review=requires_field_review,
+            autonomy_policy=autonomy_policy,
+            auto_post_threshold=autonomy_threshold,
         )
 
         if not seeded_item:
@@ -1979,6 +2086,20 @@ class FinanceAgentRuntime:
                 "execution_mode": "extraction_refresh",
             }
 
+        existing_metadata = self._parse_json_dict(seeded_item.get("metadata"))
+        stale_planner_failure = (
+            str(
+                existing_metadata.get("exception_code")
+                or seeded_item.get("exception_code")
+                or ""
+            ).strip().lower() == "planner_failed"
+            or str(existing_metadata.get("processing_status") or "").strip().lower() == "planner_failed"
+            or "apskill not registered" in str(
+                existing_metadata.get("planner_error")
+                or seeded_item.get("last_error")
+                or ""
+            ).strip().lower()
+        )
         refresh_metadata = {
             "processing_status": "extraction_refreshed",
             "refresh_reason": str(refresh_reason or "replay_backfill").strip() or "replay_backfill",
@@ -1987,7 +2108,25 @@ class FinanceAgentRuntime:
             "autonomy_policy": autonomy_policy,
             "autonomy_mode": autonomy_policy.get("mode"),
         }
+        if stale_planner_failure:
+            refresh_metadata.update(
+                {
+                    "exception_code": None,
+                    "exception_severity": None,
+                    "planner_error": None,
+                }
+            )
         ap_item_id = str(seeded_item.get("id") or "").strip()
+        if stale_planner_failure and ap_item_id and hasattr(self.db, "update_ap_item"):
+            try:
+                self.db.update_ap_item(
+                    ap_item_id,
+                    exception_code=None,
+                    exception_severity=None,
+                    last_error=None,
+                )
+            except Exception:
+                pass
         if ap_item_id and hasattr(self.db, "update_ap_item_metadata_merge"):
             try:
                 self.db.update_ap_item_metadata_merge(ap_item_id, refresh_metadata)
@@ -2397,6 +2536,12 @@ class FinanceAgentRuntime:
         mismatch_text = "\n".join(
             [f"• {entry.get('message', str(entry))}" for entry in mismatch_rows[:5]]
         )
+        try:
+            confidence_pct = float(confidence or 0.0)
+        except (TypeError, ValueError):
+            confidence_pct = 0.0
+        if 0.0 <= confidence_pct <= 1.0:
+            confidence_pct *= 100.0
         amount_text = (
             f"{currency} {float(amount):,.2f}"
             if isinstance(amount, (int, float))
@@ -2406,7 +2551,7 @@ class FinanceAgentRuntime:
             f"*Invoice Review Required*\n\n"
             f"*Vendor:* {vendor or 'Unknown'}\n"
             f"*Amount:* {amount_text}\n"
-            f"*Confidence:* {confidence or 0}%\n\n"
+            f"*Confidence:* {confidence_pct:.1f}%\n\n"
             f"*Issues:*\n{mismatch_text or '• Manual review requested'}"
         )
 
@@ -2423,7 +2568,7 @@ class FinanceAgentRuntime:
                     "currency": currency,
                 },
                 "confidence_result": {
-                    "confidence_pct": confidence,
+                    "confidence_pct": confidence_pct,
                     "mismatches": mismatch_rows,
                     "requires_review": True,
                 },

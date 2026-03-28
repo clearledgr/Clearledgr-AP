@@ -210,7 +210,8 @@ function registerThreadHandler() {
         if (threadId && queueManager) {
           // Always refresh the canonical item for the open thread so new
           // backend-derived fields (for example attachment evidence) replace
-          // stale queue rows already in memory.
+          // stale queue rows already in memory. Lookup stays read-only; thread
+          // repair is an explicit fallback when the backend reports a miss.
           try {
             const result = await queueManager.backendFetch(
               `/extension/by-thread/${encodeURIComponent(threadId)}`
@@ -219,6 +220,19 @@ function registerThreadHandler() {
               const data = await result.json();
               if (data?.found && data?.item) {
                 item = data.item;
+              } else {
+                const recovered = await queueManager.backendFetch(
+                  `/extension/by-thread/${encodeURIComponent(threadId)}/recover`,
+                  { method: 'POST' }
+                );
+                if (recovered?.ok) {
+                  const recoveredData = await recovered.json();
+                  if (recoveredData?.found && recoveredData?.item) {
+                    item = recoveredData.item;
+                  }
+                }
+              }
+              if (item?.id) {
                 queueManager.upsertQueueItem(item);
                 queueManager.emitQueueUpdated();
                 store.update({ selectedItemId: item.id });
@@ -426,7 +440,7 @@ function registerToolbarIcon() {
   try {
     const logoUrl = getAssetUrl(LOGO_PATH);
     sdk.Toolbars.registerToolbarButtonForList({
-      title: 'Clearledgr Home',
+      title: 'Clearledgr Pipeline',
       iconUrl: logoUrl || undefined,
       section: 'METADATA_STATE',
       onClick: () => {
@@ -469,8 +483,8 @@ function registerSearchSuggestions() {
       // Suggest Clearledgr pages
       if ('clearledgr'.includes(q) || 'invoice'.includes(q) || 'ap'.includes(q)) {
         suggestions.push({
-          name: 'Clearledgr Home',
-          description: 'Open Clearledgr dashboard',
+          name: 'Clearledgr Pipeline',
+          description: 'Open the AP control plane',
           routeID: DEFAULT_ROUTE,
           iconUrl: getAssetUrl(LOGO_PATH) || undefined,
         });
@@ -494,10 +508,10 @@ function registerSearchSuggestions() {
 function registerKeyboardShortcuts() {
   if (!sdk?.Keyboard) return;
   try {
-    // G then C → Go to Clearledgr Home
+    // G then C → Go to Clearledgr Pipeline
     const goHome = sdk.Keyboard.createShortcutHandle({
       chord: 'g c',
-      description: 'Go to Clearledgr Home',
+      description: 'Go to Clearledgr Pipeline',
     });
     goHome.on('activate', () => sdk.Router.goto(DEFAULT_ROUTE));
 
@@ -680,7 +694,8 @@ function registerAppMenuAndRoutes() {
       .slice(0, 3)
       .map((view) => ({
         title: `View: ${view.name}`,
-        id: `clearledgr/pipeline-view/${encodeURIComponent(getPipelineViewRef(view))}`,
+        id: 'clearledgr/pipeline-view/:ref',
+        routeParams: { ref: getPipelineViewRef(view) },
         iconUrl: getPipelineViewIconUrl(),
       }));
     clearNavItemViews(appMenuNavItemViews);
@@ -699,6 +714,7 @@ function registerAppMenuAndRoutes() {
         const navHandle = appMenuPanelView.addNavItem({
           name: route.title,
           routeID: route.id,
+          routeParams: route.routeParams,
           iconUrl: route.iconUrl,
         });
         appMenuNavItemViews.push(navHandle);
@@ -720,6 +736,7 @@ function registerAppMenuAndRoutes() {
         const navHandle = sdk.NavMenu.addNavItem({
           name: route.title,
           routeID: route.id,
+          routeParams: route.routeParams,
           type: 'NAVIGATION',
           iconUrl: route.iconUrl,
         });
@@ -809,7 +826,7 @@ function registerAppMenuAndRoutes() {
 
   void getBootstrap();
 
-  sdk.Router.handleCustomRoute('clearledgr/pipeline-view', async (customRouteView) => {
+  sdk.Router.handleCustomRoute('clearledgr/pipeline-view/:ref', async (customRouteView) => {
     const params = customRouteView.getParams?.() || {};
     const rawRef = params.ref || window.location.hash.split('clearledgr/pipeline-view/')[1]?.split('?')[0] || '';
     const pipelineScope = {
@@ -839,7 +856,7 @@ function registerAppMenuAndRoutes() {
   });
 
   // Dynamic route: invoice detail (clearledgr/invoice/:id)
-  sdk.Router.handleCustomRoute('clearledgr/invoice', async (customRouteView) => {
+  sdk.Router.handleCustomRoute('clearledgr/invoice/:id', async (customRouteView) => {
     const container = document.createElement('div');
     container.className = 'cl-route';
     const style = document.createElement('style');
@@ -857,7 +874,7 @@ function registerAppMenuAndRoutes() {
     const params = customRouteView.getParams?.() || {};
     const rawId = resolveRecordRouteId(params, window.location.hash);
     const orgId = workspaceShellApi.orgId();
-    const navigate = (routeId) => sdk.Router.goto(routeId);
+    const navigate = (routeId, params) => sdk.Router.goto(routeId, params);
     const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
     const bootstrap = await getBootstrap();
 
@@ -872,7 +889,7 @@ function registerAppMenuAndRoutes() {
     />`, pageMount);
   });
 
-  sdk.Router.handleCustomRoute('clearledgr/vendor', async (customRouteView) => {
+  sdk.Router.handleCustomRoute('clearledgr/vendor/:name', async (customRouteView) => {
     const container = document.createElement('div');
     container.className = 'cl-route';
     const style = document.createElement('style');
@@ -890,7 +907,7 @@ function registerAppMenuAndRoutes() {
     const params = customRouteView.getParams?.() || {};
     const rawName = resolveVendorRouteName(params, window.location.hash);
     const orgId = workspaceShellApi.orgId();
-    const navigate = (routeId) => sdk.Router.goto(routeId);
+    const navigate = (routeId, params) => sdk.Router.goto(routeId, params);
     const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
     const bootstrap = await getBootstrap();
 
@@ -930,7 +947,7 @@ function registerAppMenuAndRoutes() {
       routeEl.appendChild(container);
 
       const orgId = workspaceShellApi.orgId();
-      const navigate = (routeId) => sdk.Router.goto(routeId);
+      const navigate = (routeId, params) => sdk.Router.goto(routeId, params);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
 
       let renderCurrentPage = async () => {};
@@ -951,7 +968,7 @@ function registerAppMenuAndRoutes() {
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
-              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Home</button>
+              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Pipeline</button>
             </div>
           `, pageMount);
           return;
@@ -996,7 +1013,7 @@ function registerAppMenuAndRoutes() {
       customRouteView.getElement().appendChild(container);
 
       const orgId = workspaceShellApi.orgId();
-      const navigate = (nextRouteId) => sdk.Router.goto(nextRouteId);
+      const navigate = (nextRouteId, params) => sdk.Router.goto(nextRouteId, params);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
 
       const renderCurrentPage = async () => {
@@ -1007,7 +1024,7 @@ function registerAppMenuAndRoutes() {
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
-              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Home</button>
+              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Pipeline</button>
             </div>
           `, pageMount);
           return;

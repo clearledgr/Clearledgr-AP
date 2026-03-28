@@ -7,13 +7,15 @@ and lightweight matching/escalation helpers.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from clearledgr.core.database import get_db
 from clearledgr.services.ap_classifier import classify_ap_email
 from clearledgr.services.email_parser import parse_email
 from clearledgr.services.fuzzy_matching import vendor_similarity
+from clearledgr.services.slack_api import SlackAPIClient, resolve_slack_runtime
 from clearledgr.services.slack_notifications import send_with_retry
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,35 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_confidence_pct(value: Any) -> float:
+    raw = _safe_float(value, 0.0)
+    if 0.0 <= raw <= 1.0:
+        return raw * 100.0
+    return raw
+
+
+def _parse_json_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _amount_from_extraction(extraction: Dict[str, Any]) -> float:
@@ -389,22 +420,59 @@ async def send_slack_notification_activity(payload: Dict[str, Any]) -> Dict[str,
     org_id = _org_id(payload)
     channel = str(payload.get("channel") or payload.get("slack_channel") or "#finance-escalations")
     email_id = str(payload.get("email_id") or "")
+    ap_item_id = str(payload.get("ap_item_id") or "") or None
     extraction = payload.get("extraction") if isinstance(payload.get("extraction"), dict) else {}
     confidence_result = payload.get("confidence_result") if isinstance(payload.get("confidence_result"), dict) else {}
+    db = get_db()
+    ap_item = {}
+    if ap_item_id and hasattr(db, "get_ap_item"):
+        ap_item = db.get_ap_item(ap_item_id) or {}
+    if not ap_item and email_id and hasattr(db, "get_invoice_status"):
+        ap_item = db.get_invoice_status(email_id) or {}
+        ap_item_id = ap_item_id or str(ap_item.get("id") or "") or None
 
     vendor = str(extraction.get("vendor") or "Unknown")
     amount = _safe_float(extraction.get("amount"), 0.0)
     currency = str(extraction.get("currency") or "USD")
-    confidence_pct = _safe_float(confidence_result.get("confidence_pct"), 0.0)
+    confidence_pct = _normalize_confidence_pct(
+        confidence_result.get("confidence_pct")
+        if confidence_result.get("confidence_pct") is not None
+        else extraction.get("confidence")
+    )
     mismatches = confidence_result.get("mismatches") if isinstance(confidence_result.get("mismatches"), list) else []
+    metadata = _parse_json_dict(ap_item.get("metadata"))
+    requested_at = (
+        _parse_iso_datetime(metadata.get("approval_requested_at"))
+        or _parse_iso_datetime(ap_item.get("updated_at"))
+        or _parse_iso_datetime(ap_item.get("created_at"))
+    )
+    hours_waiting = None
+    if requested_at is not None:
+        hours_waiting = max(
+            0.1,
+            round((datetime.now(timezone.utc) - requested_at).total_seconds() / 3600.0, 1),
+        )
 
     mismatch_lines = []
     for mismatch in mismatches[:5]:
+        message = str(mismatch.get("message") or "").strip()
+        if message:
+            mismatch_lines.append(f"- {message}")
+            continue
         field = str(mismatch.get("field") or "field")
-        extracted = str(mismatch.get("extracted") or "")
-        expected = str(mismatch.get("expected") or "")
-        mismatch_lines.append(f"- {field}: {extracted} -> {expected}")
-    mismatch_text = "\n".join(mismatch_lines) if mismatch_lines else "- Manual review requested"
+        extracted = str(mismatch.get("extracted") or "").strip()
+        expected = str(mismatch.get("expected") or "").strip()
+        if extracted or expected:
+            mismatch_lines.append(f"- {field}: {extracted or 'n/a'} -> {expected or 'n/a'}")
+        else:
+            mismatch_lines.append(f"- {field} needs review")
+    if not mismatch_lines:
+        if hours_waiting is not None:
+            mismatch_lines.append(f"- Approval has been waiting for {hours_waiting:.1f}h")
+        else:
+            mismatch_lines.append("- Manual review requested")
+    mismatch_text = "\n".join(mismatch_lines)
+    action_ref = email_id or ap_item_id or "unknown"
 
     text = (
         f"AP review required: {vendor} "
@@ -424,29 +492,124 @@ async def send_slack_notification_activity(payload: Dict[str, Any]) -> Dict[str,
                     f"*Amount:* {currency} {amount:,.2f}\n"
                     f"*Confidence:* {confidence_pct:.1f}%\n"
                     f"*Email:* {email_id or 'n/a'}"
+                    + (f"\n*Waiting:* {hours_waiting:.1f}h" if hours_waiting is not None else "")
                 ),
             },
         },
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": f"*Mismatches:*\n{mismatch_text}"},
+            "text": {"type": "mrkdwn", "text": f"*Why this was escalated:*\n{mismatch_text}"},
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Approve"},
+                    "style": "primary",
+                    "action_id": f"approve_invoice_{action_ref}",
+                    "value": action_ref,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Reject"},
+                    "style": "danger",
+                    "action_id": f"reject_invoice_{action_ref}",
+                    "value": action_ref,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Request info"},
+                    "action_id": f"request_info_{action_ref}",
+                    "value": action_ref,
+                },
+            ],
         },
     ]
-
-    delivered = await send_with_retry(
-        blocks=blocks,
-        text=text,
-        ap_item_id=str(payload.get("ap_item_id") or "") or None,
-        preferred_channel=channel,
-        organization_id=org_id,
+    runtime = resolve_slack_runtime(org_id)
+    slack_thread = db.get_slack_thread(email_id) if email_id and hasattr(db, "get_slack_thread") else None
+    thread_channel = str((slack_thread or {}).get("channel_id") or "").strip()
+    thread_ts = str((slack_thread or {}).get("thread_ts") or (slack_thread or {}).get("thread_id") or "").strip()
+    cooldown_seconds = max(60, _safe_int(os.getenv("SLACK_ESCALATION_COOLDOWN_SECONDS"), 30 * 60))
+    last_escalated_at = (
+        _parse_iso_datetime(metadata.get("approval_last_escalated_at"))
+        or _parse_iso_datetime(metadata.get("approval_last_slack_escalation_at"))
     )
+    now = datetime.now(timezone.utc)
+
+    if thread_ts and last_escalated_at and (now - last_escalated_at) <= timedelta(seconds=cooldown_seconds):
+        return {
+            "status": "deduped",
+            "delivered": True,
+            "deduped": True,
+            "organization_id": org_id,
+            "channel": thread_channel or channel,
+            "email_id": email_id or None,
+            "thread_ts": thread_ts,
+            "threaded": True,
+        }
+
+    delivered = False
+    delivered_channel = thread_channel or channel
+    delivered_thread_ts = thread_ts or None
+    if runtime.get("bot_token"):
+        try:
+            sent = await SlackAPIClient(bot_token=str(runtime.get("bot_token"))).send_message(
+                channel=delivered_channel,
+                text=text,
+                blocks=blocks,
+                thread_ts=thread_ts or None,
+                reply_broadcast=False,
+                unfurl_links=False,
+                unfurl_media=False,
+            )
+            delivered = True
+            delivered_channel = sent.channel or delivered_channel
+            delivered_thread_ts = thread_ts or sent.ts
+            if email_id and hasattr(db, "save_slack_thread") and not thread_ts:
+                db.save_slack_thread(
+                    email_id,
+                    channel_id=delivered_channel,
+                    thread_ts=delivered_thread_ts or "",
+                    thread_id=delivered_thread_ts or "",
+                )
+            elif email_id and hasattr(db, "update_slack_thread_status") and delivered_thread_ts:
+                db.update_slack_thread_status(
+                    email_id,
+                    channel_id=delivered_channel,
+                    thread_ts=delivered_thread_ts,
+                    thread_id=delivered_thread_ts,
+                )
+        except Exception:
+            delivered = False
+
+    if not delivered:
+        delivered = await send_with_retry(
+            blocks=blocks,
+            text=text,
+            ap_item_id=ap_item_id,
+            preferred_channel=channel,
+            organization_id=org_id,
+        )
+
+    if delivered and ap_item_id and hasattr(db, "update_ap_item_metadata_merge"):
+        db.update_ap_item_metadata_merge(
+            ap_item_id,
+            {
+                "approval_last_slack_escalation_at": now.isoformat(),
+                "approval_last_slack_escalation_channel": delivered_channel,
+                "approval_last_slack_thread_ts": delivered_thread_ts,
+            },
+        )
 
     return {
         "status": "sent" if delivered else "queued_for_retry",
         "delivered": bool(delivered),
         "organization_id": org_id,
-        "channel": channel,
+        "channel": delivered_channel,
         "email_id": email_id or None,
+        "thread_ts": delivered_thread_ts,
+        "threaded": bool(delivered_thread_ts),
     }
 
 

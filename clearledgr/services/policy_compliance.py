@@ -27,6 +27,93 @@ logger = logging.getLogger(__name__)
 
 AP_POLICY_NAME = "ap_business_v1"
 
+DEFAULT_APPROVAL_AUTOMATION = {
+    "reminder_hours": 4,
+    "escalation_hours": 24,
+    "escalation_channel": "",
+}
+
+
+def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> Optional[int]:
+    if value in (None, ""):
+        return int(default)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(minimum, min(parsed, maximum))
+
+
+def parse_approval_automation_config(config: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    """Normalize approval follow-up automation settings from the AP policy doc."""
+    if not isinstance(config, dict):
+        return dict(DEFAULT_APPROVAL_AUTOMATION), ["config must be an object"]
+
+    raw = config.get("approval_automation")
+    if raw in (None, ""):
+        raw = {}
+    if not isinstance(raw, dict):
+        return dict(DEFAULT_APPROVAL_AUTOMATION), ["approval_automation must be an object"]
+
+    errors: List[str] = []
+
+    reminder_hours = _bounded_int(
+        raw.get("reminder_hours"),
+        default=int(DEFAULT_APPROVAL_AUTOMATION["reminder_hours"]),
+        minimum=1,
+        maximum=168,
+    )
+    if reminder_hours is None:
+        errors.append("approval_automation.reminder_hours must be a whole number")
+        reminder_hours = int(DEFAULT_APPROVAL_AUTOMATION["reminder_hours"])
+
+    escalation_hours = _bounded_int(
+        raw.get("escalation_hours"),
+        default=int(DEFAULT_APPROVAL_AUTOMATION["escalation_hours"]),
+        minimum=1,
+        maximum=336,
+    )
+    if escalation_hours is None:
+        errors.append("approval_automation.escalation_hours must be a whole number")
+        escalation_hours = int(DEFAULT_APPROVAL_AUTOMATION["escalation_hours"])
+
+    escalation_channel = str(raw.get("escalation_channel") or "").strip()
+    if len(escalation_channel) > 120:
+        errors.append("approval_automation.escalation_channel must be 120 characters or fewer")
+        escalation_channel = escalation_channel[:120]
+
+    if escalation_hours < reminder_hours:
+        errors.append("approval_automation.escalation_hours must be greater than or equal to reminder_hours")
+        escalation_hours = max(escalation_hours, reminder_hours)
+
+    return {
+        "reminder_hours": int(reminder_hours),
+        "escalation_hours": int(escalation_hours),
+        "escalation_channel": escalation_channel,
+    }, errors
+
+
+def get_approval_automation_policy(
+    organization_id: str = "default",
+    policy_name: str = AP_POLICY_NAME,
+) -> Dict[str, Any]:
+    """Return normalized approval automation settings for an organization."""
+    db = get_db()
+    config: Dict[str, Any] = {}
+    try:
+        if hasattr(db, "get_ap_policy"):
+            current = db.get_ap_policy(organization_id, policy_name=policy_name) or {}
+            if isinstance(current.get("config_json"), dict):
+                config = current.get("config_json") or {}
+    except Exception as exc:
+        logger.warning(
+            "Failed to load approval automation policy for %s: %s",
+            organization_id,
+            exc,
+        )
+    settings, _ = parse_approval_automation_config(config)
+    return settings
+
 
 class PolicyAction(Enum):
     """Actions that can be enforced by policy."""
@@ -726,6 +813,8 @@ class PolicyComplianceService:
     def validate_policy_config(self, config: Dict[str, Any]) -> List[str]:
         """Validate policy document and return parse errors."""
         _, errors = self._policies_from_config(config or {})
+        _, approval_errors = parse_approval_automation_config(config or {})
+        errors.extend(approval_errors)
         return errors
 
     def get_policy_document(self) -> Dict[str, Any]:
@@ -748,6 +837,7 @@ class PolicyComplianceService:
             "enabled": True,
             "config": {
                 "inherit_defaults": True,
+                "approval_automation": dict(DEFAULT_APPROVAL_AUTOMATION),
                 "policies": [policy.to_dict() for policy in DEFAULT_POLICIES],
             },
             "updated_by": "system",

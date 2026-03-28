@@ -6,7 +6,9 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDateTime, fmtDollar, useAction } from '../route-helpers.js';
 import { clearPipelineNavigation, readPipelinePreferences, writePipelinePreferences } from '../pipeline-views.js';
+import { writeReviewPreferences } from '../review-preferences.js';
 import { navigateToVendorRecord } from '../../utils/vendor-route.js';
+import { getExceptionLabel } from '../../utils/formatters.js';
 
 const html = htm.bind(h);
 
@@ -68,6 +70,13 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
     navigate('clearledgr/pipeline');
   };
 
+  const openVendorIssues = (vendor) => {
+    const vendorName = String(vendor?.vendor_name || '').trim();
+    if (!vendorName) return;
+    writeReviewPreferences(pipelineScope, { searchQuery: vendorName });
+    navigate('clearledgr/review');
+  };
+
   if (loading) {
     return html`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor directory…</p></div>`;
   }
@@ -87,8 +96,8 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
     <div class="secondary-chip-row" style="margin:0 0 18px">
       <span class="secondary-chip">Vendors tracked ${vendors.length}</span>
       <span class="secondary-chip">Open invoices ${vendors.reduce((sum, vendor) => sum + Number(vendor.open_count || 0), 0).toLocaleString()}</span>
+      <span class="secondary-chip">Open issues ${vendors.reduce((sum, vendor) => sum + Number(vendor.issue_count || 0), 0).toLocaleString()}</span>
       <span class="secondary-chip">Total spend ${fmtDollar(vendors.reduce((sum, vendor) => sum + Number(vendor.total_amount || 0), 0))}</span>
-      <span class="secondary-chip">Needs info ${vendors.reduce((sum, vendor) => sum + Number(vendor.needs_info_count || 0), 0).toLocaleString()}</span>
     </div>
 
     <div class="panel">
@@ -120,6 +129,11 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
                           ${String(row.state || '').replace(/_/g, ' ')} ${row.count}
                         </span>
                       `)}
+                      ${(vendor.top_exception_codes || []).slice(0, 2).map((row) => html`
+                        <span key=${row.exception_code} style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FFF7ED;color:#9A3412">
+                          ${getExceptionLabel(row.exception_code)} ${row.count}
+                        </span>
+                      `)}
                       ${vendor.profile?.requires_po
                         ? html`<span style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FEF3C7;color:#92400E">Requires PO</span>`
                         : null}
@@ -131,11 +145,12 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
                   <div style="text-align:right;min-width:140px">
                     <div style="font-weight:700">${fmtDollar(vendor.total_amount || 0)}</div>
                     <div class="muted" style="font-size:12px;margin-top:2px">${Number(vendor.invoice_count || 0).toLocaleString()} invoices</div>
-                    <div class="muted" style="font-size:12px;margin-top:4px">${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</div>
+                    <div class="muted" style="font-size:12px;margin-top:4px">${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.issue_count || 0).toLocaleString()} issues · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</div>
                   </div>
                 </div>
                 <div class="row-actions" style="margin-top:12px">
                   <button class="btn-secondary btn-sm" onClick=${() => openVendorRecord(vendor)}>Open vendor record</button>
+                  <button class="btn-secondary btn-sm" onClick=${() => openVendorIssues(vendor)}>Review issues</button>
                   <button class="btn-ghost btn-sm" onClick=${() => openVendorPipeline(vendor)}>Open in pipeline</button>
                 </div>
               </div>

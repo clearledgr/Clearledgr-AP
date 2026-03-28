@@ -18,10 +18,21 @@ class DB:
         self.sqlite_path = sqlite_path
         self.use_postgres = bool(self.dsn and psycopg)
 
+    def _postgres_connect_timeout_seconds(self) -> int:
+        raw_value = str(os.getenv("DB_CONNECT_TIMEOUT", "2")).strip()
+        try:
+            timeout_seconds = int(raw_value)
+        except (TypeError, ValueError):
+            timeout_seconds = 2
+        return max(1, timeout_seconds)
+
     @contextmanager
     def connect(self):
         if self.use_postgres:
-            conn = psycopg.connect(self.dsn)  # type: ignore
+            conn = psycopg.connect(  # type: ignore
+                self.dsn,
+                connect_timeout=self._postgres_connect_timeout_seconds(),
+            )
             try:
                 yield conn
             finally:

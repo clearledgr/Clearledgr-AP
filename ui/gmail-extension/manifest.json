@@ -4,6 +4,7 @@
   "version": "1.2026.001",
   "version_name": "1.2026.001 Phoenix",
   "description": "Finance execution agents embedded in Gmail — AP workflows today, more coming",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr37O2Lz2TJyC7Oe3/res2gv4geyo7JqTt7lBaeBxlmGLDW9Z+pPGz5wb09g1icMychN9fRJhoVkySD74ZbOf+lMsrtayCntO1IO+IrJGDRBP5/4kWxvyeeG8xqNe5/ScbvahmBxr9SuHJSjJiAYmLhHKeF0c7/5AP2kwa8XN3Azu/A6YbY+zaeaEH/UXOo9oF6y4SnedV1Fj1JT+QvjxAXR8/L2y/LXfAsTwFgIogKsTNVNG5AJoL/Gzb2Y5+fSL947aoFH7x4yNdPnOFNuOjPxvJ/4oKe/oIncD9y9i35j4dRo7cfzz45lzqbo26ompScYxq3ZrE9T79L9HDZ0ZhQIDAQAB",
   "permissions": [
     "activeTab",
     "scripting",

@@ -330,11 +330,6 @@ async def _drain_erp_post_retry_queue():
 async def _check_approval_timeouts(org_id: str):
     """Send reminders / escalations for AP items stuck in needs_approval.
 
-    Milestone  Hours  Action
-    ---------  -----  ------
-    reminder    4h    DM each pending approver once
-    escalation 24h    DM + post to approval channel once
-
     Deduplication is DB-backed via the ap_item's metadata column
     (``approval_reminder_milestones`` dict). This survives process restarts,
     deploys, and scale-out — unlike the old module-level ``_reminded_set``.
@@ -342,6 +337,7 @@ async def _check_approval_timeouts(org_id: str):
     try:
         import json as _json
         from clearledgr.core.database import get_db
+        from clearledgr.services.policy_compliance import get_approval_automation_policy
         from clearledgr.services.slack_notifications import send_approval_reminder
 
         db = get_db()
@@ -349,9 +345,21 @@ async def _check_approval_timeouts(org_id: str):
             return
 
         now_iso = datetime.now(timezone.utc).isoformat()
+        policy = get_approval_automation_policy(organization_id=org_id)
+        reminder_hours = max(1.0, float(policy.get("reminder_hours") or 4.0))
+        escalation_hours = max(reminder_hours, float(policy.get("escalation_hours") or 24.0))
+        escalation_channel = str(policy.get("escalation_channel") or "").strip() or None
 
-        # Check 4-hour milestone first, then 24-hour
-        for min_hours, milestone in [(4.0, "4h"), (24.0, "24h")]:
+        def _milestone_key(stage: str, hours_value: float) -> str:
+            hours_token = str(int(hours_value) if float(hours_value).is_integer() else hours_value).replace(".", "_")
+            return f"{stage}_{hours_token}h"
+
+        milestones = [
+            ("reminder", reminder_hours, _milestone_key("reminder", reminder_hours)),
+            ("escalation", escalation_hours, _milestone_key("escalation", escalation_hours)),
+        ]
+
+        for stage, min_hours, milestone in milestones:
             overdue = db.get_overdue_approvals(org_id, min_hours=min_hours)
             for item in overdue:
                 ap_item_id = item.get("id")
@@ -364,7 +372,12 @@ async def _check_approval_timeouts(org_id: str):
                 except Exception:
                     meta = {}
                 milestones_sent = meta.get("approval_reminder_milestones") or {}
-                if milestone in milestones_sent:
+                legacy_milestone = (
+                    f"{int(min_hours)}h"
+                    if float(min_hours).is_integer() and stage in {"reminder", "escalation"}
+                    else None
+                )
+                if milestone in milestones_sent or (legacy_milestone and legacy_milestone in milestones_sent):
                     continue  # already sent and recorded in DB
 
                 approver_ids = db.get_pending_approver_ids(ap_item_id)
@@ -373,44 +386,62 @@ async def _check_approval_timeouts(org_id: str):
                     approver_ids=approver_ids,
                     hours_pending=min_hours,
                     organization_id=org_id,
+                    stage=stage,
+                    escalation_channel=escalation_channel,
                 )
 
                 try:
+                    event_type = "approval_nudge_sent" if reminder_sent else "approval_nudge_failed"
+                    reason = (
+                        f"approval_nudge_auto_{int(min_hours) if float(min_hours).is_integer() else min_hours}h"
+                    )
+                    if stage == "escalation":
+                        event_type = "approval_escalation_sent" if reminder_sent else "approval_escalation_failed"
+                        reason = (
+                            f"approval_escalation_auto_{int(min_hours) if float(min_hours).is_integer() else min_hours}h"
+                        )
                     db.append_ap_audit_event(
                         {
                             "ap_item_id": ap_item_id,
-                            "event_type": "approval_nudge_sent" if reminder_sent else "approval_nudge_failed",
+                            "event_type": event_type,
                             "actor_type": "system",
                             "actor_id": "agent_background",
-                            "reason": f"approval_nudge_auto_{milestone}",
+                            "reason": reason,
                             "metadata": {
                                 "auto": True,
+                                "stage": stage,
                                 "milestone": milestone,
                                 "hours_pending": min_hours,
                                 "approver_count": len(approver_ids or []),
                             },
                             "organization_id": org_id,
                             "source": "agent_background",
-                            "idempotency_key": f"approval_nudge_auto:{ap_item_id}:{milestone}",
+                            "idempotency_key": f"approval_{stage}_auto:{ap_item_id}:{milestone}",
                         }
                     )
                 except Exception as audit_exc:
                     logger.error("Could not append auto-approval-nudge audit event: %s", audit_exc)
 
-                # Build metadata patch — include escalation record for 24h
-                patch: dict = {
-                    "approval_reminder_milestones": {
+                patch: dict = {}
+                if reminder_sent:
+                    patch["approval_reminder_milestones"] = {
                         **milestones_sent,
                         milestone: now_iso,
                     }
-                }
-                if milestone == "24h":
-                    patch["escalated_at"] = now_iso
-                    patch["escalation_reason"] = "approval_timeout_24h"
-                    patch["escalation_vendor"] = item.get("vendor_name")
-                    patch["escalation_amount"] = item.get("amount")
+                    if stage == "reminder":
+                        patch["approval_nudge_count"] = max(0, int(meta.get("approval_nudge_count") or 0)) + 1
+                        patch["approval_last_nudged_at"] = now_iso
+                        patch["approval_next_action"] = "wait_for_approval"
+                    if stage == "escalation":
+                        patch["escalated_at"] = now_iso
+                        patch["escalation_reason"] = f"approval_timeout_{milestone}"
+                        patch["escalation_vendor"] = item.get("vendor_name")
+                        patch["escalation_amount"] = item.get("amount")
+                        patch["approval_escalation_count"] = max(0, int(meta.get("approval_escalation_count") or 0)) + 1
+                        patch["approval_last_escalated_at"] = now_iso
+                        patch["approval_next_action"] = "wait_for_escalated_review"
 
-                if hasattr(db, "update_ap_item_metadata_merge"):
+                if patch and hasattr(db, "update_ap_item_metadata_merge"):
                     db.update_ap_item_metadata_merge(ap_item_id, patch)
 
                 logger.info(

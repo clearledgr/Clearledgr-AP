@@ -10,6 +10,7 @@ from clearledgr.services.slack_notifications import (
     _post_slack_blocks,
     _retry_slack_response_url,
     send_with_retry,
+    send_approval_reminder,
     process_retry_queue,
 )
 
@@ -117,6 +118,84 @@ class TestRetrySlackResponseUrl:
                 "body": {},
             }))
             assert result is False
+
+
+# ---------------------------------------------------------------------------
+# send_approval_reminder
+# ---------------------------------------------------------------------------
+
+
+class TestSendApprovalReminder:
+    def test_posts_channel_reminder_when_no_pending_approvers(self):
+        instance = MagicMock()
+        instance.send_dm = AsyncMock()
+
+        with patch("clearledgr.services.slack_api.get_slack_client", return_value=instance):
+            with patch(
+                "clearledgr.services.slack_notifications._post_slack_blocks",
+                new=AsyncMock(return_value=True),
+            ) as post_blocks:
+                result = _run(
+                    send_approval_reminder(
+                        ap_item={
+                            "vendor_name": "Approval Reminder Co",
+                            "amount": 42.0,
+                            "invoice_number": "INV-REM-1",
+                            "organization_id": "default",
+                            "metadata": {"approval_channel": "C-APPROVALS"},
+                        },
+                        approver_ids=[],
+                        hours_pending=4,
+                        organization_id="default",
+                        stage="reminder",
+                    )
+                )
+
+        assert result is True
+        post_blocks.assert_awaited_once()
+        instance.send_dm.assert_not_awaited()
+        posted_blocks = post_blocks.await_args.kwargs["blocks"]
+        actions_block = next(block for block in posted_blocks if block.get("type") == "actions")
+        action_ids = [element["action_id"] for element in actions_block["elements"]]
+        assert action_ids == [
+            "approve_invoice_INV-REM-1",
+            "reject_invoice_INV-REM-1",
+            "request_info_INV-REM-1",
+        ]
+
+    def test_dm_reminder_includes_action_buttons(self):
+        instance = MagicMock()
+        instance.send_dm = AsyncMock()
+
+        with patch("clearledgr.services.slack_api.get_slack_client", return_value=instance):
+            result = _run(
+                send_approval_reminder(
+                    ap_item={
+                        "id": "AP-123",
+                        "vendor_name": "Approval Reminder Co",
+                        "amount": 42.0,
+                        "currency": "USD",
+                        "invoice_number": "INV-REM-2",
+                        "organization_id": "default",
+                        "metadata": {"approval_channel": "C-APPROVALS"},
+                    },
+                    approver_ids=["U123"],
+                    hours_pending=4,
+                    organization_id="default",
+                    stage="reminder",
+                )
+            )
+
+        assert result is True
+        instance.send_dm.assert_awaited_once()
+        dm_blocks = instance.send_dm.await_args.kwargs["blocks"]
+        actions_block = next(block for block in dm_blocks if block.get("type") == "actions")
+        action_ids = [element["action_id"] for element in actions_block["elements"]]
+        assert action_ids == [
+            "approve_invoice_AP-123",
+            "reject_invoice_AP-123",
+            "request_info_AP-123",
+        ]
 
 
 # ---------------------------------------------------------------------------

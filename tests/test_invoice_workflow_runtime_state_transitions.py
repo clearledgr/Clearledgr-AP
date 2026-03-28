@@ -971,6 +971,29 @@ def test_resume_workflow_still_failing_stays_in_failed_post(service, db, monkeyp
     assert row["state"] == "failed_post"
 
 
+def test_resume_workflow_still_failing_preserves_nonrecoverable_error_code(service, db, monkeypatch):
+    item = _create_ap_item(db, gmail_id="gmail-resume-no-erp", state="failed_post")
+
+    async def _fake_post(_invoice, **_kwargs):
+        return {
+            "status": "error",
+            "reason": "ERP is not properly configured",
+            "error_code": "erp_not_configured",
+        }
+
+    monkeypatch.setattr(service, "_post_to_erp", _fake_post)
+
+    result = asyncio.run(service.resume_workflow(item["id"]))
+
+    assert result["status"] == "still_failing"
+    assert result["error_code"] == "erp_not_configured"
+    assert result["recoverability"]["recoverable"] is False
+
+    row = db.get_invoice_status("gmail-resume-no-erp")
+    assert row["state"] == "failed_post"
+    assert row["exception_code"] == "erp_not_configured"
+
+
 def test_resume_workflow_retry_storm_recovers_once_without_double_post(service, db, monkeypatch):
     """Repeated retries through outage/recovery should post exactly once."""
     item = _create_ap_item(db, gmail_id="gmail-resume-storm", state="failed_post")
@@ -1046,6 +1069,39 @@ def test_approve_invoice_failure_enqueues_retry_job(service, db, monkeypatch):
     assert jobs, "Expected a pending erp_post_retry job after failed_post"
     assert jobs[0]["job_type"] == "erp_post_retry"
     assert jobs[0]["ap_item_id"] == item["id"]
+
+
+def test_approve_invoice_connector_failure_preserves_exception_code_and_skips_retry_job(service, db, monkeypatch):
+    item = _create_ap_item(db, gmail_id="gmail-no-erp", state="needs_approval")
+
+    monkeypatch.setattr(service, "_load_budget_context_from_invoice_row", lambda _row: [])
+    monkeypatch.setattr(service, "_check_po_exception_block", lambda _row: {"blocked": False, "exceptions": []})
+
+    async def _fake_post(_invoice, **_kwargs):
+        return {
+            "status": "error",
+            "reason": "No ERP connected for organization",
+            "error_code": "erp_not_connected",
+        }
+
+    monkeypatch.setattr(service, "_post_to_erp", _fake_post)
+
+    result = asyncio.run(
+        service.approve_invoice(
+            gmail_id="gmail-no-erp",
+            approved_by="approver@example.com",
+        )
+    )
+
+    assert result["status"] == "error"
+
+    row = db.get_invoice_status("gmail-no-erp")
+    assert row["state"] == "failed_post"
+    assert row["exception_code"] == "erp_not_connected"
+    assert row["last_error"] == "No ERP connected for organization"
+
+    jobs = db.list_agent_retry_jobs("default", ap_item_id=item["id"], status="pending")
+    assert jobs == []
 
 
 def test_enqueue_erp_post_retry_is_idempotent(service, db, monkeypatch):
@@ -1127,6 +1183,20 @@ def test_batch_retry_recoverable_precheck_blocks_non_recoverable_failed_post(ser
     precheck = service.evaluate_batch_retry_recoverable_failure(row)
     assert precheck["eligible"] is False
     assert precheck["recoverability"]["recoverable"] is False
+
+
+def test_batch_retry_recoverable_precheck_blocks_connector_configuration_failure(service):
+    row = {
+        "id": "ap-retry-no-erp",
+        "state": "failed_post",
+        "last_error": "No ERP connected for organization",
+        "exception_code": "erp_not_connected",
+        "metadata": {},
+    }
+    precheck = service.evaluate_batch_retry_recoverable_failure(row)
+    assert precheck["eligible"] is False
+    assert precheck["recoverability"]["recoverable"] is False
+    assert precheck["recoverability"]["reason"] == "non_recoverable_erp_not_connected"
 
 
 def test_batch_retry_recoverable_precheck_blocks_field_review_required(service):

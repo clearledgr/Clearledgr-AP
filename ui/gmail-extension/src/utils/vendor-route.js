@@ -26,7 +26,7 @@ export function rememberVendorRouteName(vendorName) {
 export function navigateToVendorRecord(navigate, vendorName) {
   const normalized = rememberVendorRouteName(vendorName);
   if (!normalized || typeof navigate !== 'function') return false;
-  navigate(`clearledgr/vendor/${encodeURIComponent(normalized)}`);
+  navigate('clearledgr/vendor/:name', { name: normalized });
   return true;
 }
 

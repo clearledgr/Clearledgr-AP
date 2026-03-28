@@ -24,12 +24,15 @@ import {
   partitionAuditEvents,
 } from '../utils/formatters.js';
 import {
+  canEscalateApproval,
+  canReassignApproval,
   normalizeWorkState,
   getPrimaryActionConfig,
   getWorkStateNotice,
   shouldOfferResumeWorkflow,
   canRejectWorkItem,
   canNudgeApprover,
+  needsEntityRouting,
 } from '../utils/work-actions.js';
 import {
   getDocumentTypeLabel,
@@ -37,6 +40,7 @@ import {
   isInvoiceDocumentType,
   normalizeDocumentType,
 } from '../utils/document-types.js';
+import { navigateInboxRoute } from '../utils/inbox-route.js';
 import { navigateToVendorRecord } from '../utils/vendor-route.js';
 import { focusPipelineItem } from '../routes/pipeline-views.js';
 
@@ -124,10 +128,25 @@ function humanizeActionFailure(reason) {
     missing_item_reference: 'Clearledgr could not identify this invoice record.',
     ap_item_not_found: 'Clearledgr could not find this invoice record.',
     state_not_ready_for_approval: 'This invoice is not ready to send for approval yet.',
+    entity_route_review_required: 'Choose the legal entity before sending this invoice for approval.',
+    entity_selection_required: 'Select the correct legal entity first.',
     field_review_required: 'Finish the required field checks before sending this invoice for approval.',
     organization_mismatch: 'This invoice belongs to a different workspace.',
+    assignee_required: 'Choose the approver who should own this approval request.',
+    state_not_waiting_for_approval: 'This invoice is no longer waiting on approval.',
+    waiting_for_sla_window: 'Follow-up already sent. Wait for the vendor response before nudging again.',
+    followup_attempt_limit_reached: 'Clearledgr reached the vendor follow-up limit. This now needs manual escalation.',
+    state_not_needs_info: 'This invoice is no longer waiting on vendor information.',
   };
   return map[token] || token.replace(/_/g, ' ');
+}
+
+function didSendApprovalReminder(result) {
+  const payload = result && typeof result === 'object' ? result : {};
+  if (String(payload.status || '').toLowerCase() === 'nudged') return true;
+  return ['slack', 'teams', 'fallback'].some((key) => (
+    String(payload?.[key]?.status || '').toLowerCase() === 'sent'
+  ));
 }
 
 function Toast() {
@@ -192,6 +211,9 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   const fieldReviewBlockers = getFieldReviewBlockers(item);
   const financeEffectBlockers = getFinanceEffectBlockers(item);
   const financeEffectNotice = getFinanceEffectNotice(item);
+  const approvalFollowup = item?.approval_followup && typeof item.approval_followup === 'object'
+    ? item.approval_followup
+    : {};
   const pauseReason = getWorkflowPauseReason(item);
   const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
   const isInvoiceDocument = isInvoiceDocumentType(documentType);
@@ -236,9 +258,29 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
       financeEffectBlockers[0]?.detail || financeEffectNotice || 'Linked finance documents changed the payable or settlement balance.',
     );
   }
+  if (needsEntityRouting(item, state, documentType)) {
+    add(
+      'entity',
+      'Entity route needs review',
+      item?.entity_route_reason || 'Choose the correct legal entity before approval routing can continue.',
+    );
+  }
 
   if (state === 'needs_approval') {
-    add('approval', 'Waiting on approver', 'The approval request is still outstanding.');
+    const pendingAssignees = Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees : [];
+    add(
+      'approval',
+      approvalFollowup?.escalation_due
+        ? 'Approval escalation due'
+        : (approvalFollowup?.sla_breached ? 'Approval follow-up due' : 'Waiting on approver'),
+      approvalFollowup?.escalation_due
+        ? 'Approval has been waiting past the escalation policy and should be escalated or reassigned.'
+        : (approvalFollowup?.sla_breached
+          ? 'Approval has been waiting past the reminder SLA and should be nudged.'
+        : (pendingAssignees.length
+          ? `Waiting on ${pendingAssignees.slice(0, 3).join(', ')}.`
+          : 'The approval request is still outstanding.')),
+    );
   }
 
   if (state === 'needs_info') {
@@ -266,9 +308,15 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   if (blockers.length === 0 && state === 'validated') {
     add(
       'validated',
-      isInvoiceDocument ? 'Ready for approval' : `Ready to review ${documentLabel}`,
+      isInvoiceDocument && needsEntityRouting(item, state, documentType)
+        ? 'Resolve entity route'
+        : (isInvoiceDocument ? 'Ready for approval' : `Ready to review ${documentLabel}`),
       isInvoiceDocument
-        ? 'Checks are complete and the invoice is ready to send for approval.'
+        ? (
+          needsEntityRouting(item, state, documentType)
+            ? 'Choose the correct legal entity before sending this invoice for approval.'
+            : 'Checks are complete and the invoice is ready to send for approval.'
+        )
         : getNonInvoiceWorkflowGuidance(documentType),
     );
   }
@@ -443,7 +491,11 @@ function AuthPrompt({ queueManager }) {
   const s = useStore();
   const gmail = s.gmailIntegration || {};
   const canOpenConnections = hasAdminAccessRole(s.currentUserRole);
-  const goConnections = useCallback(() => store.sdk?.Router?.goto?.('clearledgr/connections'), []);
+  const goConnections = useCallback(() => {
+    if (!navigateInboxRoute('clearledgr/connections', store.sdk)) {
+      showToast('Unable to open Connections', 'error');
+    }
+  }, []);
   const [authorize, pending] = useAction(async () => {
     const result = await queueManager?.authorizeGmailNow?.();
     const ok = Boolean(result?.success || result?.authorized || result?.status === 'ok');
@@ -513,12 +565,22 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     : {};
   const financeEffectBlockers = getFinanceEffectBlockers(item);
   const financeEffectNotice = getFinanceEffectNotice(item);
+  const approvalFollowup = item?.approval_followup && typeof item.approval_followup === 'object'
+    ? item.approval_followup
+    : {};
+  const entityRouting = item?.entity_routing && typeof item.entity_routing === 'object'
+    ? item.entity_routing
+    : {};
+  const entityCandidates = Array.isArray(item?.entity_candidates)
+    ? item.entity_candidates
+    : (Array.isArray(entityRouting?.candidates) ? entityRouting.candidates : []);
   const resumeWorkflowEligible = !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType);
   const stateNotice = resumeWorkflowEligible
     ? 'Field review is cleared. Resume workflow to continue the posting step.'
     : getWorkStateNotice(state, documentType, item);
   const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : '';
   const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
+  const entityNeedsReview = needsEntityRouting(item, state, documentType);
 
   const [optimisticState, setOptimisticState] = useState(null);
   const displayState = normalizeWorkState(optimisticState || state);
@@ -529,6 +591,7 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     orgId: queueManager?.runtimeConfig?.organizationId || 'default',
     userEmail: queueManager?.runtimeConfig?.userEmail || '',
   };
+  const gotoRoute = useCallback((routeId, params) => navigateInboxRoute(routeId, store.sdk, params), []);
 
   const [doApproval, approvalPending] = useAction(async () => {
     setOptimisticState('needs_approval');
@@ -544,8 +607,37 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
 
   const [doNudge, nudgePending] = useAction(async () => {
     const result = await queueManager.nudgeApproval(item);
-    const ok = String(result?.status || '').toLowerCase() === 'nudged';
-    showToast(ok ? 'Approval reminder sent' : 'Unable to send reminder', ok ? 'success' : 'error');
+    const ok = didSendApprovalReminder(result);
+    showToast(
+      ok ? 'Approval reminder sent' : (humanizeActionFailure(result?.reason || result?.fallback?.reason) || 'Unable to send reminder'),
+      ok ? 'success' : 'error'
+    );
+    if (ok) await queueManager.refreshQueue();
+  });
+
+  const [doEscalateApproval, escalatePending] = useAction(async () => {
+    const result = await queueManager.escalateApproval(item);
+    const ok = String(result?.status || '').toLowerCase() === 'escalated';
+    showToast(ok ? 'Approval escalated' : (humanizeActionFailure(result?.reason) || 'Unable to escalate approval'), ok ? 'success' : 'error');
+    if (ok) await queueManager.refreshQueue();
+  });
+
+  const [doReassignApproval, reassignPending] = useAction(async () => {
+    const assignee = await openDialog({
+      actionType: 'generic',
+      title: 'Reassign approval',
+      label: 'New approver',
+      message: 'Enter the approver who should own this approval request now.',
+      placeholder: 'Approver email or Slack user',
+      confirmLabel: 'Reassign',
+      cancelLabel: 'Cancel',
+      required: true,
+      chips: Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees.slice(0, 4) : [],
+    });
+    if (!assignee) return;
+    const result = await queueManager.reassignApproval(item, { assignee });
+    const ok = String(result?.status || '').toLowerCase() === 'reassigned';
+    showToast(ok ? `Approval reassigned to ${assignee}` : (humanizeActionFailure(result?.reason) || 'Unable to reassign approval'), ok ? 'success' : 'error');
     if (ok) await queueManager.refreshQueue();
   });
 
@@ -553,8 +645,18 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     const result = await queueManager.prepareVendorFollowup(item, {
       reason: 'Request missing invoice details from vendor',
     });
-    const ok = ['prepared', 'queued'].includes(String(result?.status || '').toLowerCase());
-    showToast(ok ? 'Info request draft prepared' : 'Unable to prepare info request', ok ? 'success' : 'error');
+    const status = String(result?.status || '').toLowerCase();
+    const ok = ['prepared', 'queued'].includes(status);
+    const informational = status === 'waiting_sla';
+    showToast(
+      ok
+        ? 'Info request draft prepared'
+        : informational
+        ? (humanizeActionFailure(result?.reason) || 'Follow-up already sent')
+        : (humanizeActionFailure(result?.reason) || 'Unable to prepare info request'),
+      ok ? 'success' : informational ? 'info' : 'error',
+    );
+    if (ok || informational) await queueManager.refreshQueue();
   });
 
   const [doRetry, retryPending] = useAction(async () => {
@@ -691,26 +793,63 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     }
   });
 
+  const [doResolveEntityRoute, resolveEntityPending] = useAction(async () => {
+    let selection = '';
+    if (entityCandidates.length > 1) {
+      selection = await openDialog({
+        actionType: 'generic',
+        title: 'Resolve entity route',
+        label: 'Entity code or name',
+        message: 'Choose the legal entity Clearledgr should use for this invoice.',
+        previewLines: entityCandidates.slice(0, 6).map((candidate) => (
+          candidate?.label || candidate?.entity_name || candidate?.entity_code || ''
+        )).filter(Boolean),
+        placeholder: 'e.g. US-01 or Cowrywise Inc US',
+        confirmLabel: 'Resolve entity',
+        cancelLabel: 'Cancel',
+        required: true,
+        chips: entityCandidates.slice(0, 4).map((candidate) => (
+          candidate?.entity_code || candidate?.entity_name || candidate?.label || ''
+        )).filter(Boolean),
+      });
+      if (!selection) return;
+    }
+    const candidate = entityCandidates.length === 1 ? entityCandidates[0] : null;
+    const result = await queueManager.resolveEntityRoute(item, {
+      selection: selection || candidate?.entity_code || candidate?.entity_name,
+      entityId: candidate?.entity_id,
+      entityCode: candidate?.entity_code,
+      entityName: candidate?.entity_name,
+    });
+    const ok = String(result?.status || '').toLowerCase() === 'resolved';
+    showToast(ok ? 'Entity route resolved' : (humanizeActionFailure(result?.reason) || 'Unable to resolve entity route'), ok ? 'success' : 'error');
+    if (ok) await queueManager.refreshQueue();
+  });
+
   const goPrev = useCallback(() => store.selectItemByOffset(-1), []);
   const goNext = useCallback(() => store.selectItemByOffset(1), []);
   const openPipeline = useCallback(() => {
     if (!item?.id) return;
     store.setSelectedItem(String(item.id));
     focusPipelineItem(pipelineScope, item, 'thread');
-    store.sdk?.Router?.goto?.('clearledgr/pipeline');
-  }, [item, pipelineScope]);
+    if (!gotoRoute('clearledgr/pipeline')) {
+      showToast('Unable to open pipeline', 'error');
+    }
+  }, [gotoRoute, item, pipelineScope]);
   const openSource = useCallback(() => {
     if (!openSourceEmail(item)) showToast('Unable to open source email', 'error');
   }, [item]);
   const openVendorRecord = useCallback(() => {
     const vendorName = String(item?.vendor_name || item?.vendor || '').trim();
     if (!vendorName) return;
-    navigateToVendorRecord((routeId) => store.sdk?.Router?.goto?.(routeId), vendorName);
-  }, [item]);
+    if (!navigateToVendorRecord(gotoRoute, vendorName)) {
+      showToast('Unable to open vendor record', 'error');
+    }
+  }, [gotoRoute, item]);
 
   const basePrimaryAction = (pauseReason || item?.finance_effect_review_required)
     ? null
-    : getPrimaryActionConfig(displayState, actorRole, documentType);
+    : getPrimaryActionConfig(displayState, actorRole, documentType, item);
   const primaryAction = resumeWorkflowEligible && ['preview_erp_post', 'retry_erp_post'].includes(basePrimaryAction?.id)
     ? { id: 'resume_workflow', label: 'Resume workflow' }
     : basePrimaryAction;
@@ -720,9 +859,15 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   if (primaryAction?.id === 'request_approval') {
     primaryHandler = doApproval;
     primaryPending = approvalPending;
+  } else if (primaryAction?.id === 'resolve_entity_route') {
+    primaryHandler = doResolveEntityRoute;
+    primaryPending = resolveEntityPending;
   } else if (primaryAction?.id === 'prepare_info_request') {
     primaryHandler = doPrepareInfo;
     primaryPending = prepareInfoPending;
+  } else if (primaryAction?.id === 'escalate_approval') {
+    primaryHandler = doEscalateApproval;
+    primaryPending = escalatePending;
   } else if (primaryAction?.id === 'nudge_approver') {
     primaryHandler = doNudge;
     primaryPending = nudgePending;
@@ -793,10 +938,77 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
         ${canRejectWorkItem(displayState, actorRole, documentType) && html`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
         `}
+        ${canReassignApproval(item, displayState, actorRole, documentType) && html`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReassignApproval} disabled=${reassignPending}>
+            ${reassignPending ? 'Reassigning…' : 'Reassign approver'}
+          </button>
+        `}
+        ${canEscalateApproval(item, displayState, actorRole, documentType) && primaryAction?.id !== 'escalate_approval' && html`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doEscalateApproval} disabled=${escalatePending}>
+            ${escalatePending ? 'Escalating…' : 'Escalate approval'}
+          </button>
+        `}
+        ${entityNeedsReview && primaryAction?.id !== 'resolve_entity_route' && html`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doResolveEntityRoute} disabled=${resolveEntityPending}>
+            ${resolveEntityPending ? 'Resolving…' : 'Resolve entity'}
+          </button>
+        `}
         ${canNudgeApprover(displayState, actorRole, documentType) && primaryAction?.id !== 'nudge_approver' && html`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Nudge approver</button>
         `}
       </div>
+
+      ${(displayState === 'needs_approval' || entityNeedsReview) && html`
+        <div class="cl-section" aria-label="Follow-up and routing">
+          <div class="cl-section-title">Follow-up and routing</div>
+          <div class="cl-evidence-list">
+            ${displayState === 'needs_approval' && html`
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Approval wait</div>
+                  <div class="cl-evidence-detail">
+                    ${approvalFollowup?.escalation_due
+                      ? 'Past escalation policy'
+                      : (approvalFollowup?.sla_breached ? 'Past reminder SLA' : 'Still within SLA')}
+                  </div>
+                </div>
+                <div class="cl-evidence-status">${approvalFollowup?.wait_minutes ? `${approvalFollowup.wait_minutes}m` : '—'}</div>
+              </div>
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Pending approvers</div>
+                </div>
+                <div class="cl-evidence-status">
+                  ${Array.isArray(approvalFollowup?.pending_assignees) && approvalFollowup.pending_assignees.length
+                    ? approvalFollowup.pending_assignees.join(', ')
+                    : 'Not recorded'}
+                </div>
+              </div>
+            `}
+            ${isInvoiceDocument && html`
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Entity route</div>
+                  ${item?.entity_route_reason && html`<div class="cl-evidence-detail">${item.entity_route_reason}</div>`}
+                </div>
+                <div class="cl-evidence-status">
+                  ${entityNeedsReview ? 'Needs review' : (item?.entity_code || item?.entity_name || 'Not set')}
+                </div>
+              </div>
+              ${entityCandidates.length > 0 && html`
+                <div class="cl-evidence-row">
+                  <div class="cl-evidence-copy">
+                    <div>Entity candidates</div>
+                  </div>
+                  <div class="cl-evidence-status">
+                    ${entityCandidates.slice(0, 3).map((candidate) => candidate?.label || candidate?.entity_name || candidate?.entity_code).filter(Boolean).join(', ')}
+                  </div>
+                </div>
+              `}
+            `}
+          </div>
+        </div>
+      `}
 
       <${FieldReviewPanel}
         blockers=${fieldReviewBlockers}
@@ -852,8 +1064,16 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
 }
 
 function EmptyState({ queueCount }) {
-  const openPipeline = useCallback(() => store.sdk?.Router?.goto?.('clearledgr/pipeline'), []);
-  const openHome = useCallback(() => store.sdk?.Router?.goto?.('clearledgr/home'), []);
+  const openPipeline = useCallback(() => {
+    if (!navigateInboxRoute('clearledgr/pipeline', store.sdk)) {
+      showToast('Unable to open pipeline', 'error');
+    }
+  }, []);
+  const openHome = useCallback(() => {
+    if (!navigateInboxRoute('clearledgr/home', store.sdk)) {
+      showToast('Unable to open Home', 'error');
+    }
+  }, []);
   const threadSelected = Boolean(store.currentThreadId);
 
   if (threadSelected) {
@@ -872,16 +1092,17 @@ function EmptyState({ queueCount }) {
       <p class="cl-muted">Open an email to work one record, or open Pipeline to see the full queue.</p>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
       </div>
     </div></div>`;
   }
 
   return html`<div class="cl-section"><div class="cl-empty">
     <p>Nothing is waiting right now.</p>
-    <p class="cl-muted">Clearledgr will show new work here when it arrives.</p>
+    <p class="cl-muted">Pipeline is still the control plane. Home is available if you want the lighter overview.</p>
     <div class="cl-thread-actions">
-      <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
+      <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
+      <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
     </div>
   </div></div>`;
 }

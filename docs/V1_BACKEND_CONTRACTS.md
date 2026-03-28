@@ -77,8 +77,9 @@ Returns the AP worklist for the Gmail embedded experience. This is the canonical
 16. `confidence_blockers`
 
 **Notes**
-1. Gmail should render one active item at a time, using this worklist as the queue source.
-2. Legacy `/extension/pipeline` may exist for compatibility but is not the preferred AP v1 worklist contract.
+1. Gmail should render one active item at a time, using this worklist as the active-record source.
+2. `Pipeline` should use the same canonical worklist contract as its queue/control-plane source.
+3. Legacy `/extension/pipeline` may exist for compatibility but is not the preferred AP v1 worklist contract.
 
 ### 1.2 AP item context (cross-system context for selected invoice)
 
@@ -165,6 +166,18 @@ Embedded channel responses should communicate one of:
 5. `blocked_by_policy_or_state`
 
 These should map to operator-safe messages in Slack/Teams cards.
+
+### 2.4 Callback precedence matrix
+
+Slack and Teams callbacks must resolve in this order before dispatch:
+
+1. `duplicate_callback`
+2. `stale_action`
+3. `superseded_by_state_*` when workflow has already moved beyond the approval window
+4. `blocked_by_policy_or_state`
+5. dispatch to the workflow runtime
+
+This keeps both approval surfaces aligned when duplicate, late, or superseded decisions arrive.
 
 ---
 

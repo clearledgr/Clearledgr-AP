@@ -25,6 +25,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.ap_entity_routing import resolve_entity_routing
+
 logger = logging.getLogger(__name__)
 
 
@@ -1517,6 +1519,203 @@ class MetricsStore:
             items,
             audit_events_by_item=audit_events_by_item,
         )
+        pilot_window_days = 30
+        pilot_cutoff = now - timedelta(days=pilot_window_days)
+        operator_event_rows = self.list_audit_events(
+            organization_id,
+            event_types=[
+                "approval_escalation_sent",
+                "approval_reassigned",
+                "entity_route_resolved",
+            ],
+            limit=20000,
+        )
+        approval_escalation_event_count = 0
+        approval_reassignment_event_count = 0
+        entity_route_resolution_event_count = 0
+        for event in operator_event_rows:
+            event_ts = self._parse_iso(event.get("ts"))
+            if not event_ts or event_ts < pilot_cutoff:
+                continue
+            event_type = str(event.get("event_type") or "").strip().lower()
+            if event_type == "approval_escalation_sent":
+                approval_escalation_event_count += 1
+            elif event_type == "approval_reassigned":
+                approval_reassignment_event_count += 1
+            elif event_type == "entity_route_resolved":
+                entity_route_resolution_event_count += 1
+
+        approval_queue_count = 0
+        approval_sla_breached_open_count = 0
+        approval_escalated_open_count = 0
+        approval_reassigned_open_count = 0
+        entity_route_needs_review_count = 0
+        entity_route_resolved_count = 0
+        entity_route_single_candidate_resolved_count = 0
+        field_review_open_count = 0
+        invoice_population = 0
+        approval_open_states = {"needs_approval", "pending_approval"}
+
+        for item in items:
+            state = str(item.get("state") or "").strip().lower()
+            metadata = self._decode_json_any(item.get("metadata"))
+            metadata_dict = metadata if isinstance(metadata, dict) else {}
+            document_type = str(
+                item.get("document_type")
+                or item.get("email_type")
+                or metadata_dict.get("document_type")
+                or metadata_dict.get("email_type")
+                or "invoice"
+            ).strip().lower() or "invoice"
+
+            if state in open_states and self._coerce_bool(
+                item.get("requires_field_review")
+                if item.get("requires_field_review") is not None
+                else metadata_dict.get("requires_field_review")
+            ):
+                field_review_open_count += 1
+
+            if document_type == "invoice":
+                invoice_population += 1
+                entity_routing = resolve_entity_routing(metadata_dict, item)
+                routing_status = str(entity_routing.get("status") or "").strip().lower()
+                if routing_status == "needs_review" and state in open_states:
+                    entity_route_needs_review_count += 1
+                elif routing_status == "resolved":
+                    entity_route_resolved_count += 1
+                    candidates = entity_routing.get("candidates") if isinstance(entity_routing.get("candidates"), list) else []
+                    selected = entity_routing.get("selected") if isinstance(entity_routing.get("selected"), dict) else {}
+                    if selected and len(candidates) <= 1:
+                        entity_route_single_candidate_resolved_count += 1
+
+            if state not in approval_open_states:
+                continue
+
+            approval_queue_count += 1
+            if metadata_dict.get("approval_last_escalated_at") or int(metadata_dict.get("approval_escalation_count") or 0) > 0:
+                approval_escalated_open_count += 1
+            if metadata_dict.get("approval_last_reassigned_at") or int(metadata_dict.get("approval_reassignment_count") or 0) > 0:
+                approval_reassigned_open_count += 1
+
+            requested_at = (
+                self._parse_iso(item.get("approval_requested_at"))
+                or self._parse_iso(metadata_dict.get("approval_requested_at"))
+            )
+            if requested_at is None:
+                item_approvals = approvals_by_item.get(str(item.get("id") or ""), [])
+                if item_approvals:
+                    approval_created_ats = [
+                        created_at
+                        for created_at in (
+                            self._parse_iso(entry.get("created_at"))
+                            for entry in item_approvals
+                        )
+                        if created_at is not None
+                    ]
+                    requested_at = max(approval_created_ats) if approval_created_ats else None
+            if requested_at and (now - requested_at).total_seconds() / 60.0 >= approval_sla_minutes:
+                approval_sla_breached_open_count += 1
+
+        operator_metrics = {
+            "definitions": {
+                "approval_queue_count": "Open invoices currently waiting on approval.",
+                "approval_sla_breached_open_count": "Open approval items whose current approval wait exceeds the configured SLA.",
+                "approval_escalated_open_count": "Open approval items that have already been escalated at least once.",
+                "approval_reassigned_open_count": "Open approval items that have already been reassigned at least once.",
+                "entity_route_needs_review_count": "Open invoice items still blocked on manual entity routing review.",
+                "field_review_open_count": "Open invoice items still blocked on field-review confirmation.",
+            },
+            "live_queue": {
+                "approval_queue_count": int(approval_queue_count),
+                "approval_sla_breached_open_count": int(approval_sla_breached_open_count),
+                "approval_escalated_open_count": int(approval_escalated_open_count),
+                "approval_reassigned_open_count": int(approval_reassigned_open_count),
+                "entity_route_needs_review_count": int(entity_route_needs_review_count),
+                "field_review_open_count": int(field_review_open_count),
+            },
+            "queue_rates": {
+                "approval_sla_breached_open_rate": round(
+                    (approval_sla_breached_open_count / approval_queue_count) if approval_queue_count else 0.0,
+                    4,
+                ),
+                "entity_route_needs_review_rate": round(
+                    (entity_route_needs_review_count / invoice_population) if invoice_population else 0.0,
+                    4,
+                ),
+            },
+            "activity_window_days": int(pilot_window_days),
+            "activity": {
+                "approval_escalation_event_count": int(approval_escalation_event_count),
+                "approval_reassignment_event_count": int(approval_reassignment_event_count),
+                "entity_route_resolution_event_count": int(entity_route_resolution_event_count),
+            },
+        }
+
+        touchless_rate = round((touchless_count / touchless_eligible) if touchless_eligible else 0.0, 4)
+        human_intervention_rate = round((human_intervention_count / touchless_eligible) if touchless_eligible else 0.0, 4)
+        on_time_approval_rate = round((on_time_count / len(approved_records)) if approved_records else 0.0, 4)
+        avg_cycle_time_hours = round(sum(cycle_times_hours) / len(cycle_times_hours), 2) if cycle_times_hours else 0.0
+        avg_approval_wait_hours = round(approval_wait_avg_minutes / 60.0, 2)
+        approval_sla_hours = round(float(approval_sla_minutes) / 60.0, 2)
+
+        pilot_highlights: List[str] = []
+        if approval_sla_breached_open_count > 0:
+            pilot_highlights.append(
+                f"{approval_sla_breached_open_count} approvals are currently beyond the {approval_sla_hours:g}-hour SLA."
+            )
+        if entity_route_needs_review_count > 0:
+            pilot_highlights.append(
+                f"{entity_route_needs_review_count} invoices are waiting on manual entity routing review."
+            )
+        if approval_escalation_event_count > 0:
+            pilot_highlights.append(
+                f"{approval_escalation_event_count} approval escalations were sent in the last {pilot_window_days} days."
+            )
+        if touchless_eligible > 0:
+            pilot_highlights.append(
+                f"{round(touchless_rate * 100.0, 1):.1f}% of completed invoices ran touchless."
+            )
+
+        pilot_scorecard = {
+            "window_days": int(pilot_window_days),
+            "summary": {
+                "touchless_rate_pct": round(touchless_rate * 100.0, 2),
+                "human_intervention_rate_pct": round(human_intervention_rate * 100.0, 2),
+                "avg_cycle_time_hours": float(avg_cycle_time_hours),
+                "on_time_approvals_pct": round(on_time_approval_rate * 100.0, 2),
+                "avg_approval_wait_hours": float(avg_approval_wait_hours),
+                "approval_sla_breached_open_count": int(approval_sla_breached_open_count),
+                "entity_route_needs_review_count": int(entity_route_needs_review_count),
+            },
+            "automation": {
+                "completed_item_count": int(touchless_eligible),
+                "touchless_count": int(touchless_count),
+                "touchless_rate": float(touchless_rate),
+                "human_intervention_count": int(human_intervention_count),
+                "human_intervention_rate": float(human_intervention_rate),
+            },
+            "approval_workflow": {
+                "population_count": int(approval_population),
+                "avg_wait_hours": float(avg_approval_wait_hours),
+                "p95_wait_hours": round(approval_wait_p95_minutes / 60.0, 2),
+                "sla_hours": float(approval_sla_hours),
+                "on_time_rate": float(on_time_approval_rate),
+                "on_time_rate_pct": round(on_time_approval_rate * 100.0, 2),
+                "sla_breached_open_count": int(approval_sla_breached_open_count),
+                "escalated_open_count": int(approval_escalated_open_count),
+                "reassigned_open_count": int(approval_reassigned_open_count),
+                "escalation_event_count_30d": int(approval_escalation_event_count),
+                "reassignment_event_count_30d": int(approval_reassignment_event_count),
+            },
+            "entity_routing": {
+                "invoice_population": int(invoice_population),
+                "needs_review_open_count": int(entity_route_needs_review_count),
+                "resolved_count": int(entity_route_resolved_count),
+                "single_candidate_resolved_count": int(entity_route_single_candidate_resolved_count),
+                "manual_resolution_event_count_30d": int(entity_route_resolution_event_count),
+            },
+            "highlights": pilot_highlights[:4],
+        }
 
         total_items = len(items)
         return {
@@ -1633,6 +1832,8 @@ class MetricsStore:
                 "shadow_decision_scoring": shadow_decision_metrics,
                 "post_action_verification": post_action_verification_metrics,
             },
+            "operator_metrics": operator_metrics,
+            "pilot_scorecard": pilot_scorecard,
         }
 
     # ------------------------------------------------------------------

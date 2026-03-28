@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:8ef45d6710592b3037ae5ad3f7867e25e16c2670bf336e8f88f456345c910f02 */
+/* clearledgr-source-fingerprint:a24f3751d0326130d5647f7d01754ddd3e253ee723f2a859e66cfc037ce5ad23 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -54088,6 +54088,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       normalized.exception_severity = normalized.exception_severity || null;
       normalized.budget_status = normalized.budget_status || null;
       normalized.budget_requires_decision = Boolean(normalized.budget_requires_decision);
+      normalized.entity_routing = normalized.entity_routing && typeof normalized.entity_routing === "object" ? normalized.entity_routing : {};
+      normalized.entity_routing_status = normalized.entity_routing_status || normalized.entity_routing?.status || "not_needed";
+      normalized.entity_candidates = Array.isArray(normalized.entity_candidates) ? normalized.entity_candidates : Array.isArray(normalized.entity_routing?.candidates) ? normalized.entity_routing.candidates : [];
+      normalized.approval_followup = normalized.approval_followup && typeof normalized.approval_followup === "object" ? normalized.approval_followup : {};
+      normalized.approval_pending_assignees = Array.isArray(normalized.approval_pending_assignees) ? normalized.approval_pending_assignees : Array.isArray(normalized.approval_followup?.pending_assignees) ? normalized.approval_followup.pending_assignees : [];
       normalized.risk_signals = normalized.risk_signals || {};
       normalized.source_ranking = normalized.source_ranking || {};
       normalized.navigator = normalized.navigator || {};
@@ -54883,7 +54888,51 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         });
         await this.syncQueueWithBackend({ updateStatus: false });
         this.emitQueueUpdated();
-        return result || { status: "nudged" };
+        const normalized = result && typeof result === "object" ? { ...result } : {};
+        const delivered = ["slack", "teams", "fallback"].some((key) => String(normalized?.[key]?.status || "").toLowerCase() === "sent");
+        if (delivered && String(normalized.status || "").toLowerCase() !== "nudged") {
+          normalized.status = "nudged";
+        }
+        return normalized.status ? normalized : { status: "nudged" };
+      } catch (_2) {
+        return { status: "error", reason: "network_error" };
+      }
+    }
+    async escalateApproval(item, { message = "", idempotencyKey = "" } = {}) {
+      if (!item || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid" };
+      const locator = this.buildItemLocator(item);
+      try {
+        const result = await this.executeAgentIntent("escalate_approval", {
+          ...locator,
+          message: message || undefined
+        }, {
+          idempotencyKey,
+          defaultStatus: "error"
+        });
+        await this.syncQueueWithBackend({ updateStatus: false });
+        this.emitQueueUpdated();
+        return result || { status: "escalated" };
+      } catch (_2) {
+        return { status: "error", reason: "network_error" };
+      }
+    }
+    async reassignApproval(item, { assignee = "", note = "", idempotencyKey = "" } = {}) {
+      if (!item || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid" };
+      const locator = this.buildItemLocator(item);
+      try {
+        const result = await this.executeAgentIntent("reassign_approval", {
+          ...locator,
+          assignee: assignee || undefined,
+          note: note || undefined
+        }, {
+          idempotencyKey,
+          defaultStatus: "error"
+        });
+        await this.syncQueueWithBackend({ updateStatus: false });
+        this.emitQueueUpdated();
+        return result || { status: "reassigned" };
       } catch (_2) {
         return { status: "error", reason: "network_error" };
       }
@@ -55027,6 +55076,44 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         await this.syncQueueWithBackend({ updateStatus: false });
         this.emitQueueUpdated();
         return result || { status: "error", reason: "unknown_response" };
+      } catch (_2) {
+        return { status: "error", reason: "network_error" };
+      }
+    }
+    async resolveEntityRoute(item, {
+      selection = "",
+      entityId = "",
+      entityCode = "",
+      entityName = "",
+      note = ""
+    } = {}) {
+      if (!item?.id || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid", reason: "invalid" };
+      try {
+        const url = new URL(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/entity-route/resolve`);
+        url.searchParams.set("organization_id", this.runtimeConfig.organizationId || "default");
+        const response = await this.backendFetch(url.toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            selection: selection || undefined,
+            entity_id: entityId || undefined,
+            entity_code: entityCode || undefined,
+            entity_name: entityName || undefined,
+            note: note || undefined
+          })
+        });
+        if (!response.ok) {
+          const detail = await this.readErrorDetail(response);
+          return { status: "error", reason: detail || `http_${response.status}` };
+        }
+        const result = await response.json();
+        if (result?.ap_item) {
+          this.upsertQueueItem(result.ap_item);
+        }
+        await this.syncQueueWithBackend({ updateStatus: false });
+        this.emitQueueUpdated();
+        return result || { status: "resolved" };
       } catch (_2) {
         return { status: "error", reason: "network_error" };
       }
@@ -57878,7 +57965,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const requiresDecision = Boolean(candidate?.requires_decision || item?.budget_requires_decision || status === "critical" || status === "exceeded");
     return { status, requiresDecision, checks, warningCount: Number(candidate?.warning_count || 0), criticalCount: Number(candidate?.critical_count || 0), exceededCount: Number(candidate?.exceeded_count || 0) };
   }
-  function getIssueSummary(item) {
+  function getIssueSummary2(item) {
     const ec = String(item?.exception_code || "").trim().toLowerCase();
     if (ec === "po_missing_reference")
       return "PO reference is required before processing";
@@ -58368,19 +58455,58 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "posted_to_erp";
     return normalized;
   }
-  function getPrimaryActionConfig(state, actorRole = "operator", documentType = "invoice") {
+  function needsEntityRouting(item = null, state = "", documentType = "invoice") {
+    if (!isInvoiceDocumentType(documentType))
+      return false;
+    const normalizedState = normalizeWorkState(state || item?.state || "");
+    if (!["received", "validated"].includes(normalizedState))
+      return false;
+    const status = String(item?.entity_routing_status || item?.entity_routing?.status || "").trim().toLowerCase();
+    if (status)
+      return status === "needs_review";
+    const candidates = Array.isArray(item?.entity_candidates) ? item.entity_candidates : Array.isArray(item?.entity_routing?.candidates) ? item.entity_routing.candidates : [];
+    return candidates.length > 1;
+  }
+  function canEscalateApproval(item = null, state = "", actorRole = "operator", documentType = "invoice") {
+    if (!hasOpsAccessRole(actorRole))
+      return false;
+    if (!isInvoiceDocumentType(documentType))
+      return false;
+    if (normalizeWorkState(state || item?.state || "") !== "needs_approval")
+      return false;
+    return Boolean(item?.approval_followup?.escalation_due || item?.approval_followup?.next_action === "escalate_approval");
+  }
+  function canReassignApproval(item = null, state = "", actorRole = "operator", documentType = "invoice") {
+    if (!hasOpsAccessRole(actorRole))
+      return false;
+    if (!isInvoiceDocumentType(documentType))
+      return false;
+    return normalizeWorkState(state || item?.state || "") === "needs_approval";
+  }
+  function getPrimaryActionConfig(state, actorRole = "operator", documentType = "invoice", item = null) {
     if (!hasOpsAccessRole(actorRole))
       return null;
     if (!isInvoiceDocumentType(documentType))
       return null;
     const normalized = normalizeWorkState(state);
     if (normalized === "received" || normalized === "validated") {
+      if (needsEntityRouting(item, normalized, documentType)) {
+        return { id: "resolve_entity_route", label: "Resolve entity" };
+      }
       return { id: "request_approval", label: "Request approval" };
     }
     if (normalized === "needs_info") {
+      const followupNextAction = String(item?.followup_next_action || "").trim().toLowerCase();
+      if (followupNextAction === "await_vendor_response")
+        return null;
+      if (followupNextAction === "manual_vendor_escalation")
+        return null;
       return { id: "prepare_info_request", label: "Prepare info request" };
     }
     if (normalized === "needs_approval") {
+      if (canEscalateApproval(item, normalized, actorRole, documentType)) {
+        return { id: "escalate_approval", label: "Escalate approval" };
+      }
       return { id: "nudge_approver", label: "Nudge approver" };
     }
     if (normalized === "ready_to_post") {
@@ -58428,6 +58554,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (financeEffectNotice) {
       return financeEffectNotice;
     }
+    if (normalized === "needs_info") {
+      const followupNextAction = String(item?.followup_next_action || "").trim().toLowerCase();
+      if (followupNextAction === "await_vendor_response") {
+        return "Waiting for the vendor response. Clearledgr already prepared the follow-up.";
+      }
+      if (followupNextAction === "manual_vendor_escalation") {
+        return "Vendor follow-up reached the retry limit and now needs manual escalation.";
+      }
+      if (followupNextAction === "nudge_vendor_followup") {
+        return "The vendor has not replied yet. Send the next follow-up when you are ready.";
+      }
+    }
     if (normalized === "approved") {
       return "Approval received. Clearledgr is preparing the posting step.";
     }
@@ -58453,6 +58591,35 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (!isInvoiceDocumentType(documentType))
       return false;
     return normalizeWorkState(state) === "needs_approval";
+  }
+
+  // src/utils/inbox-route.js
+  function populateRouteId(routeId, params = {}) {
+    const normalized = String(routeId || "").trim().replace(/^#/, "");
+    if (!normalized)
+      return "";
+    return normalized.replace(/:([^/]+)/g, (_whole, key) => encodeURIComponent(String(params?.[key] || "").trim()));
+  }
+  function navigateInboxRoute(routeId, sdk, params = null) {
+    const normalized = String(routeId || "").trim().replace(/^#/, "");
+    if (!normalized)
+      return false;
+    const goto = sdk?.Router?.goto;
+    if (typeof goto === "function") {
+      try {
+        const result = goto(normalized, params || undefined);
+        if (result !== false)
+          return true;
+      } catch {}
+    }
+    const fallbackRoute = populateRouteId(normalized, params || {});
+    if (!fallbackRoute)
+      return false;
+    if (typeof window !== "undefined" && window?.location) {
+      window.location.hash = `#${fallbackRoute}`;
+      return true;
+    }
+    return false;
   }
 
   // src/utils/vendor-route.js
@@ -58481,7 +58648,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const normalized = rememberVendorRouteName(vendorName);
     if (!normalized || typeof navigate !== "function")
       return false;
-    navigate(`clearledgr/vendor/${encodeURIComponent(normalized)}`);
+    navigate("clearledgr/vendor/:name", { name: normalized });
     return true;
   }
   function resolveVendorRouteName(params = {}, hash = "") {
@@ -58523,7 +58690,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     { id: "ready_to_post", label: "Ready to post", description: "Approved invoices ready for ERP posting." },
     { id: "needs_info", label: "Needs info", description: "Invoices blocked on vendor or field follow-up." },
     { id: "failed_post", label: "Failed post", description: "Invoices that need ERP retry or posting recovery." },
-    { id: "blocked_exception", label: "Blocked / exception", description: "Policy, budget, confidence, PO, or processing blockers." },
+    { id: "blocked_exception", label: "Blocked / exception", description: "Entity, policy, budget, confidence, PO, or processing blockers." },
     { id: "due_soon", label: "Due soon", description: "Open invoices due within the next 7 days." },
     { id: "overdue", label: "Overdue", description: "Open invoices already past due." }
   ];
@@ -58899,7 +59066,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "failed_post";
     if (dueDate && !isClosedPipelineState(state) && diffInDays(dueDate, now) < 0)
       return "overdue";
-    if (blockers.some((kind) => ["exception", "confidence", "budget", "po", "erp"].includes(kind))) {
+    if (blockers.some((kind) => ["entity", "exception", "confidence", "budget", "po", "erp", "processing"].includes(kind))) {
       return "blocked_exception";
     }
     if (dueDate && !isClosedPipelineState(state) && diffInDays(dueDate, now) <= 7)
@@ -59045,22 +59212,24 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return diffInMinutes(startedAt, now);
   }
   function getErpStatus(item = {}) {
-    const state = normalizePipelineState(item.state);
-    const normalizedStatus = normalizeText(item?.erp_status).toLowerCase();
+    const source = item && typeof item === "object" ? item : {};
+    const state = normalizePipelineState(source.state);
+    const normalizedStatus = normalizeText(source?.erp_status).toLowerCase();
     if (normalizedStatus)
       return normalizedStatus;
-    if (state === "posted_to_erp" || state === "closed" || item?.erp_reference || item?.erp_bill_id)
+    if (state === "posted_to_erp" || state === "closed" || source?.erp_reference || source?.erp_bill_id)
       return "posted";
     if (state === "failed_post")
       return "failed";
     if (state === "ready_to_post" || state === "approved")
       return "ready";
-    if (item?.erp_connector_available || item?.connector_available)
+    if (source?.erp_connector_available || source?.connector_available)
       return "connected";
     return "not_connected";
   }
   function getPipelineBlockers(item = {}) {
-    const existing = Array.isArray(item?.pipeline_blockers) ? item.pipeline_blockers : [];
+    const source = item && typeof item === "object" ? item : {};
+    const existing = Array.isArray(source?.pipeline_blockers) ? source.pipeline_blockers : [];
     if (existing.length > 0) {
       return existing.map((blocker) => ({
         ...blocker,
@@ -59075,10 +59244,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       })).filter((blocker) => blocker.kind && blocker.type);
     }
     const blockers = [];
-    const state = normalizePipelineState(item.state);
-    const exceptionCode = normalizeText(item?.exception_code).toLowerCase();
-    const budgetStatus = normalizeText(item?.budget_status).toLowerCase();
-    const confidence = Number(item?.confidence);
+    const state = normalizePipelineState(source.state);
+    const exceptionCode = normalizeText(source?.exception_code).toLowerCase();
+    const budgetStatus = normalizeText(source?.budget_status).toLowerCase();
+    const confidence = Number(source?.confidence);
     if (state === "needs_approval") {
       blockers.push({ kind: "approval", type: "approval_waiting" });
     }
@@ -59088,18 +59257,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (state === "failed_post") {
       blockers.push({ kind: "erp", type: "posting_failed" });
     }
-    if (exceptionCode === "planner_failed" && !item?.requires_field_review) {
+    if (String(source?.entity_routing_status || source?.entity_routing?.status || "").trim().toLowerCase() === "needs_review") {
+      blockers.push({ kind: "entity", type: "entity_review" });
+    }
+    if (exceptionCode === "planner_failed" && !source?.requires_field_review) {
       blockers.push({ kind: "processing", type: "processing_issue" });
     } else if (exceptionCode && exceptionCode !== "planner_failed") {
       blockers.push({ kind: "exception", type: exceptionCode });
     }
-    if (item?.requires_field_review || Number.isFinite(confidence) && confidence < 0.95) {
+    if (source?.requires_field_review || Number.isFinite(confidence) && confidence < 0.95) {
       blockers.push({ kind: "confidence", type: "confidence_review" });
     }
-    if (item?.budget_requires_decision || ["critical", "exceeded"].includes(budgetStatus)) {
+    if (source?.budget_requires_decision || ["critical", "exceeded"].includes(budgetStatus)) {
       blockers.push({ kind: "budget", type: "budget_review" });
     }
-    if (exceptionCode && exceptionCode !== "planner_failed" && (exceptionCode.includes("po") || !item?.po_number && exceptionCode)) {
+    if (exceptionCode && exceptionCode !== "planner_failed" && (exceptionCode.includes("po") || !source?.po_number && exceptionCode)) {
       blockers.push({ kind: "po", type: exceptionCode });
     }
     return blockers;
@@ -59126,7 +59298,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       case "failed_post":
         return state === "failed_post";
       case "blocked_exception":
-        return blockers.some((kind) => ["exception", "confidence", "budget", "po", "erp", "processing"].includes(kind));
+        return blockers.some((kind) => ["entity", "exception", "confidence", "budget", "po", "erp", "processing"].includes(kind));
       case "due_soon":
         if (!dueDate || isClosedPipelineState(state))
           return false;
@@ -59354,10 +59526,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       missing_item_reference: "Clearledgr could not identify this invoice record.",
       ap_item_not_found: "Clearledgr could not find this invoice record.",
       state_not_ready_for_approval: "This invoice is not ready to send for approval yet.",
+      entity_route_review_required: "Choose the legal entity before sending this invoice for approval.",
+      entity_selection_required: "Select the correct legal entity first.",
       field_review_required: "Finish the required field checks before sending this invoice for approval.",
-      organization_mismatch: "This invoice belongs to a different workspace."
+      organization_mismatch: "This invoice belongs to a different workspace.",
+      assignee_required: "Choose the approver who should own this approval request.",
+      state_not_waiting_for_approval: "This invoice is no longer waiting on approval.",
+      waiting_for_sla_window: "Follow-up already sent. Wait for the vendor response before nudging again.",
+      followup_attempt_limit_reached: "Clearledgr reached the vendor follow-up limit. This now needs manual escalation.",
+      state_not_needs_info: "This invoice is no longer waiting on vendor information."
     };
     return map[token] || token.replace(/_/g, " ");
+  }
+  function didSendApprovalReminder(result) {
+    const payload = result && typeof result === "object" ? result : {};
+    if (String(payload.status || "").toLowerCase() === "nudged")
+      return true;
+    return ["slack", "teams", "fallback"].some((key) => String(payload?.[key]?.status || "").toLowerCase() === "sent");
   }
   function Toast() {
     const ref = A2(null);
@@ -59417,6 +59602,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const fieldReviewBlockers = getFieldReviewBlockers(item);
     const financeEffectBlockers = getFinanceEffectBlockers(item);
     const financeEffectNotice = getFinanceEffectNotice(item);
+    const approvalFollowup = item?.approval_followup && typeof item.approval_followup === "object" ? item.approval_followup : {};
     const pauseReason = getWorkflowPauseReason(item);
     const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
     const isInvoiceDocument = isInvoiceDocumentType(documentType);
@@ -59433,7 +59619,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const exceptionCode = String(item?.exception_code || "").trim().toLowerCase();
     const exceptionReason = getExceptionReason(exceptionCode);
     if (exceptionReason) {
-      add("exception", exceptionReason, getIssueSummary(item));
+      add("exception", exceptionReason, getIssueSummary2(item));
     }
     if (!item?.po_number && exceptionCode.includes("po")) {
       add("po", "PO reference missing", `Link the correct PO before continuing this ${isInvoiceDocument ? "invoice" : "record"}.`);
@@ -59445,8 +59631,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (item?.finance_effect_review_required) {
       add("finance_effect", financeEffectBlockers[0]?.label || "Credits or payments need review", financeEffectBlockers[0]?.detail || financeEffectNotice || "Linked finance documents changed the payable or settlement balance.");
     }
+    if (needsEntityRouting(item, state, documentType)) {
+      add("entity", "Entity route needs review", item?.entity_route_reason || "Choose the correct legal entity before approval routing can continue.");
+    }
     if (state === "needs_approval") {
-      add("approval", "Waiting on approver", "The approval request is still outstanding.");
+      const pendingAssignees = Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees : [];
+      add("approval", approvalFollowup?.escalation_due ? "Approval escalation due" : approvalFollowup?.sla_breached ? "Approval follow-up due" : "Waiting on approver", approvalFollowup?.escalation_due ? "Approval has been waiting past the escalation policy and should be escalated or reassigned." : approvalFollowup?.sla_breached ? "Approval has been waiting past the reminder SLA and should be nudged." : pendingAssignees.length ? `Waiting on ${pendingAssignees.slice(0, 3).join(", ")}.` : "The approval request is still outstanding.");
     }
     if (state === "needs_info") {
       add("needs_info", isInvoiceDocument ? "Missing invoice details" : "Missing document details", `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
@@ -59458,7 +59648,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       add("received", isInvoiceDocument ? "Ready for approval" : "Needs finance review", isInvoiceDocument ? "This invoice is ready to send for approval." : getNonInvoiceWorkflowGuidance(documentType));
     }
     if (blockers.length === 0 && state === "validated") {
-      add("validated", isInvoiceDocument ? "Ready for approval" : `Ready to review ${documentLabel}`, isInvoiceDocument ? "Checks are complete and the invoice is ready to send for approval." : getNonInvoiceWorkflowGuidance(documentType));
+      add("validated", isInvoiceDocument && needsEntityRouting(item, state, documentType) ? "Resolve entity route" : isInvoiceDocument ? "Ready for approval" : `Ready to review ${documentLabel}`, isInvoiceDocument ? needsEntityRouting(item, state, documentType) ? "Choose the correct legal entity before sending this invoice for approval." : "Checks are complete and the invoice is ready to send for approval." : getNonInvoiceWorkflowGuidance(documentType));
     }
     return blockers.slice(0, 4);
   }
@@ -59625,7 +59815,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const s3 = useStore();
     const gmail = s3.gmailIntegration || {};
     const canOpenConnections = hasAdminAccessRole(s3.currentUserRole);
-    const goConnections = q2(() => store_default.sdk?.Router?.goto?.("clearledgr/connections"), []);
+    const goConnections = q2(() => {
+      if (!navigateInboxRoute("clearledgr/connections", store_default.sdk)) {
+        showToast("Unable to open Connections", "error");
+      }
+    }, []);
     const [authorize, pending] = useAction(async () => {
       const result = await queueManager?.authorizeGmailNow?.();
       const ok = Boolean(result?.success || result?.authorized || result?.status === "ok");
@@ -59689,10 +59883,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const financeEffectSummary = item?.finance_effect_summary && typeof item.finance_effect_summary === "object" ? item.finance_effect_summary : {};
     const financeEffectBlockers = getFinanceEffectBlockers(item);
     const financeEffectNotice = getFinanceEffectNotice(item);
+    const approvalFollowup = item?.approval_followup && typeof item.approval_followup === "object" ? item.approval_followup : {};
+    const entityRouting = item?.entity_routing && typeof item.entity_routing === "object" ? item.entity_routing : {};
+    const entityCandidates = Array.isArray(item?.entity_candidates) ? item.entity_candidates : Array.isArray(entityRouting?.candidates) ? entityRouting.candidates : [];
     const resumeWorkflowEligible = !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType);
     const stateNotice = resumeWorkflowEligible ? "Field review is cleared. Resume workflow to continue the posting step." : getWorkStateNotice(state, documentType, item);
     const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : "";
     const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
+    const entityNeedsReview = needsEntityRouting(item, state, documentType);
     const [optimisticState, setOptimisticState] = d2(null);
     const displayState = normalizeWorkState(optimisticState || state);
     const readOnlyMode = !hasOpsAccessRole(actorRole);
@@ -59702,6 +59900,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       orgId: queueManager?.runtimeConfig?.organizationId || "default",
       userEmail: queueManager?.runtimeConfig?.userEmail || ""
     };
+    const gotoRoute = q2((routeId, params) => navigateInboxRoute(routeId, store_default.sdk, params), []);
     const [doApproval, approvalPending] = useAction(async () => {
       setOptimisticState("needs_approval");
       const result = await queueManager.requestApproval(item);
@@ -59713,8 +59912,35 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     });
     const [doNudge, nudgePending] = useAction(async () => {
       const result = await queueManager.nudgeApproval(item);
-      const ok = String(result?.status || "").toLowerCase() === "nudged";
-      showToast(ok ? "Approval reminder sent" : "Unable to send reminder", ok ? "success" : "error");
+      const ok = didSendApprovalReminder(result);
+      showToast(ok ? "Approval reminder sent" : humanizeActionFailure(result?.reason || result?.fallback?.reason) || "Unable to send reminder", ok ? "success" : "error");
+      if (ok)
+        await queueManager.refreshQueue();
+    });
+    const [doEscalateApproval, escalatePending] = useAction(async () => {
+      const result = await queueManager.escalateApproval(item);
+      const ok = String(result?.status || "").toLowerCase() === "escalated";
+      showToast(ok ? "Approval escalated" : humanizeActionFailure(result?.reason) || "Unable to escalate approval", ok ? "success" : "error");
+      if (ok)
+        await queueManager.refreshQueue();
+    });
+    const [doReassignApproval, reassignPending] = useAction(async () => {
+      const assignee = await openDialog({
+        actionType: "generic",
+        title: "Reassign approval",
+        label: "New approver",
+        message: "Enter the approver who should own this approval request now.",
+        placeholder: "Approver email or Slack user",
+        confirmLabel: "Reassign",
+        cancelLabel: "Cancel",
+        required: true,
+        chips: Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees.slice(0, 4) : []
+      });
+      if (!assignee)
+        return;
+      const result = await queueManager.reassignApproval(item, { assignee });
+      const ok = String(result?.status || "").toLowerCase() === "reassigned";
+      showToast(ok ? `Approval reassigned to ${assignee}` : humanizeActionFailure(result?.reason) || "Unable to reassign approval", ok ? "success" : "error");
       if (ok)
         await queueManager.refreshQueue();
     });
@@ -59722,8 +59948,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const result = await queueManager.prepareVendorFollowup(item, {
         reason: "Request missing invoice details from vendor"
       });
-      const ok = ["prepared", "queued"].includes(String(result?.status || "").toLowerCase());
-      showToast(ok ? "Info request draft prepared" : "Unable to prepare info request", ok ? "success" : "error");
+      const status = String(result?.status || "").toLowerCase();
+      const ok = ["prepared", "queued"].includes(status);
+      const informational = status === "waiting_sla";
+      showToast(ok ? "Info request draft prepared" : informational ? humanizeActionFailure(result?.reason) || "Follow-up already sent" : humanizeActionFailure(result?.reason) || "Unable to prepare info request", ok ? "success" : informational ? "info" : "error");
+      if (ok || informational)
+        await queueManager.refreshQueue();
     });
     const [doRetry, retryPending] = useAction(async () => {
       setOptimisticState("ready_to_post");
@@ -59847,6 +60077,36 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         setResolvingFieldKey("");
       }
     });
+    const [doResolveEntityRoute, resolveEntityPending] = useAction(async () => {
+      let selection = "";
+      if (entityCandidates.length > 1) {
+        selection = await openDialog({
+          actionType: "generic",
+          title: "Resolve entity route",
+          label: "Entity code or name",
+          message: "Choose the legal entity Clearledgr should use for this invoice.",
+          previewLines: entityCandidates.slice(0, 6).map((candidate2) => candidate2?.label || candidate2?.entity_name || candidate2?.entity_code || "").filter(Boolean),
+          placeholder: "e.g. US-01 or Cowrywise Inc US",
+          confirmLabel: "Resolve entity",
+          cancelLabel: "Cancel",
+          required: true,
+          chips: entityCandidates.slice(0, 4).map((candidate2) => candidate2?.entity_code || candidate2?.entity_name || candidate2?.label || "").filter(Boolean)
+        });
+        if (!selection)
+          return;
+      }
+      const candidate = entityCandidates.length === 1 ? entityCandidates[0] : null;
+      const result = await queueManager.resolveEntityRoute(item, {
+        selection: selection || candidate?.entity_code || candidate?.entity_name,
+        entityId: candidate?.entity_id,
+        entityCode: candidate?.entity_code,
+        entityName: candidate?.entity_name
+      });
+      const ok = String(result?.status || "").toLowerCase() === "resolved";
+      showToast(ok ? "Entity route resolved" : humanizeActionFailure(result?.reason) || "Unable to resolve entity route", ok ? "success" : "error");
+      if (ok)
+        await queueManager.refreshQueue();
+    });
     const goPrev = q2(() => store_default.selectItemByOffset(-1), []);
     const goNext = q2(() => store_default.selectItemByOffset(1), []);
     const openPipeline = q2(() => {
@@ -59854,8 +60114,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return;
       store_default.setSelectedItem(String(item.id));
       focusPipelineItem(pipelineScope, item, "thread");
-      store_default.sdk?.Router?.goto?.("clearledgr/pipeline");
-    }, [item, pipelineScope]);
+      if (!gotoRoute("clearledgr/pipeline")) {
+        showToast("Unable to open pipeline", "error");
+      }
+    }, [gotoRoute, item, pipelineScope]);
     const openSource = q2(() => {
       if (!openSourceEmail(item))
         showToast("Unable to open source email", "error");
@@ -59864,9 +60126,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const vendorName = String(item?.vendor_name || item?.vendor || "").trim();
       if (!vendorName)
         return;
-      navigateToVendorRecord((routeId) => store_default.sdk?.Router?.goto?.(routeId), vendorName);
-    }, [item]);
-    const basePrimaryAction = pauseReason || item?.finance_effect_review_required ? null : getPrimaryActionConfig(displayState, actorRole, documentType);
+      if (!navigateToVendorRecord(gotoRoute, vendorName)) {
+        showToast("Unable to open vendor record", "error");
+      }
+    }, [gotoRoute, item]);
+    const basePrimaryAction = pauseReason || item?.finance_effect_review_required ? null : getPrimaryActionConfig(displayState, actorRole, documentType, item);
     const primaryAction = resumeWorkflowEligible && ["preview_erp_post", "retry_erp_post"].includes(basePrimaryAction?.id) ? { id: "resume_workflow", label: "Resume workflow" } : basePrimaryAction;
     let primaryHandler = null;
     let primaryPending = false;
@@ -59874,9 +60138,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (primaryAction?.id === "request_approval") {
       primaryHandler = doApproval;
       primaryPending = approvalPending;
+    } else if (primaryAction?.id === "resolve_entity_route") {
+      primaryHandler = doResolveEntityRoute;
+      primaryPending = resolveEntityPending;
     } else if (primaryAction?.id === "prepare_info_request") {
       primaryHandler = doPrepareInfo;
       primaryPending = prepareInfoPending;
+    } else if (primaryAction?.id === "escalate_approval") {
+      primaryHandler = doEscalateApproval;
+      primaryPending = escalatePending;
     } else if (primaryAction?.id === "nudge_approver") {
       primaryHandler = doNudge;
       primaryPending = nudgePending;
@@ -59946,10 +60216,73 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ${canRejectWorkItem(displayState, actorRole, documentType) && html2`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
         `}
+        ${canReassignApproval(item, displayState, actorRole, documentType) && html2`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReassignApproval} disabled=${reassignPending}>
+            ${reassignPending ? "Reassigning…" : "Reassign approver"}
+          </button>
+        `}
+        ${canEscalateApproval(item, displayState, actorRole, documentType) && primaryAction?.id !== "escalate_approval" && html2`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doEscalateApproval} disabled=${escalatePending}>
+            ${escalatePending ? "Escalating…" : "Escalate approval"}
+          </button>
+        `}
+        ${entityNeedsReview && primaryAction?.id !== "resolve_entity_route" && html2`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doResolveEntityRoute} disabled=${resolveEntityPending}>
+            ${resolveEntityPending ? "Resolving…" : "Resolve entity"}
+          </button>
+        `}
         ${canNudgeApprover(displayState, actorRole, documentType) && primaryAction?.id !== "nudge_approver" && html2`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Nudge approver</button>
         `}
       </div>
+
+      ${(displayState === "needs_approval" || entityNeedsReview) && html2`
+        <div class="cl-section" aria-label="Follow-up and routing">
+          <div class="cl-section-title">Follow-up and routing</div>
+          <div class="cl-evidence-list">
+            ${displayState === "needs_approval" && html2`
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Approval wait</div>
+                  <div class="cl-evidence-detail">
+                    ${approvalFollowup?.escalation_due ? "Past escalation policy" : approvalFollowup?.sla_breached ? "Past reminder SLA" : "Still within SLA"}
+                  </div>
+                </div>
+                <div class="cl-evidence-status">${approvalFollowup?.wait_minutes ? `${approvalFollowup.wait_minutes}m` : "—"}</div>
+              </div>
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Pending approvers</div>
+                </div>
+                <div class="cl-evidence-status">
+                  ${Array.isArray(approvalFollowup?.pending_assignees) && approvalFollowup.pending_assignees.length ? approvalFollowup.pending_assignees.join(", ") : "Not recorded"}
+                </div>
+              </div>
+            `}
+            ${isInvoiceDocument && html2`
+              <div class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>Entity route</div>
+                  ${item?.entity_route_reason && html2`<div class="cl-evidence-detail">${item.entity_route_reason}</div>`}
+                </div>
+                <div class="cl-evidence-status">
+                  ${entityNeedsReview ? "Needs review" : item?.entity_code || item?.entity_name || "Not set"}
+                </div>
+              </div>
+              ${entityCandidates.length > 0 && html2`
+                <div class="cl-evidence-row">
+                  <div class="cl-evidence-copy">
+                    <div>Entity candidates</div>
+                  </div>
+                  <div class="cl-evidence-status">
+                    ${entityCandidates.slice(0, 3).map((candidate) => candidate?.label || candidate?.entity_name || candidate?.entity_code).filter(Boolean).join(", ")}
+                  </div>
+                </div>
+              `}
+            `}
+          </div>
+        </div>
+      `}
 
       <${FieldReviewPanel}
         blockers=${fieldReviewBlockers}
@@ -60004,8 +60337,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
   function EmptyState({ queueCount }) {
-    const openPipeline = q2(() => store_default.sdk?.Router?.goto?.("clearledgr/pipeline"), []);
-    const openHome = q2(() => store_default.sdk?.Router?.goto?.("clearledgr/home"), []);
+    const openPipeline = q2(() => {
+      if (!navigateInboxRoute("clearledgr/pipeline", store_default.sdk)) {
+        showToast("Unable to open pipeline", "error");
+      }
+    }, []);
+    const openHome = q2(() => {
+      if (!navigateInboxRoute("clearledgr/home", store_default.sdk)) {
+        showToast("Unable to open Home", "error");
+      }
+    }, []);
     const threadSelected = Boolean(store_default.currentThreadId);
     if (threadSelected) {
       return html2`<div class="cl-section"><div class="cl-empty">
@@ -60022,15 +60363,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <p class="cl-muted">Open an email to work one record, or open Pipeline to see the full queue.</p>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
       </div>
     </div></div>`;
     }
     return html2`<div class="cl-section"><div class="cl-empty">
     <p>Nothing is waiting right now.</p>
-    <p class="cl-muted">Clearledgr will show new work here when it arrives.</p>
+    <p class="cl-muted">Pipeline is still the control plane. Home is available if you want the lighter overview.</p>
     <div class="cl-thread-actions">
-      <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Home</button>
+      <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
+      <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
     </div>
   </div></div>`;
   }
@@ -60123,7 +60465,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const normalized = rememberRecordRouteId(recordId);
     if (!normalized || typeof navigate !== "function")
       return false;
-    navigate(`clearledgr/invoice/${encodeURIComponent(normalized)}`);
+    navigate("clearledgr/invoice/:id", { id: normalized });
     return true;
   }
   function resolveRecordRouteId(params = {}, hash = "") {
@@ -60142,27 +60484,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var NAV_PREFS_STORAGE_KEY = "clearledgr_nav_preferences_v1";
   var ROUTES = [
     {
+      id: "clearledgr/pipeline",
+      title: "Pipeline",
+      subtitle: "Control the AP queue across entities and states.",
+      icon: "pipeline",
+      navOrder: 10,
+      defaultPinned: true,
+      canHide: false,
+      menuGroup: "primary",
+      viewCapability: "view_pipeline"
+    },
+    {
       id: "clearledgr/home",
       title: "Home",
-      subtitle: "Your Clearledgr start page in Gmail.",
+      subtitle: "Quick access, recent work, and secondary tools.",
       icon: "home",
-      navOrder: 10,
+      navOrder: 20,
       defaultPinned: true,
       canHide: false,
       menuGroup: "primary",
       hideTopbar: true,
       viewCapability: "view_home"
-    },
-    {
-      id: "clearledgr/pipeline",
-      title: "Pipeline",
-      subtitle: "See and work the invoice queue.",
-      icon: "pipeline",
-      navOrder: 20,
-      defaultPinned: true,
-      canHide: false,
-      menuGroup: "primary",
-      viewCapability: "view_pipeline"
     },
     {
       id: "clearledgr/review",
@@ -60288,7 +60630,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       viewCapability: "view_reports"
     }
   ];
-  var DEFAULT_ROUTE = "clearledgr/home";
+  var DEFAULT_ROUTE = "clearledgr/pipeline";
   function getRouteById(id) {
     return ROUTES.find((route) => route.id === id) || null;
   }
@@ -61862,7 +62204,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           Welcome to Clearledgr
         </h2>
         <p style="font-size:15px;color:var(--ink-secondary);margin:0 0 12px">
-          ${allReady ? "Keep invoice work moving without leaving Gmail." : `${greeting}${firstName ? `, ${firstName}` : ""}. Finish setup, then pick up invoice work here.`}
+          ${allReady ? "Pipeline is your AP control plane. Use Gmail for the active record when context matters." : `${greeting}${firstName ? `, ${firstName}` : ""}. Finish setup, then use Pipeline to pick up invoice work.`}
         </p>
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
           <span style="font-size:12px;padding:4px 10px;border-radius:999px;background:${allReady ? "#ECFDF5" : "#FEFCE8"};color:${allReady ? "#047857" : "#A16207"}">
@@ -61932,6 +62274,83 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
     </div>
   `;
+  }
+
+  // src/routes/review-preferences.js
+  var STORAGE_PREFIX2 = "clearledgr_review_preferences_v1";
+  function normalizeText2(value, fallback = "") {
+    return String(value || "").trim() || fallback;
+  }
+  function normalizeUserEmail2(value) {
+    return normalizeText2(value).toLowerCase();
+  }
+  function resolveReviewScope(scopeOrOrgId, maybeUserEmail = "") {
+    if (scopeOrOrgId && typeof scopeOrOrgId === "object") {
+      return {
+        orgId: normalizeText2(scopeOrOrgId.orgId || scopeOrOrgId.organizationId, "default"),
+        userEmail: normalizeUserEmail2(scopeOrOrgId.userEmail || scopeOrOrgId.email || maybeUserEmail)
+      };
+    }
+    return {
+      orgId: normalizeText2(scopeOrOrgId, "default"),
+      userEmail: normalizeUserEmail2(maybeUserEmail)
+    };
+  }
+  function readStorageValue2(key) {
+    if (typeof window === "undefined" || !window?.localStorage)
+      return null;
+    try {
+      return window.localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+  function writeStorageValue2(key, value) {
+    if (typeof window === "undefined" || !window?.localStorage)
+      return;
+    try {
+      window.localStorage.setItem(key, value);
+    } catch {}
+  }
+  function removeStorageValue(key) {
+    if (typeof window === "undefined" || !window?.localStorage)
+      return;
+    try {
+      window.localStorage.removeItem(key);
+    } catch {}
+  }
+  function getReviewPreferenceKey(scopeOrOrgId, maybeUserEmail = "") {
+    const scope = resolveReviewScope(scopeOrOrgId, maybeUserEmail);
+    return `${STORAGE_PREFIX2}:${scope.orgId}:${scope.userEmail || "anonymous"}`;
+  }
+  function defaultReviewPreferences() {
+    return {
+      searchQuery: ""
+    };
+  }
+  function normalizeReviewPreferences(value = {}) {
+    return {
+      searchQuery: normalizeText2(value?.searchQuery).slice(0, 120)
+    };
+  }
+  function readReviewPreferences(scopeOrOrgId, maybeUserEmail = "") {
+    const raw = readStorageValue2(getReviewPreferenceKey(scopeOrOrgId, maybeUserEmail));
+    if (!raw)
+      return defaultReviewPreferences();
+    try {
+      return normalizeReviewPreferences(JSON.parse(raw));
+    } catch {
+      return defaultReviewPreferences();
+    }
+  }
+  function writeReviewPreferences(scopeOrOrgId, maybeUserEmailOrValue = "", maybeValue = null) {
+    const hasExplicitUserEmail = typeof maybeUserEmailOrValue === "string" || maybeUserEmailOrValue == null;
+    const userEmail = hasExplicitUserEmail ? maybeUserEmailOrValue : "";
+    const value = hasExplicitUserEmail ? maybeValue : maybeUserEmailOrValue;
+    writeStorageValue2(getReviewPreferenceKey(scopeOrOrgId, userEmail), JSON.stringify(normalizeReviewPreferences(value)));
+  }
+  function clearReviewPreferences(scopeOrOrgId, maybeUserEmail = "") {
+    removeStorageValue(getReviewPreferenceKey(scopeOrOrgId, maybeUserEmail));
   }
 
   // src/routes/pages/ReviewPage.js
@@ -62054,10 +62473,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return getWorkflowPauseReason(item) || "Check the blocked fields before continuing.";
     }
     if (section === "failed_post") {
-      return getIssueSummary(item) || "ERP posting failed and needs operator follow-up.";
+      return getIssueSummary2(item) || "ERP posting failed and needs operator follow-up.";
     }
     if (section === "needs_info") {
-      return getIssueSummary(item) || "Additional finance details are still required.";
+      return getIssueSummary2(item) || "Additional finance details are still required.";
     }
     if (section === "non_invoice") {
       return getNonInvoiceWorkflowGuidance(documentType);
@@ -62328,7 +62747,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const pipelineScope = T2(() => getPipelineScope(orgId, userEmail), [orgId, userEmail]);
     const [items, setItems] = d2([]);
     const [loading, setLoading] = d2(true);
-    const [search, setSearch] = d2("");
+    const [search, setSearch] = d2(() => readReviewPreferences(pipelineScope).searchQuery || "");
     const [selectedIds, setSelectedIds] = d2([]);
     const [activeItemId, setActiveItemId] = d2("");
     const [resolvingFieldKey, setResolvingFieldKey] = d2("");
@@ -62351,6 +62770,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     y2(() => {
       loadItems({ silent: true });
     }, [loadItems]);
+    y2(() => {
+      setSearch(readReviewPreferences(pipelineScope).searchQuery || "");
+    }, [pipelineScope]);
+    y2(() => {
+      if (String(search || "").trim()) {
+        writeReviewPreferences(pipelineScope, { searchQuery: search });
+        return;
+      }
+      clearReviewPreferences(pipelineScope);
+    }, [pipelineScope, search]);
     const [refresh, refreshing] = useAction2(async () => {
       await loadItems();
       toast?.("Review queue refreshed.", "success");
@@ -62712,6 +63141,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           style="width:100%;padding:8px 8px 8px 34px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;background:var(--bg)"
         />
       </div>
+      ${hasSearch && html5`
+        <div style="display:flex;justify-content:flex-end;margin-top:10px">
+          <button class="btn-ghost btn-sm" onClick=${() => setSearch("")}>Clear search</button>
+        </div>
+      `}
       <div class="muted" style="font-size:12px;margin-top:10px">
         Keyboard: J/K move · X select · O open record · E open email · P open slice · 1/2/3 resolve current blocker · L apply primary non-invoice action · B bulk resolve selected blockers
       </div>
@@ -63066,7 +63500,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         oauthBridge.startOAuth(payload.auth_url, "gmail");
         return;
       }
-      navigate?.("clearledgr/home");
+      navigate?.("clearledgr/pipeline");
     });
     const [connectSlack, slackPending] = useAction2(async () => {
       if (!canManageConnections)
@@ -63085,7 +63519,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (!canManageConnections)
         return;
       await api("/api/workspace/integrations/slack/test", { method: "POST", body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById("cl-slack-channel")?.value?.trim() }) });
-      toast("Test sent to Slack.");
+      toast("Slack connection verified.");
     });
     const [saveWebhook, saveWebhookPending] = useAction2(async () => {
       if (!canManageConnections)
@@ -63167,9 +63601,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <button class="btn-primary btn-sm" onClick=${connectSlack} disabled=${slackPending || !canManageConnections}>${slackPending ? "Working…" : "Install to Slack"}</button>
             <input id="cl-slack-channel" placeholder="#finance-approvals" value=${slack.approval_channel || ""} disabled=${!canManageConnections} style="flex:1;min-width:160px" />
             <button class="btn-secondary btn-sm" onClick=${saveChannel} disabled=${saveChannelPending || !canManageConnections}>${saveChannelPending ? "Saving…" : "Save channel"}</button>
-            <button class="btn-ghost btn-sm" onClick=${testSlackMsg} disabled=${testSlackPending || !slack.connected || !canManageConnections}>${testSlackPending ? "Sending…" : "Send test"}</button>
+            <button class="btn-ghost btn-sm" onClick=${testSlackMsg} disabled=${testSlackPending || !slack.connected || !canManageConnections}>${testSlackPending ? "Verifying…" : "Verify Slack"}</button>
           </div>
-          <div class="muted" style="margin-top:10px">Mode: ${humanizeMode(slack.mode || "-")}</div>
+          <div class="muted" style="margin-top:10px">Mode: ${humanizeMode(slack.mode || "-")} · Verification checks access without posting into the approval channel.</div>
         </${ApprovalSurfaceCard}>
 
         <${ApprovalSurfaceCard}
@@ -63226,12 +63660,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : fallback;
   }
+  function parseWholeNumber(value, fallback, minimum = 1) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric))
+      return fallback;
+    return Math.max(minimum, Math.round(numeric));
+  }
+  function getApprovalAutomationConfig(configJson = {}, approvalAutomation = null) {
+    const nested = configJson?.approval_automation && typeof configJson.approval_automation === "object" ? configJson.approval_automation : {};
+    const policy = approvalAutomation && typeof approvalAutomation === "object" ? approvalAutomation : {};
+    const reminderHours = parseWholeNumber(policy.reminder_hours ?? nested.reminder_hours, 4);
+    const escalationHours = Math.max(reminderHours, parseWholeNumber(policy.escalation_hours ?? nested.escalation_hours, 24));
+    const escalationChannel = String(policy.escalation_channel ?? nested.escalation_channel ?? "").trim();
+    return {
+      reminderHours,
+      escalationHours,
+      escalationChannel
+    };
+  }
   function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
     const policy = bootstrap?.policyPayload || {};
     const configJson = (policy.policy || {}).config_json || {};
     const confidenceThreshold = Number(configJson.auto_approve_threshold ?? configJson.confidence_threshold ?? 0.95);
     const maxAutoAmount = Number(configJson.max_auto_approve_amount ?? configJson.auto_approve_max_amount ?? 0);
     const requirePO = configJson.require_po !== false;
+    const approvalAutomation = getApprovalAutomationConfig(configJson, policy.approval_automation);
     const canManageRules = hasCapability(bootstrap, "manage_rules");
     const [savePolicy, saving] = useAction2(async () => {
       if (!canManageRules)
@@ -63239,13 +63692,22 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const nextConfidence = parseThreshold(document.getElementById("cl-policy-confidence")?.value, confidenceThreshold);
       const nextMaxAmount = parseThreshold(document.getElementById("cl-policy-max-amount")?.value, maxAutoAmount);
       const nextRequirePO = Boolean(document.getElementById("cl-policy-require-po")?.checked);
+      const nextReminderHours = parseWholeNumber(document.getElementById("cl-policy-approval-reminder-hours")?.value, approvalAutomation.reminderHours);
+      const nextEscalationHours = Math.max(nextReminderHours, parseWholeNumber(document.getElementById("cl-policy-approval-escalation-hours")?.value, approvalAutomation.escalationHours));
+      const nextEscalationChannel = String(document.getElementById("cl-policy-approval-escalation-channel")?.value ?? approvalAutomation.escalationChannel ?? "").trim();
       const nextConfig = {
         ...configJson,
         auto_approve_threshold: nextConfidence,
         confidence_threshold: nextConfidence,
         max_auto_approve_amount: nextMaxAmount,
         auto_approve_max_amount: nextMaxAmount,
-        require_po: nextRequirePO
+        require_po: nextRequirePO,
+        approval_automation: {
+          ...configJson.approval_automation && typeof configJson.approval_automation === "object" ? configJson.approval_automation : {},
+          reminder_hours: nextReminderHours,
+          escalation_hours: nextEscalationHours,
+          escalation_channel: nextEscalationChannel
+        }
       };
       await api("/api/workspace/policies/ap", {
         method: "PUT",
@@ -63262,7 +63724,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <div class=${`secondary-banner ${canManageRules ? "" : "warning"}`}>
       <div class="secondary-banner-copy">
         <h3>${canManageRules ? "Control when invoices move automatically" : "Approval behavior is visible here"}</h3>
-        <p class="muted">${canManageRules ? "Set the confidence, amount, and PO rules that decide when work keeps moving on its own." : "You can review the current approval rules here, but only admins can change them."}</p>
+        <p class="muted">${canManageRules ? "Set approval guardrails and decide when Clearledgr nudges or escalates pending approvals automatically." : "You can review the current approval rules here, but only admins can change them."}</p>
       </div>
       <div class="secondary-banner-actions">
         <button class="btn-primary" onClick=${savePolicy} disabled=${saving || !canManageRules}>${saving ? "Saving…" : "Save rules"}</button>
@@ -63273,7 +63735,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="secondary-main">
         <div class="panel">
           <h3 style="margin-top:0">Approval rules</h3>
-          <p class="muted" style="margin:0 0 14px">These settings decide when an invoice keeps moving, waits for approval, or pauses for a PO check.</p>
+          <p class="muted" style="margin:0 0 14px">These settings decide when an invoice keeps moving, waits for approval, pauses for a PO check, and when Clearledgr starts chasing overdue approvals.</p>
           <div style="display:flex;flex-direction:column;gap:16px">
             <div>
               <label>Auto-approval confidence threshold</label>
@@ -63289,6 +63751,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <input id="cl-policy-require-po" type="checkbox" checked=${requirePO} disabled=${!canManageRules} />
               Require PO match before approval routing
             </label>
+            <div>
+              <label>Approval reminder SLA (hours)</label>
+              <input id="cl-policy-approval-reminder-hours" type="number" min="1" step="1" value=${String(approvalAutomation.reminderHours)} disabled=${!canManageRules} />
+              <div class="muted" style="margin-top:6px">Once an approval waits this long, Clearledgr marks it as due for follow-up and nudges the pending approver.</div>
+            </div>
+            <div>
+              <label>Approval escalation after (hours)</label>
+              <input id="cl-policy-approval-escalation-hours" type="number" min="1" step="1" value=${String(approvalAutomation.escalationHours)} disabled=${!canManageRules} />
+              <div class="muted" style="margin-top:6px">Once this threshold is reached, Clearledgr escalates the approval instead of only nudging.</div>
+            </div>
+            <div>
+              <label>Escalation channel override</label>
+              <input id="cl-policy-approval-escalation-channel" type="text" value=${approvalAutomation.escalationChannel} placeholder="#finance-approvals" disabled=${!canManageRules} />
+              <div class="muted" style="margin-top:6px">Optional. Leave blank to use the workspace default approval channel.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -63312,6 +63789,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <div class="secondary-stat-card">
               <strong>PO required</strong>
               <span>${requirePO ? "Yes" : "No"}</span>
+            </div>
+            <div class="secondary-stat-card">
+              <strong>Reminder SLA</strong>
+              <span>${approvalAutomation.reminderHours}h</span>
+            </div>
+            <div class="secondary-stat-card">
+              <strong>Escalation</strong>
+              <span>${approvalAutomation.escalationHours}h</span>
+            </div>
+            <div class="secondary-stat-card">
+              <strong>Escalation channel</strong>
+              <span>${approvalAutomation.escalationChannel || "Workspace default"}</span>
             </div>
           </div>
         </div>
@@ -63741,6 +64230,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     failed_post: { bg: "#FEF2F2", text: "#DC2626", label: "Failed post" }
   };
   var BLOCKER_LABELS = {
+    entity: "Entity review",
     approval: "Approval waiting",
     info: "Needs info",
     erp: "ERP retry",
@@ -63902,6 +64392,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const parts = [];
     if (isInvoiceDocumentType(documentType)) {
       parts.push(`Due ${item.due_date ? fmtDate(item.due_date) : "—"}`);
+      if (item?.entity_code || item?.entity_name) {
+        parts.push(`Entity ${item.entity_code || item.entity_name}`);
+      }
       parts.push(`ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus}`);
     } else {
       parts.push(`Type ${getDocumentTypeLabel(documentType)}`);
@@ -63915,12 +64408,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (!isInvoiceDocumentType(item?.document_type))
       return false;
     const state = normalizePipelineState(item?.state);
-    if (!["received", "validated"].includes(state))
+    if (state !== "validated")
       return false;
     if (Boolean(item?.requires_field_review))
       return false;
     const blockers = getPipelineBlockerKinds(item);
-    return !blockers.some((kind) => ["confidence", "exception", "budget", "po", "erp", "processing"].includes(kind));
+    return !blockers.some((kind) => ["entity", "confidence", "exception", "budget", "po", "erp", "processing"].includes(kind));
+  }
+  function humanizeRouteFailure(reason, detail = "") {
+    const token = String(reason || "").trim().toLowerCase();
+    const safeDetail = String(detail || "").trim();
+    if (token === "autonomy_gate_blocked" && safeDetail)
+      return safeDetail;
+    const mapping = {
+      state_not_validated: "Only validated invoices can be routed for approval.",
+      entity_route_review_required: "Resolve the legal entity before routing this invoice for approval.",
+      field_review_required: "Finish the required field checks before routing this invoice for approval.",
+      budget_decision_required: "Record the budget decision before routing this invoice for approval.",
+      exception_present: "Resolve the blocking exception before routing this invoice for approval.",
+      non_invoice_document: "Only invoice records can be routed for approval.",
+      merged_source: "This record is part of a merged source and cannot be routed directly.",
+      autonomy_gate_blocked: "Autonomy policy blocked approval routing for this invoice.",
+      policy_precheck_failed: "This invoice is not ready for approval routing yet.",
+      network_error: "Clearledgr could not reach the backend to route this invoice."
+    };
+    return mapping[token] || safeDetail || token.replace(/_/g, " ");
   }
   function getSavedViewLabel(view) {
     return String(view?.name || "").trim() || "Saved view";
@@ -63941,6 +64453,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function PipelinePage({ api, bootstrap, toast, orgId, userEmail, navigate }) {
     const pipelineScope = T2(() => getPipelineScope2(orgId, userEmail), [orgId, userEmail]);
+    const actorRole = bootstrap?.current_user?.role || "operator";
     const [items, setItems] = d2([]);
     const [loading, setLoading] = d2(true);
     const [searchQuery, setSearchQuery] = d2("");
@@ -64199,6 +64712,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       let successCount = 0;
       let failedCount = 0;
+      const failures = [];
       for (const item of routeableItems) {
         try {
           const result = await api("/extension/route-low-risk-approval", {
@@ -64213,10 +64727,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const status = String(result?.status || "").toLowerCase();
           if (["pending_approval", "needs_approval"].includes(status))
             successCount += 1;
-          else
+          else {
             failedCount += 1;
+            failures.push(humanizeRouteFailure(result?.reason, result?.detail));
+          }
         } catch {
           failedCount += 1;
+          failures.push(humanizeRouteFailure("network_error"));
         }
       }
       setLoading(true);
@@ -64227,7 +64744,40 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         setLoading(false);
       }
       setSelectedIds((prev) => prev.filter((itemId) => !routeableItems.some((item) => String(item.id || "") === String(itemId || ""))));
-      toast(failedCount > 0 ? `${successCount} invoice(s) routed, ${failedCount} failed.` : `${successCount} invoice(s) routed for approval.`, failedCount > 0 ? "warning" : "success");
+      const firstFailure = failures.find(Boolean) || "";
+      if (failedCount > 0) {
+        toast(successCount > 0 ? `${successCount} invoice(s) routed. ${failedCount} blocked. First issue: ${firstFailure || "This invoice is not ready for approval routing yet."}` : firstFailure || "No selected invoices are ready for approval routing.", "warning");
+        return;
+      }
+      toast(`${successCount} invoice(s) routed for approval.`, "success");
+    });
+    const [escalateApprovalItem, escalatingApproval] = useAction2(async (targetItem) => {
+      if (!targetItem?.id)
+        return;
+      try {
+        const result = await api("/api/agent/intents/execute", {
+          method: "POST",
+          body: JSON.stringify({
+            intent: "escalate_approval",
+            input: {
+              ap_item_id: targetItem.id,
+              email_id: targetItem.thread_id || targetItem.message_id || targetItem.id,
+              source_channel: "pipeline",
+              source_channel_id: "pipeline",
+              source_message_ref: targetItem.thread_id || targetItem.message_id || targetItem.id
+            },
+            organization_id: orgId
+          })
+        });
+        const ok = String(result?.status || "").toLowerCase() === "escalated";
+        toast(ok ? "Approval escalated." : result?.reason || "Could not escalate approval.", ok ? "success" : "error");
+        if (ok) {
+          const data = await api(`/extension/worklist?organization_id=${encodeURIComponent(orgId)}&limit=500`, { silent: true });
+          setItems(Array.isArray(data?.items) ? data.items : []);
+        }
+      } catch {
+        toast("Could not escalate approval.", "error");
+      }
     });
     y2(() => {
       const handleKeyDown = (event) => {
@@ -64322,7 +64872,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <p class="muted" style="margin:0">Work the queue by slice, then save and pin the views you reopen most often.</p>
         </div>
         <div class="toolbar-actions">
-          <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/home")}>Back to Home</button>
+          <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/home")}>Open Home</button>
           <button class="btn-secondary btn-sm" onClick=${doRefresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
         </div>
       </div>
@@ -64341,7 +64891,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <div>
                   <strong style="font-size:13px">Starter views</strong>
-                  <div class="muted" style="font-size:12px">Default views you can pin to Home.</div>
+                  <div class="muted" style="font-size:12px">Default views you can pin for quick queue access.</div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             ${starterViews.map((view) => html13`
@@ -64359,7 +64909,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
                 <div>
                   <strong style="font-size:13px">Personal views</strong>
-                  <div class="muted" style="font-size:12px">${pinnedViews.length} pinned for quick access from Home.</div>
+                  <div class="muted" style="font-size:12px">${pinnedViews.length} pinned for quick queue access.</div>
                 </div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
                   ${personalViews.map((view) => html13`
@@ -64432,6 +64982,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <span class="muted" style="font-size:12px">Blocker type</span>
           <select value=${viewPrefs.filters.blocker} onChange=${(event) => updateFilters({ blocker: event.target.value })}>
             <option value="all">All</option>
+            <option value="entity">Entity</option>
             <option value="approval">Approval</option>
             <option value="info">Needs info</option>
             <option value="erp">ERP</option>
@@ -64519,6 +65070,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const queueAge = getQueueAgeMinutes(item);
       const erpStatus = getErpStatus(item);
       const routeable = isRouteableInvoiceItem(item);
+      const entityNeedsReview = needsEntityRouting(item, item.state, item.document_type);
+      const escalateReady = canEscalateApproval(item, item.state, actorRole, item.document_type);
       return html13`
                     <div
                       key=${item.id}
@@ -64565,7 +65118,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                         ${routeable ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
         event.stopPropagation();
         routeSelected([item]);
-      }} disabled=${routingSelected}>${routingSelected ? "Routing…" : "Route approval"}</button>` : null}
+      }} disabled=${routingSelected}>${routingSelected ? "Routing…" : "Route approval"}</button>` : entityNeedsReview ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
+        event.stopPropagation();
+        openItemDetail(navigate, pipelineScope, item);
+      }}>Resolve entity</button>` : escalateReady ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
+        event.stopPropagation();
+        escalateApprovalItem(item);
+      }} disabled=${escalatingApproval}>${escalatingApproval ? "Escalating…" : "Escalate"}</button>` : null}
                         <button class="btn-secondary btn-sm" onClick=${(event) => {
         event.stopPropagation();
         openItemDetail(navigate, pipelineScope, item);
@@ -64625,6 +65184,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const erpStatus = getErpStatus(item);
       const isInvoiceDocument = isInvoiceDocumentType(item?.document_type);
       const routeable = isRouteableInvoiceItem(item);
+      const entityNeedsReview = needsEntityRouting(item, item.state, item.document_type);
+      const escalateReady = canEscalateApproval(item, item.state, actorRole, item.document_type);
       return html13`
                         <tr
                           key=${item.id}
@@ -64662,7 +65223,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                               ${routeable ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
         event.stopPropagation();
         routeSelected([item]);
-      }} disabled=${routingSelected} style="min-width:72px">${routingSelected ? "Routing…" : "Route"}</button>` : null}
+      }} disabled=${routingSelected} style="min-width:72px">${routingSelected ? "Routing…" : "Route"}</button>` : entityNeedsReview ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
+        event.stopPropagation();
+        openItemDetail(navigate, pipelineScope, item);
+      }} style="min-width:72px">Resolve</button>` : escalateReady ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
+        event.stopPropagation();
+        escalateApprovalItem(item);
+      }} disabled=${escalatingApproval} style="min-width:72px">${escalatingApproval ? "Escalating…" : "Escalate"}</button>` : null}
                               <button class="btn-secondary btn-sm" onClick=${(event) => {
         event.stopPropagation();
         openItemDetail(navigate, pipelineScope, item);
@@ -64690,7 +65257,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/reply-templates.js
-  var STORAGE_PREFIX2 = "clearledgr_reply_templates_v1";
+  var STORAGE_PREFIX3 = "clearledgr_reply_templates_v1";
   var MAX_CUSTOM_TEMPLATES = 12;
   var DEFAULT_REPLY_TEMPLATES = [
     {
@@ -64775,25 +65342,25 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 `)
     }
   ];
-  function normalizeText2(value, fallback = "") {
+  function normalizeText3(value, fallback = "") {
     return String(value || "").trim() || fallback;
   }
-  function normalizeUserEmail2(value) {
-    return normalizeText2(value).toLowerCase();
+  function normalizeUserEmail3(value) {
+    return normalizeText3(value).toLowerCase();
   }
   function resolveScope(scopeOrOrgId, maybeUserEmail = "") {
     if (scopeOrOrgId && typeof scopeOrOrgId === "object") {
       return {
-        orgId: normalizeText2(scopeOrOrgId.orgId || scopeOrOrgId.organizationId, "default"),
-        userEmail: normalizeUserEmail2(scopeOrOrgId.userEmail || scopeOrOrgId.email || maybeUserEmail)
+        orgId: normalizeText3(scopeOrOrgId.orgId || scopeOrOrgId.organizationId, "default"),
+        userEmail: normalizeUserEmail3(scopeOrOrgId.userEmail || scopeOrOrgId.email || maybeUserEmail)
       };
     }
     return {
-      orgId: normalizeText2(scopeOrOrgId, "default"),
-      userEmail: normalizeUserEmail2(maybeUserEmail)
+      orgId: normalizeText3(scopeOrOrgId, "default"),
+      userEmail: normalizeUserEmail3(maybeUserEmail)
     };
   }
-  function readStorageValue2(key) {
+  function readStorageValue3(key) {
     if (typeof window === "undefined" || !window?.localStorage)
       return null;
     try {
@@ -64802,7 +65369,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return null;
     }
   }
-  function writeStorageValue2(key, value) {
+  function writeStorageValue3(key, value) {
     if (typeof window === "undefined" || !window?.localStorage)
       return;
     try {
@@ -64811,13 +65378,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function normalizeTemplate(value = {}, scope = "user") {
     return {
-      id: normalizeText2(value?.id),
+      id: normalizeText3(value?.id),
       scope,
-      name: normalizeText2(value?.name).slice(0, 48),
-      description: normalizeText2(value?.description).slice(0, 140),
-      audience: normalizeText2(value?.audience, "vendor").toLowerCase() === "internal" ? "internal" : "vendor",
-      subjectTemplate: normalizeText2(value?.subjectTemplate || value?.subject_template).slice(0, 180),
-      bodyTemplate: normalizeText2(value?.bodyTemplate || value?.body_template).slice(0, 2400)
+      name: normalizeText3(value?.name).slice(0, 48),
+      description: normalizeText3(value?.description).slice(0, 140),
+      audience: normalizeText3(value?.audience, "vendor").toLowerCase() === "internal" ? "internal" : "vendor",
+      subjectTemplate: normalizeText3(value?.subjectTemplate || value?.subject_template).slice(0, 180),
+      bodyTemplate: normalizeText3(value?.bodyTemplate || value?.body_template).slice(0, 2400)
     };
   }
   function sanitizeCustomTemplates(values = []) {
@@ -64828,7 +65395,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function getReplyTemplatePreferenceKey(scopeOrOrgId, maybeUserEmail = "") {
     const scope = resolveScope(scopeOrOrgId, maybeUserEmail);
-    return `${STORAGE_PREFIX2}:${scope.orgId}:${scope.userEmail || "anonymous"}`;
+    return `${STORAGE_PREFIX3}:${scope.orgId}:${scope.userEmail || "anonymous"}`;
   }
   function defaultReplyTemplatePreferences() {
     return {
@@ -64852,7 +65419,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function readReplyTemplatePreferences(scopeOrOrgId, maybeUserEmail = "") {
     const key = getReplyTemplatePreferenceKey(scopeOrOrgId, maybeUserEmail);
-    const raw = readStorageValue2(key);
+    const raw = readStorageValue3(key);
     if (!raw)
       return defaultReplyTemplatePreferences();
     try {
@@ -64867,7 +65434,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const value = hasExplicitUserEmail ? maybeValue : maybeUserEmailOrValue;
     const key = getReplyTemplatePreferenceKey(scopeOrOrgId, userEmail);
     const normalized = normalizeReplyTemplatePreferences(value || {});
-    writeStorageValue2(key, JSON.stringify(normalized));
+    writeStorageValue3(key, JSON.stringify(normalized));
     return normalized;
   }
   function getStarterReplyTemplates() {
@@ -64889,7 +65456,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const current = readReplyTemplatePreferences(scopeOrOrgId, userEmail);
     const nextTemplate = normalizeTemplate({
       ...template,
-      id: normalizeText2(template?.id, `tmpl-${Date.now().toString(36)}`)
+      id: normalizeText3(template?.id, `tmpl-${Date.now().toString(36)}`)
     }, "user");
     return writeReplyTemplatePreferences(scopeOrOrgId, userEmail, {
       ...current,
@@ -64919,7 +65486,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     });
   }
   function resolveReplyTemplate(preferences = {}, templateId = "") {
-    const normalizedId = normalizeText2(templateId);
+    const normalizedId = normalizeText3(templateId);
     return getAllReplyTemplates(preferences).find((template) => template.id === normalizedId) || null;
   }
   function interpolateReplyTemplate(text = "", values = {}) {
@@ -64947,7 +65514,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function buildReplyTemplatePrefill(template = {}, item = {}, extra = {}) {
     const context = buildReplyTemplateContext(item, extra);
-    const audience = normalizeText2(template?.audience, "vendor").toLowerCase() === "internal" ? "internal" : "vendor";
+    const audience = normalizeText3(template?.audience, "vendor").toLowerCase() === "internal" ? "internal" : "vendor";
     return {
       to: audience === "vendor" ? extra?.to || context.sender_email || "" : extra?.to || "",
       subject: interpolateReplyTemplate(template?.subjectTemplate, context),
@@ -64971,6 +65538,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     rejected: { bg: "#FEF2F2", text: "#DC2626", label: "Rejected" },
     failed_post: { bg: "#FEF2F2", text: "#DC2626", label: "Failed post" }
   };
+  function humanizePrepareInfoFailure(reason) {
+    const token = String(reason || "").trim();
+    if (!token)
+      return "";
+    const map = {
+      waiting_for_sla_window: "Follow-up already sent. Wait for the vendor response before nudging again.",
+      followup_attempt_limit_reached: "Clearledgr reached the vendor follow-up limit. This now needs manual escalation.",
+      state_not_needs_info: "This invoice is no longer waiting on vendor information."
+    };
+    return map[token] || token.replace(/_/g, " ");
+  }
   function StatePill3({ state }) {
     const tone = STATE_STYLES2[state] || {
       bg: "#F1F5F9",
@@ -65034,6 +65612,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const fieldReviewBlockers = getFieldReviewBlockers(item);
     const financeEffectBlockers = getFinanceEffectBlockers(item);
     const financeEffectNotice = getFinanceEffectNotice(item);
+    const approvalFollowup = item?.approval_followup && typeof item.approval_followup === "object" ? item.approval_followup : {};
     const pauseReason = getWorkflowPauseReason(item);
     const documentLabel = getDocumentTypeLabel(documentType, { lowercase: true });
     const isInvoiceDocument = isInvoiceDocumentType(documentType);
@@ -65048,7 +65627,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const exceptionCode = String(item?.exception_code || "").trim().toLowerCase();
     const exceptionReason = getExceptionReason(exceptionCode);
     if (exceptionReason) {
-      push("exception", exceptionReason, getIssueSummary(item));
+      push("exception", exceptionReason, getIssueSummary2(item));
     }
     if (!item?.po_number && exceptionCode.includes("po")) {
       push("po", "PO reference missing", `Link the correct PO before continuing this ${isInvoiceDocument ? "invoice" : "record"}.`);
@@ -65060,8 +65639,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (item?.finance_effect_review_required) {
       push("finance_effect", financeEffectBlockers[0]?.label || "Credits or payments need review", financeEffectBlockers[0]?.detail || financeEffectNotice || "Linked finance documents changed the payable or settlement balance.");
     }
+    if (needsEntityRouting(item, state, documentType)) {
+      push("entity", "Entity route needs review", item?.entity_route_reason || "Choose the correct legal entity before approval routing can continue.");
+    }
     if (state === "needs_approval") {
-      push("approval", "Waiting on approver", "The approval request is still pending.");
+      const pendingAssignees = Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees : [];
+      push("approval", approvalFollowup?.escalation_due ? "Approval escalation due" : approvalFollowup?.sla_breached ? "Approval follow-up due" : "Waiting on approver", approvalFollowup?.escalation_due ? "Approval has been waiting past the escalation policy and should be escalated or reassigned." : approvalFollowup?.sla_breached ? "Approval has been waiting past the reminder SLA and should be nudged." : pendingAssignees.length ? `Waiting on ${pendingAssignees.slice(0, 3).join(", ")}.` : "The approval request is still pending.");
     }
     if (state === "needs_info") {
       push("info", isInvoiceDocument ? "Missing invoice details" : "Missing document details", `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
@@ -65073,7 +65656,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       push("received", isInvoiceDocument ? "Ready for approval" : "Needs finance review", isInvoiceDocument ? "This invoice is ready to send for approval." : getNonInvoiceWorkflowGuidance(documentType));
     }
     if (blockers.length === 0 && state === "validated") {
-      push("validated", isInvoiceDocument ? "Ready for approval" : `Ready to review ${documentLabel}`, isInvoiceDocument ? "Checks are complete and the invoice is ready to send for approval." : getNonInvoiceWorkflowGuidance(documentType));
+      push("validated", isInvoiceDocument && needsEntityRouting(item, state, documentType) ? "Resolve entity route" : isInvoiceDocument ? "Ready for approval" : `Ready to review ${documentLabel}`, isInvoiceDocument ? needsEntityRouting(item, state, documentType) ? "Choose the correct legal entity before sending this invoice for approval." : "Checks are complete and the invoice is ready to send for approval." : getNonInvoiceWorkflowGuidance(documentType));
     }
     return blockers.slice(0, 5);
   }
@@ -65325,8 +65908,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const auditSections = T2(() => partitionAuditEvents(auditEvents), [auditEvents]);
     const pauseReason = T2(() => getWorkflowPauseReason(item), [item]);
     const resumeWorkflowEligible = T2(() => !pauseReason && shouldOfferResumeWorkflow(item, auditEvents, documentType), [auditEvents, documentType, item, pauseReason]);
+    const approvalFollowup = item?.approval_followup && typeof item.approval_followup === "object" ? item.approval_followup : {};
+    const entityRouting = item?.entity_routing && typeof item.entity_routing === "object" ? item.entity_routing : {};
+    const entityCandidates = Array.isArray(item?.entity_candidates) ? item.entity_candidates : Array.isArray(entityRouting?.candidates) ? entityRouting.candidates : [];
+    const entityNeedsReview = needsEntityRouting(item, state, documentType);
     const stateNotice = resumeWorkflowEligible ? "Field review is cleared. Resume workflow to continue the posting step." : getWorkStateNotice(state, documentType, item);
-    const basePrimaryAction = pauseReason || item?.finance_effect_review_required ? null : getPrimaryActionConfig(state, actorRole, documentType);
+    const basePrimaryAction = pauseReason || item?.finance_effect_review_required ? null : getPrimaryActionConfig(state, actorRole, documentType, item);
     const primaryAction = resumeWorkflowEligible && ["preview_erp_post", "retry_erp_post"].includes(basePrimaryAction?.id) ? { id: "resume_workflow", label: "Resume workflow" } : basePrimaryAction;
     const canOpenEmail = Boolean(item && (getSourceThreadId(item) || getSourceMessageId(item) || item.subject));
     const smartRejectDefault = item?.exception_code ? getExceptionReason(item.exception_code) : "";
@@ -65365,8 +65952,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         email_id: item.thread_id || item.message_id || item.id,
         reason: "Request missing invoice details from vendor"
       });
-      const ok = ["prepared", "queued"].includes(String(result?.status || "").toLowerCase());
-      toast(ok ? "Info request draft prepared." : result?.reason || "Could not prepare info request.", ok ? "success" : "error");
+      const status = String(result?.status || "").toLowerCase();
+      const ok = ["prepared", "queued"].includes(status);
+      const informational = status === "waiting_sla";
+      toast(ok ? "Info request draft prepared." : informational ? humanizePrepareInfoFailure(result?.reason) || "Follow-up already sent." : humanizePrepareInfoFailure(result?.reason) || "Could not prepare info request.", ok ? "success" : informational ? "info" : "error");
       await refresh();
     });
     const [doNudge, nudging] = useAction2(async () => {
@@ -65379,6 +65968,76 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       });
       const ok = String(result?.status || "").toLowerCase() === "nudged";
       toast(ok ? "Approval reminder sent." : result?.reason || "Could not send reminder.", ok ? "success" : "error");
+      await refresh();
+    });
+    const [doEscalateApproval, escalatingApproval] = useAction2(async () => {
+      const result = await executeIntent(api, orgId, "escalate_approval", {
+        ap_item_id: item.id,
+        email_id: item.thread_id || item.message_id || item.id,
+        source_channel: "gmail_route",
+        source_channel_id: "gmail_route",
+        source_message_ref: item.thread_id || item.message_id || item.id
+      });
+      const ok = String(result?.status || "").toLowerCase() === "escalated";
+      toast(ok ? "Approval escalated." : result?.reason || "Could not escalate approval.", ok ? "success" : "error");
+      await refresh();
+    });
+    const [doReassignApproval, reassigningApproval] = useAction2(async () => {
+      const assignee = await openDialog({
+        actionType: "generic",
+        title: "Reassign approval",
+        label: "New approver",
+        message: "Enter the approver who should own this approval request now.",
+        placeholder: "Approver email or Slack user",
+        confirmLabel: "Reassign",
+        cancelLabel: "Cancel",
+        required: true,
+        chips: Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees.slice(0, 4) : []
+      });
+      if (!assignee)
+        return;
+      const result = await executeIntent(api, orgId, "reassign_approval", {
+        ap_item_id: item.id,
+        email_id: item.thread_id || item.message_id || item.id,
+        assignee,
+        source_channel: "gmail_route",
+        source_channel_id: "gmail_route",
+        source_message_ref: item.thread_id || item.message_id || item.id
+      });
+      const ok = String(result?.status || "").toLowerCase() === "reassigned";
+      toast(ok ? `Approval reassigned to ${assignee}.` : result?.reason || "Could not reassign approval.", ok ? "success" : "error");
+      await refresh();
+    });
+    const [doResolveEntityRoute, resolvingEntityRoute] = useAction2(async () => {
+      let selection = "";
+      if (entityCandidates.length > 1) {
+        selection = await openDialog({
+          actionType: "generic",
+          title: "Resolve entity route",
+          label: "Entity code or name",
+          message: "Choose the legal entity Clearledgr should use for this invoice.",
+          previewLines: entityCandidates.slice(0, 6).map((candidate2) => candidate2?.label || candidate2?.entity_name || candidate2?.entity_code || "").filter(Boolean),
+          placeholder: "e.g. US-01 or Cowrywise Inc US",
+          confirmLabel: "Resolve entity",
+          cancelLabel: "Cancel",
+          required: true,
+          chips: entityCandidates.slice(0, 4).map((candidate2) => candidate2?.entity_code || candidate2?.entity_name || candidate2?.label || "").filter(Boolean)
+        });
+        if (!selection)
+          return;
+      }
+      const candidate = entityCandidates.length === 1 ? entityCandidates[0] : null;
+      const result = await api(`/api/ap/items/${encodeURIComponent(item.id)}/entity-route/resolve?organization_id=${encodeURIComponent(orgId)}`, {
+        method: "POST",
+        body: JSON.stringify({
+          selection: selection || candidate?.entity_code || candidate?.entity_name,
+          entity_id: candidate?.entity_id,
+          entity_code: candidate?.entity_code,
+          entity_name: candidate?.entity_name
+        })
+      });
+      const ok = String(result?.status || "").toLowerCase() === "resolved";
+      toast(ok ? "Entity route resolved." : result?.reason || "Could not resolve entity route.", ok ? "success" : "error");
       await refresh();
     });
     const [doRetry, retrying] = useAction2(async () => {
@@ -65594,7 +66253,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         toast("Template unavailable for this record.", "warning");
         return;
       }
-      const issueSummary = getIssueSummary(item) || context?.summary?.text || "additional information is required";
+      const issueSummary = getIssueSummary2(item) || context?.summary?.text || "additional information is required";
       const prefill = buildReplyTemplatePrefill(template, item, {
         issue_summary: issueSummary,
         next_action: item?.next_action || context?.summary?.text || "Review in Clearledgr"
@@ -65622,9 +66281,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (primaryAction?.id === "request_approval") {
       primaryHandler = doRequestApproval;
       primaryPending = requestingApproval;
+    } else if (primaryAction?.id === "resolve_entity_route") {
+      primaryHandler = doResolveEntityRoute;
+      primaryPending = resolvingEntityRoute;
     } else if (primaryAction?.id === "prepare_info_request") {
       primaryHandler = doPrepareInfo;
       primaryPending = preparingInfo;
+    } else if (primaryAction?.id === "escalate_approval") {
+      primaryHandler = doEscalateApproval;
+      primaryPending = escalatingApproval;
     } else if (primaryAction?.id === "nudge_approver") {
       primaryHandler = doNudge;
       primaryPending = nudging;
@@ -65687,6 +66352,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ${canRejectWorkItem(state, actorRole, documentType) && html14`
           <button class="btn-danger btn-sm" onClick=${doReject} disabled=${rejecting}>Reject</button>
         `}
+        ${canReassignApproval(item, state, actorRole, documentType) && html14`
+          <button class="btn-secondary btn-sm" onClick=${doReassignApproval} disabled=${reassigningApproval}>
+            ${reassigningApproval ? "Reassigning…" : "Reassign approver"}
+          </button>
+        `}
+        ${canEscalateApproval(item, state, actorRole, documentType) && primaryAction?.id !== "escalate_approval" && html14`
+          <button class="btn-secondary btn-sm" onClick=${doEscalateApproval} disabled=${escalatingApproval}>
+            ${escalatingApproval ? "Escalating…" : "Escalate approval"}
+          </button>
+        `}
+        ${entityNeedsReview && primaryAction?.id !== "resolve_entity_route" && html14`
+          <button class="btn-secondary btn-sm" onClick=${doResolveEntityRoute} disabled=${resolvingEntityRoute}>
+            ${resolvingEntityRoute ? "Resolving…" : "Resolve entity"}
+          </button>
+        `}
         ${canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== "nudge_approver" && html14`
           <button class="btn-secondary btn-sm" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
         `}
@@ -65706,6 +66386,25 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 `)}
               </div>` : html14`<p class="muted">No active blockers.</p>`}
         </div>
+
+        ${(state === "needs_approval" || entityNeedsReview) && html14`
+          <div class="panel">
+            <h3 style="margin-top:0">Follow-up and routing</h3>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              ${state === "needs_approval" && html14`
+                ${detailRow("Approval wait", approvalFollowup?.wait_minutes ? `${approvalFollowup.wait_minutes} minutes` : "—")}
+                ${detailRow("Pending approvers", Array.isArray(approvalFollowup?.pending_assignees) && approvalFollowup.pending_assignees.length ? approvalFollowup.pending_assignees.join(", ") : "Not recorded")}
+                ${detailRow("Approval SLA", approvalFollowup?.escalation_due ? "Escalation due" : approvalFollowup?.sla_breached ? "Reminder due" : "Within SLA")}
+                ${detailRow("Escalations", String(approvalFollowup?.escalation_count || 0))}
+                ${detailRow("Reassignments", String(approvalFollowup?.reassignment_count || 0))}
+              `}
+              ${isInvoiceDocument && html14`
+                ${detailRow("Entity route", entityNeedsReview ? "Needs review" : item?.entity_code || item?.entity_name || "Not set")}
+                ${entityCandidates.length ? detailRow("Entity candidates", entityCandidates.slice(0, 4).map((candidate) => candidate?.label || candidate?.entity_name || candidate?.entity_code).filter(Boolean).join(", ")) : null}
+              `}
+            </div>
+          </div>
+        `}
 
         <div class="panel">
           <h3 style="margin-top:0">Check these fields</h3>
@@ -65971,6 +66670,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       });
       navigate("clearledgr/pipeline");
     };
+    const openVendorIssues = (vendor) => {
+      const vendorName = String(vendor?.vendor_name || "").trim();
+      if (!vendorName)
+        return;
+      writeReviewPreferences(pipelineScope, { searchQuery: vendorName });
+      navigate("clearledgr/review");
+    };
     if (loading) {
       return html15`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor directory…</p></div>`;
     }
@@ -65989,8 +66695,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <div class="secondary-chip-row" style="margin:0 0 18px">
       <span class="secondary-chip">Vendors tracked ${vendors.length}</span>
       <span class="secondary-chip">Open invoices ${vendors.reduce((sum, vendor) => sum + Number(vendor.open_count || 0), 0).toLocaleString()}</span>
+      <span class="secondary-chip">Open issues ${vendors.reduce((sum, vendor) => sum + Number(vendor.issue_count || 0), 0).toLocaleString()}</span>
       <span class="secondary-chip">Total spend ${fmtDollar(vendors.reduce((sum, vendor) => sum + Number(vendor.total_amount || 0), 0))}</span>
-      <span class="secondary-chip">Needs info ${vendors.reduce((sum, vendor) => sum + Number(vendor.needs_info_count || 0), 0).toLocaleString()}</span>
     </div>
 
     <div class="panel">
@@ -66020,6 +66726,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                           ${String(row.state || "").replace(/_/g, " ")} ${row.count}
                         </span>
                       `)}
+                      ${(vendor.top_exception_codes || []).slice(0, 2).map((row) => html15`
+                        <span key=${row.exception_code} style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FFF7ED;color:#9A3412">
+                          ${getExceptionLabel(row.exception_code)} ${row.count}
+                        </span>
+                      `)}
                       ${vendor.profile?.requires_po ? html15`<span style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FEF3C7;color:#92400E">Requires PO</span>` : null}
                       ${(vendor.profile?.anomaly_flags || []).slice(0, 2).map((flag) => html15`
                         <span key=${flag} style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FEF2F2;color:#B91C1C">${String(flag).replace(/_/g, " ")}</span>
@@ -66029,11 +66740,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   <div style="text-align:right;min-width:140px">
                     <div style="font-weight:700">${fmtDollar(vendor.total_amount || 0)}</div>
                     <div class="muted" style="font-size:12px;margin-top:2px">${Number(vendor.invoice_count || 0).toLocaleString()} invoices</div>
-                    <div class="muted" style="font-size:12px;margin-top:4px">${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</div>
+                    <div class="muted" style="font-size:12px;margin-top:4px">${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.issue_count || 0).toLocaleString()} issues · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</div>
                   </div>
                 </div>
                 <div class="row-actions" style="margin-top:12px">
                   <button class="btn-secondary btn-sm" onClick=${() => openVendorRecord(vendor)}>Open vendor record</button>
+                  <button class="btn-secondary btn-sm" onClick=${() => openVendorIssues(vendor)}>Review issues</button>
                   <button class="btn-ghost btn-sm" onClick=${() => openVendorPipeline(vendor)}>Open in pipeline</button>
                 </div>
               </div>
@@ -66119,6 +66831,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const recentItems = Array.isArray(payload?.recent_items) ? payload.recent_items : [];
     const history = Array.isArray(payload?.history) ? payload.history : [];
     const topExceptionCodes = Array.isArray(payload?.top_exception_codes) ? payload.top_exception_codes : [];
+    const openIssues = Array.isArray(payload?.open_issues) ? payload.open_issues : [];
+    const issueSummary = payload?.issue_summary || {};
     const senderEmails = Array.isArray(summary?.sender_emails) ? summary.sender_emails : [];
     const topStates = Array.isArray(summary?.top_states) ? summary.top_states : [];
     const anomalyFlags = Array.isArray(profile?.anomaly_flags) ? profile.anomaly_flags : [];
@@ -66143,6 +66857,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return;
       focusPipelineItem(pipelineScope, { ...item, id: recordId }, "vendor_record");
       navigateToRecordDetail(navigate, recordId);
+    };
+    const openVendorIssues = () => {
+      if (!vendorName)
+        return;
+      writeReviewPreferences(pipelineScope, { searchQuery: vendorName });
+      navigate("clearledgr/review");
+    };
+    const openIssueEmail = (item) => {
+      const ok = openSourceEmail(item);
+      if (!ok)
+        toast?.("Could not open the source email for this issue.", "error");
     };
     if (loading) {
       return html16`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor record…</p></div>`;
@@ -66169,6 +66894,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <div class="toolbar-actions">
           <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/vendors")}>Back to vendors</button>
           <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
+          <button class="btn-secondary btn-sm" onClick=${openVendorIssues}>Review issues</button>
           <button class="btn-primary btn-sm" onClick=${openVendorInPipeline}>Open vendor in pipeline</button>
         </div>
       </div>
@@ -66176,13 +66902,53 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
     <div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
       <${MetricCard} label="Tracked invoices" value=${Number(summary.invoice_count || 0).toLocaleString()} />
-      <${MetricCard} label="Open now" value=${Number(summary.open_count || 0).toLocaleString()} detail=${`${Number(summary.approval_count || 0)} waiting approval`} />
+      <${MetricCard} label="Open now" value=${Number(summary.open_count || 0).toLocaleString()} detail=${`${Number(summary.issue_count || 0)} with issues`} />
       <${MetricCard} label="Posted" value=${Number(summary.posted_count || 0).toLocaleString()} detail=${`${Number(summary.failed_count || 0)} failed post`} />
       <${MetricCard} label="Tracked spend" value=${fmtDollar(summary.total_amount || 0)} detail=${summary.last_activity_at ? `Last activity ${fmtDateTime(summary.last_activity_at)}` : "No recent activity"} />
     </div>
 
     <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,0.8fr);gap:20px">
       <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="panel">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+            <div>
+              <h3 style="margin:0 0 6px">Open issues and follow-up</h3>
+              <p class="muted" style="margin:0">Work the vendor-specific blockers that still need action before this supplier’s invoices can move cleanly.</p>
+            </div>
+            <button class="btn-secondary btn-sm" onClick=${openVendorIssues}>Open in review</button>
+          </div>
+          ${openIssues.length === 0 ? html16`<p class="muted" style="margin:0">No open vendor issues right now.</p>` : html16`<div style="display:flex;flex-direction:column;gap:10px">
+                ${openIssues.map((item) => html16`
+                  <div key=${item.id} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                      <div>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                          <strong style="font-size:14px">${item.invoice_number || "No invoice #"}</strong>
+                          <span style="font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;background:#FFF7ED;color:#9A3412">
+                            ${item.issue_label || "Open issue"}
+                          </span>
+                          <${StatePill4} state=${item.state} />
+                        </div>
+                        <div class="muted" style="font-size:12px;margin-top:4px">
+                          ${formatMoney2(item.amount, item.currency || "USD")} · Updated ${fmtDateTime(item.updated_at)}
+                        </div>
+                        <div class="muted" style="font-size:12px;margin-top:6px;line-height:1.45">
+                          ${item.issue_summary || getIssueSummary(item)}
+                        </div>
+                        ${item.exception_code ? html16`<div class="muted" style="font-size:12px;margin-top:4px">${getExceptionLabel(item.exception_code)}</div>` : null}
+                      </div>
+                      <div class="row-actions">
+                        <button class="btn-secondary btn-sm" onClick=${() => openItemDetail2(item)}>Open record</button>
+                        ${(item.thread_id || item.message_id) && html16`
+                          <button class="btn-ghost btn-sm" onClick=${() => openIssueEmail(item)}>Open email</button>
+                        `}
+                      </div>
+                    </div>
+                  </div>
+                `)}
+              </div>`}
+        </div>
+
         <div class="panel">
           <h3 style="margin-top:0">Open and recent invoices</h3>
           ${recentItems.length === 0 ? html16`<p class="muted" style="margin:0">No recent invoices for this vendor yet.</p>` : html16`<div style="display:flex;flex-direction:column;gap:10px">
@@ -66270,6 +67036,32 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               </div>
             </div>
           `}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Issue summary</h3>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Open issues</span>
+              <strong>${Number(issueSummary.total || 0).toLocaleString()}</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Field review</span>
+              <strong>${Number(issueSummary.field_review || 0).toLocaleString()}</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Needs info</span>
+              <strong>${Number(issueSummary.needs_info || 0).toLocaleString()}</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Failed post</span>
+              <strong>${Number(issueSummary.failed_post || 0).toLocaleString()}</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px">
+              <span class="muted">Policy / entity</span>
+              <strong>${Number((issueSummary.policy_exception || 0) + (issueSummary.entity_route || 0)).toLocaleString()}</strong>
+            </div>
+          </div>
         </div>
 
         <div class="panel">
@@ -66468,7 +67260,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       setSelectedRef("");
       setEditor(blankEditor());
     }}>New personal template</button>
-        <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/home")}>Back to Home</button>
+        <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/pipeline")}>Back to Pipeline</button>
       </div>
     </div>
 
@@ -66638,6 +67430,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const numeric = Number(value);
     return Number.isFinite(numeric) ? `${numeric.toFixed(2)}%` : "0.00%";
   }
+  function metricHours(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${numeric.toFixed(1)}h` : "0.0h";
+  }
   function toneForPercent(value, { watchBelow = 95, dangerBelow = 90 } = {}) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric))
@@ -66648,18 +67444,70 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "color:#A16207;";
     return "color:#047857;";
   }
+  function safeNumber(value, fallback = 0) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : fallback;
+  }
+  function getPilotScorecardSummary(kpis = {}, dashboard = {}) {
+    const pilot = kpis?.pilot_scorecard || {};
+    const summary = pilot?.summary || {};
+    const approval = pilot?.approval_workflow || {};
+    const routing = pilot?.entity_routing || {};
+    const bootstrap = dashboard?.pilot_snapshot || {};
+    const highlights = Array.isArray(pilot?.highlights) && pilot.highlights.length ? pilot.highlights : Array.isArray(bootstrap?.highlights) ? bootstrap.highlights : [];
+    return {
+      touchlessRatePct: safeNumber(summary?.touchless_rate_pct, safeNumber(bootstrap?.touchless_rate_pct)),
+      avgCycleTimeHours: safeNumber(summary?.avg_cycle_time_hours, safeNumber(bootstrap?.avg_cycle_time_hours)),
+      onTimeApprovalsPct: safeNumber(summary?.on_time_approvals_pct, safeNumber(bootstrap?.on_time_approvals_pct)),
+      avgApprovalWaitHours: safeNumber(summary?.avg_approval_wait_hours, safeNumber(bootstrap?.avg_approval_wait_hours)),
+      approvalSlaBreachedOpenCount: safeNumber(summary?.approval_sla_breached_open_count, safeNumber(bootstrap?.approval_sla_breached_open_count)),
+      approvalEscalatedOpenCount: safeNumber(approval?.escalated_open_count, safeNumber(bootstrap?.approval_escalated_open_count)),
+      approvalReassignedOpenCount: safeNumber(approval?.reassigned_open_count, safeNumber(bootstrap?.approval_reassigned_open_count)),
+      entityRouteNeedsReviewCount: safeNumber(summary?.entity_route_needs_review_count, safeNumber(bootstrap?.entity_route_needs_review_count)),
+      entityRouteManualResolutionCount30d: safeNumber(routing?.manual_resolution_event_count_30d, safeNumber(bootstrap?.entity_route_manual_resolution_count_30d)),
+      highlights: highlights.map((entry) => String(entry || "").trim()).filter(Boolean).slice(0, 4)
+    };
+  }
+  function getOperatorPressureSummary(kpis = {}) {
+    const operator = kpis?.operator_metrics || {};
+    const liveQueue = operator?.live_queue || {};
+    const queueRates = operator?.queue_rates || {};
+    const activity = operator?.activity || {};
+    return {
+      approvalQueueCount: safeNumber(liveQueue?.approval_queue_count),
+      approvalSlaBreachedOpenCount: safeNumber(liveQueue?.approval_sla_breached_open_count),
+      approvalEscalatedOpenCount: safeNumber(liveQueue?.approval_escalated_open_count),
+      approvalReassignedOpenCount: safeNumber(liveQueue?.approval_reassigned_open_count),
+      entityRouteNeedsReviewCount: safeNumber(liveQueue?.entity_route_needs_review_count),
+      fieldReviewOpenCount: safeNumber(liveQueue?.field_review_open_count),
+      approvalSlaBreachedOpenRatePct: safeNumber(queueRates?.approval_sla_breached_open_rate) * 100,
+      entityRouteNeedsReviewRatePct: safeNumber(queueRates?.entity_route_needs_review_rate) * 100,
+      approvalEscalationEventCount: safeNumber(activity?.approval_escalation_event_count),
+      approvalReassignmentEventCount: safeNumber(activity?.approval_reassignment_event_count),
+      entityRouteResolutionEventCount: safeNumber(activity?.entity_route_resolution_event_count),
+      activityWindowDays: safeNumber(operator?.activity_window_days, 30)
+    };
+  }
   function ReportsPage({ api, bootstrap, orgId, userEmail, navigate, toast }) {
     const pipelineScope = T2(() => ({ orgId, userEmail }), [orgId, userEmail]);
-    const [metrics, setMetrics] = d2(null);
+    const [reportData, setReportData] = d2({ aggregation: null, kpis: null });
     const [loading, setLoading] = d2(true);
     const starterViews = T2(() => getStarterPipelineViews({}), []);
     const loadMetrics = async ({ silent = false } = {}) => {
       setLoading(true);
       try {
-        const data = await api(`/api/ap/items/metrics/aggregation?organization_id=${encodeURIComponent(orgId)}`, { silent });
-        setMetrics(data?.metrics || null);
+        const [aggregationResult, kpiResult] = await Promise.allSettled([
+          api(`/api/ap/items/metrics/aggregation?organization_id=${encodeURIComponent(orgId)}`, { silent }),
+          api(`/api/ops/ap-kpis?organization_id=${encodeURIComponent(orgId)}`, { silent })
+        ]);
+        const aggregation = aggregationResult.status === "fulfilled" ? aggregationResult.value?.metrics || null : null;
+        const kpis = kpiResult.status === "fulfilled" ? kpiResult.value?.kpis || null : null;
+        setReportData({ aggregation, kpis });
+        if (!aggregation && !kpis && !silent) {
+          toast?.("Could not load reports.", "error");
+        }
       } catch {
-        setMetrics(null);
+        setReportData({ aggregation: null, kpis: null });
         if (!silent)
           toast?.("Could not load reports.", "error");
       } finally {
@@ -66682,11 +67530,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     };
     const dashboard = bootstrap?.dashboard || {};
     const agenticSnapshot = dashboard?.agentic_snapshot || {};
-    const totals = metrics?.totals || {};
-    const sources = metrics?.sources || {};
-    const duplicates = metrics?.duplicates || {};
-    const topVendors = Array.isArray(metrics?.spend_by_vendor) ? metrics.spend_by_vendor.slice(0, 6) : [];
+    const totals = reportData?.aggregation?.totals || {};
+    const sources = reportData?.aggregation?.sources || {};
+    const duplicates = reportData?.aggregation?.duplicates || {};
+    const topVendors = Array.isArray(reportData?.aggregation?.spend_by_vendor) ? reportData.aggregation.spend_by_vendor.slice(0, 6) : [];
     const sourceTypes = Object.entries(sources.link_count_by_type || {}).sort((left, right) => right[1] - left[1]).slice(0, 6);
+    const pilotSummary = getPilotScorecardSummary(reportData?.kpis || {}, dashboard);
+    const operatorSummary = getOperatorPressureSummary(reportData?.kpis || {});
     if (loading) {
       return html18`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading reports…</p></div>`;
     }
@@ -66759,6 +67609,76 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
 
       <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="panel">
+          <h3 style="margin-top:0">Pilot scorecard</h3>
+          <p class="muted" style="margin:0 0 12px">
+            Track whether Clearledgr is actually removing approval chasing and manual routing work.
+          </p>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+            <${MetricCard2}
+              label="Touchless completed invoices"
+              value=${html18`<span style=${toneForPercent(pilotSummary.touchlessRatePct, { watchBelow: 70, dangerBelow: 50 })}>${metricPercent(pilotSummary.touchlessRatePct)}</span>`}
+            />
+            <${MetricCard2}
+              label="Average cycle time"
+              value=${metricHours(pilotSummary.avgCycleTimeHours)}
+            />
+            <${MetricCard2}
+              label="On-time approvals"
+              value=${html18`<span style=${toneForPercent(pilotSummary.onTimeApprovalsPct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(pilotSummary.onTimeApprovalsPct)}</span>`}
+            />
+            <${MetricCard2}
+              label="Average approval wait"
+              value=${metricHours(pilotSummary.avgApprovalWaitHours)}
+            />
+          </div>
+
+          ${pilotSummary.highlights.length > 0 && html18`
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Current readout</div>
+              <div class="secondary-list">
+                ${pilotSummary.highlights.map((line) => html18`
+                  <div key=${line} class="secondary-note">${line}</div>
+                `)}
+              </div>
+            </div>
+          `}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Operator pressure</h3>
+          <p class="muted" style="margin:0 0 12px">
+            Watch the live queue pressure points that still create manual chasing or routing work.
+          </p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <${ReportRow}
+              label="Open approvals waiting"
+              value=${Number(operatorSummary.approvalQueueCount || 0).toLocaleString()}
+              detail=${`${Number(operatorSummary.approvalSlaBreachedOpenCount || 0).toLocaleString()} beyond SLA`}
+            />
+            <${ReportRow}
+              label="Escalated approvals"
+              value=${Number(operatorSummary.approvalEscalatedOpenCount || 0).toLocaleString()}
+              detail=${`${Number(operatorSummary.approvalEscalationEventCount || 0).toLocaleString()} escalations in the last ${Number(operatorSummary.activityWindowDays || 30).toLocaleString()} days`}
+            />
+            <${ReportRow}
+              label="Reassigned approvals"
+              value=${Number(operatorSummary.approvalReassignedOpenCount || 0).toLocaleString()}
+              detail=${`${Number(operatorSummary.approvalReassignmentEventCount || 0).toLocaleString()} reassignments in the last ${Number(operatorSummary.activityWindowDays || 30).toLocaleString()} days`}
+            />
+            <${ReportRow}
+              label="Entity routing review"
+              value=${Number(operatorSummary.entityRouteNeedsReviewCount || 0).toLocaleString()}
+              detail=${`${Number(pilotSummary.entityRouteManualResolutionCount30d || 0).toLocaleString()} manual resolutions in the last 30 days`}
+            />
+            <${ReportRow}
+              label="Field review queue"
+              value=${Number(operatorSummary.fieldReviewOpenCount || 0).toLocaleString()}
+              detail=${`Approval SLA breach rate ${metricPercent(operatorSummary.approvalSlaBreachedOpenRatePct)}`}
+            />
+          </div>
+        </div>
+
         <div class="panel">
           <h3 style="margin-top:0">Autonomy quality</h3>
           <p class="muted" style="margin:0 0 12px">
@@ -67182,6 +68102,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               const data = await result.json();
               if (data?.found && data?.item) {
                 item = data.item;
+              } else {
+                const recovered = await queueManager.backendFetch(`/extension/by-thread/${encodeURIComponent(threadId)}/recover`, { method: "POST" });
+                if (recovered?.ok) {
+                  const recoveredData = await recovered.json();
+                  if (recoveredData?.found && recoveredData?.item) {
+                    item = recoveredData.item;
+                  }
+                }
+              }
+              if (item?.id) {
                 queueManager.upsertQueueItem(item);
                 queueManager.emitQueueUpdated();
                 store_default.update({ selectedItemId: item.id });
@@ -67363,7 +68293,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     try {
       const logoUrl = getAssetUrl(LOGO_PATH2);
       sdk.Toolbars.registerToolbarButtonForList({
-        title: "Clearledgr Home",
+        title: "Clearledgr Pipeline",
         iconUrl: logoUrl || undefined,
         section: "METADATA_STATE",
         onClick: () => {
@@ -67401,8 +68331,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         }
         if ("clearledgr".includes(q3) || "invoice".includes(q3) || "ap".includes(q3)) {
           suggestions.push({
-            name: "Clearledgr Home",
-            description: "Open Clearledgr dashboard",
+            name: "Clearledgr Pipeline",
+            description: "Open the AP control plane",
             routeID: DEFAULT_ROUTE,
             iconUrl: getAssetUrl(LOGO_PATH2) || undefined
           });
@@ -67427,7 +68357,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     try {
       const goHome = sdk.Keyboard.createShortcutHandle({
         chord: "g c",
-        description: "Go to Clearledgr Home"
+        description: "Go to Clearledgr Pipeline"
       });
       goHome.on("activate", () => sdk.Router.goto(DEFAULT_ROUTE));
       const goActivity = sdk.Keyboard.createShortcutHandle({
@@ -67580,7 +68510,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       };
       const pinnedViewRoutes = getPinnedPipelineViews(readPipelinePreferences(pipelineScope)).slice(0, 3).map((view) => ({
         title: `View: ${view.name}`,
-        id: `clearledgr/pipeline-view/${encodeURIComponent(getPipelineViewRef(view))}`,
+        id: "clearledgr/pipeline-view/:ref",
+        routeParams: { ref: getPipelineViewRef(view) },
         iconUrl: getPipelineViewIconUrl()
       }));
       clearNavItemViews(appMenuNavItemViews);
@@ -67598,6 +68529,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const navHandle = appMenuPanelView.addNavItem({
             name: route.title,
             routeID: route.id,
+            routeParams: route.routeParams,
             iconUrl: route.iconUrl
           });
           appMenuNavItemViews.push(navHandle);
@@ -67618,6 +68550,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const navHandle = sdk.NavMenu.addNavItem({
             name: route.title,
             routeID: route.id,
+            routeParams: route.routeParams,
             type: "NAVIGATION",
             iconUrl: route.iconUrl
           });
@@ -67694,7 +68627,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       bootstrapCache = null;
     }
     getBootstrap();
-    sdk.Router.handleCustomRoute("clearledgr/pipeline-view", async (customRouteView) => {
+    sdk.Router.handleCustomRoute("clearledgr/pipeline-view/:ref", async (customRouteView) => {
       const params = customRouteView.getParams?.() || {};
       const rawRef = params.ref || window.location.hash.split("clearledgr/pipeline-view/")[1]?.split("?")[0] || "";
       const pipelineScope = {
@@ -67722,7 +68655,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         customRouteView.destroy?.();
       } catch (_2) {}
     });
-    sdk.Router.handleCustomRoute("clearledgr/invoice", async (customRouteView) => {
+    sdk.Router.handleCustomRoute("clearledgr/invoice/:id", async (customRouteView) => {
       const container = document.createElement("div");
       container.className = "cl-route";
       const style = document.createElement("style");
@@ -67739,7 +68672,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const params = customRouteView.getParams?.() || {};
       const rawId = resolveRecordRouteId(params, window.location.hash);
       const orgId = workspaceShellApi.orgId();
-      const navigate = (routeId) => sdk.Router.goto(routeId);
+      const navigate = (routeId, params2) => sdk.Router.goto(routeId, params2);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
       const bootstrap2 = await getBootstrap();
       J(html19`<${InvoiceDetailPage}
@@ -67752,7 +68685,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       routeParams=${{ id: rawId }}
     />`, pageMount);
     });
-    sdk.Router.handleCustomRoute("clearledgr/vendor", async (customRouteView) => {
+    sdk.Router.handleCustomRoute("clearledgr/vendor/:name", async (customRouteView) => {
       const container = document.createElement("div");
       container.className = "cl-route";
       const style = document.createElement("style");
@@ -67769,7 +68702,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const params = customRouteView.getParams?.() || {};
       const rawName = resolveVendorRouteName(params, window.location.hash);
       const orgId = workspaceShellApi.orgId();
-      const navigate = (routeId) => sdk.Router.goto(routeId);
+      const navigate = (routeId, params2) => sdk.Router.goto(routeId, params2);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
       const bootstrap2 = await getBootstrap();
       J(html19`<${VendorDetailPage}
@@ -67803,7 +68736,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         const routeEl = customRouteView.getElement();
         routeEl.appendChild(container);
         const orgId = workspaceShellApi.orgId();
-        const navigate = (routeId) => sdk.Router.goto(routeId);
+        const navigate = (routeId, params) => sdk.Router.goto(routeId, params);
         const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
         let renderCurrentPage = async () => {};
         const updateRoutePreferences = async (nextPreferences) => {
@@ -67822,7 +68755,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
-              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Home</button>
+              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Pipeline</button>
             </div>
           `, pageMount);
             return;
@@ -67864,7 +68797,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         container.appendChild(pageMount);
         customRouteView.getElement().appendChild(container);
         const orgId = workspaceShellApi.orgId();
-        const navigate = (nextRouteId) => sdk.Router.goto(nextRouteId);
+        const navigate = (nextRouteId, params) => sdk.Router.goto(nextRouteId, params);
         const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
         const renderCurrentPage = async () => {
           const bootstrap2 = await getBootstrap();
@@ -67874,7 +68807,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
-              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Home</button>
+              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Pipeline</button>
             </div>
           `, pageMount);
             return;

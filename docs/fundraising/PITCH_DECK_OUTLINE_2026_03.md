@@ -1,10 +1,12 @@
 # Clearledgr Pitch Deck Outline
 
+Note: working slide copy lives in [`PITCH_DECK_COPY_2026_03.md`](/Users/mombalam/Desktop/Clearledgr.v1/docs/fundraising/PITCH_DECK_COPY_2026_03.md), and the slide-ready draft lives in [`PITCH_DECK_PRESENTATION_DRAFT_2026_03.md`](/Users/mombalam/Desktop/Clearledgr.v1/docs/fundraising/PITCH_DECK_PRESENTATION_DRAFT_2026_03.md). This file remains the structural outline.
+
 Date: 2026-03-23
 
 Target raise:
 
-- $2.5M
+- $2M-$2.5M
 - YC post-money SAFE
 - $15M cap target
 
@@ -14,80 +16,83 @@ This deck should stay concise. Aim for 12-14 slides.
 
 Clearledgr
 
-Streak for finance ops
+AI execution layer for finance teams
 
-Embedded finance execution inside Gmail, chat, and ERP
+First skill: run AP from Gmail
+
+No approval chasing. No duplicate ERP entry.
 
 Footer:
 
 - founder names
 - contact info
 
-## Slide 2 — Problem
+## Slide 2 — Workflow Reality
 
 Title:
 
-Finance ops work lives everywhere except the system that records it
+AP already runs through email
 
 Points:
 
 - invoices arrive in Gmail
-- approvals happen in Slack or Teams
-- finance chases exceptions manually
-- ERP only gets updated at the end
+- approvers get pulled into Slack or Teams
+- exceptions spill into spreadsheets and inbox threads
+- ERP only records the result
 
 Close with:
 
-Finance teams do not need another dashboard. They need a system of execution.
+The workflow already exists. It is just fragmented and manual.
 
-## Slide 3 — Why Existing Tools Break
-
-Title:
-
-Systems of record are not systems of execution
-
-Contrast:
-
-- ERP: records outcomes
-- inbox: where work starts
-- chat: where decisions happen
-- spreadsheets: where exceptions get tracked
-
-This slide should show the workflow fragmentation visually.
-
-## Slide 4 — Solution
+## Slide 3 — Real Pain
 
 Title:
 
-Clearledgr is the execution layer for finance ops
+The pain is coordination, not capture
 
-Diagram:
+Points:
 
-- Gmail = operator surface
-- Slack / Teams = decision surfaces
-- ERP = system of record
-- Clearledgr = policy + orchestration + execution + audit
+- chasing approvers
+- triaging entity and workflow
+- resolving exceptions across inbox, chat, and sheets
+- re-entering approved invoices into ERP
 
 Close with:
 
-No new dashboards. No context switching. Just execution.
+Finance teams do not need another dashboard. They need the workflow to run.
 
-## Slide 5 — Wedge
+## Slide 4 — Market Gap
 
 Title:
 
-Start with Gmail-native AP
+Everyone acknowledges email. No one owns the workflow.
 
-Why AP:
+Points:
 
-- frequent
-- painful
-- already inbox-native
-- directly tied to ERP outcomes
+- Ramp and BILL pull invoices out of email into their own systems
+- Tipalti uses email as an approval side channel
+- Stampli says email-thread coordination is broken and moves it into Stampli
+- no one treats Gmail as the AP operating surface
+
+This slide should make the competitive opening obvious.
+
+## Slide 5 — Solution
+
+Title:
+
+First skill: AP from Gmail
 
 Message:
 
-We are not starting with a broad finance suite. We are starting with the sharpest wedge.
+- triage invoices from the inbox
+- route by entity and workflow
+- route approvals in Slack or Teams
+- validate against ERP
+- write approved invoices back
+
+Close with:
+
+Gmail = operator surface. Slack / Teams = action surfaces. ERP = system of record.
 
 ## Slide 6 — Product
 
@@ -97,9 +102,10 @@ The product is real today
 
 Bullets:
 
-- Gmail-native AP work surfaces
-- approval routing in Slack / Teams
-- policy and confidence gates
+- live Gmail work surfaces
+- invoice processing and routing
+- confidence-gated review and exception handling
+- Slack / Teams actions
 - ERP write-back
 - audit trail
 
@@ -112,128 +118,49 @@ Visual:
 
 Title:
 
-How Clearledgr works
+How one invoice moves through Clearledgr
 
 Step sequence:
 
 1. invoice arrives in Gmail
-2. Clearledgr extracts and validates
-3. approval routes in chat if needed
-4. approved invoice posts to ERP
-5. audit trail remains intact
+2. Clearledgr classifies and routes it
+3. approver acts in chat
+4. exceptions move into review or follow-up
+5. approved invoice posts to ERP
 
 This can be either one slide or two slides depending on visual density.
 
-## Slide 8 — Why This Wins
+## Slide 8 — Customer
 
 Title:
 
-Why Clearledgr is different
+The first buyer is a stretched finance team, not a giant enterprise committee
 
-Three columns:
+Points:
 
-- dashboard AP tools
-- narrow automation tools
-- Clearledgr
+- multi-entity finance team
+- already living in Gmail, Slack, spreadsheets, and ERP
+- approvals slipping through the cracks
+- too much manual re-entry
+- no appetite to hire more people
 
-Key differentiators:
-
-- embedded in host tools
-- action-oriented, not dashboard-oriented
-- ERP write-back
-- policy and audit built in
-
-## Slide 9 — Market Expansion
+## Slide 9 — Traction / Proof
 
 Title:
 
-AP is the first wedge, not the whole company
+The wedge already resonates with real buyers
 
-Expansion map:
+Use only real proof. Recommended mix:
 
-- AP
-- exceptions and vendor issue handling
-- credits / refunds / settlements
-- reconciliation
-- broader finance operations workflows
+- 3 design partners
+- 1 committed pilot starting in May
+- Cowrywise spends roughly 3 days per week on reconciliation and AP
+- Cowrywise buying trigger: avoid more headcount
+- Booking.com validates that the pain is broader than one company
 
-Message:
+Keep this slide narrow: one concrete commercial anchor, one broader market-validation signal.
 
-Own the execution layer for one finance workflow, then expand across the rest.
-
-## Slide 10 — Traction / Proof
-
-Title:
-
-Early proof
-
-This slide must use real data only.
-
-Possible boxes:
-
-- number of design partners
-- pilot status
-- invoices processed
-- approvals routed
-- ERP posts completed
-- weekly active finance users
-
-If current data is thin, use:
-
-- live product evidence
-- pilot readiness evidence
-- integration coverage
-
-Good candidates for this slide:
-
-- 20+ finance leader interviews
-- 85% cite manual close, FP&A, and vendor workflows as top-3 pain
-- "If you can do this without more headcount, we'll pay for it."
-- early validation across reconciliation, categorization, FP&A, and journal-entry workflows
-- co-creation with a Fortune 200 subsidiary
-
-If you have to choose, keep this slide narrow: customer pain, buyer urgency, and one or two concrete proof points beat a crowded proof wall.
-
-## Slide 11 — GTM
-
-Title:
-
-Land through one team, one inbox, one ERP
-
-Message:
-
-- narrow initial deployment
-- founder-led sales
-- high-touch onboarding
-- convert design partners into paid pilots
-
-This should feel focused, not scaled-up too early.
-
-## Slide 12 — Business Model
-
-Title:
-
-How we make money
-
-Suggested framing if pricing is still evolving:
-
-- workspace or team subscription
-- usage / workflow volume expansion
-- enterprise / connector / control-plane upsell over time
-
-If pricing is not locked, keep this directional.
-
-Current pricing hypothesis:
-
-- land first workflow at $10K-$15K per month
-- expand to $30K-$75K+ per month across multiple workflows
-- expansion is driven by workflow count and execution depth, not just seats
-
-Useful bottom-of-slide wedge math:
-
-- 15 customers x 3 workflows x $10K per month = $5.4M ARR
-
-## Slide 13 — Why Now
+## Slide 10 — Why Now
 
 Title:
 
@@ -241,13 +168,38 @@ Why this category opens now
 
 Points:
 
-- CFO tech spend up 40%+
-- 90%+ of ERPs now expose production-grade APIs
-- finance turnover / burnout pressure remains severe
 - LLMs make inbox-native execution viable
-- ERP remains necessary but insufficient
+- finance teams are leaner and cannot keep adding headcount to coordination work
+- ERP APIs are good enough, but ERP still does not run the workflow
 
-## Slide 14 — Team
+## Slide 11 — Wedge + Expansion
+
+Title:
+
+Clearledgr is the execution layer. AP is the first skill.
+
+Message:
+
+- AP is frequent, painful, inbox-native, and tied directly to ERP outcomes
+- the same coordination pattern exists in vendor issues, finance exceptions, reconciliation, and close
+- win one workflow deeply, then expand
+
+## Slide 12 — GTM
+
+Title:
+
+Land through one team, one inbox, one ERP
+
+Message:
+
+- founder-led sales
+- paid pilot first
+- narrow deployment with measurable proof
+- expand by workflow depth, not broad rollout
+
+This should feel disciplined, not sprawling.
+
+## Slide 13 — Team
 
 Title:
 
@@ -261,15 +213,15 @@ Include:
 - relevant domain or product insight
 - why this team is suited to build finance execution software
 
-## Slide 15 — Raise
+## Slide 14 — Raise
 
 Title:
 
-Raising $2.5M to turn the wedge into repeatable proof
+Raising $2M-$2.5M to turn the wedge into repeatable proof
 
 Terms:
 
-- $2.5M
+- $2M-$2.5M
 - post-money SAFE
 - $15M cap target
 
@@ -278,7 +230,7 @@ Milestones this round:
 - 3-5 strong design partners
 - 2-3 paid pilots
 - repeat weekly usage
-- measurable workflow throughput
+- measurable workflow throughput and time savings
 - second wedge identified and validated
 
 ## Appendix Slides
@@ -300,6 +252,8 @@ Use these deck rules:
 3. Do not over-claim autonomy.
 4. Do not present AP as the full company.
 5. Make the wedge-to-platform transition obvious.
+6. Do not let the deck become a single-customer story; use Cowrywise as the best proof anchor, not the whole company.
+7. Do not let the deck describe Clearledgr as just an AP product; the company is the finance execution layer and AP is the first skill.
 
 ## Required Founder Inputs
 

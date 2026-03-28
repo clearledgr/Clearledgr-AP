@@ -4,13 +4,14 @@
 
 Clearledgr AP v1 is an **inbox-native, agentic AP workflow** for finance teams.
 
-It starts in Gmail, routes approvals in Slack and Teams, and writes approved invoices into ERP systems with policy checks, deterministic workflow orchestration, and an auditable execution trail.
+It starts in Gmail, runs queue control in `Pipeline`, routes approvals in Slack and Teams, and writes approved invoices into ERP systems with policy checks, deterministic workflow orchestration, and an auditable execution trail.
 
-Clearledgr is not a standalone AP dashboard for daily work. The day-to-day operator workflow lives in Gmail and chat.
+Clearledgr is not a standalone AP dashboard for daily work. The day-to-day operator workflow lives across Gmail, `Pipeline`, chat approvals, and ERP writeback.
 
 ## Product Shape (AP v1)
 
-- **Gmail** = intake, context, status, exceptions, next action
+- **Gmail** = intake, context, active-record review, next action
+- **Pipeline** = queue control, prioritization, saved views, cross-entity work management
 - **Slack / Teams** = approval and escalation decisions
 - **ERP** = system of record
 - **Clearledgr** = policy + orchestration + execution + audit
@@ -51,7 +52,7 @@ Before approval routing or ERP posting, Clearledgr runs deterministic checks suc
 
 If there is an issue, Clearledgr creates an explicit exception state (for example low confidence, mismatch, missing info) with a clear next action.
 
-### 4. Gmail thread becomes the AP control surface
+### 4. Gmail thread becomes the active-record work surface
 
 Inside Gmail, the operator sees a focused AP workspace for the invoice:
 
@@ -63,7 +64,16 @@ Inside Gmail, the operator sees a focused AP workspace for the invoice:
 
 Technical details and deep context are hidden behind progressive disclosure so the thread card stays decision-first and uncluttered.
 
-### 5. Approvals happen in Slack and Teams
+### 5. `Pipeline` becomes the queue control plane
+
+Once an item is valid enough to enter queue work, `Pipeline` becomes the place where operators:
+
+- prioritize across entities and states
+- reopen focused records
+- watch approval backlog and posting backlog
+- move through saved views and queue slices
+
+### 6. Approvals happen in Slack and Teams
 
 When an invoice needs approval, Clearledgr sends an approval request to the configured approver(s) in Slack or Teams.
 
@@ -76,7 +86,7 @@ The approval card includes the information needed to decide:
 
 Approval actions are handled through a common contract and must be idempotent (duplicate clicks/callbacks cannot create duplicate approvals or posts).
 
-### 6. Approved invoices are posted to ERP (system of record)
+### 7. Approved invoices are posted to ERP (system of record)
 
 Once an invoice is approved and all posting preconditions are satisfied, Clearledgr posts the invoice to the ERP.
 
@@ -89,7 +99,7 @@ AP v1 doctrine defines ERP write-back as:
 
 If a fallback path is used (for example a gated browser-based path where allowed), it must be previewed, confirmed, and audited.
 
-### 7. Clearledgr records audit breadcrumbs and outcomes
+### 8. Clearledgr records audit breadcrumbs and outcomes
 
 Clearledgr records:
 

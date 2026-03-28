@@ -14,6 +14,7 @@ Use these documents as source of truth:
 3. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_EMBEDDED_WORKER_EXPERIENCE.md`
 4. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
 5. `/Users/mombalam/Desktop/Clearledgr.v1/docs/API_REFERENCE.md`
+6. `/Users/mombalam/Desktop/Clearledgr.v1/docs/WEDGE_QUALITY_SCORECARD.md`
 
 If any document conflicts with `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `PLAN.md` wins.
 
@@ -31,21 +32,24 @@ The main remaining gap to launch is not core product implementation. It is live-
 
 Use this README plus `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_LAUNCH_READINESS_TRACKER.md` for current product and launch posture. Treat `/Users/mombalam/Desktop/Clearledgr.v1/TODOS.md` as deferred work only, not as an implementation-completeness ledger.
 
+For pilot hardening and wedge-truth evaluation, use `/Users/mombalam/Desktop/Clearledgr.v1/docs/WEDGE_QUALITY_SCORECARD.md` as the operating scorecard for reliability, context-switch reduction, and elimination of approval chasing / ERP re-entry.
+
 ## Product Direction (Locked)
 
 1. One Clearledgr finance execution agent runtime.
 2. AP is the first production skill domain, not the terminal product scope.
-3. Gmail is the primary AP operator surface in the current wedge, not the entire product.
-4. Gmail default pinned navigation stays intentionally small: `Home`, `Pipeline`, `Connections`.
-5. Slack and Teams are approval/decision surfaces.
-6. ERP is the system of record.
-7. Human-in-the-loop is intentional for risky actions.
-8. Policy, audit, idempotency, and durability are mandatory.
-9. Current AP connector scope is NetSuite, QuickBooks, Xero, and SAP, each enabled by readiness gates.
-10. Current durable orchestration backend is `local_db` (DB-backed); Temporal remains optional and must be truthfully reported.
-11. Outlook intake is explicitly de-scoped for AP v1 GA (Gmail is the only inbox surface in production scope).
-12. Initial rollout is Europe and Africa first (before any broader regional expansion).
-13. Operator-facing timestamps are standardized to `Europe/London`; backend storage/audit timestamps remain UTC.
+3. `Pipeline` is the AP control plane and default landing route for queue work.
+4. Gmail is the first inbox adapter and the primary current-record surface in the current wedge, not the entire product.
+5. Gmail default pinned navigation stays intentionally small: `Pipeline`, `Home`.
+6. Slack and Teams are approval/decision surfaces.
+7. ERP is the system of record.
+8. Human-in-the-loop is intentional for risky actions.
+9. Policy, audit, idempotency, and durability are mandatory.
+10. Current AP connector scope is NetSuite, QuickBooks, Xero, and SAP, each enabled by readiness gates.
+11. Current durable orchestration backend is `local_db` (DB-backed); Temporal remains optional and must be truthfully reported.
+12. Outlook intake is explicitly de-scoped for AP v1 GA (Gmail is the only inbox surface in production scope).
+13. Initial rollout is Europe and Africa first (before any broader regional expansion).
+14. Operator-facing timestamps are standardized to `Europe/London`; backend storage/audit timestamps remain UTC.
 
 Clearledgr is not a generic automation builder and not a dashboard-first AP tool.
 
@@ -60,7 +64,7 @@ Clearledgr is not a generic automation builder and not a dashboard-first AP tool
 
 ## Gmail Operator Surface
 
-For AP v1, Gmail is the primary operator surface. The Gmail/AP wedge is built as Streak for finance ops:
+For AP v1, Gmail is the primary current-record surface and `Pipeline` is the queue control plane. The Gmail/AP wedge is built as Streak for finance ops:
 
 1. `Clearledgr AP` thread panel is the daily execution workspace.
    - Focused invoice identity strip (vendor, amount, due date, invoice number, PO status).
@@ -69,10 +73,10 @@ For AP v1, Gmail is the primary operator surface. The Gmail/AP wedge is built as
    - Evidence checklist + collapsed audit disclosure.
    - Audit copy is backend-owned via `/api/ap/items/{ap_item_id}/audit` `operator_*` fields (UI renders backend operator wording, not local reason-code phrase maps).
 2. Gmail-native page routes handle setup, pipeline views, monitoring, policy management, team access, and plan/health pages.
-   - The core Gmail work path is `Home`, `Pipeline`, `Review`, and `Upcoming`.
-   - Default pinned nav stays intentionally sparse at `Home` and `Pipeline`; `Review` / `Upcoming` remain part of the core work path without bloating the default left nav.
-   - `Pipeline` is the default AP queue/process surface with AP-first slices, finance-native filters/sorts, and direct thread-to-pipeline / pipeline-to-thread reopening.
-   - `Home` is a Streak-style hub: welcome, quick access, recent work, upcoming work, and secondary tools.
+   - The core Gmail work path is `Pipeline`, `Home`, `Review`, and `Upcoming`.
+   - Default pinned nav stays intentionally sparse at `Pipeline` and `Home`; `Review` / `Upcoming` remain part of the core work path without bloating the default left nav.
+   - `Pipeline` is the default AP queue/process surface and control plane, with AP-first slices, finance-native filters/sorts, and direct thread-to-pipeline / pipeline-to-thread reopening.
+   - `Home` is a lightweight hub: quick access, recent work, upcoming work, and secondary tools.
    - Saved pipeline views are persisted per authenticated user and organization; `Home` surfaces saved views and finance-native starter views before secondary admin tools.
    - `Health` and comparable admin pages are role-gated secondary pages.
    - These pages are still inside Gmail and do not require a separate operating console for normal use.
@@ -94,7 +98,7 @@ Clearledgr onboarding and account management still follows an admin-first model,
 
 1. Gmail routed pages own onboarding for Gmail, Slack/Teams, and ERP setup.
 2. Team roles/invites are managed through the same authenticated backend APIs (`/api/workspace/team/*` + `/auth/invites/*`).
-3. `Home` is a Streak-like launch hub for quick access, recent activity, upcoming work, and secondary tools, not a dashboard-heavy control center.
+3. `Home` is a lightweight hub for quick access, recent activity, upcoming work, and secondary tools, not the center of daily AP operations.
 4. The thread panel stays execution-focused; setup/config flows live in Gmail-native pages rather than a separate dashboard.
 5. OAuth entry points for setup are launched from authenticated backend endpoints and surfaced inside the Gmail product shell.
 

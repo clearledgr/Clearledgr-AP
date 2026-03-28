@@ -105,12 +105,16 @@ function runBundler(configFile) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   debug(`args:${JSON.stringify(args)}`);
+  console.log('[build-extension] computing source fingerprint...');
+  const fingerprintStartedAt = Date.now();
   debug('fingerprint:start');
   const fingerprintPayload = computeSourceFingerprint(EXTENSION_ROOT);
   debug('fingerprint:done');
   debug(`fingerprint:${fingerprintPayload.fingerprint}`);
+  console.log(`[build-extension] fingerprint ready in ${Date.now() - fingerprintStartedAt}ms`);
   cleanDist();
   debug('dist cleaned');
+  console.log('[build-extension] bundling InboxSDK layer...');
   const summary = runBundler(args.config);
   debug('bun build complete');
   debug('injecting fingerprint banner');
@@ -124,6 +128,7 @@ async function main() {
 
   if (args.verify) {
     debug('starting parity verification');
+    console.log('[build-extension] verifying bundle parity...');
     verifyBundleParity();
   }
 

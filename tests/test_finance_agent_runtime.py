@@ -103,6 +103,8 @@ class _FakeDB:
         }
         self.audit_rows = []
         self.source_rows = []
+        self.slack_threads = {}
+        self.reassigned_chains = []
 
     def _all_items(self):
         return list(self.items.values())
@@ -242,6 +244,19 @@ class _FakeDB:
         payload["organization_id"] = organization_id
         return payload
 
+    def get_slack_thread(self, email_id):
+        return self.slack_threads.get(str(email_id or ""))
+
+    def db_reassign_pending_step_approvers(self, chain_id, approvers, comments=""):
+        self.reassigned_chains.append(
+            {
+                "chain_id": chain_id,
+                "approvers": list(approvers or []),
+                "comments": comments,
+            }
+        )
+        return True
+
     def get_operational_metrics(self, organization_id, approval_sla_minutes=240, workflow_stuck_minutes=120):
         _ = approval_sla_minutes, workflow_stuck_minutes
         return {
@@ -272,6 +287,8 @@ def _runtime(db: _FakeDB) -> FinanceAgentRuntime:
 def test_runtime_registers_ap_and_read_only_health_skills():
     db = _FakeDB()
     runtime = _runtime(db)
+    assert "escalate_approval" in runtime.supported_intents
+    assert "reassign_approval" in runtime.supported_intents
     assert "prepare_vendor_followups" in runtime.supported_intents
     assert "route_low_risk_for_approval" in runtime.supported_intents
     assert "retry_recoverable_failures" in runtime.supported_intents
@@ -744,6 +761,32 @@ def test_execute_route_low_risk_for_approval_success_and_idempotent_replay():
     assert len(db.audit_rows) == 1
 
 
+def test_execute_route_low_risk_for_approval_returns_success_when_audit_append_fails():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.evaluate_batch_route_low_risk_for_approval.return_value = {
+        "eligible": True,
+        "reason_codes": [],
+    }
+    workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="gmail-thread-route-1")
+    workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "171.13"})
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch.object(runtime, "append_runtime_audit", side_effect=RuntimeError("audit_locked")):
+            result = asyncio.run(
+                runtime.execute_intent(
+                    "route_low_risk_for_approval",
+                    {"email_id": "gmail-thread-route-1"},
+                    idempotency_key="idem-runtime-route-low-risk-audit-failure-1",
+                )
+            )
+
+    assert result["status"] == "pending_approval"
+    assert result["audit_status"] == "error"
+    assert result["audit_error"] == "audit_locked"
+
+
 def test_execute_request_approval_falls_back_to_email_reference_when_ap_item_id_is_stale():
     db = _FakeDB()
     runtime = _runtime(db)
@@ -794,6 +837,89 @@ def test_execute_request_approval_uses_resolved_email_reference_when_invoice_gma
     assert invoice.gmail_id == "gmail-thread-route-1"
 
 
+def test_execute_request_approval_returns_success_when_audit_append_fails():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="gmail-thread-route-1")
+    workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "171.12"})
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch.object(runtime, "append_runtime_audit", side_effect=RuntimeError("audit_locked")):
+            result = asyncio.run(
+                runtime.execute_intent(
+                    "request_approval",
+                    {
+                        "ap_item_id": "ap-route-1",
+                        "email_id": "gmail-thread-route-1",
+                    },
+                    idempotency_key="idem-runtime-request-approval-audit-failure-1",
+                )
+            )
+
+    assert result["status"] == "pending_approval"
+    assert result["audit_status"] == "error"
+    assert result["audit_error"] == "audit_locked"
+
+
+def test_execute_request_approval_blocks_until_entity_route_is_resolved():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    db.items["ap-route-1"]["metadata"]["entity_candidates"] = [
+        {"entity_code": "US-01", "entity_name": "Runtime Co US"},
+        {"entity_code": "GH-01", "entity_name": "Runtime Co Ghana"},
+    ]
+    workflow = MagicMock()
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        result = asyncio.run(
+            runtime.execute_intent(
+                "request_approval",
+                {"email_id": "gmail-thread-route-1"},
+                idempotency_key="idem-runtime-request-approval-entity-block-1",
+            )
+        )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "entity_route_review_required"
+    workflow._send_for_approval.assert_not_called()
+
+
+def test_execute_request_approval_blocks_until_org_entity_rules_are_resolved():
+    db = _FakeDB()
+    db.organization["settings"] = {
+        "auto_approve_threshold": 0.91,
+        "entity_routing": {
+            "entities": [
+                {"entity_code": "US-01", "entity_name": "Runtime Co US"},
+                {"entity_code": "GH-01", "entity_name": "Runtime Co Ghana"},
+            ],
+            "rules": [
+                {
+                    "entity_code": "US-01",
+                    "sender_domains": ["us.runtime.example"],
+                }
+            ],
+        },
+    }
+    db.items["ap-route-1"]["sender"] = "billing@unknown.runtime.example"
+    runtime = _runtime(db)
+    workflow = MagicMock()
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        result = asyncio.run(
+            runtime.execute_intent(
+                "request_approval",
+                {"email_id": "gmail-thread-route-1"},
+                idempotency_key="idem-runtime-request-approval-org-entity-block-1",
+            )
+        )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "entity_route_review_required"
+    workflow._send_for_approval.assert_not_called()
+
+
 def test_execute_route_low_risk_for_approval_blocks_field_review_precheck():
     db = _FakeDB()
     runtime = _runtime(db)
@@ -817,6 +943,278 @@ def test_execute_route_low_risk_for_approval_blocks_field_review_precheck():
     assert result["reason"] == "field_review_required"
     assert result["audit_event_id"]
     workflow._send_for_approval.assert_not_called()
+
+
+def test_execute_route_low_risk_for_approval_blocks_unvalidated_items_explicitly():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.evaluate_batch_route_low_risk_for_approval.return_value = {
+        "eligible": False,
+        "reason_codes": ["state_not_validated"],
+        "state": "received",
+    }
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        result = asyncio.run(
+            runtime.execute_intent(
+                "route_low_risk_for_approval",
+                {"email_id": "gmail-thread-route-1"},
+                idempotency_key="idem-runtime-route-blocked-state-1",
+            )
+        )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "state_not_validated"
+    assert result["audit_event_id"]
+    workflow._send_for_approval.assert_not_called()
+
+
+def test_execute_escalate_approval_updates_followup_metadata():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    db.items["ap-route-1"]["state"] = "needs_approval"
+    workflow = MagicMock()
+
+    async def _fake_send(payload):
+        return {
+            "status": "sent",
+            "channel": payload.get("channel"),
+            "email_id": payload.get("email_id"),
+        }
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("clearledgr.workflows.gmail_activities.send_slack_notification_activity", _fake_send):
+            result = asyncio.run(
+                runtime.execute_intent(
+                    "escalate_approval",
+                    {"email_id": "gmail-thread-route-1"},
+                    idempotency_key="idem-runtime-escalate-approval-1",
+                )
+            )
+
+    assert result["status"] == "escalated"
+    assert result["audit_event_id"]
+    assert db.items["ap-route-1"]["metadata"]["approval_escalation_count"] == 1
+    assert db.items["ap-route-1"]["metadata"]["approval_next_action"] == "wait_for_escalated_review"
+
+
+def test_execute_escalate_approval_dedupes_without_incrementing_followup_metadata():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    db.items["ap-route-1"]["state"] = "needs_approval"
+    db.items["ap-route-1"]["metadata"]["approval_escalation_count"] = 2
+    workflow = MagicMock()
+
+    async def _fake_send(payload):
+        return {
+            "status": "deduped",
+            "delivered": True,
+            "channel": payload.get("channel"),
+            "email_id": payload.get("email_id"),
+            "thread_ts": "170.123",
+        }
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("clearledgr.workflows.gmail_activities.send_slack_notification_activity", _fake_send):
+            result = asyncio.run(
+                runtime.execute_intent(
+                    "escalate_approval",
+                    {"email_id": "gmail-thread-route-1"},
+                    idempotency_key="idem-runtime-escalate-approval-deduped-1",
+                )
+            )
+
+    assert result["status"] == "deduped"
+    assert result["audit_event_id"]
+    assert db.items["ap-route-1"]["metadata"]["approval_escalation_count"] == 2
+    assert db.audit_rows[-1]["event_type"] == "approval_escalation_deduped"
+
+
+def test_execute_escalate_approval_returns_success_when_audit_append_fails():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    db.items["ap-route-1"]["state"] = "needs_approval"
+    workflow = MagicMock()
+
+    async def _fake_send(payload):
+        return {
+            "status": "sent",
+            "channel": payload.get("channel"),
+            "email_id": payload.get("email_id"),
+        }
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("clearledgr.workflows.gmail_activities.send_slack_notification_activity", _fake_send):
+            with patch.object(runtime, "append_runtime_audit", side_effect=RuntimeError("audit_locked")):
+                result = asyncio.run(
+                    runtime.execute_intent(
+                        "escalate_approval",
+                        {"email_id": "gmail-thread-route-1"},
+                        idempotency_key="idem-runtime-escalate-approval-audit-failure-1",
+                    )
+                )
+
+    assert result["status"] == "escalated"
+    assert result["audit_status"] == "error"
+    assert result["audit_error"] == "audit_locked"
+
+
+def test_execute_nudge_approval_falls_back_without_slack_thread():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    db.items["ap-route-1"]["state"] = "needs_approval"
+    db.items["ap-route-1"]["metadata"].update(
+        {
+            "approval_sent_to": ["approver-1"],
+            "approval_requested_at": "2026-03-26T10:00:00+00:00",
+        }
+    )
+    workflow = MagicMock()
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("clearledgr.services.finance_skills.ap_skill.resolve_slack_runtime") as resolve_runtime:
+            resolve_runtime.return_value = {
+                "connected": True,
+                "approval_channel": "cl-finance-ap",
+                "source": "shared_env",
+            }
+            with patch(
+                "clearledgr.services.finance_skills.ap_skill.send_approval_reminder",
+                AsyncMock(return_value=True),
+            ) as send_reminder:
+                result = asyncio.run(
+                    runtime.execute_intent(
+                        "nudge_approval",
+                        {"email_id": "gmail-thread-route-1"},
+                        idempotency_key="idem-runtime-nudge-approval-fallback-1",
+                    )
+                )
+
+    assert result["status"] == "nudged"
+    assert result["audit_event_id"]
+    assert result["fallback"]["status"] == "sent"
+    assert result["fallback"]["delivery"] == "approval_reminder_fallback"
+    assert result["fallback"]["channel"] == "cl-finance-ap"
+    assert result["fallback"]["slack_connected"] is True
+    send_reminder.assert_awaited_once()
+    kwargs = send_reminder.await_args.kwargs
+    assert kwargs["organization_id"] == "default"
+    assert kwargs["approver_ids"] == ["approver-1"]
+    assert kwargs["stage"] == "reminder"
+    assert kwargs["escalation_channel"] == "cl-finance-ap"
+    assert kwargs["hours_pending"] >= 1.0
+
+
+def test_execute_nudge_approval_returns_success_when_audit_append_fails():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    db.items["ap-route-1"]["state"] = "needs_approval"
+    db.items["ap-route-1"]["metadata"].update(
+        {
+            "approval_sent_to": ["approver-1"],
+            "approval_requested_at": "2026-03-26T10:00:00+00:00",
+        }
+    )
+    workflow = MagicMock()
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("clearledgr.services.finance_skills.ap_skill.resolve_slack_runtime") as resolve_runtime:
+            resolve_runtime.return_value = {
+                "connected": True,
+                "approval_channel": "cl-finance-ap",
+                "source": "shared_env",
+            }
+            with patch(
+                "clearledgr.services.finance_skills.ap_skill.send_approval_reminder",
+                AsyncMock(return_value=True),
+            ):
+                with patch.object(runtime, "append_runtime_audit", side_effect=RuntimeError("audit_locked")):
+                    result = asyncio.run(
+                        runtime.execute_intent(
+                            "nudge_approval",
+                            {"email_id": "gmail-thread-route-1"},
+                            idempotency_key="idem-runtime-nudge-approval-audit-failure-1",
+                        )
+                    )
+
+    assert result["status"] == "nudged"
+    assert result["fallback"]["status"] == "sent"
+    assert result["audit_status"] == "error"
+    assert result["audit_error"] == "audit_locked"
+
+
+def test_execute_nudge_approval_reports_slack_not_connected():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    db.items["ap-route-1"]["state"] = "needs_approval"
+    db.items["ap-route-1"]["metadata"].update(
+        {
+            "approval_sent_to": [],
+            "approval_requested_at": "2026-03-26T10:00:00+00:00",
+        }
+    )
+    workflow = MagicMock()
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("clearledgr.services.finance_skills.ap_skill.resolve_slack_runtime") as resolve_runtime:
+            resolve_runtime.return_value = {
+                "connected": False,
+                "approval_channel": "cl-finance-ap",
+                "source": "shared_env_unconfigured",
+            }
+            with patch(
+                "clearledgr.services.finance_skills.ap_skill.send_approval_reminder",
+                AsyncMock(return_value=False),
+            ):
+                result = asyncio.run(
+                    runtime.execute_intent(
+                        "nudge_approval",
+                        {"email_id": "gmail-thread-route-1"},
+                        idempotency_key="idem-runtime-nudge-approval-fallback-unconfigured-1",
+                    )
+                )
+
+    assert result["status"] == "error"
+    assert result["audit_event_id"]
+    assert result["fallback"]["status"] == "error"
+    assert result["fallback"]["reason"] == "slack_not_connected"
+    assert result["fallback"]["channel"] == "cl-finance-ap"
+    assert result["fallback"]["slack_connected"] is False
+    assert result["fallback"]["slack_source"] == "shared_env_unconfigured"
+
+
+def test_execute_reassign_approval_updates_pending_approver_and_chain():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    db.items["ap-route-1"]["state"] = "needs_approval"
+    db.items["ap-route-1"]["metadata"]["approval_chain_id"] = "chain-1"
+    db.items["ap-route-1"]["metadata"]["approval_sent_to"] = ["old-approver"]
+    db.slack_threads["gmail-thread-route-1"] = {"channel_id": "C123", "thread_ts": "171.99"}
+    workflow = MagicMock()
+    workflow.slack_client = SimpleNamespace(
+        send_message=AsyncMock(return_value=SimpleNamespace(channel="C123", thread_ts="171.99", ts="171.100"))
+    )
+
+    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        result = asyncio.run(
+            runtime.execute_intent(
+                "reassign_approval",
+                {
+                    "email_id": "gmail-thread-route-1",
+                    "assignee": "new-approver",
+                },
+                idempotency_key="idem-runtime-reassign-approval-1",
+            )
+        )
+
+    assert result["status"] == "reassigned"
+    assert result["assignee"] == "new-approver"
+    assert result["audit_event_id"]
+    assert db.items["ap-route-1"]["metadata"]["approval_sent_to"] == ["new-approver"]
+    assert db.items["ap-route-1"]["metadata"]["approval_last_reassigned_to"] == "new-approver"
+    assert db.reassigned_chains[-1]["chain_id"] == "chain-1"
+    assert db.reassigned_chains[-1]["approvers"] == ["new-approver"]
 
 
 def test_execute_route_low_risk_for_approval_blocks_autonomous_mode_when_vendor_not_earned():
@@ -1263,6 +1661,60 @@ def test_refresh_invoice_record_from_extraction_updates_ap_item_without_planner(
     assert seeded["invoice_number"] == "INV-REFRESH-1"
     assert seeded["metadata"]["processing_status"] == "extraction_refreshed"
     assert seeded["metadata"]["refresh_reason"] == "golden_replay"
+
+
+def test_refresh_invoice_record_from_extraction_clears_stale_planner_failure():
+    db = _FakeDB()
+    db.items["ap-stale-planner-1"] = {
+        "id": "ap-stale-planner-1",
+        "organization_id": "default",
+        "thread_id": "gmail-thread-stale-planner-1",
+        "message_id": "gmail-message-stale-planner-1",
+        "state": "received",
+        "vendor_name": "Stale Planner Co",
+        "invoice_number": "INV-STALE-1",
+        "amount": 99.0,
+        "currency": "USD",
+        "exception_code": "planner_failed",
+        "exception_severity": "high",
+        "last_error": "APSkill not registered",
+        "metadata": {
+            "exception_code": "planner_failed",
+            "exception_severity": "high",
+            "processing_status": "planner_failed",
+            "planner_error": "APSkill not registered",
+        },
+    }
+    runtime = _runtime(db)
+
+    result = runtime.refresh_invoice_record_from_extraction(
+        {
+            "organization_id": "default",
+            "thread_id": "gmail-thread-stale-planner-1",
+            "message_id": "gmail-message-stale-planner-1",
+            "sender": "billing@vendor.test",
+            "subject": "Invoice INV-STALE-1",
+            "vendor_name": "Stale Planner Co",
+            "amount": 99.0,
+            "currency": "USD",
+            "invoice_number": "INV-STALE-1",
+            "primary_source": "attachment",
+        },
+        attachments=[{"filename": "invoice.pdf"}],
+        correlation_id="corr-stale-planner-1",
+        refresh_reason="historical_repair",
+    )
+
+    assert result["status"] == "refreshed"
+    seeded = db.get_ap_item("ap-stale-planner-1")
+    assert seeded is not None
+    assert seeded["exception_code"] is None
+    assert seeded["exception_severity"] is None
+    assert seeded["last_error"] is None
+    assert seeded["metadata"]["exception_code"] is None
+    assert seeded["metadata"]["exception_severity"] is None
+    assert seeded["metadata"]["planner_error"] is None
+    assert seeded["metadata"]["processing_status"] == "extraction_refreshed"
 
 
 def test_execute_ap_invoice_processing_registers_missing_ap_skill():

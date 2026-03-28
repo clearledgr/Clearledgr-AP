@@ -1,11 +1,21 @@
-from clearledgr.api.v1 import router as v1_router
-from clearledgr.api.erp import router as erp_router
-from clearledgr.api.gmail_extension import router as gmail_extension_router
-from clearledgr.api.slack_invoices import router as slack_invoices_router
-from clearledgr.api.teams_invoices import router as teams_invoices_router
+from __future__ import annotations
 
-__all__ = [
-    "v1_router",
-    "erp_router",
-    "gmail_extension_router", "slack_invoices_router", "teams_invoices_router",
-]
+from importlib import import_module
+
+_ROUTER_MODULES = {
+    "v1_router": "clearledgr.api.v1",
+    "erp_router": "clearledgr.api.erp",
+    "gmail_extension_router": "clearledgr.api.gmail_extension",
+    "slack_invoices_router": "clearledgr.api.slack_invoices",
+    "teams_invoices_router": "clearledgr.api.teams_invoices",
+}
+
+__all__ = list(_ROUTER_MODULES.keys())
+
+
+def __getattr__(name: str):
+    module_name = _ROUTER_MODULES.get(name)
+    if not module_name:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = import_module(module_name)
+    return getattr(module, "router")

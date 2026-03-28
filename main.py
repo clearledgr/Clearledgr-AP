@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -45,13 +45,6 @@ from starlette.requests import Request
 import time
 import uuid
 from datetime import datetime, timezone
-from clearledgr.api import (
-    v1_router,
-    gmail_extension_router,
-    slack_invoices_router,
-    teams_invoices_router,
-)
-
 
 async def _deferred_startup(app):
     """Run slow startup tasks in the background so the server binds immediately."""
@@ -120,10 +113,18 @@ async def app_lifespan(app: FastAPI):
     """Canonical app lifecycle — fires slow startup in background so server binds fast."""
     _apply_runtime_surface_profile()
     # Fire all slow startup tasks in the background so uvicorn binds immediately
-    asyncio.create_task(_deferred_startup(app))
+    deferred_startup_task = asyncio.create_task(_deferred_startup(app))
+    app.state.deferred_startup_task = deferred_startup_task
     try:
         yield
     finally:
+        startup_task = getattr(app.state, "deferred_startup_task", None)
+        if startup_task is not None:
+            if not startup_task.done():
+                startup_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await startup_task
+            app.state.deferred_startup_task = None
         try:
             from clearledgr.services.gmail_autopilot import stop_gmail_autopilot
             await stop_gmail_autopilot(app)
@@ -320,6 +321,7 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/subscription",
     "/api/workspace/subscription/plan",
     "/api/workspace/team/invites",
+    "/api/workspace/user/preferences",
 }
 
 STRICT_PROFILE_ALLOWED_AUTH_PATHS = {
@@ -382,6 +384,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/ap/items/[^/]+$",
         r"^/api/ap/items/[^/]+/audit$",
         r"^/api/ap/items/[^/]+/context$",
+        r"^/api/ap/items/[^/]+/entity-route/resolve$",
         r"^/api/ap/items/[^/]+/merge$",
         r"^/api/ap/items/[^/]+/non-invoice/resolve$",
         r"^/api/ap/items/[^/]+/resubmit$",
@@ -398,6 +401,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/auth/users/[^/]+$",
         r"^/auth/users/[^/]+/role$",
         r"^/extension/ap/[^/]+/explain$",
+        r"^/extension/by-thread/[^/]+/recover$",
         r"^/extension/invoice-pipeline/[^/]+$",
         r"^/extension/invoice-status/[^/]+$",
         r"^/extension/needs-info-draft/[^/]+$",
@@ -463,6 +467,10 @@ def _apply_runtime_surface_profile() -> None:
 
 STRICT_PROFILE_ACTIVE = bool(_runtime_surface_contract().get("strict_effective"))
 
+from clearledgr.api.v1 import router as v1_router
+from clearledgr.api.gmail_extension import router as gmail_extension_router
+from clearledgr.api.slack_invoices import router as slack_invoices_router
+from clearledgr.api.teams_invoices import router as teams_invoices_router
 
 app.include_router(v1_router)
 app.include_router(gmail_extension_router)

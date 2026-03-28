@@ -12,27 +12,27 @@ export const NAV_PREFS_STORAGE_KEY = 'clearledgr_nav_preferences_v1';
 
 export const ROUTES = [
   {
+    id: 'clearledgr/pipeline',
+    title: 'Pipeline',
+    subtitle: 'Control the AP queue across entities and states.',
+    icon: 'pipeline',
+    navOrder: 10,
+    defaultPinned: true,
+    canHide: false,
+    menuGroup: 'primary',
+    viewCapability: 'view_pipeline',
+  },
+  {
     id: 'clearledgr/home',
     title: 'Home',
-    subtitle: 'Your Clearledgr start page in Gmail.',
+    subtitle: 'Quick access, recent work, and secondary tools.',
     icon: 'home',
-    navOrder: 10,
+    navOrder: 20,
     defaultPinned: true,
     canHide: false,
     menuGroup: 'primary',
     hideTopbar: true,
     viewCapability: 'view_home',
-  },
-  {
-    id: 'clearledgr/pipeline',
-    title: 'Pipeline',
-    subtitle: 'See and work the invoice queue.',
-    icon: 'pipeline',
-    navOrder: 20,
-    defaultPinned: true,
-    canHide: false,
-    menuGroup: 'primary',
-    viewCapability: 'view_pipeline',
   },
   {
     id: 'clearledgr/review',
@@ -166,7 +166,7 @@ export const DYNAMIC_ROUTES = [
   { id: 'clearledgr/pipeline-view/:ref', title: 'Pipeline View', subtitle: '' },
 ];
 
-export const DEFAULT_ROUTE = 'clearledgr/home';
+export const DEFAULT_ROUTE = 'clearledgr/pipeline';
 
 export function getRouteById(id) {
   return ROUTES.find((route) => route.id === id) || null;

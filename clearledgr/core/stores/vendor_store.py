@@ -160,6 +160,48 @@ class VendorStore:
             logger.warning("[VendorStore] get_vendor_profile failed: %s", exc)
             return None
 
+    def get_vendor_profiles_bulk(
+        self,
+        organization_id: str,
+        vendor_names: List[str],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return vendor profiles keyed by canonical vendor name."""
+        normalized_names = [
+            str(name or "").strip()
+            for name in (vendor_names or [])
+            if str(name or "").strip()
+        ]
+        if not normalized_names:
+            return {}
+
+        placeholders = ", ".join("?" for _ in normalized_names)
+        sql = self._prepare_sql(
+            "SELECT * FROM vendor_profiles "
+            f"WHERE organization_id = ? AND vendor_name IN ({placeholders})"
+        )
+        try:
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, *normalized_names))
+                rows = cur.fetchall()
+        except Exception as exc:
+            logger.warning("[VendorStore] get_vendor_profiles_bulk failed: %s", exc)
+            return {}
+
+        profiles: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            parsed = dict(row)
+            for key, default in (
+                ("vendor_aliases", []),
+                ("sender_domains", []),
+                ("anomaly_flags", []),
+                ("metadata", {}),
+            ):
+                decoded = _loads(parsed.get(key))
+                parsed[key] = decoded if decoded is not None else default
+            profiles[str(parsed.get("vendor_name") or "").strip()] = parsed
+        return profiles
+
     def upsert_vendor_profile(
         self,
         organization_id: str,

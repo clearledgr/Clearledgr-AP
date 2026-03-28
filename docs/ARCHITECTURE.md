@@ -14,7 +14,7 @@ Clearledgr is a finance execution agent platform implemented as:
 
 1. one core agent runtime
 2. AP as the first production skill domain
-3. embedded surfaces (Gmail operator workflow + Slack/Teams approvals)
+3. embedded surfaces (`Pipeline` control plane + Gmail current-record workflow + Slack/Teams approvals)
 4. ERP write-back as system-of-record mutation path
 5. deterministic policy/state/audit controls around all risky actions
 
@@ -22,7 +22,8 @@ Clearledgr is a finance execution agent platform implemented as:
 
 ```text
 Operator surfaces
-  Gmail extension (primary AP workspace)
+  Pipeline (queue control plane)
+  Gmail extension (current-record workspace)
   Slack/Teams (approval decisions)
         |
         v
@@ -139,9 +140,15 @@ Autonomy is increased on low-risk paths only when policy allows it.
 
 ### Gmail
 
-- primary AP operator surface
+- primary current-record AP surface
 - thread-level decision workspace
 - progressive disclosure for context and audit
+
+### Pipeline
+
+- primary queue/control surface
+- cross-entity prioritization and saved-view surface
+- the place operators return to between active records
 
 ### Slack / Teams
 

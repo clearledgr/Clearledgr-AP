@@ -9,6 +9,42 @@ function parseThreshold(value, fallback) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+function parseWholeNumber(value, fallback, minimum = 1) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(minimum, Math.round(numeric));
+}
+
+export function getApprovalAutomationConfig(configJson = {}, approvalAutomation = null) {
+  const nested = configJson?.approval_automation && typeof configJson.approval_automation === 'object'
+    ? configJson.approval_automation
+    : {};
+  const policy = approvalAutomation && typeof approvalAutomation === 'object'
+    ? approvalAutomation
+    : {};
+  const reminderHours = parseWholeNumber(
+    policy.reminder_hours ?? nested.reminder_hours,
+    4,
+  );
+  const escalationHours = Math.max(
+    reminderHours,
+    parseWholeNumber(
+      policy.escalation_hours ?? nested.escalation_hours,
+      24,
+    ),
+  );
+  const escalationChannel = String(
+    policy.escalation_channel
+    ?? nested.escalation_channel
+    ?? '',
+  ).trim();
+  return {
+    reminderHours,
+    escalationHours,
+    escalationChannel,
+  };
+}
+
 export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
   const policy = bootstrap?.policyPayload || {};
   const configJson = (policy.policy || {}).config_json || {};
@@ -23,6 +59,7 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
     ?? 0
   );
   const requirePO = configJson.require_po !== false;
+  const approvalAutomation = getApprovalAutomationConfig(configJson, policy.approval_automation);
   const canManageRules = hasCapability(bootstrap, 'manage_rules');
 
   const [savePolicy, saving] = useAction(async () => {
@@ -30,6 +67,22 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
     const nextConfidence = parseThreshold(document.getElementById('cl-policy-confidence')?.value, confidenceThreshold);
     const nextMaxAmount = parseThreshold(document.getElementById('cl-policy-max-amount')?.value, maxAutoAmount);
     const nextRequirePO = Boolean(document.getElementById('cl-policy-require-po')?.checked);
+    const nextReminderHours = parseWholeNumber(
+      document.getElementById('cl-policy-approval-reminder-hours')?.value,
+      approvalAutomation.reminderHours,
+    );
+    const nextEscalationHours = Math.max(
+      nextReminderHours,
+      parseWholeNumber(
+        document.getElementById('cl-policy-approval-escalation-hours')?.value,
+        approvalAutomation.escalationHours,
+      ),
+    );
+    const nextEscalationChannel = String(
+      document.getElementById('cl-policy-approval-escalation-channel')?.value
+      ?? approvalAutomation.escalationChannel
+      ?? '',
+    ).trim();
 
     const nextConfig = {
       ...configJson,
@@ -38,6 +91,14 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
       max_auto_approve_amount: nextMaxAmount,
       auto_approve_max_amount: nextMaxAmount,
       require_po: nextRequirePO,
+      approval_automation: {
+        ...(configJson.approval_automation && typeof configJson.approval_automation === 'object'
+          ? configJson.approval_automation
+          : {}),
+        reminder_hours: nextReminderHours,
+        escalation_hours: nextEscalationHours,
+        escalation_channel: nextEscalationChannel,
+      },
     };
 
     await api('/api/workspace/policies/ap', {
@@ -56,7 +117,7 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
     <div class=${`secondary-banner ${canManageRules ? '' : 'warning'}`}>
       <div class="secondary-banner-copy">
         <h3>${canManageRules ? 'Control when invoices move automatically' : 'Approval behavior is visible here'}</h3>
-        <p class="muted">${canManageRules ? 'Set the confidence, amount, and PO rules that decide when work keeps moving on its own.' : 'You can review the current approval rules here, but only admins can change them.'}</p>
+        <p class="muted">${canManageRules ? 'Set approval guardrails and decide when Clearledgr nudges or escalates pending approvals automatically.' : 'You can review the current approval rules here, but only admins can change them.'}</p>
       </div>
       <div class="secondary-banner-actions">
         <button class="btn-primary" onClick=${savePolicy} disabled=${saving || !canManageRules}>${saving ? 'Saving…' : 'Save rules'}</button>
@@ -67,7 +128,7 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
       <div class="secondary-main">
         <div class="panel">
           <h3 style="margin-top:0">Approval rules</h3>
-          <p class="muted" style="margin:0 0 14px">These settings decide when an invoice keeps moving, waits for approval, or pauses for a PO check.</p>
+          <p class="muted" style="margin:0 0 14px">These settings decide when an invoice keeps moving, waits for approval, pauses for a PO check, and when Clearledgr starts chasing overdue approvals.</p>
           <div style="display:flex;flex-direction:column;gap:16px">
             <div>
               <label>Auto-approval confidence threshold</label>
@@ -83,6 +144,21 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
               <input id="cl-policy-require-po" type="checkbox" checked=${requirePO} disabled=${!canManageRules} />
               Require PO match before approval routing
             </label>
+            <div>
+              <label>Approval reminder SLA (hours)</label>
+              <input id="cl-policy-approval-reminder-hours" type="number" min="1" step="1" value=${String(approvalAutomation.reminderHours)} disabled=${!canManageRules} />
+              <div class="muted" style="margin-top:6px">Once an approval waits this long, Clearledgr marks it as due for follow-up and nudges the pending approver.</div>
+            </div>
+            <div>
+              <label>Approval escalation after (hours)</label>
+              <input id="cl-policy-approval-escalation-hours" type="number" min="1" step="1" value=${String(approvalAutomation.escalationHours)} disabled=${!canManageRules} />
+              <div class="muted" style="margin-top:6px">Once this threshold is reached, Clearledgr escalates the approval instead of only nudging.</div>
+            </div>
+            <div>
+              <label>Escalation channel override</label>
+              <input id="cl-policy-approval-escalation-channel" type="text" value=${approvalAutomation.escalationChannel} placeholder="#finance-approvals" disabled=${!canManageRules} />
+              <div class="muted" style="margin-top:6px">Optional. Leave blank to use the workspace default approval channel.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -106,6 +182,18 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
             <div class="secondary-stat-card">
               <strong>PO required</strong>
               <span>${requirePO ? 'Yes' : 'No'}</span>
+            </div>
+            <div class="secondary-stat-card">
+              <strong>Reminder SLA</strong>
+              <span>${approvalAutomation.reminderHours}h</span>
+            </div>
+            <div class="secondary-stat-card">
+              <strong>Escalation</strong>
+              <span>${approvalAutomation.escalationHours}h</span>
+            </div>
+            <div class="secondary-stat-card">
+              <strong>Escalation channel</strong>
+              <span>${approvalAutomation.escalationChannel || 'Workspace default'}</span>
             </div>
           </div>
         </div>

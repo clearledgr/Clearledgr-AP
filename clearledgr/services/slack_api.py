@@ -27,6 +27,18 @@ SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
 SLACK_API_BASE = "https://slack.com/api"
 
 
+def _is_placeholder_slack_token(token: Optional[str]) -> bool:
+    value = str(token or "").strip()
+    if not value:
+        return True
+    lowered = value.lower()
+    return lowered in {
+        "xoxb-your-bot-token",
+        "your-slack-bot-token",
+        "placeholder",
+    }
+
+
 @dataclass
 class SlackMessage:
     """Represents a Slack message."""
@@ -80,6 +92,10 @@ class SlackAPIClient:
                 raise SlackAPIError(error, result)
             
             return result
+
+    async def auth_test(self) -> Dict[str, Any]:
+        """Validate the bot token and return the Slack auth context."""
+        return await self._request("POST", "auth.test", data={})
     
     # ==================== MESSAGING ====================
     
@@ -224,6 +240,30 @@ class SlackAPIClient:
         """Get information about a channel."""
         result = await self._request("GET", "conversations.info", params={"channel": channel})
         return result.get("channel", {})
+
+    async def resolve_channel(self, channel: str) -> Optional[Dict[str, Any]]:
+        """Resolve a channel id or #name into Slack channel metadata."""
+        token = str(channel or "").strip()
+        if not token:
+            return None
+
+        normalized_name = token[1:] if token.startswith("#") else token
+        if token[:1] in {"C", "G"}:
+            try:
+                return await self.get_channel_info(token)
+            except SlackAPIError:
+                return None
+
+        channels = await self.list_channels(limit=1000)
+        lowered = normalized_name.lower()
+        for row in channels:
+            row_name = str(row.get("name") or "").strip()
+            row_id = str(row.get("id") or "").strip()
+            if lowered and row_name.lower() == lowered:
+                return row
+            if token and row_id == token:
+                return row
+        return None
     
     async def list_channels(
         self,
@@ -589,6 +629,7 @@ def resolve_slack_runtime(organization_id: Optional[str] = None) -> Dict[str, An
     - per_org: use org installation token; fallback to shared when explicitly enabled
     """
     shared_token = os.getenv("SLACK_BOT_TOKEN", "").strip()
+    shared_token_configured = not _is_placeholder_slack_token(shared_token)
     shared_channel = (
         os.getenv("SLACK_APPROVAL_CHANNEL", "").strip()
         or os.getenv("SLACK_DEFAULT_CHANNEL", "").strip()
@@ -603,11 +644,11 @@ def resolve_slack_runtime(organization_id: Optional[str] = None) -> Dict[str, An
     runtime: Dict[str, Any] = {
         "organization_id": organization_id or "default",
         "mode": default_mode,
-        "bot_token": shared_token or None,
+        "bot_token": shared_token if shared_token_configured else None,
         "signing_secret": shared_secret or None,
         "approval_channel": shared_channel,
-        "connected": bool(shared_token),
-        "source": "shared_env",
+        "connected": shared_token_configured,
+        "source": "shared_env" if shared_token_configured else "shared_env_unconfigured",
         "team_id": None,
         "team_name": None,
     }
@@ -647,7 +688,7 @@ def resolve_slack_runtime(organization_id: Optional[str] = None) -> Dict[str, An
                         "team_name": (install or {}).get("team_name"),
                     }
                 )
-            elif allow_shared_fallback and shared_token:
+            elif allow_shared_fallback and shared_token_configured:
                 runtime.update({"bot_token": shared_token, "connected": True, "source": "shared_fallback"})
             else:
                 runtime.update({"bot_token": None, "connected": False, "source": "missing_org_installation"})

@@ -27,9 +27,13 @@ from clearledgr.core.launch_controls import (
 )
 from clearledgr.services.erp_readiness import evaluate_erp_connector_readiness
 from clearledgr.services.learning_calibration import get_learning_calibration_service
-from clearledgr.services.policy_compliance import AP_POLICY_NAME, get_policy_compliance
+from clearledgr.services.policy_compliance import (
+    AP_POLICY_NAME,
+    get_approval_automation_policy,
+    get_policy_compliance,
+)
 from clearledgr.services.gmail_api import generate_auth_url, get_google_oauth_config
-from clearledgr.services.slack_api import SlackAPIClient, resolve_slack_runtime
+from clearledgr.services.slack_api import SlackAPIClient, SlackAPIError, resolve_slack_runtime
 from clearledgr.services.teams_api import TeamsAPIClient
 from clearledgr.services.subscription import PlanTier, get_subscription_service
 
@@ -230,6 +234,7 @@ def _slack_status_for_org(organization_id: str) -> Dict[str, Any]:
     org = db.get_organization(organization_id) or {}
     integration = db.get_organization_integration(organization_id, "slack") or {}
     install = db.get_slack_installation(organization_id) or {}
+    runtime = resolve_slack_runtime(organization_id)
     mode = (
         integration.get("mode")
         or org.get("integration_mode")
@@ -237,14 +242,19 @@ def _slack_status_for_org(organization_id: str) -> Dict[str, Any]:
     )
     settings = _load_org_settings(org)
     slack_channels = settings.get("slack_channels") if isinstance(settings.get("slack_channels"), dict) else {}
+    connected = bool(runtime.get("connected"))
+    approval_channel = slack_channels.get("invoices") if isinstance(slack_channels, dict) else None
     return {
         "name": "slack",
-        "connected": bool(integration.get("status") == "connected" or install),
-        "status": integration.get("status") or ("connected" if install else "disconnected"),
+        "connected": connected,
+        "status": "connected" if connected else "disconnected",
         "mode": mode,
         "team_id": install.get("team_id"),
         "team_name": install.get("team_name"),
-        "approval_channel": slack_channels.get("invoices") if isinstance(slack_channels, dict) else None,
+        "approval_channel": approval_channel,
+        "approval_channel_configured": bool(approval_channel),
+        "install_recorded": bool(install),
+        "source": runtime.get("source"),
         "last_sync_at": integration.get("last_sync_at"),
     }
 
@@ -418,6 +428,37 @@ def _build_agentic_snapshot(kpis: Dict[str, Any]) -> Dict[str, Any]:
         "post_verification_attempted_count": int(post_verification_summary.get("attempted_count") or 0),
         "top_blockers": top_blockers,
     }
+
+
+def _build_pilot_snapshot(kpis: Dict[str, Any]) -> Dict[str, Any]:
+    payload = kpis if isinstance(kpis, dict) else {}
+    pilot = payload.get("pilot_scorecard") if isinstance(payload.get("pilot_scorecard"), dict) else {}
+    summary = pilot.get("summary") if isinstance(pilot.get("summary"), dict) else {}
+    approval = pilot.get("approval_workflow") if isinstance(pilot.get("approval_workflow"), dict) else {}
+    routing = pilot.get("entity_routing") if isinstance(pilot.get("entity_routing"), dict) else {}
+    highlights = pilot.get("highlights") if isinstance(pilot.get("highlights"), list) else []
+    return {
+        "window_days": int(pilot.get("window_days") or 0),
+        "touchless_rate_pct": round(float(summary.get("touchless_rate_pct") or 0.0), 2),
+        "avg_cycle_time_hours": round(float(summary.get("avg_cycle_time_hours") or 0.0), 2),
+        "on_time_approvals_pct": round(float(summary.get("on_time_approvals_pct") or 0.0), 2),
+        "avg_approval_wait_hours": round(float(summary.get("avg_approval_wait_hours") or 0.0), 2),
+        "approval_sla_breached_open_count": int(summary.get("approval_sla_breached_open_count") or 0),
+        "approval_escalated_open_count": int(approval.get("escalated_open_count") or 0),
+        "approval_reassigned_open_count": int(approval.get("reassigned_open_count") or 0),
+        "entity_route_needs_review_count": int(summary.get("entity_route_needs_review_count") or 0),
+        "entity_route_manual_resolution_count_30d": int(routing.get("manual_resolution_event_count_30d") or 0),
+        "highlights": [str(entry) for entry in highlights if str(entry or "").strip()][:4],
+    }
+
+
+def _approval_sla_minutes_for_org(organization_id: str) -> int:
+    policy = get_approval_automation_policy(organization_id=organization_id, policy_name=AP_POLICY_NAME)
+    try:
+        hours = int(policy.get("reminder_hours") or 4)
+    except (TypeError, ValueError):
+        hours = 4
+    return max(60, min(hours * 60, 10080))
 
 
 class SlackInstallStartRequest(BaseModel):
@@ -599,8 +640,10 @@ def _safe_dashboard_stats(org_id: str) -> Dict[str, Any]:
         pending = len(pipeline.get("needs_approval", []) + pipeline.get("pending_approval", []))  if pipeline else 0
         posted = sum(1 for inv in pipeline.get("posted_to_erp", []) + pipeline.get("closed", []) if isinstance(inv, dict) and str(inv.get("created_at", "")).startswith(today)) if pipeline else 0
         rejected = sum(1 for inv in pipeline.get("rejected", []) if isinstance(inv, dict) and str(inv.get("created_at", "")).startswith(today)) if pipeline else 0
-        kpis = db.get_ap_kpis(org_id, approval_sla_minutes=240) if hasattr(db, "get_ap_kpis") else {}
+        approval_sla_minutes = _approval_sla_minutes_for_org(org_id)
+        kpis = db.get_ap_kpis(org_id, approval_sla_minutes=approval_sla_minutes) if hasattr(db, "get_ap_kpis") else {}
         agentic_snapshot = _build_agentic_snapshot(kpis)
+        pilot_snapshot = _build_pilot_snapshot(kpis)
         return {
             "total_invoices": total,
             "pending_approval": pending,
@@ -612,6 +655,7 @@ def _safe_dashboard_stats(org_id: str) -> Dict[str, Any]:
             "total_amount_posted_today": 0,
             "agentic_telemetry": (kpis or {}).get("agentic_telemetry") or {},
             "agentic_snapshot": agentic_snapshot,
+            "pilot_snapshot": pilot_snapshot,
         }
     except Exception:
         return {}
@@ -794,15 +838,24 @@ def set_slack_channel(
     channels["invoices"] = request.channel_id.strip()
     settings["slack_channels"] = channels
     _save_org_settings(org_id, settings)
+    runtime = resolve_slack_runtime(org_id)
+    existing = db.get_organization_integration(org_id, "slack") or {}
+    existing_metadata = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
     db.upsert_organization_integration(
         organization_id=org_id,
         integration_type="slack",
-        status="connected",
-        mode=(db.get_organization(org_id) or {}).get("integration_mode") or "shared",
-        metadata={"approval_channel": request.channel_id.strip()},
+        status="connected" if runtime.get("connected") else "disconnected",
+        mode=existing.get("mode") or (db.get_organization(org_id) or {}).get("integration_mode") or "shared",
+        metadata={**existing_metadata, "approval_channel": request.channel_id.strip()},
         last_sync_at=_now_iso(),
     )
-    return {"success": True, "organization_id": org_id, "channel_id": request.channel_id.strip()}
+    return {
+        "success": True,
+        "organization_id": org_id,
+        "channel_id": request.channel_id.strip(),
+        "slack_connected": bool(runtime.get("connected")),
+        "slack_source": runtime.get("source"),
+    }
 
 
 @router.post("/integrations/slack/test")
@@ -816,15 +869,34 @@ async def test_slack_channel(
     token = runtime.get("bot_token")
     if not token:
         raise HTTPException(status_code=400, detail="slack_not_connected")
-    channel = request.channel_id or runtime.get("approval_channel") or "#finance-approvals"
+    channel = str(request.channel_id or runtime.get("approval_channel") or "").strip()
     client = SlackAPIClient(bot_token=token)
-    sent = await client.send_message(channel=channel, text=request.message)
+    try:
+        auth_context = await client.auth_test()
+        resolved_channel = await client.resolve_channel(channel) if channel else None
+    except SlackAPIError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "slack_verification_failed",
+                "error": exc.error,
+            },
+        ) from exc
+
+    if channel and not resolved_channel:
+        raise HTTPException(status_code=400, detail="slack_channel_not_accessible")
+
     return {
         "success": True,
         "organization_id": org_id,
-        "channel": channel,
+        "channel": f"#{resolved_channel.get('name')}" if resolved_channel and resolved_channel.get("name") else (channel or None),
+        "channel_id": resolved_channel.get("id") if resolved_channel else None,
+        "channel_verified": bool(resolved_channel) if channel else True,
         "mode": runtime.get("mode"),
-        "message_ts": sent.ts,
+        "message_posted": False,
+        "verification": "silent",
+        "team": auth_context.get("team"),
+        "bot_user_id": auth_context.get("user_id"),
     }
 
 
@@ -1137,6 +1209,10 @@ def get_ap_policy(
         "policy_name": AP_POLICY_NAME,
         "policy": policy,
         "effective_policies": policy_service.describe_effective_policies(),
+        "approval_automation": get_approval_automation_policy(
+            organization_id=org_id,
+            policy_name=AP_POLICY_NAME,
+        ),
     }
 
 
@@ -1159,7 +1235,15 @@ def put_ap_policy(
         updated_by=request.updated_by or user.user_id,
         enabled=bool(request.enabled),
     )
-    return {"organization_id": org_id, "policy_name": AP_POLICY_NAME, "policy": updated}
+    return {
+        "organization_id": org_id,
+        "policy_name": AP_POLICY_NAME,
+        "policy": updated,
+        "approval_automation": get_approval_automation_policy(
+            organization_id=org_id,
+            policy_name=AP_POLICY_NAME,
+        ),
+    }
 
 
 @router.get("/org/settings")

@@ -461,19 +461,17 @@ class InvoicePostingMixin:
             except Exception as close_exc:
                 logger.warning("Failed to transition to closed: %s", close_exc)
         else:
-            failure_reason = (
-                str(result.get("error_message") or "")
-                or str(result.get("reason") or "")
-                or str(result.get("status") or "")
-                or "erp_post_failed"
-            )
+            failure = self._erp_failure_details(result)
+            failure_reason = failure["failure_reason"]
+            exception_code = failure["exception_code"]
+            recoverability = failure["recoverability"]
             self._transition_invoice_state(
                 gmail_id=gmail_id,
                 target_state="failed_post",
                 correlation_id=correlation_id,
                 post_attempted_at=post_attempted_at,
                 last_error=failure_reason,
-                exception_code="erp_post_failed",
+                exception_code=exception_code,
                 exception_severity="error",
             )
             self._record_approval_snapshot(
@@ -512,7 +510,7 @@ class InvoicePostingMixin:
             )
             # Gap #5: Enqueue durable retry so the background loop can recover
             # items stuck in failed_post after a crash or transient ERP error.
-            if ap_item_id:
+            if ap_item_id and recoverability.get("recoverable"):
                 self._enqueue_erp_post_retry(
                     ap_item_id=ap_item_id,
                     gmail_id=gmail_id,
@@ -709,6 +707,25 @@ class InvoicePostingMixin:
             "decision_idempotency_key": decision_idempotency_key,
         }
 
+    def _erp_failure_details(self, result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        payload = result if isinstance(result, dict) else {}
+        failure_reason = (
+            str(payload.get("error_message") or "").strip()
+            or str(payload.get("reason") or "").strip()
+            or str(payload.get("status") or "").strip()
+            or "erp_post_failed"
+        )
+        exception_code = str(payload.get("error_code") or "").strip().lower() or "erp_post_failed"
+        recoverability = classify_post_failure_recoverability(
+            last_error=failure_reason,
+            exception_code=exception_code,
+        )
+        return {
+            "failure_reason": failure_reason,
+            "exception_code": exception_code,
+            "recoverability": recoverability,
+        }
+
     def _enqueue_erp_post_retry(
         self,
         *,
@@ -894,12 +911,8 @@ class InvoicePostingMixin:
             }
 
         # Post still failed — leave in failed_post with updated error
-        failure_reason = (
-            str(result.get("error_message") or "")
-            or str(result.get("reason") or "")
-            or str(result.get("status") or "")
-            or "erp_post_failed"
-        )
+        failure = self._erp_failure_details(result)
+        failure_reason = failure["failure_reason"]
         self._transition_invoice_state(
             gmail_id,
             "failed_post",
@@ -907,6 +920,7 @@ class InvoicePostingMixin:
             source="resume_workflow",
             post_attempted_at=post_attempted_at,
             last_error=failure_reason,
+            exception_code=failure["exception_code"],
         )
         logger.warning(
             "resume_workflow: ap_item_id=%s ERP post still failing: %s",
@@ -917,6 +931,8 @@ class InvoicePostingMixin:
             "status": "still_failing",
             "ap_item_id": ap_item_id,
             "reason": failure_reason,
+            "error_code": failure["exception_code"],
+            "recoverability": failure["recoverability"],
             "erp_result": result,
         }
 

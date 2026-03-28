@@ -121,6 +121,55 @@ describe('SidebarApp', () => {
     expect(screen.getByText('Nudge approver')).toBeTruthy();
   });
 
+  it('hides prepare info request when vendor response is already pending', () => {
+    store.queueState = [{
+      id: 'inv-needs-info-1',
+      vendor_name: 'Northwind',
+      state: 'needs_info',
+      amount: 100,
+      followup_next_action: 'await_vendor_response',
+    }];
+    store.selectedItemId = 'inv-needs-info-1';
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+    expect(screen.queryByText('Prepare info request')).toBeNull();
+  });
+
+  it('treats fallback reminder delivery as a successful nudge in the sidebar', async () => {
+    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'needs_approval', amount: 100 }];
+    store.selectedItemId = 'inv-1';
+    mockQueueManager.nudgeApproval.mockResolvedValueOnce({
+      status: 'error',
+      fallback: { status: 'sent', reason: null, channel: 'cl-finance-ap' },
+    });
+
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+    fireEvent.click(screen.getByText('Nudge approver'));
+
+    await screen.findByText('Approval reminder sent');
+    expect(mockQueueManager.refreshQueue).toHaveBeenCalled();
+  });
+
+  it('treats vendor follow-up SLA waits as informational instead of a hard failure', async () => {
+    store.queueState = [{
+      id: 'inv-needs-info-2',
+      vendor_name: 'Northwind',
+      state: 'needs_info',
+      amount: 88,
+      followup_next_action: 'prepare_vendor_followup_draft',
+    }];
+    store.selectedItemId = 'inv-needs-info-2';
+    mockQueueManager.prepareVendorFollowup.mockResolvedValueOnce({
+      status: 'waiting_sla',
+      reason: 'waiting_for_sla_window',
+    });
+
+    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+    fireEvent.click(screen.getByText('Prepare info request'));
+
+    await screen.findByText('Follow-up already sent. Wait for the vendor response before nudging again.');
+    expect(mockQueueManager.refreshQueue).toHaveBeenCalled();
+  });
+
   it('hides mutation actions for read-only roles', () => {
     store.currentUserRole = 'viewer';
     store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'needs_approval', amount: 100 }];

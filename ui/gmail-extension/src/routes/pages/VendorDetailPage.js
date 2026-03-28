@@ -6,13 +6,14 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDate, fmtDateTime, fmtDollar, useAction } from '../route-helpers.js';
 import { navigateToRecordDetail } from '../../utils/record-route.js';
-import { getExceptionLabel, getExceptionReason, getStateLabel } from '../../utils/formatters.js';
+import { getExceptionLabel, getExceptionReason, getStateLabel, openSourceEmail } from '../../utils/formatters.js';
 import {
   clearPipelineNavigation,
   focusPipelineItem,
   readPipelinePreferences,
   writePipelinePreferences,
 } from '../pipeline-views.js';
+import { writeReviewPreferences } from '../review-preferences.js';
 
 const html = htm.bind(h);
 
@@ -97,6 +98,8 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
   const recentItems = Array.isArray(payload?.recent_items) ? payload.recent_items : [];
   const history = Array.isArray(payload?.history) ? payload.history : [];
   const topExceptionCodes = Array.isArray(payload?.top_exception_codes) ? payload.top_exception_codes : [];
+  const openIssues = Array.isArray(payload?.open_issues) ? payload.open_issues : [];
+  const issueSummary = payload?.issue_summary || {};
   const senderEmails = Array.isArray(summary?.sender_emails) ? summary.sender_emails : [];
   const topStates = Array.isArray(summary?.top_states) ? summary.top_states : [];
   const anomalyFlags = Array.isArray(profile?.anomaly_flags) ? profile.anomaly_flags : [];
@@ -122,6 +125,17 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
     if (!recordId) return;
     focusPipelineItem(pipelineScope, { ...item, id: recordId }, 'vendor_record');
     navigateToRecordDetail(navigate, recordId);
+  };
+
+  const openVendorIssues = () => {
+    if (!vendorName) return;
+    writeReviewPreferences(pipelineScope, { searchQuery: vendorName });
+    navigate('clearledgr/review');
+  };
+
+  const openIssueEmail = (item) => {
+    const ok = openSourceEmail(item);
+    if (!ok) toast?.('Could not open the source email for this issue.', 'error');
   };
 
   if (loading) {
@@ -151,6 +165,7 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
         <div class="toolbar-actions">
           <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/vendors')}>Back to vendors</button>
           <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
+          <button class="btn-secondary btn-sm" onClick=${openVendorIssues}>Review issues</button>
           <button class="btn-primary btn-sm" onClick=${openVendorInPipeline}>Open vendor in pipeline</button>
         </div>
       </div>
@@ -158,13 +173,57 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
 
     <div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
       <${MetricCard} label="Tracked invoices" value=${Number(summary.invoice_count || 0).toLocaleString()} />
-      <${MetricCard} label="Open now" value=${Number(summary.open_count || 0).toLocaleString()} detail=${`${Number(summary.approval_count || 0)} waiting approval`} />
+      <${MetricCard} label="Open now" value=${Number(summary.open_count || 0).toLocaleString()} detail=${`${Number(summary.issue_count || 0)} with issues`} />
       <${MetricCard} label="Posted" value=${Number(summary.posted_count || 0).toLocaleString()} detail=${`${Number(summary.failed_count || 0)} failed post`} />
       <${MetricCard} label="Tracked spend" value=${fmtDollar(summary.total_amount || 0)} detail=${summary.last_activity_at ? `Last activity ${fmtDateTime(summary.last_activity_at)}` : 'No recent activity'} />
     </div>
 
     <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,0.8fr);gap:20px">
       <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="panel">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+            <div>
+              <h3 style="margin:0 0 6px">Open issues and follow-up</h3>
+              <p class="muted" style="margin:0">Work the vendor-specific blockers that still need action before this supplier’s invoices can move cleanly.</p>
+            </div>
+            <button class="btn-secondary btn-sm" onClick=${openVendorIssues}>Open in review</button>
+          </div>
+          ${openIssues.length === 0
+            ? html`<p class="muted" style="margin:0">No open vendor issues right now.</p>`
+            : html`<div style="display:flex;flex-direction:column;gap:10px">
+                ${openIssues.map((item) => html`
+                  <div key=${item.id} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                      <div>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                          <strong style="font-size:14px">${item.invoice_number || 'No invoice #'}</strong>
+                          <span style="font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;background:#FFF7ED;color:#9A3412">
+                            ${item.issue_label || 'Open issue'}
+                          </span>
+                          <${StatePill} state=${item.state} />
+                        </div>
+                        <div class="muted" style="font-size:12px;margin-top:4px">
+                          ${formatMoney(item.amount, item.currency || 'USD')} · Updated ${fmtDateTime(item.updated_at)}
+                        </div>
+                        <div class="muted" style="font-size:12px;margin-top:6px;line-height:1.45">
+                          ${item.issue_summary || getIssueSummary(item)}
+                        </div>
+                        ${item.exception_code
+                          ? html`<div class="muted" style="font-size:12px;margin-top:4px">${getExceptionLabel(item.exception_code)}</div>`
+                          : null}
+                      </div>
+                      <div class="row-actions">
+                        <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(item)}>Open record</button>
+                        ${(item.thread_id || item.message_id) && html`
+                          <button class="btn-ghost btn-sm" onClick=${() => openIssueEmail(item)}>Open email</button>
+                        `}
+                      </div>
+                    </div>
+                  </div>
+                `)}
+              </div>`}
+        </div>
+
         <div class="panel">
           <h3 style="margin-top:0">Open and recent invoices</h3>
           ${recentItems.length === 0
@@ -260,6 +319,32 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
               </div>
             </div>
           `}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Issue summary</h3>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Open issues</span>
+              <strong>${Number(issueSummary.total || 0).toLocaleString()}</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Field review</span>
+              <strong>${Number(issueSummary.field_review || 0).toLocaleString()}</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Needs info</span>
+              <strong>${Number(issueSummary.needs_info || 0).toLocaleString()}</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <span class="muted">Failed post</span>
+              <strong>${Number(issueSummary.failed_post || 0).toLocaleString()}</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:16px">
+              <span class="muted">Policy / entity</span>
+              <strong>${Number((issueSummary.policy_exception || 0) + (issueSummary.entity_route || 0)).toLocaleString()}</strong>
+            </div>
+          </div>
         </div>
 
         <div class="panel">

@@ -15,6 +15,10 @@ import {
   normalizeDocumentType,
 } from '../../utils/document-types.js';
 import {
+  canEscalateApproval,
+  needsEntityRouting,
+} from '../../utils/work-actions.js';
+import {
   PIPELINE_BUILTIN_SLICES,
   PIPELINE_STARTER_VIEWS,
   activatePipelineSlice,
@@ -67,6 +71,7 @@ const STATE_STYLES = {
 };
 
 const BLOCKER_LABELS = {
+  entity: 'Entity review',
   approval: 'Approval waiting',
   info: 'Needs info',
   erp: 'ERP retry',
@@ -243,6 +248,9 @@ function getPipelineTimeline(item, erpStatus) {
   const parts = [];
   if (isInvoiceDocumentType(documentType)) {
     parts.push(`Due ${item.due_date ? fmtDate(item.due_date) : '—'}`);
+    if (item?.entity_code || item?.entity_name) {
+      parts.push(`Entity ${item.entity_code || item.entity_name}`);
+    }
     parts.push(`ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus}`);
   } else {
     parts.push(`Type ${getDocumentTypeLabel(documentType)}`);
@@ -255,10 +263,29 @@ function isRouteableInvoiceItem(item) {
   if (!item) return false;
   if (!isInvoiceDocumentType(item?.document_type)) return false;
   const state = normalizePipelineState(item?.state);
-  if (!['received', 'validated'].includes(state)) return false;
+  if (state !== 'validated') return false;
   if (Boolean(item?.requires_field_review)) return false;
   const blockers = getPipelineBlockerKinds(item);
-  return !blockers.some((kind) => ['confidence', 'exception', 'budget', 'po', 'erp', 'processing'].includes(kind));
+  return !blockers.some((kind) => ['entity', 'confidence', 'exception', 'budget', 'po', 'erp', 'processing'].includes(kind));
+}
+
+function humanizeRouteFailure(reason, detail = '') {
+  const token = String(reason || '').trim().toLowerCase();
+  const safeDetail = String(detail || '').trim();
+  if (token === 'autonomy_gate_blocked' && safeDetail) return safeDetail;
+  const mapping = {
+    state_not_validated: 'Only validated invoices can be routed for approval.',
+    entity_route_review_required: 'Resolve the legal entity before routing this invoice for approval.',
+    field_review_required: 'Finish the required field checks before routing this invoice for approval.',
+    budget_decision_required: 'Record the budget decision before routing this invoice for approval.',
+    exception_present: 'Resolve the blocking exception before routing this invoice for approval.',
+    non_invoice_document: 'Only invoice records can be routed for approval.',
+    merged_source: 'This record is part of a merged source and cannot be routed directly.',
+    autonomy_gate_blocked: 'Autonomy policy blocked approval routing for this invoice.',
+    policy_precheck_failed: 'This invoice is not ready for approval routing yet.',
+    network_error: 'Clearledgr could not reach the backend to route this invoice.',
+  };
+  return mapping[token] || safeDetail || token.replace(/_/g, ' ');
 }
 
 function getSavedViewLabel(view) {
@@ -283,6 +310,7 @@ function buildResetFilters() {
 
 export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, navigate }) {
   const pipelineScope = useMemo(() => getPipelineScope(orgId, userEmail), [orgId, userEmail]);
+  const actorRole = bootstrap?.current_user?.role || 'operator';
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -588,6 +616,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
 
     let successCount = 0;
     let failedCount = 0;
+    const failures = [];
     for (const item of routeableItems) {
       try {
         const result = await api('/extension/route-low-risk-approval', {
@@ -601,9 +630,13 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
         });
         const status = String(result?.status || '').toLowerCase();
         if (['pending_approval', 'needs_approval'].includes(status)) successCount += 1;
-        else failedCount += 1;
+        else {
+          failedCount += 1;
+          failures.push(humanizeRouteFailure(result?.reason, result?.detail));
+        }
       } catch {
         failedCount += 1;
+        failures.push(humanizeRouteFailure('network_error'));
       }
     }
 
@@ -615,12 +648,45 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
       setLoading(false);
     }
     setSelectedIds((prev) => prev.filter((itemId) => !routeableItems.some((item) => String(item.id || '') === String(itemId || ''))));
-    toast(
-      failedCount > 0
-        ? `${successCount} invoice(s) routed, ${failedCount} failed.`
-        : `${successCount} invoice(s) routed for approval.`,
-      failedCount > 0 ? 'warning' : 'success',
-    );
+    const firstFailure = failures.find(Boolean) || '';
+    if (failedCount > 0) {
+      toast(
+        successCount > 0
+          ? `${successCount} invoice(s) routed. ${failedCount} blocked. First issue: ${firstFailure || 'This invoice is not ready for approval routing yet.'}`
+          : (firstFailure || 'No selected invoices are ready for approval routing.'),
+        'warning',
+      );
+      return;
+    }
+    toast(`${successCount} invoice(s) routed for approval.`, 'success');
+  });
+
+  const [escalateApprovalItem, escalatingApproval] = useAction(async (targetItem) => {
+    if (!targetItem?.id) return;
+    try {
+      const result = await api('/api/agent/intents/execute', {
+        method: 'POST',
+        body: JSON.stringify({
+          intent: 'escalate_approval',
+          input: {
+            ap_item_id: targetItem.id,
+            email_id: targetItem.thread_id || targetItem.message_id || targetItem.id,
+            source_channel: 'pipeline',
+            source_channel_id: 'pipeline',
+            source_message_ref: targetItem.thread_id || targetItem.message_id || targetItem.id,
+          },
+          organization_id: orgId,
+        }),
+      });
+      const ok = String(result?.status || '').toLowerCase() === 'escalated';
+      toast(ok ? 'Approval escalated.' : (result?.reason || 'Could not escalate approval.'), ok ? 'success' : 'error');
+      if (ok) {
+        const data = await api(`/extension/worklist?organization_id=${encodeURIComponent(orgId)}&limit=500`, { silent: true });
+        setItems(Array.isArray(data?.items) ? data.items : []);
+      }
+    } catch {
+      toast('Could not escalate approval.', 'error');
+    }
   });
 
   useEffect(() => {
@@ -726,7 +792,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
           <p class="muted" style="margin:0">Work the queue by slice, then save and pin the views you reopen most often.</p>
         </div>
         <div class="toolbar-actions">
-          <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/home')}>Back to Home</button>
+          <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/home')}>Open Home</button>
           <button class="btn-secondary btn-sm" onClick=${doRefresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
         </div>
       </div>
@@ -745,7 +811,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <div>
                   <strong style="font-size:13px">Starter views</strong>
-                  <div class="muted" style="font-size:12px">Default views you can pin to Home.</div>
+                  <div class="muted" style="font-size:12px">Default views you can pin for quick queue access.</div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             ${starterViews.map((view) => html`
@@ -764,7 +830,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
               <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
                 <div>
                   <strong style="font-size:13px">Personal views</strong>
-                  <div class="muted" style="font-size:12px">${pinnedViews.length} pinned for quick access from Home.</div>
+                  <div class="muted" style="font-size:12px">${pinnedViews.length} pinned for quick queue access.</div>
                 </div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
                   ${personalViews.map((view) => html`
@@ -838,6 +904,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
           <span class="muted" style="font-size:12px">Blocker type</span>
           <select value=${viewPrefs.filters.blocker} onChange=${(event) => updateFilters({ blocker: event.target.value })}>
             <option value="all">All</option>
+            <option value="entity">Entity</option>
             <option value="approval">Approval</option>
             <option value="info">Needs info</option>
             <option value="erp">ERP</option>
@@ -934,6 +1001,8 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                   const queueAge = getQueueAgeMinutes(item);
                   const erpStatus = getErpStatus(item);
                   const routeable = isRouteableInvoiceItem(item);
+                  const entityNeedsReview = needsEntityRouting(item, item.state, item.document_type);
+                  const escalateReady = canEscalateApproval(item, item.state, actorRole, item.document_type);
                   return html`
                     <div
                       key=${item.id}
@@ -981,7 +1050,11 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                       <div style="display:flex;gap:8px;flex-wrap:wrap">
                         ${routeable
                           ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected}>${routingSelected ? 'Routing…' : 'Route approval'}</button>`
-                          : null}
+                          : entityNeedsReview
+                            ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Resolve entity</button>`
+                            : (escalateReady
+                              ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); escalateApprovalItem(item); }} disabled=${escalatingApproval}>${escalatingApproval ? 'Escalating…' : 'Escalate'}</button>`
+                              : null)}
                         <button class="btn-secondary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Open record</button>
                         ${(item.thread_id || item.message_id) && html`
                           <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }}>Open email</button>
@@ -1040,6 +1113,8 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                       const erpStatus = getErpStatus(item);
                       const isInvoiceDocument = isInvoiceDocumentType(item?.document_type);
                       const routeable = isRouteableInvoiceItem(item);
+                      const entityNeedsReview = needsEntityRouting(item, item.state, item.document_type);
+                      const escalateReady = canEscalateApproval(item, item.state, actorRole, item.document_type);
                       return html`
                         <tr
                           key=${item.id}
@@ -1075,7 +1150,11 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                             <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
                               ${routeable
                                 ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected} style="min-width:72px">${routingSelected ? 'Routing…' : 'Route'}</button>`
-                                : null}
+                                : entityNeedsReview
+                                  ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }} style="min-width:72px">Resolve</button>`
+                                  : (escalateReady
+                                    ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); escalateApprovalItem(item); }} disabled=${escalatingApproval} style="min-width:72px">${escalatingApproval ? 'Escalating…' : 'Escalate'}</button>`
+                                    : null)}
                               <button class="btn-secondary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }} style="min-width:72px">Open</button>
                               ${(item.thread_id || item.message_id) && html`
                                 <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }} style="min-width:72px">Email</button>
