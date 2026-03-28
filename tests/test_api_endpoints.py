@@ -1852,7 +1852,7 @@ class TestExtensionEndpoints:
         assert captured["invoice_payload"]["organization_id"] == "default"
         assert captured["invoice_payload"]["user_id"] == "extension-user-1"
         assert captured["invoice_payload"]["confidence"] >= 0.95
-        assert fake_db.audit_rows[-1]["event_type"] == "approval_routed_from_extension"
+        assert not fake_db.audit_rows
         assert not fake_audit.events
 
     def test_escalate_endpoint_uses_runtime_contract(self, monkeypatch):

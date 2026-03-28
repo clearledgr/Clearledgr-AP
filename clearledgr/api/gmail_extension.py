@@ -32,7 +32,7 @@ from clearledgr.core.ap_confidence import evaluate_critical_field_confidence, ex
 from clearledgr.core.ap_item_resolution import resolve_ap_item_reference
 from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email
 from clearledgr.core.database import get_db
-from clearledgr.api.ap_items import build_worklist_item
+from clearledgr.services.ap_item_service import build_worklist_item
 from clearledgr.services.ap_projection import build_worklist_items
 from clearledgr.services.gmail_api import (
     GmailAPIClient,
@@ -419,7 +419,6 @@ class RegisterGmailTokenRequest(BaseModel):
 @router.post("/triage", dependencies=[Depends(get_current_user)])
 async def triage_email(
     request: EmailTriageRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
     user=Depends(get_current_user),
 ):
     """
@@ -441,7 +440,6 @@ async def triage_email(
     payload = request.model_dump()
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     payload["organization_id"] = org_id
-    actor_email = _authenticated_actor(user)
     
     # Build combined text for agent reasoning (used for both Temporal + inline)
     combined_text = "\n".join(
@@ -469,218 +467,16 @@ async def triage_email(
         )
         return result
     
-    # Inline execution (no Temporal)
-    from clearledgr.workflows.gmail_activities import (
-        classify_email_activity,
-        extract_email_data_activity,
+    from clearledgr.services.gmail_triage_service import (
+        run_inline_gmail_triage,
     )
-    
-    # Initialize audit trail for this invoice
-    trail = get_audit_trail(org_id)
-    trail.log(
-        invoice_id=request.email_id,
-        event_type=AuditEventType.RECEIVED,
-        summary=f"Email received from {request.sender or 'unknown'}",
-        details={"subject": request.subject, "sender": request.sender},
-    )
-    
-    classification = await classify_email_activity(payload)
-    
-    trail.log(
-        invoice_id=request.email_id,
-        event_type=AuditEventType.CLASSIFIED,
-        summary=f"Classified as {classification.get('type', 'UNKNOWN')}",
-        confidence=classification.get("confidence", 0),
-        reasoning=classification.get("reason", "AI classification"),
-    )
-    
-    if classification.get("type") == "NOISE":
-        return {
-            "email_id": request.email_id,
-            "classification": classification,
-            "action": "skipped",
-        }
-    
-    extraction = await extract_email_data_activity({**payload, "classification": classification})
-    extracted_amount = extraction.get("amount")
-    amount_display = (
-        f"{float(extracted_amount):,.2f}"
-        if isinstance(extracted_amount, (int, float))
-        else "Unknown"
-    )
-
-    trail.log(
-        invoice_id=request.email_id,
-        event_type=AuditEventType.EXTRACTED,
-        summary=f"Extracted: {extraction.get('vendor', 'Unknown')} ${amount_display}",
-        confidence=extraction.get("confidence", 0),
-        vendor=extraction.get("vendor"),
-        amount=extraction.get("amount"),
-    )
-    
-    # ========== APPLY ALL INTELLIGENCE ==========
-    
-    # 1. Self-reflection: Agent checks its own work
-    reflection = get_agent_reflection()
-    original_text = f"{request.subject or ''} {request.snippet or ''} {request.body or ''}"
-    reflection_result = reflection.reflect_on_extraction(extraction, original_text)
-    
-    if reflection_result.corrections_made:
-        extraction = reflection_result.final_extraction
-        trail.log(
-            invoice_id=request.email_id,
-            event_type=AuditEventType.VALIDATED,
-            summary=f"Self-corrected {len(reflection_result.corrections_made)} field(s)",
-            reasoning="; ".join(reflection_result.reflection_notes),
-        )
-    
-    # 2. Vendor Intelligence: Know vendors before told
-    vendor_intel = get_vendor_intelligence()
-    vendor_info = vendor_intel.get_suggestion(extraction.get("vendor", ""))
-    if vendor_info:
-        extraction["vendor_intelligence"] = vendor_info
-        # Apply suggested GL if not already set
-        if not extraction.get("gl_code") and vendor_info.get("suggested_gl"):
-            extraction["gl_code"] = vendor_info["suggested_gl"]
-            extraction["gl_source"] = "vendor_intelligence"
-    
-    # 3. Policy Compliance: Check against company policies
-    policy_service = get_policy_compliance(org_id)
-    invoice_for_policy = {
-        "vendor": extraction.get("vendor") or "",
-        "amount": extraction.get("amount", 0),
-        "category": extraction.get("category") or "",
-        "vendor_intelligence": extraction.get("vendor_intelligence", {}),
-    }
-    policy_result = policy_service.check(invoice_for_policy)
-    extraction["policy_compliance"] = policy_result.to_dict()
-    
-    if not policy_result.compliant:
-        trail.log(
-            invoice_id=request.email_id,
-            event_type=AuditEventType.POLICY_CHECK,
-            summary=f"Policy: {len(policy_result.violations)} requirement(s)",
-            details={"violations": [v.message for v in policy_result.violations]},
-        )
-    
-    # 4. Priority Detection: Smart urgency scoring
-    priority_service = get_priority_detection(org_id)
-    invoice_for_priority = {
-        "id": request.email_id,
-        "vendor": extraction.get("vendor"),
-        "amount": extraction.get("amount", 0),
-        "due_date": extraction.get("due_date"),
-        "created_at": extraction.get("created_at"),
-        "vendor_intelligence": extraction.get("vendor_intelligence", {}),
-    }
-    priority = priority_service.assess(invoice_for_priority)
-    extraction["priority"] = priority.to_dict()
-    
-    # 5. Cross-Invoice Analysis: Duplicates and anomalies
-    analyzer = get_cross_invoice_analyzer(org_id)
-    analysis = analyzer.analyze(
-        vendor=extraction.get("vendor", ""),
-        amount=extraction.get("amount", 0),
-        invoice_number=extraction.get("invoice_number"),
-        invoice_date=extraction.get("invoice_date"),
-        gmail_id=request.email_id,
-    )
-    extraction["cross_invoice_analysis"] = analysis.to_dict()
-    duplicate_alerts = getattr(analysis, "duplicates", []) or []
-    
-    if duplicate_alerts:
-        trail.log(
-            invoice_id=request.email_id,
-            event_type=AuditEventType.DUPLICATE_CHECK,
-            summary=f"Potential duplicate detected",
-            details={"duplicates": [getattr(d, "invoice_id", None) for d in duplicate_alerts]},
-        )
-    
-    # 6. Budget Awareness: Check budget impact
-    budget_service = get_budget_awareness(org_id)
-    budget_checks = budget_service.check_invoice(invoice_for_policy)
-    if budget_checks:
-        extraction["budget_impact"] = [b.to_dict() for b in budget_checks]
-        
-        # Alert if budget critical
-        for check in budget_checks:
-            if check.after_approval_status.value in ["critical", "exceeded"]:
-                trail.log(
-                    invoice_id=request.email_id,
-                    event_type=AuditEventType.ANALYZED,
-                    summary=f"Budget alert: {check.budget.name} at {check.after_approval_percent:.0f}%",
-                )
-    
-    # 7. Proactive Insights: Check for alerts
-    insights_service = get_proactive_insights(org_id)
-    insights = insights_service.analyze_after_invoice(invoice_for_priority)
-    if insights:
-        extraction["insights"] = [
-            {"title": i.title, "description": i.description, "severity": i.severity}
-            for i in insights
-        ]
-    
-    # Record decision in audit trail
-    trail.log(
-        invoice_id=request.email_id,
-        event_type=AuditEventType.DECISION_MADE,
-        summary=f"Ready for processing - Priority: {priority.priority.label}",
-        confidence=extraction.get("confidence", 0),
-        reasoning=f"Vendor: {'known' if vendor_info else 'new'}, Policy: {'compliant' if policy_result.compliant else 'requirements'}, Duplicates: {len(duplicate_alerts)}",
-    )
-    
-    # Legacy audit
-    audit.record_event(
-        user_email=actor_email,
-        action="email_triaged",
-        entity_type="email",
-        entity_id=request.email_id,
-        organization_id=org_id,
-        metadata={
-            "classification": classification.get("type"),
-            "vendor": extraction.get("vendor"),
-            "amount": extraction.get("amount"),
-            "priority": priority.priority.value,
-            "policy_compliant": policy_result.compliant,
-            "potential_duplicates": len(duplicate_alerts),
-        },
-    )
-    
-    result = {
-        "email_id": request.email_id,
-        "classification": classification,
-        "extraction": extraction,
-        "action": "triaged",
-        "ai_powered": True,
-        "intelligence": {
-            "vendor_known": vendor_info is not None,
-            "vendor_info": vendor_info,
-            "policy_compliant": policy_result.compliant,
-            "policy_requirements": [v.message for v in policy_result.violations],
-            "required_approvers": policy_result.required_approvers,
-            "priority": priority.priority.value,
-            "priority_label": priority.priority.label,
-            "days_until_due": priority.days_until_due,
-            "alerts": priority.alerts,
-            "potential_duplicates": len(duplicate_alerts),
-            "anomalies": [getattr(a, "anomaly_type", None) for a in (getattr(analysis, "anomalies", []) or [])],
-            "budget_warnings": [
-                b.warning_message for b in budget_checks if b.warning_message
-            ] if budget_checks else [],
-            "insights": [i.title for i in insights] if insights else [],
-            "self_verified": reflection_result.self_verified,
-        },
-    }
-
-    # Agent reasoning layer (deep autonomy)
-    result = _apply_agent_reasoning(
-        result=result,
+    return await run_inline_gmail_triage(
+        payload=payload,
         org_id=org_id,
         combined_text=combined_text,
         attachments=request.attachments or [],
+        agent_reasoning_fn=_apply_agent_reasoning,
     )
-
-    return result
 
 
 async def _apply_intelligence(result: Dict[str, Any], org_id: str, email_id: str) -> Dict[str, Any]:
@@ -1826,34 +1622,6 @@ def _resolve_ap_item_for_extension_action(db: Any, organization_id: str, referen
     return resolve_ap_item_reference(db, organization_id, reference_id)
 
 
-def _append_extension_ap_audit(
-    db: Any,
-    *,
-    ap_item_id: str,
-    organization_id: str,
-    event_type: str,
-    actor_id: str,
-    reason: str,
-    metadata: Optional[Dict[str, Any]] = None,
-    correlation_id: Optional[str] = None,
-    idempotency_key: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    return db.append_ap_audit_event(
-        {
-            "ap_item_id": ap_item_id,
-            "event_type": event_type,
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "reason": reason,
-            "metadata": metadata or {},
-            "organization_id": organization_id,
-            "source": "gmail_extension",
-            "correlation_id": correlation_id,
-            "idempotency_key": idempotency_key,
-        }
-    )
-
-
 def _load_idempotent_extension_response(db: Any, idempotency_key: Optional[str]) -> Optional[Dict[str, Any]]:
     key = str(idempotency_key or "").strip()
     if not key:
@@ -2084,35 +1852,11 @@ async def submit_for_approval(
         idempotency_key=request.idempotency_key,
     )
     
-    ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.email_id)
-    correlation_id = None
-    ap_item_id = request.email_id
-    if ap_item:
-        metadata = _parse_json_dict(ap_item.get("metadata"))
-        correlation_id = str(ap_item.get("correlation_id") or metadata.get("correlation_id") or "").strip() or None
-        ap_item_id = str(ap_item.get("id") or request.email_id)
     response_payload = {
         **(result if isinstance(result, dict) else {"status": "unknown"}),
         "email_id": request.email_id,
-        "ap_item_id": ap_item_id,
+        "ap_item_id": str((result or {}).get("ap_item_id") or request.email_id),
     }
-    audit_row = _append_extension_ap_audit(
-        db,
-        ap_item_id=ap_item_id,
-        organization_id=org_id,
-        event_type="approval_routed_from_extension",
-        actor_id=actor_email,
-        reason="route_for_approval",
-        metadata={
-            "response": response_payload,
-            "email_id": request.email_id,
-            "batch_intent": "route_low_risk_for_approval",
-        },
-        correlation_id=correlation_id,
-        idempotency_key=request.idempotency_key,
-    )
-    if audit_row and isinstance(response_payload, dict):
-        response_payload["audit_event_id"] = audit_row.get("id")
     return response_payload
 
 

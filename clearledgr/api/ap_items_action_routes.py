@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-import clearledgr.api.ap_items as shared
+import clearledgr.services.ap_item_service as shared
 from clearledgr.api.ap_item_contracts import (
     BulkResolveFieldReviewRequest,
     LinkSourceRequest,

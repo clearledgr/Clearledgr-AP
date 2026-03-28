@@ -296,19 +296,12 @@ class AuditTrailService:
         return event
     
     def _persist_event(self, invoice_id: str, event: AuditEvent) -> None:
-        """Persist event to database via append_ap_audit_event."""
-        try:
-            self.db.append_ap_audit_event({
-                "ap_item_id": invoice_id,
-                "event_type": event.event_type.value if hasattr(event.event_type, 'value') else str(event.event_type),
-                "actor_type": event.actor,
-                "actor_id": event.actor,
-                "organization_id": self.organization_id,
-                "metadata": event.to_dict(),
-                "source": "audit_trail_service",
-            })
-        except Exception as e:
-            logger.warning(f"Failed to persist audit event: {e}")
+        """Legacy trail events are presentation-only and do not own DB persistence."""
+        logger.debug(
+            "Skipping legacy audit_trail DB persistence for invoice_id=%s event_type=%s",
+            invoice_id,
+            event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type),
+        )
     
     def get_trail(self, invoice_id: str) -> Optional[AuditTrail]:
         """Get the complete audit trail for an invoice."""

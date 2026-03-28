@@ -35,7 +35,6 @@ from clearledgr.services.purchase_orders import get_purchase_order_service
 from clearledgr.integrations.erp_router import (
     Bill, Vendor, get_or_create_vendor
 )
-from clearledgr.services.audit_trail import get_audit_trail
 from clearledgr.services.erp_api_first import post_bill_api_first
 from clearledgr.services.learning import get_learning_service
 from clearledgr.services.approval_card_builder import (
@@ -459,19 +458,6 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             },
         )
 
-        # Audit: Log the AP agent decision
-        try:
-            trail = get_audit_trail(self.organization_id)
-            trail.log_decision(
-                invoice_id=invoice.gmail_id,
-                decision=ap_decision.recommendation,
-                reasoning=ap_decision.reasoning,
-                confidence=ap_decision.confidence,
-                factors=[{"risk_flags": ap_decision.risk_flags, "model": ap_decision.model}],
-            )
-        except Exception as audit_exc:
-            logger.debug("Audit trail log_decision failed (non-fatal): %s", audit_exc)
-
         # Deterministic gate is a hard guardrail that overrides Claude.
         # If it fires, route to human — but use Claude's reasoning as context.
         if not validation_gate.get("passed", True):
@@ -736,17 +722,6 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 if ap_id:
                     self._update_ap_item_metadata(ap_id, {"post_verified": False})
             
-            # Audit: Log auto-approval + ERP posting
-            try:
-                trail = get_audit_trail(self.organization_id)
-                trail.log_approval(
-                    invoice_id=invoice.gmail_id,
-                    approved_by=f"clearledgr-auto:{reason}",
-                    comment=f"Auto-approved and posted to ERP (ref: {erp_reference})",
-                )
-            except Exception as audit_exc:
-                logger.debug("Audit trail log_approval failed (non-fatal): %s", audit_exc)
-
             # LEARNING: Record auto-approval to learn vendor→GL mappings
             try:
                 learning = get_learning_service(self.organization_id)
@@ -1076,19 +1051,6 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     )
             
             logger.info(f"Sent approval request to Slack: {message.ts}")
-
-            # Audit: Log approval request to audit trail
-            try:
-                trail = get_audit_trail(self.organization_id)
-                from clearledgr.services.audit_trail import AuditEventType
-                trail.log(
-                    invoice_id=invoice.gmail_id,
-                    event_type=AuditEventType.APPROVAL_REQUESTED,
-                    summary=f"Sent for approval: {invoice.vendor_name} ${invoice.amount:,.2f}",
-                    details={"channel": message.channel, "ap_decision": (extra_context or {}).get("ap_decision")},
-                )
-            except Exception as audit_exc:
-                logger.debug("Audit trail approval_requested failed (non-fatal): %s", audit_exc)
 
             # H4: Audit approval request dispatch (PLAN.md §4.7)
             if ap_item_id:

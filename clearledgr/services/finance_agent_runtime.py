@@ -2340,6 +2340,17 @@ class FinanceAgentRuntime:
                 response.setdefault("idempotency_key", resolved_idempotency_key)
             if resolved_correlation_id:
                 response.setdefault("correlation_id", resolved_correlation_id)
+            if ap_item_id:
+                audit_row = self._append_runtime_audit(
+                    ap_item_id=ap_item_id,
+                    event_type="ap_invoice_processing_blocked",
+                    reason="ap_invoice_processing_field_review_required",
+                    metadata={"response": response},
+                    correlation_id=resolved_correlation_id,
+                    idempotency_key=resolved_idempotency_key,
+                    skill_id="ap_v1",
+                )
+                response["audit_event_id"] = (audit_row or {}).get("id")
             return response
 
         # Route through the canonical workflow service hosted by the finance
@@ -2408,6 +2419,22 @@ class FinanceAgentRuntime:
         response.setdefault("autonomy_policy", autonomy_policy)
         if autonomy_downgraded_auto_post:
             response.setdefault("autonomy_auto_post_downgraded", True)
+        ap_item_id = str(response.get("ap_item_id") or (seeded_item or {}).get("id") or "").strip()
+        if ap_item_id:
+            status_token = str(response.get("status") or "unknown").strip().lower()
+            event_type = "ap_invoice_processing_completed"
+            if status_token in {"error", "failed"}:
+                event_type = "ap_invoice_processing_failed"
+            audit_row = self._append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type=event_type,
+                reason=f"ap_invoice_processing_{status_token or 'unknown'}",
+                metadata={"response": response},
+                correlation_id=resolved_correlation_id,
+                idempotency_key=resolved_idempotency_key,
+                skill_id="ap_v1",
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
         return response
 
     def ap_auto_approve_threshold(self) -> float:
@@ -2860,7 +2887,6 @@ class FinanceAgentRuntime:
         feedback: Optional[str] = None,
         actor_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        from clearledgr.services.audit_trail import get_audit_trail
         from clearledgr.services.correction_learning import get_correction_learning_service
 
         ap_item = self._resolve_ap_item(ap_item_id)
@@ -2963,18 +2989,6 @@ class FinanceAgentRuntime:
             "feedback": feedback,
             "learning_result": learning_result,
         }
-        try:
-            audit_svc = get_audit_trail(self.organization_id)
-            audit_svc.record_event(
-                event_type="field_correction",
-                invoice_id=ap_item.get("thread_id") or resolved_ap_item_id,
-                actor_type="operator",
-                actor_id=resolved_actor,
-                metadata=audit_meta,
-            )
-        except Exception as exc:
-            logger.warning("audit field_correction event failed: %s", exc)
-
         response = {
             "status": "recorded",
             "ap_item_id": resolved_ap_item_id,

@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, Query
 
-import clearledgr.api.ap_items as shared
+import clearledgr.services.ap_item_service as shared
 from clearledgr.core.auth import get_current_user
 from clearledgr.api.deps import verify_org_access
 from clearledgr.services.ap_operator_audit import normalize_operator_audit_events
