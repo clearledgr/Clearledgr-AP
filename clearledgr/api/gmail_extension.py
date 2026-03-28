@@ -1429,15 +1429,6 @@ async def approve_and_post(
         },
     )
 
-    audit.record_event(
-        user_email=actor,
-        action="post_to_erp_runtime",
-        entity_type="invoice",
-        entity_id=str(ap_item_id or request.email_id),
-        organization_id=org_id,
-        metadata={"result": result, "override": bool(request.override)},
-    )
-
     return {
         "email_id": request.email_id,
         **result,
@@ -1666,24 +1657,6 @@ async def escalate_to_manager(
         mismatches=request.mismatches,
         message=request.message,
         channel=request.channel,
-    )
-
-    # Record escalation in audit trail
-    audit.record_event(
-        user_email=actor,
-        action="invoice_escalated",
-        entity_type="invoice",
-        entity_id=request.email_id,
-        organization_id=org_id,
-        metadata={
-            "vendor": request.vendor,
-            "amount": request.amount,
-            "confidence": request.confidence,
-            "mismatches": request.mismatches,
-            "channel": request.channel,
-            "audit_event_id": result.get("audit_event_id"),
-            "delivery": result.get("delivery"),
-        },
     )
 
     return result
@@ -2053,20 +2026,6 @@ async def submit_for_approval(
         })
         budget_checks = [c.to_dict() for c in checks] if checks else None
     
-    # Log to audit trail
-    trail = get_audit_trail(org_id)
-    trail.log(
-        invoice_id=request.email_id,
-        event_type=AuditEventType.ROUTED,
-        summary=f"Submitting for approval - Priority: {priority_data.get('priority_label', 'N/A')}",
-        details={
-            "policy_compliant": policy_result.get("compliant", True) if policy_result else True,
-            "required_approvers": policy_result.get("required_approvers", []) if policy_result else [],
-        },
-        vendor=request.vendor,
-        amount=request.amount,
-    )
-    
     agent_decision = request.agent_decision or {}
     agent_confidence = request.agent_confidence
     if agent_confidence is None:
@@ -2125,30 +2084,6 @@ async def submit_for_approval(
         idempotency_key=request.idempotency_key,
     )
     
-    # Log result
-    trail.log(
-        invoice_id=request.email_id,
-        event_type=AuditEventType.APPROVAL_REQUESTED if result.get("status") == "pending_approval" else AuditEventType.AUTO_APPROVED,
-        summary=f"Status: {result.get('status')}",
-    )
-    
-    # Legacy audit
-    audit.record_event(
-        user_email=actor_email,
-        action="invoice_submitted",
-        entity_type="invoice",
-        entity_id=request.email_id,
-        organization_id=org_id,
-        metadata={
-            "vendor": request.vendor,
-            "amount": request.amount,
-            "confidence": request.confidence,
-            "result_status": result.get("status"),
-            "policy_compliant": policy_result.get("compliant", True) if policy_result else True,
-            "priority": priority_data.get("priority") if priority_data else None,
-        },
-    )
-
     ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.email_id)
     correlation_id = None
     ap_item_id = request.email_id
@@ -2214,15 +2149,6 @@ async def reject_invoice(
             "actor_id": rejected_by,
             "actor_display": rejected_by,
         },
-    )
-
-    audit.record_event(
-        user_email=rejected_by,
-        action="invoice_rejected",
-        entity_type="invoice",
-        entity_id=str(ap_item_id or request.email_id),
-        organization_id=org_id,
-        metadata={"reason": request.reason, "result": result},
     )
 
     if result.get("status") != "rejected":
@@ -2308,20 +2234,6 @@ async def budget_decision(
     else:
         raise HTTPException(status_code=400, detail="invalid_budget_decision")
 
-    audit.record_event(
-        user_email=actor,
-        action="budget_decision",
-        entity_type="invoice",
-        entity_id=ap_item_id or request.email_id,
-        organization_id=org_id,
-        metadata={
-            "ap_item_id": ap_item_id,
-            "email_id": gmail_ref,
-            "decision": decision,
-            "justification": request.justification,
-            "result": result,
-        },
-    )
     return result
 
 
@@ -2373,20 +2285,6 @@ async def approval_nudge(
         idempotency_key=request.idempotency_key,
     )
 
-    audit.record_event(
-        user_email=actor_email,
-        action="approval_nudge",
-        entity_type="invoice",
-        entity_id=str(ap_item.get("id") or request.email_id),
-        organization_id=org_id,
-        metadata={
-            "ap_item_id": str(ap_item.get("id") or request.ap_item_id or "").strip() or None,
-            "email_id": gmail_id,
-            "result": response,
-            "audit_event_id": response.get("audit_event_id"),
-        },
-    )
-
     return response
 
 
@@ -2429,30 +2327,6 @@ async def vendor_followup(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    action = {
-        "prepared": "vendor_followup_prepared",
-        "waiting_sla": "vendor_followup_waiting_sla",
-        "blocked": "vendor_followup_blocked",
-        "draft_unavailable": "vendor_followup_failed",
-    }.get(str(response.get("status") or "").strip().lower(), "vendor_followup_executed")
-    audit.record_event(
-        user_email=actor_email,
-        action=action,
-        entity_type="invoice",
-        entity_id=str(response.get("ap_item_id") or request.email_id),
-        organization_id=org_id,
-        metadata={
-            "email_id": request.email_id,
-            "ap_item_id": str(response.get("ap_item_id") or request.email_id),
-            "status": response.get("status"),
-            "reason": response.get("reason"),
-            "policy_precheck": response.get("policy_precheck"),
-            "draft_id": response.get("draft_id"),
-            "followup_attempt_count": response.get("followup_attempt_count"),
-            "next_due_at": response.get("followup_sla_due_at"),
-            "audit_event_id": response.get("audit_event_id"),
-        },
-    )
     return response
 
 
@@ -2496,20 +2370,6 @@ async def route_low_risk_approval(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    audit.record_event(
-        user_email=actor_email,
-        action="route_low_risk_for_approval",
-        entity_type="invoice",
-        entity_id=str(response.get("ap_item_id") or request.ap_item_id or request.email_id),
-        organization_id=org_id,
-        metadata={
-            "ap_item_id": response.get("ap_item_id") or request.ap_item_id,
-            "email_id": request.email_id,
-            "status": response.get("status"),
-            "policy_precheck": response.get("policy_precheck"),
-            "audit_event_id": response.get("audit_event_id"),
-        },
-    )
     return response
 
 
@@ -2552,21 +2412,6 @@ async def retry_recoverable_failure(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    audit.record_event(
-        user_email=actor_email,
-        action="retry_recoverable_failure",
-        entity_type="invoice",
-        entity_id=str(response.get("ap_item_id") or request.ap_item_id or request.email_id),
-        organization_id=org_id,
-        metadata={
-            "ap_item_id": response.get("ap_item_id") or request.ap_item_id,
-            "email_id": request.email_id,
-            "status": response.get("status"),
-            "reason": response.get("reason"),
-            "policy_precheck": response.get("policy_precheck"),
-            "audit_event_id": response.get("audit_event_id"),
-        },
-    )
     return response
 
 
@@ -2603,30 +2448,6 @@ async def finance_summary_share(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    action = {
-        "preview": "finance_summary_share_previewed",
-        "prepared": "finance_summary_share_prepared",
-        "shared": "finance_summary_shared",
-        "error": "finance_summary_share_failed",
-    }.get(str(result.get("status") or "").strip().lower(), "finance_summary_share_failed")
-    audit.record_event(
-        user_email=actor_email,
-        action=action,
-        entity_type="invoice",
-        entity_id=str(result.get("ap_item_id") or request.email_id),
-        organization_id=org_id,
-        metadata={
-            "email_id": request.email_id,
-            "target": result.get("target") or request.target,
-            "recipient_email": (
-                ((result.get("draft") or {}).get("to"))
-                if str(result.get("status") or "").strip().lower() == "prepared"
-                else request.recipient_email
-            ),
-            "delivery": result.get("delivery"),
-            "audit_event_id": result.get("audit_event_id"),
-        },
-    )
     return result
 
 

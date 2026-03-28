@@ -78,24 +78,6 @@ async def _deferred_startup(app):
         logger.warning(f"Finance agent runtime not started: {e}")
 
     try:
-        from clearledgr.core.agent_runtime import get_planning_engine
-        from clearledgr.core.skills.ap_skill import APSkill
-        from clearledgr.core.skills.recon_skill import ReconciliationSkill
-
-        planner = get_planning_engine()
-        planner.register_skill(APSkill())
-        planner.register_skill(ReconciliationSkill())
-        planner_resumed = await asyncio.wait_for(planner.resume_pending_tasks(), timeout=10.0)
-        logger.info(
-            "Agent planning engine started, AP + Reconciliation skills registered (%d tasks resumed)",
-            planner_resumed,
-        )
-    except asyncio.TimeoutError:
-        logger.warning("Agent planning engine startup timed out (10s) — skipping")
-    except Exception as e:
-        logger.warning(f"Agent planning engine not started: {e}")
-
-    try:
         from clearledgr.services.erp_follow_on_reconciliation import (
             run_erp_follow_on_reconciliation_check,
         )

@@ -1853,7 +1853,7 @@ class TestExtensionEndpoints:
         assert captured["invoice_payload"]["user_id"] == "extension-user-1"
         assert captured["invoice_payload"]["confidence"] >= 0.95
         assert fake_db.audit_rows[-1]["event_type"] == "approval_routed_from_extension"
-        assert fake_audit.events[-1]["action"] == "invoice_submitted"
+        assert not fake_audit.events
 
     def test_escalate_endpoint_uses_runtime_contract(self, monkeypatch):
         captured: dict = {}
@@ -1903,8 +1903,8 @@ class TestExtensionEndpoints:
         assert captured["actor_email"] == "extension@example.com"
         assert captured["kwargs"]["email_id"] == "gmail-thread-escalate-1"
         assert captured["kwargs"]["channel"] == "#finance-escalations"
-        assert fake_audit.events[-1]["action"] == "invoice_escalated"
-        assert fake_audit.events[-1]["metadata"]["audit_event_id"] == "audit-escalate-1"
+        assert payload["audit_event_id"] == "audit-escalate-1"
+        assert not fake_audit.events
 
     def test_extension_register_gmail_token_success(self, monkeypatch):
         stored = {}
@@ -2568,8 +2568,7 @@ class TestExtensionEndpoints:
         assert captured["payload"]["email_id"] == "gmail-thread-1"
         assert captured["payload"]["source_message_ref"] == "gmail-thread-1"
         assert data["audit_event_id"]
-        assert fake_audit.events[-1]["metadata"]["ap_item_id"] == "ap-item-1"
-        assert fake_audit.events[-1]["action"] == "approval_nudge"
+        assert not fake_audit.events
 
     def test_budget_decision_approve_override_uses_runtime_with_canonical_ap_item_reference(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
@@ -2606,7 +2605,7 @@ class TestExtensionEndpoints:
         assert captured["payload"]["email_id"] == "gmail-thread-1"
         assert captured["payload"]["approve_override"] is True
         assert captured["payload"]["action_variant"] == "budget_override"
-        assert fake_audit.events[-1]["metadata"]["ap_item_id"] == "ap-item-1"
+        assert not fake_audit.events
 
     def test_budget_decision_request_adjustment_uses_runtime_request_info(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
@@ -2642,7 +2641,7 @@ class TestExtensionEndpoints:
         assert captured["payload"]["ap_item_id"] == "ap-item-1"
         assert captured["payload"]["email_id"] == "gmail-thread-1"
         assert captured["payload"]["reason"] == "Need updated cost centre approval"
-        assert fake_audit.events[-1]["metadata"]["ap_item_id"] == "ap-item-1"
+        assert not fake_audit.events
 
     def test_budget_decision_reject_uses_runtime_reject_invoice(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
@@ -2678,7 +2677,7 @@ class TestExtensionEndpoints:
         assert captured["payload"]["ap_item_id"] == "ap-item-1"
         assert captured["payload"]["email_id"] == "gmail-thread-1"
         assert captured["payload"]["reason"] == "Budget not approved"
-        assert fake_audit.events[-1]["metadata"]["ap_item_id"] == "ap-item-1"
+        assert not fake_audit.events
 
     def test_finance_summary_share_preview_email_draft_returns_preview_and_audits(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
@@ -2723,7 +2722,7 @@ class TestExtensionEndpoints:
         assert data["preview"]["draft"]["to"] == "financelead@example.com"
         assert data["audit_event_id"]
         assert fake_db.audit_rows[-1]["event_type"] == "finance_summary_share_previewed"
-        assert fake_audit.events[-1]["action"] == "finance_summary_share_previewed"
+        assert not fake_audit.events
 
     def test_finance_summary_share_preview_uses_runtime_contract(self, monkeypatch):
         captured: dict = {}
@@ -2776,8 +2775,8 @@ class TestExtensionEndpoints:
         assert captured["actor_email"] == "extension@example.com"
         assert captured["kwargs"]["reference_id"] == "ap-item-2"
         assert captured["kwargs"]["preview_only"] is True
-        assert fake_audit.events[-1]["action"] == "finance_summary_share_previewed"
-        assert fake_audit.events[-1]["metadata"]["audit_event_id"] == "audit-summary-runtime-1"
+        assert payload["audit_event_id"] == "audit-summary-runtime-1"
+        assert not fake_audit.events
 
     def test_finance_summary_share_preview_slack_thread_returns_message_preview(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
@@ -2931,7 +2930,7 @@ class TestExtensionEndpoints:
         assert metadata["followup_next_action"] == "await_vendor_response"
         assert metadata.get("followup_last_sent_at")
         assert fake_db.audit_rows[-1]["event_type"] == "vendor_followup_draft_prepared"
-        assert fake_audit.events[-1]["action"] == "vendor_followup_prepared"
+        assert not fake_audit.events
 
     def test_vendor_followup_endpoint_respects_sla_wait_window(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user

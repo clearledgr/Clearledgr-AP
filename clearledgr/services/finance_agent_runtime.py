@@ -2087,18 +2087,25 @@ class FinanceAgentRuntime:
             }
 
         existing_metadata = self._parse_json_dict(seeded_item.get("metadata"))
-        stale_planner_failure = (
+        stale_runtime_failure = (
             str(
                 existing_metadata.get("exception_code")
                 or seeded_item.get("exception_code")
                 or ""
             ).strip().lower() == "planner_failed"
             or str(existing_metadata.get("processing_status") or "").strip().lower() == "planner_failed"
+            or str(
+                existing_metadata.get("exception_code")
+                or seeded_item.get("exception_code")
+                or ""
+            ).strip().lower() == "workflow_execution_failed"
+            or str(existing_metadata.get("processing_status") or "").strip().lower() == "workflow_execution_failed"
             or "apskill not registered" in str(
                 existing_metadata.get("planner_error")
                 or seeded_item.get("last_error")
                 or ""
             ).strip().lower()
+            or bool(str(existing_metadata.get("workflow_error") or "").strip())
         )
         refresh_metadata = {
             "processing_status": "extraction_refreshed",
@@ -2108,16 +2115,17 @@ class FinanceAgentRuntime:
             "autonomy_policy": autonomy_policy,
             "autonomy_mode": autonomy_policy.get("mode"),
         }
-        if stale_planner_failure:
+        if stale_runtime_failure:
             refresh_metadata.update(
                 {
                     "exception_code": None,
                     "exception_severity": None,
                     "planner_error": None,
+                    "workflow_error": None,
                 }
             )
         ap_item_id = str(seeded_item.get("id") or "").strip()
-        if stale_planner_failure and ap_item_id and hasattr(self.db, "update_ap_item"):
+        if stale_runtime_failure and ap_item_id and hasattr(self.db, "update_ap_item"):
             try:
                 self.db.update_ap_item(
                     ap_item_id,
@@ -2154,7 +2162,7 @@ class FinanceAgentRuntime:
         idempotency_key: Optional[str] = None,
         correlation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Run AP invoice processing through the canonical planning engine path."""
+        """Run AP invoice processing through the canonical finance runtime path."""
         from clearledgr.services.invoice_workflow import InvoiceData
 
         invoice = invoice_payload if isinstance(invoice_payload, dict) else {}
@@ -2318,7 +2326,7 @@ class FinanceAgentRuntime:
                 "status": "blocked",
                 "reason": "field_review_required",
                 "detail": "Invoice extraction has unresolved field blockers; workflow execution was not performed.",
-                "execution_mode": "agent_planning_engine",
+                "execution_mode": "finance_agent_runtime",
                 "requires_field_review": True,
                 "confidence_blockers": confidence_blockers,
                 "source_conflicts": source_conflicts,
@@ -2334,70 +2342,58 @@ class FinanceAgentRuntime:
                 response.setdefault("correlation_id", resolved_correlation_id)
             return response
 
-        # Route through AgentPlanningEngine (Claude tool-use planning loop).
-        # Fail closed if planner is unavailable; never bypass policy gates with
-        # a direct workflow fallback.
+        # Route through the canonical workflow service hosted by the finance
+        # runtime. This keeps Gmail intake on the same production execution
+        # path as the rest of AP v1 instead of branching into the legacy
+        # planning engine.
+        workflow = None
         try:
-            from clearledgr.core.agent_runtime import get_planning_engine
-            from clearledgr.core.skills.base import AgentTask
+            from clearledgr.services.invoice_workflow import get_invoice_workflow
 
-            planner = get_planning_engine()
-            if "ap_invoice_processing" not in planner._skills:
-                from clearledgr.core.skills.ap_skill import APSkill
-
-                planner.register_skill(APSkill())
-            if "ap_invoice_processing" not in planner._skills:
-                raise RuntimeError("APSkill not registered")
-
-            task = AgentTask(
-                task_type="ap_invoice_processing",
-                organization_id=invoice_org,
-                payload={"invoice": invoice_data.__dict__},
-                idempotency_key=resolved_idempotency_key,
-                correlation_id=resolved_correlation_id,
-            )
-            skill_result = await planner.run_task(task)
-
-            response = dict(skill_result.outcome or {})
-            response["execution_mode"] = "agent_planning_engine"
-            response["task_run_id"] = skill_result.task_run_id
-            response["step_count"] = skill_result.step_count
-            response["agent_status"] = skill_result.status
-            if skill_result.status == "failed":
-                response.setdefault("status", "error")
-                response.setdefault("reason", str(skill_result.error or "agent_planning_failed"))
-            elif skill_result.status == "awaiting_human":
-                response.setdefault("status", "pending_approval")
-            elif skill_result.status == "max_steps_exceeded":
-                response.setdefault("status", "error")
-                response.setdefault("reason", "agent_max_steps_exceeded")
-        except Exception as planner_exc:
+            workflow = get_invoice_workflow(invoice_org)
+            response = await workflow.process_new_invoice(invoice_data)
+            response = dict(response or {})
+            response["execution_mode"] = "finance_agent_runtime"
+            response.setdefault("agent_status", "completed")
+            if response.get("status") in {"pending_approval", "needs_info"}:
+                response["agent_status"] = "awaiting_human"
+            elif response.get("status") in {"error", "failed"}:
+                response["agent_status"] = "failed"
+            if seeded_item and hasattr(self.db, "update_ap_item_metadata_merge"):
+                self.db.update_ap_item_metadata_merge(
+                    str(seeded_item.get("id") or "").strip(),
+                    {
+                        "processing_status": response.get("status") or "processed",
+                        "last_runtime_execution_mode": "finance_agent_runtime",
+                    },
+                )
+        except Exception as workflow_exc:
             logger.error(
-                "[FinanceAgentRuntime] planning engine unavailable; AP processing failed closed: %s",
-                planner_exc,
+                "[FinanceAgentRuntime] invoice workflow execution failed closed: %s",
+                workflow_exc,
             )
             if seeded_item and hasattr(self.db, "update_ap_item"):
                 ap_item_id = str(seeded_item.get("id") or "").strip()
                 merged_metadata = {
                     **self._parse_json_dict(seeded_item.get("metadata")),
-                    "exception_code": "planner_failed",
+                    "exception_code": "workflow_execution_failed",
                     "exception_severity": "high",
-                    "processing_status": "planner_failed",
-                    "planner_error": str(planner_exc),
+                    "processing_status": "workflow_execution_failed",
+                    "workflow_error": str(workflow_exc),
                 }
                 try:
                     self.db.update_ap_item(
                         ap_item_id,
-                        last_error=str(planner_exc),
+                        last_error=str(workflow_exc),
                         metadata=merged_metadata,
                     )
                 except Exception:
                     pass
             response = {
                 "status": "error",
-                "reason": "planning_engine_unavailable",
-                "detail": "AP planner unavailable; no workflow execution was performed.",
-                "execution_mode": "agent_planning_engine",
+                "reason": "invoice_workflow_unavailable",
+                "detail": "AP workflow execution failed; no workflow execution was completed.",
+                "execution_mode": "finance_agent_runtime",
                 "agent_status": "failed",
                 "autonomy_policy": autonomy_policy,
             }
@@ -3000,14 +2996,8 @@ class FinanceAgentRuntime:
         return response
 
     async def resume_pending_agent_tasks(self) -> int:
-        """Resume interrupted planning engine tasks and count pending retry jobs."""
+        """Count pending runtime retry jobs for this tenant."""
         count = 0
-        try:
-            from clearledgr.core.agent_runtime import get_planning_engine
-
-            count += await get_planning_engine().resume_pending_tasks()
-        except Exception:
-            pass
         try:
             jobs = self.db.list_agent_retry_jobs(self.organization_id, status="pending", limit=1000)
             count += len(jobs or [])

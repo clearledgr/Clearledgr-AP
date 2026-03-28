@@ -14,6 +14,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +29,128 @@ SLACK_CHANNEL = (
 _background_task = None
 
 
-async def _slack_alert(text: str, blocks=None):
+def _active_org_ids() -> List[str]:
+    """Return the orgs that should receive background automation."""
+    try:
+        from clearledgr.core.database import get_db
+
+        db = get_db()
+    except Exception:
+        return [DEFAULT_ORG_ID]
+
+    org_ids: List[str] = []
+    if hasattr(db, "list_organizations_with_ap_items"):
+        try:
+            org_ids.extend(db.list_organizations_with_ap_items() or [])
+        except Exception:
+            pass
+    if hasattr(db, "list_organizations"):
+        try:
+            for row in db.list_organizations(limit=500) or []:
+                if not isinstance(row, dict):
+                    continue
+                org_ids.append(row.get("id") or row.get("organization_id"))
+        except Exception:
+            pass
+    try:
+        from clearledgr.services.email_tasks import get_tasks
+
+        for task in get_tasks(include_completed=True, limit=1000) or []:
+            if not isinstance(task, dict):
+                continue
+            org_ids.append(task.get("organization_id"))
+    except Exception:
+        pass
+
+    normalized: List[str] = []
+    seen = set()
+    for org_id in org_ids:
+        token = str(org_id or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        normalized.append(token)
+    return normalized or [DEFAULT_ORG_ID]
+
+
+def _parse_task_datetime(raw: Any) -> Optional[datetime]:
+    token = str(raw or "").strip()
+    if not token:
+        return None
+    try:
+        parsed = datetime.fromisoformat(token.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.strptime(token, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            try:
+                parsed = datetime.strptime(token, "%Y-%m-%d")
+            except ValueError:
+                return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _normalize_task_for_ap_summary(task: Dict[str, Any]) -> Dict[str, Any]:
+    due_at = _parse_task_datetime(task.get("due_date"))
+    updated_at = _parse_task_datetime(task.get("updated_at") or task.get("created_at"))
+    amount = task.get("related_amount")
+    try:
+        amount_value = float(amount or 0)
+    except (TypeError, ValueError):
+        amount_value = 0.0
+    return {
+        "task_id": task.get("task_id"),
+        "organization_id": task.get("organization_id") or DEFAULT_ORG_ID,
+        "vendor_name": task.get("related_vendor") or task.get("source_email_sender") or task.get("title") or "Unknown task",
+        "amount": amount_value,
+        "due_date": due_at.date().isoformat() if due_at else (task.get("due_date") or "?"),
+        "state": task.get("status") or "open",
+        "title": task.get("title"),
+        "task_type": task.get("task_type"),
+        "updated_at": updated_at.isoformat() if updated_at else None,
+    }
+
+
+def _collect_org_overdue_and_stale_tasks(
+    organization_id: str,
+    *,
+    stale_days: int = 5,
+) -> Dict[str, List[Dict[str, Any]]]:
+    from clearledgr.services.email_tasks import get_overdue_tasks, get_tasks
+
+    overdue_items = [
+        _normalize_task_for_ap_summary(task)
+        for task in (get_overdue_tasks(organization_id=organization_id) or [])
+        if isinstance(task, dict)
+    ]
+
+    stale_items: List[Dict[str, Any]] = []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=stale_days)
+    for task in get_tasks(include_completed=False, organization_id=organization_id, limit=1000) or []:
+        if not isinstance(task, dict):
+            continue
+        updated_at = _parse_task_datetime(task.get("updated_at") or task.get("created_at"))
+        if updated_at and updated_at < cutoff:
+            stale_items.append(_normalize_task_for_ap_summary(task))
+
+    return {
+        "overdue": overdue_items,
+        "stale": stale_items,
+    }
+
+
+async def _slack_alert(text: str, blocks=None, organization_id: Optional[str] = None):
     """Send an alert to the configured Slack channel."""
     try:
         from ui.slack.app import send_message
-        await send_message(SLACK_CHANNEL, text, blocks=blocks, organization_id=DEFAULT_ORG_ID)
+        await send_message(
+            SLACK_CHANNEL,
+            text,
+            blocks=blocks,
+            organization_id=str(organization_id or DEFAULT_ORG_ID).strip() or DEFAULT_ORG_ID,
+        )
     except Exception as e:
         logger.error("Slack alert failed: %s", e)
 
@@ -66,26 +184,32 @@ async def _run_loop():
     while True:
         try:
             tick += 1
+            org_ids = _active_org_ids()
 
             # Every tick: drain ERP-post retry queue (Gap #5 crash recovery)
             await _drain_erp_post_retry_queue()
-            await _check_erp_follow_on_fallback_timeouts(DEFAULT_ORG_ID)
+            for org_id in org_ids:
+                await _check_erp_follow_on_fallback_timeouts(org_id)
 
             # Every 15 minutes: check overdue and stale tasks + approval timeouts
             if tick % 1 == 0:  # runs every iteration (15 min sleep)
                 await _check_overdue_tasks()
-                await _check_approval_timeouts(DEFAULT_ORG_ID)
+                for org_id in org_ids:
+                    await _check_approval_timeouts(org_id)
 
             # Every hour (4 ticks)
             if tick % 4 == 0:
-                await _check_anomalies()
+                for org_id in org_ids:
+                    await _check_anomalies(org_id)
 
             # Daily (96 ticks at 15-min intervals, but we check by hour)
             now = datetime.now(timezone.utc)
             if tick % 4 == 0 and now.hour == 8:
-                await _send_daily_digest()
+                for org_id in org_ids:
+                    await _send_daily_digest(org_id)
             if tick % 4 == 0 and now.hour == 7:
-                await _check_period_end()
+                for org_id in org_ids:
+                    await _check_period_end(org_id)
 
         except asyncio.CancelledError:
             logger.info("Agent background loop cancelled")
@@ -98,65 +222,69 @@ async def _run_loop():
 
 
 async def _check_overdue_tasks():
-    """Check for overdue and stale AP items, send nudges to Slack."""
+    """Check overdue and stale task queues per org, then post summaries to Slack."""
     try:
-        from clearledgr.services.task_scheduler import run_all_checks
-
-        results = run_all_checks()
-
-        overdue = results.get("overdue", [])
-        stale = results.get("stale", [])
-
-        if overdue or stale:
+        total_overdue = 0
+        total_stale = 0
+        org_ids = _active_org_ids()
+        for org_id in org_ids:
+            task_status = _collect_org_overdue_and_stale_tasks(org_id)
+            org_overdue = task_status.get("overdue", [])
+            org_stale = task_status.get("stale", [])
+            total_overdue += len(org_overdue)
+            total_stale += len(org_stale)
+            if org_overdue or org_stale:
+                try:
+                    from clearledgr.services.slack_notifications import send_overdue_summary
+                    await send_overdue_summary(
+                        overdue_items=org_overdue,
+                        stale_items=org_stale,
+                        organization_id=org_id,
+                    )
+                except Exception as _kpi_err:
+                    logger.error("KPI dashboard failed, falling back to plain alert: %s", _kpi_err)
+                    lines = [":clock3: *AP Status Check*"]
+                    if org_overdue:
+                        lines.append(f"\n*{len(org_overdue)} overdue item(s):*")
+                        for item in org_overdue[:5]:
+                            vendor = item.get("vendor_name", "Unknown")
+                            amount = item.get("amount", 0)
+                            due = item.get("due_date", "?")
+                            lines.append(f"  • {vendor} — ${amount:,.2f} (due {due})")
+                    if org_stale:
+                        lines.append(f"\n*{len(org_stale)} stale item(s) needing attention:*")
+                        for item in org_stale[:5]:
+                            vendor = item.get("vendor_name", "Unknown")
+                            state = item.get("state", "?")
+                            lines.append(f"  • {vendor} — stuck in `{state}`")
+                    await _slack_alert("\n".join(lines), organization_id=org_id)
+        if total_overdue or total_stale:
             logger.info(
-                f"Background check: {len(overdue)} overdue, {len(stale)} stale tasks"
+                "Background check: %d overdue, %d stale tasks across %d org(s)",
+                total_overdue,
+                total_stale,
+                len(org_ids),
             )
-            # Rich KPI dashboard (replaces the plain-text alert)
-            try:
-                from clearledgr.services.slack_notifications import send_overdue_summary
-                await send_overdue_summary(
-                    overdue_items=overdue,
-                    stale_items=stale,
-                    organization_id=DEFAULT_ORG_ID,
-                )
-            except Exception as _kpi_err:
-                # Fall back to plain-text alert if KPI dashboard fails
-                logger.error("KPI dashboard failed, falling back to plain alert: %s", _kpi_err)
-                lines = [":clock3: *AP Status Check*"]
-                if overdue:
-                    lines.append(f"\n*{len(overdue)} overdue item(s):*")
-                    for item in overdue[:5]:
-                        vendor = item.get("vendor_name", "Unknown")
-                        amount = item.get("amount", 0)
-                        due = item.get("due_date", "?")
-                        lines.append(f"  • {vendor} — ${amount:,.2f} (due {due})")
-                if stale:
-                    lines.append(f"\n*{len(stale)} stale item(s) needing attention:*")
-                    for item in stale[:5]:
-                        vendor = item.get("vendor_name", "Unknown")
-                        state = item.get("state", "?")
-                        lines.append(f"  • {vendor} — stuck in `{state}`")
-                await _slack_alert("\n".join(lines))
     except Exception as e:
         logger.error("Overdue task check failed: %s", e)
 
 
-async def _check_anomalies():
+async def _check_anomalies(org_id: str):
     """Detect volume and pattern anomalies, alert Slack."""
     try:
         from clearledgr.services.agent_anomaly_detection import AnomalyDetectionService
 
-        service = AnomalyDetectionService(organization_id=DEFAULT_ORG_ID)
+        service = AnomalyDetectionService(organization_id=org_id)
         anomalies = service.detect_all()
 
         if anomalies:
-            logger.info(f"Detected {len(anomalies)} anomalies")
+            logger.info("Detected %d anomalies for org=%s", len(anomalies), org_id)
             lines = [":warning: *Anomaly Detection*"]
             for a in anomalies[:5]:
                 atype = a.get("type", "?")
                 desc = a.get("description", "")
                 lines.append(f"  • *{atype}:* {desc}")
-            await _slack_alert("\n".join(lines))
+            await _slack_alert("\n".join(lines), organization_id=org_id)
     except Exception as e:
         logger.error("Anomaly detection failed: %s", e)
 
@@ -178,20 +306,25 @@ async def _check_erp_follow_on_fallback_timeouts(organization_id: str):
         logger.error("ERP follow-on timeout reaper failed: %s", e)
 
 
-async def _send_daily_digest():
+async def _send_daily_digest(org_id: str):
     """Generate and send daily spending digest to Slack."""
     try:
         from clearledgr.services.proactive_insights import get_proactive_insights
 
-        insights_service = get_proactive_insights(DEFAULT_ORG_ID)
+        insights_service = get_proactive_insights(org_id)
         digest = insights_service.generate_daily_digest()
 
         if digest and digest.insights:
-            logger.info(f"Daily digest: {len(digest.insights)} insights generated — {digest.summary}")
+            logger.info(
+                "Daily digest for org=%s: %d insights generated — %s",
+                org_id,
+                len(digest.insights),
+                digest.summary,
+            )
             lines = [f":bar_chart: *Daily AP Digest* — {digest.summary}"]
             for insight in digest.insights[:8]:
                 lines.append(f"  • {insight.title}")
-            await _slack_alert("\n".join(lines))
+            await _slack_alert("\n".join(lines), organization_id=org_id)
     except Exception as e:
         logger.error("Daily digest generation failed: %s", e)
 
@@ -453,7 +586,7 @@ async def _check_approval_timeouts(org_id: str):
         logger.error("Approval timeout check failed: %s", exc)
 
 
-async def _check_period_end():
+async def _check_period_end(org_id: str):
     """Detect period-end and alert about closing deadlines in Slack."""
     try:
         from clearledgr.services.agent_monitoring import detect_period_end
@@ -467,7 +600,8 @@ async def _check_period_end():
             await _slack_alert(
                 f":calendar: *Period-End Alert*\n"
                 f"{period_type.title()}-end closing in *{days_left} day(s)*. "
-                f"Review pending AP items before the cutoff."
+                f"Review pending AP items before the cutoff.",
+                organization_id=org_id,
             )
     except Exception as e:
         logger.error("Period-end detection failed: %s", e)

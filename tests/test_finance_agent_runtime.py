@@ -1548,9 +1548,11 @@ def test_runtime_audit_rows_include_canonical_audit_event_schema():
     assert canonical.get("timestamp")
 
 
-def test_execute_ap_invoice_processing_fails_closed_when_planner_unavailable():
+def test_execute_ap_invoice_processing_fails_closed_when_workflow_unavailable():
     db = _FakeDB()
     runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.process_new_invoice = AsyncMock(side_effect=RuntimeError("workflow unavailable"))
 
     invoice_payload = {
         "gmail_id": "gmail-fail-closed-1",
@@ -1564,10 +1566,7 @@ def test_execute_ap_invoice_processing_fails_closed_when_planner_unavailable():
         "currency": "USD",
     }
 
-    with patch(
-        "clearledgr.core.agent_runtime.get_planning_engine",
-        side_effect=RuntimeError("planner unavailable"),
-    ):
+    with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_ap_invoice_processing(
                 invoice_payload=invoice_payload,
@@ -1577,8 +1576,8 @@ def test_execute_ap_invoice_processing_fails_closed_when_planner_unavailable():
         )
 
     assert result["status"] == "error"
-    assert result["reason"] == "planning_engine_unavailable"
-    assert result["execution_mode"] == "agent_planning_engine"
+    assert result["reason"] == "invoice_workflow_unavailable"
+    assert result["execution_mode"] == "finance_agent_runtime"
     assert result["agent_status"] == "failed"
     assert result["idempotency_key"] == "idem-fail-closed-1"
     assert result["correlation_id"] == "corr-fail-closed-1"
@@ -1586,8 +1585,9 @@ def test_execute_ap_invoice_processing_fails_closed_when_planner_unavailable():
     assert seeded is not None
     assert seeded["thread_id"] == "gmail-thread-fail-closed-1"
     assert seeded["message_id"] == "gmail-message-fail-closed-1"
-    assert seeded["last_error"] == "planner unavailable"
-    assert seeded["metadata"]["exception_code"] == "planner_failed"
+    assert seeded["last_error"] == "workflow unavailable"
+    assert seeded["metadata"]["exception_code"] == "workflow_execution_failed"
+    assert seeded["metadata"]["workflow_error"] == "workflow unavailable"
 
 
 def test_seed_ap_item_replaces_placeholder_vendor_and_zero_amount():
@@ -1663,7 +1663,7 @@ def test_refresh_invoice_record_from_extraction_updates_ap_item_without_planner(
     assert seeded["metadata"]["refresh_reason"] == "golden_replay"
 
 
-def test_refresh_invoice_record_from_extraction_clears_stale_planner_failure():
+def test_refresh_invoice_record_from_extraction_clears_stale_runtime_failure():
     db = _FakeDB()
     db.items["ap-stale-planner-1"] = {
         "id": "ap-stale-planner-1",
@@ -1675,14 +1675,15 @@ def test_refresh_invoice_record_from_extraction_clears_stale_planner_failure():
         "invoice_number": "INV-STALE-1",
         "amount": 99.0,
         "currency": "USD",
-        "exception_code": "planner_failed",
+        "exception_code": "workflow_execution_failed",
         "exception_severity": "high",
-        "last_error": "APSkill not registered",
+        "last_error": "workflow unavailable",
         "metadata": {
-            "exception_code": "planner_failed",
+            "exception_code": "workflow_execution_failed",
             "exception_severity": "high",
-            "processing_status": "planner_failed",
+            "processing_status": "workflow_execution_failed",
             "planner_error": "APSkill not registered",
+            "workflow_error": "workflow unavailable",
         },
     }
     runtime = _runtime(db)
@@ -1714,31 +1715,18 @@ def test_refresh_invoice_record_from_extraction_clears_stale_planner_failure():
     assert seeded["metadata"]["exception_code"] is None
     assert seeded["metadata"]["exception_severity"] is None
     assert seeded["metadata"]["planner_error"] is None
+    assert seeded["metadata"]["workflow_error"] is None
     assert seeded["metadata"]["processing_status"] == "extraction_refreshed"
 
 
-def test_execute_ap_invoice_processing_registers_missing_ap_skill():
+def test_execute_ap_invoice_processing_invokes_invoice_workflow_directly():
     db = _FakeDB()
     runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.process_new_invoice = AsyncMock(
+        return_value={"status": "processed", "ap_item_state": "validated"}
+    )
 
-    class _FakePlanner:
-        def __init__(self):
-            self._skills = {}
-            self.registered = []
-
-        def register_skill(self, skill):
-            self.registered.append(skill.skill_name)
-            self._skills[skill.skill_name] = skill
-
-        async def run_task(self, task):
-            return SimpleNamespace(
-                outcome={"status": "processed", "ap_item_state": "validated"},
-                task_run_id="task-run-1",
-                step_count=1,
-                status="completed",
-            )
-
-    planner = _FakePlanner()
     invoice_payload = {
         "gmail_id": "gmail-skill-register-1",
         "thread_id": "gmail-thread-skill-register-1",
@@ -1751,7 +1739,7 @@ def test_execute_ap_invoice_processing_registers_missing_ap_skill():
         "currency": "USD",
     }
 
-    with patch("clearledgr.core.agent_runtime.get_planning_engine", return_value=planner):
+    with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_ap_invoice_processing(
                 invoice_payload=invoice_payload,
@@ -1760,28 +1748,25 @@ def test_execute_ap_invoice_processing_registers_missing_ap_skill():
             )
         )
 
-    assert planner.registered == ["ap_invoice_processing"]
+    workflow.process_new_invoice.assert_awaited_once()
+    invoice_data = workflow.process_new_invoice.await_args.args[0]
+    assert invoice_data.gmail_id == "gmail-thread-skill-register-1"
     assert result["status"] == "processed"
-    assert result["execution_mode"] == "agent_planning_engine"
+    assert result["execution_mode"] == "finance_agent_runtime"
+    assert result["agent_status"] == "completed"
 
 
 def test_execute_ap_invoice_processing_downgrades_auto_post_when_autonomy_not_earned():
     db = _FakeDB()
     runtime = _runtime(db)
     captured = {}
+    workflow = MagicMock()
 
-    class _FakePlanner:
-        def __init__(self):
-            self._skills = {"ap_invoice_processing": object()}
+    async def _process_new_invoice(invoice_data):
+        captured["invoice"] = invoice_data
+        return {"status": "pending_approval"}
 
-        async def run_task(self, task):
-            captured["task"] = task
-            return SimpleNamespace(
-                outcome={"status": "pending_approval"},
-                task_run_id="task-run-autonomy-1",
-                step_count=1,
-                status="awaiting_human",
-            )
+    workflow.process_new_invoice = AsyncMock(side_effect=_process_new_invoice)
 
     readiness = {
         "status": "ready",
@@ -1802,7 +1787,7 @@ def test_execute_ap_invoice_processing_downgrades_auto_post_when_autonomy_not_ea
     }
 
     with patch.object(runtime, "skill_readiness", return_value=readiness):
-        with patch("clearledgr.core.agent_runtime.get_planning_engine", return_value=_FakePlanner()):
+        with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
             result = asyncio.run(
                 runtime.execute_ap_invoice_processing(
                     invoice_payload=invoice_payload,
@@ -1812,8 +1797,8 @@ def test_execute_ap_invoice_processing_downgrades_auto_post_when_autonomy_not_ea
             )
 
     threshold = runtime.ap_auto_approve_threshold()
-    task_invoice = captured["task"].payload["invoice"]
-    assert float(task_invoice["confidence"]) < threshold
+    task_invoice = captured["invoice"]
+    assert float(task_invoice.confidence) < threshold
     assert result["status"] == "pending_approval"
     assert result["autonomy_policy"]["mode"] == "assisted"
     assert result["autonomy_auto_post_downgraded"] is True
@@ -1826,7 +1811,8 @@ def test_execute_ap_invoice_processing_blocks_on_field_review_without_planner():
     db = _FakeDB()
     runtime = _runtime(db)
 
-    planner = MagicMock()
+    workflow = MagicMock()
+    workflow.process_new_invoice = AsyncMock()
     invoice_payload = {
         "gmail_id": "gmail-blocked-1",
         "thread_id": "gmail-thread-blocked-1",
@@ -1853,7 +1839,7 @@ def test_execute_ap_invoice_processing_blocks_on_field_review_without_planner():
         "field_confidences": {"amount": 0.98},
     }
 
-    with patch("clearledgr.core.agent_runtime.get_planning_engine", return_value=planner):
+    with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_ap_invoice_processing(
                 invoice_payload=invoice_payload,
@@ -1864,7 +1850,7 @@ def test_execute_ap_invoice_processing_blocks_on_field_review_without_planner():
 
     assert result["status"] == "blocked"
     assert result["reason"] == "field_review_required"
-    planner.run_task.assert_not_called()
+    workflow.process_new_invoice.assert_not_awaited()
     seeded = db.get_ap_item_by_thread("default", "gmail-thread-blocked-1")
     assert seeded is not None
     assert seeded["exception_code"] == "field_conflict"
