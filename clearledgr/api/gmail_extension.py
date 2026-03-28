@@ -28,6 +28,22 @@ from clearledgr.services.agent_reflection import get_agent_reflection
 from clearledgr.services.proactive_insights import get_proactive_insights
 from clearledgr.services.cross_invoice_analysis import get_cross_invoice_analyzer
 from clearledgr.services.agent_reasoning import get_agent as get_reasoning_agent
+from clearledgr.services.gmail_extension_support import (
+    _explain_fallback as support_explain_fallback,
+    _explain_with_claude as support_explain_with_claude,
+    apply_agent_reasoning as support_apply_agent_reasoning,
+    apply_intelligence as support_apply_intelligence,
+    build_amount_validation_payload,
+    build_extension_pipeline as support_build_extension_pipeline,
+    build_form_prefill_payload,
+    build_gl_suggestion_payload,
+    build_needs_info_draft_payload,
+    build_vendor_suggestion_payload,
+    build_verify_confidence_payload,
+    merge_agent_extraction as support_merge_agent_extraction,
+    pipeline_bucket_for_state as support_pipeline_bucket_for_state,
+    render_ap_item_explanation,
+)
 from clearledgr.core.ap_confidence import evaluate_critical_field_confidence, extract_field_confidences
 from clearledgr.core.ap_item_resolution import resolve_ap_item_reference
 from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email
@@ -78,6 +94,18 @@ def _authenticated_actor(user: Any, fallback: str = "extension") -> str:
         or getattr(user, "user_id", None)
         or fallback
     ).strip() or fallback
+
+
+def _build_finance_runtime(user: Any, organization_id: str, *, db: Any = None):
+    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+
+    actor = _authenticated_actor(user, fallback="gmail_extension")
+    return FinanceAgentRuntime(
+        organization_id=organization_id,
+        actor_id=getattr(user, "user_id", None) or actor,
+        actor_email=actor,
+        db=db or get_db(),
+    )
 
 
 async def _recover_ap_item_for_thread(
@@ -481,42 +509,7 @@ async def triage_email(
 
 async def _apply_intelligence(result: Dict[str, Any], org_id: str, email_id: str) -> Dict[str, Any]:
     """Apply intelligence services to a triage result."""
-    extraction = result.get("extraction", {})
-    
-    # Vendor Intelligence
-    vendor_intel = get_vendor_intelligence()
-    vendor_info = vendor_intel.get_suggestion(extraction.get("vendor", ""))
-    if vendor_info:
-        extraction["vendor_intelligence"] = vendor_info
-    
-    # Policy Compliance
-    policy_service = get_policy_compliance(org_id)
-    policy_result = policy_service.check({
-        "vendor": extraction.get("vendor"),
-        "amount": extraction.get("amount", 0),
-        "vendor_intelligence": vendor_info or {},
-    })
-    extraction["policy_compliance"] = policy_result.to_dict()
-    
-    # Priority Detection
-    priority_service = get_priority_detection(org_id)
-    priority = priority_service.assess({
-        "id": email_id,
-        "vendor": extraction.get("vendor"),
-        "amount": extraction.get("amount", 0),
-        "due_date": extraction.get("due_date"),
-    })
-    extraction["priority"] = priority.to_dict()
-    
-    result["extraction"] = extraction
-    result["intelligence"] = {
-        "vendor_known": vendor_info is not None,
-        "policy_compliant": policy_result.compliant,
-        "priority": priority.priority.value,
-        "priority_label": priority.priority.label,
-    }
-    
-    return result
+    return support_apply_intelligence(result, org_id, email_id)
 
 
 def _merge_agent_extraction(
@@ -524,29 +517,7 @@ def _merge_agent_extraction(
     agent_extraction: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Fill missing extraction fields from agent reasoning output."""
-    if not agent_extraction:
-        return extraction
-
-    merged = dict(extraction or {})
-
-    def _set_if_missing(key: str, value: Any):
-        if value is None or value == "":
-            return
-        if merged.get(key) in (None, "", 0):
-            merged[key] = value
-
-    _set_if_missing("vendor", agent_extraction.get("vendor"))
-    _set_if_missing("amount", agent_extraction.get("total_amount"))
-    _set_if_missing("currency", agent_extraction.get("currency"))
-    _set_if_missing("invoice_number", agent_extraction.get("invoice_number"))
-    _set_if_missing("invoice_date", agent_extraction.get("invoice_date"))
-    _set_if_missing("due_date", agent_extraction.get("due_date"))
-
-    # Prefer agent line items if none exist
-    if not merged.get("line_items") and agent_extraction.get("line_items"):
-        merged["line_items"] = agent_extraction.get("line_items")
-
-    return merged
+    return support_merge_agent_extraction(extraction, agent_extraction)
 
 
 def _apply_agent_reasoning(
@@ -556,29 +527,13 @@ def _apply_agent_reasoning(
     attachments: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Run agent reasoning and merge decision + extraction."""
-    if not combined_text and not attachments:
-        return result
-
-    try:
-        agent = get_reasoning_agent(org_id)
-        decision = agent.reason_about_invoice(combined_text, attachments)
-    except Exception as exc:  # noqa: BLE001
-        result.setdefault("agent_decision_error", str(exc))
-        return result
-
-    extraction = result.get("extraction") or {}
-    extraction = _merge_agent_extraction(extraction, decision.extraction or {})
-
-    # Boost confidence if agent produced one
-    try:
-        extraction_confidence = float(extraction.get("confidence") or 0.0)
-        extraction["confidence"] = max(extraction_confidence, float(decision.confidence))
-    except Exception:
-        pass
-
-    result["extraction"] = extraction
-    result["agent_decision"] = decision.to_dict()
-    return result
+    return support_apply_agent_reasoning(
+        result,
+        org_id,
+        combined_text,
+        attachments,
+        reasoning_agent_factory=get_reasoning_agent,
+    )
 
 
 @router.post("/process", dependencies=[Depends(get_current_user)])
@@ -691,38 +646,16 @@ async def bulk_scan_emails(
 
 
 def _pipeline_bucket_for_state(state: Any) -> str:
-    normalized = str(state or "").strip().lower()
-    if normalized in {"new", "received", "validated"}:
-        return "new"
-    if normalized in {"needs_info", "needs_approval", "pending_approval"}:
-        return "pending_approval"
-    if normalized in {"approved", "ready_to_post"}:
-        return "approved"
-    if normalized in {"posted", "posted_to_erp", "closed"}:
-        return "posted"
-    if normalized in {"rejected"}:
-        return "rejected"
-    return "pending_approval"
+    return support_pipeline_bucket_for_state(state)
 
 
 def _build_extension_pipeline(db, organization_id: str, limit: int = 1000) -> Dict[str, List[Dict[str, Any]]]:
-    items = db.list_ap_items(organization_id, limit=limit, prioritized=True)
-    normalized_items = build_worklist_items(
+    return support_build_extension_pipeline(
         db,
-        items,
-        build_item=build_worklist_item,
+        organization_id,
+        limit=limit,
+        build_item_fn=build_worklist_item,
     )
-    groups: Dict[str, List[Dict[str, Any]]] = {
-        "new": [],
-        "pending_approval": [],
-        "approved": [],
-        "posted": [],
-        "rejected": [],
-    }
-    for normalized in normalized_items:
-        bucket = _pipeline_bucket_for_state(normalized.get("state"))
-        groups.setdefault(bucket, []).append(normalized)
-    return groups
 
 
 @router.get("/pipeline")
@@ -1195,20 +1128,12 @@ async def approve_and_post(
     The canonical AP-first path is ``post_to_erp`` through the finance runtime,
     which preserves legal state transitions and policy guards.
     """
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
-
     org_id = _resolve_org_id_for_user(user, request.organization_id)
-    actor = _authenticated_actor(user, fallback="gmail_extension")
     db = get_db()
     ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.ap_item_id or request.email_id)
     ap_item_id = str((ap_item or {}).get("id") or request.ap_item_id or "").strip() or None
     gmail_ref = str((ap_item or {}).get("thread_id") or request.email_id or "").strip()
-    runtime = FinanceAgentRuntime(
-        organization_id=org_id,
-        actor_id=getattr(user, "user_id", None) or actor,
-        actor_email=actor,
-        db=db,
-    )
+    runtime = _build_finance_runtime(user, org_id, db=db)
     result = await runtime.execute_intent(
         "post_to_erp",
         {
@@ -1255,138 +1180,13 @@ async def verify_confidence(
         # Try by message_id
         ap_item = db.get_ap_item_by_message_id(org_id, request.email_id)
 
-    confidence_pct = 0
-    mismatches = []
-    confidence_gate: Dict[str, Any] = {
-        "threshold": 0.95,
-        "threshold_pct": 95,
-        "confidence_blockers": [],
-        "requires_field_review": True,
-    }
-
-    if ap_item:
-        confidence_pct = round((ap_item.get("confidence") or 0) * 100)
-        metadata = db._decode_json(ap_item.get("metadata"))
-
-        # Surface mismatches from extraction vs stored data
-        extraction = request.extraction or {}
-        request_field_confidences = extract_field_confidences(extraction)
-        stored_vendor = ap_item.get("vendor_name") or ""
-        extracted_vendor = extraction.get("vendor") or ""
-        if extracted_vendor and stored_vendor and extracted_vendor.lower() != stored_vendor.lower():
-            mismatches.append({
-                "field": "vendor",
-                "extracted": extracted_vendor,
-                "expected": stored_vendor,
-                "severity": "medium",
-            })
-
-        stored_amount = ap_item.get("amount")
-        extracted_amount = extraction.get("amount")
-        if extracted_amount is not None and stored_amount is not None:
-            try:
-                if abs(float(extracted_amount) - float(stored_amount)) > 0.01:
-                    mismatches.append({
-                        "field": "amount",
-                        "extracted": str(extracted_amount),
-                        "expected": str(stored_amount),
-                        "severity": "high",
-                    })
-            except (TypeError, ValueError):
-                pass
-
-        # Check exception codes from metadata
-        exception_code = ap_item.get("exception_code") or metadata.get("exception_code")
-        if exception_code:
-            mismatches.append({
-                "field": "exception",
-                "extracted": exception_code,
-                "expected": "none",
-                "severity": metadata.get("exception_severity", "medium"),
-            })
-
-        learned_threshold_overrides = None
-        learned_profile_id = None
-        learned_signal_count = 0
-        organization_id = ap_item.get("organization_id") or metadata.get("organization_id")
-        vendor_name = extraction.get("vendor") or ap_item.get("vendor_name")
-        if organization_id and vendor_name:
-            try:
-                from clearledgr.services.correction_learning import get_correction_learning_service
-
-                learned_adjustments = get_correction_learning_service(str(organization_id)).get_extraction_confidence_adjustments(
-                    vendor_name=vendor_name,
-                    sender_domain=metadata.get("source_sender_domain") or ap_item.get("sender"),
-                    document_type=(
-                        extraction.get("document_type")
-                        or ap_item.get("document_type")
-                        or metadata.get("document_type")
-                        or metadata.get("email_type")
-                    ),
-                )
-                learned_threshold_overrides = learned_adjustments.get("threshold_overrides") or None
-                learned_profile_id = learned_adjustments.get("profile_id")
-                learned_signal_count = int(learned_adjustments.get("signal_count") or 0)
-            except Exception:
-                learned_threshold_overrides = None
-                learned_profile_id = None
-                learned_signal_count = 0
-
-        confidence_gate = evaluate_critical_field_confidence(
-            overall_confidence=ap_item.get("confidence"),
-            field_values={
-                "vendor": extraction.get("vendor") or ap_item.get("vendor_name"),
-                "amount": extraction.get("amount")
-                if extraction.get("amount") is not None else ap_item.get("amount"),
-                "invoice_number": extraction.get("invoice_number") or ap_item.get("invoice_number"),
-                "due_date": extraction.get("due_date") or ap_item.get("due_date"),
-            },
-            field_confidences=request_field_confidences or metadata.get("field_confidences"),
-            vendor_name=extraction.get("vendor") or ap_item.get("vendor_name"),
-            sender=ap_item.get("sender"),
-            document_type=(
-                extraction.get("document_type")
-                or ap_item.get("document_type")
-                or metadata.get("document_type")
-                or metadata.get("email_type")
-            ),
-            primary_source=extraction.get("primary_source") or metadata.get("primary_source"),
-            has_attachment=bool(
-                extraction.get("has_invoice_attachment")
-                or extraction.get("attachment_url")
-                or ap_item.get("has_attachment")
-                or metadata.get("has_attachment")
-            ),
-            sender_domain=metadata.get("source_sender_domain"),
-            learned_threshold_overrides=learned_threshold_overrides,
-            learned_profile_id=learned_profile_id,
-            learned_signal_count=learned_signal_count,
-        )
-    else:
-        # No AP item found — report as low confidence
-        confidence_pct = 0
-        confidence_gate = evaluate_critical_field_confidence(
-            overall_confidence=0,
-            field_values=request.extraction or {},
-            field_confidences=extract_field_confidences(request.extraction or {}),
-            document_type=(request.extraction or {}).get("document_type"),
-            primary_source=(request.extraction or {}).get("primary_source"),
-            has_attachment=bool(
-                (request.extraction or {}).get("has_invoice_attachment")
-                or (request.extraction or {}).get("attachment_url")
-            ),
-        )
-
-    return {
-        "email_id": request.email_id,
-        "confidence_pct": confidence_pct,
-        "can_post": confidence_pct >= 95 and len(mismatches) == 0 and not confidence_gate.get("requires_field_review"),
-        "mismatches": mismatches,
-        "threshold": confidence_gate.get("threshold_pct", 95),
-        "requires_field_review": bool(confidence_gate.get("requires_field_review")),
-        "confidence_blockers": confidence_gate.get("confidence_blockers") or [],
-        "confidence_gate": confidence_gate,
-    }
+    metadata = db._decode_json(ap_item.get("metadata")) if ap_item else {}
+    return build_verify_confidence_payload(
+        email_id=request.email_id,
+        ap_item=ap_item,
+        extraction=request.extraction or {},
+        metadata=metadata,
+    )
 
 
 @router.post("/match-bank")
@@ -1434,16 +1234,8 @@ async def escalate_to_manager(
     user=Depends(require_ops_user),
 ):
     """Runtime-owned escalation action for invoice review exceptions."""
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
-
     org_id = _resolve_org_id_for_user(user, request.organization_id)
-    actor = _authenticated_actor(user)
-    runtime = FinanceAgentRuntime(
-        organization_id=org_id,
-        actor_id=getattr(user, "user_id", None) or actor,
-        actor_email=actor,
-        db=get_db(),
-    )
+    runtime = _build_finance_runtime(user, org_id)
     result = await runtime.escalate_invoice_review(
         email_id=request.email_id,
         vendor=request.vendor,
@@ -1740,7 +1532,6 @@ async def submit_for_approval(
     
     Use this when an invoice is detected and ready for processing.
     """
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
     from clearledgr.services.invoice_models import InvoiceData
 
     org_id = _resolve_org_id_for_user(user, request.organization_id)
@@ -1749,12 +1540,7 @@ async def submit_for_approval(
     replay = _load_idempotent_extension_response(db, request.idempotency_key)
     if replay:
         return replay
-    runtime = FinanceAgentRuntime(
-        organization_id=org_id,
-        actor_id=getattr(user, "user_id", None) or actor_email,
-        actor_email=actor_email,
-        db=db,
-    )
+    runtime = _build_finance_runtime(user, org_id, db=db)
     
     # If intelligence not provided, generate it now
     vendor_intel = request.vendor_intelligence
@@ -1867,20 +1653,13 @@ async def reject_invoice(
     user=Depends(require_ops_user),
 ):
     """Reject an invoice and keep pipeline state in sync."""
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
-
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     rejected_by = _authenticated_actor(user)
     db = get_db()
     ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.ap_item_id or request.email_id)
     ap_item_id = str((ap_item or {}).get("id") or request.ap_item_id or "").strip() or None
     gmail_ref = str((ap_item or {}).get("thread_id") or request.email_id or "").strip()
-    runtime = FinanceAgentRuntime(
-        organization_id=org_id,
-        actor_id=getattr(user, "user_id", None) or rejected_by,
-        actor_email=rejected_by,
-        db=db,
-    )
+    runtime = _build_finance_runtime(user, org_id, db=db)
     result = await runtime.execute_intent(
         "reject_invoice",
         {
@@ -1907,8 +1686,6 @@ async def budget_decision(
     user=Depends(require_ops_user),
 ):
     """Handle explicit budget decisions from Gmail sidebar surfaces."""
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
-
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     actor = _authenticated_actor(user)
     decision = str(request.decision or "").strip().lower()
@@ -1918,12 +1695,7 @@ async def budget_decision(
         raise HTTPException(status_code=404, detail="ap_item_not_found")
     ap_item_id = str(ap_item.get("id") or request.ap_item_id or "").strip()
     gmail_ref = str(ap_item.get("thread_id") or request.email_id or "").strip()
-    runtime = FinanceAgentRuntime(
-        organization_id=org_id,
-        actor_id=getattr(user, "user_id", None) or actor,
-        actor_email=actor,
-        db=db,
-    )
+    runtime = _build_finance_runtime(user, org_id, db=db)
 
     if decision == "approve_override":
         if not str(request.justification or "").strip():
@@ -1988,8 +1760,6 @@ async def approval_nudge(
     user = Depends(require_ops_user),
 ):
     """Send a dedicated approver nudge for pending approvals (Slack/Teams best effort)."""
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
-
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     actor_email = _authenticated_actor(user)
     db = get_db()
@@ -2008,12 +1778,7 @@ async def approval_nudge(
     if not gmail_id:
         raise HTTPException(status_code=400, detail="missing_gmail_reference")
 
-    runtime = FinanceAgentRuntime(
-        organization_id=org_id,
-        actor_id=getattr(user, "user_id", None) or actor_email,
-        actor_email=actor_email,
-        db=db,
-    )
+    runtime = _build_finance_runtime(user, org_id, db=db)
     response = await runtime.execute_intent(
         "nudge_approval",
         {
@@ -2039,19 +1804,10 @@ async def vendor_followup(
     user=Depends(require_ops_user),
 ):
     """Prepare a vendor follow-up draft through the canonical finance runtime."""
-    from clearledgr.services.finance_agent_runtime import (
-        FinanceAgentRuntime,
-        IntentNotSupportedError,
-    )
+    from clearledgr.services.finance_agent_runtime import IntentNotSupportedError
 
     org_id = _resolve_org_id_for_user(user, request.organization_id)
-    actor_email = _authenticated_actor(user)
-    runtime = FinanceAgentRuntime(
-        organization_id=org_id,
-        actor_id=getattr(user, "user_id", None) or actor_email,
-        actor_email=actor_email,
-        db=get_db(),
-    )
+    runtime = _build_finance_runtime(user, org_id)
     try:
         response = await runtime.execute_intent(
             "prepare_vendor_followups",
@@ -2081,20 +1837,11 @@ async def route_low_risk_approval(
     user=Depends(require_ops_user),
 ):
     """Route a validated low-risk item into approval surfaces with policy prechecks."""
-    from clearledgr.services.finance_agent_runtime import (
-        FinanceAgentRuntime,
-        IntentNotSupportedError,
-    )
+    from clearledgr.services.finance_agent_runtime import IntentNotSupportedError
 
     org_id = _resolve_org_id_for_user(user, request.organization_id)
-    actor_email = _authenticated_actor(user)
     db = get_db()
-    runtime = FinanceAgentRuntime(
-        organization_id=org_id,
-        actor_id=getattr(user, "user_id", None) or actor_email,
-        actor_email=actor_email,
-        db=db,
-    )
+    runtime = _build_finance_runtime(user, org_id, db=db)
     try:
         response = await runtime.execute_intent(
             "route_low_risk_for_approval",
@@ -2124,19 +1871,10 @@ async def retry_recoverable_failure(
     user=Depends(require_ops_user),
 ):
     """Retry a recoverable failed-post item through the canonical finance runtime."""
-    from clearledgr.services.finance_agent_runtime import (
-        FinanceAgentRuntime,
-        IntentNotSupportedError,
-    )
+    from clearledgr.services.finance_agent_runtime import IntentNotSupportedError
 
     org_id = _resolve_org_id_for_user(user, request.organization_id)
-    actor_email = _authenticated_actor(user)
-    runtime = FinanceAgentRuntime(
-        organization_id=org_id,
-        actor_id=getattr(user, "user_id", None) or actor_email,
-        actor_email=actor_email,
-        db=get_db(),
-    )
+    runtime = _build_finance_runtime(user, org_id)
     try:
         response = await runtime.execute_intent(
             "retry_recoverable_failures",
@@ -2166,17 +1904,9 @@ async def finance_summary_share(
     user = Depends(require_ops_user),
 ):
     """Prepare or deliver a finance-lead exception summary share action."""
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
-
     org_id = _resolve_org_id_for_user(user, request.organization_id)
-    actor_email = _authenticated_actor(user)
     db = get_db()
-    runtime = FinanceAgentRuntime(
-        organization_id=org_id,
-        actor_id=getattr(user, "user_id", None) or actor_email,
-        actor_email=actor_email,
-        db=db,
-    )
+    runtime = _build_finance_runtime(user, org_id, db=db)
     try:
         result = await runtime.share_finance_summary(
             reference_id=request.ap_item_id or request.email_id,
@@ -2313,29 +2043,19 @@ def explain_ap_item(
     prior_reasoning = str(meta.get("ap_decision_reasoning") or "").strip()
     needs_info_q = str(meta.get("needs_info_question") or "").strip()
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if api_key:
-        explanation = _explain_with_claude(
-            api_key=api_key,
-            vendor=vendor,
-            amount=amount,
-            state=state,
-            exception_code=exception_code,
-            confidence=confidence,
-            subject=subject,
-            audit_events=audit_events,
-            vendor_profile=vendor_profile,
-            vendor_history=vendor_history,
-            prior_reasoning=prior_reasoning,
-            needs_info_question=needs_info_q,
-        )
-    else:
-        explanation = _explain_fallback(
-            vendor=vendor, amount=amount, state=state,
-            exception_code=exception_code, confidence=confidence,
-            audit_events=audit_events, prior_reasoning=prior_reasoning,
-            needs_info_question=needs_info_q,
-        )
+    explanation = render_ap_item_explanation(
+        vendor=vendor,
+        amount=amount,
+        state=state,
+        exception_code=exception_code,
+        confidence=confidence,
+        subject=subject,
+        audit_events=audit_events,
+        vendor_profile=vendor_profile,
+        vendor_history=vendor_history,
+        prior_reasoning=prior_reasoning,
+        needs_info_question=needs_info_q,
+    )
 
     return {
         "ap_item_id": ap_item_id,
@@ -2365,124 +2085,20 @@ def _explain_with_claude(
     needs_info_question: str,
 ) -> dict:
     """Ask Claude to explain an AP item's current state in plain English."""
-    import requests as _requests
-
-    # Vendor context
-    vendor_lines = [f"Vendor: {vendor}"]
-    vendor_context = {"vendor": vendor}
-    if vendor_profile:
-        count = vendor_profile.get("invoice_count", 0)
-        avg = vendor_profile.get("avg_invoice_amount")
-        always_ok = bool(vendor_profile.get("always_approved"))
-        bank_chg = vendor_profile.get("bank_details_changed_at")
-        if count:
-            avg_str = f"${avg:.2f}" if avg else "unknown"
-            vendor_lines.append(f"  History: {count} invoice(s), avg {avg_str}")
-            vendor_context.update({"invoice_count": count, "avg_amount": avg})
-        if always_ok and count >= 3:
-            vendor_lines.append("  Pattern: always approved in history")
-            vendor_context["always_approved"] = True
-        if bank_chg:
-            vendor_lines.append(f"  ⚠ Bank details changed: {bank_chg[:10]}")
-            vendor_context["bank_details_changed_at"] = bank_chg
-    if vendor_history:
-        rows = []
-        for h in vendor_history[:4]:
-            d = (h.get("invoice_date") or h.get("created_at") or "")[:10]
-            a = h.get("amount")
-            s = h.get("final_state") or "?"
-            rows.append(f"  {d} | ${a:.2f} | {s}" if a else f"  {d} | {s}")
-        vendor_lines.append("  Recent invoices:\n" + "\n".join(rows))
-
-    # Audit trail
-    audit_lines = []
-    for ev in audit_events:
-        ts = str(ev.get("ts") or ev.get("created_at") or "")[:16]
-        etype = str(ev.get("event_type") or "event")
-        actor = str(ev.get("actor_type") or "system")
-        reason = str(ev.get("reason") or "")
-        line = f"  {ts} [{actor}] {etype}"
-        if reason:
-            line += f" — {reason}"
-        audit_lines.append(line)
-
-    amount_str = f"${amount:.2f}" if amount else "unknown"
-    conf_str = f"{float(confidence):.0%}" if confidence else "unknown"
-
-    prompt = f"""You are Clearledgr, an AP agent embedded in Gmail.
-
-An operator is asking: "Why is this invoice in its current state?"
-
-INVOICE:
-  Vendor: {vendor}
-  Amount: {amount_str}
-  State: {state}
-  Exception: {exception_code or "none"}
-  Extraction confidence: {conf_str}
-  Subject: {subject}
-
-{chr(10).join(vendor_lines)}
-
-AUDIT TRAIL (oldest → newest):
-{chr(10).join(audit_lines) if audit_lines else "  (no audit events recorded)"}
-
-{f"PRIOR AGENT REASONING:{chr(10)}{prior_reasoning}" if prior_reasoning else ""}
-{f"INFO NEEDED FROM VENDOR:{chr(10)}{needs_info_question}" if needs_info_question else ""}
-
----
-Write a plain-English explanation (3-6 sentences) that answers:
-1. What is this invoice and where did it come from?
-2. Why is it in state '{state}'? (reference specific audit events or confidence scores)
-3. What happens next, and is there anything the operator should do?
-
-Speak as the AP agent. Be direct and specific. Do not use bullet points.
-End with one sentence starting "Suggested next step:" if action is needed.
-
-Return ONLY valid JSON:
-{{"text": "...", "suggested_action": "..or null if no action needed"}}"""
-
-    try:
-        resp = _requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-                "max_tokens": 512,
-                "temperature": 0.2,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        raw = resp.json()
-        content = raw.get("content", [])
-        text = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
-
-        import re as _re
-        import json as _json2
-        text = text.strip()
-        fence = _re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
-        if fence:
-            text = fence.group(1)
-        parsed = _json2.loads(text)
-        return {
-            "text": str(parsed.get("text") or ""),
-            "suggested_action": parsed.get("suggested_action"),
-            "vendor_context": vendor_context,
-            "method": "llm",
-        }
-    except Exception as exc:
-        logger.warning("[Explain] Claude call failed: %s — using fallback", exc)
-        return _explain_fallback(
-            vendor=vendor, amount=amount, state=state,
-            exception_code=exception_code, confidence=confidence,
-            audit_events=audit_events, prior_reasoning=prior_reasoning,
-            needs_info_question=needs_info_question,
-        )
+    return support_explain_with_claude(
+        api_key=api_key,
+        vendor=vendor,
+        amount=amount,
+        state=state,
+        exception_code=exception_code,
+        confidence=confidence,
+        subject=subject,
+        audit_events=audit_events,
+        vendor_profile=vendor_profile,
+        vendor_history=vendor_history,
+        prior_reasoning=prior_reasoning,
+        needs_info_question=needs_info_question,
+    )
 
 
 def _explain_fallback(
@@ -2497,40 +2113,16 @@ def _explain_fallback(
     needs_info_question: str,
 ) -> dict:
     """Plain-text fallback explanation built from structured fields (no LLM)."""
-    amount_str = f"${amount:.2f}" if amount else "an unknown amount"
-    conf_str = f"{float(confidence):.0%}" if confidence else "unknown"
-
-    parts = [f"Invoice from {vendor} for {amount_str} is currently in state '{state}'."]
-
-    if prior_reasoning:
-        parts.append(f"Agent reasoning: {prior_reasoning}")
-    elif exception_code:
-        parts.append(f"Blocked by: {exception_code}.")
-
-    if confidence:
-        parts.append(f"Extraction confidence: {conf_str}.")
-
-    if audit_events:
-        last = audit_events[-1]
-        etype = str(last.get("event_type") or "event")
-        parts.append(f"Last recorded event: {etype}.")
-
-    suggested_action = None
-    if state == "needs_info":
-        if needs_info_question:
-            parts.append(f"Waiting for information: {needs_info_question}")
-        suggested_action = "Use 'Draft vendor reply' to request the missing information."
-    elif state in ("failed_post", "posting"):
-        suggested_action = "Retry ERP posting or use browser fallback."
-    elif state in ("needs_approval", "pending_review"):
-        suggested_action = "Review and approve or reject this invoice."
-
-    return {
-        "text": " ".join(parts),
-        "suggested_action": suggested_action,
-        "vendor_context": {},
-        "method": "fallback",
-    }
+    return support_explain_fallback(
+        vendor=vendor,
+        amount=amount,
+        state=state,
+        exception_code=exception_code,
+        confidence=confidence,
+        audit_events=audit_events,
+        prior_reasoning=prior_reasoning,
+        needs_info_question=needs_info_question,
+    )
 
 
 @router.get("/health")
@@ -2580,64 +2172,10 @@ async def suggest_gl_code(
     Human reviews and confirms/changes.
     """
     org_id = _resolve_org_id_for_user(_user, request.organization_id)
-    from clearledgr.services.learning import get_learning_service
-    from clearledgr.services.vendor_intelligence import get_vendor_intelligence
-
-    learning = get_learning_service(org_id)
-    vendor_intel = get_vendor_intelligence()
-    
-    # Get suggestion from learning service (based on historical patterns)
-    learned = learning.suggest_gl_code(request.vendor_name)
-    
-    # Get suggestion from vendor intelligence (known vendor profiles)
-    vendor_profile = vendor_intel.get_suggestion(request.vendor_name)
-    
-    # Combine suggestions
-    suggestions = []
-    
-    # Primary suggestion from learning (historical data)
-    if learned and learned.get("gl_code"):
-        suggestions.append({
-            "gl_code": learned["gl_code"],
-            "gl_name": learned.get("gl_description", ""),
-            "confidence": learned.get("confidence", 0.5),
-            "source": "learning",
-            "reason": f"Used {learned.get('occurrence_count', 0)} times for this vendor",
-        })
-    
-    # Suggestion from vendor intelligence (known profiles)
-    if vendor_profile and vendor_profile.get("suggested_gl"):
-        # Don't duplicate if same as learned
-        if not suggestions or suggestions[0]["gl_code"] != vendor_profile["suggested_gl"]:
-            suggestions.append({
-                "gl_code": vendor_profile["suggested_gl"],
-                "gl_name": vendor_profile.get("gl_description", ""),
-                "confidence": 0.7 if vendor_profile.get("known_vendor") else 0.4,
-                "source": "vendor_profile",
-                "reason": f"Typical for {vendor_profile.get('category', 'this vendor type')}",
-            })
-    
-    # Add alternatives from learning service
-    if learned and learned.get("alternatives"):
-        for alt in learned["alternatives"][:2]:  # Max 2 alternatives
-            if not any(s["gl_code"] == alt["gl_code"] for s in suggestions):
-                suggestions.append({
-                    "gl_code": alt["gl_code"],
-                    "gl_name": alt.get("gl_description", ""),
-                    "confidence": alt.get("confidence", 0.3),
-                    "source": "alternative",
-                    "reason": "Also used for similar vendors",
-                })
-    
-    # Sort by confidence
-    suggestions.sort(key=lambda x: x["confidence"], reverse=True)
-    
-    return {
-        "vendor_name": request.vendor_name,
-        "primary": suggestions[0] if suggestions else None,
-        "alternatives": suggestions[1:3] if len(suggestions) > 1 else [],
-        "has_suggestion": len(suggestions) > 0,
-    }
+    return build_gl_suggestion_payload(
+        organization_id=org_id,
+        vendor_name=request.vendor_name,
+    )
 
 
 @router.post("/suggestions/vendor")
@@ -2651,57 +2189,11 @@ async def suggest_vendor(
     Returns matched vendor + confidence for human confirmation.
     """
     org_id = _resolve_org_id_for_user(_user, request.organization_id)
-    from clearledgr.services.fuzzy_matching import get_fuzzy_matcher
-    from clearledgr.services.vendor_management import get_vendor_management_service
-
-    matcher = get_fuzzy_matcher()
-    vendor_service = get_vendor_management_service(org_id)
-    
-    # Try to match from extracted vendor name first
-    candidates = []
-    
-    if request.extracted_vendor:
-        # Direct match from extraction
-        match = matcher.find_best_vendor_match(
-            request.extracted_vendor,
-            vendor_service.get_all_vendors()
-        )
-        if match and match.get("score", 0) > 0.6:
-            candidates.append({
-                "vendor_id": match.get("vendor_id"),
-                "vendor_name": match.get("vendor_name"),
-                "confidence": match.get("score", 0.7),
-                "source": "extraction",
-                "matched_from": request.extracted_vendor,
-            })
-    
-    if request.sender_email:
-        # Match from sender email domain
-        domain = request.sender_email.split("@")[-1] if "@" in request.sender_email else None
-        if domain:
-            domain_match = matcher.find_vendor_by_domain(
-                domain,
-                vendor_service.get_all_vendors()
-            )
-            if domain_match and not any(c["vendor_id"] == domain_match.get("vendor_id") for c in candidates):
-                candidates.append({
-                    "vendor_id": domain_match.get("vendor_id"),
-                    "vendor_name": domain_match.get("vendor_name"),
-                    "confidence": domain_match.get("score", 0.6),
-                    "source": "email_domain",
-                    "matched_from": domain,
-                })
-    
-    # Sort by confidence
-    candidates.sort(key=lambda x: x["confidence"], reverse=True)
-    
-    return {
-        "extracted_vendor": request.extracted_vendor,
-        "primary": candidates[0] if candidates else None,
-        "alternatives": candidates[1:3] if len(candidates) > 1 else [],
-        "has_suggestion": len(candidates) > 0,
-        "is_new_vendor": len(candidates) == 0,
-    }
+    return build_vendor_suggestion_payload(
+        organization_id=org_id,
+        sender_email=request.sender_email,
+        extracted_vendor=request.extracted_vendor,
+    )
 
 
 @router.post("/suggestions/amount-validation")
@@ -2717,18 +2209,7 @@ async def validate_amount(
     Returns whether amount seems reasonable + expected range.
     """
     _resolve_org_id_for_user(_user, organization_id)
-    vendor_intel = get_vendor_intelligence()
-    
-    validation = vendor_intel.validate_amount(vendor_name, amount)
-    
-    return {
-        "vendor_name": vendor_name,
-        "amount": amount,
-        "is_reasonable": validation.get("seems_reasonable", True),
-        "expected_range": validation.get("expected_range"),
-        "concern": validation.get("concern"),
-        "message": validation.get("message"),
-    }
+    return build_amount_validation_payload(vendor_name, amount)
 
 
 @router.get("/suggestions/form-prefill/{email_id}")
@@ -2743,63 +2224,17 @@ async def get_form_prefill(
     Combines vendor match, GL suggestion, and amount validation.
     Returns everything needed to pre-fill invoice forms.
     """
-    from clearledgr.core.database import get_db
-    from clearledgr.services.learning import get_learning_service
-    from clearledgr.services.vendor_intelligence import get_vendor_intelligence
-    
     org_id = _resolve_org_id_for_user(_user, organization_id)
     db = get_db()
-    learning = get_learning_service(org_id)
-    vendor_intel = get_vendor_intelligence()
-    
-    # Get stored extraction data for this email
     invoice = db.get_invoice_by_email_id(email_id)
-    
-    if not invoice:
-        return {
-            "email_id": email_id,
-            "has_data": False,
-            "message": "No extraction data found for this email",
-        }
-    invoice_org = str(invoice.get("organization_id") or org_id)
-    if invoice_org != org_id:
+    try:
+        return build_form_prefill_payload(
+            email_id=email_id,
+            organization_id=org_id,
+            invoice=invoice,
+        )
+    except PermissionError:
         raise HTTPException(status_code=403, detail="org_mismatch")
-    
-    vendor_name = invoice.get("vendor") or invoice.get("vendor_name", "")
-    amount = invoice.get("amount", 0)
-    
-    # Get GL suggestion
-    gl_suggestion = learning.suggest_gl_code(vendor_name) if vendor_name else None
-    vendor_profile = vendor_intel.get_suggestion(vendor_name) if vendor_name else None
-    
-    # Get amount validation
-    amount_validation = vendor_intel.validate_amount(vendor_name, amount) if vendor_name and amount else None
-    
-    return {
-        "email_id": email_id,
-        "has_data": True,
-        "prefill": {
-            "vendor": {
-                "name": vendor_name,
-                "confidence": invoice.get("confidence", 0.5),
-            },
-            "amount": {
-                "value": amount,
-                "is_reasonable": amount_validation.get("seems_reasonable", True) if amount_validation else True,
-                "expected_range": amount_validation.get("expected_range") if amount_validation else None,
-                "concern": amount_validation.get("concern") if amount_validation else None,
-            },
-            "gl_code": {
-                "suggested": gl_suggestion.get("gl_code") if gl_suggestion else (vendor_profile.get("suggested_gl") if vendor_profile else None),
-                "name": gl_suggestion.get("gl_description") if gl_suggestion else (vendor_profile.get("gl_description") if vendor_profile else None),
-                "confidence": gl_suggestion.get("confidence", 0.5) if gl_suggestion else 0.4,
-                "source": "learning" if gl_suggestion else ("vendor_profile" if vendor_profile else None),
-            },
-            "invoice_number": invoice.get("invoice_number"),
-            "invoice_date": invoice.get("invoice_date"),
-            "due_date": invoice.get("due_date"),
-        },
-    }
 
 
 # ==================== CORRECTION LEARNING ====================
@@ -2825,56 +2260,16 @@ async def get_needs_info_draft(
     No auth required — callable from content-script.js without token."""
     db = get_db()
     ap_item = db.get_ap_item(ap_item_id)
-    if not ap_item:
-        raise HTTPException(status_code=404, detail="ap_item_not_found")
-    if ap_item.get("state") != "needs_info":
-        raise HTTPException(status_code=400, detail="item_not_in_needs_info_state")
-
-    vendor = ap_item.get("vendor_name") or "Vendor"
-    invoice_number = ap_item.get("invoice_number") or "your recent invoice"
-    sender_email = ap_item.get("sender") or ""
-    original_subject = ap_item.get("subject") or f"Invoice {invoice_number}"
-
-    # Map exception_code to a human-readable request for the vendor.
-    _EXCEPTION_REASON_MAP = {
-        "po_reference_required": "Please provide a valid Purchase Order (PO) number for this invoice. Our system requires a PO reference before we can process payment.",
-        "missing_po": "Please provide a valid Purchase Order (PO) number for this invoice.",
-        "missing_invoice_number": "Please provide a valid invoice number. The invoice number was missing or could not be read from your submission.",
-        "invalid_invoice_number": "The invoice number on your submission appears to be invalid. Please re-send with a clearly formatted invoice number.",
-        "amount_mismatch": "The invoice amount does not match our purchase order or approval records. Please confirm the correct total and any line-item breakdown.",
-        "duplicate_invoice": "This invoice appears to be a duplicate of a previous submission. Please confirm the invoice number and date, or advise if this is a revised invoice.",
-        "vendor_not_recognized": "We were unable to match your company to our vendor records. Please confirm your registered company name, VAT/tax ID, and remittance address.",
-        "currency_mismatch": "The invoice currency does not match the currency on our purchase order. Please re-issue in the agreed contract currency.",
-        "missing_line_items": "Please re-send the invoice with itemised line items (description, quantity, unit price) so we can match it against our purchase order.",
-        "policy_attribute_failure": "Additional details are required to process this invoice under our accounting policy. Please confirm the PO number, cost centre, and project code associated with this charge.",
-        "approval_limit_exceeded": "This invoice exceeds the approval limit for automatic processing. We are escalating internally — no action is needed from you at this time.",
-        "tax_id_required": "Please include your VAT/tax identification number on the invoice. This is required for our accounts payable records.",
-    }
-    exception_code = str(ap_item.get("exception_code") or "").strip()
-    reason_text = (
-        str(reason).strip()
-        if reason and str(reason).strip()
-        else _EXCEPTION_REASON_MAP.get(exception_code)
-        or str(ap_item.get("last_error") or "").strip()
-        or "additional information is required before we can process this invoice"
-    )
-
-    body = (
-        f"Dear {vendor},\n\n"
-        f"Thank you for submitting invoice {invoice_number}.\n\n"
-        f"We need the following before we can complete processing:\n\n"
-        f"    {reason_text}\n\n"
-        f"Please reply to this email with the requested information and we will "
-        f"process your invoice promptly.\n\n"
-        f"Best regards"
-    )
-
-    return {
-        "ap_item_id": ap_item_id,
-        "to": sender_email,
-        "subject": f"Re: {original_subject}",
-        "body": body,
-    }
+    try:
+        return build_needs_info_draft_payload(
+            ap_item_id=ap_item_id,
+            ap_item=ap_item,
+            reason=reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/record-field-correction")
@@ -2883,18 +2278,14 @@ async def record_field_correction(
     user=Depends(require_ops_user),
 ):
     """Record a field-level correction through the runtime-owned AP contract."""
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
-
     actor_id = (
         getattr(user, "email", None)
         or getattr(user, "user_id", None)
         or "operator"
     )
-    runtime = FinanceAgentRuntime(
-        organization_id=str(getattr(user, "organization_id", None) or "default"),
-        actor_id=str(getattr(user, "user_id", None) or actor_id),
-        actor_email=str(actor_id),
-        db=get_db(),
+    runtime = _build_finance_runtime(
+        user,
+        str(getattr(user, "organization_id", None) or "default"),
     )
     try:
         return runtime.record_field_correction(
