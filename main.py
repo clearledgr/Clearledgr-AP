@@ -22,8 +22,7 @@ Run Instructions:
 from dotenv import load_dotenv
 load_dotenv()
 
-import asyncio
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -46,54 +45,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-async def _deferred_startup(app):
-    """Run slow startup tasks in the background so the server binds immediately."""
-    try:
-        from clearledgr.services.gmail_autopilot import start_gmail_autopilot
-        await asyncio.wait_for(start_gmail_autopilot(app), timeout=10.0)
-        logger.info("Gmail autopilot started")
-    except asyncio.TimeoutError:
-        logger.warning("Gmail autopilot startup timed out (10s) — skipping")
-    except Exception as e:
-        logger.warning(f"Gmail autopilot not started: {e}")
-
-    try:
-        from clearledgr.services.agent_background import start_agent_background
-        await asyncio.wait_for(start_agent_background(app), timeout=10.0)
-        logger.info("Agent background intelligence started")
-    except asyncio.TimeoutError:
-        logger.warning("Agent background startup timed out (10s) — skipping")
-    except Exception as e:
-        logger.warning(f"Agent background not started: {e}")
-
-    try:
-        from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
-
-        runtime = get_platform_finance_runtime("default")
-        recovery = await asyncio.wait_for(runtime.resume_pending_agent_tasks(), timeout=10.0)
-        logger.info(
-            "Finance agent runtime started (claimed=%d completed=%d rescheduled=%d dead_letter=%d)",
-            int((recovery or {}).get("claimed") or 0),
-            int((recovery or {}).get("completed") or 0),
-            int((recovery or {}).get("rescheduled") or 0),
-            int((recovery or {}).get("dead_letter") or 0),
-        )
-    except asyncio.TimeoutError:
-        logger.warning("Finance agent runtime startup timed out (10s) — skipping")
-    except Exception as e:
-        logger.warning(f"Finance agent runtime not started: {e}")
-
-    try:
-        from clearledgr.services.erp_follow_on_reconciliation import (
-            run_erp_follow_on_reconciliation_check,
-        )
-
-        checked = await asyncio.wait_for(run_erp_follow_on_reconciliation_check(), timeout=10.0)
-        logger.info("ERP follow-on reconciliation check completed (%d items checked)", checked)
-    except asyncio.TimeoutError:
-        logger.warning("ERP follow-on reconciliation check timed out (10s) — skipping")
-    except Exception as e:
-        logger.warning(f"ERP follow-on reconciliation check not started: {e}")
+from clearledgr.services.app_startup import cancel_deferred_startup, schedule_deferred_startup
 
 
 @asynccontextmanager
@@ -103,19 +55,12 @@ async def app_lifespan(app: FastAPI):
     if _should_skip_deferred_startup():
         yield
         return
-    # Fire all slow startup tasks in the background so uvicorn binds immediately
-    deferred_startup_task = asyncio.create_task(_deferred_startup(app))
-    app.state.deferred_startup_task = deferred_startup_task
+    # Defer launch to the next loop turn so eager task execution cannot block bind.
+    schedule_deferred_startup(app)
     try:
         yield
     finally:
-        startup_task = getattr(app.state, "deferred_startup_task", None)
-        if startup_task is not None:
-            if not startup_task.done():
-                startup_task.cancel()
-            with suppress(asyncio.CancelledError, Exception):
-                await startup_task
-            app.state.deferred_startup_task = None
+        await cancel_deferred_startup(app)
         try:
             from clearledgr.services.gmail_autopilot import stop_gmail_autopilot
             await stop_gmail_autopilot(app)
