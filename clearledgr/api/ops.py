@@ -7,33 +7,6 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from clearledgr.core.auth import TokenData, get_current_user
-from clearledgr.core.database import get_db
-from clearledgr.integrations.erp_router import get_erp_connection
-from clearledgr.services.erp_connector_strategy import get_erp_connector_strategy
-from clearledgr.services.gmail_api import token_store
-from clearledgr.services.policy_compliance import get_approval_automation_policy
-from clearledgr.services.slack_api import SlackAPIClient
-try:
-    from clearledgr.services.teams_api import TeamsAPIClient
-except ImportError:  # pragma: no cover - optional dependency in local/dev builds
-    class TeamsAPIClient:  # type: ignore[override]
-        @staticmethod
-        def build_ap_kpi_digest_card(kpis: Dict[str, Any], organization_id: str) -> Dict[str, Any]:
-            return {
-                "organization_id": organization_id,
-                "kpis": kpis,
-                "note": "teams_client_unavailable",
-            }
-try:
-    from clearledgr.workflows.ap.client import get_ap_temporal_client
-except ImportError:  # pragma: no cover - optional in reduced/local installs
-    class _FallbackTemporalClient:
-        enabled = False
-        required = False
-        temporal_available = False
-
-    def get_ap_temporal_client() -> _FallbackTemporalClient:
-        return _FallbackTemporalClient()
 
 
 router = APIRouter(
@@ -44,6 +17,78 @@ router = APIRouter(
 
 
 _OPS_ADMIN_ROLES = {"admin", "owner"}
+
+
+def get_db():
+    from clearledgr.core.database import get_db as _get_db
+
+    return _get_db()
+
+
+def get_erp_connection(*args, **kwargs):
+    from clearledgr.integrations.erp_router import get_erp_connection as _get_erp_connection
+
+    return _get_erp_connection(*args, **kwargs)
+
+
+def get_erp_connector_strategy():
+    from clearledgr.services.erp_connector_strategy import (
+        get_erp_connector_strategy as _get_erp_connector_strategy,
+    )
+
+    return _get_erp_connector_strategy()
+
+
+def get_approval_automation_policy(*args, **kwargs):
+    from clearledgr.services.policy_compliance import (
+        get_approval_automation_policy as _get_approval_automation_policy,
+    )
+
+    return _get_approval_automation_policy(*args, **kwargs)
+
+
+def _get_token_store():
+    from clearledgr.services.gmail_api import token_store
+
+    return token_store
+
+
+def _slack_api_client_class():
+    from clearledgr.services.slack_api import SlackAPIClient
+
+    return SlackAPIClient
+
+
+def _teams_api_client_class():
+    try:
+        from clearledgr.services.teams_api import TeamsAPIClient
+
+        return TeamsAPIClient
+    except ImportError:  # pragma: no cover - optional dependency in local/dev builds
+        class TeamsAPIClientFallback:  # type: ignore[override]
+            @staticmethod
+            def build_ap_kpi_digest_card(kpis: Dict[str, Any], organization_id: str) -> Dict[str, Any]:
+                return {
+                    "organization_id": organization_id,
+                    "kpis": kpis,
+                    "note": "teams_client_unavailable",
+                }
+
+        return TeamsAPIClientFallback
+
+
+def get_ap_temporal_client():
+    try:
+        from clearledgr.workflows.ap.client import get_ap_temporal_client as _get_ap_temporal_client
+
+        return _get_ap_temporal_client()
+    except ImportError:  # pragma: no cover - optional in reduced/local installs
+        class _FallbackTemporalClient:
+            enabled = False
+            required = False
+            temporal_available = False
+
+        return _FallbackTemporalClient()
 
 
 def _assert_org_access(user: TokenData, organization_id: str) -> None:
@@ -59,6 +104,7 @@ def _require_admin(user: TokenData) -> None:
 
 
 def _build_slack_digest_text(kpis: Dict[str, Any], organization_id: str) -> str:
+    SlackAPIClient = _slack_api_client_class()
     builder = getattr(SlackAPIClient, "build_ap_kpi_digest_text", None)
     if callable(builder):
         return str(builder(kpis, organization_id))
@@ -71,6 +117,7 @@ def _build_slack_digest_text(kpis: Dict[str, Any], organization_id: str) -> str:
 
 
 def _build_slack_digest_blocks(kpis: Dict[str, Any], organization_id: str) -> List[Dict[str, Any]]:
+    SlackAPIClient = _slack_api_client_class()
     builder = getattr(SlackAPIClient, "build_ap_kpi_digest_blocks", None)
     if callable(builder):
         blocks = builder(kpis, organization_id)
@@ -237,7 +284,7 @@ async def get_ap_kpi_digest(
             "blocks": _build_slack_digest_blocks(kpis, organization_id),
         }
     if normalized_surface in {"all", "teams"}:
-        payload["teams"] = TeamsAPIClient.build_ap_kpi_digest_card(kpis, organization_id)
+        payload["teams"] = _teams_api_client_class().build_ap_kpi_digest_card(kpis, organization_id)
     return payload
 
 
@@ -331,7 +378,7 @@ async def get_autopilot_status(
         except Exception:
             status = {}
 
-    tokens = token_store.list_all()
+    tokens = _get_token_store().list_all()
     has_tokens = len(tokens) > 0
     enabled = str(os.getenv("GMAIL_AUTOPILOT_ENABLED", "true")).strip().lower() not in {"0", "false", "no", "off"}
     mode = os.getenv("GMAIL_AUTOPILOT_MODE", "both").strip().lower() or "both"

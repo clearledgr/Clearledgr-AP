@@ -10,15 +10,6 @@ from clearledgr.core.ap_confidence import (
     evaluate_critical_field_confidence,
     extract_field_confidences,
 )
-from clearledgr.services.agent_reasoning import get_agent as get_reasoning_agent
-from clearledgr.services.ap_item_service import build_worklist_item
-from clearledgr.services.ap_projection import build_worklist_items
-from clearledgr.services.fuzzy_matching import get_fuzzy_matcher
-from clearledgr.services.learning import get_learning_service
-from clearledgr.services.policy_compliance import get_policy_compliance
-from clearledgr.services.priority_detection import get_priority_detection
-from clearledgr.services.vendor_intelligence import get_vendor_intelligence
-from clearledgr.services.vendor_management import get_vendor_management_service
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 def apply_intelligence(result: Dict[str, Any], org_id: str, email_id: str) -> Dict[str, Any]:
     """Apply vendor, policy, and priority enrichment to a triage result."""
+    from clearledgr.services.policy_compliance import get_policy_compliance
+    from clearledgr.services.priority_detection import get_priority_detection
+    from clearledgr.services.vendor_intelligence import get_vendor_intelligence
+
     extraction = result.get("extraction", {})
 
     vendor_intel = get_vendor_intelligence()
@@ -98,13 +93,17 @@ def apply_agent_reasoning(
     org_id: str,
     combined_text: str,
     attachments: List[Dict[str, Any]],
-    reasoning_agent_factory: Callable[[str], Any] = get_reasoning_agent,
+    reasoning_agent_factory: Optional[Callable[[str], Any]] = None,
 ) -> Dict[str, Any]:
     """Run agent reasoning and merge decision + extraction."""
     if not combined_text and not attachments:
         return result
 
     try:
+        if reasoning_agent_factory is None:
+            from clearledgr.services.agent_reasoning import get_agent as get_reasoning_agent
+
+            reasoning_agent_factory = get_reasoning_agent
         agent = reasoning_agent_factory(org_id)
         decision = agent.reason_about_invoice(combined_text, attachments)
     except Exception as exc:  # noqa: BLE001
@@ -146,9 +145,15 @@ def build_extension_pipeline(
     organization_id: str,
     *,
     limit: int = 1000,
-    build_item_fn: Callable[[Any, Dict[str, Any]], Dict[str, Any]] = build_worklist_item,
+    build_item_fn: Optional[Callable[[Any, Dict[str, Any]], Dict[str, Any]]] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Return extension pipeline grouped by Gmail-facing status buckets."""
+    from clearledgr.services.ap_projection import build_worklist_items
+
+    if build_item_fn is None:
+        from clearledgr.services.ap_item_service import build_worklist_item
+
+        build_item_fn = build_worklist_item
     items = db.list_ap_items(organization_id, limit=limit, prioritized=True)
     normalized_items = build_worklist_items(
         db,
@@ -546,6 +551,9 @@ def build_gl_suggestion_payload(
     vendor_name: str,
 ) -> Dict[str, Any]:
     """Build GL code suggestions from learning and vendor history."""
+    from clearledgr.services.learning import get_learning_service
+    from clearledgr.services.vendor_intelligence import get_vendor_intelligence
+
     learning = get_learning_service(organization_id)
     vendor_intel = get_vendor_intelligence()
 
@@ -602,6 +610,9 @@ def build_vendor_suggestion_payload(
     extracted_vendor: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build vendor-match suggestions from extraction and sender domain."""
+    from clearledgr.services.fuzzy_matching import get_fuzzy_matcher
+    from clearledgr.services.vendor_management import get_vendor_management_service
+
     matcher = get_fuzzy_matcher()
     vendor_service = get_vendor_management_service(organization_id)
 
@@ -648,6 +659,8 @@ def build_vendor_suggestion_payload(
 
 def build_amount_validation_payload(vendor_name: str, amount: float) -> Dict[str, Any]:
     """Validate amount against vendor history."""
+    from clearledgr.services.vendor_intelligence import get_vendor_intelligence
+
     vendor_intel = get_vendor_intelligence()
     validation = vendor_intel.validate_amount(vendor_name, amount)
     return {
@@ -667,6 +680,9 @@ def build_form_prefill_payload(
     invoice: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Build all AI suggestions used to pre-fill Gmail form surfaces."""
+    from clearledgr.services.learning import get_learning_service
+    from clearledgr.services.vendor_intelligence import get_vendor_intelligence
+
     if not invoice:
         return {
             "email_id": email_id,
