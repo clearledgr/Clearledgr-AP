@@ -215,7 +215,7 @@ GOOGLE_CLIENT_SECRET=your-client-secret
 GOOGLE_REDIRECT_URI=https://api.clearledgr.com/gmail/callback
 
 # For local development
-# GOOGLE_REDIRECT_URI=http://localhost:8000/gmail/callback
+# GOOGLE_REDIRECT_URI=http://localhost:8010/gmail/callback
 """
 
 

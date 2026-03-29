@@ -52,14 +52,14 @@ def _resolve_org_id(user: TokenData, requested_org: str) -> str:
 # QuickBooks OAuth
 QUICKBOOKS_CLIENT_ID = os.getenv("QUICKBOOKS_CLIENT_ID", "")
 QUICKBOOKS_CLIENT_SECRET = os.getenv("QUICKBOOKS_CLIENT_SECRET", "")
-QUICKBOOKS_REDIRECT_URI = os.getenv("QUICKBOOKS_REDIRECT_URI", "http://localhost:8000/erp/quickbooks/callback")
+QUICKBOOKS_REDIRECT_URI = os.getenv("QUICKBOOKS_REDIRECT_URI", "http://localhost:8010/erp/quickbooks/callback")
 QUICKBOOKS_AUTH_URL = "https://appcenter.intuit.com/connect/oauth2"
 QUICKBOOKS_TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 
 # Xero OAuth
 XERO_CLIENT_ID = os.getenv("XERO_CLIENT_ID", "")
 XERO_CLIENT_SECRET = os.getenv("XERO_CLIENT_SECRET", "")
-XERO_REDIRECT_URI = os.getenv("XERO_REDIRECT_URI", "http://localhost:8000/erp/xero/callback")
+XERO_REDIRECT_URI = os.getenv("XERO_REDIRECT_URI", "http://localhost:8010/erp/xero/callback")
 XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize"
 XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
 

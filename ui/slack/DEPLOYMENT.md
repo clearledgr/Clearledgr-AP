@@ -83,7 +83,7 @@ Once installed, users can:
 
 Use ngrok to expose your local server:
 ```bash
-ngrok http 8000
+ngrok http 8010
 ```
 
 Update manifest URLs to ngrok URL, then reinstall app.

@@ -36,7 +36,7 @@ router = APIRouter(prefix="/slack", tags=["slack"])
 # Configuration
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
 SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8010")
 DEFAULT_ORG_ID = os.getenv("DEFAULT_ORGANIZATION_ID", "default")
 
 

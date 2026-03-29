@@ -40,7 +40,7 @@ def get_quickbooks_config() -> OAuthConfig:
     return OAuthConfig(
         client_id=os.getenv("QUICKBOOKS_CLIENT_ID", ""),
         client_secret=os.getenv("QUICKBOOKS_CLIENT_SECRET", ""),
-        redirect_uri=os.getenv("QUICKBOOKS_REDIRECT_URI", "http://localhost:8000/oauth/quickbooks/callback"),
+        redirect_uri=os.getenv("QUICKBOOKS_REDIRECT_URI", "http://localhost:8010/oauth/quickbooks/callback"),
         scope="com.intuit.quickbooks.accounting",
         authorize_url="https://appcenter.intuit.com/connect/oauth2",
         token_url="https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
@@ -52,7 +52,7 @@ def get_xero_config() -> OAuthConfig:
     return OAuthConfig(
         client_id=os.getenv("XERO_CLIENT_ID", ""),
         client_secret=os.getenv("XERO_CLIENT_SECRET", ""),
-        redirect_uri=os.getenv("XERO_REDIRECT_URI", "http://localhost:8000/oauth/xero/callback"),
+        redirect_uri=os.getenv("XERO_REDIRECT_URI", "http://localhost:8010/oauth/xero/callback"),
         scope="openid profile email accounting.transactions accounting.settings",
         authorize_url="https://login.xero.com/identity/connect/authorize",
         token_url="https://identity.xero.com/connect/token",

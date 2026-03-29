@@ -26,7 +26,7 @@ The Workspace Shell is used for setup, configuration, and health checks.
 ### Step 1: Start the backend
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
 If using the Workspace Shell, ensure `WORKSPACE_SHELL_ENABLED` is enabled in your environment.
@@ -35,7 +35,7 @@ If using the Workspace Shell, ensure `WORKSPACE_SHELL_ENABLED` is enabled in you
 
 Open:
 
-- `http://127.0.0.1:8000/workspace`
+- `http://127.0.0.1:8010/workspace`
 
 Use the Workspace Shell for:
 1. organization setup
@@ -86,7 +86,7 @@ Set the baseline AP policy rules for:
 
 ### Step 7: Load the Gmail extension (operator experience)
 
-Load the Gmail extension and verify it points to your backend URL (typically `http://127.0.0.1:8000` for local dev).
+Load the Gmail extension and verify it points to your backend URL (typically `http://127.0.0.1:8010` for local dev).
 
 The Gmail surface should show:
 1. focused AP item workspace
@@ -126,7 +126,7 @@ Check:
 
 ### Gmail sidebar cannot reach backend
 Check:
-1. extension backend URL is correct (`http://127.0.0.1:8000` for local)
+1. extension backend URL is correct (`http://127.0.0.1:8010` for local)
 2. backend server is running
 3. CORS is configured for Gmail origin in your local setup
 

@@ -70,8 +70,14 @@ async def _deferred_startup(app):
         from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
 
         runtime = get_platform_finance_runtime("default")
-        resumed = await asyncio.wait_for(runtime.resume_pending_agent_tasks(), timeout=10.0)
-        logger.info("Finance agent runtime started (%d pending tasks discovered)", resumed)
+        recovery = await asyncio.wait_for(runtime.resume_pending_agent_tasks(), timeout=10.0)
+        logger.info(
+            "Finance agent runtime started (claimed=%d completed=%d rescheduled=%d dead_letter=%d)",
+            int((recovery or {}).get("claimed") or 0),
+            int((recovery or {}).get("completed") or 0),
+            int((recovery or {}).get("rescheduled") or 0),
+            int((recovery or {}).get("dead_letter") or 0),
+        )
     except asyncio.TimeoutError:
         logger.warning("Finance agent runtime startup timed out (10s) — skipping")
     except Exception as e:
@@ -166,7 +172,7 @@ app = FastAPI(
         "name": "Proprietary",
     },
     servers=[
-        {"url": "http://localhost:8000", "description": "Development server"},
+        {"url": "http://localhost:8010", "description": "Development server"},
         {"url": "https://api.clearledgr.com", "description": "Production server"},
     ],
     lifespan=app_lifespan,
@@ -746,8 +752,6 @@ def _resolve_cors_policy(configured_origins_raw: str, configured_regex_raw: str)
 _default_cors_origins = [
     "https://mail.google.com",
     "https://gmail.google.com",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
     "http://localhost:8010",
     "http://127.0.0.1:8010",
 ]

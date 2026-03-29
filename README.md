@@ -188,14 +188,14 @@ cp env.example .env
 ### 3. Run backend
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
 ### 4. Open local surfaces
 
-- API docs: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-- Optional workspace shell (if enabled): `http://localhost:8000/workspace`
+- API docs: `http://localhost:8010/docs`
+- ReDoc: `http://localhost:8010/redoc`
+- Optional workspace shell (if enabled): `http://localhost:8010/workspace`
 
 ### 5. Run core regression slices
 

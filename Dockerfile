@@ -37,7 +37,7 @@ RUN useradd --create-home appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Environment variables (override in deployment)
-ENV PORT=8000
+ENV PORT=8010
 ENV HOST=0.0.0.0
 ENV WORKERS=4
 ENV LOG_LEVEL=info
@@ -46,7 +46,7 @@ ENV LOG_LEVEL=info
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health')"
 
-EXPOSE 8000
+EXPOSE 8010
 
 # Run with gunicorn for production
 CMD ["sh", "-c", "gunicorn main:app --workers ${WORKERS} --worker-class uvicorn.workers.UvicornWorker --bind ${HOST}:${PORT} --access-logfile - --error-logfile - --log-level ${LOG_LEVEL}"]

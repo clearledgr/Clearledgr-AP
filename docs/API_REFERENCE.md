@@ -16,7 +16,7 @@ Use this document for AP v1 product-facing and operator/admin-facing APIs, and u
 
 ```text
 Production: https://api.clearledgr.com
-Development: http://localhost:8000
+Development: http://localhost:8010
 ```
 
 ## Authentication and Security
@@ -363,8 +363,8 @@ For exact request/response schemas in your running build:
 
 1. Start the backend
 2. Open:
-   - `http://localhost:8000/docs`
-   - `http://localhost:8000/redoc`
+   - `http://localhost:8010/docs`
+   - `http://localhost:8010/redoc`
 3. Verify routes against:
    - `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
    - `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
