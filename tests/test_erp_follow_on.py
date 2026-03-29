@@ -18,23 +18,25 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api.ap_items import (
-    _ERP_FOLLOW_ON_APPLIED_STATUSES,
-    _ERP_FOLLOW_ON_PENDING_STATUSES,
-    _finance_effect_review_blockers,
+from clearledgr.core import database as db_module
+from clearledgr.core.ap_states import APState
+from clearledgr.services.ap_item_service import (
     _execute_non_invoice_erp_follow_on,
     _normalize_document_type_token,
     _normalize_non_invoice_outcome,
     _parse_json,
     _safe_float,
-    _money_amount,
 )
-from clearledgr.core import database as db_module
-from clearledgr.core.ap_states import APState
 from clearledgr.services.browser_agent import BrowserAgentService, SUPPORTED_MACROS
 from clearledgr.services.erp_connector_strategy import (
     ERPConnectorStrategy,
     ConnectorCapability,
+)
+from clearledgr.services.erp_follow_on_result import (
+    _ERP_FOLLOW_ON_APPLIED_STATUSES,
+    _ERP_FOLLOW_ON_PENDING_STATUSES,
+    _finance_effect_review_blockers,
+    _money_amount,
 )
 
 
@@ -262,9 +264,7 @@ class TestExecuteNonInvoiceERPFollowOn:
     """Tests for the async dispatch function that routes credit note / settlement
     ERP follow-on operations."""
 
-    def test_currency_mismatch_returns_error(self, db, monkeypatch):
-        monkeypatch.setattr("clearledgr.api.ap_items.get_db", lambda: db)
-
+    def test_currency_mismatch_returns_error(self, db):
         source_item = {
             "id": "SRC-1",
             "currency": "USD",
@@ -300,15 +300,13 @@ class TestExecuteNonInvoiceERPFollowOn:
         assert result["source_currency"] == "USD"
         assert result["target_currency"] == "EUR"
 
-    def test_same_currency_proceeds(self, db, monkeypatch):
+    def test_same_currency_proceeds(self, db):
         """When currencies match and target is posted, the function dispatches to api_first."""
-        monkeypatch.setattr("clearledgr.api.ap_items.get_db", lambda: db)
-
         source = _create_ap_item(db, item_id="SRC-2", state="received", document_type="credit_note", amount=50.0)
         related = _create_ap_item(db, item_id="REL-2", state="posted_to_erp", erp_reference="ERP-REF-002")
 
         mock_api = AsyncMock(return_value={"status": "success", "erp_reference": "CR-123"})
-        with patch("clearledgr.api.ap_items.apply_credit_note_api_first", mock_api):
+        with patch("clearledgr.services.ap_item_service.apply_credit_note_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,
@@ -326,10 +324,8 @@ class TestExecuteNonInvoiceERPFollowOn:
         assert "follow_on" in result
         assert result["follow_on"]["action_type"] == "apply_credit_note"
 
-    def test_unrecognized_doc_type_returns_none(self, db, monkeypatch):
+    def test_unrecognized_doc_type_returns_none(self, db):
         """Unrecognized document_type + outcome combination returns None (logged, not dispatched)."""
-        monkeypatch.setattr("clearledgr.api.ap_items.get_db", lambda: db)
-
         source_item = {
             "id": "SRC-3",
             "currency": "USD",
@@ -361,10 +357,8 @@ class TestExecuteNonInvoiceERPFollowOn:
         result = asyncio.run(_run())
         assert result is None
 
-    def test_target_not_posted_returns_skipped(self, db, monkeypatch):
+    def test_target_not_posted_returns_skipped(self, db):
         """When target invoice is not yet posted_to_erp, returns skipped/pending_target_post."""
-        monkeypatch.setattr("clearledgr.api.ap_items.get_db", lambda: db)
-
         source = _create_ap_item(db, item_id="SRC-4", state="received", document_type="credit_note", amount=50.0)
         related = _create_ap_item(db, item_id="REL-4", state="needs_approval", erp_reference="")
 
@@ -384,10 +378,8 @@ class TestExecuteNonInvoiceERPFollowOn:
         follow_on = result["follow_on"]
         assert follow_on["status"] in ("pending_target_post", "skipped")
 
-    def test_credit_note_posted_target_dispatches_api_first(self, db, monkeypatch):
+    def test_credit_note_posted_target_dispatches_api_first(self, db):
         """credit_note + apply_to_invoice + posted target -> dispatches apply_credit_note_api_first."""
-        monkeypatch.setattr("clearledgr.api.ap_items.get_db", lambda: db)
-
         source = _create_ap_item(
             db, item_id="SRC-5", state="received", document_type="credit_note",
             amount=75.0, currency="USD",
@@ -398,7 +390,7 @@ class TestExecuteNonInvoiceERPFollowOn:
         )
 
         mock_api = AsyncMock(return_value={"status": "success", "erp_reference": "CR-005"})
-        with patch("clearledgr.api.ap_items.apply_credit_note_api_first", mock_api):
+        with patch("clearledgr.services.ap_item_service.apply_credit_note_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,
@@ -421,10 +413,8 @@ class TestExecuteNonInvoiceERPFollowOn:
         assert result is not None
         assert result["follow_on"]["action_type"] == "apply_credit_note"
 
-    def test_refund_posted_target_dispatches_settlement_api_first(self, db, monkeypatch):
+    def test_refund_posted_target_dispatches_settlement_api_first(self, db):
         """refund + link_to_payment + posted target -> dispatches apply_settlement_api_first."""
-        monkeypatch.setattr("clearledgr.api.ap_items.get_db", lambda: db)
-
         source = _create_ap_item(
             db, item_id="SRC-6", state="received", document_type="refund",
             amount=200.0, currency="USD",
@@ -435,7 +425,7 @@ class TestExecuteNonInvoiceERPFollowOn:
         )
 
         mock_api = AsyncMock(return_value={"status": "success", "erp_reference": "SET-006"})
-        with patch("clearledgr.api.ap_items.apply_settlement_api_first", mock_api):
+        with patch("clearledgr.services.ap_item_service.apply_settlement_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,
@@ -456,10 +446,8 @@ class TestExecuteNonInvoiceERPFollowOn:
         assert result is not None
         assert result["follow_on"]["action_type"] == "apply_settlement"
 
-    def test_api_first_exception_returns_internal_error(self, db, monkeypatch):
+    def test_api_first_exception_returns_internal_error(self, db):
         """When apply_credit_note_api_first raises, the function catches it and returns internal_error."""
-        monkeypatch.setattr("clearledgr.api.ap_items.get_db", lambda: db)
-
         source = _create_ap_item(
             db, item_id="SRC-7", state="received", document_type="credit_note",
             amount=100.0, currency="USD",
@@ -470,7 +458,7 @@ class TestExecuteNonInvoiceERPFollowOn:
         )
 
         mock_api = AsyncMock(side_effect=RuntimeError("ERP connection timeout"))
-        with patch("clearledgr.api.ap_items.apply_credit_note_api_first", mock_api):
+        with patch("clearledgr.services.ap_item_service.apply_credit_note_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,
@@ -487,10 +475,8 @@ class TestExecuteNonInvoiceERPFollowOn:
         assert result is not None
         assert result["follow_on"]["status"] == "failed"
 
-    def test_settlement_api_first_exception_returns_internal_error(self, db, monkeypatch):
+    def test_settlement_api_first_exception_returns_internal_error(self, db):
         """When apply_settlement_api_first raises, the function catches it and returns internal_error."""
-        monkeypatch.setattr("clearledgr.api.ap_items.get_db", lambda: db)
-
         source = _create_ap_item(
             db, item_id="SRC-8", state="received", document_type="payment",
             amount=300.0, currency="USD",
@@ -501,7 +487,7 @@ class TestExecuteNonInvoiceERPFollowOn:
         )
 
         mock_api = AsyncMock(side_effect=Exception("unexpected failure"))
-        with patch("clearledgr.api.ap_items.apply_settlement_api_first", mock_api):
+        with patch("clearledgr.services.ap_item_service.apply_settlement_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,
@@ -517,10 +503,8 @@ class TestExecuteNonInvoiceERPFollowOn:
         assert result is not None
         assert result["follow_on"]["status"] == "failed"
 
-    def test_receipt_dispatches_settlement(self, db, monkeypatch):
+    def test_receipt_dispatches_settlement(self, db):
         """receipt + link_to_payment also dispatches apply_settlement_api_first (not just refund)."""
-        monkeypatch.setattr("clearledgr.api.ap_items.get_db", lambda: db)
-
         source = _create_ap_item(
             db, item_id="SRC-9", state="received", document_type="receipt",
             amount=150.0, currency="USD",
@@ -531,7 +515,7 @@ class TestExecuteNonInvoiceERPFollowOn:
         )
 
         mock_api = AsyncMock(return_value={"status": "success"})
-        with patch("clearledgr.api.ap_items.apply_settlement_api_first", mock_api):
+        with patch("clearledgr.services.ap_item_service.apply_settlement_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,

@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import ap_items as ap_items_module
 from clearledgr.core import database as db_module
+from clearledgr.services.ap_item_service import _build_vendor_detail_payload, _build_vendor_summary_rows
 
 
 @pytest.fixture()
@@ -62,7 +62,7 @@ def test_vendor_payload_surfaces_open_issue_rollups(db):
         }
     )
 
-    vendor_rows = ap_items_module._build_vendor_summary_rows(db, "default", search="Acme Vendor", limit=10)
+    vendor_rows = _build_vendor_summary_rows(db, "default", search="Acme Vendor", limit=10)
     assert len(vendor_rows) == 1
     summary = vendor_rows[0]
     assert summary["vendor_name"] == "Acme Vendor"
@@ -74,7 +74,7 @@ def test_vendor_payload_surfaces_open_issue_rollups(db):
         "erp_post_failed",
     }
 
-    payload = ap_items_module._build_vendor_detail_payload(db, "default", "Acme Vendor")
+    payload = _build_vendor_detail_payload(db, "default", "Acme Vendor")
     assert payload["issue_summary"]["total"] == 2
     assert payload["issue_summary"]["needs_info"] == 1
     assert payload["issue_summary"]["failed_post"] == 1

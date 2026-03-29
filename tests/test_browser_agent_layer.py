@@ -13,9 +13,8 @@ from main import app
 from clearledgr.api import agent_sessions as agent_sessions_module
 from clearledgr.api import workspace_shell as workspace_shell_module
 from clearledgr.api import ops as ops_module
-from clearledgr.api import ap_items as ap_items_module
 from clearledgr.core import database as db_module
-from clearledgr.core.auth import TokenData
+from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.services import browser_agent as browser_agent_module
 
 
@@ -45,14 +44,14 @@ def client(db):
     app.dependency_overrides[agent_sessions_module.get_current_user] = _fake_user
     app.dependency_overrides[ops_module.get_current_user] = _fake_user
     app.dependency_overrides[workspace_shell_module.get_current_user] = _fake_user
-    app.dependency_overrides[ap_items_module.get_current_user] = _fake_user
+    app.dependency_overrides[get_current_user] = _fake_user
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
         app.dependency_overrides.pop(ops_module.get_current_user, None)
         app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
-        app.dependency_overrides.pop(ap_items_module.get_current_user, None)
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.fixture()
@@ -60,7 +59,7 @@ def unauth_client(db):
     app.dependency_overrides.pop(agent_sessions_module.get_current_user, None)
     app.dependency_overrides.pop(ops_module.get_current_user, None)
     app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
-    app.dependency_overrides.pop(ap_items_module.get_current_user, None)
+    app.dependency_overrides.pop(get_current_user, None)
     return TestClient(app)
 
 

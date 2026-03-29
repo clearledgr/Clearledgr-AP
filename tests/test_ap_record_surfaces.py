@@ -15,13 +15,11 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from main import _apply_runtime_surface_profile, _is_strict_profile_allowed_path, app  # noqa: E402
+from clearledgr.api.ap_item_contracts import ResolveEntityRouteRequest  # noqa: E402
+from clearledgr.api.ap_items_action_routes import resolve_ap_item_entity_route  # noqa: E402
 from clearledgr.core import database as db_module  # noqa: E402
 from clearledgr.core.auth import create_access_token  # noqa: E402
-from clearledgr.api.ap_items import (  # noqa: E402
-    ResolveEntityRouteRequest,
-    build_worklist_item,
-    resolve_ap_item_entity_route,
-)
+from clearledgr.services.ap_item_service import build_worklist_item  # noqa: E402
 from clearledgr.services.correction_learning import CorrectionLearningService  # noqa: E402
 
 
@@ -616,7 +614,7 @@ def test_field_review_resolution_endpoint_auto_resumes_retry_path_when_last_bloc
         return {"status": "ready_to_post", "reason": "resume_after_field_resolution"}
 
     monkeypatch.setattr(
-        "clearledgr.api.ap_items.FinanceAgentRuntime.execute_intent",
+        "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
         _fake_execute_intent,
     )
 

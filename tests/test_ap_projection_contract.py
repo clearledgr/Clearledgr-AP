@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api.ap_items import build_worklist_item  # noqa: E402
 from clearledgr.core import database as db_module  # noqa: E402
+from clearledgr.services.ap_item_service import build_worklist_item  # noqa: E402
 
 
 def _item_payload(

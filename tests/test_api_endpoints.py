@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from clearledgr.core.auth import TokenData
+from clearledgr.core.auth import TokenData, get_current_user
 
 os.environ.setdefault("CLEARLEDGR_SKIP_DEFERRED_STARTUP", "true")
 
@@ -60,7 +60,6 @@ gmail_extension_module = _lazy_module("clearledgr.api.gmail_extension")
 agent_intents_module = _lazy_module("clearledgr.api.agent_intents")
 gmail_webhooks_module = _lazy_module("clearledgr.api.gmail_webhooks")
 workspace_shell_module = _lazy_module("clearledgr.api.workspace_shell")
-ap_items_module = _lazy_module("clearledgr.api.ap_items")
 auth_module = _lazy_module("clearledgr.api.auth")
 
 client = _LazyProxy(lambda: TestClient(main_module.app))
@@ -266,7 +265,7 @@ class TestAPRetryPostEndpoint:
                 "result": {"status": "recovered", "erp_reference": "ERP-RET-1"},
             }
 
-        app.dependency_overrides[ap_items_module.get_current_user] = self._fake_user
+        app.dependency_overrides[get_current_user] = self._fake_user
         try:
             with patch("clearledgr.services.ap_item_service.get_db", return_value=fake_db):
                 with patch(
@@ -275,7 +274,7 @@ class TestAPRetryPostEndpoint:
                 ):
                     response = client.post("/api/ap/items/ap-1/retry-post?organization_id=default")
         finally:
-            app.dependency_overrides.pop(ap_items_module.get_current_user, None)
+            app.dependency_overrides.pop(get_current_user, None)
 
         assert response.status_code == 200
         payload = response.json()
@@ -297,7 +296,7 @@ class TestAPRetryPostEndpoint:
         async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
             return {"status": "error", "reason": "connector_timeout"}
 
-        app.dependency_overrides[ap_items_module.get_current_user] = self._fake_user
+        app.dependency_overrides[get_current_user] = self._fake_user
         try:
             with patch("clearledgr.services.ap_item_service.get_db", return_value=fake_db):
                 with patch(
@@ -306,7 +305,7 @@ class TestAPRetryPostEndpoint:
                 ):
                     response = client.post("/api/ap/items/ap-2/retry-post?organization_id=default")
         finally:
-            app.dependency_overrides.pop(ap_items_module.get_current_user, None)
+            app.dependency_overrides.pop(get_current_user, None)
 
         assert response.status_code == 502
         assert "connector_timeout" in str(response.json().get("detail") or "")

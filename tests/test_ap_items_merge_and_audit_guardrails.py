@@ -7,18 +7,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import ap_items as ap_items_api
-from clearledgr.api.ap_items import (
-    MergeItemsRequest,
-    ResubmitRejectedItemRequest,
-    build_worklist_item,
-)
+from clearledgr.api.ap_item_contracts import MergeItemsRequest, ResubmitRejectedItemRequest
+from clearledgr.api.ap_items_action_routes import merge_ap_items, resubmit_rejected_item
+from clearledgr.api.ap_items_read_routes import get_ap_item_context
 from clearledgr.core import database as db_module
+from clearledgr.services.ap_item_service import build_worklist_item
 
 
 @pytest.fixture()
@@ -70,7 +69,7 @@ def _mock_user(*, user_id: str = "test-user", organization_id: str = "default"):
     )
 
 
-def test_merge_ap_items_uses_metadata_linkage_without_illegal_state(monkeypatch, db):
+def test_merge_ap_items_uses_metadata_linkage_without_illegal_state(db):
     target = _create_ap_item(db, item_id="AP-TARGET-1", thread_id="thread-target")
     source = _create_ap_item(db, item_id="AP-SOURCE-1", thread_id="thread-source")
 
@@ -86,9 +85,7 @@ def test_merge_ap_items_uses_metadata_linkage_without_illegal_state(monkeypatch,
         }
     )
 
-    monkeypatch.setattr(ap_items_api, "get_db", lambda: db)
-
-    response = ap_items_api.merge_ap_items(
+    response = merge_ap_items(
         target["id"],
         MergeItemsRequest(source_ap_item_id=source["id"], actor_id="user-1", reason="duplicate_invoice"),
         _user=_mock_user(user_id="user-1", organization_id="default"),
@@ -161,7 +158,7 @@ def test_audit_events_table_is_append_only(db):
     assert persisted["event_type"] == "test_audit_event"
 
 
-def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(monkeypatch, db):
+def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(db):
     rejected = _create_ap_item(db, item_id="AP-REJ-1", thread_id="thread-rej", state="rejected")
     db.link_ap_item_source(
         {
@@ -174,9 +171,7 @@ def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(m
         }
     )
 
-    monkeypatch.setattr(ap_items_api, "get_db", lambda: db)
-
-    response = ap_items_api.resubmit_rejected_item(
+    response = resubmit_rejected_item(
         rejected["id"],
         ResubmitRejectedItemRequest(
             actor_id="ap-user-1",
@@ -219,7 +214,7 @@ def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(m
     assert new_worklist["supersedes_ap_item_id"] == rejected["id"]
     assert new_worklist["is_resubmission"] is True
 
-    new_context = ap_items_api.get_ap_item_context(new_ap_item_id, refresh=True)
+    new_context = get_ap_item_context(new_ap_item_id, refresh=True)
     supersession = new_context.get("supersession") or {}
     assert supersession["supersedes_ap_item_id"] == rejected["id"]
     assert supersession["supersedes_invoice_key"] == rejected["invoice_key"]
@@ -231,12 +226,11 @@ def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(m
     assert "ap_item_resubmission_created" in new_events
 
 
-def test_resubmission_requires_rejected_state(monkeypatch, db):
+def test_resubmission_requires_rejected_state(db):
     item = _create_ap_item(db, item_id="AP-NOT-REJECTED-1", thread_id="thread-not-rej", state="needs_approval")
-    monkeypatch.setattr(ap_items_api, "get_db", lambda: db)
 
-    with pytest.raises(ap_items_api.HTTPException) as exc:
-        ap_items_api.resubmit_rejected_item(
+    with pytest.raises(HTTPException) as exc:
+        resubmit_rejected_item(
             item["id"],
             ResubmitRejectedItemRequest(actor_id="ap-user-1", reason="should_fail"),
             _user=_mock_user(user_id="ap-user-1", organization_id="default"),
