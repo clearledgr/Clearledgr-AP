@@ -224,6 +224,15 @@ async def _run_loop():
 async def _check_overdue_tasks():
     """Check overdue and stale task queues per org, then post summaries to Slack."""
     try:
+        try:
+            from clearledgr.services.task_scheduler import log_reminder, should_send_reminder
+        except Exception:
+            def should_send_reminder(_task_id: str, _reminder_type: str, min_hours: int = 24) -> bool:
+                return True
+
+            def log_reminder(_task_id: str, _reminder_type: str, next_reminder: Optional[str] = None) -> None:
+                return None
+
         total_overdue = 0
         total_stale = 0
         org_ids = _active_org_ids()
@@ -234,6 +243,9 @@ async def _check_overdue_tasks():
             total_overdue += len(org_overdue)
             total_stale += len(org_stale)
             if org_overdue or org_stale:
+                summary_task_id = f"{org_id}:daily_summary"
+                if not should_send_reminder(summary_task_id, "overdue_summary", 20):
+                    continue
                 try:
                     from clearledgr.services.slack_notifications import send_overdue_summary
                     await send_overdue_summary(
@@ -258,6 +270,7 @@ async def _check_overdue_tasks():
                             state = item.get("state", "?")
                             lines.append(f"  • {vendor} — stuck in `{state}`")
                     await _slack_alert("\n".join(lines), organization_id=org_id)
+                log_reminder(summary_task_id, "overdue_summary")
         if total_overdue or total_stale:
             logger.info(
                 "Background check: %d overdue, %d stale tasks across %d org(s)",

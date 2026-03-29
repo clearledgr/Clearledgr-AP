@@ -1775,6 +1775,86 @@ class TestExtensionEndpoints:
         })
         assert response.status_code == 401
 
+    def test_process_endpoint_runs_inline_triage_without_legacy_audit_kwarg(self):
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        app.dependency_overrides[gmail_extension_module.require_ops_user] = self._fake_user
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        try:
+            with patch.object(gmail_extension_module, "temporal_enabled", return_value=False):
+                with patch(
+                    "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
+                    AsyncMock(
+                        return_value={
+                            "email_id": "process-inline-1",
+                            "action": "triaged",
+                            "classification": {"type": "INVOICE"},
+                        }
+                    ),
+                ) as triage_mock:
+                    response = client.post(
+                        "/extension/process",
+                        json={
+                            "email_id": "process-inline-1",
+                            "subject": "Invoice inline process",
+                            "sender": "billing@acme.com",
+                            "organization_id": "default",
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.require_ops_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "processed_inline"
+        assert payload["triage"]["action"] == "triaged"
+        triage_mock.assert_awaited_once()
+
+    def test_bulk_scan_endpoint_runs_inline_triage_without_legacy_audit_kwarg(self):
+        fake_audit = self._FakeAuditService()
+        app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
+        app.dependency_overrides[gmail_extension_module.require_ops_user] = self._fake_user
+        app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
+        try:
+            with patch.object(gmail_extension_module, "temporal_enabled", return_value=False):
+                with patch(
+                    "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
+                    AsyncMock(
+                        side_effect=[
+                            {
+                                "email_id": "scan-inline-1",
+                                "action": "triaged",
+                                "classification": {"type": "INVOICE"},
+                            },
+                            {
+                                "email_id": "scan-inline-2",
+                                "action": "skipped",
+                                "classification": {"type": "NOISE"},
+                            },
+                        ]
+                    ),
+                ) as triage_mock:
+                    response = client.post(
+                        "/extension/scan",
+                        json={
+                            "email_ids": ["scan-inline-1", "scan-inline-2"],
+                            "organization_id": "default",
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.require_ops_user, None)
+            app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["total"] == 2
+        assert payload["processed"] == 2
+        assert payload["labeled"] == 1
+        assert triage_mock.await_count == 2
+
     def test_approve_and_post_uses_runtime_with_canonical_ap_item_reference(self, monkeypatch):
         captured: dict = {}
 

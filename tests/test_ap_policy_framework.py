@@ -261,6 +261,91 @@ def test_runtime_policy_changes_drive_workflow_routing(tmp_path: Path, monkeypat
     assert any(code.startswith("policy_requirement_") for code in reason_codes)
 
 
+def test_background_overdue_summary_is_throttled_per_org(monkeypatch):
+    sent = []
+    logged = []
+    sent_keys = set()
+
+    monkeypatch.setattr(agent_background_module, "_active_org_ids", lambda: ["default"])
+    monkeypatch.setattr(
+        agent_background_module,
+        "_collect_org_overdue_and_stale_tasks",
+        lambda _org_id: {
+            "overdue": [
+                {
+                    "vendor_name": "Acme Corp",
+                    "amount": 125.0,
+                    "due_date": "2026-03-01",
+                    "state": "open",
+                }
+            ],
+            "stale": [],
+        },
+    )
+
+    async def _fake_send_overdue_summary(
+        *,
+        overdue_items,
+        stale_items,
+        organization_id,
+        preferred_channel=None,
+    ):
+        sent.append(
+            {
+                "organization_id": organization_id,
+                "overdue_count": len(overdue_items),
+                "stale_count": len(stale_items),
+                "preferred_channel": preferred_channel,
+            }
+        )
+        return True
+
+    def _fake_should_send_reminder(task_id: str, reminder_type: str, min_hours: int = 24) -> bool:
+        return (task_id, reminder_type) not in sent_keys
+
+    def _fake_log_reminder(task_id: str, reminder_type: str, next_reminder: str = None):
+        sent_keys.add((task_id, reminder_type))
+        logged.append(
+            {
+                "task_id": task_id,
+                "reminder_type": reminder_type,
+                "next_reminder": next_reminder,
+            }
+        )
+
+    monkeypatch.setattr(
+        "clearledgr.services.slack_notifications.send_overdue_summary",
+        _fake_send_overdue_summary,
+    )
+    monkeypatch.setattr(
+        "clearledgr.services.task_scheduler.should_send_reminder",
+        _fake_should_send_reminder,
+    )
+    monkeypatch.setattr(
+        "clearledgr.services.task_scheduler.log_reminder",
+        _fake_log_reminder,
+    )
+
+    asyncio.run(agent_background_module._check_overdue_tasks())
+    asyncio.run(agent_background_module._check_overdue_tasks())
+
+    assert sent == [
+        {
+            "organization_id": "default",
+            "overdue_count": 1,
+            "stale_count": 0,
+            "preferred_channel": None,
+        }
+    ]
+    assert logged == [
+        {
+            "task_id": "default:daily_summary",
+            "reminder_type": "overdue_summary",
+            "next_reminder": None,
+        }
+    ]
+
+
 def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, monkeypatch):
     db = _make_db(tmp_path)
     monkeypatch.setattr("clearledgr.core.database.get_db", lambda: db)

@@ -605,7 +605,6 @@ async def process_email(
     # Inline execution - simplified
     triage_result = await triage_email(
         EmailTriageRequest(**{k: v for k, v in payload.items() if k in EmailTriageRequest.model_fields}),
-        audit=audit,
         user=user,
     )
     
@@ -662,7 +661,6 @@ async def bulk_scan_emails(
                     email_id=email_id,
                     organization_id=request.organization_id,
                 ),
-                audit=audit,
                 user=user,
             )
             results["processed"] += 1
