@@ -18,24 +18,6 @@ from pydantic import BaseModel, EmailStr, Field
 
 from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
-from clearledgr.core.launch_controls import (
-    get_ga_readiness,
-    get_rollback_controls,
-    set_ga_readiness,
-    set_rollback_controls,
-    summarize_ga_readiness,
-)
-from clearledgr.services.erp_readiness import evaluate_erp_connector_readiness
-from clearledgr.services.learning_calibration import get_learning_calibration_service
-from clearledgr.services.policy_compliance import (
-    AP_POLICY_NAME,
-    get_approval_automation_policy,
-    get_policy_compliance,
-)
-from clearledgr.services.gmail_api import generate_auth_url, get_google_oauth_config
-from clearledgr.services.slack_api import SlackAPIClient, SlackAPIError, resolve_slack_runtime
-from clearledgr.services.teams_api import TeamsAPIClient
-from clearledgr.services.subscription import PlanTier, get_subscription_service
 
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
@@ -52,6 +34,114 @@ def _now_iso() -> str:
 def _secret_key() -> str:
     from clearledgr.core.secrets import require_secret
     return require_secret("CLEARLEDGR_SECRET_KEY")
+
+
+def _get_ga_readiness(*args, **kwargs):
+    from clearledgr.core.launch_controls import get_ga_readiness
+
+    return get_ga_readiness(*args, **kwargs)
+
+
+def _get_rollback_controls(*args, **kwargs):
+    from clearledgr.core.launch_controls import get_rollback_controls
+
+    return get_rollback_controls(*args, **kwargs)
+
+
+def _set_ga_readiness(*args, **kwargs):
+    from clearledgr.core.launch_controls import set_ga_readiness
+
+    return set_ga_readiness(*args, **kwargs)
+
+
+def _set_rollback_controls(*args, **kwargs):
+    from clearledgr.core.launch_controls import set_rollback_controls
+
+    return set_rollback_controls(*args, **kwargs)
+
+
+def _summarize_ga_readiness(*args, **kwargs):
+    from clearledgr.core.launch_controls import summarize_ga_readiness
+
+    return summarize_ga_readiness(*args, **kwargs)
+
+
+def _evaluate_erp_connector_readiness(*args, **kwargs):
+    from clearledgr.services.erp_readiness import evaluate_erp_connector_readiness
+
+    return evaluate_erp_connector_readiness(*args, **kwargs)
+
+
+def _get_learning_calibration_service(*args, **kwargs):
+    from clearledgr.services.learning_calibration import get_learning_calibration_service
+
+    return get_learning_calibration_service(*args, **kwargs)
+
+
+def _ap_policy_name() -> str:
+    from clearledgr.services.policy_compliance import AP_POLICY_NAME
+
+    return AP_POLICY_NAME
+
+
+def _get_approval_automation_policy(*args, **kwargs):
+    from clearledgr.services.policy_compliance import get_approval_automation_policy
+
+    return get_approval_automation_policy(*args, **kwargs)
+
+
+def _get_policy_compliance(*args, **kwargs):
+    from clearledgr.services.policy_compliance import get_policy_compliance
+
+    return get_policy_compliance(*args, **kwargs)
+
+
+def _generate_auth_url(*args, **kwargs):
+    from clearledgr.services.gmail_api import generate_auth_url
+
+    return generate_auth_url(*args, **kwargs)
+
+
+def _get_google_oauth_config() -> Dict[str, Any]:
+    from clearledgr.services.gmail_api import get_google_oauth_config
+
+    return get_google_oauth_config()
+
+
+def _slack_api_client_class():
+    from clearledgr.services.slack_api import SlackAPIClient
+
+    return SlackAPIClient
+
+
+def _slack_api_error_type():
+    from clearledgr.services.slack_api import SlackAPIError
+
+    return SlackAPIError
+
+
+def _resolve_slack_runtime(*args, **kwargs):
+    from clearledgr.services.slack_api import resolve_slack_runtime
+
+    return resolve_slack_runtime(*args, **kwargs)
+
+
+def _teams_api_client_class():
+    from clearledgr.services.teams_api import TeamsAPIClient
+
+    return TeamsAPIClient
+
+
+def _get_subscription_service():
+    from clearledgr.services.subscription import get_subscription_service
+
+    return get_subscription_service()
+
+
+def _plan_tier():
+    from clearledgr.services.subscription import PlanTier
+
+    return PlanTier
 
 
 def _sign_state(payload: Dict[str, Any]) -> str:
@@ -234,7 +324,7 @@ def _slack_status_for_org(organization_id: str) -> Dict[str, Any]:
     org = db.get_organization(organization_id) or {}
     integration = db.get_organization_integration(organization_id, "slack") or {}
     install = db.get_slack_installation(organization_id) or {}
-    runtime = resolve_slack_runtime(organization_id)
+    runtime = _resolve_slack_runtime(organization_id)
     mode = (
         integration.get("mode")
         or org.get("integration_mode")
@@ -453,7 +543,8 @@ def _build_pilot_snapshot(kpis: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _approval_sla_minutes_for_org(organization_id: str) -> int:
-    policy = get_approval_automation_policy(organization_id=organization_id, policy_name=AP_POLICY_NAME)
+    policy_name = _ap_policy_name()
+    policy = _get_approval_automation_policy(organization_id=organization_id, policy_name=policy_name)
     try:
         hours = int(policy.get("reminder_hours") or 4)
     except (TypeError, ValueError):
@@ -577,7 +668,7 @@ def get_admin_bootstrap(
     db = get_db()
     org = db.ensure_organization(org_id, organization_name=org_id)
     org_settings = _load_org_settings(org)
-    subscription = get_subscription_service().get_subscription(org_id).to_dict()
+    subscription = _get_subscription_service().get_subscription(org_id).to_dict()
     health = _build_health(org_id, user)
 
     current_user = db.get_user(user.user_id) or {}
@@ -689,7 +780,7 @@ def start_gmail_connect(
     if not redirect_path.startswith("/"):
         raise HTTPException(status_code=400, detail="invalid_redirect_path")
 
-    oauth_redirect_uri = get_google_oauth_config().get("redirect_uri")
+    oauth_redirect_uri = _get_google_oauth_config().get("redirect_uri")
     state = _sign_state(
         {
             "organization_id": org_id,
@@ -701,7 +792,7 @@ def start_gmail_connect(
         }
     )
     try:
-        auth_url = generate_auth_url(state=state)
+        auth_url = _generate_auth_url(state=state)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
@@ -838,7 +929,7 @@ def set_slack_channel(
     channels["invoices"] = request.channel_id.strip()
     settings["slack_channels"] = channels
     _save_org_settings(org_id, settings)
-    runtime = resolve_slack_runtime(org_id)
+    runtime = _resolve_slack_runtime(org_id)
     existing = db.get_organization_integration(org_id, "slack") or {}
     existing_metadata = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
     db.upsert_organization_integration(
@@ -865,11 +956,13 @@ async def test_slack_channel(
 ):
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
-    runtime = resolve_slack_runtime(org_id)
+    runtime = _resolve_slack_runtime(org_id)
     token = runtime.get("bot_token")
     if not token:
         raise HTTPException(status_code=400, detail="slack_not_connected")
     channel = str(request.channel_id or runtime.get("approval_channel") or "").strip()
+    SlackAPIClient = _slack_api_client_class()
+    SlackAPIError = _slack_api_error_type()
     client = SlackAPIClient(bot_token=token)
     try:
         auth_context = await client.auth_test()
@@ -929,7 +1022,7 @@ def test_teams_webhook(
 ):
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
-    client = TeamsAPIClient.from_env(org_id)
+    client = _teams_api_client_class().from_env(org_id)
     payload = {
         "type": "message",
         "attachments": [
@@ -1171,7 +1264,7 @@ def get_onboarding_status(
     user: TokenData = Depends(get_current_user),
 ):
     org_id = _resolve_org_id(user, organization_id)
-    sub = get_subscription_service().get_subscription(org_id)
+    sub = _get_subscription_service().get_subscription(org_id)
     return {
         "organization_id": org_id,
         "onboarding_completed": sub.onboarding_completed,
@@ -1186,7 +1279,7 @@ def complete_onboarding_step(
 ):
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
-    sub = get_subscription_service().complete_onboarding_step(org_id, request.step)
+    sub = _get_subscription_service().complete_onboarding_step(org_id, request.step)
     return {
         "success": True,
         "organization_id": org_id,
@@ -1201,17 +1294,18 @@ def get_ap_policy(
     user: TokenData = Depends(get_current_user),
 ):
     org_id = _resolve_org_id(user, organization_id)
-    policy_service = get_policy_compliance(organization_id=org_id, policy_name=AP_POLICY_NAME)
+    policy_name = _ap_policy_name()
+    policy_service = _get_policy_compliance(organization_id=org_id, policy_name=policy_name)
     db = get_db()
-    policy = db.get_ap_policy(org_id, AP_POLICY_NAME)
+    policy = db.get_ap_policy(org_id, policy_name)
     return {
         "organization_id": org_id,
-        "policy_name": AP_POLICY_NAME,
+        "policy_name": policy_name,
         "policy": policy,
         "effective_policies": policy_service.describe_effective_policies(),
-        "approval_automation": get_approval_automation_policy(
+        "approval_automation": _get_approval_automation_policy(
             organization_id=org_id,
-            policy_name=AP_POLICY_NAME,
+            policy_name=policy_name,
         ),
     }
 
@@ -1224,24 +1318,25 @@ def put_ap_policy(
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
     db = get_db()
-    policy_service = get_policy_compliance(organization_id=org_id, policy_name=AP_POLICY_NAME)
+    policy_name = _ap_policy_name()
+    policy_service = _get_policy_compliance(organization_id=org_id, policy_name=policy_name)
     errors = policy_service.validate_policy_config(request.config or {})
     if errors:
         raise HTTPException(status_code=422, detail={"message": "invalid_policy_document", "errors": errors})
     updated = db.upsert_ap_policy_version(
         organization_id=org_id,
-        policy_name=AP_POLICY_NAME,
+        policy_name=policy_name,
         config=request.config or {},
         updated_by=request.updated_by or user.user_id,
         enabled=bool(request.enabled),
     )
     return {
         "organization_id": org_id,
-        "policy_name": AP_POLICY_NAME,
+        "policy_name": policy_name,
         "policy": updated,
-        "approval_automation": get_approval_automation_policy(
+        "approval_automation": _get_approval_automation_policy(
             organization_id=org_id,
-            policy_name=AP_POLICY_NAME,
+            policy_name=policy_name,
         ),
     }
 
@@ -1353,7 +1448,7 @@ def get_admin_rollback_controls(
     user: TokenData = Depends(get_current_user),
 ):
     org_id = _resolve_org_id(user, organization_id)
-    controls = get_rollback_controls(org_id)
+    controls = _get_rollback_controls(org_id)
     return {"organization_id": org_id, "rollback_controls": controls}
 
 
@@ -1364,7 +1459,7 @@ def put_admin_rollback_controls(
 ):
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
-    controls = set_rollback_controls(
+    controls = _set_rollback_controls(
         org_id,
         request.controls or {},
         updated_by=request.updated_by or user.user_id,
@@ -1378,13 +1473,13 @@ def get_admin_ga_readiness(
     user: TokenData = Depends(get_current_user),
 ):
     org_id = _resolve_org_id(user, organization_id)
-    evidence = get_ga_readiness(org_id)
-    rollback_controls = get_rollback_controls(org_id)
+    evidence = _get_ga_readiness(org_id)
+    rollback_controls = _get_rollback_controls(org_id)
     return {
         "organization_id": org_id,
         "ga_readiness": evidence,
         "rollback_controls": rollback_controls,
-        "summary": summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
+        "summary": _summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
     }
 
 
@@ -1395,18 +1490,18 @@ def put_admin_ga_readiness(
 ):
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
-    evidence = set_ga_readiness(
+    evidence = _set_ga_readiness(
         org_id,
         request.evidence or {},
         updated_by=request.updated_by or user.user_id,
     )
-    rollback_controls = get_rollback_controls(org_id)
+    rollback_controls = _get_rollback_controls(org_id)
     return {
         "success": True,
         "organization_id": org_id,
         "ga_readiness": evidence,
         "rollback_controls": rollback_controls,
-        "summary": summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
+        "summary": _summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
     }
 
 
@@ -1417,7 +1512,7 @@ def get_ops_connector_readiness(
 ):
     _require_ops_access(user)
     org_id = _resolve_org_id(user, organization_id)
-    report = evaluate_erp_connector_readiness(org_id, db=get_db(), require_full_ga_scope=False)
+    report = _evaluate_erp_connector_readiness(org_id, db=get_db(), require_full_ga_scope=False)
     return {
         "organization_id": org_id,
         "generated_at": _now_iso(),
@@ -1432,7 +1527,7 @@ def get_ops_learning_calibration(
 ):
     _require_ops_access(user)
     org_id = _resolve_org_id(user, organization_id)
-    service = get_learning_calibration_service(org_id, db=get_db())
+    service = _get_learning_calibration_service(org_id, db=get_db())
     snapshot = service.get_latest_snapshot()
     return {
         "organization_id": org_id,
@@ -1447,7 +1542,7 @@ def recompute_ops_learning_calibration(
 ):
     _require_ops_access(user)
     org_id = _resolve_org_id(user, request.organization_id)
-    service = get_learning_calibration_service(org_id, db=get_db())
+    service = _get_learning_calibration_service(org_id, db=get_db())
     snapshot = service.recompute_snapshot(
         window_days=request.window_days,
         min_feedback=request.min_feedback,
@@ -1635,7 +1730,7 @@ def get_admin_subscription(
     user: TokenData = Depends(get_current_user),
 ):
     org_id = _resolve_org_id(user, organization_id)
-    return {"organization_id": org_id, "subscription": get_subscription_service().get_subscription(org_id).to_dict()}
+    return {"organization_id": org_id, "subscription": _get_subscription_service().get_subscription(org_id).to_dict()}
 
 
 @router.patch("/subscription/plan")
@@ -1645,7 +1740,8 @@ def patch_subscription_plan(
 ):
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
-    service = get_subscription_service()
+    service = _get_subscription_service()
+    PlanTier = _plan_tier()
     plan = request.plan.lower().strip()
     if plan == PlanTier.FREE.value:
         sub = service.downgrade_to_free(org_id)
@@ -1675,10 +1771,10 @@ def get_admin_health(
 ):
     org_id = _resolve_org_id(user, organization_id)
     health = _build_health(org_id, user)
-    evidence = get_ga_readiness(org_id)
-    rollback_controls = get_rollback_controls(org_id)
+    evidence = _get_ga_readiness(org_id)
+    rollback_controls = _get_rollback_controls(org_id)
     health["launch_controls"] = {
         "rollback_controls": rollback_controls,
-        "ga_readiness_summary": summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
+        "ga_readiness_summary": _summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
     }
     return health

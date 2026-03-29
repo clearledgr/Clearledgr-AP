@@ -10,26 +10,56 @@ from typing import Any, Dict
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from clearledgr.core.approval_action_contract import (
-    ApprovalActionContractError,
-    NormalizedApprovalAction,
-    normalize_slack_action,
-    resolve_action_precedence,
-)
 from clearledgr.core.ap_item_resolution import (
     resolve_ap_context as resolve_shared_ap_context,
     resolve_ap_correlation_id,
 )
 from clearledgr.core.database import get_db
-from clearledgr.core.launch_controls import get_channel_action_block_reason
-from clearledgr.core.slack_verify import require_slack_signature
-from clearledgr.services.agent_command_dispatch import (
-    build_channel_runtime,
-    dispatch_runtime_intent,
-)
 
 router = APIRouter(prefix="/slack/invoices", tags=["slack-invoices"])
 logger = logging.getLogger(__name__)
+
+
+def _approval_action_error_type():
+    from clearledgr.core.approval_action_contract import ApprovalActionContractError
+
+    return ApprovalActionContractError
+
+
+def _normalize_slack_action(*args, **kwargs):
+    from clearledgr.core.approval_action_contract import normalize_slack_action
+
+    return normalize_slack_action(*args, **kwargs)
+
+
+def _resolve_action_precedence(*args, **kwargs):
+    from clearledgr.core.approval_action_contract import resolve_action_precedence
+
+    return resolve_action_precedence(*args, **kwargs)
+
+
+def _get_channel_action_block_reason(*args, **kwargs):
+    from clearledgr.core.launch_controls import get_channel_action_block_reason
+
+    return get_channel_action_block_reason(*args, **kwargs)
+
+
+async def _require_slack_signature(request: Request) -> bytes:
+    from clearledgr.core.slack_verify import require_slack_signature
+
+    return await require_slack_signature(request)
+
+
+def _build_channel_runtime(*args, **kwargs):
+    from clearledgr.services.agent_command_dispatch import build_channel_runtime
+
+    return build_channel_runtime(*args, **kwargs)
+
+
+async def _dispatch_runtime_intent(*args, **kwargs):
+    from clearledgr.services.agent_command_dispatch import dispatch_runtime_intent
+
+    return await dispatch_runtime_intent(*args, **kwargs)
 
 
 def _parse_form(body: bytes) -> Dict[str, str]:
@@ -131,8 +161,8 @@ def _slack_stale_response() -> Dict[str, str]:
     }
 
 
-async def _dispatch_slack_action(action: NormalizedApprovalAction) -> Dict[str, Any]:
-    runtime = build_channel_runtime(
+async def _dispatch_slack_action(action: Any) -> Dict[str, Any]:
+    runtime = _build_channel_runtime(
         organization_id=action.organization_id or "default",
         actor_id=action.actor_id or "slack_user",
         actor_email=action.actor_display or action.actor_id or "slack_user",
@@ -141,7 +171,7 @@ async def _dispatch_slack_action(action: NormalizedApprovalAction) -> Dict[str, 
     )
 
     if action.action == "approve":
-        result = await dispatch_runtime_intent(
+        result = await _dispatch_runtime_intent(
             runtime,
             "approve_invoice",
             {
@@ -191,7 +221,7 @@ async def _dispatch_slack_action(action: NormalizedApprovalAction) -> Dict[str, 
         return {"response_type": "ephemeral", "text": f"{prefix} {detail}", "result": result}
 
     if action.action == "request_info":
-        result = await dispatch_runtime_intent(
+        result = await _dispatch_runtime_intent(
             runtime,
             "request_info",
             {
@@ -224,7 +254,7 @@ async def _dispatch_slack_action(action: NormalizedApprovalAction) -> Dict[str, 
         }
 
     if action.action == "reject":
-        result = await dispatch_runtime_intent(
+        result = await _dispatch_runtime_intent(
             runtime,
             "reject_invoice",
             {
@@ -259,7 +289,7 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
     """Handle Slack interactive actions for invoice approvals."""
     db = get_db()
     try:
-        body = await require_slack_signature(request)
+        body = await _require_slack_signature(request)
     except HTTPException as exc:
         raw_body = await request.body()
         body_hash = hashlib.sha256(raw_body or b"").hexdigest()[:16]
@@ -313,8 +343,9 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
             gmail_candidate = action_id.rsplit("_", 1)[-1]
     organization_id, ap_item_id = _resolve_ap_context(db, "default", gmail_candidate)
 
+    ApprovalActionContractError = _approval_action_error_type()
     try:
-        normalized = normalize_slack_action(
+        normalized = _normalize_slack_action(
             payload,
             request_ts=request.headers.get("x-slack-request-timestamp"),
             organization_id=organization_id,
@@ -337,7 +368,7 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
     normalized.ap_item_id = ap_item_id
     normalized.correlation_id = _resolve_correlation_id(db, ap_item_id, organization_id, normalized.gmail_id)
 
-    blocked_reason = get_channel_action_block_reason(
+    blocked_reason = _get_channel_action_block_reason(
         normalized.organization_id,
         "slack",
         db=db,
@@ -368,7 +399,7 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
         except Exception:
             pass
 
-    precedence = resolve_action_precedence(
+    precedence = _resolve_action_precedence(
         normalized,
         ap_item_row,
         already_processed=bool(db.get_ap_audit_event_by_key(processed_key)),

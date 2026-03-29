@@ -14,36 +14,8 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from pydantic import BaseModel, Field
 
-from clearledgr.workflows.temporal_runtime import TemporalRuntime, temporal_enabled
-
-# Import all intelligence services
-from clearledgr.services.gmail_extension_support import (
-    _explain_fallback as support_explain_fallback,
-    _explain_with_claude as support_explain_with_claude,
-    apply_agent_reasoning as support_apply_agent_reasoning,
-    apply_intelligence as support_apply_intelligence,
-    build_amount_validation_payload,
-    build_extension_pipeline as support_build_extension_pipeline,
-    build_form_prefill_payload,
-    build_gl_suggestion_payload,
-    build_needs_info_draft_payload,
-    build_vendor_suggestion_payload,
-    build_verify_confidence_payload,
-    merge_agent_extraction as support_merge_agent_extraction,
-    pipeline_bucket_for_state as support_pipeline_bucket_for_state,
-    render_ap_item_explanation,
-)
-from clearledgr.core.ap_confidence import evaluate_critical_field_confidence, extract_field_confidences
-from clearledgr.core.ap_item_resolution import resolve_ap_item_reference
 from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email
 from clearledgr.core.database import get_db
-from clearledgr.services.gmail_api import (
-    GmailAPIClient,
-    GmailToken,
-    token_store,
-    GMAIL_PROFILE_URL,
-    GOOGLE_USERINFO_URL,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +24,120 @@ router = APIRouter(prefix="/extension", tags=["gmail-extension"])
 
 _ADMIN_ROLES = {"admin", "owner"}
 EXTENSION_BACKEND_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60
+_GMAIL_EXTENSION_SUPPORT = None
+_GMAIL_API_MODULE = None
+
+
+def _gmail_extension_support_module():
+    global _GMAIL_EXTENSION_SUPPORT
+    if _GMAIL_EXTENSION_SUPPORT is None:
+        from clearledgr.services import gmail_extension_support as module
+
+        _GMAIL_EXTENSION_SUPPORT = module
+    return _GMAIL_EXTENSION_SUPPORT
+
+
+def _gmail_api_module():
+    global _GMAIL_API_MODULE
+    if _GMAIL_API_MODULE is None:
+        from clearledgr.services import gmail_api as module
+
+        _GMAIL_API_MODULE = module
+    return _GMAIL_API_MODULE
+
+
+def _support_explain_fallback(*args, **kwargs):
+    return _gmail_extension_support_module()._explain_fallback(*args, **kwargs)
+
+
+def _support_explain_with_claude(*args, **kwargs):
+    return _gmail_extension_support_module()._explain_with_claude(*args, **kwargs)
+
+
+def _support_apply_agent_reasoning(*args, **kwargs):
+    return _gmail_extension_support_module().apply_agent_reasoning(*args, **kwargs)
+
+
+def _support_apply_intelligence(*args, **kwargs):
+    return _gmail_extension_support_module().apply_intelligence(*args, **kwargs)
+
+
+def _build_amount_validation_payload(*args, **kwargs):
+    return _gmail_extension_support_module().build_amount_validation_payload(*args, **kwargs)
+
+
+def _support_build_extension_pipeline(*args, **kwargs):
+    return _gmail_extension_support_module().build_extension_pipeline(*args, **kwargs)
+
+
+def _build_form_prefill_payload(*args, **kwargs):
+    return _gmail_extension_support_module().build_form_prefill_payload(*args, **kwargs)
+
+
+def _build_gl_suggestion_payload(*args, **kwargs):
+    return _gmail_extension_support_module().build_gl_suggestion_payload(*args, **kwargs)
+
+
+def _build_needs_info_draft_payload(*args, **kwargs):
+    return _gmail_extension_support_module().build_needs_info_draft_payload(*args, **kwargs)
+
+
+def _build_vendor_suggestion_payload(*args, **kwargs):
+    return _gmail_extension_support_module().build_vendor_suggestion_payload(*args, **kwargs)
+
+
+def _build_verify_confidence_payload(*args, **kwargs):
+    return _gmail_extension_support_module().build_verify_confidence_payload(*args, **kwargs)
+
+
+def _support_merge_agent_extraction(*args, **kwargs):
+    return _gmail_extension_support_module().merge_agent_extraction(*args, **kwargs)
+
+
+def _support_pipeline_bucket_for_state(*args, **kwargs):
+    return _gmail_extension_support_module().pipeline_bucket_for_state(*args, **kwargs)
+
+
+def _render_ap_item_explanation(*args, **kwargs):
+    return _gmail_extension_support_module().render_ap_item_explanation(*args, **kwargs)
+
+
+def _evaluate_critical_field_confidence(*args, **kwargs):
+    from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
+
+    return evaluate_critical_field_confidence(*args, **kwargs)
+
+
+def _extract_field_confidences(*args, **kwargs):
+    from clearledgr.core.ap_confidence import extract_field_confidences
+
+    return extract_field_confidences(*args, **kwargs)
+
+
+def _resolve_ap_item_reference(*args, **kwargs):
+    from clearledgr.core.ap_item_resolution import resolve_ap_item_reference
+
+    return resolve_ap_item_reference(*args, **kwargs)
+
+
+def _gmail_api_client(*args, **kwargs):
+    return _gmail_api_module().GmailAPIClient(*args, **kwargs)
+
+
+def _gmail_token_class():
+    return _gmail_api_module().GmailToken
+
+
+def _token_store():
+    return _gmail_api_module().token_store
+
+
+def _gmail_profile_url() -> str:
+    return _gmail_api_module().GMAIL_PROFILE_URL
+
+
+def _google_userinfo_url() -> str:
+    return _gmail_api_module().GOOGLE_USERINFO_URL
 
 
 def get_audit_service():
@@ -100,6 +186,18 @@ def build_worklist_items(*args, **kwargs):
     from clearledgr.services.ap_projection import build_worklist_items as _build_worklist_items
 
     return _build_worklist_items(*args, **kwargs)
+
+
+def _temporal_enabled() -> bool:
+    from clearledgr.workflows.temporal_runtime import temporal_enabled
+
+    return temporal_enabled()
+
+
+def _temporal_runtime():
+    from clearledgr.workflows.temporal_runtime import TemporalRuntime
+
+    return TemporalRuntime()
 
 
 def _is_admin_user(user: Any) -> bool:
@@ -156,7 +254,7 @@ async def _recover_ap_item_for_thread(
         return None
 
     try:
-        gmail_client = GmailAPIClient(user_id)
+        gmail_client = _gmail_api_client(user_id)
         if not await gmail_client.ensure_authenticated():
             return None
         messages = await gmail_client.get_thread(thread_id)
@@ -509,8 +607,8 @@ async def triage_email(
         [v for v in [request.subject, request.snippet, request.body] if v]
     ).strip()
 
-    if temporal_enabled():
-        runtime = TemporalRuntime()
+    if _temporal_enabled():
+        runtime = _temporal_runtime()
         result = await runtime.start_workflow(
             "EmailTriageWorkflow",
             payload,
@@ -544,7 +642,7 @@ async def triage_email(
 
 async def _apply_intelligence(result: Dict[str, Any], org_id: str, email_id: str) -> Dict[str, Any]:
     """Apply intelligence services to a triage result."""
-    return support_apply_intelligence(result, org_id, email_id)
+    return _support_apply_intelligence(result, org_id, email_id)
 
 
 def _merge_agent_extraction(
@@ -552,7 +650,7 @@ def _merge_agent_extraction(
     agent_extraction: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Fill missing extraction fields from agent reasoning output."""
-    return support_merge_agent_extraction(extraction, agent_extraction)
+    return _support_merge_agent_extraction(extraction, agent_extraction)
 
 
 def _apply_agent_reasoning(
@@ -562,7 +660,7 @@ def _apply_agent_reasoning(
     attachments: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Run agent reasoning and merge decision + extraction."""
-    return support_apply_agent_reasoning(result, org_id, combined_text, attachments)
+    return _support_apply_agent_reasoning(result, org_id, combined_text, attachments)
 
 
 @router.post("/process", dependencies=[Depends(get_current_user)])
@@ -587,8 +685,8 @@ async def process_email(
     payload = request.model_dump()
     payload["organization_id"] = _resolve_org_id_for_user(user, request.organization_id)
     
-    if temporal_enabled():
-        runtime = TemporalRuntime()
+    if _temporal_enabled():
+        runtime = _temporal_runtime()
         # Don't wait - this can take longer
         result = await runtime.start_workflow(
             "EmailProcessingWorkflow",
@@ -632,8 +730,8 @@ async def bulk_scan_emails(
     payload = request.model_dump()
     payload["organization_id"] = _resolve_org_id_for_user(user, request.organization_id)
     
-    if temporal_enabled():
-        runtime = TemporalRuntime()
+    if _temporal_enabled():
+        runtime = _temporal_runtime()
         result = await runtime.start_workflow(
             "BulkEmailScanWorkflow",
             payload,
@@ -673,11 +771,11 @@ async def bulk_scan_emails(
 
 
 def _pipeline_bucket_for_state(state: Any) -> str:
-    return support_pipeline_bucket_for_state(state)
+    return _support_pipeline_bucket_for_state(state)
 
 
 def _build_extension_pipeline(db, organization_id: str, limit: int = 1000) -> Dict[str, List[Dict[str, Any]]]:
-    return support_build_extension_pipeline(
+    return _support_build_extension_pipeline(
         db,
         organization_id,
         limit=limit,
@@ -766,7 +864,7 @@ async def repair_historical_invoices(
             "results": [],
         }
 
-    gmail_client = GmailAPIClient(target_user["user_id"])
+    gmail_client = _gmail_api_client(target_user["user_id"])
     if not await gmail_client.ensure_authenticated():
         raise HTTPException(status_code=409, detail="gmail_not_connected")
 
@@ -865,7 +963,7 @@ async def cleanup_gmail_labels(
         organization_id=org_id,
     )
 
-    gmail_client = GmailAPIClient(target_user["user_id"])
+    gmail_client = _gmail_api_client(target_user["user_id"])
     if not await gmail_client.ensure_authenticated():
         raise HTTPException(status_code=409, detail="gmail_not_connected")
 
@@ -947,12 +1045,12 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         headers = {"Authorization": f"Bearer {access_token}"}
-        profile_response = await client.get(GMAIL_PROFILE_URL, headers=headers)
+        profile_response = await client.get(_gmail_profile_url(), headers=headers)
         if profile_response.status_code < 400:
             profile = profile_response.json()
             profile_email = str(profile.get("emailAddress") or "").strip() or None
         else:
-            userinfo_response = await client.get(GOOGLE_USERINFO_URL, headers=headers)
+            userinfo_response = await client.get(_google_userinfo_url(), headers=headers)
             if userinfo_response.status_code < 400:
                 payload = userinfo_response.json()
                 profile_email = str(payload.get("email") or "").strip() or None
@@ -996,10 +1094,11 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
     expires_in = int(request.expires_in or 3600)
     expires_in = max(60, min(expires_in, 86400))
     user_id = str(getattr(user, "id", "") or "").strip() or profile_email
+    token_store = _token_store()
     existing_token = token_store.get(user_id)
     preserved_refresh_token = existing_token.refresh_token if existing_token else ""
     token_store.store(
-        GmailToken(
+        _gmail_token_class()(
             user_id=user_id,
             access_token=access_token,
             refresh_token=preserved_refresh_token,
@@ -1091,13 +1190,14 @@ async def exchange_gmail_code(request: ExchangeCodeRequest):
 
     user_id = str(getattr(user, "id", "") or "").strip() or profile_email
     resolved_org_id = str(getattr(user, "organization_id", None) or "default").strip()
+    token_store = _token_store()
     existing_token = token_store.get(user_id)
     if not refresh_token and existing_token and existing_token.refresh_token:
         refresh_token = existing_token.refresh_token
 
     # Store token WITH refresh token — this is what enables 24/7 server-side scanning
     token_store.store(
-        GmailToken(
+        _gmail_token_class()(
             user_id=user_id,
             access_token=access_token,
             refresh_token=refresh_token,
@@ -1170,7 +1270,7 @@ async def approve_and_post(
             "override_justification": (
                 request.extraction.get("override_justification", "") if isinstance(request.extraction, dict) else ""
             ) or None,
-            "field_confidences": extract_field_confidences(request.extraction or {}),
+            "field_confidences": _extract_field_confidences(request.extraction or {}),
             "source_channel": "gmail_extension",
             "source_channel_id": "gmail_extension",
             "source_message_ref": gmail_ref,
@@ -1208,7 +1308,7 @@ async def verify_confidence(
         ap_item = db.get_ap_item_by_message_id(org_id, request.email_id)
 
     metadata = db._decode_json(ap_item.get("metadata")) if ap_item else {}
-    return build_verify_confidence_payload(
+    return _build_verify_confidence_payload(
         email_id=request.email_id,
         ap_item=ap_item,
         extraction=request.extraction or {},
@@ -1438,7 +1538,7 @@ def _merge_ap_item_metadata(db: Any, ap_item: Dict[str, Any], updates: Dict[str,
 
 
 def _resolve_ap_item_for_extension_action(db: Any, organization_id: str, reference_id: str) -> Optional[Dict[str, Any]]:
-    return resolve_ap_item_reference(db, organization_id, reference_id)
+    return _resolve_ap_item_reference(db, organization_id, reference_id)
 
 
 def _load_idempotent_extension_response(db: Any, idempotency_key: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -2006,7 +2106,7 @@ async def get_workflow_status(
     
     Use this to poll for completion of async workflows.
     """
-    runtime = TemporalRuntime()
+    runtime = _temporal_runtime()
     try:
         payload = await runtime.get_status(workflow_id)
     except KeyError:
@@ -2070,7 +2170,7 @@ def explain_ap_item(
     prior_reasoning = str(meta.get("ap_decision_reasoning") or "").strip()
     needs_info_q = str(meta.get("needs_info_question") or "").strip()
 
-    explanation = render_ap_item_explanation(
+    explanation = _render_ap_item_explanation(
         vendor=vendor,
         amount=amount,
         state=state,
@@ -2112,7 +2212,7 @@ def _explain_with_claude(
     needs_info_question: str,
 ) -> dict:
     """Ask Claude to explain an AP item's current state in plain English."""
-    return support_explain_with_claude(
+    return _support_explain_with_claude(
         api_key=api_key,
         vendor=vendor,
         amount=amount,
@@ -2140,7 +2240,7 @@ def _explain_fallback(
     needs_info_question: str,
 ) -> dict:
     """Plain-text fallback explanation built from structured fields (no LLM)."""
-    return support_explain_fallback(
+    return _support_explain_fallback(
         vendor=vendor,
         amount=amount,
         state=state,
@@ -2157,7 +2257,7 @@ def extension_health():
     """Health check for extension API."""
     return {
         "status": "ok",
-        "temporal_enabled": temporal_enabled(),
+        "temporal_enabled": _temporal_enabled(),
         "service": "clearledgr-gmail-extension",
         "differentiators": [
             "audit_link_generation",
@@ -2199,7 +2299,7 @@ async def suggest_gl_code(
     Human reviews and confirms/changes.
     """
     org_id = _resolve_org_id_for_user(_user, request.organization_id)
-    return build_gl_suggestion_payload(
+    return _build_gl_suggestion_payload(
         organization_id=org_id,
         vendor_name=request.vendor_name,
     )
@@ -2216,7 +2316,7 @@ async def suggest_vendor(
     Returns matched vendor + confidence for human confirmation.
     """
     org_id = _resolve_org_id_for_user(_user, request.organization_id)
-    return build_vendor_suggestion_payload(
+    return _build_vendor_suggestion_payload(
         organization_id=org_id,
         sender_email=request.sender_email,
         extracted_vendor=request.extracted_vendor,
@@ -2236,7 +2336,7 @@ async def validate_amount(
     Returns whether amount seems reasonable + expected range.
     """
     _resolve_org_id_for_user(_user, organization_id)
-    return build_amount_validation_payload(vendor_name, amount)
+    return _build_amount_validation_payload(vendor_name, amount)
 
 
 @router.get("/suggestions/form-prefill/{email_id}")
@@ -2255,7 +2355,7 @@ async def get_form_prefill(
     db = get_db()
     invoice = db.get_invoice_by_email_id(email_id)
     try:
-        return build_form_prefill_payload(
+        return _build_form_prefill_payload(
             email_id=email_id,
             organization_id=org_id,
             invoice=invoice,
@@ -2288,7 +2388,7 @@ async def get_needs_info_draft(
     db = get_db()
     ap_item = db.get_ap_item(ap_item_id)
     try:
-        return build_needs_info_draft_payload(
+        return _build_needs_info_draft_payload(
             ap_item_id=ap_item_id,
             ap_item=ap_item,
             reason=reason,

@@ -8,27 +8,57 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
-from clearledgr.core.approval_action_contract import (
-    ApprovalActionContractError,
-    NormalizedApprovalAction,
-    normalize_teams_action,
-    resolve_action_precedence,
-)
 from clearledgr.core.ap_item_resolution import (
     resolve_ap_context as resolve_shared_ap_context,
     resolve_ap_correlation_id,
 )
 from clearledgr.core.database import get_db
-from clearledgr.core.launch_controls import get_channel_action_block_reason
-from clearledgr.core.teams_verify import verify_teams_token
-from clearledgr.services.agent_command_dispatch import (
-    build_channel_runtime,
-    dispatch_runtime_intent,
-)
 
 
 router = APIRouter(prefix="/teams/invoices", tags=["teams-invoices"])
 logger = logging.getLogger(__name__)
+
+
+def _approval_action_error_type():
+    from clearledgr.core.approval_action_contract import ApprovalActionContractError
+
+    return ApprovalActionContractError
+
+
+def _normalize_teams_action(*args, **kwargs):
+    from clearledgr.core.approval_action_contract import normalize_teams_action
+
+    return normalize_teams_action(*args, **kwargs)
+
+
+def _resolve_action_precedence(*args, **kwargs):
+    from clearledgr.core.approval_action_contract import resolve_action_precedence
+
+    return resolve_action_precedence(*args, **kwargs)
+
+
+def _get_channel_action_block_reason(*args, **kwargs):
+    from clearledgr.core.launch_controls import get_channel_action_block_reason
+
+    return get_channel_action_block_reason(*args, **kwargs)
+
+
+def _verify_teams_token(auth_header: str):
+    from clearledgr.core.teams_verify import verify_teams_token
+
+    return verify_teams_token(auth_header)
+
+
+def _build_channel_runtime(*args, **kwargs):
+    from clearledgr.services.agent_command_dispatch import build_channel_runtime
+
+    return build_channel_runtime(*args, **kwargs)
+
+
+async def _dispatch_runtime_intent(*args, **kwargs):
+    from clearledgr.services.agent_command_dispatch import dispatch_runtime_intent
+
+    return await dispatch_runtime_intent(*args, **kwargs)
 
 
 def _parse_payload(raw: Any) -> Dict[str, Any]:
@@ -136,8 +166,8 @@ def _resolve_correlation_id(db, organization_id: str, ap_item_id: Optional[str],
     )
 
 
-async def _dispatch_teams_action(action: NormalizedApprovalAction) -> Dict[str, Any]:
-    runtime = build_channel_runtime(
+async def _dispatch_teams_action(action: Any) -> Dict[str, Any]:
+    runtime = _build_channel_runtime(
         organization_id=action.organization_id or "default",
         actor_id=action.actor_id or "teams_user",
         actor_email=action.actor_display or action.actor_id or "teams_user",
@@ -146,7 +176,7 @@ async def _dispatch_teams_action(action: NormalizedApprovalAction) -> Dict[str, 
     )
 
     if action.action == "approve":
-        return await dispatch_runtime_intent(
+        return await _dispatch_runtime_intent(
             runtime,
             "approve_invoice",
             {
@@ -166,7 +196,7 @@ async def _dispatch_teams_action(action: NormalizedApprovalAction) -> Dict[str, 
             idempotency_key=action.idempotency_key,
         )
     if action.action == "request_info":
-        return await dispatch_runtime_intent(
+        return await _dispatch_runtime_intent(
             runtime,
             "request_info",
             {
@@ -186,7 +216,7 @@ async def _dispatch_teams_action(action: NormalizedApprovalAction) -> Dict[str, 
             idempotency_key=action.idempotency_key,
         )
     if action.action == "reject":
-        return await dispatch_runtime_intent(
+        return await _dispatch_runtime_intent(
             runtime,
             "reject_invoice",
             {
@@ -213,8 +243,9 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
     """Handle Teams approval/budget actions for AP invoices."""
     db = get_db()
     auth_header = request.headers.get("Authorization", "")
+    ApprovalActionContractError = _approval_action_error_type()
     try:
-        claims = verify_teams_token(auth_header)
+        claims = _verify_teams_token(auth_header)
     except HTTPException as exc:
         raw_body = await request.body()
         body_hash = hashlib.sha256(raw_body or b"").hexdigest()[:16]
@@ -252,7 +283,7 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
         email_candidate,
     )
     try:
-        normalized = normalize_teams_action(payload, claims=claims, organization_id=organization_id)
+        normalized = _normalize_teams_action(payload, claims=claims, organization_id=organization_id)
     except ApprovalActionContractError as exc:
         _audit_callback_event(
             db,
@@ -275,7 +306,7 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
         normalized.gmail_id,
     )
 
-    blocked_reason = get_channel_action_block_reason(
+    blocked_reason = _get_channel_action_block_reason(
         normalized.organization_id,
         "teams",
         db=db,
@@ -317,7 +348,7 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
         except Exception:
             pass
 
-    precedence = resolve_action_precedence(
+    precedence = _resolve_action_precedence(
         normalized,
         ap_item_row,
         already_processed=bool(db.get_ap_audit_event_by_key(processed_key)),

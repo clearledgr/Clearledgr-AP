@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,13 +12,10 @@ from clearledgr.core.auth import get_current_user, require_ops_user
 from clearledgr.core.database import get_db
 from clearledgr.core.finance_contracts import ActionExecution, SkillRequest
 from clearledgr.services.agent_command_dispatch import build_runtime_for_user
-from clearledgr.services.finance_agent_runtime import (
-    FinanceAgentRuntime,
-    IntentNotSupportedError,
-)
 
 
 router = APIRouter(prefix="/api/agent/intents", tags=["agent-intents"])
+logger = logging.getLogger(__name__)
 
 
 class AgentIntentPreviewRequest(BaseModel):
@@ -61,19 +59,38 @@ class AgentSkillExecuteRequest(BaseModel):
     organization_id: Optional[str] = None
 
 
+def _intent_not_supported_error_type():
+    from clearledgr.services.finance_agent_runtime import IntentNotSupportedError
+
+    return IntentNotSupportedError
+
+
 def _translate_runtime_error(exc: Exception) -> HTTPException:
+    error_code = "agent_intent_runtime_error"
+    IntentNotSupportedError = _intent_not_supported_error_type()
     if isinstance(exc, IntentNotSupportedError):
-        return HTTPException(status_code=400, detail=str(exc))
+        error_code = "intent_not_supported"
+        return HTTPException(status_code=400, detail={"code": error_code, "message": str(exc)})
     if isinstance(exc, LookupError):
-        return HTTPException(status_code=404, detail=str(exc))
+        error_code = "lookup_error"
+        return HTTPException(status_code=404, detail={"code": error_code, "message": str(exc)})
     if isinstance(exc, PermissionError):
-        return HTTPException(status_code=403, detail=str(exc))
+        error_code = "permission_error"
+        return HTTPException(status_code=403, detail={"code": error_code, "message": str(exc)})
     if isinstance(exc, ValueError):
-        return HTTPException(status_code=400, detail=str(exc))
-    return HTTPException(status_code=500, detail="agent_intent_runtime_error")
+        error_code = "validation_error"
+        return HTTPException(status_code=400, detail={"code": error_code, "message": str(exc)})
+    logger.exception("Unhandled agent intent runtime error: %s", exc)
+    return HTTPException(
+        status_code=500,
+        detail={
+            "code": error_code,
+            "message": "Unexpected agent runtime failure",
+        },
+    )
 
 
-def _runtime_for_request(user: Any, requested_org_id: Optional[str]) -> FinanceAgentRuntime:
+def _runtime_for_request(user: Any, requested_org_id: Optional[str]) -> Any:
     return build_runtime_for_user(
         user,
         requested_org_id,

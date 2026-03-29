@@ -7,13 +7,30 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, Query
 
-import clearledgr.services.ap_item_service as shared
 from clearledgr.core.auth import get_current_user
 from clearledgr.api.deps import verify_org_access
 from clearledgr.services.ap_operator_audit import normalize_operator_audit_events
 
 
 router = APIRouter()
+
+
+class _SharedProxy:
+    def __init__(self) -> None:
+        self._module = None
+
+    def _resolve(self):
+        if self._module is None:
+            import clearledgr.services.ap_item_service as module
+
+            self._module = module
+        return self._module
+
+    def __getattr__(self, name: str):
+        return getattr(self._resolve(), name)
+
+
+shared = _SharedProxy()
 
 
 @router.get("/upcoming")

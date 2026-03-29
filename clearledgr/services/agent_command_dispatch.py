@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 from clearledgr.core.database import get_db
-from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
 _ORG_ADMIN_ROLES = {"admin", "owner", "api"}
 
@@ -50,7 +49,9 @@ def build_runtime_for_user(
     db: Any = None,
     admin_roles: set[str] | None = None,
     fallback_actor: str = "user",
-) -> FinanceAgentRuntime:
+) -> Any:
+    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+
     org_id = resolve_org_id_for_user(
         user,
         requested_org_id,
@@ -71,7 +72,9 @@ def build_channel_runtime(
     actor_email: Optional[str],
     db: Any = None,
     fallback_actor: str,
-) -> FinanceAgentRuntime:
+) -> Any:
+    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+
     return FinanceAgentRuntime(
         organization_id=str(organization_id or "default"),
         actor_id=str(actor_id or fallback_actor),
@@ -81,7 +84,7 @@ def build_channel_runtime(
 
 
 async def dispatch_runtime_intent(
-    runtime: FinanceAgentRuntime,
+    runtime: Any,
     intent: str,
     payload: Optional[Dict[str, Any]] = None,
     *,
@@ -92,4 +95,3 @@ async def dispatch_runtime_intent(
         payload if isinstance(payload, dict) else {},
         idempotency_key=idempotency_key,
     )
-

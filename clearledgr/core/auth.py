@@ -11,13 +11,9 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import Any, Dict, Optional
 
-import jwt
 from fastapi import Depends, Header, HTTPException, Cookie
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
-
-from clearledgr.core.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -26,31 +22,77 @@ logger = logging.getLogger(__name__)
 # call _users_db.clear() without breaking.
 _users_db: dict = {}
 
-try:
-    import bcrypt as _bcrypt_lib
-except Exception as e:  # pragma: no cover
-    logger.info("bcrypt not available, using fallback: %s", e)
-    _bcrypt_lib = None
-
-# Configuration
-from clearledgr.core.secrets import require_secret as _require_secret
-
-SECRET_KEY = _require_secret("CLEARLEDGR_SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
-# Password hashing
-# Keep bcrypt compatibility for existing hashes, but default to pbkdf2_sha256 so
-# local/dev environments don't fail when bcrypt wheels/backends are mismatched.
-pwd_context = CryptContext(
-    schemes=["pbkdf2_sha256", "bcrypt"],
-    deprecated="auto",
-)
-_fallback_pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-
 # Bearer token security
 security = HTTPBearer(auto_error=False)
+_JWT_MODULE = None
+_PWD_CONTEXT = None
+_FALLBACK_PWD_CONTEXT = None
+_BCRYPT_LIB = None
+_BCRYPT_CHECKED = False
+
+
+def _jwt_module():
+    global _JWT_MODULE
+    if _JWT_MODULE is None:
+        import jwt as module
+
+        _JWT_MODULE = module
+    return _JWT_MODULE
+
+
+def _password_context():
+    global _PWD_CONTEXT
+    if _PWD_CONTEXT is None:
+        from passlib.context import CryptContext
+
+        _PWD_CONTEXT = CryptContext(
+            schemes=["pbkdf2_sha256", "bcrypt"],
+            deprecated="auto",
+        )
+    return _PWD_CONTEXT
+
+
+def _fallback_password_context():
+    global _FALLBACK_PWD_CONTEXT
+    if _FALLBACK_PWD_CONTEXT is None:
+        from passlib.context import CryptContext
+
+        _FALLBACK_PWD_CONTEXT = CryptContext(
+            schemes=["pbkdf2_sha256"],
+            deprecated="auto",
+        )
+    return _FALLBACK_PWD_CONTEXT
+
+
+def _bcrypt_lib():
+    global _BCRYPT_LIB
+    global _BCRYPT_CHECKED
+    if not _BCRYPT_CHECKED:
+        try:
+            import bcrypt as module
+
+            _BCRYPT_LIB = module
+        except Exception as exc:  # pragma: no cover
+            logger.info("bcrypt not available, using fallback: %s", exc)
+            _BCRYPT_LIB = None
+        _BCRYPT_CHECKED = True
+    return _BCRYPT_LIB
+
+
+def _secret_key() -> str:
+    from clearledgr.core.secrets import require_secret
+
+    return require_secret("CLEARLEDGR_SECRET_KEY")
+
+
+def _get_db():
+    from clearledgr.core.database import get_db
+
+    return get_db()
 
 
 class TokenData(BaseModel):
@@ -94,10 +136,10 @@ class TokenResponse(BaseModel):
 def hash_password(password: str) -> str:
     """Hash a password."""
     try:
-        return pwd_context.hash(password)
+        return _password_context().hash(password)
     except Exception as e:
         logger.warning("Primary password hashing failed, using fallback: %s", e)
-        return _fallback_pwd_context.hash(password)
+        return _fallback_password_context().hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: Optional[str]) -> bool:
@@ -105,13 +147,14 @@ def verify_password(plain_password: str, hashed_password: Optional[str]) -> bool
     if not hashed_password:
         return False
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        return _password_context().verify(plain_password, hashed_password)
     except Exception as e:
         logger.warning("Primary password verification failed, trying fallbacks: %s", e)
-        if hashed_password.startswith("$2") and _bcrypt_lib is not None:
+        bcrypt_lib = _bcrypt_lib()
+        if hashed_password.startswith("$2") and bcrypt_lib is not None:
             try:
                 return bool(
-                    _bcrypt_lib.checkpw(
+                    bcrypt_lib.checkpw(
                         plain_password.encode("utf-8"),
                         hashed_password.encode("utf-8"),
                     )
@@ -120,7 +163,7 @@ def verify_password(plain_password: str, hashed_password: Optional[str]) -> bool
                 logger.warning("bcrypt fallback verification failed: %s", e)
         # Fallback verification path for pbkdf2 hashes when bcrypt backend is unavailable.
         try:
-            return _fallback_pwd_context.verify(plain_password, hashed_password)
+            return _fallback_password_context().verify(plain_password, hashed_password)
         except Exception as e:
             logger.error("All password verification methods failed: %s", e)
             return False
@@ -147,7 +190,7 @@ def create_access_token(
         "iat": datetime.now(timezone.utc),
         "type": "access",
     }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return _jwt_module().encode(payload, _secret_key(), algorithm=ALGORITHM)
 
 
 def create_refresh_token(user_id: str) -> str:
@@ -159,13 +202,14 @@ def create_refresh_token(user_id: str) -> str:
         "iat": datetime.now(timezone.utc),
         "type": "refresh",
     }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return _jwt_module().encode(payload, _secret_key(), algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> Dict[str, Any]:
     """Decode and validate a JWT token."""
+    jwt = _jwt_module()
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, _secret_key(), algorithms=[ALGORITHM])
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token has expired")
@@ -202,7 +246,7 @@ def get_current_user(
         return _token_data_from_payload(payload)
 
     if x_api_key:
-        db = get_db()
+        db = _get_db()
         key_record = db.validate_api_key(x_api_key)
         if key_record:
             return TokenData(
@@ -325,7 +369,7 @@ def create_user(
     role: str = "user",
 ) -> User:
     """Create a new user in persistent storage.  Idempotent: returns existing user if found."""
-    db = get_db()
+    db = _get_db()
     existing = db.get_user_by_email(email)
     if existing:
         return _row_to_user(existing)
@@ -348,7 +392,7 @@ def create_user(
 
 def authenticate_user(email: str, password: str) -> Optional[User]:
     """Authenticate a user by email and password."""
-    db = get_db()
+    db = _get_db()
     row = db.get_user_by_email(email)
     if not row:
         return None
@@ -361,13 +405,13 @@ def authenticate_user(email: str, password: str) -> Optional[User]:
 
 def get_user_by_id(user_id: str) -> Optional[User]:
     """Get user by ID."""
-    row = get_db().get_user(user_id)
+    row = _get_db().get_user(user_id)
     return _row_to_user(row) if row else None
 
 
 def get_user_by_email(email: str) -> Optional[User]:
     """Get user by email."""
-    row = get_db().get_user_by_email(email)
+    row = _get_db().get_user_by_email(email)
     return _row_to_user(row) if row else None
 
 
@@ -375,7 +419,7 @@ def create_user_from_google(email: str, google_id: str, organization_id: str) ->
     """
     Create or update a user from Google identity.
     """
-    db = get_db()
+    db = _get_db()
     domain = email.split("@")[1] if "@" in email else None
     db.ensure_organization(
         organization_id=organization_id,

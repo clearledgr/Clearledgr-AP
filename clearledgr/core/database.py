@@ -30,34 +30,60 @@ except ImportError:  # pragma: no cover
     dict_row = None
     HAS_POSTGRES = False
 
-from clearledgr.core.stores.ap_store import APStore
-from clearledgr.core.stores.ap_runtime_store import APRuntimeStore, AP_RUNTIME_COMPAT_TABLES
-from clearledgr.core.stores.approval_chain_store import ApprovalChainStore
-from clearledgr.core.stores.auth_store import AuthStore
-from clearledgr.core.stores.browser_agent_store import BrowserAgentStore
-from clearledgr.core.stores.integration_store import IntegrationStore
-from clearledgr.core.stores.metrics_store import MetricsStore
-from clearledgr.core.stores.policy_store import PolicyStore
-from clearledgr.core.stores.task_store import TaskStore
-from clearledgr.core.stores.vendor_store import VendorStore
-from clearledgr.core.stores.recon_store import ReconStore
-
 logger = logging.getLogger(__name__)
 
 
-class ClearledgrDB(
-    APStore,
-    APRuntimeStore,
-    ApprovalChainStore,
-    AuthStore,
-    IntegrationStore,
-    BrowserAgentStore,
-    PolicyStore,
-    MetricsStore,
-    TaskStore,
-    VendorStore,
-    ReconStore,
-):
+AP_RUNTIME_COMPAT_TABLES: tuple[str, ...] = ()
+_CLEARLEDGR_DB_IMPL = None
+
+
+def _load_store_symbols() -> None:
+    global APStore
+    global APRuntimeStore
+    global AP_RUNTIME_COMPAT_TABLES
+    global ApprovalChainStore
+    global AuthStore
+    global BrowserAgentStore
+    global IntegrationStore
+    global MetricsStore
+    global PolicyStore
+    global TaskStore
+    global VendorStore
+    global ReconStore
+
+    if "APStore" in globals():
+        return
+
+    from clearledgr.core.stores.ap_store import APStore as _APStore
+    from clearledgr.core.stores.ap_runtime_store import (
+        APRuntimeStore as _APRuntimeStore,
+        AP_RUNTIME_COMPAT_TABLES as _AP_RUNTIME_COMPAT_TABLES,
+    )
+    from clearledgr.core.stores.approval_chain_store import ApprovalChainStore as _ApprovalChainStore
+    from clearledgr.core.stores.auth_store import AuthStore as _AuthStore
+    from clearledgr.core.stores.browser_agent_store import BrowserAgentStore as _BrowserAgentStore
+    from clearledgr.core.stores.integration_store import IntegrationStore as _IntegrationStore
+    from clearledgr.core.stores.metrics_store import MetricsStore as _MetricsStore
+    from clearledgr.core.stores.policy_store import PolicyStore as _PolicyStore
+    from clearledgr.core.stores.task_store import TaskStore as _TaskStore
+    from clearledgr.core.stores.vendor_store import VendorStore as _VendorStore
+    from clearledgr.core.stores.recon_store import ReconStore as _ReconStore
+
+    APStore = _APStore
+    APRuntimeStore = _APRuntimeStore
+    AP_RUNTIME_COMPAT_TABLES = _AP_RUNTIME_COMPAT_TABLES
+    ApprovalChainStore = _ApprovalChainStore
+    AuthStore = _AuthStore
+    BrowserAgentStore = _BrowserAgentStore
+    IntegrationStore = _IntegrationStore
+    MetricsStore = _MetricsStore
+    PolicyStore = _PolicyStore
+    TaskStore = _TaskStore
+    VendorStore = _VendorStore
+    ReconStore = _ReconStore
+
+
+class _ClearledgrDBBase:
     def __init__(self, db_path: str = "clearledgr.db"):
         self.dsn = os.getenv("DATABASE_URL")
         self.db_path = db_path
@@ -1064,6 +1090,42 @@ class ClearledgrDB(
             conn.commit()
 
         self._initialized = True
+
+
+class ClearledgrDB:
+    def __new__(cls, *args, **kwargs):
+        if cls is ClearledgrDB:
+            impl_cls = _get_db_impl_class()
+            instance = object.__new__(impl_cls)
+            impl_cls.__init__(instance, *args, **kwargs)
+            return instance
+        return object.__new__(cls)
+
+
+def _get_db_impl_class():
+    global _CLEARLEDGR_DB_IMPL
+    if _CLEARLEDGR_DB_IMPL is None:
+        _load_store_symbols()
+
+        class _ClearledgrDBImpl(
+            ClearledgrDB,
+            APStore,
+            APRuntimeStore,
+            ApprovalChainStore,
+            AuthStore,
+            IntegrationStore,
+            BrowserAgentStore,
+            PolicyStore,
+            MetricsStore,
+            TaskStore,
+            VendorStore,
+            ReconStore,
+            _ClearledgrDBBase,
+        ):
+            pass
+
+        _CLEARLEDGR_DB_IMPL = _ClearledgrDBImpl
+    return _CLEARLEDGR_DB_IMPL
 
 
 _DB_INSTANCE: Optional[ClearledgrDB] = None
