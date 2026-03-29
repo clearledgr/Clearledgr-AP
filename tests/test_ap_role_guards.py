@@ -79,7 +79,7 @@ def test_require_ops_user_rejects_read_only_roles():
 
 def test_get_current_user_requires_auth():
     with pytest.raises(HTTPException) as exc_info:
-        get_current_user(credentials=None, x_api_key=None, admin_access_cookie=None)
+        get_current_user(credentials=None, x_api_key=None, workspace_access_cookie=None)
 
     assert exc_info.value.status_code == 401
     assert "Not authenticated" in str(exc_info.value.detail)

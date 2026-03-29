@@ -94,6 +94,9 @@ async def _deferred_startup(app):
 async def app_lifespan(app: FastAPI):
     """Canonical app lifecycle — fires slow startup in background so server binds fast."""
     _apply_runtime_surface_profile()
+    if _should_skip_deferred_startup():
+        yield
+        return
     # Fire all slow startup tasks in the background so uvicorn binds immediately
     deferred_startup_task = asyncio.create_task(_deferred_startup(app))
     app.state.deferred_startup_task = deferred_startup_task
@@ -175,6 +178,10 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_skip_deferred_startup() -> bool:
+    return _env_flag("CLEARLEDGR_SKIP_DEFERRED_STARTUP", default=False)
 
 
 def _runtime_surface_contract() -> Dict[str, Any]:

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from clearledgr.core.auth import get_current_user, require_ops_user
+from clearledgr.core.database import get_db
 from clearledgr.core.finance_contracts import ActionExecution, SkillRequest
 from clearledgr.services.agent_command_dispatch import build_runtime_for_user
 from clearledgr.services.finance_agent_runtime import (
@@ -76,6 +77,7 @@ def _runtime_for_request(user: Any, requested_org_id: Optional[str]) -> FinanceA
     return build_runtime_for_user(
         user,
         requested_org_id,
+        db=get_db(),
         fallback_actor="user",
     )
 

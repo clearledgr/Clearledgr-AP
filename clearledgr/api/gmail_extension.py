@@ -14,20 +14,9 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from pydantic import BaseModel, Field
 
-from clearledgr.api.deps import get_audit_service
-from clearledgr.services.audit import AuditTrailService
 from clearledgr.workflows.temporal_runtime import TemporalRuntime, temporal_enabled
 
 # Import all intelligence services
-from clearledgr.services.vendor_intelligence import get_vendor_intelligence
-from clearledgr.services.policy_compliance import get_policy_compliance
-from clearledgr.services.priority_detection import get_priority_detection
-from clearledgr.services.audit_trail import get_audit_trail, AuditEventType
-from clearledgr.services.budget_awareness import get_budget_awareness
-from clearledgr.services.agent_reflection import get_agent_reflection
-from clearledgr.services.proactive_insights import get_proactive_insights
-from clearledgr.services.cross_invoice_analysis import get_cross_invoice_analyzer
-from clearledgr.services.agent_reasoning import get_agent as get_reasoning_agent
 from clearledgr.services.gmail_extension_support import (
     _explain_fallback as support_explain_fallback,
     _explain_with_claude as support_explain_with_claude,
@@ -48,8 +37,6 @@ from clearledgr.core.ap_confidence import evaluate_critical_field_confidence, ex
 from clearledgr.core.ap_item_resolution import resolve_ap_item_reference
 from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email
 from clearledgr.core.database import get_db
-from clearledgr.services.ap_item_service import build_worklist_item
-from clearledgr.services.ap_projection import build_worklist_items
 from clearledgr.services.gmail_api import (
     GmailAPIClient,
     GmailToken,
@@ -65,6 +52,54 @@ router = APIRouter(prefix="/extension", tags=["gmail-extension"])
 
 _ADMIN_ROLES = {"admin", "owner"}
 EXTENSION_BACKEND_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60
+
+
+def get_audit_service():
+    from clearledgr.api.deps import get_audit_service as _get_audit_service
+
+    return _get_audit_service()
+
+
+def get_audit_trail():
+    from clearledgr.services.audit_trail import get_audit_trail as _get_audit_trail
+
+    return _get_audit_trail()
+
+
+def get_vendor_intelligence():
+    from clearledgr.services.vendor_intelligence import get_vendor_intelligence as _get_vendor_intelligence
+
+    return _get_vendor_intelligence()
+
+
+def get_policy_compliance(organization_id: str):
+    from clearledgr.services.policy_compliance import get_policy_compliance as _get_policy_compliance
+
+    return _get_policy_compliance(organization_id)
+
+
+def get_priority_detection(organization_id: str):
+    from clearledgr.services.priority_detection import get_priority_detection as _get_priority_detection
+
+    return _get_priority_detection(organization_id)
+
+
+def get_budget_awareness(organization_id: str):
+    from clearledgr.services.budget_awareness import get_budget_awareness as _get_budget_awareness
+
+    return _get_budget_awareness(organization_id)
+
+
+def build_worklist_item(*args, **kwargs):
+    from clearledgr.services.ap_item_service import build_worklist_item as _build_worklist_item
+
+    return _build_worklist_item(*args, **kwargs)
+
+
+def build_worklist_items(*args, **kwargs):
+    from clearledgr.services.ap_projection import build_worklist_items as _build_worklist_items
+
+    return _build_worklist_items(*args, **kwargs)
 
 
 def _is_admin_user(user: Any) -> bool:
@@ -527,19 +562,13 @@ def _apply_agent_reasoning(
     attachments: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Run agent reasoning and merge decision + extraction."""
-    return support_apply_agent_reasoning(
-        result,
-        org_id,
-        combined_text,
-        attachments,
-        reasoning_agent_factory=get_reasoning_agent,
-    )
+    return support_apply_agent_reasoning(result, org_id, combined_text, attachments)
 
 
 @router.post("/process", dependencies=[Depends(get_current_user)])
 async def process_email(
     request: EmailProcessRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user=Depends(require_ops_user),
 ):
     """
@@ -590,7 +619,7 @@ async def process_email(
 @router.post("/scan", dependencies=[Depends(get_current_user)])
 async def bulk_scan_emails(
     request: BulkScanRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user=Depends(require_ops_user),
 ):
     """
@@ -1118,7 +1147,7 @@ async def exchange_gmail_code(request: ExchangeCodeRequest):
 @router.post("/approve-and-post", dependencies=[Depends(get_current_user)])
 async def approve_and_post(
     request: ApproveAndPostRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user=Depends(require_ops_user),
 ):
     """
@@ -1230,7 +1259,7 @@ async def match_erp(
 @router.post("/escalate", dependencies=[Depends(get_current_user)])
 async def escalate_to_manager(
     request: EscalateRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user=Depends(require_ops_user),
 ):
     """Runtime-owned escalation action for invoice review exceptions."""
@@ -1519,7 +1548,7 @@ def _build_finance_lead_summary_payload(
 @router.post("/submit-for-approval", dependencies=[Depends(get_current_user)])
 async def submit_for_approval(
     request: SubmitForApprovalRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user=Depends(require_ops_user),
 ):
     """
@@ -1649,7 +1678,7 @@ async def submit_for_approval(
 @router.post("/reject-invoice", dependencies=[Depends(get_current_user)])
 async def reject_invoice(
     request: RejectInvoiceRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user=Depends(require_ops_user),
 ):
     """Reject an invoice and keep pipeline state in sync."""
@@ -1682,7 +1711,7 @@ async def reject_invoice(
 @router.post("/budget-decision", dependencies=[Depends(get_current_user)])
 async def budget_decision(
     request: BudgetDecisionRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user=Depends(require_ops_user),
 ):
     """Handle explicit budget decisions from Gmail sidebar surfaces."""
@@ -1756,7 +1785,7 @@ async def budget_decision(
 @router.post("/approval-nudge", dependencies=[Depends(get_current_user)])
 async def approval_nudge(
     request: ApprovalNudgeRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user = Depends(require_ops_user),
 ):
     """Send a dedicated approver nudge for pending approvals (Slack/Teams best effort)."""
@@ -1800,7 +1829,7 @@ async def approval_nudge(
 @router.post("/vendor-followup", dependencies=[Depends(get_current_user)])
 async def vendor_followup(
     request: VendorFollowupRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user=Depends(require_ops_user),
 ):
     """Prepare a vendor follow-up draft through the canonical finance runtime."""
@@ -1833,7 +1862,7 @@ async def vendor_followup(
 @router.post("/route-low-risk-approval", dependencies=[Depends(get_current_user)])
 async def route_low_risk_approval(
     request: RouteLowRiskApprovalRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user=Depends(require_ops_user),
 ):
     """Route a validated low-risk item into approval surfaces with policy prechecks."""
@@ -1867,7 +1896,7 @@ async def route_low_risk_approval(
 @router.post("/retry-recoverable-failure", dependencies=[Depends(get_current_user)])
 async def retry_recoverable_failure(
     request: RetryRecoverableFailureRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user=Depends(require_ops_user),
 ):
     """Retry a recoverable failed-post item through the canonical finance runtime."""
@@ -1900,7 +1929,7 @@ async def retry_recoverable_failure(
 @router.post("/finance-summary-share", dependencies=[Depends(get_current_user)])
 async def finance_summary_share(
     request: FinanceSummaryShareRequest,
-    audit: AuditTrailService = Depends(get_audit_service),
+    audit: Any = Depends(get_audit_service),
     user = Depends(require_ops_user),
 ):
     """Prepare or deliver a finance-lead exception summary share action."""

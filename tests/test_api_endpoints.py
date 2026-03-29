@@ -6,23 +6,64 @@ Tests the FastAPI endpoints for the Clearledgr API.
 
 from datetime import datetime, timedelta, timezone
 import asyncio
+import importlib
+import os
 from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock, AsyncMock
 
-# Import the FastAPI app
-import main as main_module
-from main import app
-from clearledgr.api import gmail_extension as gmail_extension_module
-from clearledgr.api import agent_intents as agent_intents_module
-from clearledgr.api import gmail_webhooks as gmail_webhooks_module
-from clearledgr.api import workspace_shell as workspace_shell_module
-from clearledgr.api import ap_items as ap_items_module
-from clearledgr.api import auth as auth_module
 from clearledgr.core.auth import TokenData
 
-client = TestClient(app)
+os.environ.setdefault("CLEARLEDGR_SKIP_DEFERRED_STARTUP", "true")
+
+
+class _LazyProxy:
+    def __init__(self, loader):
+        object.__setattr__(self, "_lazy_loader", loader)
+        object.__setattr__(self, "_lazy_target", None)
+
+    def _load(self):
+        target = object.__getattribute__(self, "_lazy_target")
+        if target is None:
+            target = object.__getattribute__(self, "_lazy_loader")()
+            object.__setattr__(self, "_lazy_target", target)
+        return target
+
+    def __getattr__(self, name):
+        if name == "__test__":
+            return False
+        return getattr(self._load(), name)
+
+    def __setattr__(self, name, value):
+        if name in {"_lazy_loader", "_lazy_target"}:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self._load(), name, value)
+
+    def __delattr__(self, name):
+        if name in {"_lazy_loader", "_lazy_target"}:
+            raise AttributeError(name)
+        delattr(self._load(), name)
+
+    def __call__(self, *args, **kwargs):
+        return self._load()(*args, **kwargs)
+
+
+def _lazy_module(name: str) -> _LazyProxy:
+    return _LazyProxy(lambda: importlib.import_module(name))
+
+
+main_module = _lazy_module("main")
+app = _LazyProxy(lambda: main_module.app)
+gmail_extension_module = _lazy_module("clearledgr.api.gmail_extension")
+agent_intents_module = _lazy_module("clearledgr.api.agent_intents")
+gmail_webhooks_module = _lazy_module("clearledgr.api.gmail_webhooks")
+workspace_shell_module = _lazy_module("clearledgr.api.workspace_shell")
+ap_items_module = _lazy_module("clearledgr.api.ap_items")
+auth_module = _lazy_module("clearledgr.api.auth")
+
+client = _LazyProxy(lambda: TestClient(main_module.app))
 
 
 @pytest.fixture(autouse=True)
@@ -200,7 +241,7 @@ class TestAPRetryPostEndpoint:
             user_id="ap-user-1",
             email="ap-user@example.com",
             organization_id="default",
-            role="user",
+            role="operator",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
 
@@ -227,7 +268,7 @@ class TestAPRetryPostEndpoint:
 
         app.dependency_overrides[ap_items_module.get_current_user] = self._fake_user
         try:
-            with patch.object(ap_items_module, "get_db", return_value=fake_db):
+            with patch("clearledgr.services.ap_item_service.get_db", return_value=fake_db):
                 with patch(
                     "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
                     _runtime_execute,
@@ -258,7 +299,7 @@ class TestAPRetryPostEndpoint:
 
         app.dependency_overrides[ap_items_module.get_current_user] = self._fake_user
         try:
-            with patch.object(ap_items_module, "get_db", return_value=fake_db):
+            with patch("clearledgr.services.ap_item_service.get_db", return_value=fake_db):
                 with patch(
                     "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
                     _runtime_execute,
@@ -2142,7 +2183,7 @@ class TestExtensionEndpoints:
         assert client.get("/extension/invoice-status/email-1").status_code == 401
         assert client.get("/extension/workflow/wf-1").status_code == 401
         assert client.get("/extension/ap/AP-1/explain").status_code == 401
-        # Field-correction endpoint is not exposed in strict AP-v1 runtime profile.
+        # Field-correction is a runtime-owned mutation route and still requires auth.
         assert client.post(
             "/extension/record-field-correction",
             json={
@@ -2151,7 +2192,7 @@ class TestExtensionEndpoints:
                 "original_value": "Old",
                 "corrected_value": "New",
             },
-        ).status_code == 404
+        ).status_code == 401
 
     def test_sensitive_extension_endpoints_enforce_org_scope(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
@@ -3252,6 +3293,16 @@ class TestAgentIntentEndpoints:
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
 
+    @staticmethod
+    def _fake_operator():
+        return TokenData(
+            user_id="agent-operator-1",
+            email="agent-operator@example.com",
+            organization_id="default",
+            role="operator",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
     def test_preview_intent_endpoint_calls_runtime(self):
         app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
         preview_response = {
@@ -3304,7 +3355,7 @@ class TestAgentIntentEndpoints:
         assert response.json().get("detail") == "org_mismatch"
 
     def test_execute_intent_endpoint_calls_runtime(self):
-        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_operator
         execute_response = {
             "intent": "route_low_risk_for_approval",
             "status": "pending_approval",
@@ -3339,7 +3390,7 @@ class TestAgentIntentEndpoints:
         exec_mock.assert_awaited_once()
 
     def test_execute_intent_endpoint_blocks_cross_org_request(self):
-        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_operator
         try:
             response = client.post(
                 "/api/agent/intents/execute",
@@ -3387,7 +3438,7 @@ class TestAgentIntentEndpoints:
         exec_mock.assert_awaited_once()
 
     def test_execute_intent_endpoint_supports_prepare_vendor_followups(self):
-        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_operator
         execute_response = {
             "intent": "prepare_vendor_followups",
             "status": "prepared",
@@ -3621,7 +3672,7 @@ class TestAgentIntentEndpoints:
         preview_mock.assert_called_once()
 
     def test_execute_request_endpoint_uses_canonical_action_execution_contract(self):
-        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
+        app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_operator
         execute_response = {
             "status": "pending_approval",
             "intent": "route_low_risk_for_approval",

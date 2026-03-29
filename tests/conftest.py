@@ -2,7 +2,12 @@
 Shared pytest fixtures and hooks for the Clearledgr test suite.
 """
 
+import os
+
 import pytest
+
+os.environ.setdefault("AP_V1_ALLOW_IN_MEMORY_RATE_LIMIT_IN_PRODUCTION", "true")
+os.environ.setdefault("CLEARLEDGR_SKIP_DEFERRED_STARTUP", "true")
 
 
 @pytest.fixture(autouse=True)

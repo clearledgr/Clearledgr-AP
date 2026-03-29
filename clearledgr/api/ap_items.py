@@ -7,6 +7,7 @@ from fastapi import APIRouter
 import clearledgr.services.ap_item_service as _service
 from clearledgr.api.ap_items_action_routes import router as _action_router
 from clearledgr.api.ap_items_read_routes import router as _read_router
+from clearledgr.core.auth import get_current_user
 from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
 
@@ -22,3 +23,4 @@ for _name in dir(_service):
 
 
 globals()["FinanceAgentRuntime"] = FinanceAgentRuntime
+globals()["get_current_user"] = get_current_user

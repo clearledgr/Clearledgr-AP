@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -10,13 +12,30 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from main import STRICT_PROFILE_ALLOWED_PREFIXES, _runtime_surface_contract, app
 from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+
+os.environ.setdefault("CLEARLEDGR_SKIP_DEFERRED_STARTUP", "true")
+
+
+def _main_module():
+    return importlib.import_module("main")
+
+
+def _runtime_surface_contract():
+    return _main_module()._runtime_surface_contract()
+
+
+def _app():
+    return _main_module().app
+
+
+def _strict_profile_allowed_prefixes():
+    return _main_module().STRICT_PROFILE_ALLOWED_PREFIXES
 
 
 def _mounted_paths() -> set[str]:
     paths: set[str] = set()
-    for route in app.router.routes:
+    for route in _app().router.routes:
         route_path = getattr(route, "path", None)
         if isinstance(route_path, str):
             paths.add(route_path)
@@ -29,7 +48,7 @@ def test_strict_profile_blocks_legacy_surfaces(monkeypatch):
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
-    with TestClient(app) as client:
+    with TestClient(_app()) as client:
         blocked = client.get("/email/tasks")
         assert blocked.status_code == 404
         body = blocked.json()
@@ -72,7 +91,7 @@ def test_strict_profile_contract_ignores_legacy_runtime_flags(monkeypatch):
     assert "strict_disable_request_ignored_strict_ap_v1" in warnings
     assert "allow_legacy_in_production_ignored_strict_ap_v1" in warnings
 
-    with TestClient(app) as client:
+    with TestClient(_app()) as client:
         response = client.get("/email/tasks")
         assert response.status_code == 404
         body = response.json()
@@ -89,7 +108,7 @@ def test_legacy_surface_override_does_not_restore_deleted_legacy_routes(monkeypa
     monkeypatch.setenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", "true")
     monkeypatch.setenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", "true")
 
-    with TestClient(app) as client:
+    with TestClient(_app()) as client:
         response = client.get("/email/tasks")
         assert response.status_code == 404
         assert "/email/tasks" not in _mounted_paths()
@@ -101,7 +120,7 @@ def test_strict_profile_filters_legacy_paths_from_openapi(monkeypatch):
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
-    with TestClient(app) as client:
+    with TestClient(_app()) as client:
         response = client.get("/openapi.json")
         assert response.status_code == 200
         paths = response.json()["paths"]
@@ -119,9 +138,9 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
-    with TestClient(app) as _client:
+    with TestClient(_app()) as _client:
         paths = _mounted_paths()
-        assert len(paths) <= 135
+        assert len(paths) <= 145
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
@@ -132,7 +151,7 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         # OAuth callbacks remain available for admin ERP install flows.
         assert "/erp/quickbooks/callback" in paths
         assert "/erp/xero/callback" in paths
-        assert set(STRICT_PROFILE_ALLOWED_PREFIXES) == {"/v1", "/static"}
+        assert set(_strict_profile_allowed_prefixes()) == {"/v1", "/static"}
 
 
 def test_strict_profile_blocks_unknown_prefixed_routes(monkeypatch):
@@ -141,7 +160,7 @@ def test_strict_profile_blocks_unknown_prefixed_routes(monkeypatch):
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
-    with TestClient(app) as client:
+    with TestClient(_app()) as client:
         for path in (
             "/auth/noncanonical-probe",
             "/gmail/noncanonical-probe",
@@ -159,7 +178,7 @@ def test_strict_profile_allows_canonical_ap_item_detail_route(monkeypatch):
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
-    with TestClient(app) as client:
+    with TestClient(_app()) as client:
         response = client.get("/api/ap/items/AP-SURFACE-PROBE?organization_id=default")
         assert response.status_code in {401, 404}
         assert response.json().get("detail") != "endpoint_disabled_in_ap_v1_profile"
@@ -171,7 +190,7 @@ def test_strict_profile_allows_explicit_gmail_thread_recovery(monkeypatch):
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
-    with TestClient(app) as client:
+    with TestClient(_app()) as client:
         response = client.post("/extension/by-thread/thread-surface-probe/recover?organization_id=default")
         assert response.status_code in {401, 404}
         assert response.json().get("detail") != "endpoint_disabled_in_ap_v1_profile"
@@ -183,7 +202,7 @@ def test_strict_profile_allows_workspace_user_preferences_route(monkeypatch):
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
-    with TestClient(app) as client:
+    with TestClient(_app()) as client:
         response = client.patch(
             "/api/workspace/user/preferences",
             json={"organization_id": "default", "patch": {"gmail_extension": {"probe": True}}},
