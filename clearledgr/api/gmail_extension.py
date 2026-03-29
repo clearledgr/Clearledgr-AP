@@ -14,6 +14,14 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from pydantic import BaseModel, Field
 
+from clearledgr.api.gmail_extension_common import (
+    assert_user_org_access as _assert_user_org_access,
+    authenticated_actor as _authenticated_actor,
+    build_finance_runtime as _build_finance_runtime,
+    resolve_org_id_for_user as _resolve_org_id_for_user,
+    temporal_enabled as _temporal_enabled,
+)
+from clearledgr.api.gmail_extension_support_routes import router as support_routes_router
 from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email
 from clearledgr.core.database import get_db
 
@@ -21,11 +29,10 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/extension", tags=["gmail-extension"])
-
-_ADMIN_ROLES = {"admin", "owner"}
 EXTENSION_BACKEND_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60
 _GMAIL_EXTENSION_SUPPORT = None
 _GMAIL_API_MODULE = None
+router.include_router(support_routes_router)
 
 
 def _gmail_extension_support_module():
@@ -62,29 +69,8 @@ def _support_apply_intelligence(*args, **kwargs):
     return _gmail_extension_support_module().apply_intelligence(*args, **kwargs)
 
 
-def _build_amount_validation_payload(*args, **kwargs):
-    return _gmail_extension_support_module().build_amount_validation_payload(*args, **kwargs)
-
-
 def _support_build_extension_pipeline(*args, **kwargs):
     return _gmail_extension_support_module().build_extension_pipeline(*args, **kwargs)
-
-
-def _build_form_prefill_payload(*args, **kwargs):
-    return _gmail_extension_support_module().build_form_prefill_payload(*args, **kwargs)
-
-
-def _build_gl_suggestion_payload(*args, **kwargs):
-    return _gmail_extension_support_module().build_gl_suggestion_payload(*args, **kwargs)
-
-
-def _build_needs_info_draft_payload(*args, **kwargs):
-    return _gmail_extension_support_module().build_needs_info_draft_payload(*args, **kwargs)
-
-
-def _build_vendor_suggestion_payload(*args, **kwargs):
-    return _gmail_extension_support_module().build_vendor_suggestion_payload(*args, **kwargs)
-
 
 def _build_verify_confidence_payload(*args, **kwargs):
     return _gmail_extension_support_module().build_verify_confidence_payload(*args, **kwargs)
@@ -188,57 +174,10 @@ def build_worklist_items(*args, **kwargs):
     return _build_worklist_items(*args, **kwargs)
 
 
-def _temporal_enabled() -> bool:
-    from clearledgr.workflows.temporal_runtime import temporal_enabled
-
-    return temporal_enabled()
-
-
 def _temporal_runtime():
     from clearledgr.workflows.temporal_runtime import TemporalRuntime
 
     return TemporalRuntime()
-
-
-def _is_admin_user(user: Any) -> bool:
-    return str(getattr(user, "role", "") or "").strip().lower() in _ADMIN_ROLES
-
-
-def _assert_user_org_access(user: Any, organization_id: str) -> None:
-    org_id = str(organization_id or "default")
-    user_org = str(getattr(user, "organization_id", "") or "")
-    if _is_admin_user(user):
-        return
-    if user_org != org_id:
-        raise HTTPException(status_code=403, detail="org_mismatch")
-
-
-def _resolve_org_id_for_user(user: Any, requested_org: Optional[str]) -> str:
-    requested = str(requested_org or "").strip()
-    if requested and requested != "default":
-        _assert_user_org_access(user, requested)
-        return requested
-    return str(getattr(user, "organization_id", None) or "default")
-
-
-def _authenticated_actor(user: Any, fallback: str = "extension") -> str:
-    return str(
-        getattr(user, "email", None)
-        or getattr(user, "user_id", None)
-        or fallback
-    ).strip() or fallback
-
-
-def _build_finance_runtime(user: Any, organization_id: str, *, db: Any = None):
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
-
-    actor = _authenticated_actor(user, fallback="gmail_extension")
-    return FinanceAgentRuntime(
-        organization_id=organization_id,
-        actor_id=getattr(user, "user_id", None) or actor,
-        actor_email=actor,
-        db=db or get_db(),
-    )
 
 
 async def _recover_ap_item_for_thread(
@@ -2252,118 +2191,6 @@ def _explain_fallback(
     )
 
 
-@router.get("/health")
-def extension_health():
-    """Health check for extension API."""
-    return {
-        "status": "ok",
-        "temporal_enabled": _temporal_enabled(),
-        "service": "clearledgr-gmail-extension",
-        "differentiators": [
-            "audit_link_generation",
-            "human_in_the_loop",
-            "multi_system_routing",
-        ],
-    }
-
-
-# ==================== AI SUGGESTIONS FOR FORMS ====================
-# These endpoints expose AI suggestions to pre-fill forms (human confirms)
-
-class GLSuggestionRequest(BaseModel):
-    """Request for GL code suggestion."""
-    vendor_name: str
-    amount: Optional[float] = None
-    description: Optional[str] = None
-    organization_id: Optional[str] = "default"
-
-
-class VendorSuggestionRequest(BaseModel):
-    """Request for vendor suggestion from email context."""
-    sender_email: Optional[str] = None
-    sender_name: Optional[str] = None
-    subject: Optional[str] = None
-    extracted_vendor: Optional[str] = None
-    organization_id: Optional[str] = "default"
-
-
-@router.post("/suggestions/gl-code")
-async def suggest_gl_code(
-    request: GLSuggestionRequest,
-    _user=Depends(get_current_user),
-):
-    """
-    Get AI-suggested GL code for a vendor.
-    
-    Returns primary suggestion + alternatives with confidence scores.
-    Human reviews and confirms/changes.
-    """
-    org_id = _resolve_org_id_for_user(_user, request.organization_id)
-    return _build_gl_suggestion_payload(
-        organization_id=org_id,
-        vendor_name=request.vendor_name,
-    )
-
-
-@router.post("/suggestions/vendor")
-async def suggest_vendor(
-    request: VendorSuggestionRequest,
-    _user=Depends(get_current_user),
-):
-    """
-    Get AI-suggested vendor match from email context.
-    
-    Returns matched vendor + confidence for human confirmation.
-    """
-    org_id = _resolve_org_id_for_user(_user, request.organization_id)
-    return _build_vendor_suggestion_payload(
-        organization_id=org_id,
-        sender_email=request.sender_email,
-        extracted_vendor=request.extracted_vendor,
-    )
-
-
-@router.post("/suggestions/amount-validation")
-async def validate_amount(
-    vendor_name: str = Body(...),
-    amount: float = Body(...),
-    organization_id: str = Body("default"),
-    _user=Depends(get_current_user),
-):
-    """
-    Validate invoice amount against vendor history.
-    
-    Returns whether amount seems reasonable + expected range.
-    """
-    _resolve_org_id_for_user(_user, organization_id)
-    return _build_amount_validation_payload(vendor_name, amount)
-
-
-@router.get("/suggestions/form-prefill/{email_id}")
-async def get_form_prefill(
-    email_id: str,
-    organization_id: str = "default",
-    _user=Depends(get_current_user),
-):
-    """
-    Get all AI suggestions to pre-fill a form for an invoice.
-    
-    Combines vendor match, GL suggestion, and amount validation.
-    Returns everything needed to pre-fill invoice forms.
-    """
-    org_id = _resolve_org_id_for_user(_user, organization_id)
-    db = get_db()
-    invoice = db.get_invoice_by_email_id(email_id)
-    try:
-        return _build_form_prefill_payload(
-            email_id=email_id,
-            organization_id=org_id,
-            invoice=invoice,
-        )
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="org_mismatch")
-
-
 # ==================== CORRECTION LEARNING ====================
 
 class FieldCorrectionRequest(BaseModel):
@@ -2374,29 +2201,6 @@ class FieldCorrectionRequest(BaseModel):
     corrected_value: Any
     actor_id: Optional[str] = None  # email of the operator; falls back to token identity
     feedback: Optional[str] = None  # optional free-text reason
-
-
-@router.get("/needs-info-draft/{ap_item_id}")
-async def get_needs_info_draft(
-    ap_item_id: str,
-    reason: Optional[str] = Query(None, description="What information is needed — pre-fills the email body"),
-    _user=Depends(get_current_user),
-):
-    """Generate a pre-filled vendor reply template for a needs_info AP item.
-    Returns {to, subject, body} ready for Gmail compose URL construction.
-    No auth required — callable from content-script.js without token."""
-    db = get_db()
-    ap_item = db.get_ap_item(ap_item_id)
-    try:
-        return _build_needs_info_draft_payload(
-            ap_item_id=ap_item_id,
-            ap_item=ap_item,
-            reason=reason,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/record-field-correction")
