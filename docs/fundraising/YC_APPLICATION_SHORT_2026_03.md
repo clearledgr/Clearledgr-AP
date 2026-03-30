@@ -34,7 +34,7 @@ We have a real product and the current wedge is already working in software. Cle
 
 ## Do people want it?
 
-We have 3 design partners and 1 committed pilot. Cowrywise is in pricing discussions with us and starts a pilot in May. After our demo, their VP Finance said: "wow, I know how I'm already going to use this" and "if you can do this without us hiring more people, we'd use it." Booking.com told us: "if you can build this, every organisation would want it."
+We have 3 design partners and 1 committed pilot. Cowrywise is in pricing discussions with us and starts a pilot in May. After our demo, their VP Finance said: "wow, I know how I'm already going to use this" and "if you can do this without us hiring more people, we'd use it." We have also heard broader market-validation feedback from Booking.com that this pain exists beyond one company, but Cowrywise is the stronger commercial signal because it is tied to an active buying motion.
 
 ## Who is the customer?
 

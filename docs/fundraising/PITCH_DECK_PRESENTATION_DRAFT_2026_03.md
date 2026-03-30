@@ -194,9 +194,9 @@ The wedge already resonates with real buyers
 - 3 design partners
 - 1 committed pilot
 - pilot starts in May
-- real product, now being hardened for the pilot
 - Cowrywise spends ~3 days/week on reconciliation and AP
-- Booking.com validates that the pain is broader than one company
+- buying trigger: avoid hiring more people
+- proof target: approvals routed, invoices written back, hours removed
 
 Cowrywise: "if you can do this without us hiring more people, we'd use it"
 
@@ -206,7 +206,7 @@ Cowrywise: "if you can do this without us hiring more people, we'd use it"
 
 ### Speaker note
 
-Cowrywise is the strongest commercial signal. Booking.com shows the wedge is not a one-customer anomaly.
+Cowrywise is the strongest commercial signal. Keep this slide anchored on live buying motion and operational proof. Broader market-validation conversations can support in appendix or Q&A.
 
 ## Slide 10
 
@@ -296,7 +296,7 @@ To:
 - convert design partners into paid pilots
 - prove weekly operator usage
 - prove approvals routed, invoices written back, and hours removed
-- identify the strongest post-AP wedge
+- earn 1-2 referenceable AP customers
 
 YC post-money SAFE
 Target cap: $15M
@@ -307,7 +307,7 @@ Target cap: $15M
 
 ### Speaker note
 
-The ask is not to fund exploration. It is to turn early pull into repeatable customer proof.
+The ask is not to fund exploration. It is to turn early pull into repeatable customer proof on one AP lane.
 
 ## Appendix A
 

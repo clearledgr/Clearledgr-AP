@@ -80,11 +80,11 @@ The strongest signal is Cowrywise. After seeing the Gmail-native AP triage and a
 
 We are already discussing pricing with them, and the pilot is scheduled to start in May.
 
-We also had a conversation with Booking.com where the reaction was:
+We have also had broader market-validation conversations, including with Booking.com, where the reaction was:
 
 - "if you can build this, every organisation would want it"
 
-Booking.com is useful market validation. Cowrywise is the stronger commercial signal because it is tied to a real workflow and an active buying motion.
+That is useful market validation. Cowrywise is the stronger commercial signal because it is tied to a real workflow and an active buying motion.
 
 ## Who is the customer?
 

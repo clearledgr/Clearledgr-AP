@@ -150,7 +150,7 @@ Booking.com is useful validation of the market pain, but not yet equivalent buyi
 - Current environment: roughly 20 internal and external tools
 - Reaction: "if you can build this, every organisation would want it"
 
-That is strong category signal, not yet strong product commitment.
+That is strong category signal, not yet strong product commitment. It belongs in appendix or Q&A support, not as the core proof slide.
 
 ## Status Quo
 
@@ -244,15 +244,15 @@ This round should buy proof.
 
 By the end of this round, Clearledgr should have:
 
-1. 3-5 strong design partners using the AP wedge
-2. 2-3 paid pilots or paid conversions
-3. repeat weekly operator usage
-4. measurable workflow throughput:
+1. 2-3 paid pilots or paid conversions on the AP wedge
+2. repeat weekly operator usage
+3. measurable workflow throughput:
    - AP emails triaged
    - approvals routed
    - invoices written back to ERP
    - hours of manual work removed
-5. one clear post-AP expansion wedge
+4. 1-2 referenceable AP customers
+5. a repeatable deployment playbook for one Gmail -> approval -> ERP lane
 
 ## Use of Funds
 
@@ -282,7 +282,7 @@ $2M-$2.5M is the right amount because it gives Clearledgr enough runway to:
 - finish polishing the Gmail-native AP wedge
 - convert design-partner signal into paid pilot proof
 - build repeatable deployment confidence
-- identify and validate the second wedge
+- earn referenceable AP customers and a repeatable lane
 
 It is large enough to matter and small enough to preserve discipline.
 

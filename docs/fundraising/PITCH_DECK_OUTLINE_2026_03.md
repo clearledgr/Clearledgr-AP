@@ -156,9 +156,9 @@ Use only real proof. Recommended mix:
 - 1 committed pilot starting in May
 - Cowrywise spends roughly 3 days per week on reconciliation and AP
 - Cowrywise buying trigger: avoid more headcount
-- Booking.com validates that the pain is broader than one company
+- target proof for the pilot: approvals routed, invoices written back, manual hours removed
 
-Keep this slide narrow: one concrete commercial anchor, one broader market-validation signal.
+Keep this slide narrow: one concrete commercial anchor plus one or two operational proof signals. Broader market-validation conversations belong in speaker notes or the appendix.
 
 ## Slide 10 — Why Now
 
@@ -227,11 +227,11 @@ Terms:
 
 Milestones this round:
 
-- 3-5 strong design partners
+- convert design partners into paid pilot motion
 - 2-3 paid pilots
 - repeat weekly usage
 - measurable workflow throughput and time savings
-- second wedge identified and validated
+- 1-2 referenceable AP customers
 
 ## Appendix Slides
 
