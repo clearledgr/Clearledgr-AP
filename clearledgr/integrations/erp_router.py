@@ -17,6 +17,8 @@ from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from datetime import datetime
 
+from clearledgr.core.database import get_db as _canonical_get_db
+
 logger = logging.getLogger(__name__)
 
 _ERP_TIMEOUT = 30  # seconds — applied to all outbound ERP HTTP calls
@@ -175,9 +177,8 @@ class ERPConnection:
 
 # Database-backed connection storage
 def _get_db():
-    """Get database instance (lazy load to avoid circular imports)."""
-    from clearledgr.core.database import get_db
-    return get_db()
+    """Get database instance via canonical get_db()."""
+    return _canonical_get_db()
 
 
 def get_erp_connection(organization_id: str) -> Optional[ERPConnection]:

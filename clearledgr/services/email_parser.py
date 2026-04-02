@@ -10,7 +10,6 @@ Parses finance-related emails and attachments:
 """
 
 import re
-import json
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 from decimal import Decimal

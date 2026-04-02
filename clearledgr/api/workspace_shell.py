@@ -1,4 +1,17 @@
-"""Workspace shell support API for Gmail-routed pages and setup surfaces."""
+"""Workspace shell API — admin console endpoints.
+
+Sections:
+- Lines 555-660: Pydantic request models for all workspace endpoints
+- Lines 662-754: Bootstrap and integration listing
+- Lines 755-1259: Integration management (Gmail, Slack, Teams, ERP connect)
+- Lines 1261-1442: Organization settings, policies, onboarding, and user preferences
+- Lines 1445-1556: GA readiness, rollback controls, and ops monitoring
+- Lines 1559-1672: Vendor intelligence management
+- Lines 1675-1764: Team management, invites, and subscription
+- Lines 1767-1780: Health endpoint
+
+TODO: Split into workspace_integrations.py, workspace_config.py, workspace_health.py
+"""
 from __future__ import annotations
 
 import base64

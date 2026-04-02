@@ -2,6 +2,14 @@
 Clearledgr Authentication
 
 JWT-based authentication backed by persistent database records.
+
+Naming conventions
+~~~~~~~~~~~~~~~~~~
+- **user_id**: The authenticated human user (from JWT ``sub`` claim).
+  Always corresponds to a row in the ``users`` table.
+- **actor_id**: Who performed an action.  May be a ``user_id``, or a
+  synthetic value like ``"system"`` or ``"agent"`` for automated actions.
+  Stored in audit events and AP item transition logs.
 """
 
 import logging
@@ -14,6 +22,8 @@ from typing import Any, Dict, Optional
 from fastapi import Depends, Header, HTTPException, Cookie
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
+
+from clearledgr.core.database import get_db as _canonical_get_db
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +100,8 @@ def _secret_key() -> str:
 
 
 def _get_db():
-    from clearledgr.core.database import get_db
-
-    return get_db()
+    """Get database instance via canonical get_db()."""
+    return _canonical_get_db()
 
 
 class TokenData(BaseModel):

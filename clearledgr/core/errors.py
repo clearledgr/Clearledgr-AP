@@ -3,6 +3,12 @@
 Never expose stack traces, exception class names, or internal paths
 to API callers. Instead, log the full error server-side with a
 correlation ID and return only the ID to the caller.
+
+ERROR HANDLING CONVENTIONS (project-wide):
+- API routes: raise HTTPException(status_code=..., detail=...)
+- Services returning optional data: return None (caller checks)
+- Services that can fail: return {"ok": False, "error": "..."} or raise
+- Agent tool handlers: ALWAYS return dict, NEVER raise
 """
 
 import logging

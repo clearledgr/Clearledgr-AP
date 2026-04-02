@@ -13,8 +13,6 @@ from fastapi import HTTPException
 from clearledgr.api.deps import verify_org_access
 from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
 from clearledgr.core.ap_entity_routing import (
-    match_entity_candidate,
-    normalize_entity_candidate,
     resolve_entity_routing,
 )
 from clearledgr.core.database import ClearledgrDB, get_db
@@ -25,8 +23,6 @@ from clearledgr.services.erp_api_first import (
     apply_settlement_api_first,
 )
 from clearledgr.services.erp_follow_on_result import (
-    _ERP_FOLLOW_ON_APPLIED_STATUSES,
-    _ERP_FOLLOW_ON_PENDING_STATUSES,
     _apply_erp_follow_on_result,
     _money_amount,
     _refresh_linked_finance_metadata,
@@ -34,14 +30,8 @@ from clearledgr.services.erp_follow_on_result import (
 from clearledgr.services.ap_projection import build_worklist_items
 from clearledgr.services.policy_compliance import get_approval_automation_policy
 from clearledgr.api.ap_item_contracts import (
-    BulkResolveFieldReviewRequest,
-    LinkSourceRequest,
-    MergeItemsRequest,
-    ResolveEntityRouteRequest,
     ResolveFieldReviewRequest,
-    ResolveNonInvoiceReviewRequest,
     ResubmitRejectedItemRequest,
-    SplitItemRequest,
 )
 
 logger = logging.getLogger(__name__)

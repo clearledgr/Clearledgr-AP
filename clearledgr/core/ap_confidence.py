@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 
 DEFAULT_CRITICAL_FIELD_CONFIDENCE_THRESHOLD = 0.95
+DEFAULT_CONFIDENCE_FLOOR = 0.7  # Below this, extraction is considered unreliable
 DEFAULT_CRITICAL_FIELDS = ("vendor", "amount", "invoice_number", "due_date")
 
 _FIELD_ALIASES = {

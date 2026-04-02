@@ -8,6 +8,13 @@ Domain methods live in ``clearledgr.core.stores.*`` mixins.  This module
 provides the shared infrastructure (connection management, schema init,
 encryption helpers) and composes the final ``ClearledgrDB`` class via
 multiple inheritance.
+
+Threading model
+~~~~~~~~~~~~~~~
+All DB calls are **synchronous**.  When calling from an ``async`` context
+(e.g. a FastAPI route), use ``asyncio.get_event_loop().run_in_executor(None, ...)``
+to avoid blocking the event loop.  FastAPI's default thread-pool executor is
+sufficient for the expected AP workload.
 """
 from __future__ import annotations
 
@@ -88,8 +95,11 @@ class _ClearledgrDBBase:
         self.dsn = os.getenv("DATABASE_URL")
         self.db_path = db_path
         dsn = (self.dsn or "").strip().lower()
-        # In production, default to no-fallback (require Postgres).
-        # In dev, default to allowing SQLite fallback.
+        # Dev/prod defaults differ intentionally:
+        #   - dev:  CLEARLEDGR_DB_FALLBACK_SQLITE defaults to "true" (SQLite OK)
+        #   - prod: CLEARLEDGR_DB_FALLBACK_SQLITE defaults to "false" (require Postgres)
+        # This ensures prod never silently falls back to SQLite while dev stays
+        # zero-config. Override with the env var if needed.
         _is_prod = os.getenv("ENV", "dev").lower() in ("production", "prod")
         _fallback_default = "false" if _is_prod else "true"
         self.allow_sqlite_fallback = str(
@@ -1092,6 +1102,12 @@ class _ClearledgrDBBase:
         self._initialized = True
 
 
+# ARCHITECTURE NOTE: ClearledgrDB uses mixin inheritance for store methods.
+# Each mixin (APStore, AuthStore, IntegrationStore, PolicyStore, etc.) adds
+# query methods to the DB class.  The final class is assembled dynamically in
+# _get_db_impl_class() below via multiple inheritance.
+# Future migration: replace mixins with composition (db.ap.list_items()).
+# See docs/TIER4_AUDIT_2026_04.md section I5/I6 for details.
 class ClearledgrDB:
     def __new__(cls, *args, **kwargs):
         if cls is ClearledgrDB:

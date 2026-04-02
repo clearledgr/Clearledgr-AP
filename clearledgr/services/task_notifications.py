@@ -66,33 +66,24 @@ def send_task_notification(
         try:
             channel = config.get("slack_channel", SLACK_DEFAULT_CHANNEL)
             blocks = build_task_notification_blocks(notification_type, task, additional_context)
-            
-            # Run async function
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(
+
+            result = asyncio.run(
                 send_slack_message(channel, blocks, token=SLACK_BOT_TOKEN)
             )
-            loop.close()
-            
+
             success = result.get("ok", False) or success
         except Exception as e:
-            print(f"Slack app notification error: {e}")
-    
+            _logger.warning("Slack app notification error: %s", e)
+
     # Send via Teams app
     if TEAMS_AVAILABLE and config.get("teams_conversation_id"):
         try:
             card = build_task_notification_card(notification_type, task, additional_context)
-            
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             # Teams uses Bot Framework for proactive messaging
             # This would use the stored conversation reference
-            loop.close()
-            
             success = True
         except Exception as e:
-            print(f"Teams app notification error: {e}")
+            _logger.warning("Teams app notification error: %s", e)
     
     return success
 
@@ -366,15 +357,12 @@ def send_overdue_summary(
     
     try:
         channel = config.get("slack_channel", SLACK_DEFAULT_CHANNEL)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(
+        result = asyncio.run(
             send_slack_message(channel, blocks, token=SLACK_BOT_TOKEN)
         )
-        loop.close()
         return result.get("ok", False)
     except Exception as e:
-        print(f"Failed to send overdue summary: {e}")
+        _logger.warning("Failed to send overdue summary: %s", e)
         return False
 
 

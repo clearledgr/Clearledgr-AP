@@ -14,6 +14,13 @@ expects the concrete class that inherits it to provide:
 
 All methods are copied verbatim from ``clearledgr/core/database.py`` so that
 ``ClearledgrDB(APStore, ...)`` inherits them without any behavioural change.
+
+Gmail ID mapping
+~~~~~~~~~~~~~~~~
+- **gmail_id** (Python/service layer) maps to the ``thread_id`` column in
+  ``ap_items``.  It is the Gmail *thread* identifier (e.g. ``18e3f...``).
+- **message_id** is the individual message within that thread.
+  A single thread_id / gmail_id may contain multiple message_ids.
 """
 
 from __future__ import annotations
@@ -154,6 +161,15 @@ class APStore:
         If ``state`` is included in *kwargs*, the transition is validated
         against the canonical AP state machine (PLAN.md 2.1) and an
         audit event is written atomically within the same transaction.
+
+        Transaction semantics: the row UPDATE and the audit-event INSERT
+        share a single ``conn.commit()`` call, so they are atomic in both
+        SQLite and Postgres.  If either statement fails, neither is committed.
+        The ``get_ap_item()`` read for state-machine validation happens
+        *before* the write transaction opens, so it is not held inside the
+        transaction (acceptable because state transitions are idempotent
+        and the write will fail on constraint violation if a concurrent
+        update races).
 
         Callers may pass ``_actor_type`` and ``_actor_id`` as kwargs to
         record who triggered the transition.  These keys are consumed

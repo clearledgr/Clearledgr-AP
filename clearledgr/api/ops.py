@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from clearledgr.core.auth import TokenData, get_current_user
+from clearledgr.core.database import get_db
 
 
 router = APIRouter(
@@ -17,12 +18,6 @@ router = APIRouter(
 
 
 _OPS_ADMIN_ROLES = {"admin", "owner"}
-
-
-def get_db():
-    from clearledgr.core.database import get_db as _get_db
-
-    return _get_db()
 
 
 def get_erp_connection(*args, **kwargs):

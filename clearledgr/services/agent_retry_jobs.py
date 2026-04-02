@@ -12,6 +12,9 @@ from clearledgr.services.invoice_workflow import get_invoice_workflow
 
 logger = logging.getLogger(__name__)
 
+# Timeout for a single retry-job workflow resume (seconds).
+RETRY_WORKFLOW_TIMEOUT_SECONDS = 120
+
 
 def _try_ops_alert(ap_item_id: str, retry_count: int, last_error: str) -> None:
     """Best-effort Slack ops alert for dead-lettered AP items."""
@@ -98,9 +101,9 @@ async def drain_agent_retry_jobs(
 
             workflow = get_invoice_workflow(job_org_id)
             try:
-                outcome = await asyncio.wait_for(workflow.resume_workflow(ap_item_id), timeout=120)
+                outcome = await asyncio.wait_for(workflow.resume_workflow(ap_item_id), timeout=RETRY_WORKFLOW_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
-                logger.error("Retry job timed out after 120s for ap_item=%s", ap_item_id)
+                logger.error("Retry job timed out after %ds for ap_item=%s", RETRY_WORKFLOW_TIMEOUT_SECONDS, ap_item_id)
                 outcome = {"status": "timeout"}
             outcome_status = str(outcome.get("status") or "").strip().lower()
 
