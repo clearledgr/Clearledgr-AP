@@ -565,6 +565,11 @@ class APStore:
             if retry_count >= max_retries:
                 status = "dead_letter"
                 next_retry = now.isoformat()
+                logger.critical(
+                    "Notification %s entered dead_letter after %d retries. Last error: %s. "
+                    "Manual intervention required.",
+                    notif_id, retry_count, error,
+                )
             else:
                 status = "pending"
                 idx = min(retry_count - 1, len(backoff_seconds) - 1)
@@ -603,12 +608,25 @@ class APStore:
             rows = cur.fetchall()
         return [dict(row) for row in rows]
 
+    @staticmethod
+    def _normalize_invoice_number(raw: str) -> str:
+        """Normalize invoice number for dedup: lowercase, strip whitespace and common prefixes."""
+        import re as _re
+        val = str(raw or "").strip().lower()
+        # Strip leading '#'
+        val = val.lstrip("#")
+        # Remove common prefixes like 'inv-', 'inv', 'invoice-', 'invoice'
+        val = _re.sub(r"^inv(?:oice)?[-\s]*", "", val)
+        return val.strip()
+
     def get_ap_item_by_vendor_invoice(
         self, organization_id: str, vendor_name: str, invoice_number: str
     ) -> Optional[Dict[str, Any]]:
         vendor_name = str(vendor_name or "").strip()
         invoice_number = str(invoice_number or "").strip()
+        normalized_invoice = self._normalize_invoice_number(invoice_number)
         self.initialize()
+        # First try exact LOWER match (most common, uses index)
         sql = self._prepare_sql(
             "SELECT * FROM ap_items WHERE organization_id = ? "
             "AND LOWER(vendor_name) = LOWER(?) AND LOWER(invoice_number) = LOWER(?) "
@@ -618,7 +636,24 @@ class APStore:
             cur = conn.cursor()
             cur.execute(sql, (organization_id, vendor_name, invoice_number))
             row = cur.fetchone()
-        return dict(row) if row else None
+        if row:
+            return dict(row)
+        # Fallback: load recent vendor items and compare normalized forms
+        if normalized_invoice:
+            sql2 = self._prepare_sql(
+                "SELECT * FROM ap_items WHERE organization_id = ? "
+                "AND LOWER(vendor_name) = LOWER(?) "
+                "ORDER BY created_at DESC LIMIT 50"
+            )
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql2, (organization_id, vendor_name))
+                rows = cur.fetchall()
+            for r in rows:
+                row_inv = str(dict(r).get("invoice_number") or "").strip()
+                if row_inv and self._normalize_invoice_number(row_inv) == normalized_invoice:
+                    return dict(r)
+        return None
 
     def get_rejected_ap_item_by_vendor_invoice(
         self, organization_id: str, vendor_name: str, invoice_number: str

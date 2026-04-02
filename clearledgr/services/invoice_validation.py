@@ -706,6 +706,17 @@ class InvoiceValidationMixin:
             return True
 
         success = bool(self.db.update_invoice_status(gmail_id=gmail_id, status=normalized_target, **kwargs))
+        if not success:
+            logger.error(
+                "State transition failed: gmail_id=%s from=%s to=%s — update returned False",
+                gmail_id,
+                current_state,
+                normalized_target,
+            )
+            raise RuntimeError(
+                f"State transition failed for {gmail_id}: "
+                f"{current_state!r} -> {normalized_target!r}"
+            )
         if success and self._observer_registry:
             try:
                 import asyncio
@@ -1480,6 +1491,49 @@ class InvoiceValidationMixin:
                     )
             except Exception as dedup_exc:
                 logger.warning("Duplicate check failed (non-fatal): %s", dedup_exc)
+        elif invoice.vendor_name and not invoice.invoice_number:
+            # H3: No invoice number — fall back to vendor + amount + date range matching
+            # to catch potential duplicates that would otherwise be missed entirely.
+            try:
+                if hasattr(self.db, "get_ap_items_by_vendor") and invoice.amount:
+                    from datetime import timedelta
+                    recent_items = self.db.get_ap_items_by_vendor(
+                        self.organization_id,
+                        invoice.vendor_name,
+                        days=7,
+                        limit=20,
+                    )
+                    for existing in (recent_items or []):
+                        if str(existing.get("state") or "") in ("rejected",):
+                            continue
+                        existing_amount = existing.get("amount")
+                        if existing_amount is None or invoice.amount is None:
+                            continue
+                        try:
+                            existing_amount = float(existing_amount)
+                        except (TypeError, ValueError):
+                            continue
+                        if existing_amount <= 0:
+                            continue
+                        # 2% tolerance
+                        amount_diff = abs(invoice.amount - existing_amount) / max(existing_amount, 0.01)
+                        if amount_diff <= 0.02:
+                            add_reason(
+                                "possible_duplicate_no_invoice_number",
+                                f"Possible duplicate: same vendor ({invoice.vendor_name}), "
+                                f"similar amount (${invoice.amount:,.2f} vs ${existing_amount:,.2f}) "
+                                f"within 7 days, but no invoice number to confirm",
+                                severity="warning",
+                                details={
+                                    "existing_ap_item_id": str(existing.get("id") or ""),
+                                    "existing_state": str(existing.get("state") or ""),
+                                    "existing_amount": existing_amount,
+                                    "amount_diff_pct": round(amount_diff * 100, 2),
+                                },
+                            )
+                            break  # One warning is enough
+            except Exception as fuzzy_dedup_exc:
+                logger.warning("Fuzzy duplicate check failed (non-fatal): %s", fuzzy_dedup_exc)
 
         # 5) Critical-field confidence gate (launch-critical, server-enforced).
         confidence_gate = self._evaluate_invoice_confidence_gate(invoice)

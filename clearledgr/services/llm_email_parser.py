@@ -777,6 +777,28 @@ class LLMEmailParser:
             attachments=attachments,
             model=model,
         )
+
+        # C6: Cross-check extracted vendor against sender email domain.
+        # Flag (don't block) when the vendor name doesn't match any part of the sender domain.
+        extracted_vendor = str(result.get("vendor") or "").strip().lower()
+        if extracted_vendor and not _is_placeholder_vendor(extracted_vendor) and not _is_payment_processor(sender):
+            sender_domain = _sender_base_domain(sender)
+            # Split domain into meaningful parts (e.g. "acme.com" -> ["acme"])
+            domain_parts = sender_domain.replace(".", " ").split() if sender_domain else []
+            vendor_lower = extracted_vendor.lower()
+            # Check if any domain part (>= 3 chars) appears in vendor or vice versa
+            vendor_matches_domain = any(
+                (len(part) >= 3 and (part in vendor_lower or vendor_lower in part))
+                for part in domain_parts
+            )
+            if not vendor_matches_domain:
+                result["vendor_unverified"] = True
+                logger.info(
+                    "[LLMEmailParser] Vendor %r does not match sender domain %r — flagged as unverified",
+                    result["vendor"],
+                    sender_domain,
+                )
+
         if attachments:
             if local_result is None:
                 from clearledgr.services.email_parser import EmailParser

@@ -174,6 +174,10 @@ NON_RECOVERABLE_POST_FAILURE_TOKENS = frozenset(
         "missing required",
         "unmapped",
         "policy_blocked",
+        "realm_id",
+        "tenant_id",
+        "account_id",
+        "configuration_stale",
     }
 )
 

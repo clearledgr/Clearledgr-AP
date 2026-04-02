@@ -250,18 +250,49 @@ class AgentReflection:
             "correction": None  # Don't auto-correct vendor - too risky
         }
     
+    # Common tax rates as multipliers (rate% -> 1 + rate/100)
+    _KNOWN_TAX_MULTIPLIERS = [
+        1.05,   # 5%
+        1.07,   # 7%
+        1.075,  # 7.5%
+        1.08,   # 8%
+        1.0825, # 8.25%
+        1.10,   # 10%
+        1.15,   # 15%
+        1.20,   # 20%
+        1.21,   # 21%
+        1.25,   # 25%
+    ]
+
     def _check_inconsistencies(self, extraction: Dict[str, Any]) -> List[str]:
         """Check for internal inconsistencies in the extraction."""
         issues = []
-        
+
         # Check if line items sum to total
         line_items = extraction.get("line_items", [])
         total = extraction.get("total_amount") or extraction.get("amount")
-        
+
         if line_items and total:
             line_sum = sum(item.get("amount", 0) for item in line_items)
             if line_sum > 0 and abs(line_sum - total) > 1.0:
-                issues.append(f"Line items sum (${line_sum:,.2f}) doesn't match total (${total:,.2f})")
+                # H8: Before flagging mismatch, check if the difference looks like tax.
+                # If total / line_sum matches a known tax multiplier (within 1%), it's
+                # likely a tax-inclusive total rather than an extraction error.
+                ratio = total / line_sum if line_sum > 0 else 0
+                is_tax_inclusive = any(
+                    abs(ratio - mult) / mult < 0.01
+                    for mult in self._KNOWN_TAX_MULTIPLIERS
+                )
+                if is_tax_inclusive:
+                    tax_pct = round((ratio - 1.0) * 100, 1)
+                    extraction["tax_inclusive"] = True
+                    extraction["estimated_tax_rate"] = tax_pct
+                    issues.append(
+                        f"Line items sum (${line_sum:,.2f}) differs from total (${total:,.2f}) "
+                        f"— likely tax-inclusive (~{tax_pct}% tax)"
+                    )
+                else:
+                    issues.append(f"Line items sum (${line_sum:,.2f}) doesn't match total (${total:,.2f})")
         
         # Check date consistency
         invoice_date = extraction.get("invoice_date")

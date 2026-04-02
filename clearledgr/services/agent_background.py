@@ -217,6 +217,10 @@ async def _run_loop():
                 for org_id in org_ids:
                     await _check_approval_timeouts(org_id)
 
+            # Every 6th tick (~90 min): run task scheduler checks
+            if tick % 6 == 0:
+                await _run_task_scheduler_checks()
+
             # Every hour (4 ticks)
             if tick % 4 == 0:
                 for org_id in org_ids:
@@ -617,6 +621,21 @@ async def _check_approval_timeouts(org_id: str):
                 )
     except Exception as exc:
         logger.error("Approval timeout check failed: %s", exc)
+
+
+async def _run_task_scheduler_checks():
+    """Run the task scheduler's overdue/approaching/stale checks."""
+    try:
+        from clearledgr.services.task_scheduler import run_all_checks
+
+        results = run_all_checks()
+        total = results.get("total_reminders", 0)
+        if total:
+            logger.info(
+                "Task scheduler checks completed: %d reminder(s) sent", total
+            )
+    except Exception as exc:
+        logger.error("Task scheduler checks failed: %s", exc)
 
 
 async def _check_period_end(org_id: str):

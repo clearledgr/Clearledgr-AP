@@ -18,9 +18,19 @@ from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+import re
+
 from clearledgr.core.database import get_db
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_invoice_number(raw: str) -> str:
+    """Normalize invoice number for comparison: lowercase, strip whitespace and common prefixes."""
+    val = str(raw or "").strip().lower()
+    val = val.lstrip("#")
+    val = re.sub(r"^inv(?:oice)?[-\s]*", "", val)
+    return val.strip()
 
 
 @dataclass
@@ -206,9 +216,9 @@ class CrossInvoiceAnalyzer:
             match_score = 0.0
             match_reasons = []
             
-            # Check invoice number match (strongest signal)
+            # Check invoice number match (strongest signal) — normalized comparison
             if invoice_number and inv.get("invoice_number"):
-                if invoice_number.lower() == inv.get("invoice_number", "").lower():
+                if _normalize_invoice_number(invoice_number) == _normalize_invoice_number(inv.get("invoice_number", "")):
                     match_score += 0.5
                     match_reasons.append("Same invoice number")
             

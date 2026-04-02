@@ -143,6 +143,17 @@ async def drain_agent_retry_jobs(
                 last_error=last_error,
                 result=outcome,
             )
+            # B8: Mark the AP item with posting_exhausted so it's visible in
+            # the pipeline exceptions view, not just silently stuck.
+            try:
+                db.update_ap_item(
+                    ap_item_id,
+                    exception_code="posting_exhausted",
+                    exception_severity="critical",
+                    last_error=f"Dead-lettered after {retry_count} retries: {last_error}",
+                )
+            except Exception as _mark_exc:
+                logger.warning("Failed to mark AP item %s as posting_exhausted: %s", ap_item_id, _mark_exc)
             logger.critical(
                 "AP item %s entered dead letter queue after %d retries. Last error: %s. "
                 "Manual intervention required.",

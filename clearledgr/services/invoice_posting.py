@@ -1164,10 +1164,12 @@ class InvoicePostingMixin:
                 }
 
         # B3: Mandatory idempotency key — generate if not provided (PLAN.md S7.3)
+        # B4: Use a stable key derived from the AP item so retries reuse the same
+        # key and never duplicate-post to the ERP.
         if not idempotency_key:
-            import uuid as _uuid
-            idempotency_key = f"auto:{invoice.gmail_id or invoice.invoice_number or ''}:{_uuid.uuid4().hex[:8]}"
-            logger.warning("Generated auto idempotency_key=%s (caller did not provide one)", idempotency_key)
+            stable_seed = ap_item_id or invoice.gmail_id or invoice.invoice_number or ""
+            idempotency_key = f"auto:{stable_seed}:erp_post"
+            logger.warning("Generated stable idempotency_key=%s (caller did not provide one)", idempotency_key)
 
         # First, get or create vendor
         vendor = Vendor(

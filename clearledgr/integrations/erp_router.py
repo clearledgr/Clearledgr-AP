@@ -2410,10 +2410,18 @@ async def post_bill_to_quickbooks(
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("QuickBooks Bill API HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        if status_code == 404:
+            reason = "erp_realm_id_invalid"
+            logger.error(
+                "QuickBooks 404 — likely realm_id mismatch (realm_id=%s). "
+                "Verify the company is accessible with current credentials.",
+                connection.realm_id,
+            )
         return {
             "status": "error",
             "erp": "quickbooks",
-            "reason": f"http_{status_code}",
+            "reason": reason,
             "needs_reauth": status_code == 401,
         }
     except Exception as e:
@@ -2505,10 +2513,18 @@ async def post_bill_to_xero(
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("Xero Bill API HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        if status_code == 404:
+            reason = "erp_configuration_stale"
+            logger.error(
+                "Xero 404 — likely tenant_id mismatch (tenant_id=%s). "
+                "Verify the organisation is accessible with current credentials.",
+                connection.tenant_id,
+            )
         return {
             "status": "error",
             "erp": "xero",
-            "reason": f"http_{status_code}",
+            "reason": reason,
             "needs_reauth": status_code == 401,
         }
     except Exception as e:
@@ -2624,10 +2640,18 @@ async def post_bill_to_netsuite(
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("NetSuite Vendor Bill API HTTP error: status=%d", status_code)
+        reason = f"http_{status_code}"
+        if status_code == 404:
+            reason = "erp_configuration_stale"
+            logger.error(
+                "NetSuite 404 — likely account_id mismatch (account_id=%s). "
+                "Verify the account is accessible with current credentials.",
+                connection.account_id,
+            )
         return {
             "status": "error",
             "erp": "netsuite",
-            "reason": f"http_{status_code}",
+            "reason": reason,
             "needs_reauth": status_code == 401,
         }
     except Exception as e:
@@ -3268,12 +3292,19 @@ async def post_bill_to_sap(
         status_code = e.response.status_code
         logger.error("SAP A/P Invoice HTTP error: status=%d", status_code)
         reason = f"http_{status_code}"
+        if status_code == 404:
+            reason = "erp_configuration_stale"
+            logger.error(
+                "SAP 404 — likely base_url or company_code mismatch (base_url=%s, company_code=%s). "
+                "Verify the SAP Service Layer endpoint and company are accessible.",
+                connection.base_url, connection.company_code,
+            )
         try:
             payload = e.response.json()
         except Exception:
             payload = None
         validation_message = _extract_sap_validation_message(payload)
-        if validation_message:
+        if validation_message and status_code != 404:
             reason = validation_message
         return {
             "status": "error",

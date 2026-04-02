@@ -702,15 +702,47 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             except Exception as ver_exc:
                 logger.warning("Post-posting verification error (non-fatal): %s", ver_exc)
 
-            self._transition_invoice_state(
-                gmail_id=invoice.gmail_id,
-                target_state="posted_to_erp",
-                correlation_id=correlation_id,
-                erp_reference=erp_reference,
-                erp_posted_at=post_attempted_at,
-                post_attempted_at=post_attempted_at,
-                last_error=None,
-            )
+            try:
+                self._transition_invoice_state(
+                    gmail_id=invoice.gmail_id,
+                    target_state="posted_to_erp",
+                    correlation_id=correlation_id,
+                    erp_reference=erp_reference,
+                    erp_posted_at=post_attempted_at,
+                    post_attempted_at=post_attempted_at,
+                    last_error=None,
+                )
+            except Exception as db_exc:
+                # ERP post succeeded but DB state update failed — critical inconsistency.
+                # Log at CRITICAL so operators can recover the ERP reference.
+                logger.critical(
+                    "ERP post succeeded but DB state transition to posted_to_erp FAILED. "
+                    "gmail_id=%s erp_reference=%s correlation_id=%s error=%s",
+                    invoice.gmail_id,
+                    erp_reference,
+                    correlation_id,
+                    db_exc,
+                )
+                # Best-effort: mark AP item with exception code for later reconciliation
+                try:
+                    ap_id = self._lookup_ap_item_id(
+                        gmail_id=invoice.gmail_id,
+                        vendor_name=invoice.vendor_name,
+                        invoice_number=invoice.invoice_number,
+                    )
+                    if ap_id:
+                        self.db.update_ap_item(
+                            ap_id,
+                            exception_code="erp_posted_db_update_failed",
+                            exception_severity="critical",
+                            last_error=f"ERP reference {erp_reference} posted but DB update failed: {db_exc}",
+                        )
+                except Exception as patch_exc:
+                    logger.critical(
+                        "Failed to set exception_code on AP item after ERP/DB inconsistency: %s",
+                        patch_exc,
+                    )
+                raise
 
             # Store verification result in metadata
             if not post_verified:

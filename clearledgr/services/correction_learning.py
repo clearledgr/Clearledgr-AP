@@ -103,6 +103,7 @@ class CorrectionLearningService:
     """
     
     _RULES_TTL_SECONDS: int = 300  # refresh in-memory cache every 5 minutes
+    _REFRESH_INTERVAL: int = 300   # full refresh interval in seconds (5 minutes)
 
     def __init__(self, organization_id: str = "default"):
         self.organization_id = organization_id
@@ -113,11 +114,13 @@ class CorrectionLearningService:
         self._learned_rules: Dict[str, LearningRule] = {}
         self._vendor_preferences: Dict[str, Dict[str, Any]] = defaultdict(dict)
         self._rules_loaded_at: float = 0.0  # monotonic timestamp of last DB load
+        self._last_refresh: float = time.time()
         self._extraction_calibration_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
         self._review_snapshot_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
 
         self._init_tables()
         self._load_rules()
+        self._load_vendor_preferences()
     
     # ------------------------------------------------------------------
     # DB persistence
@@ -300,8 +303,69 @@ class CorrectionLearningService:
         except Exception as e:
             logger.error("Could not load learned rules: %s", e)
 
-    def _persist_correction(self, correction: Correction):
-        """Write a correction to the DB."""
+    def _load_vendor_preferences(self):
+        """Load vendor preferences from the learned_rules DB (rule_type='vendor_pref')."""
+        import json as _json
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT id, action FROM agent_learned_rules "
+                    "WHERE organization_id = ? AND rule_type = 'vendor_pref'",
+                    (self.organization_id,),
+                )
+                for row in cur.fetchall():
+                    r = dict(row)
+                    rule_id = r.get("id") or ""
+                    # rule_id format: vendor_pref_{vendor_key}
+                    vendor_key = rule_id.replace("vendor_pref_", "", 1)
+                    if not vendor_key:
+                        continue
+                    try:
+                        prefs = _json.loads(r["action"]) if r.get("action") else {}
+                    except Exception:
+                        prefs = {}
+                    if isinstance(prefs, dict) and prefs:
+                        self._vendor_preferences[vendor_key] = prefs
+            if self._vendor_preferences:
+                logger.info(
+                    "Loaded %d vendor preferences for %s",
+                    len(self._vendor_preferences),
+                    self.organization_id,
+                )
+        except Exception as e:
+            logger.error("Could not load vendor preferences: %s", e)
+
+    def _persist_vendor_preference(self, vendor: str):
+        """Persist a single vendor's preferences to the learned_rules DB."""
+        import json as _json
+        prefs = self._vendor_preferences.get(vendor)
+        if not prefs:
+            return
+        rule_id = f"vendor_pref_{vendor.lower().replace(' ', '_')}"
+        now = datetime.now().isoformat()
+        try:
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """INSERT OR REPLACE INTO agent_learned_rules
+                    (id, organization_id, rule_type, condition, action,
+                     confidence, learned_from, created_at, last_applied, success_rate)
+                    VALUES (?, ?, 'vendor_pref', ?, ?, 0.0, 0, ?, NULL, 1.0)""",
+                    (
+                        rule_id,
+                        self.organization_id,
+                        _json.dumps({"vendor": vendor}),
+                        _json.dumps(prefs),
+                        now,
+                    ),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("Could not persist vendor preference for %s: %s", vendor, e)
+
+    def _persist_correction(self, correction: Correction) -> bool:
+        """Write a correction to the DB. Returns False on failure."""
         import json as _json
         try:
             with self.db.connect() as conn:
@@ -327,11 +391,13 @@ class CorrectionLearningService:
                     ),
                 )
                 conn.commit()
+            return True
         except Exception as e:
             logger.error("Could not persist correction: %s", e)
+            return False
 
-    def _persist_rule(self, rule: LearningRule):
-        """Upsert a learned rule to the DB."""
+    def _persist_rule(self, rule: LearningRule) -> bool:
+        """Upsert a learned rule to the DB. Returns False on failure."""
         import json as _json
         try:
             with self.db.connect() as conn:
@@ -355,8 +421,10 @@ class CorrectionLearningService:
                     ),
                 )
                 conn.commit()
+            return True
         except Exception as e:
             logger.error("Could not persist rule: %s", e)
+            return False
 
     @staticmethod
     def _normalize_field_name(raw: Any) -> str:
@@ -520,7 +588,8 @@ class CorrectionLearningService:
             "created_at": correction.timestamp,
         }
 
-    def _persist_normalized_correction_event(self, normalized: Dict[str, Any]) -> str:
+    def _persist_normalized_correction_event(self, normalized: Dict[str, Any]):
+        """Persist a normalized correction event. Returns event_id on success, False on failure."""
         event_id = str(normalized.get("event_id") or f"cevt_{datetime.now().strftime('%Y%m%d%H%M%S%f')}")
         try:
             with self.db.connect() as conn:
@@ -560,9 +629,10 @@ class CorrectionLearningService:
                     ),
                 )
                 conn.commit()
+            return event_id
         except Exception as exc:
             logger.error("Could not persist normalized correction event: %s", exc)
-        return event_id
+            return False
 
     def _update_vendor_layout_error_stats(self, normalized: Dict[str, Any]) -> Optional[str]:
         vendor_name = self._normalize_vendor_name(normalized.get("vendor_name"))
@@ -1258,6 +1328,7 @@ class CorrectionLearningService:
                 self._vendor_preferences[vendor] = {}
             self._vendor_preferences[vendor]["gl_correction_count"] = gl_correction_count
             self._vendor_preferences[vendor]["gl_last_corrected_value"] = correction.corrected_value
+            self._persist_vendor_preference(vendor)
 
             if gl_correction_count < 2:
                 logger.info(
@@ -1318,10 +1389,11 @@ class CorrectionLearningService:
             prefs["expected_amounts"] = []
         
         prefs["expected_amounts"].append(corrected_amount)
-        
+
         # Keep last 10 amounts
         prefs["expected_amounts"] = prefs["expected_amounts"][-10:]
-        
+        self._persist_vendor_preference(vendor)
+
         return {"preferences_updated": ["amount_expectations"]}
     
     def _learn_classification(self, correction: Correction) -> Dict[str, Any]:
@@ -1367,21 +1439,31 @@ class CorrectionLearningService:
             
             self._vendor_preferences[vendor]["approval_bias"] = "permissive"
             self._vendor_preferences[vendor]["auto_approve_threshold_adj"] = -0.1
-            
+            self._persist_vendor_preference(vendor)
+
             return {"preferences_updated": ["approval_threshold"]}
-        
+
         elif original_decision == "auto_approved" and user_decision == "rejected":
             # User is more strict - raise the threshold
             if vendor not in self._vendor_preferences:
                 self._vendor_preferences[vendor] = {}
-            
+
             self._vendor_preferences[vendor]["approval_bias"] = "strict"
             self._vendor_preferences[vendor]["auto_approve_threshold_adj"] = 0.1
-            
+            self._persist_vendor_preference(vendor)
+
             return {"preferences_updated": ["approval_threshold"]}
         
         return {"rules_created": 0}
     
+    def _refresh_if_stale(self):
+        """Reload rules and vendor preferences from DB if the refresh interval has elapsed."""
+        now = time.time()
+        if now - self._last_refresh > self._REFRESH_INTERVAL:
+            self._load_rules()
+            self._load_vendor_preferences()
+            self._last_refresh = now
+
     def suggest(
         self,
         suggestion_type: str,
@@ -1390,15 +1472,13 @@ class CorrectionLearningService:
         """
         Get a suggestion based on learned rules.
 
-        Refreshes the in-memory rule cache from DB if it is older than
-        _RULES_TTL_SECONDS (default 5 min), so corrections written by one
-        process are visible to others without a restart.
+        Refreshes the in-memory caches (rules + vendor preferences) from DB
+        if older than _REFRESH_INTERVAL (default 5 min), so corrections
+        written by one process are visible to others without a restart.
 
         Returns None if no learned rule applies.
         """
-        import time as _time
-        if _time.monotonic() - self._rules_loaded_at > self._RULES_TTL_SECONDS:
-            self._load_rules()
+        self._refresh_if_stale()
 
         if suggestion_type == "gl_code":
             return self._suggest_gl_code(context)

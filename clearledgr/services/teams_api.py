@@ -48,27 +48,41 @@ class TeamsAPIClient:
             webhook_url = str(os.getenv("TEAMS_APPROVAL_WEBHOOK_URL", "")).strip()
         return cls(webhook_url=webhook_url)
 
-    def _post_json(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _post_json(self, payload: Dict[str, Any], *, max_retries: int = 3) -> Dict[str, Any]:
         if not self.webhook_url:
             return {"status": "skipped", "reason": "teams_webhook_not_configured"}
 
         body = json.dumps(payload).encode("utf-8")
-        request = Request(
-            self.webhook_url,
-            data=body,
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                status_code = int(getattr(response, "status", 200))
-            if 200 <= status_code < 300:
-                return {"status": "sent", "status_code": status_code}
-            return {"status": "error", "status_code": status_code}
-        except URLError as exc:
-            return {"status": "error", "reason": str(exc)}
-        except Exception as exc:  # pragma: no cover - defensive for runtime-only integrations
-            return {"status": "error", "reason": str(exc)}
+        last_error: Optional[Dict[str, Any]] = None
+
+        for attempt in range(max_retries):
+            request = Request(
+                self.webhook_url,
+                data=body,
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                with urlopen(request, timeout=self.timeout_seconds) as response:
+                    status_code = int(getattr(response, "status", 200))
+                if 200 <= status_code < 300:
+                    return {"status": "sent", "status_code": status_code}
+                last_error = {"status": "error", "status_code": status_code}
+            except URLError as exc:
+                last_error = {"status": "error", "reason": str(exc)}
+            except Exception as exc:  # pragma: no cover - defensive for runtime-only integrations
+                last_error = {"status": "error", "reason": str(exc)}
+
+            if attempt < max_retries - 1:
+                backoff = 2 ** attempt  # 1s, 2s
+                logger.warning(
+                    "Teams webhook POST failed (attempt %d/%d), retrying in %ds: %s",
+                    attempt + 1, max_retries, backoff, last_error,
+                )
+                time.sleep(backoff)
+
+        logger.error("Teams webhook POST failed after %d attempts: %s", max_retries, last_error)
+        return last_error or {"status": "error", "reason": "all_retries_exhausted"}
 
     @staticmethod
     def _budget_rows(budget: Dict[str, Any]) -> List[Dict[str, Any]]:

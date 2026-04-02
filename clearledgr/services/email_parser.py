@@ -27,7 +27,7 @@ try:
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False
-    logger.warning("pytesseract not available - OCR disabled. Install with: pip install pytesseract pillow")
+    logger.warning("pytesseract not available - OCR disabled. Scanned invoices will be flagged as 'requires_ocr'. Install with: pip install pytesseract pillow")
 
 try:
     import pdfplumber
@@ -384,6 +384,13 @@ class EmailParser:
         )
         conflict_actions = self._build_conflict_actions(source_conflicts)
 
+        # Propagate ocr_status from any attachment that needs OCR but couldn't get it
+        attachments_requiring_ocr = [
+            a for a in parsed_attachments
+            if a.get("ocr_status") == "requires_ocr"
+        ]
+        ocr_status = "requires_ocr" if attachments_requiring_ocr else None
+
         return {
             "email_type": email_type,
             "vendor": vendor,
@@ -401,6 +408,7 @@ class EmailParser:
             "confidence": self._calculate_confidence(email_type, amounts, invoice_numbers),
             "currency": primary_currency,
             "primary_source": primary_source,
+            "ocr_status": ocr_status,
             "field_provenance": field_provenance,
             "field_evidence": field_evidence,
             "source_conflicts": source_conflicts,
@@ -1541,11 +1549,20 @@ class EmailParser:
                 else ""
             )
 
+            ocr_status = None
+            if not parsed_text and not (OCR_AVAILABLE and PDFIUM_AVAILABLE):
+                ocr_status = "requires_ocr"
+                logger.warning(
+                    "PDF attachment %r has no extractable text and OCR is unavailable",
+                    attachment.get('name') or attachment.get('filename'),
+                )
+
             return {
                 "name": attachment.get('name') or attachment.get('filename'),
                 "type": parsed_type or ("invoice" if 'invoice' in name else "document"),
                 "content_type": "application/pdf",
                 "requires_ocr": False if parsed_text else True,
+                "ocr_status": ocr_status,
                 "parsed": bool(parsed_text),
                 "content_text": parsed_text,
                 "extraction": parsed_invoice
@@ -1595,22 +1612,30 @@ class EmailParser:
             # Attempt OCR extraction
             ocr_text = None
             parsed_invoice = None
-            
+            ocr_status = None
+
             if content_base64 and OCR_AVAILABLE:
                 ocr_text = self._extract_image_text_ocr(content_base64)
                 if ocr_text:
                     parsed_invoice = self.parse_invoice_text(ocr_text)
-            
+            elif content_base64 and not OCR_AVAILABLE:
+                ocr_status = "requires_ocr"
+                logger.warning(
+                    "Scanned image attachment %r cannot be processed - OCR (pytesseract) is not installed",
+                    attachment.get('name') or attachment.get('filename'),
+                )
+
             return {
                 "name": attachment.get('name') or attachment.get('filename'),
                 "type": "invoice" if 'invoice' in name else "document",
                 "content_type": content_type,
                 "requires_ocr": not bool(ocr_text),
+                "ocr_status": ocr_status,
                 "parsed": bool(ocr_text),
                 "content_text": ocr_text,
                 "extraction": parsed_invoice
             }
-        
+
         return None
     
     def _extract_image_text_ocr(self, content_base64: str) -> Optional[str]:
@@ -1862,6 +1887,14 @@ class EmailParser:
     ) -> bool:
         """Decide whether a PDF should be rasterized and OCR'd."""
         if not (OCR_AVAILABLE and PDFIUM_AVAILABLE):
+            # Log when a scanned PDF would need OCR but we can't provide it
+            normalized = re.sub(r"\s+", "", str(text or ""))
+            if len(normalized) < 60:
+                logger.warning(
+                    "Scanned PDF detected (text layer too thin: %d chars) but OCR is unavailable. "
+                    "Install pytesseract + pypdfium2 to process scanned invoices.",
+                    len(normalized),
+                )
             return False
 
         normalized = re.sub(r"\s+", "", str(text or ""))

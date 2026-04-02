@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,15 @@ from typing import Any, Dict, List, Optional
 
 from clearledgr.core.database import ClearledgrDB, get_db
 from clearledgr.services.correction_learning import CorrectionLearningService
+
+logger = logging.getLogger(__name__)
+
+# Module-level calibration history for rollback visibility
+_calibration_history: List[Dict[str, Any]] = []
+
+# Hard bounds for auto-applied thresholds
+_THRESHOLD_FLOOR = 0.70
+_THRESHOLD_CEILING = 0.99
 
 
 def _now_iso() -> str:
@@ -274,12 +284,31 @@ class LearningCalibrationService:
 
                 if status == "recalibration_needed":
                     # Tighten: human disagreement is high, lower the auto-approve bar
-                    new_threshold = max(0.80, round(current_threshold - 0.02, 4))
+                    new_threshold = round(current_threshold - 0.02, 4)
                 elif status == "stable" and current_threshold < 0.95 and override_rate < 0.1:
                     # Relax: stable performance, gradually return toward default
-                    new_threshold = min(0.95, round(current_threshold + 0.01, 4))
+                    new_threshold = round(current_threshold + 0.01, 4)
+
+                # Enforce hard bounds: never below floor or above ceiling
+                new_threshold = max(_THRESHOLD_FLOOR, min(_THRESHOLD_CEILING, new_threshold))
 
                 if new_threshold != current_threshold:
+                    logger.info(
+                        "[LearningCalibration] auto_apply org=%s: threshold %.4f -> %.4f (reason=%s)",
+                        self.organization_id,
+                        current_threshold,
+                        new_threshold,
+                        status,
+                    )
+                    # Store previous value for rollback visibility
+                    _calibration_history.append({
+                        "organization_id": self.organization_id,
+                        "field": "auto_approve_confidence_threshold",
+                        "old_value": current_threshold,
+                        "new_value": new_threshold,
+                        "reason": status,
+                        "applied_at": _now_iso(),
+                    })
                     _cfg_dict["auto_approve_confidence_threshold"] = new_threshold
                     _raw_settings["org_config"] = _cfg_dict
                     _db.update_organization(self.organization_id, settings=_raw_settings)
@@ -291,8 +320,7 @@ class LearningCalibrationService:
                         "applied_at": _now_iso(),
                     })
             except Exception as _exc:
-                import logging as _logging
-                _logging.getLogger(__name__).warning(
+                logger.warning(
                     "[LearningCalibration] auto_apply failed (non-fatal): %s", _exc
                 )
 

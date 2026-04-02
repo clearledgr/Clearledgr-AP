@@ -263,12 +263,18 @@ class GLCorrectionService:
         """
         Get a suggested GL code based on vendor and context.
         Uses learning service if available.
+
+        Collects suggestions from all available sources and flags conflicts
+        when multiple sources disagree on the GL code.
         """
         def _with_alias(d: Dict[str, Any]) -> Dict[str, Any]:
             """Ensure suggested_gl alias is present alongside gl_code."""
             if "gl_code" in d and "suggested_gl" not in d:
                 d["suggested_gl"] = d["gl_code"]
             return d
+
+        # Collect candidates from all sources to detect conflicts.
+        candidates: List[Dict[str, Any]] = []
 
         # Check local corrections history first (most vendor-specific)
         vendor_lower = vendor.lower()
@@ -285,7 +291,7 @@ class GLCorrectionService:
             total = len(vendor_corrections)
             confidence = min(0.95, gl_counts[best_gl] / total * (0.5 + total * 0.1))
             if confidence > 0.5:
-                return _with_alias({
+                candidates.append({
                     "gl_code": best_gl,
                     "suggested_gl": best_gl,
                     "gl_description": self._get_gl_description(best_gl),
@@ -298,7 +304,7 @@ class GLCorrectionService:
             learning = get_learning_service(self.organization_id)
             suggestion = learning.suggest_gl_code(vendor=vendor, amount=amount)
             if suggestion and suggestion.get("confidence", 0) > 0.5:
-                return _with_alias({
+                candidates.append({
                     "gl_code": suggestion["gl_code"],
                     "gl_description": self._get_gl_description(suggestion["gl_code"]),
                     "confidence": suggestion["confidence"],
@@ -307,13 +313,13 @@ class GLCorrectionService:
         except Exception:
             pass
 
-        # Fallback to vendor intelligence
+        # Vendor intelligence
         try:
             from clearledgr.services.vendor_intelligence import get_vendor_intelligence
             vi = get_vendor_intelligence()
             vendor_info = vi.get_suggestion(vendor)
             if vendor_info and vendor_info.get("suggested_gl"):
-                return _with_alias({
+                candidates.append({
                     "gl_code": vendor_info["suggested_gl"],
                     "gl_description": vendor_info.get("gl_description", ""),
                     "confidence": 0.7,
@@ -322,14 +328,38 @@ class GLCorrectionService:
         except Exception:
             pass
 
-        # Default to general operating expenses
-        return {
-            "gl_code": "5000",
-            "suggested_gl": "5000",
-            "gl_description": "Operating Expenses",
-            "confidence": 0.3,
-            "source": "default",
-        }
+        if not candidates:
+            # Default to general operating expenses
+            return {
+                "gl_code": "5000",
+                "suggested_gl": "5000",
+                "gl_description": "Operating Expenses",
+                "confidence": 0.3,
+                "source": "default",
+            }
+
+        # H6: Detect conflicts — multiple sources suggest different GL codes
+        unique_codes = set(c["gl_code"] for c in candidates)
+        # Pick the highest-confidence candidate
+        best = max(candidates, key=lambda c: c.get("confidence", 0))
+        result = _with_alias(dict(best))
+
+        if len(unique_codes) > 1:
+            result["gl_conflict"] = True
+            result["gl_conflict_details"] = [
+                {"gl_code": c["gl_code"], "source": c["source"], "confidence": c.get("confidence")}
+                for c in candidates
+            ]
+            logger.warning(
+                "GL code conflict for vendor %r: %s (selected %s from %s with confidence %.2f)",
+                vendor,
+                ", ".join(f"{c['gl_code']}({c['source']})" for c in candidates),
+                best["gl_code"],
+                best["source"],
+                best.get("confidence", 0),
+            )
+
+        return result
     
     def get_recent_corrections(
         self,
