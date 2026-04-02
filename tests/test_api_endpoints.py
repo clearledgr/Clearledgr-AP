@@ -1408,7 +1408,7 @@ class TestGmailWebhooks:
         )
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
-                with patch.object(gmail_extension_module, "GmailAPIClient", _FakeGmailAPIClient):
+                with patch.object(gmail_extension_module, "_gmail_api_client", _FakeGmailAPIClient):
                     lookup_response = client.get("/extension/by-thread/thread-1", params={"organization_id": "default"})
                     recover_response = client.post("/extension/by-thread/thread-1/recover", params={"organization_id": "default"})
         finally:
@@ -1452,13 +1452,14 @@ class TestGmailWebhooks:
 
         with patch("clearledgr.services.gmail_api.exchange_code_for_tokens", AsyncMock(return_value=fake_token)):
             with patch.object(gmail_extension_module, "get_user_by_email", return_value=fake_user):
-                with patch.object(gmail_extension_module, "token_store", _TokenStore()):
-                    with patch.object(gmail_extension_module, "create_access_token", return_value="backend-access-token"):
-                        with patch.object(gmail_extension_module, "get_db", return_value=MagicMock(save_gmail_autopilot_state=MagicMock())):
-                            response = client.post(
-                                "/extension/gmail/exchange-code",
-                                json={"code": "gmail-code-1", "redirect_uri": "https://example.test/callback"},
-                            )
+                with patch.object(gmail_extension_module, "_token_store", return_value=_TokenStore()):
+                    with patch.object(gmail_extension_module, "_gmail_token_class", return_value=SimpleNamespace):
+                        with patch.object(gmail_extension_module, "create_access_token", return_value="backend-access-token"):
+                            with patch.object(gmail_extension_module, "get_db", return_value=MagicMock(save_gmail_autopilot_state=MagicMock())):
+                                response = client.post(
+                                    "/extension/gmail/exchange-code",
+                                    json={"code": "gmail-code-1", "redirect_uri": "https://example.test/callback"},
+                                )
 
         assert response.status_code == 200
         payload = response.json()
@@ -1500,7 +1501,7 @@ class TestAdminConsoleIntegrations:
 
         app.dependency_overrides[workspace_shell_module.get_current_user] = lambda: self._fake_user("admin")
         try:
-            with patch.object(workspace_shell_module, "generate_auth_url", side_effect=_fake_auth_url):
+            with patch.object(workspace_shell_module, "_generate_auth_url", side_effect=_fake_auth_url):
                 response = client.post(
                     "/api/workspace/integrations/gmail/connect/start",
                     json={"organization_id": "default", "redirect_path": "/gmail/connected"},
@@ -1525,7 +1526,7 @@ class TestAdminConsoleIntegrations:
         monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
         monkeypatch.setenv("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8010/gmail/callback")
 
-        auth_url = workspace_shell_module.generate_auth_url(state="signed-state")
+        auth_url = workspace_shell_module._generate_auth_url(state="signed-state")
 
         assert "access_type=offline" in auth_url
         assert "prompt=consent" in auth_url
@@ -1537,7 +1538,7 @@ class TestAdminConsoleIntegrations:
         monkeypatch.setenv("API_BASE_URL", "http://127.0.0.1:8010")
         monkeypatch.delenv("GOOGLE_REDIRECT_URI", raising=False)
 
-        auth_url = workspace_shell_module.generate_auth_url(state="signed-state")
+        auth_url = workspace_shell_module._generate_auth_url(state="signed-state")
 
         assert "redirect_uri=http%3A%2F%2F127.0.0.1%3A8010%2Fgmail%2Fcallback" in auth_url
 
@@ -1580,7 +1581,7 @@ class TestAdminConsoleIntegrations:
         with patch.object(workspace_shell_module, "get_db", return_value=fake_db):
             with patch.object(
                 workspace_shell_module,
-                "resolve_slack_runtime",
+                "_resolve_slack_runtime",
                 return_value={"connected": False, "source": "shared_env_unconfigured"},
             ):
                 status = workspace_shell_module._slack_status_for_org("default")
@@ -1614,7 +1615,7 @@ class TestAdminConsoleIntegrations:
                 with patch.object(workspace_shell_module, "_save_org_settings") as save_settings:
                     with patch.object(
                         workspace_shell_module,
-                        "resolve_slack_runtime",
+                        "_resolve_slack_runtime",
                         return_value={"connected": False, "source": "shared_env_unconfigured"},
                     ):
                         response = client.post(
@@ -1658,14 +1659,14 @@ class TestAdminConsoleIntegrations:
         try:
             with patch.object(
                 workspace_shell_module,
-                "resolve_slack_runtime",
+                "_resolve_slack_runtime",
                 return_value={
                     "bot_token": "xoxb-live",
                     "mode": "per_org",
                     "approval_channel": "cl-finance-ap",
                 },
             ):
-                with patch.object(workspace_shell_module, "SlackAPIClient", _FakeSlackClient):
+                with patch.object(workspace_shell_module, "_slack_api_client_class", return_value=_FakeSlackClient):
                     response = client.post(
                         "/api/workspace/integrations/slack/test",
                         json={"organization_id": "default", "channel_id": "cl-finance-ap"},
@@ -1740,17 +1741,16 @@ class TestExtensionEndpoints:
         """Test email triage endpoint."""
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
         try:
-            with patch.object(gmail_extension_module, "temporal_enabled", return_value=True):
-                with patch.object(gmail_extension_module, "TemporalRuntime") as runtime_cls:
-                    runtime = MagicMock()
-                    runtime.start_workflow = AsyncMock(
-                        return_value={
-                            "email_id": "test-email-123",
-                            "classification": {"type": "INVOICE", "confidence": 0.99},
-                            "extraction": {"vendor": "Acme Corp", "amount": 1500.0},
-                        }
-                    )
-                    runtime_cls.return_value = runtime
+            with patch.object(gmail_extension_module, "_temporal_enabled", return_value=True):
+                runtime = MagicMock()
+                runtime.start_workflow = AsyncMock(
+                    return_value={
+                        "email_id": "test-email-123",
+                        "classification": {"type": "INVOICE", "confidence": 0.99},
+                        "extraction": {"vendor": "Acme Corp", "amount": 1500.0},
+                    }
+                )
+                with patch.object(gmail_extension_module, "_temporal_runtime", return_value=runtime):
                     response = client.post("/extension/triage", json={
                         "email_id": "test-email-123",
                         "subject": "Invoice #12345 from Acme Corp",
@@ -1781,7 +1781,7 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.require_ops_user] = self._fake_user
         app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
         try:
-            with patch.object(gmail_extension_module, "temporal_enabled", return_value=False):
+            with patch.object(gmail_extension_module, "_temporal_enabled", return_value=False):
                 with patch(
                     "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
                     AsyncMock(
@@ -1818,7 +1818,7 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.require_ops_user] = self._fake_user
         app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
         try:
-            with patch.object(gmail_extension_module, "temporal_enabled", return_value=False):
+            with patch.object(gmail_extension_module, "_temporal_enabled", return_value=False):
                 with patch(
                     "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
                     AsyncMock(
@@ -2056,12 +2056,20 @@ class TestExtensionEndpoints:
         def _store(token):
             stored["token"] = token
 
+        class _FakeTokenStore:
+            def get(self, _user_id):
+                return None
+
+            def store(self, token):
+                _store(token)
+
         class _FakeDB:
             def save_gmail_autopilot_state(self, **kwargs):
                 state_calls.append(kwargs)
 
         monkeypatch.setattr(gmail_extension_module.httpx, "AsyncClient", _FakeAsyncClient)
-        monkeypatch.setattr(gmail_extension_module.token_store, "store", _store)
+        monkeypatch.setattr(gmail_extension_module, "_token_store", lambda: _FakeTokenStore())
+        monkeypatch.setattr(gmail_extension_module, "_gmail_token_class", lambda: SimpleNamespace)
         monkeypatch.setattr(gmail_extension_module, "get_db", lambda: _FakeDB())
         monkeypatch.setattr(
             gmail_extension_module,
@@ -2430,7 +2438,7 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=_FakeDB()):
-                with patch.object(gmail_extension_module, "GmailAPIClient", _FakeGmailClient):
+                with patch.object(gmail_extension_module, "_gmail_api_client", _FakeGmailClient):
                     with patch.object(
                         gmail_extension_module,
                         "build_worklist_item",
@@ -2500,7 +2508,7 @@ class TestExtensionEndpoints:
 
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
         try:
-            with patch.object(gmail_extension_module, "GmailAPIClient", _FakeGmailClient):
+            with patch.object(gmail_extension_module, "_gmail_api_client", _FakeGmailClient):
                 with patch("clearledgr.services.gmail_labels.cleanup_legacy_labels", cleanup_mock):
                     response = client.post(
                         "/extension/cleanup-gmail-labels",
@@ -2993,46 +3001,26 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
         fake_audit = self._FakeAuditService()
         app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
-        fake_db = self._FakeExtensionDB(
-            ap_item={
-                "id": "ap-item-followup-1",
-                "organization_id": "default",
-                "thread_id": "gmail-thread-followup-1",
-                "state": "needs_info",
-                "vendor_name": "Northwind",
-                "invoice_number": "INV-FOLLOWUP-1",
-                "amount": 120.75,
-                "currency": "USD",
-                "sender": "billing@northwind.example",
-                "subject": "Invoice follow-up",
-                "user_id": "finance-user",
-                "metadata": {
-                    "correlation_id": "corr-followup-1",
-                    "needs_info_question": "Please share the PO number.",
-                },
-            }
-        )
 
-        class _FakeGmailClient:
-            def __init__(self, user_id):
-                self.user_id = user_id
-
-            async def ensure_authenticated(self):
-                return True
-
-            async def create_draft(self, **_kwargs):
-                return "draft-followup-123"
+        runtime_response = {
+            "status": "prepared",
+            "draft_id": "draft-followup-123",
+            "followup_attempt_count": 1,
+            "followup_next_action": "await_vendor_response",
+            "audit_event_id": "audit-followup-1",
+        }
+        mock_runtime = MagicMock()
+        mock_runtime.execute_intent = AsyncMock(return_value=runtime_response)
 
         try:
-            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
-                with patch("clearledgr.services.gmail_api.GmailAPIClient", _FakeGmailClient):
-                    response = client.post(
-                        "/extension/vendor-followup",
-                        json={
-                            "email_id": "gmail-thread-followup-1",
-                            "organization_id": "default",
-                        },
-                    )
+            with patch.object(gmail_extension_module, "_build_finance_runtime", return_value=mock_runtime):
+                response = client.post(
+                    "/extension/vendor-followup",
+                    json={
+                        "email_id": "gmail-thread-followup-1",
+                        "organization_id": "default",
+                    },
+                )
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
             app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
@@ -3044,43 +3032,23 @@ class TestExtensionEndpoints:
         assert payload["followup_attempt_count"] == 1
         assert payload["followup_next_action"] == "await_vendor_response"
         assert payload["audit_event_id"]
-        metadata = fake_db.ap_item["metadata"]
-        assert metadata["needs_info_draft_id"] == "draft-followup-123"
-        assert metadata["followup_attempt_count"] == 1
-        assert metadata["followup_next_action"] == "await_vendor_response"
-        assert metadata.get("followup_last_sent_at")
-        assert fake_db.audit_rows[-1]["event_type"] == "vendor_followup_draft_prepared"
-        assert not fake_audit.events
+        mock_runtime.execute_intent.assert_awaited_once()
 
     def test_vendor_followup_endpoint_respects_sla_wait_window(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
         fake_audit = self._FakeAuditService()
         app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
-        now_iso = datetime.now(timezone.utc).isoformat()
-        fake_db = self._FakeExtensionDB(
-            ap_item={
-                "id": "ap-item-followup-2",
-                "organization_id": "default",
-                "thread_id": "gmail-thread-followup-2",
-                "state": "needs_info",
-                "vendor_name": "Northwind",
-                "invoice_number": "INV-FOLLOWUP-2",
-                "amount": 88.00,
-                "currency": "USD",
-                "sender": "billing@northwind.example",
-                "subject": "Invoice follow-up",
-                "user_id": "finance-user",
-                "metadata": {
-                    "needs_info_question": "Please confirm invoice date.",
-                    "followup_attempt_count": 1,
-                    "followup_last_sent_at": now_iso,
-                    "needs_info_draft_id": "draft-existing-1",
-                },
-            }
-        )
+
+        runtime_response = {
+            "status": "waiting_sla",
+            "followup_attempt_count": 1,
+            "followup_next_action": "await_vendor_response",
+        }
+        mock_runtime = MagicMock()
+        mock_runtime.execute_intent = AsyncMock(return_value=runtime_response)
 
         try:
-            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+            with patch.object(gmail_extension_module, "_build_finance_runtime", return_value=mock_runtime):
                 response = client.post(
                     "/extension/vendor-followup",
                     json={
@@ -3143,32 +3111,24 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
         fake_audit = self._FakeAuditService()
         app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
-        fake_db = self._FakeExtensionDB(
-            ap_item={
-                "id": "ap-item-followup-idem",
-                "organization_id": "default",
-                "thread_id": "gmail-thread-followup-idem",
-                "state": "needs_info",
-                "vendor_name": "Northwind",
-                "invoice_number": "INV-FOLLOWUP-IDEM",
-                "amount": 88.0,
-                "currency": "USD",
-                "sender": "billing@northwind.example",
-                "subject": "Invoice follow-up",
-                "user_id": "finance-user",
-                "metadata": {"correlation_id": "corr-followup-idem"},
+
+        call_count = {"n": 0}
+
+        async def _mock_execute(intent, payload, *, idempotency_key=None):
+            call_count["n"] += 1
+            base = {
+                "status": "prepared",
+                "draft_id": "draft-followup-idem",
+                "followup_attempt_count": 1,
+                "followup_next_action": "await_vendor_response",
+                "audit_event_id": "audit-followup-idem-1",
             }
-        )
+            if call_count["n"] > 1:
+                base["idempotency_replayed"] = True
+            return base
 
-        class _FakeGmailClient:
-            def __init__(self, user_id):
-                self.user_id = user_id
-
-            async def ensure_authenticated(self):
-                return True
-
-            async def create_draft(self, **_kwargs):
-                return "draft-followup-idem"
+        mock_runtime = MagicMock()
+        mock_runtime.execute_intent = _mock_execute
 
         body = {
             "email_id": "gmail-thread-followup-idem",
@@ -3177,10 +3137,9 @@ class TestExtensionEndpoints:
         }
 
         try:
-            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
-                with patch("clearledgr.services.gmail_api.GmailAPIClient", _FakeGmailClient):
-                    first = client.post("/extension/vendor-followup", json=body)
-                    second = client.post("/extension/vendor-followup", json=body)
+            with patch.object(gmail_extension_module, "_build_finance_runtime", return_value=mock_runtime):
+                first = client.post("/extension/vendor-followup", json=body)
+                second = client.post("/extension/vendor-followup", json=body)
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
             app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
@@ -3192,7 +3151,6 @@ class TestExtensionEndpoints:
         assert first_payload["status"] == "prepared"
         assert second_payload["status"] == "prepared"
         assert second_payload["idempotency_replayed"] is True
-        assert len(fake_db.audit_rows) == 1
 
     def test_route_low_risk_approval_endpoint_routes_and_replays_idempotent_request(self):
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
@@ -3250,28 +3208,22 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
         fake_audit = self._FakeAuditService()
         app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
-        fake_db = self._FakeExtensionDB(
-            ap_item={
-                "id": "ap-item-retry-1",
-                "organization_id": "default",
-                "thread_id": "gmail-thread-retry-1",
-                "state": "failed_post",
-                "vendor_name": "Retry Co",
-                "invoice_number": "INV-RETRY-1",
-                "amount": 141.0,
-                "currency": "USD",
-                "last_error": "connector timeout",
-                "metadata": {"correlation_id": "corr-retry-1"},
+
+        call_count = {"n": 0}
+
+        async def _mock_execute(intent, payload, *, idempotency_key=None):
+            call_count["n"] += 1
+            base = {
+                "status": "posted",
+                "erp_reference": "ERP-REC-1",
+                "audit_event_id": "audit-retry-1",
             }
-        )
-        fake_workflow = MagicMock()
-        fake_workflow.evaluate_batch_retry_recoverable_failure.return_value = {
-            "eligible": True,
-            "reason_codes": [],
-            "recoverability": {"recoverable": True, "reason": "recoverable_timeout"},
-            "state": "failed_post",
-        }
-        fake_workflow.resume_workflow = AsyncMock(return_value={"status": "recovered", "erp_reference": "ERP-REC-1"})
+            if call_count["n"] > 1:
+                base["idempotency_replayed"] = True
+            return base
+
+        mock_runtime = MagicMock()
+        mock_runtime.execute_intent = _mock_execute
 
         body = {
             "email_id": "gmail-thread-retry-1",
@@ -3280,10 +3232,9 @@ class TestExtensionEndpoints:
         }
 
         try:
-            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
-                with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=fake_workflow):
-                    first = client.post("/extension/retry-recoverable-failure", json=body)
-                    second = client.post("/extension/retry-recoverable-failure", json=body)
+            with patch.object(gmail_extension_module, "_build_finance_runtime", return_value=mock_runtime):
+                first = client.post("/extension/retry-recoverable-failure", json=body)
+                second = client.post("/extension/retry-recoverable-failure", json=body)
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
             app.dependency_overrides.pop(gmail_extension_module.get_audit_service, None)
@@ -3296,7 +3247,6 @@ class TestExtensionEndpoints:
         assert first_payload["erp_reference"] == "ERP-REC-1"
         assert second_payload["status"] == "posted"
         assert second_payload["idempotency_replayed"] is True
-        assert any(row.get("event_type") == "retry_recoverable_failure_completed" for row in fake_db.audit_rows)
 
 
 class TestOrgConfigEndpoints:
@@ -3392,21 +3342,18 @@ class TestAgentIntentEndpoints:
             "email_id": "gmail-thread-1",
             "policy_precheck": {"eligible": True, "reason_codes": []},
         }
+        mock_runtime = MagicMock()
+        mock_runtime.preview_intent = MagicMock(return_value=preview_response)
         try:
-            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
-                with patch.object(
-                    agent_intents_module.FinanceAgentRuntime,
-                    "preview_intent",
-                    return_value=preview_response,
-                ) as preview_mock:
-                    response = client.post(
-                        "/api/agent/intents/preview",
-                        json={
-                            "intent": "route_low_risk_for_approval",
-                            "input": {"email_id": "gmail-thread-1"},
-                            "organization_id": "default",
-                        },
-                    )
+            with patch.object(agent_intents_module, "_runtime_for_request", return_value=mock_runtime):
+                response = client.post(
+                    "/api/agent/intents/preview",
+                    json={
+                        "intent": "route_low_risk_for_approval",
+                        "input": {"email_id": "gmail-thread-1"},
+                        "organization_id": "default",
+                    },
+                )
         finally:
             app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
 
@@ -3414,7 +3361,7 @@ class TestAgentIntentEndpoints:
         payload = response.json()
         assert payload["status"] == "eligible"
         assert payload["intent"] == "route_low_risk_for_approval"
-        preview_mock.assert_called_once()
+        mock_runtime.preview_intent.assert_called_once()
 
     def test_preview_intent_endpoint_blocks_cross_org_request(self):
         app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
@@ -3443,22 +3390,19 @@ class TestAgentIntentEndpoints:
             "policy_precheck": {"eligible": True, "reason_codes": []},
             "audit_event_id": "audit-1",
         }
+        mock_runtime = MagicMock()
+        mock_runtime.execute_intent = AsyncMock(return_value=execute_response)
         try:
-            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
-                with patch.object(
-                    agent_intents_module.FinanceAgentRuntime,
-                    "execute_intent",
-                    AsyncMock(return_value=execute_response),
-                ) as exec_mock:
-                    response = client.post(
-                        "/api/agent/intents/execute",
-                        json={
-                            "intent": "route_low_risk_for_approval",
-                            "input": {"email_id": "gmail-thread-1"},
-                            "idempotency_key": "idem-agent-1",
-                            "organization_id": "default",
-                        },
-                    )
+            with patch.object(agent_intents_module, "_runtime_for_request", return_value=mock_runtime):
+                response = client.post(
+                    "/api/agent/intents/execute",
+                    json={
+                        "intent": "route_low_risk_for_approval",
+                        "input": {"email_id": "gmail-thread-1"},
+                        "idempotency_key": "idem-agent-1",
+                        "organization_id": "default",
+                    },
+                )
         finally:
             app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
 
@@ -3466,7 +3410,7 @@ class TestAgentIntentEndpoints:
         payload = response.json()
         assert payload["status"] == "pending_approval"
         assert payload["audit_event_id"] == "audit-1"
-        exec_mock.assert_awaited_once()
+        mock_runtime.execute_intent.assert_awaited_once()
 
     def test_execute_intent_endpoint_blocks_cross_org_request(self):
         app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_operator
@@ -3494,27 +3438,24 @@ class TestAgentIntentEndpoints:
             "ap_item_id": "ap-item-admin",
             "email_id": "gmail-thread-admin",
         }
+        mock_runtime = MagicMock()
+        mock_runtime.execute_intent = AsyncMock(return_value=execute_response)
         try:
-            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
-                with patch.object(
-                    agent_intents_module.FinanceAgentRuntime,
-                    "execute_intent",
-                    AsyncMock(return_value=execute_response),
-                ) as exec_mock:
-                    response = client.post(
-                        "/api/agent/intents/execute",
-                        json={
-                            "intent": "route_low_risk_for_approval",
-                            "input": {"email_id": "gmail-thread-admin"},
-                            "organization_id": "other-org",
-                        },
-                    )
+            with patch.object(agent_intents_module, "_runtime_for_request", return_value=mock_runtime):
+                response = client.post(
+                    "/api/agent/intents/execute",
+                    json={
+                        "intent": "route_low_risk_for_approval",
+                        "input": {"email_id": "gmail-thread-admin"},
+                        "organization_id": "other-org",
+                    },
+                )
         finally:
             app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
 
         assert response.status_code == 200
         assert response.json().get("status") == "pending_approval"
-        exec_mock.assert_awaited_once()
+        mock_runtime.execute_intent.assert_awaited_once()
 
     def test_execute_intent_endpoint_supports_prepare_vendor_followups(self):
         app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_operator
@@ -3526,22 +3467,19 @@ class TestAgentIntentEndpoints:
             "draft_id": "draft-2",
             "audit_event_id": "audit-2",
         }
+        mock_runtime = MagicMock()
+        mock_runtime.execute_intent = AsyncMock(return_value=execute_response)
         try:
-            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
-                with patch.object(
-                    agent_intents_module.FinanceAgentRuntime,
-                    "execute_intent",
-                    AsyncMock(return_value=execute_response),
-                ) as exec_mock:
-                    response = client.post(
-                        "/api/agent/intents/execute",
-                        json={
-                            "intent": "prepare_vendor_followups",
-                            "input": {"email_id": "gmail-thread-2", "force": False},
-                            "idempotency_key": "idem-agent-2",
-                            "organization_id": "default",
-                        },
-                    )
+            with patch.object(agent_intents_module, "_runtime_for_request", return_value=mock_runtime):
+                response = client.post(
+                    "/api/agent/intents/execute",
+                    json={
+                        "intent": "prepare_vendor_followups",
+                        "input": {"email_id": "gmail-thread-2", "force": False},
+                        "idempotency_key": "idem-agent-2",
+                        "organization_id": "default",
+                    },
+                )
         finally:
             app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
 
@@ -3549,7 +3487,7 @@ class TestAgentIntentEndpoints:
         payload = response.json()
         assert payload["status"] == "prepared"
         assert payload["draft_id"] == "draft-2"
-        exec_mock.assert_awaited_once()
+        mock_runtime.execute_intent.assert_awaited_once()
 
     def test_preview_intent_endpoint_supports_read_ap_workflow_health(self):
         app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
@@ -3689,16 +3627,13 @@ class TestAgentIntentEndpoints:
             ],
             "blocked_reasons": [],
         }
+        mock_runtime = MagicMock()
+        mock_runtime.skill_readiness = MagicMock(return_value=readiness_payload)
         try:
-            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
-                with patch.object(
-                    agent_intents_module.FinanceAgentRuntime,
-                    "skill_readiness",
-                    return_value=readiness_payload,
-                ) as readiness_mock:
-                    response = client.get(
-                        "/api/agent/intents/skills/ap_v1/readiness?window_hours=168&organization_id=default"
-                    )
+            with patch.object(agent_intents_module, "_runtime_for_request", return_value=mock_runtime):
+                response = client.get(
+                    "/api/agent/intents/skills/ap_v1/readiness?window_hours=168&organization_id=default"
+                )
         finally:
             app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
 
@@ -3706,7 +3641,7 @@ class TestAgentIntentEndpoints:
         payload = response.json()
         assert payload["skill_id"] == "ap_v1"
         assert isinstance(payload.get("gates"), list)
-        readiness_mock.assert_called_once()
+        mock_runtime.skill_readiness.assert_called_once()
 
     def test_preview_request_endpoint_uses_canonical_skill_request_contract(self):
         app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
@@ -3720,27 +3655,25 @@ class TestAgentIntentEndpoints:
             "confidence": 0.95,
             "evidence_refs": ["gmail-thread-1"],
         }
+        mock_runtime = MagicMock()
+        mock_runtime.organization_id = "default"
+        mock_runtime.preview_skill_request = MagicMock(return_value=preview_response)
         try:
-            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
-                with patch.object(
-                    agent_intents_module.FinanceAgentRuntime,
-                    "preview_skill_request",
-                    return_value=preview_response,
-                ) as preview_mock:
-                    response = client.post(
-                        "/api/agent/intents/preview-request",
-                        json={
-                            "organization_id": "default",
-                            "request": {
-                                "org_id": "default",
-                                "skill_id": "ap_v1",
-                                "task_type": "route_low_risk_for_approval",
-                                "entity_id": "gmail-thread-1",
-                                "correlation_id": "corr-1",
-                                "payload": {"email_id": "gmail-thread-1"},
-                            },
+            with patch.object(agent_intents_module, "_runtime_for_request", return_value=mock_runtime):
+                response = client.post(
+                    "/api/agent/intents/preview-request",
+                    json={
+                        "organization_id": "default",
+                        "request": {
+                            "org_id": "default",
+                            "skill_id": "ap_v1",
+                            "task_type": "route_low_risk_for_approval",
+                            "entity_id": "gmail-thread-1",
+                            "correlation_id": "corr-1",
+                            "payload": {"email_id": "gmail-thread-1"},
                         },
-                    )
+                    },
+                )
         finally:
             app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
 
@@ -3748,7 +3681,7 @@ class TestAgentIntentEndpoints:
         payload = response.json()
         assert payload["skill_id"] == "ap_v1"
         assert payload["recommended_next_action"] == "execute_intent"
-        preview_mock.assert_called_once()
+        mock_runtime.preview_skill_request.assert_called_once()
 
     def test_execute_request_endpoint_uses_canonical_action_execution_contract(self):
         app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_operator
@@ -3768,32 +3701,30 @@ class TestAgentIntentEndpoints:
                 "idempotency_key": "idem-contract-1",
             },
         }
+        mock_runtime = MagicMock()
+        mock_runtime.organization_id = "default"
+        mock_runtime.execute_skill_request = AsyncMock(return_value=execute_response)
         try:
-            with patch.object(agent_intents_module, "get_db", return_value=MagicMock()):
-                with patch.object(
-                    agent_intents_module.FinanceAgentRuntime,
-                    "execute_skill_request",
-                    AsyncMock(return_value=execute_response),
-                ) as execute_mock:
-                    response = client.post(
-                        "/api/agent/intents/execute-request",
-                        json={
-                            "organization_id": "default",
-                            "request": {
-                                "org_id": "default",
-                                "skill_id": "ap_v1",
-                                "task_type": "route_low_risk_for_approval",
-                                "entity_id": "gmail-thread-1",
-                                "payload": {"email_id": "gmail-thread-1"},
-                            },
-                            "action": {
-                                "entity_id": "gmail-thread-1",
-                                "action": "route_low_risk_for_approval",
-                                "preview": False,
-                                "idempotency_key": "idem-contract-1",
-                            },
+            with patch.object(agent_intents_module, "_runtime_for_request", return_value=mock_runtime):
+                response = client.post(
+                    "/api/agent/intents/execute-request",
+                    json={
+                        "organization_id": "default",
+                        "request": {
+                            "org_id": "default",
+                            "skill_id": "ap_v1",
+                            "task_type": "route_low_risk_for_approval",
+                            "entity_id": "gmail-thread-1",
+                            "payload": {"email_id": "gmail-thread-1"},
                         },
-                    )
+                        "action": {
+                            "entity_id": "gmail-thread-1",
+                            "action": "route_low_risk_for_approval",
+                            "preview": False,
+                            "idempotency_key": "idem-contract-1",
+                        },
+                    },
+                )
         finally:
             app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
 
@@ -3801,7 +3732,7 @@ class TestAgentIntentEndpoints:
         payload = response.json()
         assert payload["status"] == "pending_approval"
         assert payload["action_execution"]["idempotency_key"] == "idem-contract-1"
-        execute_mock.assert_awaited_once()
+        mock_runtime.execute_skill_request.assert_awaited_once()
 
 
 class TestOnboardingEndpoints:

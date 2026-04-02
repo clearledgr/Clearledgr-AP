@@ -6,6 +6,7 @@ from clearledgr.core.skills.base import (
     FinanceSkill,
 )
 from clearledgr.core.skills.ap_skill import APSkill
+from clearledgr.core.skills.compound_skill import CompoundSkill
 
 __all__ = [
     "AgentTool",
@@ -13,4 +14,5 @@ __all__ = [
     "SkillResult",
     "FinanceSkill",
     "APSkill",
+    "CompoundSkill",
 ]

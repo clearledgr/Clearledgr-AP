@@ -50,6 +50,18 @@ async def run_deferred_startup(app: Any) -> None:
         logger.warning("Finance agent runtime not started: %s", exc)
 
     try:
+        from clearledgr.core.agent_runtime import get_planning_engine
+        from clearledgr.core.skills.ap_skill import APSkill
+        from clearledgr.core.skills.compound_skill import CompoundSkill
+
+        planner = get_planning_engine()
+        planner.register_skill(APSkill("default"))
+        planner.register_skill(CompoundSkill("default"))
+        logger.info("Planning engine skills registered (APSkill, CompoundSkill)")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Planning engine skill registration failed: %s", exc)
+
+    try:
         from clearledgr.services.erp_follow_on_reconciliation import (
             run_erp_follow_on_reconciliation_check,
         )

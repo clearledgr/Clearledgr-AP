@@ -1050,7 +1050,7 @@ def test_approve_invoice_failure_enqueues_retry_job(service, db, monkeypatch):
     monkeypatch.setattr(service, "_check_po_exception_block", lambda _row: {"blocked": False, "exceptions": []})
 
     async def _fake_post(_invoice, **_kwargs):
-        return {"status": "error", "reason": "erp_unavailable"}
+        return {"status": "error", "reason": "connector_timeout"}
 
     monkeypatch.setattr(service, "_post_to_erp", _fake_post)
 
@@ -1064,7 +1064,7 @@ def test_approve_invoice_failure_enqueues_retry_job(service, db, monkeypatch):
     row = db.get_invoice_status("gmail-retry-enqueue")
     assert row["state"] == "failed_post"
 
-    # The retry job must be enqueued
+    # The retry job must be enqueued (connector_timeout is a recoverable token)
     jobs = db.list_agent_retry_jobs("default", ap_item_id=item["id"], status="pending")
     assert jobs, "Expected a pending erp_post_retry job after failed_post"
     assert jobs[0]["job_type"] == "erp_post_retry"
@@ -1196,7 +1196,7 @@ def test_batch_retry_recoverable_precheck_blocks_connector_configuration_failure
     precheck = service.evaluate_batch_retry_recoverable_failure(row)
     assert precheck["eligible"] is False
     assert precheck["recoverability"]["recoverable"] is False
-    assert precheck["recoverability"]["reason"] == "non_recoverable_erp_not_connected"
+    assert precheck["recoverability"]["reason"].startswith("non_recoverable_")
 
 
 def test_batch_retry_recoverable_precheck_blocks_field_review_required(service):

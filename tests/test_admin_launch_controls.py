@@ -287,7 +287,11 @@ def test_admin_teams_webhook_config_and_test(client, db, monkeypatch):
         def _post_json(self, _payload):
             return {"status": "sent", "status_code": 200}
 
-    monkeypatch.setattr(workspace_shell_module.TeamsAPIClient, "from_env", lambda _org_id=None: _FakeTeamsClient())
+        @classmethod
+        def from_env(cls, _org_id=None):
+            return cls()
+
+    monkeypatch.setattr(workspace_shell_module, "_teams_api_client_class", lambda: _FakeTeamsClient)
     test = client.post(
         "/api/workspace/integrations/teams/test",
         json={"organization_id": "default", "message": "test"},

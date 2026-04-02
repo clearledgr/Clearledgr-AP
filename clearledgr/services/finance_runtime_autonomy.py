@@ -63,6 +63,51 @@ _AUTONOMY_ACTION_ALIASES: Dict[str, tuple[str, ...]] = {
 }
 
 
+def _load_org_autonomy_thresholds(organization_id: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    """Load per-org autonomy threshold overrides from settings_json.
+
+    Returns the merged result of the global defaults + any org-level
+    ``settings_json.autonomy_thresholds`` overrides.  Falls back to
+    the global defaults if the org has no overrides or if anything fails.
+    """
+    if not organization_id:
+        return _AUTONOMY_ACTION_THRESHOLDS
+
+    try:
+        from clearledgr.core.database import get_db
+
+        db = get_db()
+        org = db.get_organization(organization_id)
+        if not org:
+            return _AUTONOMY_ACTION_THRESHOLDS
+
+        settings = org.get("settings_json") if isinstance(org, dict) else None
+        if isinstance(settings, str):
+            import json as _json
+            settings = _json.loads(settings)
+        if not isinstance(settings, dict):
+            return _AUTONOMY_ACTION_THRESHOLDS
+
+        overrides = settings.get("autonomy_thresholds")
+        if not isinstance(overrides, dict) or not overrides:
+            return _AUTONOMY_ACTION_THRESHOLDS
+
+        # Deep-merge: for each action, start with global defaults and layer
+        # org overrides on top so admins only need to specify the keys they
+        # want to change.
+        merged: Dict[str, Dict[str, Any]] = {}
+        for action, defaults in _AUTONOMY_ACTION_THRESHOLDS.items():
+            action_overrides = overrides.get(action)
+            if isinstance(action_overrides, dict):
+                merged[action] = {**defaults, **action_overrides}
+            else:
+                merged[action] = dict(defaults)
+        return merged
+    except Exception as exc:
+        logger.debug("org autonomy thresholds load failed for %s: %s", organization_id, exc)
+        return _AUTONOMY_ACTION_THRESHOLDS
+
+
 def extraction_drift_payload(ap_kpis: Dict[str, Any]) -> Dict[str, Any]:
     telemetry = (ap_kpis or {}).get("agentic_telemetry")
     telemetry = telemetry if isinstance(telemetry, dict) else {}
@@ -124,13 +169,20 @@ def vendor_post_verification_scorecard(
     return None
 
 
-def autonomy_action_thresholds() -> Dict[str, Dict[str, Any]]:
+def autonomy_action_thresholds(
+    organization_id: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    source = (
+        _load_org_autonomy_thresholds(organization_id)
+        if organization_id
+        else _AUTONOMY_ACTION_THRESHOLDS
+    )
     return {
         action: {
             key: (list(value) if isinstance(value, tuple) else value)
             for key, value in thresholds.items()
         }
-        for action, thresholds in _AUTONOMY_ACTION_THRESHOLDS.items()
+        for action, thresholds in source.items()
     }
 
 
@@ -204,7 +256,9 @@ def evaluate_action_autonomy_policy(
     shadow_scorecard: Optional[Dict[str, Any]],
     verification_scorecard: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    thresholds = _AUTONOMY_ACTION_THRESHOLDS[action]
+    org_id = getattr(runtime, "organization_id", None)
+    org_thresholds = _load_org_autonomy_thresholds(org_id) if org_id else _AUTONOMY_ACTION_THRESHOLDS
+    thresholds = org_thresholds.get(action) or _AUTONOMY_ACTION_THRESHOLDS[action]
     action_label = str(thresholds.get("label") or action)
     reason_codes: List[str] = []
     status = str(readiness.get("status") or "").strip().lower()
@@ -590,7 +644,7 @@ def ap_autonomy_policy(
         "earned_actions": list(evaluation.get("earned_actions") or []),
         "blocked_actions": dict(evaluation.get("blocked_actions") or {}),
         "action_policies": dict(evaluation.get("action_policies") or {}),
-        "action_thresholds": autonomy_action_thresholds(),
+        "action_thresholds": autonomy_action_thresholds(getattr(runtime, "organization_id", None)),
         "item_reason_codes": item_reason_codes,
         "finance_effect_summary": effect_policy.get("summary") or {},
         "vendor_drift_risk": (
@@ -711,7 +765,7 @@ def ap_autonomy_summary(runtime: Any, *, window_hours: int = 168) -> Dict[str, A
         "shadow_action_match_rate": round(runtime._safe_float(shadow_summary.get("action_match_rate")), 4),
         "post_verification_rate": round(runtime._safe_float(verification_summary.get("verification_rate")), 4),
         "post_verification_mismatch_count": int(verification_summary.get("mismatch_count") or 0),
-        "action_thresholds": autonomy_action_thresholds(),
+        "action_thresholds": autonomy_action_thresholds(getattr(runtime, "organization_id", None)),
         "vendor_promotion_status": vendor_promotion_status[:20],
         "vendors_manual": sum(1 for row in vendor_promotion_status if str(row.get("mode")) == "manual"),
         "vendors_assisted": sum(1 for row in vendor_promotion_status if str(row.get("mode")) == "assisted"),

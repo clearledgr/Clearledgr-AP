@@ -1,13 +1,14 @@
-"""AP (Accounts Payable) skill — four tools that wrap the existing AP pipeline.
+"""AP (Accounts Payable) skill — five tools that wrap the existing AP pipeline.
 
 Claude calls these tools during the planning loop instead of following the
 hardcoded 8-step sequence in AgentOrchestrator._process_invoice_legacy().
 
 Tool catalogue (in typical execution order):
-  1. enrich_with_context  — fetch vendor history, correction suggestions, priority
-  2. run_validation_gate  — deterministic confidence/PO/budget checks
-  3. get_ap_decision      — call APDecisionService (Claude Sonnet) with full context
-  4. execute_routing      — route based on recommendation; auto-approve or HITL pause
+  1. enrich_with_context    — fetch vendor history, correction suggestions, priority
+  2. run_validation_gate    — deterministic confidence/PO/budget checks
+  3. get_ap_decision        — call APDecisionService (Claude Sonnet) with full context
+  4. execute_routing        — route based on recommendation; auto-approve or HITL pause
+  5. request_vendor_info    — draft a Gmail follow-up when info is missing
 
 Each handler:
   - Accepts **kwargs (extra args from Claude are silently ignored).
@@ -91,6 +92,24 @@ async def _handle_enrich_with_context(
         correction_svc = get_correction_learning_service(organization_id)
         correction_suggestions = correction_svc.suggest(invoice.vendor_name, invoice.amount)
 
+        # --- Cross-invoice analysis (duplicate detection, anomalies, vendor stats) ---
+        cross_invoice_data: Dict[str, Any] = {}
+        try:
+            from clearledgr.services.cross_invoice_analysis import get_cross_invoice_analyzer
+
+            analyzer = get_cross_invoice_analyzer(organization_id)
+            analysis = analyzer.analyze(
+                vendor=invoice.vendor_name,
+                amount=invoice.amount,
+                invoice_number=getattr(invoice, "invoice_number", None),
+                invoice_date=getattr(invoice, "due_date", None),
+                currency=getattr(invoice, "currency", "USD"),
+                gmail_id=getattr(invoice, "gmail_id", None),
+            )
+            cross_invoice_data = analysis.to_dict()
+        except Exception as ci_exc:
+            logger.debug("[APSkill] cross-invoice analysis skipped: %s", ci_exc)
+
         # --- Gap 2: Reasoning factors provide contextual enrichment ---
         reasoning_data: Dict[str, Any] = {}
         try:
@@ -116,6 +135,7 @@ async def _handle_enrich_with_context(
             "vendor_history": vendor_history[:6],
             "decision_feedback": decision_feedback[:10],
             "correction_suggestions": correction_suggestions,
+            "cross_invoice_analysis": cross_invoice_data,
             "vendor_name": invoice.vendor_name,
             "amount": invoice.amount,
             "reflection": reflection_data,
@@ -265,6 +285,78 @@ async def _handle_execute_routing(
         return {"ok": False, "error": str(exc)}
 
 
+async def _handle_request_vendor_info(
+    invoice_payload: Dict[str, Any],
+    question: Optional[str] = None,
+    organization_id: str = "default",
+    **_kwargs,
+) -> Dict[str, Any]:
+    """Draft a Gmail follow-up when the invoice is missing information.
+
+    Calls AutoFollowUpService to detect missing fields, then creates a
+    Gmail draft so the AP clerk can review and send it.  NEVER raises.
+    """
+    try:
+        from clearledgr.services.auto_followup import get_auto_followup_service
+
+        followup_svc = get_auto_followup_service(organization_id)
+        missing_info = followup_svc.detect_missing_info(invoice_payload)
+
+        # If nothing is missing and no explicit question, skip draft
+        if not missing_info and not question:
+            return {
+                "ok": True,
+                "draft_created": False,
+                "reason": "no_missing_info",
+                "missing_info": [],
+            }
+
+        thread_id = (
+            invoice_payload.get("gmail_thread_id")
+            or invoice_payload.get("thread_id")
+            or invoice_payload.get("gmail_id")
+        )
+        to_email = (
+            invoice_payload.get("sender")
+            or invoice_payload.get("sender_email")
+            or invoice_payload.get("from_email")
+        )
+
+        if not thread_id or not to_email:
+            return {
+                "ok": False,
+                "draft_created": False,
+                "error": "Missing thread_id or sender_email — cannot create draft",
+                "missing_info": [m.value for m in missing_info],
+            }
+
+        # Obtain Gmail client for this org
+        from clearledgr.services.gmail_client import get_gmail_client
+
+        gmail_client = get_gmail_client(organization_id)
+
+        ap_item_id = invoice_payload.get("id") or invoice_payload.get("ap_item_id") or ""
+        draft_id = await followup_svc.create_gmail_draft(
+            gmail_client=gmail_client,
+            ap_item_id=ap_item_id,
+            thread_id=thread_id,
+            to_email=to_email,
+            invoice_data=invoice_payload,
+            question=question,
+        )
+
+        return {
+            "ok": True,
+            "draft_created": bool(draft_id),
+            "draft_id": draft_id,
+            "to": to_email,
+            "missing_info": [m.value for m in missing_info],
+        }
+    except Exception as exc:
+        logger.warning("[APSkill] request_vendor_info failed: %s", exc)
+        return {"ok": False, "draft_created": False, "error": str(exc)}
+
+
 # ---------------------------------------------------------------------------
 # APSkill
 # ---------------------------------------------------------------------------
@@ -382,6 +474,30 @@ class APSkill(FinanceSkill):
                 },
                 handler=_handle_execute_routing,
             ),
+            AgentTool(
+                name="request_vendor_info",
+                description=(
+                    "Draft a Gmail follow-up email to the vendor when information is "
+                    "missing (PO number, amount clarification, etc.). Only call this "
+                    "when get_ap_decision returns 'needs_info'. Optionally pass a "
+                    "'question' string for Claude-generated clarification."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "invoice_payload": {
+                            "type": "object",
+                            "description": "The full invoice data dict.",
+                        },
+                        "question": {
+                            "type": "string",
+                            "description": "Specific question to ask the vendor (optional).",
+                        },
+                    },
+                    "required": ["invoice_payload"],
+                },
+                handler=_handle_request_vendor_info,
+            ),
         ]
 
     def build_system_prompt(self, task: AgentTask) -> str:
@@ -392,13 +508,41 @@ class APSkill(FinanceSkill):
         currency = invoice.get("currency", "USD")
         confidence = invoice.get("confidence", 0)
 
+        # --- Cross-invoice warnings (duplicate / anomaly) ---
+        cross_invoice_warning = ""
+        try:
+            from clearledgr.services.cross_invoice_analysis import get_cross_invoice_analyzer
+
+            analyzer = get_cross_invoice_analyzer(task.organization_id)
+            analysis = analyzer.analyze(
+                vendor=vendor,
+                amount=amount,
+                invoice_number=invoice.get("invoice_number"),
+                invoice_date=invoice.get("due_date"),
+                currency=currency,
+                gmail_id=invoice.get("gmail_id"),
+            )
+            if analysis.has_issues:
+                warnings = []
+                for dup in analysis.duplicates:
+                    warnings.append(f"  - DUPLICATE RISK: {dup.message} (severity={dup.severity})")
+                for anomaly in analysis.anomalies:
+                    warnings.append(f"  - ANOMALY ({anomaly.anomaly_type}): {anomaly.message}")
+                if warnings:
+                    warnings.append("  Consider escalating if duplicates are present.")
+                    cross_invoice_warning = (
+                        "\n\nCross-invoice warnings:\n" + "\n".join(warnings)
+                    )
+        except Exception:
+            pass  # non-critical
+
         return f"""You are the Clearledgr AP agent processing an invoice for approval.
 
 Invoice summary:
 - Vendor: {vendor}
 - Amount: {currency} {amount:,.2f}
 - Extraction confidence: {confidence:.0%}
-- Organization: {task.organization_id}
+- Organization: {task.organization_id}{cross_invoice_warning}
 
 Your job: process this invoice through AP review using the available tools.
 
@@ -407,12 +551,15 @@ Recommended sequence:
 2. Call run_validation_gate to check hard rules
 3. Call get_ap_decision with the vendor context to get a recommendation
 4. Call execute_routing with the recommendation to complete processing
+5. If recommendation is "needs_info", call request_vendor_info to draft a follow-up
 
 Rules:
 - NEVER skip run_validation_gate — it is a hard guardrail
 - If validation gate fails, set recommendation to "escalate" in execute_routing
 - NEVER auto-approve without calling get_ap_decision first
 - NEVER reject without human sign-off — use "escalate" instead
-- After calling execute_routing, you are done — do not call more tools
+- Only call request_vendor_info when the decision is "needs_info"
+- After calling execute_routing (and optionally request_vendor_info), you are done — do not call more tools
+- If cross-invoice warnings mention duplicates, factor that into your decision — prefer "escalate"
 
 When you are finished, respond with a brief summary of what was decided and why."""

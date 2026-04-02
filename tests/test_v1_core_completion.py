@@ -208,9 +208,14 @@ def _run_worklist_test(monkeypatch, client, db):
         async def reject_invoice(self, **kwargs):
             return {"status": "rejected", "kwargs": kwargs}
 
-    monkeypatch.setattr("clearledgr.api.teams_invoices.get_invoice_workflow", lambda _org: _FakeWorkflow())
+    async def _fake_dispatch(runtime, intent, payload, *, idempotency_key=None):
+        if intent == "approve_invoice":
+            return {"status": "approved", "result": {"status": "approved"}}
+        return {"status": "error"}
+
+    monkeypatch.setattr("clearledgr.api.teams_invoices._dispatch_runtime_intent", _fake_dispatch)
     monkeypatch.setattr(
-        "clearledgr.api.teams_invoices.verify_teams_token",
+        "clearledgr.api.teams_invoices._verify_teams_token",
         lambda _auth: {"appid": "test-bot", "iat": 1890000000},
     )
 

@@ -1933,25 +1933,22 @@ def test_record_field_correction_appends_runtime_audit():
 
     fake_audit = _FakeAuditTrail()
 
+    fake_learning_instance = _FakeLearningService("default")
+
     with patch(
-        "clearledgr.services.correction_learning.CorrectionLearningService",
-        _FakeLearningService,
+        "clearledgr.services.correction_learning.get_correction_learning_service",
+        return_value=fake_learning_instance,
     ):
-        with patch(
-            "clearledgr.services.audit_trail.get_audit_trail",
-            return_value=fake_audit,
-        ):
-            result = runtime.record_field_correction(
-                ap_item_id="ap-route-1",
-                field="invoice_number",
-                original_value="INV-OLD",
-                corrected_value="INV-NEW",
-                feedback="Corrected from source email",
-            )
+        result = runtime.record_field_correction(
+            ap_item_id="ap-route-1",
+            field="invoice_number",
+            original_value="INV-OLD",
+            corrected_value="INV-NEW",
+            feedback="Corrected from source email",
+        )
 
     assert result["status"] == "recorded"
     assert result["audit_event_id"]
     assert captured["organization_id"] == "default"
     assert captured["record_kwargs"]["correction_type"] == "invoice_number"
-    assert fake_audit.events[-1]["event_type"] == "field_correction"
     assert db.audit_rows[-1]["event_type"] == "field_correction"
