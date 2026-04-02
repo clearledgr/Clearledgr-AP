@@ -10,6 +10,7 @@ Automatically drafts follow-up emails when invoice information is missing:
 This handles the "invisible work" problem by automating clarification requests.
 """
 
+import json
 import logging
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
@@ -254,9 +255,27 @@ Best regards"""
         )
         
         self._drafts[original_thread_id] = draft
-        
+
+        # E3: Persist to AP item metadata so drafts survive restarts
+        try:
+            from clearledgr.core.database import get_db
+            db = get_db()
+            if hasattr(db, "get_ap_item_by_thread"):
+                ap_item = db.get_ap_item_by_thread(self.organization_id, original_thread_id)
+                if ap_item:
+                    metadata = json.loads(ap_item.get("metadata") or "{}")
+                    metadata["pending_followup"] = {
+                        "to": draft.to,
+                        "subject": draft.subject,
+                        "created_at": draft.created_at.isoformat(),
+                        "missing_info": [m.value for m in draft.missing_info],
+                    }
+                    db.update_ap_item(ap_item["id"], metadata=json.dumps(metadata))
+        except Exception as exc:
+            logger.warning("Could not persist follow-up draft: %s", exc)
+
         logger.info(f"Created follow-up draft for thread {original_thread_id}: {subject}")
-        
+
         return draft
     
     def get_draft(self, thread_id: str) -> Optional[FollowUpDraft]:

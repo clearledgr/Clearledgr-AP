@@ -1229,29 +1229,50 @@ class CorrectionLearningService:
         return learned
     
     def _learn_gl_code(self, correction: Correction) -> Dict[str, Any]:
-        """Learn GL code preferences from correction."""
+        """Learn GL code preferences from correction.
+
+        Requires at least 2 corrections before creating a rule to avoid
+        one wrong GL correction producing a high-confidence auto-apply rule.
+        Confidence ramps from 0.4 (at 2 corrections) toward 1.0 (at 5+).
+        """
         vendor = correction.vendor
         if not vendor:
             return {"rules_created": 0}
-        
+
         # Create or update vendor GL preference
         rule_id = f"gl_{vendor.lower().replace(' ', '_')}"
-        
+
         if rule_id in self._learned_rules:
             rule = self._learned_rules[rule_id]
             rule.learned_from += 1
             rule.action = {"gl_code": correction.corrected_value}
-            rule.confidence = min(0.99, rule.confidence + 0.1)
+            # Ramp confidence: cap at 0.7 initially, approach 0.99 at 5+ corrections
+            rule.confidence = min(0.99, rule.learned_from / 5.0)
             self._persist_rule(rule)
             return {"rules_updated": 1}
         else:
+            # Track the correction count but don't create a rule until 2+ corrections
+            prefs = self._vendor_preferences.get(vendor) or {}
+            gl_correction_count = int(prefs.get("gl_correction_count") or 0) + 1
+            if vendor not in self._vendor_preferences:
+                self._vendor_preferences[vendor] = {}
+            self._vendor_preferences[vendor]["gl_correction_count"] = gl_correction_count
+            self._vendor_preferences[vendor]["gl_last_corrected_value"] = correction.corrected_value
+
+            if gl_correction_count < 2:
+                logger.info(
+                    "GL correction recorded but rule not created yet (need 2+, have %d) for vendor %s",
+                    gl_correction_count, vendor,
+                )
+                return {"rules_created": 0}
+
             rule = LearningRule(
                 rule_id=rule_id,
                 rule_type="gl_code",
                 condition={"vendor": vendor},
                 action={"gl_code": correction.corrected_value},
-                confidence=0.7,
-                learned_from=1,
+                confidence=min(0.7, gl_correction_count / 5.0),
+                learned_from=gl_correction_count,
                 created_at=datetime.now().isoformat(),
             )
             self._learned_rules[rule_id] = rule

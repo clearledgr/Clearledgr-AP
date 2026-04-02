@@ -15,11 +15,14 @@ import os
 import json
 import hmac
 import hashlib
+import logging
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # Configuration
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
@@ -136,10 +139,17 @@ class SlackAPIClient:
             data["reply_broadcast"] = reply_broadcast
         
         result = await self._request("POST", "chat.postMessage", data)
-        
+
+        ts = result.get("ts", "")
+        if not ts:
+            logger.warning(
+                "Slack chat.postMessage returned empty ts for channel=%s; message updates will fail",
+                channel,
+            )
+
         return SlackMessage(
             channel=result.get("channel", channel),
-            ts=result.get("ts", ""),
+            ts=ts,
             text=text,
             blocks=blocks,
             thread_ts=thread_ts

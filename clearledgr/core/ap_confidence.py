@@ -99,11 +99,7 @@ def normalize_confidence_value(value: Any) -> Optional[float]:
             num = num / 100.0
         else:
             return None
-    if num < 0:
-        return 0.0
-    if num > 1.0:
-        return 1.0
-    return num
+    return min(1.0, max(0.0, num))
 
 
 def coerce_confidence_map(raw: Any) -> Dict[str, float]:

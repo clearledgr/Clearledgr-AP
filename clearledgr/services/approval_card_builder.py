@@ -10,7 +10,10 @@ return UI structures. No database or network access.
 """
 
 import json
+import logging
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Budget helpers (pure data transforms)
@@ -595,5 +598,17 @@ def build_approval_blocks(
             {"type": "mrkdwn", "text": str(approval_copy.get("source_of_truth_text") or "Source of truth: Gmail thread and Clearledgr AP context.")},
         ]
     })
+
+    # Validate all action_id strings — Slack silently rejects blocks with
+    # empty or None action_ids (e.g. when gmail_id is None).
+    for block in blocks:
+        for element in block.get("elements", []):
+            aid = element.get("action_id")
+            if aid is not None and (not isinstance(aid, str) or not aid.strip() or "None" in aid):
+                logger.error(
+                    "Invalid action_id detected in approval blocks: %r (invoice gmail_id=%s); replacing with fallback",
+                    aid, getattr(invoice, "gmail_id", None),
+                )
+                element["action_id"] = f"fallback_action_{id(element)}"
 
     return blocks

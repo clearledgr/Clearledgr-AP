@@ -1079,17 +1079,30 @@ async def process_invoice_email(
 ):
     """
     Process an invoice email through the invoice workflow.
-    
+
     This is the main entry point for invoice processing from Gmail Pub/Sub.
-    
+
     Flow:
     1. Extract invoice data using Claude Vision (for PDFs) or LLM (for text)
     2. Submit to invoice workflow
     3. Workflow handles: auto-approve (high confidence) or route to Slack (low confidence)
     """
+    # D2: Check subscription limits before processing
+    try:
+        from clearledgr.services.subscription import get_subscription_service
+        sub_svc = get_subscription_service()
+        sub = sub_svc.get_subscription(organization_id)
+        current_usage = sub.usage.invoices_this_month if sub.usage else 0
+        limit_check = sub_svc.check_limit(organization_id, "invoices_per_month", current_usage)
+        if not limit_check.get("allowed", True):
+            logger.warning("Subscription limit reached for org %s, skipping invoice processing", organization_id)
+            return
+    except Exception as sub_exc:
+        logger.warning("Subscription check failed for org %s, proceeding: %s", organization_id, sub_exc)
+
     from clearledgr.services.invoice_workflow import InvoiceWorkflowService, InvoiceData
     from clearledgr.workflows.gmail_activities import extract_email_data_activity
-    
+
     logger.info(f"Processing invoice email: {message.subject}")
     
     # Extract data from email + attachments

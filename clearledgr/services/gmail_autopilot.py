@@ -213,6 +213,26 @@ class GmailAutopilot:
             from clearledgr.api.gmail_webhooks import process_single_email
 
             organization_id = self._resolve_org_id(token.user_id)
+
+            # D1: Check subscription limits before processing emails
+            try:
+                from clearledgr.services.subscription import get_subscription_service
+                sub_svc = get_subscription_service()
+                sub = sub_svc.get_subscription(organization_id)
+                current_usage = sub.usage.invoices_this_month if sub.usage else 0
+                limit_check = sub_svc.check_limit(organization_id, "invoices_per_month", current_usage)
+                if not limit_check.get("allowed", True):
+                    logger.warning("Autopilot: subscription limit reached for org %s, skipping", organization_id)
+                    self._db.save_gmail_autopilot_state(
+                        user_id=token.user_id,
+                        email=token.email,
+                        last_scan_at=now.isoformat(),
+                        last_error="subscription_limit_reached",
+                    )
+                    return
+            except Exception as sub_exc:
+                logger.warning("Autopilot: subscription check failed for org %s, proceeding: %s", organization_id, sub_exc)
+
             for entry in messages:
                 message_id = entry.get("id")
                 if not message_id:

@@ -163,7 +163,11 @@ async def send_with_retry(
     organization_id: Optional[str] = None,
 ) -> bool:
     """Send Slack blocks, enqueueing for retry on failure."""
-    ok = await _post_slack_blocks(blocks, text, preferred_channel, organization_id)
+    try:
+        ok = await _post_slack_blocks(blocks, text, preferred_channel, organization_id)
+    except Exception as post_exc:
+        logger.error("Slack _post_slack_blocks raised for ap_item=%s: %s", ap_item_id, post_exc)
+        ok = False
     if ok:
         return True
     # Enqueue for retry
@@ -182,7 +186,10 @@ async def send_with_retry(
         )
         logger.info("Notification enqueued for retry (ap_item=%s)", ap_item_id)
     except Exception as e:
-        logger.error("Failed to enqueue notification: %s", e)
+        logger.critical(
+            "Slack send AND enqueue both failed for ap_item=%s channel=%s org=%s: %s",
+            ap_item_id, preferred_channel, organization_id, e,
+        )
     return False
 
 

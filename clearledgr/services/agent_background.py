@@ -162,7 +162,17 @@ async def start_agent_background(app=None):
         logger.warning("Agent background already running")
         return
 
-    _background_task = asyncio.create_task(_run_loop())
+    async def _run_loop_with_restart():
+        while True:
+            try:
+                await _run_loop()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                logger.critical("Background loop crashed, restarting in 30s: %s", exc)
+                await asyncio.sleep(30)
+
+    _background_task = asyncio.create_task(_run_loop_with_restart())
     logger.info("Agent background intelligence loop started")
 
 
@@ -190,6 +200,16 @@ async def _run_loop():
             await _drain_erp_post_retry_queue()
             for org_id in org_ids:
                 await _check_erp_follow_on_fallback_timeouts(org_id)
+
+            # Drain notification retry queue (F1: ensures failed Slack/Teams
+            # notifications are retried instead of silently dropped)
+            try:
+                from clearledgr.services.slack_notifications import process_retry_queue
+                drained = await process_retry_queue()
+                if drained:
+                    logger.info("Drained %d notification retries", drained)
+            except Exception as exc:
+                logger.warning("Notification retry drain failed: %s", exc)
 
             # Every 15 minutes: check overdue and stale tasks + approval timeouts
             if tick % 1 == 0:  # runs every iteration (15 min sleep)

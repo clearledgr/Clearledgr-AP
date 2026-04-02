@@ -196,7 +196,7 @@ def classify_post_failure_recoverability(
     joined = " ".join(part for part in [error_text, exception_text] if part).strip()
 
     if not joined:
-        return {"recoverable": True, "reason": "recoverable_unknown_failure"}
+        return {"recoverable": False, "reason": "non_recoverable_empty_error"}
 
     for token in NON_RECOVERABLE_POST_FAILURE_TOKENS:
         if token in joined:
@@ -214,7 +214,7 @@ def classify_post_failure_recoverability(
                 "matched_token": token,
             }
 
-    return {"recoverable": True, "reason": "recoverable_unspecified"}
+    return {"recoverable": False, "reason": "non_recoverable_unclassified"}
 
 
 @dataclass

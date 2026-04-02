@@ -606,9 +606,12 @@ class APStore:
     def get_ap_item_by_vendor_invoice(
         self, organization_id: str, vendor_name: str, invoice_number: str
     ) -> Optional[Dict[str, Any]]:
+        vendor_name = str(vendor_name or "").strip()
+        invoice_number = str(invoice_number or "").strip()
         self.initialize()
         sql = self._prepare_sql(
-            "SELECT * FROM ap_items WHERE organization_id = ? AND vendor_name = ? AND invoice_number = ? "
+            "SELECT * FROM ap_items WHERE organization_id = ? "
+            "AND LOWER(vendor_name) = LOWER(?) AND LOWER(invoice_number) = LOWER(?) "
             "ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:

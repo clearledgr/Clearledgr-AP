@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -556,10 +557,13 @@ class APDecisionService:
         if rec not in _VALID_RECOMMENDATIONS:
             rec = "escalate"
 
+        raw_confidence = _safe_float(parsed.get("confidence"))
+        confidence = raw_confidence if (raw_confidence is not None and not math.isnan(raw_confidence)) else 0.0
+
         return APDecision(
             recommendation=rec,
             reasoning=str(parsed.get("reasoning") or "No reasoning provided."),
-            confidence=_safe_float(parsed.get("confidence")) or 0.0,
+            confidence=confidence,
             info_needed=parsed.get("info_needed") or None,
             risk_flags=[str(f) for f in (parsed.get("risk_flags") or [])],
             vendor_context_used=vendor_context_used,
@@ -638,7 +642,7 @@ class APDecisionService:
                         f"{days_since_change} day(s) ago — a potential fraud signal. "
                         "Routing to human review."
                     ),
-                    confidence=max(0.7, confidence - 0.2),
+                    confidence=min(1.0, max(0.7, confidence - 0.2)),
                     info_needed=None,
                     risk_flags=["bank_details_recently_changed"],
                     vendor_context_used=vendor_context_used or {},
@@ -655,7 +659,7 @@ class APDecisionService:
                     "(frequent reject/request-info outcomes), so this invoice is routed "
                     "for human review despite high extraction confidence."
                 ),
-                confidence=max(0.8, confidence - 0.1),
+                confidence=min(1.0, max(0.8, confidence - 0.1)),
                 info_needed=None,
                 risk_flags=["human_feedback_strict_bias"],
                 vendor_context_used=vendor_context_used or {},
@@ -674,7 +678,7 @@ class APDecisionService:
                     f"(flags: {', '.join(risk_flags_from_score)}). "
                     "Routing to human review regardless of extraction confidence."
                 ),
-                confidence=max(0.7, confidence - 0.15),
+                confidence=min(1.0, max(0.7, confidence - 0.15)),
                 info_needed=None,
                 risk_flags=risk_flags_from_score,
                 vendor_context_used=vendor_context_used or {},
@@ -692,7 +696,7 @@ class APDecisionService:
                     f"(${getattr(invoice, 'amount', 0):.2f}). "
                     "Routing to human review to confirm this is not a re-submission."
                 ),
-                confidence=max(0.7, confidence - 0.1),
+                confidence=min(1.0, max(0.7, confidence - 0.1)),
                 info_needed=None,
                 risk_flags=["duplicate_invoice_detected"],
                 vendor_context_used=vendor_context_used or {},
@@ -713,7 +717,7 @@ class APDecisionService:
                         f"is more than 2 standard deviations from the historical average "
                         f"(avg=${avg:.2f}, σ=${stddev:.2f}). Routing to human review."
                     ),
-                    confidence=max(0.65, confidence - 0.15),
+                    confidence=min(1.0, max(0.65, confidence - 0.15)),
                     info_needed=None,
                     risk_flags=["amount_anomaly_2sigma"],
                     vendor_context_used=vendor_context_used or {},

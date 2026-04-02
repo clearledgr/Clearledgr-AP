@@ -507,11 +507,11 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
                 reason=result_reason or None,
             )
         except Exception as _upd_exc:
-            logger.warning("Teams card update failed, enqueueing for retry: %s", _upd_exc)
+            logger.warning("Teams card update failed for ap_item=%s, enqueueing for retry: %s", normalized.ap_item_id, _upd_exc)
             try:
                 _db = get_db()
                 _db.enqueue_notification(
-                    organization_id="system",
+                    organization_id=normalized.organization_id or "default",
                     channel="teams_card_update",
                     payload={
                         "service_url": service_url,
@@ -522,9 +522,13 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
                         "action": normalized.action,
                         "reason": result_reason or None,
                     },
+                    ap_item_id=normalized.ap_item_id,
                 )
             except Exception as _enq_exc:
-                logger.error("Failed to enqueue Teams callback retry: %s", _enq_exc)
+                logger.error(
+                    "CRITICAL: Teams card update AND enqueue both failed for ap_item=%s org=%s: %s",
+                    normalized.ap_item_id, normalized.organization_id, _enq_exc,
+                )
 
     return {
         "status": result_status,

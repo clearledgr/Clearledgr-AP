@@ -128,23 +128,38 @@ def _resolve_correlation_id(db, ap_item_id: str | None, org_id: str, gmail_id: s
     )
 
 
-async def _post_to_response_url(response_url: str, payload: Dict[str, Any]) -> None:
-    """Post a follow-up message to Slack's response_url with retry on failure."""
+async def _post_to_response_url(
+    response_url: str,
+    payload: Dict[str, Any],
+    *,
+    organization_id: str = "default",
+    ap_item_id: str | None = None,
+) -> bool:
+    """Post a follow-up message to Slack's response_url with inline retry enqueue.
+
+    Returns True on success, False when POST failed (enqueue attempted).
+    """
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(response_url, json=payload)
             resp.raise_for_status()
+        return True
     except Exception as exc:
-        logger.warning("Slack response_url failed, enqueueing for retry: %s", exc)
+        logger.error("Slack response_url POST failed for ap_item=%s: %s", ap_item_id, exc)
         try:
             db = get_db()
             db.enqueue_notification(
-                organization_id="system",
+                organization_id=organization_id,
                 channel="slack_response_url",
                 payload={"response_url": response_url, "body": payload},
+                ap_item_id=ap_item_id,
             )
         except Exception as enq_exc:
-            logger.error("Failed to enqueue Slack callback retry: %s", enq_exc)
+            logger.error(
+                "CRITICAL: Slack response_url POST AND enqueue both failed for ap_item=%s: %s",
+                ap_item_id, enq_exc,
+            )
+        return False
 
 
 def _slack_duplicate_response() -> Dict[str, str]:
@@ -502,6 +517,10 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
 
     final_reply = {"response_type": response.get("response_type", "ephemeral"), "text": response.get("text", "Action received.")}
     if response_url:
-        background_tasks.add_task(_post_to_response_url, response_url, final_reply)
-        return {"response_type": "ephemeral", "text": "Processing..."}
+        await _post_to_response_url(
+            response_url,
+            final_reply,
+            organization_id=normalized.organization_id or "default",
+            ap_item_id=normalized.ap_item_id,
+        )
     return final_reply
