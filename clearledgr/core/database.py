@@ -1135,4 +1135,10 @@ def get_db() -> ClearledgrDB:
     global _DB_INSTANCE
     if _DB_INSTANCE is None:
         _DB_INSTANCE = ClearledgrDB(db_path=os.getenv("CLEARLEDGR_DB_PATH", "clearledgr.db"))
+        # E10: Verify database connectivity on first creation
+        try:
+            with _DB_INSTANCE.connect() as conn:
+                conn.execute("SELECT 1")
+        except Exception as exc:
+            logger.error("Database connectivity check failed: %s", exc)
     return _DB_INSTANCE

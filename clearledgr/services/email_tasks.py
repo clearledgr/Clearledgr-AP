@@ -9,11 +9,13 @@ Turns email threads into actionable tasks:
 """
 
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 import os
 from clearledgr.services.db import DB
 
+logger = logging.getLogger(__name__)
 
 # Database path
 TASKS_DB_PATH = os.environ.get("TASKS_DB_PATH", "email_tasks.sqlite3")
@@ -428,3 +430,10 @@ class TaskStatus:
 
 # Initialize on import
 init_tasks_db()
+
+# E8: Verify database connectivity at startup
+try:
+    db.execute("SELECT 1")
+    logger.info("Email tasks database verified: %s", TASKS_DB_PATH)
+except Exception as _db_check_exc:
+    logger.error("Email tasks database verification failed: %s", _db_check_exc)

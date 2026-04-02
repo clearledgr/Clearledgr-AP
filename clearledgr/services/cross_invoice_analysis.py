@@ -225,7 +225,7 @@ class CrossInvoiceAnalyzer:
             # Check amount match
             inv_amount = inv.get("amount", 0)
             if inv_amount > 0 and amount > 0:
-                amount_diff = abs(amount - inv_amount) / amount
+                amount_diff = abs(amount - inv_amount) / max(amount, inv_amount)
                 if amount_diff <= self.DUPLICATE_AMOUNT_TOLERANCE:
                     match_score += 0.3
                     match_reasons.append(f"Same amount (${amount:,.2f})")
@@ -286,7 +286,10 @@ class CrossInvoiceAnalyzer:
             return anomalies
         
         avg_amount = sum(amounts) / len(amounts)
-        
+
+        if avg_amount < 0.01:
+            return anomalies
+
         # Check for amount anomaly
         if avg_amount > 0:
             deviation_pct = abs(amount - avg_amount) / avg_amount

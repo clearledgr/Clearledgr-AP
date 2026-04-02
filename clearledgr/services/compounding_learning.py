@@ -89,14 +89,17 @@ class CompoundingLearningService:
     6. Confidence increases with successful use
     """
     
+    _CACHE_REFRESH_INTERVAL: int = 300  # 5-minute refresh interval
+
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or os.path.join(
             os.path.dirname(__file__), "..", "state", "learning.db"
         )
         self._init_db()
-        
+
         # In-memory caches for fast lookup
         self._pattern_cache: Dict[str, LearnedPattern] = {}
+        self._last_refresh: float = 0.0
         self._load_patterns_to_cache()
     
     def _init_db(self) -> None:
@@ -143,8 +146,17 @@ class CompoundingLearningService:
                 ON learned_patterns(pattern_type);
             """)
     
+    def _refresh_if_stale(self) -> None:
+        """Reload patterns from DB if the cache is older than _CACHE_REFRESH_INTERVAL."""
+        import time
+        now = time.time()
+        if now - self._last_refresh > self._CACHE_REFRESH_INTERVAL:
+            self._load_patterns_to_cache()
+
     def _load_patterns_to_cache(self) -> None:
         """Load patterns into memory cache."""
+        import time
+        self._last_refresh = time.time()
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("""
                 SELECT pattern_id, pattern_type, pattern_data, confidence,
@@ -484,20 +496,26 @@ class CompoundingLearningService:
         
         # Increase confidence (diminishing returns)
         confidence_boost = 0.05 * (1 - pattern.confidence)
-        pattern.confidence = min(0.95, pattern.confidence + confidence_boost)
-        
+        pattern.confidence = min(1.0, max(0.0, min(0.95, pattern.confidence + confidence_boost)))
+
         # Update in database
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                UPDATE learned_patterns 
-                SET confidence = ?, created_from = ?
-                WHERE pattern_id = ?
-            """, (
-                pattern.confidence,
-                json.dumps(pattern.created_from),
-                pattern_id,
-            ))
-        
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("""
+                    UPDATE learned_patterns
+                    SET confidence = ?, created_from = ?
+                    WHERE pattern_id = ?
+                """, (
+                    pattern.confidence,
+                    json.dumps(pattern.created_from),
+                    pattern_id,
+                ))
+        except Exception as exc:
+            logger.error("Failed to reinforce pattern %s in DB: %s", pattern_id, exc)
+            # Invalidate the stale in-memory cache entry
+            self._pattern_cache.pop(pattern_id, None)
+            return
+
         logger.info(f"Reinforced pattern {pattern_id}, confidence: {pattern.confidence:.0%}")
     
     def _save_pattern(
@@ -530,6 +548,7 @@ class CompoundingLearningService:
         min_confidence: float = 0.5,
     ) -> List[LearnedPattern]:
         """Get relevant patterns for transaction matching."""
+        self._refresh_if_stale()
         relevant = []
         source_keywords = set(source_description.lower().split())
         
@@ -552,6 +571,7 @@ class CompoundingLearningService:
         description: str,
     ) -> Optional[Dict[str, Any]]:
         """Get learned categorization hint for vendor/description."""
+        self._refresh_if_stale()
         vendor_lower = vendor.lower()
         desc_lower = description.lower()
         
@@ -606,7 +626,7 @@ class CompoundingLearningService:
         # Adjust confidence based on success rate
         if pattern.usage_count >= 5:
             new_confidence = 0.5 + (pattern.success_rate * 0.45)
-            pattern.confidence = new_confidence
+            pattern.confidence = min(1.0, max(0.0, new_confidence))
         
         # Update database
         with sqlite3.connect(self.db_path) as conn:

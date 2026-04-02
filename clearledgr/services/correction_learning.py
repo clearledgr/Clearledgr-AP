@@ -1496,22 +1496,32 @@ class CorrectionLearningService:
         vendor = context.get("vendor", "")
         if not vendor:
             return None
-        
+
         rule_id = f"gl_{vendor.lower().replace(' ', '_')}"
-        
+
         if rule_id in self._learned_rules:
             rule = self._learned_rules[rule_id]
-            
+
+            # Apply time-based decay to confidence
+            effective_confidence = rule.confidence
+            try:
+                created = datetime.fromisoformat(rule.created_at)
+                age_days = (datetime.now() - created).days
+                decay = max(0.3, 1.0 - (age_days / 365))
+                effective_confidence = rule.confidence * decay
+            except (ValueError, TypeError):
+                pass  # If created_at is unparseable, skip decay
+
             # Update last applied
             rule.last_applied = datetime.now().isoformat()
-            
+
             return {
                 "value": rule.action.get("gl_code"),
-                "confidence": rule.confidence,
+                "confidence": effective_confidence,
                 "learned_from": rule.learned_from,
                 "message": f"Learned from {rule.learned_from} previous correction(s)",
             }
-        
+
         return None
     
     def _suggest_vendor_name(self, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:

@@ -443,13 +443,37 @@ class SubscriptionService:
         
         return getattr(sub.features, feature, False)
     
+    def _reset_monthly_counters(self, sub: Subscription) -> None:
+        """Reset monthly usage counters and update last_reset timestamp."""
+        if sub.usage is None:
+            sub.usage = UsageStats()
+        sub.usage.invoices_this_month = 0
+        sub.usage.ai_extractions_this_month = 0
+        sub.usage.api_calls_today = 0
+        sub.usage.last_reset = datetime.now(timezone.utc).isoformat()
+        self._save_subscription(sub)
+
     def check_limit(self, organization_id: str, limit_type: str, current_value: int) -> Dict[str, Any]:
         """Check if organization is within a usage limit."""
         sub = self.get_subscription(organization_id)
-        
+
+        # D10: Reset counters if month has changed
+        if sub.usage:
+            now = datetime.now(timezone.utc)
+            last_reset = sub.usage.last_reset
+            if last_reset:
+                try:
+                    last_dt = datetime.fromisoformat(last_reset.replace("Z", "+00:00"))
+                    if last_dt.month != now.month or last_dt.year != now.year:
+                        self._reset_monthly_counters(sub)
+                        sub = self.get_subscription(organization_id)
+                        current_value = 0
+                except Exception:
+                    pass
+
         if sub.limits is None:
             return {"allowed": False, "limit": 0, "current": current_value}
-        
+
         limit = getattr(sub.limits, limit_type, 0)
         
         # -1 means unlimited

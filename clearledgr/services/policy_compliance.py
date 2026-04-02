@@ -274,6 +274,9 @@ class Policy:
 
         if amount is None or threshold is None:
             return None
+
+        if amount <= 0:
+            return None  # Skip policy check for zero/negative amounts
         
         triggered = False
         if operator == "gt" and amount > threshold:
@@ -352,6 +355,9 @@ class Policy:
 
         if amount is None:
             return None
+
+        if amount <= 0:
+            return None  # Skip policy check for zero/negative amounts
         
         if amount >= threshold and not po_number:
             return PolicyViolation(
@@ -593,7 +599,8 @@ class PolicyComplianceService:
 
         merged: Dict[str, Policy] = {policy.policy_id: policy for policy in default_policies}
         for policy in custom_policies:
-            merged[policy.policy_id] = policy
+            if getattr(policy, 'enabled', True):  # Only override if enabled
+                merged[policy.policy_id] = policy
         return list(merged.values())
     
     def _dict_to_policy(self, data: Dict[str, Any]) -> Policy:

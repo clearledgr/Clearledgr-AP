@@ -57,6 +57,7 @@ class StateObserverRegistry:
 
     def __init__(self) -> None:
         self._observers: List[StateObserver] = []
+        self._observer_failure_count: int = 0
 
     def register(self, observer: StateObserver) -> None:
         self._observers.append(observer)
@@ -71,13 +72,17 @@ class StateObserverRegistry:
             try:
                 await obs.on_transition(event)
             except Exception as exc:
+                self._observer_failure_count += 1
                 logger.error(
-                    "Observer %s failed on %s -> %s (ap_item=%s): %s",
+                    "Observer %s failed on event %s->%s (ap_item=%s, org=%s, source=%s): %s",
                     type(obs).__name__,
                     event.old_state,
                     event.new_state,
                     event.ap_item_id,
+                    event.organization_id,
+                    event.source,
                     exc,
+                    exc_info=True,
                 )
 
 

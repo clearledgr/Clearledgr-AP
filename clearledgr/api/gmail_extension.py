@@ -1196,6 +1196,19 @@ async def approve_and_post(
     """
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     db = get_db()
+
+    # D7: Subscription limit check
+    try:
+        from clearledgr.services.subscription import get_subscription_service
+        sub_svc = get_subscription_service()
+        sub = sub_svc.get_subscription(org_id)
+        current_usage = sub.usage.invoices_this_month if sub.usage else 0
+        limit_check = sub_svc.check_limit(org_id, "invoices_per_month", current_usage)
+        if not limit_check.get("allowed", True):
+            raise HTTPException(status_code=429, detail=limit_check.get("message", "Subscription limit reached"))
+    except ImportError:
+        pass
+
     ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.ap_item_id or request.email_id)
     ap_item_id = str((ap_item or {}).get("id") or request.ap_item_id or "").strip() or None
     gmail_ref = str((ap_item or {}).get("thread_id") or request.email_id or "").strip()
@@ -1215,6 +1228,14 @@ async def approve_and_post(
             "source_message_ref": gmail_ref,
         },
     )
+
+    # D7: Increment usage after successful posting
+    if result.get("status") not in ("error", "failed"):
+        try:
+            from clearledgr.services.subscription import get_subscription_service
+            get_subscription_service().increment_usage(org_id, "invoices_this_month")
+        except Exception:
+            pass
 
     return {
         "email_id": request.email_id,
@@ -1606,8 +1627,21 @@ async def submit_for_approval(
     replay = _load_idempotent_extension_response(db, request.idempotency_key)
     if replay:
         return replay
+
+    # D6: Subscription limit check (same pattern as autopilot)
+    try:
+        from clearledgr.services.subscription import get_subscription_service
+        sub_svc = get_subscription_service()
+        sub = sub_svc.get_subscription(org_id)
+        current_usage = sub.usage.invoices_this_month if sub.usage else 0
+        limit_check = sub_svc.check_limit(org_id, "invoices_per_month", current_usage)
+        if not limit_check.get("allowed", True):
+            raise HTTPException(status_code=429, detail=limit_check.get("message", "Subscription limit reached"))
+    except ImportError:
+        pass
+
     runtime = _build_finance_runtime(user, org_id, db=db)
-    
+
     # If intelligence not provided, generate it now
     vendor_intel = request.vendor_intelligence
     policy_result = request.policy_compliance

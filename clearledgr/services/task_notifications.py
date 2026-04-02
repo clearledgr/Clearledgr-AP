@@ -10,19 +10,25 @@ import asyncio
 from typing import Dict, Optional, List
 from datetime import datetime
 
+import logging
+
+_logger = logging.getLogger(__name__)
+
 # Import the app notification functions
 try:
     from ui.slack.app import notify_task_reminder as slack_notify_task
     from ui.slack.app import send_slack_message, build_tasks_blocks
     SLACK_AVAILABLE = True
-except ImportError:
+except ImportError as exc:
+    _logger.warning("Slack notifications unavailable: %s", exc)
     SLACK_AVAILABLE = False
 
 try:
     from ui.teams.app import notify_task_reminder as teams_notify_task
     from ui.teams.app import send_teams_message, create_tasks_card
     TEAMS_AVAILABLE = True
-except ImportError:
+except ImportError as exc:
+    _logger.warning("Teams notifications unavailable: %s", exc)
     TEAMS_AVAILABLE = False
 
 

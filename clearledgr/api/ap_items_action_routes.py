@@ -799,6 +799,14 @@ def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(requ
     parent_meta["source_count"] = len(db.list_ap_item_sources(parent["id"]))
     db.update_ap_item(parent["id"], metadata=parent_meta)
 
+    # D8: Track split items against subscription quota
+    try:
+        from clearledgr.services.subscription import get_subscription_service
+        split_org_id = parent.get("organization_id") or "default"
+        get_subscription_service().increment_usage(split_org_id, "invoices_this_month", amount=len(created_items))
+    except Exception:
+        pass
+
     return {
         "status": "split",
         "parent_ap_item_id": parent["id"],

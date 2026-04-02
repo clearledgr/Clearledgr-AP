@@ -62,6 +62,22 @@ class APStore:
         import uuid
         now = datetime.now(timezone.utc).isoformat()
         item_id = payload.get("id") or f"AP-{uuid.uuid4().hex}"
+
+        # Validate amount: flag invalid amounts rather than persisting silently
+        raw_amount = payload.get("amount")
+        if raw_amount is not None:
+            try:
+                amount_val = float(raw_amount)
+            except (TypeError, ValueError):
+                amount_val = 0.0
+            if amount_val <= 0:
+                logger.warning(
+                    "AP item %s has non-positive amount %s; flagging as invalid_amount",
+                    item_id,
+                    raw_amount,
+                )
+                if not payload.get("exception_code"):
+                    payload["exception_code"] = "invalid_amount"
         metadata = json.dumps(payload.get("metadata") or {})
         # Serialize field_confidences to JSON if provided as a dict
         raw_fc = payload.get("field_confidences")

@@ -292,7 +292,7 @@ def evaluate_critical_field_confidence(
             continue
         # Learned calibration currently comes from correction history, so it only
         # tightens thresholds when there is repeated evidence of extraction errors.
-        merged_threshold_overrides[field] = max(static_value, learned_value)
+        merged_threshold_overrides[field] = min(1.0, max(0.0, max(static_value, learned_value)))
 
     blockers: List[Dict[str, Any]] = []
     evaluated_fields: List[str] = []

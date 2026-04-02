@@ -7,10 +7,13 @@ This module gives Clearledgr a concrete migration pattern:
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import hashlib
 import json
+
+logger = logging.getLogger(__name__)
 
 from clearledgr.core.database import ClearledgrDB, get_db
 from clearledgr.core.launch_controls import (
@@ -357,6 +360,27 @@ def _reconcile_finance_follow_on_completion(
             "idempotency_key": completion_key,
         }
 
+    # Guard against race condition: re-read AP item state before mutating.
+    # If another webhook already transitioned it, treat as duplicate.
+    if related_ap_item_id:
+        try:
+            fresh_item = resolved_db.get_ap_item(related_ap_item_id)
+            fresh_state = str((fresh_item or {}).get("state") or "").strip().lower()
+            if fresh_state == "posted_to_erp":
+                logger.info(
+                    "Browser fallback completion race: AP item %s already posted, skipping",
+                    related_ap_item_id,
+                )
+                return {
+                    "status": normalized_status,
+                    "duplicate": True,
+                    "session_id": session_id,
+                    "ap_item_id": related_ap_item_id,
+                    "reason": "state_already_posted",
+                }
+        except Exception:
+            pass  # Non-blocking guard
+
     result = {
         "status": "success" if normalized_status == "success" else "error",
         "execution_mode": "browser_fallback",
@@ -533,7 +557,46 @@ def reconcile_browser_fallback_completion(
             "idempotency_key": completion_key,
         }
 
+    # B9: Race-condition guard — re-read the AP item to verify state hasn't
+    # changed between the idempotency check and this point.
+    fresh_ap_item = resolved_db.get_ap_item(ap_item_id) or ap_item
+    fresh_state = normalize_state(str(fresh_ap_item.get("state") or ""))
+    if fresh_state != current_state:
+        logger.warning(
+            "AP item %s state changed from %s to %s between idempotency check and update — "
+            "treating as duplicate to prevent race condition",
+            ap_item_id, current_state, fresh_state,
+        )
+        return {
+            "status": normalized_status,
+            "duplicate": True,
+            "session_id": session_id,
+            "ap_item_id": ap_item_id,
+            "ap_item_state": fresh_state,
+            "erp_reference": fresh_ap_item.get("erp_reference") or erp_reference,
+            "idempotency_key": completion_key,
+        }
+    current_state = fresh_state
+
     if normalized_status == "success":
+        # B5: Verify erp_reference is non-empty before transitioning to posted_to_erp
+        if not (erp_reference or "").strip():
+            logger.warning(
+                "Browser fallback reported success but erp_reference is empty for ap_item=%s session=%s — "
+                "not transitioning to posted_to_erp",
+                ap_item_id, session_id,
+            )
+            return {
+                "status": "error",
+                "error": "empty_erp_reference",
+                "duplicate": False,
+                "session_id": session_id,
+                "ap_item_id": ap_item_id,
+                "ap_item_state": current_state,
+                "erp_reference": erp_reference,
+                "idempotency_key": completion_key,
+            }
+
         if current_state == "failed_post":
             resolved_db.update_ap_item(
                 ap_item_id,

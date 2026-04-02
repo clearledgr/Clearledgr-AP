@@ -217,13 +217,27 @@ class EmailParser:
             Parsed email data with extracted fields
         """
         attachments = attachments or []
-        
+
+        # C12: Detect forwarded emails and extract from the inner (forwarded) content
+        forwarded = False
+        forwarded_markers = [
+            "---------- Forwarded message ---------",
+            "Begin forwarded message",
+        ]
+        for marker in forwarded_markers:
+            marker_pos = body.find(marker)
+            if marker_pos != -1:
+                forwarded = True
+                # Extract the inner forwarded content for vendor/amount extraction
+                body = body[marker_pos + len(marker):]
+                break
+
         # Determine email type
         email_type = self._classify_email(subject, body)
-        
+
         # Extract vendor from sender (passes subject+body for payment-processor senders)
         vendor = self._extract_vendor(sender, subject=subject, body=body)
-        
+
         # Extract amounts
         amounts = self._extract_amounts(subject + " " + body)
         
@@ -414,6 +428,7 @@ class EmailParser:
             "source_conflicts": source_conflicts,
             "requires_extraction_review": any(bool(entry.get("blocking")) for entry in source_conflicts),
             "conflict_actions": conflict_actions,
+            "forwarded": forwarded,
             "parsed_at": datetime.now(timezone.utc).isoformat()
         }
 
@@ -1538,7 +1553,29 @@ class EmailParser:
             if content_text:
                 parsed_text = content_text
             elif content_base64:
-                parsed_text = self._extract_pdf_text(content_base64)
+                pdf_result = self._extract_pdf_text(content_base64)
+                # C8: _extract_pdf_text may return a dict on base64 corruption
+                if isinstance(pdf_result, dict) and pdf_result.get("status") == "attachment_corrupted":
+                    return {
+                        "name": attachment.get('name') or attachment.get('filename'),
+                        "type": "document",
+                        "content_type": "application/pdf",
+                        "requires_ocr": False,
+                        "parsed": False,
+                        "status": "attachment_corrupted",
+                        "error": pdf_result.get("error"),
+                    }
+                # C11: _extract_pdf_text may return a dict for password-protected PDFs
+                if isinstance(pdf_result, dict) and pdf_result.get("status") == "attachment_password_protected":
+                    return {
+                        "name": attachment.get('name') or attachment.get('filename'),
+                        "type": "document",
+                        "content_type": "application/pdf",
+                        "requires_ocr": False,
+                        "parsed": False,
+                        "status": "attachment_password_protected",
+                    }
+                parsed_text = pdf_result
 
             parsed_invoice = None
             if parsed_text:
@@ -1739,27 +1776,34 @@ class EmailParser:
             logger.warning(f"Failed to extract from image {image_path}: {e}")
             return None
 
-    def _extract_pdf_text(self, content_base64: str, max_pages: int = None) -> Optional[str]:
+    def _extract_pdf_text(self, content_base64: str, max_pages: int = None):
         """
         Extract text from a base64-encoded PDF attachment.
         Uses text-layer extraction first and falls back to OCR for scanned PDFs.
-        
+
         Args:
             content_base64: Base64-encoded PDF content
             max_pages: Maximum pages to process (None = all pages)
+
+        Returns:
+            Extracted text string, or a dict with status/error if base64 is corrupted.
         """
         try:
             data = base64.b64decode(content_base64)
         except Exception as e:
             logger.warning(f"Failed to decode PDF base64: {e}")
-            return None
+            # C8: Return structured error so callers can detect corrupted attachments
+            return {"status": "attachment_corrupted", "error": str(e)}
         return self._extract_pdf_text_from_bytes(data, max_pages=max_pages)
 
-    def _extract_pdf_text_from_bytes(self, pdf_data: bytes, max_pages: int = None) -> Optional[str]:
+    def _extract_pdf_text_from_bytes(self, pdf_data: bytes, max_pages: int = None):
         """Extract PDF text using text-layer parsing first, then OCR when needed."""
         text_candidates: List[Tuple[str, str]] = []
 
         text_layer = self._extract_pdf_text_layer(pdf_data, max_pages=max_pages)
+        # C11: Propagate password-protected dict up the call chain
+        if isinstance(text_layer, dict):
+            return text_layer
         parsed_text_layer = self.parse_invoice_text(text_layer) if text_layer else None
         if text_layer:
             text_candidates.append(("text_layer", text_layer))
@@ -1772,7 +1816,7 @@ class EmailParser:
         best = self._choose_best_pdf_text_candidate(text_candidates)
         return best[1] if best else None
 
-    def _extract_pdf_text_layer(self, pdf_data: bytes, max_pages: int = None) -> Optional[str]:
+    def _extract_pdf_text_layer(self, pdf_data: bytes, max_pages: int = None):
         """Extract PDF text from embedded text layers before attempting OCR."""
         if PDFPLUMBER_AVAILABLE:
             try:
@@ -1782,14 +1826,32 @@ class EmailParser:
             except Exception as e:
                 logger.warning(f"pdfplumber extraction failed: {e}")
 
+        # C11: _extract_with_pypdf2 may return a dict for password-protected PDFs;
+        # propagate it up so callers can detect the condition.
         return self._extract_with_pypdf2(pdf_data, max_pages=max_pages)
 
-    def _extract_with_pypdf2(self, pdf_data: bytes, max_pages: int = None) -> Optional[str]:
-        """Extract PDF text using PyPDF2 as a fallback text-layer parser."""
+    def _extract_with_pypdf2(self, pdf_data: bytes, max_pages: int = None):
+        """Extract PDF text using PyPDF2 as a fallback text-layer parser.
+
+        Returns:
+            Extracted text string, or a dict with status if password-protected, or None.
+        """
         try:
             import PyPDF2
 
             reader = PyPDF2.PdfReader(io.BytesIO(pdf_data))
+
+            # C11: Detect password-protected PDFs before extraction
+            if reader.is_encrypted:
+                try:
+                    # Attempt empty password (some PDFs are "encrypted" with no password)
+                    if not reader.decrypt(""):
+                        logger.warning("PDF is password-protected and cannot be decrypted")
+                        return {"status": "attachment_password_protected"}
+                except Exception:
+                    logger.warning("PDF is password-protected and cannot be decrypted")
+                    return {"status": "attachment_password_protected"}
+
             total_pages = len(reader.pages)
             pages_to_read = total_pages if max_pages is None else min(total_pages, max_pages)
 
@@ -1802,6 +1864,11 @@ class EmailParser:
             text = "\n".join(text_parts).strip()
             return text or None
         except Exception as e:
+            # C11: Catch specific password-related errors from PyPDF2
+            error_str = str(e).lower()
+            if "password" in error_str or "encrypted" in error_str:
+                logger.warning("PDF is password-protected: %s", e)
+                return {"status": "attachment_password_protected"}
             logger.warning(f"PyPDF2 extraction failed: {e}")
             return None
     

@@ -85,14 +85,24 @@ class MultiModalLLMService:
     def extract_invoice_from_pdf(self, pdf_base64: str, filename: str = "invoice.pdf") -> Dict[str, Any]:
         """
         Extract invoice data directly from a PDF.
-        
+
         Args:
             pdf_base64: Base64-encoded PDF content
             filename: Original filename for context
-            
+
         Returns:
             Extracted invoice data
         """
+        # C10: Reject oversized PDFs before sending to LLM
+        # 25MB base64 ~ 18MB raw file
+        max_base64_size = 25 * 1024 * 1024
+        if len(pdf_base64) > max_base64_size:
+            logger.warning(
+                "PDF %r exceeds size limit: %d bytes base64 (max %d)",
+                filename, len(pdf_base64), max_base64_size,
+            )
+            return {"error": "pdf_too_large", "max_size_mb": 18}
+
         prompt = self._build_pdf_extraction_prompt(filename)
         
         if not self.anthropic_key:

@@ -44,11 +44,11 @@ def _parse_iso(raw: Any) -> Optional[datetime]:
 
 
 def _fallback_ttl_seconds() -> int:
-    raw = os.getenv("ERP_FOLLOW_ON_BROWSER_FALLBACK_TTL_SECONDS", "14400")
+    raw = os.getenv("ERP_FOLLOW_ON_BROWSER_FALLBACK_TTL_SECONDS", "1800")
     try:
         value = int(raw)
     except (TypeError, ValueError):
-        value = 14400
+        value = 1800
     return max(300, min(value, 604800))
 
 
@@ -160,6 +160,13 @@ def reap_stale_erp_follow_on_sessions(
                 }
             )
             summary["timed_out"] += 1
+            logger.warning(
+                "erp_follow_on_timeout_reaper: reaped stale session=%s (workflow=%s, age=%ds, ttl=%ds)",
+                session_id,
+                workflow_id,
+                int((now_utc - dispatched_at).total_seconds()),
+                ttl,
+            )
         except Exception:
             logger.exception("erp_follow_on_timeout_reaper: failed to timeout session=%s", session_id)
             summary["errors"] += 1

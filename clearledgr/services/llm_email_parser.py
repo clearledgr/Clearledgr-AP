@@ -213,10 +213,18 @@ def _parse_json_response(text: str) -> Dict[str, Any]:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # Try to extract the first JSON object
-        obj_match = re.search(r"\{[\s\S]+\}", text)
+        # C9: Use non-greedy regex to avoid matching garbage across multiple objects
+        obj_match = re.search(r"\{[\s\S]+?\}", text)
         if obj_match:
-            return json.loads(obj_match.group(0))
+            parsed = json.loads(obj_match.group(0))
+            # C9: Validate the parsed result has at least one expected field
+            expected_fields = {"vendor", "amount", "invoice_number"}
+            if not (expected_fields & set(parsed.keys())):
+                raise ValueError(
+                    f"Regex JSON fallback matched an object with no expected fields "
+                    f"(got keys: {list(parsed.keys())})"
+                )
+            return parsed
         raise
 
 
@@ -257,8 +265,14 @@ def _llm_result_to_parse_email_dict(
     model: str,
 ) -> Dict[str, Any]:
     """Map LLM JSON output to the dict shape returned by EmailParser.parse_email()."""
+    _CURRENCY_ALIASES = {
+        "\u00a3": "GBP", "$": "USD", "\u20ac": "EUR", "\u00a5": "JPY",
+        "\u20b9": "INR", "R$": "BRL", "CHF": "CHF",
+    }
+
     amount = _safe_float(llm.get("amount"))
-    currency = str(llm.get("currency") or "USD").upper().strip() or "USD"
+    raw_currency = str(llm.get("currency") or "USD").strip()
+    currency = _CURRENCY_ALIASES.get(raw_currency, raw_currency).upper() or "USD"
     invoice_number = llm.get("invoice_number")
     due_date = llm.get("due_date")
     invoice_date = llm.get("invoice_date")

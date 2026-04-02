@@ -347,6 +347,7 @@ def smart_match_score(
                 "score": ref_score
             })
     
+    total_score = min(1.0, max(0.0, total_score))
     return total_score, reasoning
 
 

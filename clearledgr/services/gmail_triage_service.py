@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from clearledgr.services.agent_reflection import get_agent_reflection
 from clearledgr.services.audit_trail import AuditEventType, get_audit_trail
@@ -53,6 +56,20 @@ async def run_inline_gmail_triage(
         }
 
     extraction = await extract_email_data_activity({**payload, "classification": classification})
+
+    # C7: Validate that critical extraction fields are present
+    if not extraction.get("vendor") or extraction.get("amount") is None:
+        extraction["extraction_incomplete"] = True
+        missing = []
+        if not extraction.get("vendor"):
+            missing.append("vendor_name")
+        if extraction.get("amount") is None:
+            missing.append("amount")
+        logger.warning(
+            "Extraction incomplete for email_id=%s: missing %s",
+            payload.get("email_id"), ", ".join(missing),
+        )
+
     extracted_amount = extraction.get("amount")
     amount_display = (
         f"{float(extracted_amount):,.2f}"
@@ -88,22 +105,28 @@ async def run_inline_gmail_triage(
             extraction["gl_code"] = vendor_info["suggested_gl"]
             extraction["gl_source"] = "vendor_intelligence"
 
-    policy_service = get_policy_compliance(org_id)
+    # C13: Wrap policy compliance in try/except to prevent cascade failures
     invoice_for_policy = {
         "vendor": extraction.get("vendor") or "",
         "amount": extraction.get("amount", 0),
         "category": extraction.get("category") or "",
         "vendor_intelligence": extraction.get("vendor_intelligence", {}),
     }
-    policy_result = policy_service.check(invoice_for_policy)
-    extraction["policy_compliance"] = policy_result.to_dict()
-    if not policy_result.compliant:
-        trail.log(
-            invoice_id=payload.get("email_id"),
-            event_type=AuditEventType.POLICY_CHECK,
-            summary=f"Policy: {len(policy_result.violations)} requirement(s)",
-            details={"violations": [v.message for v in policy_result.violations]},
-        )
+    policy_result = None
+    try:
+        policy_service = get_policy_compliance(org_id)
+        policy_result = policy_service.check(invoice_for_policy)
+        extraction["policy_compliance"] = policy_result.to_dict()
+        if not policy_result.compliant:
+            trail.log(
+                invoice_id=payload.get("email_id"),
+                event_type=AuditEventType.POLICY_CHECK,
+                summary=f"Policy: {len(policy_result.violations)} requirement(s)",
+                details={"violations": [v.message for v in policy_result.violations]},
+            )
+    except Exception as policy_exc:
+        logger.warning("Policy compliance check failed for email_id=%s: %s", payload.get("email_id"), policy_exc)
+        extraction["policy_compliance"] = {"compliant": True, "violations": [], "error": "check_failed"}
 
     priority_service = get_priority_detection(org_id)
     invoice_for_priority = {
@@ -135,17 +158,23 @@ async def run_inline_gmail_triage(
             details={"duplicates": [getattr(d, "invoice_id", None) for d in duplicate_alerts]},
         )
 
-    budget_service = get_budget_awareness(org_id)
-    budget_checks = budget_service.check_invoice(invoice_for_policy)
-    if budget_checks:
-        extraction["budget_impact"] = [b.to_dict() for b in budget_checks]
-        for check in budget_checks:
-            if check.after_approval_status.value in ["critical", "exceeded"]:
-                trail.log(
-                    invoice_id=payload.get("email_id"),
-                    event_type=AuditEventType.ANALYZED,
-                    summary=f"Budget alert: {check.budget.name} at {check.after_approval_percent:.0f}%",
-                )
+    # C13: Wrap budget check in try/except to prevent cascade failures
+    budget_checks = []
+    try:
+        budget_service = get_budget_awareness(org_id)
+        budget_checks = budget_service.check_invoice(invoice_for_policy)
+        if budget_checks:
+            extraction["budget_impact"] = [b.to_dict() for b in budget_checks]
+            for check in budget_checks:
+                if check.after_approval_status.value in ["critical", "exceeded"]:
+                    trail.log(
+                        invoice_id=payload.get("email_id"),
+                        event_type=AuditEventType.ANALYZED,
+                        summary=f"Budget alert: {check.budget.name} at {check.after_approval_percent:.0f}%",
+                    )
+    except Exception as budget_exc:
+        logger.warning("Budget check failed for email_id=%s: %s", payload.get("email_id"), budget_exc)
+        budget_checks = []
 
     insights_service = get_proactive_insights(org_id)
     insights = insights_service.analyze_after_invoice(invoice_for_priority)
@@ -162,7 +191,7 @@ async def run_inline_gmail_triage(
         confidence=extraction.get("confidence", 0),
         reasoning=(
             f"Vendor: {'known' if vendor_info else 'new'}, "
-            f"Policy: {'compliant' if policy_result.compliant else 'requirements'}, "
+            f"Policy: {'compliant' if (policy_result and policy_result.compliant) else 'requirements'}, "
             f"Duplicates: {len(duplicate_alerts)}"
         ),
     )
@@ -176,9 +205,9 @@ async def run_inline_gmail_triage(
         "intelligence": {
             "vendor_known": vendor_info is not None,
             "vendor_info": vendor_info,
-            "policy_compliant": policy_result.compliant,
-            "policy_requirements": [v.message for v in policy_result.violations],
-            "required_approvers": policy_result.required_approvers,
+            "policy_compliant": policy_result.compliant if policy_result else True,
+            "policy_requirements": [v.message for v in policy_result.violations] if policy_result else [],
+            "required_approvers": policy_result.required_approvers if policy_result else [],
             "priority": priority.priority.value,
             "priority_label": priority.priority.label,
             "days_until_due": priority.days_until_due,
@@ -193,12 +222,17 @@ async def run_inline_gmail_triage(
         },
     }
 
+    # C13: Wrap agent reasoning in try/except to prevent cascade failures
     if callable(agent_reasoning_fn):
-        result = agent_reasoning_fn(
-            result=result,
-            org_id=org_id,
-            combined_text=combined_text,
-            attachments=request_attachments,
-        )
+        try:
+            result = agent_reasoning_fn(
+                result=result,
+                org_id=org_id,
+                combined_text=combined_text,
+                attachments=request_attachments,
+            )
+        except Exception as reasoning_exc:
+            logger.warning("Agent reasoning failed for email_id=%s: %s", payload.get("email_id"), reasoning_exc)
+            result["intelligence"]["agent_reasoning_error"] = str(reasoning_exc)
 
     return result

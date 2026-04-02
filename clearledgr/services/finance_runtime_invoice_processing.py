@@ -78,6 +78,14 @@ async def execute_ap_invoice_processing(
         correlation_id=resolved_correlation_id,
     )
 
+    # D9: Track usage after successful AP item creation
+    if seeded_item:
+        try:
+            from clearledgr.services.subscription import get_subscription_service
+            get_subscription_service().increment_usage(invoice_org, "invoices_this_month")
+        except Exception:
+            pass
+
     amount_value = runtime._safe_float(invoice.get("amount"))
     confidence_value = runtime._safe_float(invoice.get("confidence"))
 

@@ -225,6 +225,9 @@ async def _run_loop():
             if tick % 4 == 0:
                 for org_id in org_ids:
                     await _check_anomalies(org_id)
+                # E5: Run ERP follow-on reconciliation check every 4th tick (~60 min)
+                for org_id in org_ids:
+                    await _run_erp_reconciliation(org_id)
 
             # Daily (96 ticks at 15-min intervals, but we check by hour)
             now = datetime.now(timezone.utc)
@@ -260,8 +263,10 @@ async def _check_overdue_tasks():
         total_overdue = 0
         total_stale = 0
         org_ids = _active_org_ids()
+        loop = asyncio.get_event_loop()
         for org_id in org_ids:
-            task_status = _collect_org_overdue_and_stale_tasks(org_id)
+            # E7: Run sync DB call in executor to avoid blocking the event loop
+            task_status = await loop.run_in_executor(None, _collect_org_overdue_and_stale_tasks, org_id)
             org_overdue = task_status.get("overdue", [])
             org_stale = task_status.get("stale", [])
             total_overdue += len(org_overdue)
@@ -636,6 +641,24 @@ async def _run_task_scheduler_checks():
             )
     except Exception as exc:
         logger.error("Task scheduler checks failed: %s", exc)
+
+
+async def _run_erp_reconciliation(org_id: str):
+    """Run ERP follow-on reconciliation check for stale posted items."""
+    try:
+        from clearledgr.services.erp_follow_on_reconciliation import (
+            run_erp_follow_on_reconciliation_check,
+        )
+
+        checked = await run_erp_follow_on_reconciliation_check(organization_id=org_id)
+        if checked:
+            logger.info(
+                "ERP follow-on reconciliation checked %d item(s) for org=%s",
+                checked,
+                org_id,
+            )
+    except Exception as e:
+        logger.error("ERP follow-on reconciliation failed for org=%s: %s", org_id, e)
 
 
 async def _check_period_end(org_id: str):
