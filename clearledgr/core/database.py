@@ -1119,9 +1119,15 @@ class _ClearledgrDBBase:
             self._ensure_column(cur, "payments", "erp_reference", "TEXT")
             self._ensure_column(cur, "payments", "notes", "TEXT")
             self._ensure_column(cur, "payments", "paid_amount", "REAL")
+            self._ensure_column(cur, "payments", "overdue_alerted", "TEXT")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_org ON payments(organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_ap_item ON payments(ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_org_status ON payments(organization_id, status)")
+
+            # Payment events (append-only history — multiple payments per bill)
+            cur.execute(PaymentStore.PAYMENT_EVENTS_TABLE_SQL)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_payment_events_payment ON payment_events(payment_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_payment_events_org ON payment_events(organization_id)")
 
             # Multi-entity support (P0: Cowrywise has entities in Africa and US)
             cur.execute(EntityStore.ENTITIES_TABLE_SQL)

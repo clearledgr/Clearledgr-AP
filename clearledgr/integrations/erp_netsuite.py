@@ -1016,8 +1016,25 @@ async def get_payment_status_netsuite(
             paid = float(row.get("amountpaid") or 0)
             status_val = str(row.get("status") or "").strip()
 
-            if remaining <= 0 and total > 0:
+            # Detect payment processing failures
+            if status_val.lower() in ("pendapprov", "pendingapproval"):
                 return {
+                    "paid": False,
+                    "payment_failed": True,
+                    "reason": "payment_pending_approval",
+                }
+
+            if remaining <= 0 and total > 0:
+                # Determine closure method: if fully closed but no payment
+                # recorded, may be a credit memo application
+                closure_method = "payment"
+                if paid <= 0 and remaining <= 0:
+                    closure_method = "credit_applied"
+                elif paid > 0 and paid < total and remaining <= 0:
+                    # Part payment, part credit
+                    closure_method = "payment"
+
+                result = {
                     "paid": True,
                     "payment_amount": round(paid or total, 2),
                     "payment_date": "",
@@ -1026,6 +1043,9 @@ async def get_payment_status_netsuite(
                     "partial": False,
                     "remaining_balance": 0.0,
                 }
+                if closure_method != "payment":
+                    result["closure_method"] = closure_method
+                return result
             elif paid > 0 and remaining > 0:
                 return {
                     "paid": False,

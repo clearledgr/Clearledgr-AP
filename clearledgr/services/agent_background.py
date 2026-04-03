@@ -756,11 +756,22 @@ async def _verify_recent_erp_postings(org_id: str):
         logger.error("ERP sync verification failed for org=%s: %s", org_id, exc)
 
 
+def _is_within_days(date_str: Any, days: int) -> bool:
+    """Check if an ISO date string is within the last N days."""
+    parsed = _parse_task_datetime(date_str)
+    if not parsed:
+        return False
+    return (datetime.now(timezone.utc) - parsed).days <= days
+
+
 async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
     """Poll ERP for payment status updates on ready/scheduled payments.
 
     Reads payment status from the ERP via GET requests — NEVER executes payments.
-    Capped at 50 payments per org per tick to limit API usage.
+    Caps per org per tick:
+    - 50 ready/scheduled payments
+    - 20 recently completed payments (reversal detection)
+    - 20 overdue checks
     """
     try:
         from clearledgr.core.database import get_db
@@ -774,6 +785,9 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
 
         checked = 0
         updated = 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
+
         for payment in pending_payments[:50]:  # Cap per tick
             erp_ref = payment.get("erp_reference")
             if not erp_ref:
@@ -787,8 +801,94 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
                     invoice_number=payment.get("invoice_number"),
                 )
 
+                ap_item_id = payment.get("ap_item_id")
+
+                # Gap 3: Payment failed in ERP
+                if status.get("payment_failed"):
+                    fail_reason = status.get("reason", "unknown")
+                    db.update_payment(
+                        payment["id"],
+                        status="failed",
+                        notes=f"Payment failed in ERP: {fail_reason}",
+                    )
+                    if ap_item_id and hasattr(db, "update_ap_item_metadata_merge"):
+                        db.update_ap_item_metadata_merge(ap_item_id, {
+                            "payment_status": "failed",
+                            "payment_failed_reason": fail_reason,
+                        })
+                    # Gap 4: Log payment event
+                    if hasattr(db, "append_payment_event"):
+                        db.append_payment_event(
+                            payment_id=payment["id"],
+                            org_id=org_id,
+                            event_type="payment_failed",
+                            amount=status.get("payment_amount"),
+                            reference=status.get("payment_reference"),
+                            method=status.get("payment_method"),
+                            erp_data=status,
+                        )
+                    try:
+                        from clearledgr.services.slack_notifications import (
+                            send_payment_failed_notification,
+                        )
+                        await send_payment_failed_notification(
+                            organization_id=org_id,
+                            vendor_name=payment.get("vendor_name", "Unknown"),
+                            amount=float(payment.get("amount") or 0),
+                            currency=payment.get("currency", "USD"),
+                            reason=fail_reason,
+                            ap_item_id=ap_item_id,
+                        )
+                    except Exception as notify_exc:
+                        logger.warning("Payment failed notification failed: %s", notify_exc)
+                    updated += 1
+                    continue
+
+                # Gap 5: Credit/write-off closure
+                closure_method = status.get("closure_method")
+                if status.get("paid") and closure_method and closure_method != "payment":
+                    db.update_payment(
+                        payment["id"],
+                        status="closed_by_credit",
+                        notes=f"Closed by {closure_method}: {status.get('payment_reference', '')}",
+                        completed_date=now_iso,
+                    )
+                    if ap_item_id and hasattr(db, "update_ap_item_metadata_merge"):
+                        db.update_ap_item_metadata_merge(ap_item_id, {
+                            "payment_status": "closed_by_credit",
+                            "payment_closure_method": closure_method,
+                            "payment_completed_at": now_iso,
+                        })
+                    # Gap 4: Log payment event
+                    if hasattr(db, "append_payment_event"):
+                        db.append_payment_event(
+                            payment_id=payment["id"],
+                            org_id=org_id,
+                            event_type="credit_applied",
+                            amount=status.get("payment_amount"),
+                            reference=status.get("payment_reference"),
+                            method=closure_method,
+                            erp_data=status,
+                        )
+                    try:
+                        from clearledgr.services.slack_notifications import (
+                            send_payment_credit_applied_notification,
+                        )
+                        await send_payment_credit_applied_notification(
+                            organization_id=org_id,
+                            vendor_name=payment.get("vendor_name", "Unknown"),
+                            amount=float(payment.get("amount") or 0),
+                            currency=payment.get("currency", "USD"),
+                            closure_method=closure_method,
+                            reference=status.get("payment_reference"),
+                            ap_item_id=ap_item_id,
+                        )
+                    except Exception as notify_exc:
+                        logger.warning("Credit applied notification failed: %s", notify_exc)
+                    updated += 1
+                    continue
+
                 if status.get("paid"):
-                    now_iso = datetime.now(timezone.utc).isoformat()
                     db.update_payment(
                         payment["id"],
                         status="completed",
@@ -799,7 +899,6 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
                         notes=f"Payment detected in ERP: {status.get('payment_reference', '')}",
                     )
                     # Update AP item metadata
-                    ap_item_id = payment.get("ap_item_id")
                     if ap_item_id and hasattr(db, "update_ap_item_metadata_merge"):
                         db.update_ap_item_metadata_merge(ap_item_id, {
                             "payment_status": "completed",
@@ -807,6 +906,17 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
                             "payment_method": status.get("payment_method", ""),
                             "payment_reference": status.get("payment_reference", ""),
                         })
+                    # Gap 4: Log payment event
+                    if hasattr(db, "append_payment_event"):
+                        db.append_payment_event(
+                            payment_id=payment["id"],
+                            org_id=org_id,
+                            event_type="payment_detected",
+                            amount=status.get("payment_amount"),
+                            reference=status.get("payment_reference"),
+                            method=status.get("payment_method"),
+                            erp_data=status,
+                        )
                     # Notify via Slack
                     try:
                         from clearledgr.services.slack_notifications import (
@@ -836,13 +946,23 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
                         ),
                     )
                     # Update AP item metadata
-                    ap_item_id = payment.get("ap_item_id")
                     if ap_item_id and hasattr(db, "update_ap_item_metadata_merge"):
                         db.update_ap_item_metadata_merge(ap_item_id, {
                             "payment_status": "partial",
                             "payment_paid_amount": status.get("payment_amount"),
                             "payment_remaining": status.get("remaining_balance"),
                         })
+                    # Gap 4: Log payment event
+                    if hasattr(db, "append_payment_event"):
+                        db.append_payment_event(
+                            payment_id=payment["id"],
+                            org_id=org_id,
+                            event_type="partial_payment",
+                            amount=status.get("payment_amount"),
+                            reference=status.get("payment_reference"),
+                            method=status.get("payment_method"),
+                            erp_data=status,
+                        )
                     # Notify via Slack
                     try:
                         from clearledgr.services.slack_notifications import (
@@ -866,6 +986,125 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
                     "Payment status poll failed for payment %s: %s",
                     payment.get("id"), exc,
                 )
+
+        # -------------------------------------------------------------------
+        # Gap 1: Re-check recently completed payments for reversals
+        # -------------------------------------------------------------------
+        try:
+            recent_completed = db.list_payments_by_status(org_id, "completed")
+            recent_completed = [
+                p for p in recent_completed
+                if _is_within_days(p.get("completed_date"), 7)
+            ]
+
+            for payment in recent_completed[:20]:  # Cap at 20
+                erp_ref = payment.get("erp_reference")
+                if not erp_ref:
+                    continue
+                checked += 1
+
+                try:
+                    status = await get_bill_payment_status(
+                        organization_id=org_id,
+                        erp_reference=erp_ref,
+                        invoice_number=payment.get("invoice_number"),
+                    )
+
+                    if not status.get("paid"):
+                        # Payment was reversed/voided in ERP
+                        db.update_payment(
+                            payment["id"],
+                            status="reversed",
+                            notes=f"Payment reversal detected in ERP on {now_iso}",
+                        )
+                        ap_item_id = payment.get("ap_item_id")
+                        if ap_item_id and hasattr(db, "update_ap_item_metadata_merge"):
+                            db.update_ap_item_metadata_merge(ap_item_id, {
+                                "payment_status": "reversed",
+                            })
+                        # Gap 4: Log reversal event
+                        if hasattr(db, "append_payment_event"):
+                            db.append_payment_event(
+                                payment_id=payment["id"],
+                                org_id=org_id,
+                                event_type="reversal",
+                                amount=payment.get("amount"),
+                                reference=erp_ref,
+                                erp_data=status,
+                            )
+                        try:
+                            from clearledgr.services.slack_notifications import (
+                                send_payment_reversed_notification,
+                            )
+                            await send_payment_reversed_notification(
+                                organization_id=org_id,
+                                vendor_name=payment.get("vendor_name", "Unknown"),
+                                amount=float(payment.get("amount") or 0),
+                                currency=payment.get("currency", "USD"),
+                                reference=erp_ref,
+                                ap_item_id=ap_item_id,
+                            )
+                        except Exception as notify_exc:
+                            logger.warning("Payment reversed notification failed: %s", notify_exc)
+                        updated += 1
+
+                except Exception as exc:
+                    logger.warning(
+                        "Reversal check failed for payment %s: %s",
+                        payment.get("id"), exc,
+                    )
+        except Exception as exc:
+            logger.warning("Reversal detection sweep failed for org=%s: %s", org_id, exc)
+
+        # -------------------------------------------------------------------
+        # Gap 2: Check for overdue payments
+        # -------------------------------------------------------------------
+        try:
+            all_ready = db.list_payments_by_status(org_id, "ready_for_payment")
+            overdue_checked = 0
+            for payment in all_ready:
+                if overdue_checked >= 20:
+                    break
+                due_date = payment.get("due_date")
+                if not due_date:
+                    continue
+                # Skip payments already alerted as overdue
+                if payment.get("overdue_alerted"):
+                    continue
+                try:
+                    due_dt = datetime.fromisoformat(due_date.replace("Z", "+00:00"))
+                    if due_dt.tzinfo is None:
+                        due_dt = due_dt.replace(tzinfo=timezone.utc)
+                    if now > due_dt:
+                        days_overdue = (now - due_dt).days
+                        overdue_checked += 1
+                        db.update_payment(
+                            payment["id"],
+                            status="overdue",
+                            notes=f"Overdue by {days_overdue} days",
+                            overdue_alerted=now_iso,
+                        )
+                        ap_item_id = payment.get("ap_item_id")
+                        try:
+                            from clearledgr.services.slack_notifications import (
+                                send_payment_overdue_notification,
+                            )
+                            await send_payment_overdue_notification(
+                                organization_id=org_id,
+                                vendor_name=payment.get("vendor_name", "Unknown"),
+                                amount=float(payment.get("amount") or 0),
+                                currency=payment.get("currency", "USD"),
+                                due_date=due_date,
+                                days_overdue=days_overdue,
+                                ap_item_id=ap_item_id,
+                            )
+                        except Exception as notify_exc:
+                            logger.warning("Overdue payment notification failed: %s", notify_exc)
+                        updated += 1
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.warning("Overdue payment check failed for org=%s: %s", org_id, exc)
 
         if checked:
             logger.info(

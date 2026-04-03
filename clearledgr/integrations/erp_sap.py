@@ -958,8 +958,28 @@ async def get_payment_status_sap(
             paid_to_date = float(payload.get("PaidToDate") or 0)
             remaining = round(doc_total - paid_to_date, 2)
 
-            if paid_to_date >= doc_total and doc_total > 0:
+            # Detect cancelled invoices
+            cancelled = str(payload.get("Cancelled") or "").lower()
+            if cancelled in ("tyes", "y", "true", "yes"):
                 return {
+                    "paid": False,
+                    "payment_failed": True,
+                    "reason": "invoice_cancelled",
+                }
+
+            if paid_to_date >= doc_total and doc_total > 0:
+                # Detect closure method: credit memo vs payment
+                closure_method = "payment"
+                # SAP: if paid but no outgoing payment reference, check for
+                # credit memo closure
+                doc_type = str(payload.get("DocObjectCode") or "").lower()
+                if doc_type in ("ocreditnote", "creditnote"):
+                    closure_method = "credit_applied"
+                elif not str(payload.get("PaymentReference") or "").strip():
+                    # No explicit payment reference — may be credit
+                    closure_method = "unknown_non_payment"
+
+                result = {
                     "paid": True,
                     "payment_amount": round(paid_to_date, 2),
                     "payment_date": str(payload.get("UpdateDate") or ""),
@@ -968,6 +988,9 @@ async def get_payment_status_sap(
                     "partial": False,
                     "remaining_balance": 0.0,
                 }
+                if closure_method != "payment":
+                    result["closure_method"] = closure_method
+                return result
             elif paid_to_date > 0 and remaining > 0:
                 return {
                     "paid": False,

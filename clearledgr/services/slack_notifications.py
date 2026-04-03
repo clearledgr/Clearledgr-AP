@@ -1295,3 +1295,162 @@ async def send_payment_partial_notification(
         ap_item_id=ap_item_id,
         organization_id=organization_id,
     )
+
+
+async def send_payment_reversed_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str = "USD",
+    reference: Optional[str] = None,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that a payment was reversed/voided in the ERP."""
+    ref_str = reference or "N/A"
+    text = (
+        f"Payment REVERSED: {vendor_name} {currency} {amount:,.2f}. "
+        f"ERP ref: {ref_str}. "
+        f"The payment was voided or returned. Manual review required."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":rotating_light: *Payment REVERSED*\n"
+                    f"*{vendor_name}* — *{currency} {amount:,.2f}*\n"
+                    f"The payment was voided or returned in the ERP. Manual review required."
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*ERP Reference:*\n{ref_str}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+async def send_payment_overdue_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str = "USD",
+    due_date: Optional[str] = None,
+    days_overdue: int = 0,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that a payment is overdue (past due_date but not yet paid)."""
+    due_str = due_date or "unknown"
+    text = (
+        f"OVERDUE: {vendor_name} {currency} {amount:,.2f} was due {due_str} "
+        f"({days_overdue} days ago). Payment not yet detected in ERP."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":warning: *Payment OVERDUE*\n"
+                    f"*{vendor_name}* — *{currency} {amount:,.2f}*\n"
+                    f"Due {due_str} ({days_overdue} days ago). "
+                    f"Payment not yet detected in ERP."
+                ),
+            },
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+async def send_payment_failed_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str = "USD",
+    reason: Optional[str] = None,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that a payment failed in the ERP."""
+    reason_str = reason or "unknown"
+    text = (
+        f"Payment FAILED: {vendor_name} {currency} {amount:,.2f}. "
+        f"Reason: {reason_str}. Manual intervention required."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":x: *Payment FAILED*\n"
+                    f"*{vendor_name}* — *{currency} {amount:,.2f}*\n"
+                    f"Reason: {reason_str}. Manual intervention required."
+                ),
+            },
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+async def send_payment_credit_applied_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str = "USD",
+    closure_method: Optional[str] = None,
+    reference: Optional[str] = None,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that an invoice was closed by credit/write-off instead of payment."""
+    method_str = closure_method or "credit"
+    ref_str = reference or ""
+    text = (
+        f"Invoice closed by credit: {vendor_name} {currency} {amount:,.2f}. "
+        f"Credit/write-off applied in ERP."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":memo: *Invoice Closed by Credit*\n"
+                    f"*{vendor_name}* — *{currency} {amount:,.2f}*\n"
+                    f"Closure method: {method_str}. {ref_str}"
+                ),
+            },
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )

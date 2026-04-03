@@ -872,18 +872,61 @@ async def get_payment_status_quickbooks(
             bill = bills[0]
             total_amt = float(bill.get("TotalAmt") or 0)
             balance = float(bill.get("Balance") or 0)
+            bill_id_val = bill.get("Id") or ""
 
             if balance <= 0 and total_amt > 0:
-                # Fully paid
-                return {
+                # Fully paid — check if closed by VendorCredit instead of payment
+                # Query for BillPayment linked to this bill
+                bp_query = (
+                    "SELECT Id FROM BillPayment WHERE Id IS NOT NULL "
+                    f"STARTPOSITION 1 MAXRESULTS 1"
+                )
+                closure_method = "payment"
+                try:
+                    bp_url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
+                    bp_literal = _escape_query_literal(str(bill_id_val))
+                    vc_query = (
+                        f"SELECT Id FROM VendorCredit "
+                        f"WHERE Id IS NOT NULL "
+                        f"STARTPOSITION 1 MAXRESULTS 1"
+                    )
+                    # Heuristic: if bill is paid (Balance=0) but we can't find a
+                    # direct BillPayment reference, check for VendorCredits
+                    # For now, mark closure_method based on available data
+                    if not bill.get("LinkedTxn"):
+                        closure_method = "unknown_non_payment"
+                    else:
+                        linked = bill.get("LinkedTxn") or []
+                        has_payment = any(
+                            str(lt.get("TxnType") or "").lower() == "billpayment"
+                            for lt in (linked if isinstance(linked, list) else [])
+                        )
+                        has_credit = any(
+                            str(lt.get("TxnType") or "").lower() in ("vendorcredit", "creditcardcredit")
+                            for lt in (linked if isinstance(linked, list) else [])
+                        )
+                        if has_credit and not has_payment:
+                            closure_method = "credit_applied"
+                        elif has_payment:
+                            closure_method = "payment"
+                        else:
+                            closure_method = "unknown_non_payment"
+                except Exception:
+                    pass  # Fall through with default closure_method
+
+                result = {
                     "paid": True,
                     "payment_amount": round(total_amt, 2),
                     "payment_date": "",
                     "payment_method": "",
-                    "payment_reference": bill.get("Id") or "",
+                    "payment_reference": bill_id_val,
                     "partial": False,
                     "remaining_balance": 0.0,
                 }
+                if closure_method != "payment":
+                    result["closure_method"] = closure_method
+                return result
+
             elif balance < total_amt:
                 # Partial payment
                 paid_amount = round(total_amt - balance, 2)
@@ -892,11 +935,25 @@ async def get_payment_status_quickbooks(
                     "payment_amount": paid_amount,
                     "payment_date": "",
                     "payment_method": "",
-                    "payment_reference": bill.get("Id") or "",
+                    "payment_reference": bill_id_val,
                     "partial": True,
                     "remaining_balance": round(balance, 2),
                 }
             else:
+                # Check for voided payments (Balance == TotalAmt but voided
+                # BillPayments exist in LinkedTxn)
+                linked = bill.get("LinkedTxn") or []
+                if isinstance(linked, list):
+                    has_voided = any(
+                        str(lt.get("TxnType") or "").lower() == "billpayment"
+                        for lt in linked
+                    )
+                    if has_voided and balance >= total_amt and total_amt > 0:
+                        return {
+                            "paid": False,
+                            "payment_failed": True,
+                            "reason": "payment_voided",
+                        }
                 return {"paid": False, "reason": "unpaid"}
     except httpx.HTTPStatusError as e:
         logger.error("QuickBooks payment status HTTP error: status=%d", e.response.status_code)

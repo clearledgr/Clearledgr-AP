@@ -40,11 +40,27 @@ CREATE TABLE IF NOT EXISTS payments (
 )
 """
 
+PAYMENT_EVENTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS payment_events (
+    id TEXT PRIMARY KEY,
+    payment_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    amount REAL,
+    reference TEXT,
+    method TEXT,
+    detected_at TEXT,
+    erp_data_json TEXT,
+    created_at TEXT
+)
+"""
+
 
 class PaymentStore:
     """Mixin providing payment tracking persistence methods."""
 
     PAYMENT_TABLE_SQL = PAYMENT_TABLE_SQL
+    PAYMENT_EVENTS_TABLE_SQL = PAYMENT_EVENTS_TABLE_SQL
 
     # ------------------------------------------------------------------
     # CRUD
@@ -134,7 +150,7 @@ class PaymentStore:
     _PAYMENT_ALLOWED_COLUMNS = frozenset({
         "status", "payment_method", "payment_reference", "due_date",
         "scheduled_date", "completed_date", "erp_reference", "notes",
-        "updated_at", "paid_amount",
+        "updated_at", "paid_amount", "overdue_alerted",
     })
 
     def update_payment(self, payment_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -217,6 +233,84 @@ class PaymentStore:
             else:
                 summary[row[0]] = row[1]
         return summary
+
+    # ------------------------------------------------------------------
+    # Payment events (append-only history)
+    # ------------------------------------------------------------------
+
+    def append_payment_event(
+        self,
+        payment_id: str,
+        org_id: str,
+        event_type: str,
+        amount: Optional[float] = None,
+        reference: Optional[str] = None,
+        method: Optional[str] = None,
+        erp_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Append an immutable payment event record.
+
+        Payment events are append-only — no updates or deletes.
+        """
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+        event_id = f"PEVT-{uuid.uuid4().hex[:12]}"
+        erp_data_json = json.dumps(erp_data or {})
+
+        sql = self._prepare_sql("""
+            INSERT INTO payment_events
+            (id, payment_id, organization_id, event_type, amount, reference,
+             method, detected_at, erp_data_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """)
+        values = (
+            event_id,
+            payment_id,
+            org_id,
+            event_type,
+            amount,
+            reference,
+            method,
+            now,
+            erp_data_json,
+            now,
+        )
+        with self.connect() as conn:
+            conn.execute(sql, values)
+            conn.commit()
+
+        return {
+            "id": event_id,
+            "payment_id": payment_id,
+            "organization_id": org_id,
+            "event_type": event_type,
+            "amount": amount,
+            "reference": reference,
+            "method": method,
+            "detected_at": now,
+            "erp_data_json": erp_data_json,
+            "created_at": now,
+        }
+
+    def list_payment_events(
+        self,
+        payment_id: str,
+        *,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Return all events for a payment in chronological order."""
+        self.initialize()
+        sql = self._prepare_sql(
+            "SELECT * FROM payment_events WHERE payment_id = ? "
+            "ORDER BY created_at ASC LIMIT ?"
+        )
+        with self.connect() as conn:
+            cur = conn.execute(sql, (payment_id, limit))
+            rows = cur.fetchall()
+        return [
+            dict(r) if hasattr(r, "keys") else self._payment_row_to_dict(r, cur.description)
+            for r in rows
+        ]
 
     # ------------------------------------------------------------------
     # Internal helpers

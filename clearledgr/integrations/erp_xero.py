@@ -752,14 +752,32 @@ async def get_payment_status_xero(
             payments = invoice.get("Payments") or []
             payment_date = ""
             payment_reference = ""
+            has_voided_payment = False
             if isinstance(payments, list) and payments:
                 last_payment = payments[-1]
                 if isinstance(last_payment, dict):
                     payment_date = str(last_payment.get("Date") or "").strip()
                     payment_reference = str(last_payment.get("PaymentID") or "").strip()
+                # Check for DELETED or VOIDED payments
+                for pmt in payments:
+                    if isinstance(pmt, dict):
+                        pmt_status = str(pmt.get("Status") or "").upper()
+                        if pmt_status in ("DELETED", "VOIDED"):
+                            has_voided_payment = True
+
+            # Check for credit note applications
+            credit_notes = invoice.get("CreditNotes") or []
+            has_credits = isinstance(credit_notes, list) and len(credit_notes) > 0
 
             if status == "PAID" or (amount_due <= 0 and total > 0):
-                return {
+                # Determine closure method
+                closure_method = "payment"
+                if has_credits and not payment_reference:
+                    closure_method = "credit_applied"
+                elif not payment_reference and not has_credits:
+                    closure_method = "unknown_non_payment"
+
+                result = {
                     "paid": True,
                     "payment_amount": round(amount_paid or total, 2),
                     "payment_date": payment_date,
@@ -768,6 +786,9 @@ async def get_payment_status_xero(
                     "partial": False,
                     "remaining_balance": 0.0,
                 }
+                if closure_method != "payment":
+                    result["closure_method"] = closure_method
+                return result
             elif amount_paid > 0 and amount_due > 0:
                 return {
                     "paid": False,
@@ -779,6 +800,13 @@ async def get_payment_status_xero(
                     "remaining_balance": round(amount_due, 2),
                 }
             else:
+                # Check for voided/deleted payments indicating a failed payment
+                if has_voided_payment:
+                    return {
+                        "paid": False,
+                        "payment_failed": True,
+                        "reason": "payment_voided_or_deleted",
+                    }
                 return {"paid": False, "reason": "unpaid"}
     except httpx.HTTPStatusError as e:
         logger.error("Xero payment status HTTP error: status=%d", e.response.status_code)
