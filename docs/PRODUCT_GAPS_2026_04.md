@@ -387,42 +387,137 @@ Total items: 33 (22 missing, 8 partial, 3 infrastructure)
 
 ---
 
+## G. AP Lifecycle Completeness
+
+### 34. [PARTIAL] Auto-close after payment
+**Priority:** P1
+**What exists:** `posted_to_erp → closed` transition exists in the state machine. Payment tracking marks payments as "completed." But nothing auto-triggers the close.
+**What's needed:**
+- When payment tracking detects "completed" (full payment), auto-transition AP item from `posted_to_erp` to `closed`
+- When payment is "closed_by_credit", also auto-close
+- Log audit event: "closed_by_payment" or "closed_by_credit"
+- Don't close on partial payment — wait for full payment
+**Estimated effort:** 1 day
+
+### 35. [PARTIAL] Dispute/exception workflow
+**Priority:** P2
+**What exists:** `needs_info` state loops back to `validated`. Vendor outreach creates Gmail drafts. No structured dispute tracking.
+**What's needed:**
+- Dispute tracking model: dispute_id, ap_item_id, type (missing_po, wrong_amount, vendor_mismatch, other), status (open, vendor_contacted, response_received, resolved, escalated), opened_at, resolved_at
+- Detect vendor reply to follow-up email (Gmail thread monitoring)
+- When vendor replies, auto-link response to the dispute and notify operator
+- Escalation after N days without response
+- Dispute resolution actions: accept vendor response, reject and re-request, close dispute
+**Estimated effort:** 5-7 days
+
+### 36. [MISSING] Approval delegation
+**Priority:** P2
+**What's missing:** If the designated approver is unavailable, there's no fallback.
+**What's needed:**
+- Delegation rules: approver A → delegate to B when A is OOO
+- OOO detection: manual flag in workspace, or calendar integration
+- Auto-escalation after SLA timeout to backup approver
+- Delegation audit trail (who delegated, when, to whom)
+**Estimated effort:** 3-5 days
+
+### 37. [MISSING] Month-end accrual cutoff
+**Priority:** P2
+**What's missing:** No period close process. No accrual identification.
+**What's needed:**
+- Period cutoff date configuration (e.g., "March closes on April 5")
+- Identify invoices received after cutoff that belong to prior period (backdate detection)
+- Identify approved POs with no matching invoice (accrual candidates)
+- Accrual report: estimated uninvoiced liabilities by vendor/GL
+- Lock closed periods (prevent posting to closed months)
+**Estimated effort:** 5-7 days
+
+### 38. [MISSING] Vendor statement reconciliation
+**Priority:** P3
+**What's missing:** Can't reconcile a vendor statement against posted invoices.
+**What's needed:**
+- Import vendor statement (PDF or CSV)
+- Extract statement line items (date, reference, amount, balance)
+- Match against posted AP items by vendor + amount + date
+- Flag discrepancies: missing in Clearledgr, missing on statement, amount mismatch
+- Reconciliation report with matched/unmatched/discrepant items
+**Estimated effort:** 5-7 days
+
+### 39. [MISSING] 1099/tax reporting
+**Priority:** P3
+**What's missing:** No vendor tax ID tracking, no annual payment threshold tracking.
+**What's needed:**
+- Add `tax_id` (EIN/TIN/VAT) field to vendor profiles
+- Track annual payment total per vendor (aggregate from posted + paid invoices)
+- Flag vendors exceeding $600 annual threshold (1099-NEC/MISC requirement)
+- Generate 1099 report: vendor name, tax ID, address, total payments by category
+- Export for filing (IRS format or CSV for import into tax software)
+**Estimated effort:** 3-5 days
+
+---
+
+## Completion Status
+
+### Already built (as of 2026-04-03):
+- ✅ #1 Line item extraction and storage
+- ✅ #2 Tax amount extraction
+- ✅ #3 Discount detection
+- ✅ #4 Payment terms extraction
+- ✅ #5 Bank/payment details extraction
+- ✅ #6 Multi-invoice email handling
+- ✅ #7 ZIP archive handling
+- ✅ #8 Payment tracking (full lifecycle with ERP polling)
+- ✅ #11 ERP sync monitoring agent
+- ✅ #18 Multi-entity posting
+- ✅ #19 Bill line items for NetSuite/SAP
+- ✅ #23 Multi-entity within one org
+- ✅ #26 Audit trail export
+
+---
+
 ## Summary
 
 | Priority | Items | Total effort estimate |
 |----------|-------|---------------------|
-| P0 (blocks pilot) | #1, #18, #23 | 13-19 days |
-| P1 (improves pilot) | #2, #4, #6, #11, #19, #26 | 11-17 days |
-| P2 (blocks enterprise) | #5, #9, #10, #13, #15, #16, #21, #22, #27, #28, #29, #30, #32 | 44-68 days |
-| P3 (post-pilot) | #3, #7, #8, #12, #14, #17, #20, #24, #25, #31, #33 | 30-50 days |
-| **Total** | **33 items** | **98-154 days** |
+| P0 (blocks pilot) | #1, #18, #23 | ✅ DONE |
+| P1 (improves pilot) | #2, #4, #6, #11, #19, #26, #34 | 1 day remaining (#34) |
+| P2 (blocks enterprise) | #5, #9, #10, #13, #15, #16, #21, #22, #27, #28, #29, #30, #32, #35, #36, #37 | 52-80 days |
+| P3 (post-pilot) | #3, #7, #8, #12, #14, #17, #20, #24, #25, #31, #33, #38, #39 | 38-62 days |
+| **Total** | **39 items** | **91-143 days remaining** |
 
 ---
 
 ## Implementation Order
 
-### Sprint 1: Pilot blockers (P0) — ~2 weeks
-1. #23 Multi-entity within one org (entity table, routing rules)
-2. #18 Multi-entity posting (entity-specific ERP connections)
+### Done ✅
+1. #23 Multi-entity within one org
+2. #18 Multi-entity posting
 3. #1 Line item extraction and storage
-
-### Sprint 2: Pilot quality (P1) — ~2 weeks
-4. #19 Bill line items posting for NetSuite/SAP
+4. #19 Bill line items for NetSuite/SAP
 5. #6 Multi-invoice email handling
 6. #11 ERP sync monitoring agent
 7. #4 Payment terms extraction
 8. #2 Tax amount extraction
 9. #26 Audit trail export
+10. #3 Discount detection
+11. #5 Bank/payment details extraction
+12. #7 ZIP archive handling
+13. #8 Payment tracking (full lifecycle)
 
-### Sprint 3: Enterprise foundations (P2) — ~4 weeks
-10. #29 Database migrations
-11. #30 Monitoring/alerting
-12. #13 Chart of accounts from ERP
-13. #16 Vendor master data sync
-14. #32 Duplicate vendor consolidation
-15. #21 Exportable reports
-16. #27 SSO/SAML
-17. #22 Outlook/M365 support (start)
+### Next: Pilot quality remaining
+14. #34 Auto-close after payment
+
+### Sprint 3: Enterprise foundations (P2) — ~6 weeks
+15. #29 Database migrations
+16. #30 Monitoring/alerting
+17. #13 Chart of accounts from ERP
+18. #16 Vendor master data sync
+19. #32 Duplicate vendor consolidation
+20. #21 Exportable reports
+21. #27 SSO/SAML
+22. #22 Outlook/M365 support
+23. #35 Dispute/exception workflow
+24. #36 Approval delegation
+25. #37 Month-end accrual cutoff
 
 ### Sprint 4+: Expansion (P3) — ongoing
-18. Everything else
+26. Everything else including #38 vendor statement recon and #39 1099 reporting
