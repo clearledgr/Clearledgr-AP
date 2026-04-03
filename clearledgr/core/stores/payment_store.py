@@ -134,7 +134,7 @@ class PaymentStore:
     _PAYMENT_ALLOWED_COLUMNS = frozenset({
         "status", "payment_method", "payment_reference", "due_date",
         "scheduled_date", "completed_date", "erp_reference", "notes",
-        "updated_at",
+        "updated_at", "paid_amount",
     })
 
     def update_payment(self, payment_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:

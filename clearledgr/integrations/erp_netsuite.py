@@ -963,3 +963,84 @@ async def _attach_to_netsuite(
         resp = await client.post(url, headers=headers, json=payload)
         resp.raise_for_status()
     return {"attached": True, "erp": "netsuite"}
+
+
+# ==================== Payment Status Lookup ====================
+
+async def get_payment_status_netsuite(
+    connection,
+    bill_id: str,
+) -> Dict[str, Any]:
+    """Read payment status for a NetSuite vendor bill. GET only — never executes payments.
+
+    Uses SuiteQL to check status and amountremaining for the vendor bill.
+    """
+    if not connection.account_id:
+        return {"paid": False, "error": "NetSuite account ID not configured"}
+
+    safe_id = _sanitize_netsuite_like_operand(bill_id)
+    if not safe_id:
+        return {"paid": False, "error": "invalid_bill_reference"}
+    literal = _escape_query_literal(safe_id)
+    query = (
+        f"SELECT id, tranid, status, amount, amountremaining, amountpaid "
+        f"FROM transaction "
+        f"WHERE id = '{literal}' AND type = 'VendBill' "
+        f"FETCH FIRST 1 ROWS ONLY"
+    )
+    url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/query/v1/suiteql"
+    auth_header = _oauth_header(connection, "POST", url)
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.post(
+                url,
+                json={"q": query},
+                headers={
+                    "Authorization": auth_header,
+                    "Content-Type": "application/json",
+                    "Prefer": "transient",
+                },
+                timeout=60,
+            )
+            if response.status_code == 401:
+                return {"paid": False, "error": "authentication_failed", "needs_reauth": True}
+
+            response.raise_for_status()
+            items = response.json().get("items", [])
+            if not items:
+                return {"paid": False, "reason": "not_found"}
+
+            row = items[0]
+            total = float(row.get("amount") or 0)
+            remaining = float(row.get("amountremaining") or 0)
+            paid = float(row.get("amountpaid") or 0)
+            status_val = str(row.get("status") or "").strip()
+
+            if remaining <= 0 and total > 0:
+                return {
+                    "paid": True,
+                    "payment_amount": round(paid or total, 2),
+                    "payment_date": "",
+                    "payment_method": "",
+                    "payment_reference": str(row.get("id") or ""),
+                    "partial": False,
+                    "remaining_balance": 0.0,
+                }
+            elif paid > 0 and remaining > 0:
+                return {
+                    "paid": False,
+                    "payment_amount": round(paid, 2),
+                    "payment_date": "",
+                    "payment_method": "",
+                    "payment_reference": str(row.get("id") or ""),
+                    "partial": True,
+                    "remaining_balance": round(remaining, 2),
+                }
+            else:
+                return {"paid": False, "reason": "unpaid"}
+    except httpx.HTTPStatusError as e:
+        logger.error("NetSuite payment status HTTP error: status=%d", e.response.status_code)
+        return {"paid": False, "error": f"http_{e.response.status_code}"}
+    except Exception as e:
+        logger.error("NetSuite payment status error: %s", type(e).__name__)
+        return {"paid": False, "error": "payment_status_lookup_failed"}

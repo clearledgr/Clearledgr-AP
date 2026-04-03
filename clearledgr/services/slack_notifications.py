@@ -1202,3 +1202,96 @@ async def send_payment_ready_notification(
         ap_item_id=ap_item_id,
         organization_id=organization_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Payment status change notifications
+# ---------------------------------------------------------------------------
+
+async def send_payment_completed_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str,
+    payment_reference: Optional[str] = None,
+    payment_method: Optional[str] = None,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that a payment has been detected as completed in the ERP."""
+    ref_str = payment_reference or "N/A"
+    method_str = payment_method or "ERP"
+
+    text = (
+        f"Payment completed: {vendor_name} {currency} {amount:,.2f} "
+        f"via {method_str}. Ref: {ref_str}."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":white_check_mark: *Payment Completed*\n"
+                    f"*{vendor_name}* — *{currency} {amount:,.2f}* via {method_str}."
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Reference:*\n{ref_str}"},
+                {"type": "mrkdwn", "text": f"*Method:*\n{method_str}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+async def send_payment_partial_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    paid_amount: float,
+    remaining: float,
+    currency: str = "USD",
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that a partial payment has been detected in the ERP."""
+    text = (
+        f"Partial payment: {vendor_name} — {currency} {paid_amount:,.2f} of "
+        f"{currency} {amount:,.2f} paid. Remaining: {currency} {remaining:,.2f}."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":hourglass_flowing_sand: *Partial Payment Detected*\n"
+                    f"*{vendor_name}* — *{currency} {paid_amount:,.2f}* of "
+                    f"*{currency} {amount:,.2f}* paid."
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Remaining:*\n{currency} {remaining:,.2f}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )

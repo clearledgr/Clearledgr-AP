@@ -447,7 +447,7 @@ async def _handle_check_payment_readiness(
                 "erp_reference": ap_item.get("erp_reference"),
             }
 
-        return {
+        result = {
             "ok": True,
             "payment_ready": True,
             "payment_id": payment.get("id"),
@@ -460,6 +460,24 @@ async def _handle_check_payment_readiness(
             "payment_method": payment.get("payment_method"),
             "scheduled_date": payment.get("scheduled_date"),
         }
+
+        # Enrich with completion/partial payment details from metadata
+        try:
+            import json as _json
+            meta = _json.loads(ap_item.get("metadata") or "{}") if isinstance(ap_item.get("metadata"), str) else (ap_item.get("metadata") or {})
+        except Exception:
+            meta = {}
+
+        payment_status = payment.get("status") or ""
+        if payment_status == "completed":
+            result["completed_date"] = payment.get("completed_date")
+            result["payment_reference"] = payment.get("payment_reference")
+            result["payment_completed_at"] = meta.get("payment_completed_at")
+        elif payment_status == "partial":
+            result["paid_amount"] = payment.get("paid_amount")
+            result["remaining_balance"] = meta.get("payment_remaining")
+
+        return result
     except Exception as exc:
         logger.warning("[APSkill] check_payment_readiness failed: %s", exc)
         return {"ok": False, "error": str(exc)}

@@ -1758,10 +1758,20 @@ def build_worklist_item(
         payload["payment_status"] = metadata.get("payment_status", "ready_for_payment")
         payload["payment_due_date"] = metadata.get("due_date") or payload.get("due_date")
         payload["payment_id"] = metadata.get("payment_id")
+        payload["payment_completed_at"] = metadata.get("payment_completed_at")
+        payload["payment_method"] = metadata.get("payment_method")
+        payload["payment_reference"] = metadata.get("payment_reference")
+        payload["payment_paid_amount"] = metadata.get("payment_paid_amount")
+        payload["payment_remaining"] = metadata.get("payment_remaining")
     else:
         payload["payment_status"] = None
         payload["payment_due_date"] = None
         payload["payment_id"] = None
+        payload["payment_completed_at"] = None
+        payload["payment_method"] = None
+        payload["payment_reference"] = None
+        payload["payment_paid_amount"] = None
+        payload["payment_remaining"] = None
 
     # Correction learning: surface GL suggestion + previously-corrected fields.
     # suggest() is in-memory after rule load — fast per call.

@@ -917,3 +917,72 @@ async def _attach_to_sap(
         resp = await client.post(url, headers=headers, json=payload)
         resp.raise_for_status()
     return {"attached": True, "erp": "sap"}
+
+
+# ==================== Payment Status Lookup ====================
+
+async def get_payment_status_sap(
+    connection,
+    bill_id: str,
+) -> Dict[str, Any]:
+    """Read payment status for a SAP purchase invoice. GET only — never executes payments.
+
+    Fetches PurchaseInvoices({id}) and compares PaidToDate vs DocTotal.
+    """
+    if not connection.access_token or not connection.base_url:
+        return {"paid": False, "error": "SAP not properly configured"}
+
+    bill_ref = _normalize_sap_doc_entry(bill_id)
+    if not bill_ref:
+        return {"paid": False, "error": "invalid_bill_reference"}
+
+    url = f"{connection.base_url}/PurchaseInvoices({bill_ref})"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            session = await _open_sap_service_layer_session(connection, client)
+            if session.get("status") != "success":
+                return {"paid": False, "error": session.get("reason", "session_failed")}
+
+            response = await client.get(
+                url,
+                headers=session["headers"],
+                timeout=60,
+            )
+            if response.status_code == 401:
+                return {"paid": False, "error": "authentication_failed", "needs_reauth": True}
+
+            response.raise_for_status()
+            payload = response.json()
+
+            doc_total = float(payload.get("DocTotal") or 0)
+            paid_to_date = float(payload.get("PaidToDate") or 0)
+            remaining = round(doc_total - paid_to_date, 2)
+
+            if paid_to_date >= doc_total and doc_total > 0:
+                return {
+                    "paid": True,
+                    "payment_amount": round(paid_to_date, 2),
+                    "payment_date": str(payload.get("UpdateDate") or ""),
+                    "payment_method": "",
+                    "payment_reference": str(payload.get("DocEntry") or bill_ref),
+                    "partial": False,
+                    "remaining_balance": 0.0,
+                }
+            elif paid_to_date > 0 and remaining > 0:
+                return {
+                    "paid": False,
+                    "payment_amount": round(paid_to_date, 2),
+                    "payment_date": str(payload.get("UpdateDate") or ""),
+                    "payment_method": "",
+                    "payment_reference": str(payload.get("DocEntry") or bill_ref),
+                    "partial": True,
+                    "remaining_balance": remaining,
+                }
+            else:
+                return {"paid": False, "reason": "unpaid"}
+    except httpx.HTTPStatusError as e:
+        logger.error("SAP payment status HTTP error: status=%d", e.response.status_code)
+        return {"paid": False, "error": f"http_{e.response.status_code}"}
+    except Exception as e:
+        logger.error("SAP payment status error: %s", type(e).__name__)
+        return {"paid": False, "error": "payment_status_lookup_failed"}

@@ -1118,6 +1118,7 @@ class _ClearledgrDBBase:
             self._ensure_column(cur, "payments", "completed_date", "TEXT")
             self._ensure_column(cur, "payments", "erp_reference", "TEXT")
             self._ensure_column(cur, "payments", "notes", "TEXT")
+            self._ensure_column(cur, "payments", "paid_amount", "REAL")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_org ON payments(organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_ap_item ON payments(ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_org_status ON payments(organization_id, status)")

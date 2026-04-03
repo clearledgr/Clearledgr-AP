@@ -828,3 +828,79 @@ async def _attach_to_quickbooks(
         resp = await client.post(url, headers=headers, files=files, data={"file_metadata_01": metadata})
         resp.raise_for_status()
     return {"attached": True, "erp": "quickbooks"}
+
+
+# ==================== Payment Status Lookup ====================
+
+async def get_payment_status_quickbooks(
+    connection,
+    bill_id: str,
+) -> Dict[str, Any]:
+    """Read payment status for a QuickBooks bill. GET only — never executes payments.
+
+    Checks the Bill's Balance field: Balance == 0 means fully paid.
+    If Balance < TotalAmt but > 0, it's a partial payment.
+    """
+    if not connection.access_token or not connection.realm_id:
+        return {"paid": False, "error": "QuickBooks not properly configured"}
+
+    safe_id = _sanitize_quickbooks_like_operand(bill_id)
+    if not safe_id:
+        return {"paid": False, "error": "invalid_bill_reference"}
+    literal = _escape_query_literal(safe_id)
+    query = (
+        "SELECT Id, DocNumber, TotalAmt, Balance, VendorRef "
+        f"FROM Bill WHERE Id = '{literal}'"
+    )
+    url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                params={"query": query},
+                headers={"Authorization": f"Bearer {connection.access_token}"},
+                timeout=30,
+            )
+            if response.status_code == 401:
+                return {"paid": False, "error": "token_expired", "needs_reauth": True}
+
+            response.raise_for_status()
+            bills = response.json().get("QueryResponse", {}).get("Bill", [])
+            if not bills:
+                return {"paid": False, "reason": "not_found"}
+
+            bill = bills[0]
+            total_amt = float(bill.get("TotalAmt") or 0)
+            balance = float(bill.get("Balance") or 0)
+
+            if balance <= 0 and total_amt > 0:
+                # Fully paid
+                return {
+                    "paid": True,
+                    "payment_amount": round(total_amt, 2),
+                    "payment_date": "",
+                    "payment_method": "",
+                    "payment_reference": bill.get("Id") or "",
+                    "partial": False,
+                    "remaining_balance": 0.0,
+                }
+            elif balance < total_amt:
+                # Partial payment
+                paid_amount = round(total_amt - balance, 2)
+                return {
+                    "paid": False,
+                    "payment_amount": paid_amount,
+                    "payment_date": "",
+                    "payment_method": "",
+                    "payment_reference": bill.get("Id") or "",
+                    "partial": True,
+                    "remaining_balance": round(balance, 2),
+                }
+            else:
+                return {"paid": False, "reason": "unpaid"}
+    except httpx.HTTPStatusError as e:
+        logger.error("QuickBooks payment status HTTP error: status=%d", e.response.status_code)
+        return {"paid": False, "error": f"http_{e.response.status_code}"}
+    except Exception as e:
+        logger.error("QuickBooks payment status error: %s", type(e).__name__)
+        return {"paid": False, "error": "payment_status_lookup_failed"}

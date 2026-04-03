@@ -233,6 +233,9 @@ async def _run_loop():
                 # E5: Run ERP follow-on reconciliation check every 4th tick (~60 min)
                 for org_id in org_ids:
                     await _run_erp_reconciliation(org_id)
+                # Poll ERP for payment status changes every ~1 hour
+                for org_id in org_ids:
+                    await _poll_payment_statuses(org_id)
 
             # Daily (96 ticks at 15-min intervals, but we check by hour)
             now = datetime.now(timezone.utc)
@@ -751,6 +754,128 @@ async def _verify_recent_erp_postings(org_id: str):
             )
     except Exception as exc:
         logger.error("ERP sync verification failed for org=%s: %s", org_id, exc)
+
+
+async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
+    """Poll ERP for payment status updates on ready/scheduled payments.
+
+    Reads payment status from the ERP via GET requests — NEVER executes payments.
+    Capped at 50 payments per org per tick to limit API usage.
+    """
+    try:
+        from clearledgr.core.database import get_db
+        from clearledgr.integrations.erp_router import get_bill_payment_status
+
+        db = get_db()
+        pending_payments = (
+            db.list_payments_by_status(org_id, "ready_for_payment")
+            + db.list_payments_by_status(org_id, "scheduled")
+        )
+
+        checked = 0
+        updated = 0
+        for payment in pending_payments[:50]:  # Cap per tick
+            erp_ref = payment.get("erp_reference")
+            if not erp_ref:
+                continue
+            checked += 1
+
+            try:
+                status = await get_bill_payment_status(
+                    organization_id=org_id,
+                    erp_reference=erp_ref,
+                    invoice_number=payment.get("invoice_number"),
+                )
+
+                if status.get("paid"):
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    db.update_payment(
+                        payment["id"],
+                        status="completed",
+                        payment_reference=status.get("payment_reference", ""),
+                        payment_method=status.get("payment_method", ""),
+                        completed_date=now_iso,
+                        paid_amount=status.get("payment_amount"),
+                        notes=f"Payment detected in ERP: {status.get('payment_reference', '')}",
+                    )
+                    # Update AP item metadata
+                    ap_item_id = payment.get("ap_item_id")
+                    if ap_item_id and hasattr(db, "update_ap_item_metadata_merge"):
+                        db.update_ap_item_metadata_merge(ap_item_id, {
+                            "payment_status": "completed",
+                            "payment_completed_at": now_iso,
+                            "payment_method": status.get("payment_method", ""),
+                            "payment_reference": status.get("payment_reference", ""),
+                        })
+                    # Notify via Slack
+                    try:
+                        from clearledgr.services.slack_notifications import (
+                            send_payment_completed_notification,
+                        )
+                        await send_payment_completed_notification(
+                            organization_id=org_id,
+                            vendor_name=payment.get("vendor_name", "Unknown"),
+                            amount=float(payment.get("amount") or 0),
+                            currency=payment.get("currency", "USD"),
+                            payment_reference=status.get("payment_reference"),
+                            payment_method=status.get("payment_method"),
+                            ap_item_id=ap_item_id,
+                        )
+                    except Exception as notify_exc:
+                        logger.warning("Payment completion notification failed: %s", notify_exc)
+                    updated += 1
+
+                elif status.get("partial"):
+                    db.update_payment(
+                        payment["id"],
+                        status="partial",
+                        paid_amount=status.get("payment_amount"),
+                        notes=(
+                            f"Partial payment: {status.get('payment_amount')} of "
+                            f"{payment.get('amount')}. Remaining: {status.get('remaining_balance')}"
+                        ),
+                    )
+                    # Update AP item metadata
+                    ap_item_id = payment.get("ap_item_id")
+                    if ap_item_id and hasattr(db, "update_ap_item_metadata_merge"):
+                        db.update_ap_item_metadata_merge(ap_item_id, {
+                            "payment_status": "partial",
+                            "payment_paid_amount": status.get("payment_amount"),
+                            "payment_remaining": status.get("remaining_balance"),
+                        })
+                    # Notify via Slack
+                    try:
+                        from clearledgr.services.slack_notifications import (
+                            send_payment_partial_notification,
+                        )
+                        await send_payment_partial_notification(
+                            organization_id=org_id,
+                            vendor_name=payment.get("vendor_name", "Unknown"),
+                            amount=float(payment.get("amount") or 0),
+                            paid_amount=float(status.get("payment_amount") or 0),
+                            remaining=float(status.get("remaining_balance") or 0),
+                            currency=payment.get("currency", "USD"),
+                            ap_item_id=ap_item_id,
+                        )
+                    except Exception as notify_exc:
+                        logger.warning("Partial payment notification failed: %s", notify_exc)
+                    updated += 1
+
+            except Exception as exc:
+                logger.warning(
+                    "Payment status poll failed for payment %s: %s",
+                    payment.get("id"), exc,
+                )
+
+        if checked:
+            logger.info(
+                "Payment status poll for org=%s: checked=%d updated=%d",
+                org_id, checked, updated,
+            )
+        return {"checked": checked, "updated": updated}
+    except Exception as exc:
+        logger.error("Payment status polling failed for org=%s: %s", org_id, exc)
+        return {"checked": 0, "updated": 0}
 
 
 async def _check_period_end(org_id: str):

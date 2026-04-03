@@ -70,6 +70,7 @@ from clearledgr.integrations.erp_quickbooks import (  # noqa: F401, E402
     find_vendor_quickbooks,
     find_bill_quickbooks,
     _attach_to_quickbooks,
+    get_payment_status_quickbooks,
 )
 
 # ---------------------------------------------------------------------------
@@ -88,6 +89,7 @@ from clearledgr.integrations.erp_xero import (  # noqa: F401, E402
     find_vendor_xero,
     find_bill_xero,
     _attach_to_xero,
+    get_payment_status_xero,
 )
 
 # ---------------------------------------------------------------------------
@@ -108,6 +110,7 @@ from clearledgr.integrations.erp_netsuite import (  # noqa: F401, E402
     find_vendor_netsuite,
     find_bill_netsuite,
     _attach_to_netsuite,
+    get_payment_status_netsuite,
 )
 
 # ---------------------------------------------------------------------------
@@ -130,6 +133,7 @@ from clearledgr.integrations.erp_sap import (  # noqa: F401, E402
     find_vendor_sap,
     find_bill_sap,
     _attach_to_sap,
+    get_payment_status_sap,
 )
 
 
@@ -1091,3 +1095,63 @@ async def find_open_payables_for_vendor(
 ) -> List[Dict[str, Any]]:
     """Return open payables for a vendor.  Placeholder — returns []."""
     return []
+
+
+# ==================== Payment Status Lookup ====================
+
+_PAYMENT_STATUS_LOOKUPS = {
+    "quickbooks": get_payment_status_quickbooks,
+    "xero": get_payment_status_xero,
+    "netsuite": get_payment_status_netsuite,
+    "sap": get_payment_status_sap,
+}
+
+
+async def get_bill_payment_status(
+    organization_id: str,
+    erp_reference: str,
+    invoice_number: Optional[str] = None,
+    entity_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Read payment status from the ERP for a posted bill.
+
+    This function NEVER executes payments — it only reads status via GET/query
+    requests.  Returns a normalized dict:
+
+        {"paid": bool, "payment_amount": float, "payment_date": str,
+         "payment_method": str, "payment_reference": str,
+         "partial": bool, "remaining_balance": float}
+
+    Or on failure:
+
+        {"paid": False, "reason": "not_found"}
+        {"paid": False, "error": "<description>"}
+    """
+    connection = get_erp_connection(organization_id, entity_id=entity_id)
+    if not connection:
+        return {"paid": False, "reason": "no_erp_connection"}
+
+    erp_type = str(connection.type or "").strip().lower()
+    lookup = _PAYMENT_STATUS_LOOKUPS.get(erp_type)
+    if not lookup:
+        return {"paid": False, "reason": f"no_payment_lookup_for_{erp_type}"}
+
+    try:
+        result = await lookup(connection, erp_reference)
+        # If first attempt gets a token expiry, try refresh + retry once
+        if isinstance(result, dict) and result.get("needs_reauth"):
+            refreshed = False
+            if erp_type == "quickbooks":
+                refreshed = bool(await refresh_quickbooks_token(connection))
+            elif erp_type == "xero":
+                refreshed = bool(await refresh_xero_token(connection))
+            if refreshed:
+                set_erp_connection(organization_id, connection)
+                result = await lookup(connection, erp_reference)
+        return result
+    except Exception as exc:
+        logger.warning(
+            "Payment status lookup failed for org=%s ref=%s: %s",
+            organization_id, erp_reference, exc,
+        )
+        return {"paid": False, "error": str(exc)}

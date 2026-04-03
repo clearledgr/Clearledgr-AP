@@ -707,3 +707,82 @@ async def _attach_to_xero(
         resp = await client.put(url, headers=headers, content=file_bytes)
         resp.raise_for_status()
     return {"attached": True, "erp": "xero"}
+
+
+# ==================== Payment Status Lookup ====================
+
+async def get_payment_status_xero(
+    connection,
+    bill_id: str,
+) -> Dict[str, Any]:
+    """Read payment status for a Xero ACCPAY invoice. GET only — never executes payments.
+
+    Checks the invoice Status (PAID) or AmountDue == 0 for full payment.
+    AmountDue > 0 but < Total means partial payment.
+    """
+    if not connection.access_token or not connection.tenant_id:
+        return {"paid": False, "error": "Xero not properly configured"}
+
+    url = f"https://api.xero.com/api.xro/2.0/Invoices/{bill_id}"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {connection.access_token}",
+                    "xero-tenant-id": str(connection.tenant_id or ""),
+                },
+                timeout=30,
+            )
+            if response.status_code == 401:
+                return {"paid": False, "error": "token_expired", "needs_reauth": True}
+
+            response.raise_for_status()
+            invoices = response.json().get("Invoices", [])
+            if not invoices:
+                return {"paid": False, "reason": "not_found"}
+
+            invoice = invoices[0]
+            status = str(invoice.get("Status") or "").upper()
+            total = float(invoice.get("Total") or 0)
+            amount_due = float(invoice.get("AmountDue") or 0)
+            amount_paid = float(invoice.get("AmountPaid") or 0)
+
+            # Extract payment details from Payments array if available
+            payments = invoice.get("Payments") or []
+            payment_date = ""
+            payment_reference = ""
+            if isinstance(payments, list) and payments:
+                last_payment = payments[-1]
+                if isinstance(last_payment, dict):
+                    payment_date = str(last_payment.get("Date") or "").strip()
+                    payment_reference = str(last_payment.get("PaymentID") or "").strip()
+
+            if status == "PAID" or (amount_due <= 0 and total > 0):
+                return {
+                    "paid": True,
+                    "payment_amount": round(amount_paid or total, 2),
+                    "payment_date": payment_date,
+                    "payment_method": "",
+                    "payment_reference": payment_reference,
+                    "partial": False,
+                    "remaining_balance": 0.0,
+                }
+            elif amount_paid > 0 and amount_due > 0:
+                return {
+                    "paid": False,
+                    "payment_amount": round(amount_paid, 2),
+                    "payment_date": payment_date,
+                    "payment_method": "",
+                    "payment_reference": payment_reference,
+                    "partial": True,
+                    "remaining_balance": round(amount_due, 2),
+                }
+            else:
+                return {"paid": False, "reason": "unpaid"}
+    except httpx.HTTPStatusError as e:
+        logger.error("Xero payment status HTTP error: status=%d", e.response.status_code)
+        return {"paid": False, "error": f"http_{e.response.status_code}"}
+    except Exception as e:
+        logger.error("Xero payment status error: %s", type(e).__name__)
+        return {"paid": False, "error": "payment_status_lookup_failed"}
