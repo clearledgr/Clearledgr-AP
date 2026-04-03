@@ -222,6 +222,11 @@ async def _run_loop():
                 for org_id in org_ids:
                     await _check_approval_timeouts(org_id)
 
+            # Every 3rd tick (~45 min): sweep exception auto-resolution
+            if tick % 3 == 0:
+                for org_id in org_ids:
+                    await _sweep_exception_resolutions(org_id)
+
             # Every 6th tick (~90 min): run task scheduler checks
             if tick % 6 == 0:
                 await _run_task_scheduler_checks()
@@ -1302,6 +1307,83 @@ async def _check_vendor_followup_responses(org_id: str):
                 )
     except Exception as exc:
         logger.error("Vendor followup response check failed for org=%s: %s", org_id, exc)
+
+
+async def _sweep_exception_resolutions(org_id: str):
+    """Attempt auto-resolution for AP items with active exceptions.
+
+    Runs every 3rd tick (~45 min).  Caps at 25 items per org per sweep to
+    avoid monopolising the event loop.
+
+    Auto-resolved items have their ``exception_code`` cleared and an audit
+    event logged.  Items that cannot be resolved are left unchanged.
+    """
+    try:
+        from clearledgr.core.database import get_db
+        from clearledgr.services.exception_resolver import get_exception_resolver
+
+        db = get_db()
+        resolver = get_exception_resolver(org_id)
+
+        # Active states: items still in the pipeline, not rejected/closed
+        active_states = (
+            "new", "enriched", "validated", "needs_approval", "approved",
+            "needs_info", "failed_post",
+        )
+
+        items_resolved = 0
+        items_checked = 0
+
+        for state in active_states:
+            if items_checked >= 25:
+                break
+            try:
+                ap_items = db.list_ap_items(org_id, state=state, limit=50)
+            except Exception:
+                continue
+            for item in ap_items:
+                if items_checked >= 25:
+                    break
+                exc_code = item.get("exception_code") or ""
+                if not exc_code:
+                    continue
+
+                items_checked += 1
+                try:
+                    result = await resolver.resolve(item, exc_code)
+                except Exception:
+                    continue
+
+                if result.get("resolved"):
+                    items_resolved += 1
+                    try:
+                        db.append_ap_audit_event({
+                            "ap_item_id": item.get("id"),
+                            "event_type": "exception_auto_resolved",
+                            "actor_type": "system",
+                            "actor_id": "agent_background",
+                            "reason": result.get("action") or "auto_resolved",
+                            "metadata": {
+                                "exception_code": exc_code,
+                                "resolution": result,
+                            },
+                            "organization_id": org_id,
+                            "source": "agent_background",
+                            "idempotency_key": f"exc_resolve:{item.get('id')}:{exc_code}",
+                        })
+                    except Exception as audit_exc:
+                        logger.debug(
+                            "Could not log exception resolution audit event: %s",
+                            audit_exc,
+                        )
+
+        if items_checked > 0:
+            logger.info(
+                "Exception sweep for org=%s: checked=%d resolved=%d",
+                org_id, items_checked, items_resolved,
+            )
+    except Exception as exc:
+        logger.error("Exception resolution sweep failed for org=%s: %s", org_id, exc)
 
 
 async def _check_period_end(org_id: str):

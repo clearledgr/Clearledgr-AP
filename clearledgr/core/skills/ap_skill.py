@@ -514,6 +514,68 @@ async def _handle_request_vendor_info(
         return {"ok": False, "draft_created": False, "sent": False, "error": str(exc)}
 
 
+async def _handle_resolve_exception(
+    invoice_payload: Dict[str, Any],
+    exception_code: str = "",
+    organization_id: str = "default",
+    **_kwargs,
+) -> Dict[str, Any]:
+    """Attempt to auto-resolve a common AP exception.
+
+    Strategies by exception type:
+    - missing PO: search ERP for matching PO by vendor+amount, auto-attach
+    - wrong amount / amount anomaly: calculate discrepancy, suggest correction
+    - vendor mismatch: suggest correct vendor from known aliases
+    - missing approval: identify correct approver, auto-route
+    - duplicate invoice: link to original, suggest merge or reject
+    - erp_vendor_not_found: attempt to create vendor in ERP
+    """
+    try:
+        from clearledgr.core.database import get_db
+        from clearledgr.services.exception_resolver import get_exception_resolver
+
+        db = get_db()
+        ap_item_id = (
+            invoice_payload.get("id")
+            or invoice_payload.get("ap_item_id")
+            or ""
+        )
+
+        # If we have an AP item ID, read fresh data to get exception_code
+        ap_item: Dict[str, Any] = {}
+        if ap_item_id:
+            ap_item = db.get_ap_item(ap_item_id) or {}
+
+        # Fall back to the invoice_payload if no AP item found
+        if not ap_item:
+            ap_item = dict(invoice_payload)
+
+        # Determine the exception code: explicit param > AP item column > metadata
+        resolved_code = exception_code or ap_item.get("exception_code") or ""
+        if not resolved_code:
+            try:
+                meta = json.loads(ap_item.get("metadata") or "{}") if isinstance(ap_item.get("metadata"), str) else (ap_item.get("metadata") or {})
+                resolved_code = meta.get("exception_code") or ""
+            except Exception:
+                pass
+
+        if not resolved_code:
+            return {
+                "ok": True,
+                "resolved": False,
+                "reason": "no_exception_code",
+                "suggestion": "No exception to resolve.",
+            }
+
+        resolver = get_exception_resolver(organization_id)
+        result = await resolver.resolve(ap_item, resolved_code)
+
+        return {"ok": True, **result}
+    except Exception as exc:
+        logger.warning("[APSkill] resolve_exception failed: %s", exc)
+        return {"ok": False, "resolved": False, "error": str(exc)}
+
+
 async def _handle_check_payment_readiness(
     invoice_payload: Dict[str, Any],
     organization_id: str = "default",
@@ -772,6 +834,38 @@ class APSkill(FinanceSkill):
                 handler=_handle_verify_erp_posting,
             ),
             AgentTool(
+                name="resolve_exception",
+                description=(
+                    "Attempt to auto-resolve a common AP exception. Supported types: "
+                    "missing PO (po_required_missing, missing_required_field_po_number), "
+                    "amount anomaly (amount_anomaly_high, amount_anomaly_moderate), "
+                    "ERP vendor not found (erp_vendor_not_found), "
+                    "duplicate invoice (erp_duplicate_bill, duplicate_invoice), "
+                    "low confidence (confidence_field_review_required), "
+                    "currency mismatch, vendor mismatch, vendor unresponsive, "
+                    "posting exhausted. If an exception is flagged, call this to "
+                    "attempt auto-resolution before routing."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "invoice_payload": {
+                            "type": "object",
+                            "description": "The full invoice/AP item data dict (must include id).",
+                        },
+                        "exception_code": {
+                            "type": "string",
+                            "description": (
+                                "The exception code to resolve. If omitted, reads from the "
+                                "AP item's exception_code column."
+                            ),
+                        },
+                    },
+                    "required": ["invoice_payload"],
+                },
+                handler=_handle_resolve_exception,
+            ),
+            AgentTool(
                 name="check_payment_readiness",
                 description=(
                     "Check if a posted invoice is ready for payment and return the "
@@ -842,13 +936,15 @@ Your job: process this invoice through AP review using the available tools.
 Recommended sequence:
 1. Call enrich_with_context to understand the vendor relationship
 2. Call run_validation_gate to check hard rules
-3. Call get_ap_decision with the vendor context to get a recommendation
-4. Call execute_routing with the recommendation to complete processing
-5. If recommendation is "needs_info", call request_vendor_info to draft a follow-up
+3. If an exception is flagged (exception_code on the AP item), call resolve_exception to attempt auto-resolution before routing
+4. Call get_ap_decision with the vendor context to get a recommendation
+5. Call execute_routing with the recommendation to complete processing
+6. If recommendation is "needs_info", call request_vendor_info to draft a follow-up
 
 Rules:
 - NEVER skip run_validation_gate — it is a hard guardrail
 - If validation gate fails, set recommendation to "escalate" in execute_routing
+- If an exception is flagged, call resolve_exception to attempt auto-resolution before routing
 - NEVER auto-approve without calling get_ap_decision first
 - NEVER reject without human sign-off — use "escalate" instead
 - Only call request_vendor_info when the decision is "needs_info"
