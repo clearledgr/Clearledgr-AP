@@ -140,7 +140,7 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
 
     with TestClient(_app()) as _client:
         paths = _mounted_paths()
-        assert len(paths) <= 146
+        assert len(paths) <= 147
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths

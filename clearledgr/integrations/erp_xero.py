@@ -814,3 +814,77 @@ async def get_payment_status_xero(
     except Exception as e:
         logger.error("Xero payment status error: %s", type(e).__name__)
         return {"paid": False, "error": "payment_status_lookup_failed"}
+
+
+# ==================== Chart of Accounts ====================
+
+_XERO_ACCOUNT_TYPE_MAP = {
+    "bank": "asset",
+    "current": "asset",
+    "currliab": "liability",
+    "depreciatn": "expense",
+    "directcosts": "expense",
+    "equity": "equity",
+    "expense": "expense",
+    "fixed": "asset",
+    "inventory": "asset",
+    "liability": "liability",
+    "noncurrent": "asset",
+    "otherincome": "revenue",
+    "overheads": "expense",
+    "prepayment": "asset",
+    "revenue": "revenue",
+    "sales": "revenue",
+    "termliab": "liability",
+    "paygliability": "liability",
+    "superannuationexpense": "expense",
+    "superannuationliability": "liability",
+    "wagesexpense": "expense",
+}
+
+
+async def get_chart_of_accounts_xero(connection) -> List[Dict[str, Any]]:
+    """Fetch all accounts from Xero.
+
+    Returns a normalized list of account dicts.  Returns ``[]`` on any error
+    so the caller is never blocked.
+    """
+    if not connection.access_token or not connection.tenant_id:
+        return []
+
+    url = "https://api.xero.com/api.xro/2.0/Accounts"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {connection.access_token}",
+                    "xero-tenant-id": str(connection.tenant_id or ""),
+                },
+                timeout=60,
+            )
+
+            if response.status_code == 401:
+                logger.warning("Xero token expired during chart-of-accounts fetch")
+                return []
+
+            response.raise_for_status()
+            result = response.json()
+
+            accounts: List[Dict[str, Any]] = []
+            for acc in result.get("Accounts", []):
+                raw_type = str(acc.get("Type") or "").strip().lower()
+                accounts.append({
+                    "id": str(acc.get("AccountID") or ""),
+                    "code": str(acc.get("Code") or ""),
+                    "name": str(acc.get("Name") or ""),
+                    "type": _XERO_ACCOUNT_TYPE_MAP.get(raw_type, raw_type),
+                    "sub_type": str(acc.get("Class") or ""),
+                    "active": str(acc.get("Status") or "").upper() == "ACTIVE",
+                    "currency": str(acc.get("CurrencyCode") or ""),
+                })
+            return accounts
+
+    except Exception as e:
+        logger.error("Failed to fetch Xero chart of accounts: %s", type(e).__name__)
+        return []

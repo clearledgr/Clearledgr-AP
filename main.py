@@ -252,6 +252,7 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/integrations/teams/webhook",
     "/api/workspace/onboarding/status",
     "/api/workspace/onboarding/step",
+    "/api/workspace/chart-of-accounts",
     "/api/workspace/ops/connector-readiness",
     "/api/workspace/ops/learning-calibration",
     "/api/workspace/ops/learning-calibration/recompute",

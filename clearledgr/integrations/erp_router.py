@@ -24,7 +24,7 @@ import httpx
 import re
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from clearledgr.core.database import get_db as _canonical_get_db
 
@@ -71,6 +71,7 @@ from clearledgr.integrations.erp_quickbooks import (  # noqa: F401, E402
     find_bill_quickbooks,
     _attach_to_quickbooks,
     get_payment_status_quickbooks,
+    get_chart_of_accounts_quickbooks,
 )
 
 # ---------------------------------------------------------------------------
@@ -90,6 +91,7 @@ from clearledgr.integrations.erp_xero import (  # noqa: F401, E402
     find_bill_xero,
     _attach_to_xero,
     get_payment_status_xero,
+    get_chart_of_accounts_xero,
 )
 
 # ---------------------------------------------------------------------------
@@ -111,6 +113,7 @@ from clearledgr.integrations.erp_netsuite import (  # noqa: F401, E402
     find_bill_netsuite,
     _attach_to_netsuite,
     get_payment_status_netsuite,
+    get_chart_of_accounts_netsuite,
 )
 
 # ---------------------------------------------------------------------------
@@ -134,6 +137,7 @@ from clearledgr.integrations.erp_sap import (  # noqa: F401, E402
     find_bill_sap,
     _attach_to_sap,
     get_payment_status_sap,
+    get_chart_of_accounts_sap,
 )
 
 
@@ -940,11 +944,28 @@ async def erp_preflight_check(
             except Exception as e:
                 logger.warning("ERP preflight bill check failed (non-fatal): %s", e)
 
-    # 3. GL code validation against org mapping
+    # 3. GL code validation against org mapping + cached chart of accounts
     if gl_codes:
         gl_map = _get_org_gl_map(organization_id)
+        valid_codes: set = set()
         if gl_map:
-            valid_codes = set(gl_map.values())
+            valid_codes.update(gl_map.values())
+
+        # Also pull codes from cached chart of accounts (no ERP call — cache only)
+        try:
+            cached_coa = _get_cached_chart_of_accounts(organization_id)
+            if cached_coa and isinstance(cached_coa.get("accounts"), list):
+                for acct in cached_coa["accounts"]:
+                    code = str(acct.get("code") or "").strip()
+                    acct_id = str(acct.get("id") or "").strip()
+                    if code:
+                        valid_codes.add(code)
+                    if acct_id:
+                        valid_codes.add(acct_id)
+        except Exception:
+            pass  # non-fatal — fall back to GL map only
+
+        if valid_codes:
             invalid = [c for c in gl_codes if c not in valid_codes]
             result["gl_valid"] = len(invalid) == 0
             result["invalid_gl_codes"] = invalid
@@ -1155,3 +1176,133 @@ async def get_bill_payment_status(
             organization_id, erp_reference, exc,
         )
         return {"paid": False, "error": str(exc)}
+
+
+# ==================== Chart of Accounts Dispatcher ====================
+
+_CHART_OF_ACCOUNTS_FETCHERS = {
+    "quickbooks": get_chart_of_accounts_quickbooks,
+    "xero": get_chart_of_accounts_xero,
+    "netsuite": get_chart_of_accounts_netsuite,
+    "sap": get_chart_of_accounts_sap,
+}
+
+# Default cache TTL: 24 hours (in seconds)
+_COA_CACHE_TTL_SECONDS = 24 * 60 * 60
+
+
+def _get_cached_chart_of_accounts(
+    organization_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Return cached chart of accounts from org settings_json, or None if stale/missing."""
+    import json as _json
+
+    try:
+        db = _get_db()
+        org = db.get_organization(organization_id)
+        if not org:
+            return None
+        settings = org.get("settings_json") or org.get("settings") or {}
+        if isinstance(settings, str):
+            try:
+                settings = _json.loads(settings)
+            except Exception:
+                return None
+        cache = settings.get("chart_of_accounts_cache")
+        if not isinstance(cache, dict):
+            return None
+        fetched_at = cache.get("fetched_at")
+        if not fetched_at:
+            return None
+        # Parse the fetched_at timestamp and check TTL
+        try:
+            fetched_dt = datetime.fromisoformat(fetched_at)
+            if fetched_dt.tzinfo is None:
+                fetched_dt = fetched_dt.replace(tzinfo=timezone.utc)
+            age_seconds = (datetime.now(timezone.utc) - fetched_dt).total_seconds()
+            if age_seconds > _COA_CACHE_TTL_SECONDS:
+                return None
+        except (ValueError, TypeError):
+            return None
+        return cache
+    except Exception:
+        return None
+
+
+def _save_chart_of_accounts_cache(
+    organization_id: str,
+    accounts: List[Dict[str, Any]],
+    erp_type: str,
+) -> None:
+    """Store chart of accounts in org settings_json for caching."""
+    import json as _json
+
+    try:
+        db = _get_db()
+        org = db.get_organization(organization_id)
+        if not org:
+            return
+        settings = org.get("settings_json") or org.get("settings") or {}
+        if isinstance(settings, str):
+            try:
+                settings = _json.loads(settings)
+            except Exception:
+                settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+
+        settings["chart_of_accounts_cache"] = {
+            "accounts": accounts,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "erp_type": erp_type,
+            "account_count": len(accounts),
+        }
+
+        db.update_organization(organization_id, settings_json=settings)
+    except Exception as exc:
+        logger.warning("Failed to cache chart of accounts for org %s: %s", organization_id, exc)
+
+
+async def get_chart_of_accounts(
+    organization_id: str,
+    entity_id: Optional[str] = None,
+    force_refresh: bool = False,
+) -> List[Dict[str, Any]]:
+    """Fetch chart of accounts from the connected ERP.
+
+    Results are cached in organization settings for 24h.
+    Pass force_refresh=True to bypass cache.
+
+    Returns an empty list on any error so the caller is never blocked.
+    """
+    org_id = str(organization_id or "").strip() or "default"
+
+    # Check cache first (unless force_refresh)
+    if not force_refresh:
+        cached = _get_cached_chart_of_accounts(org_id)
+        if cached is not None:
+            return cached.get("accounts", [])
+
+    # Resolve ERP connection
+    connection = get_erp_connection(org_id, entity_id=entity_id)
+    if not connection:
+        logger.debug("No ERP connection for org %s, returning empty chart of accounts", org_id)
+        return []
+
+    erp_type = str(connection.type or "").strip().lower()
+    fetcher = _CHART_OF_ACCOUNTS_FETCHERS.get(erp_type)
+    if not fetcher:
+        logger.warning("No chart-of-accounts fetcher for ERP type: %s", erp_type)
+        return []
+
+    try:
+        accounts = await fetcher(connection)
+    except Exception as exc:
+        logger.error("Chart of accounts fetch failed for org %s (%s): %s", org_id, erp_type, exc)
+        return []
+
+    # Cache the result
+    if accounts:
+        _save_chart_of_accounts_cache(org_id, accounts, erp_type)
+
+    return accounts

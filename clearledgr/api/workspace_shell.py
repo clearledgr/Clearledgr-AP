@@ -1569,6 +1569,56 @@ def recompute_ops_learning_calibration(
     }
 
 
+# ------------------------------------------------------------------
+# Chart of Accounts
+# ------------------------------------------------------------------
+
+@router.get("/chart-of-accounts")
+async def get_chart_of_accounts_endpoint(
+    organization_id: Optional[str] = Query(default=None),
+    force_refresh: bool = Query(default=False),
+    account_type: Optional[str] = Query(default=None),
+    active_only: bool = Query(default=True),
+    user: TokenData = Depends(get_current_user),
+):
+    """Return chart of accounts from the connected ERP.
+
+    Results are cached for 24h in org settings. Use ``force_refresh=true``
+    to bypass cache and pull fresh data from the ERP.  Supports optional
+    filters: ``account_type`` (expense, revenue, asset, liability, equity)
+    and ``active_only`` (default true).
+    """
+    org_id = _resolve_org_id(user, organization_id)
+
+    from clearledgr.integrations.erp_router import (
+        get_chart_of_accounts as _get_coa,
+        get_erp_connection as _get_erp_conn,
+    )
+
+    accounts = await _get_coa(
+        organization_id=org_id,
+        force_refresh=force_refresh,
+    )
+
+    # Apply filters
+    if active_only:
+        accounts = [a for a in accounts if a.get("active", True)]
+    if account_type:
+        normalized_type = account_type.strip().lower()
+        accounts = [a for a in accounts if a.get("type") == normalized_type]
+
+    erp_conn = _get_erp_conn(org_id)
+    erp_type = erp_conn.type if erp_conn else None
+
+    return {
+        "organization_id": org_id,
+        "erp_type": erp_type,
+        "accounts": accounts,
+        "account_count": len(accounts),
+        "filtered": bool(account_type or active_only),
+    }
+
+
 @router.post("/vendor-intelligence/bootstrap")
 def bootstrap_vendor_intelligence(
     organization_id: Optional[str] = Query(default=None),

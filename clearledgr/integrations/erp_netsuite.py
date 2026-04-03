@@ -1064,3 +1064,93 @@ async def get_payment_status_netsuite(
     except Exception as e:
         logger.error("NetSuite payment status error: %s", type(e).__name__)
         return {"paid": False, "error": "payment_status_lookup_failed"}
+
+
+# ==================== Chart of Accounts (Normalized) ====================
+
+_NS_ACCOUNT_TYPE_MAP = {
+    "acctrec": "asset",
+    "acctpay": "liability",
+    "bank": "asset",
+    "cogs": "expense",
+    "credcard": "liability",
+    "deferexpense": "asset",
+    "deferrevenue": "liability",
+    "equity": "equity",
+    "expense": "expense",
+    "fixedasset": "asset",
+    "income": "revenue",
+    "longtermliab": "liability",
+    "nonposting": "other",
+    "othcurasset": "asset",
+    "othcurliab": "liability",
+    "othexpense": "expense",
+    "othincome": "revenue",
+    "statistical": "other",
+    "unbilledrec": "asset",
+}
+
+
+async def get_chart_of_accounts_netsuite(connection) -> List[Dict[str, Any]]:
+    """Fetch all accounts from NetSuite via SuiteQL.
+
+    Returns a normalized list of account dicts.  Returns ``[]`` on any error
+    so the caller is never blocked.
+    """
+    if not connection.account_id:
+        return []
+
+    suiteql_url = (
+        f"https://{connection.account_id}.suitetalk.api.netsuite.com"
+        "/services/rest/query/v1/suiteql"
+    )
+    auth_header = _oauth_header(connection, "POST", suiteql_url)
+
+    query = "SELECT id, acctnumber, acctname, accttype, isinactive, currency FROM account"
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.post(
+                suiteql_url,
+                json={"q": query},
+                headers={
+                    "Authorization": auth_header,
+                    "Content-Type": "application/json",
+                    "Prefer": "transient",
+                },
+                params={"limit": 1000},
+                timeout=60,
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            accounts: List[Dict[str, Any]] = []
+            for item in result.get("items", []):
+                raw_type = str(item.get("accttype") or "").strip().lower()
+                is_inactive = item.get("isinactive")
+                active = True
+                if isinstance(is_inactive, str):
+                    active = is_inactive.strip().upper() not in {"T", "TRUE", "YES", "1"}
+                elif isinstance(is_inactive, bool):
+                    active = not is_inactive
+
+                currency_val = item.get("currency")
+                currency = ""
+                if isinstance(currency_val, dict):
+                    currency = str(currency_val.get("refName") or currency_val.get("name") or "")
+                elif currency_val:
+                    currency = str(currency_val)
+
+                accounts.append({
+                    "id": str(item.get("id") or ""),
+                    "code": str(item.get("acctnumber") or ""),
+                    "name": str(item.get("acctname") or ""),
+                    "type": _NS_ACCOUNT_TYPE_MAP.get(raw_type, raw_type),
+                    "sub_type": raw_type,
+                    "active": active,
+                    "currency": currency,
+                })
+            return accounts
+
+    except Exception as e:
+        logger.error("Failed to fetch NetSuite chart of accounts: %s", type(e).__name__)
+        return []

@@ -961,3 +961,71 @@ async def get_payment_status_quickbooks(
     except Exception as e:
         logger.error("QuickBooks payment status error: %s", type(e).__name__)
         return {"paid": False, "error": "payment_status_lookup_failed"}
+
+
+# ==================== Chart of Accounts ====================
+
+_QB_ACCOUNT_TYPE_MAP = {
+    "bank": "asset",
+    "other current asset": "asset",
+    "fixed asset": "asset",
+    "other asset": "asset",
+    "accounts receivable": "asset",
+    "accounts payable": "liability",
+    "credit card": "liability",
+    "other current liability": "liability",
+    "long term liability": "liability",
+    "equity": "equity",
+    "income": "revenue",
+    "other income": "revenue",
+    "expense": "expense",
+    "other expense": "expense",
+    "cost of goods sold": "expense",
+}
+
+
+async def get_chart_of_accounts_quickbooks(connection) -> List[Dict[str, Any]]:
+    """Fetch all accounts from QuickBooks Online.
+
+    Returns a normalized list of account dicts.  Returns ``[]`` on any error
+    so the caller is never blocked.
+    """
+    if not connection.access_token or not connection.realm_id:
+        return []
+
+    url = (
+        f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                params={"query": "SELECT * FROM Account MAXRESULTS 1000"},
+                headers=_quickbooks_headers(connection),
+                timeout=60,
+            )
+
+            if response.status_code == 401:
+                logger.warning("QuickBooks token expired during chart-of-accounts fetch")
+                return []
+
+            response.raise_for_status()
+            result = response.json()
+
+            accounts: List[Dict[str, Any]] = []
+            for acc in result.get("QueryResponse", {}).get("Account", []):
+                raw_type = str(acc.get("AccountType") or "").strip().lower()
+                accounts.append({
+                    "id": str(acc.get("Id") or ""),
+                    "code": str(acc.get("AcctNum") or ""),
+                    "name": str(acc.get("Name") or ""),
+                    "type": _QB_ACCOUNT_TYPE_MAP.get(raw_type, raw_type),
+                    "sub_type": str(acc.get("AccountSubType") or ""),
+                    "active": acc.get("Active", True) is True,
+                    "currency": str(acc.get("CurrencyRef", {}).get("value", "") if isinstance(acc.get("CurrencyRef"), dict) else ""),
+                })
+            return accounts
+
+    except Exception as e:
+        logger.error("Failed to fetch QuickBooks chart of accounts: %s", type(e).__name__)
+        return []

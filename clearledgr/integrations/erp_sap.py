@@ -1009,3 +1009,85 @@ async def get_payment_status_sap(
     except Exception as e:
         logger.error("SAP payment status error: %s", type(e).__name__)
         return {"paid": False, "error": "payment_status_lookup_failed"}
+
+
+# ==================== Chart of Accounts ====================
+
+_SAP_GROUP_CODE_MAP = {
+    # SAP Business One GroupCode mapping to normalized types.
+    # GroupCode values vary by CoA template; these cover standard B1.
+    "1": "asset",
+    "2": "liability",
+    "3": "equity",
+    "4": "revenue",
+    "5": "expense",
+    "6": "expense",
+    "7": "expense",
+    "10": "asset",
+    "12": "liability",
+    "13": "equity",
+    "14": "revenue",
+    "15": "expense",
+}
+
+
+async def get_chart_of_accounts_sap(connection) -> List[Dict[str, Any]]:
+    """Fetch all accounts from SAP Business One.
+
+    Returns a normalized list of account dicts.  Returns ``[]`` on any error
+    so the caller is never blocked.
+    """
+    if not connection.access_token or not connection.base_url:
+        return []
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            session = await _open_sap_service_layer_session(connection, client)
+            if session.get("status") != "success":
+                logger.warning("SAP session setup failed for chart-of-accounts fetch")
+                return []
+
+            headers = session.get("headers", {})
+
+            url = (
+                f"{connection.base_url}/b1s/v1/ChartOfAccounts"
+                "?$select=Code,Name,AcctCurrency,ActiveAccount,GroupCode"
+                "&$top=5000"
+            )
+            response = await client.get(url, headers=headers, timeout=60)
+
+            if response.status_code == 401:
+                logger.warning("SAP token expired during chart-of-accounts fetch")
+                return []
+
+            response.raise_for_status()
+            result = response.json()
+
+            accounts: List[Dict[str, Any]] = []
+            for acc in result.get("value", []):
+                group_code = str(acc.get("GroupCode") or "")
+                active_flag = acc.get("ActiveAccount")
+                active = True
+                if isinstance(active_flag, str):
+                    active = active_flag.strip().lower() in {"y", "yes", "true", "tyes"}
+                elif isinstance(active_flag, bool):
+                    active = active_flag
+                elif active_flag == "tNO":
+                    active = False
+                elif active_flag == "tYES":
+                    active = True
+
+                accounts.append({
+                    "id": str(acc.get("Code") or ""),
+                    "code": str(acc.get("Code") or ""),
+                    "name": str(acc.get("Name") or ""),
+                    "type": _SAP_GROUP_CODE_MAP.get(group_code, "other"),
+                    "sub_type": f"group_{group_code}" if group_code else "",
+                    "active": active,
+                    "currency": str(acc.get("AcctCurrency") or ""),
+                })
+            return accounts
+
+    except Exception as e:
+        logger.error("Failed to fetch SAP chart of accounts: %s", type(e).__name__)
+        return []
