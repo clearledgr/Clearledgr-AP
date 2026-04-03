@@ -1,4 +1,16 @@
-"""Shared AP item business logic and projections."""
+"""Shared AP item business logic and projections.
+
+This is the public surface for AP-item helpers.  Implementation detail is
+split across:
+
+* ``ap_field_review`` — field-review normalisation, surface builders,
+  outcome derivation.
+* ``ap_vendor_analysis`` — vendor summary / detail builders, issue
+  classification.
+
+Everything is **re-exported** from this module so that existing callers
+(``from clearledgr.services.ap_item_service import X``) keep working.
+"""
 from __future__ import annotations
 
 import json
@@ -32,6 +44,60 @@ from clearledgr.services.policy_compliance import get_approval_automation_policy
 from clearledgr.api.ap_item_contracts import (
     ResolveFieldReviewRequest,
     ResubmitRejectedItemRequest,
+)
+
+# ---------------------------------------------------------------------------
+# Re-exports from ap_field_review  (field-review helpers)
+# ---------------------------------------------------------------------------
+from clearledgr.services.ap_field_review import (  # noqa: F401 — re-export
+    _FIELD_REVIEW_MUTABLE_FIELDS,
+    _FIELD_REVIEW_LABELS,
+    _FIELD_REVIEW_SOURCE_LABELS,
+    _FIELD_REVIEW_REASON_LABELS,
+    _normalize_field_review_field,
+    _normalize_field_review_source,
+    _normalize_document_type_token,
+    _get_conflict_field,
+    _resolve_field_review_source_value,
+    _coerce_field_review_value,
+    _field_resolution_column_updates,
+    _filter_allowed_ap_item_updates,
+    _build_operator_truth_context,
+    _should_auto_resume_after_field_resolution,
+    _field_review_label,
+    _field_review_source_label,
+    _format_field_review_value,
+    _join_human_list,
+    _infer_field_review_source,
+    _build_field_review_surface,
+    _field_review_value_equals,
+    _derive_field_review_outcome,
+)
+# The two overloaded _current_field_review_value names are handled below:
+from clearledgr.services.ap_field_review import (
+    _current_field_review_value_from_payload,  # noqa: F401
+    _current_field_review_value,               # noqa: F401
+)
+
+# ---------------------------------------------------------------------------
+# Re-exports from ap_vendor_analysis  (vendor helpers)
+# ---------------------------------------------------------------------------
+from clearledgr.services.ap_vendor_analysis import (  # noqa: F401 — re-export
+    _classify_vendor_issue,
+    _summarize_vendor_issue,
+    _sort_vendor_issue_items,
+    _summarize_related_item,
+    _failed_post_pause_reason,
+    _safe_sort_timestamp,
+    _is_open_ap_state,
+    OPEN_AP_STATES,
+)
+
+# Vendor summary/detail are re-exported with the original call signatures
+# (no `build_worklist_item` kwarg needed by external callers).
+from clearledgr.services.ap_vendor_analysis import (
+    _build_vendor_summary_rows as _vendor_summary_rows_impl,
+    _build_vendor_detail_payload as _vendor_detail_payload_impl,
 )
 
 logger = logging.getLogger(__name__)
@@ -272,14 +338,7 @@ def _coerce_optional_float(value: Any) -> Optional[float]:
         return None
 
 
-_FIELD_REVIEW_MUTABLE_FIELDS = {
-    "amount",
-    "currency",
-    "invoice_number",
-    "vendor",
-    "due_date",
-    "document_type",
-}
+# _FIELD_REVIEW_MUTABLE_FIELDS — imported from ap_field_review
 
 _NON_INVOICE_ALLOWED_OUTCOMES = {
     "credit_note": {"apply_to_invoice", "record_vendor_credit", "needs_followup"},
@@ -292,164 +351,22 @@ _NON_INVOICE_ALLOWED_OUTCOMES = {
     "other": {"mark_reviewed", "needs_followup"},
 }
 
-def _normalize_field_review_field(raw: Any) -> str:
-    return str(raw or "").strip().lower()
-
-
-def _normalize_field_review_source(raw: Any) -> str:
-    token = str(raw or "").strip().lower().replace("-", "_")
-    if token in {"email", "attachment", "manual"}:
-        return token
-    if token in {"manual_value", "manual_entry"}:
-        return "manual"
-    return token
-
-
-def _normalize_document_type_token(raw: Any) -> str:
-    token = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if token == "credit_memo":
-        return "credit_note"
-    if token == "payment_confirmation":
-        return "payment"
-    if token == "bank_statement":
-        return "statement"
-    return token or "invoice"
+# _normalize_field_review_field — imported from ap_field_review
+# _normalize_field_review_source — imported from ap_field_review
+# _normalize_document_type_token — imported from ap_field_review
 
 
 def _normalize_non_invoice_outcome(raw: Any) -> str:
     return str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
 
 
-def _get_conflict_field(raw: Any) -> str:
-    if isinstance(raw, dict):
-        return _normalize_field_review_field(raw.get("field") or raw.get("code"))
-    if isinstance(raw, str):
-        return _normalize_field_review_field(raw)
-    return ""
-
-
-def _resolve_field_review_source_value(
-    blocker: Optional[Dict[str, Any]],
-    *,
-    source: str,
-    manual_value: Any,
-) -> Any:
-    if source == "manual":
-        return manual_value
-    blocker_payload = blocker if isinstance(blocker, dict) else {}
-    return blocker_payload.get(f"{source}_value")
-
-
-def _coerce_field_review_value(field: str, value: Any) -> Any:
-    token = _normalize_field_review_field(field)
-    if token not in _FIELD_REVIEW_MUTABLE_FIELDS:
-        raise HTTPException(status_code=400, detail="unsupported_field_review_field")
-
-    if token == "amount":
-        numeric = _coerce_optional_float(value)
-        if numeric is None:
-            raise HTTPException(status_code=400, detail="invalid_amount_resolution")
-        return round(numeric, 2)
-
-    if token == "currency":
-        resolved = str(value or "").strip().upper()
-        if not resolved:
-            raise HTTPException(status_code=400, detail="invalid_currency_resolution")
-        return resolved
-
-    if token == "document_type":
-        resolved = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
-        if resolved == "credit_memo":
-            resolved = "credit_note"
-        if resolved == "bank_statement":
-            resolved = "statement"
-        if resolved == "payment_confirmation":
-            resolved = "payment"
-        if resolved not in {"invoice", "receipt", "payment_request", "payment", "refund", "credit_note", "statement"}:
-            raise HTTPException(status_code=400, detail="invalid_document_type_resolution")
-        return resolved
-
-    resolved = str(value or "").strip()
-    if not resolved:
-        raise HTTPException(status_code=400, detail="invalid_field_review_value")
-    return resolved
-
-
-def _field_resolution_column_updates(field: str, value: Any) -> Dict[str, Any]:
-    token = _normalize_field_review_field(field)
-    if token == "vendor":
-        return {"vendor_name": value}
-    if token in {"amount", "currency", "invoice_number", "due_date"}:
-        return {token: value}
-    return {}
-
-
-def _filter_allowed_ap_item_updates(db: ClearledgrDB, updates: Dict[str, Any]) -> Dict[str, Any]:
-    allowed = getattr(db, "_AP_ITEM_ALLOWED_COLUMNS", None)
-    filtered = dict(updates)
-    if isinstance(allowed, (set, frozenset)):
-        filtered = {
-            key: value
-            for key, value in filtered.items()
-            if key in allowed
-        }
-    serialized: Dict[str, Any] = {}
-    for key, value in filtered.items():
-        if key != "metadata" and isinstance(value, (dict, list)):
-            serialized[key] = json.dumps(value)
-        else:
-            serialized[key] = value
-    return serialized
-
-
-def _build_operator_truth_context(
-    db: ClearledgrDB,
-    *,
-    item: Dict[str, Any],
-    metadata: Dict[str, Any],
-    field: str,
-    selected_source: str,
-    blocker: Optional[Dict[str, Any]] = None,
-    expected_fields: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    source_rows = db.list_ap_item_sources(str(item.get("id") or "").strip()) if hasattr(db, "list_ap_item_sources") else []
-    primary_source_meta: Dict[str, Any] = {}
-    if isinstance(source_rows, list):
-        for row in source_rows:
-            source_meta = _parse_json((row or {}).get("metadata"))
-            if source_meta:
-                primary_source_meta = source_meta
-                break
-    attachment_names = metadata.get("attachment_names")
-    if not isinstance(attachment_names, list):
-        attachment_names = primary_source_meta.get("attachment_names")
-    document_type = metadata.get("document_type") or metadata.get("email_type") or item.get("document_type")
-    return {
-        "ap_item_id": item.get("id"),
-        "field": field,
-        "vendor": item.get("vendor_name") or item.get("vendor"),
-        "sender": item.get("sender"),
-        "subject": item.get("subject"),
-        "snippet": metadata.get("source_snippet") or primary_source_meta.get("snippet"),
-        "body_excerpt": metadata.get("source_body_excerpt") or primary_source_meta.get("body_excerpt"),
-        "attachment_names": attachment_names if isinstance(attachment_names, list) else [],
-        "document_type": document_type,
-        "selected_source": selected_source,
-        "source_channel": "gmail_route",
-        "event_source": "field_review_resolution",
-        "expected_fields": expected_fields or {},
-        "blocker": blocker or {},
-    }
-
-
-def _should_auto_resume_after_field_resolution(item: Dict[str, Any]) -> bool:
-    state = str(item.get("state") or "").strip().lower()
-    document_type = _normalize_document_type_token(item.get("document_type"))
-    return (
-        state in {"ready_to_post", "failed_post"}
-        and document_type == "invoice"
-        and not bool(item.get("requires_field_review"))
-    )
+# _get_conflict_field — imported from ap_field_review
+# _resolve_field_review_source_value — imported from ap_field_review
+# _coerce_field_review_value — imported from ap_field_review
+# _field_resolution_column_updates — imported from ap_field_review
+# _filter_allowed_ap_item_updates — imported from ap_field_review
+# _build_operator_truth_context — imported from ap_field_review
+# _should_auto_resume_after_field_resolution — imported from ap_field_review
 
 
 def _non_invoice_resolution_state(
@@ -1198,295 +1115,18 @@ def _derive_exception_from_metadata(
     return {"code": code, "severity": severity}
 
 
-_FIELD_REVIEW_LABELS = {
-    "amount": "Amount",
-    "currency": "Currency",
-    "invoice_number": "Invoice number",
-    "vendor": "Vendor",
-    "invoice_date": "Invoice date",
-    "due_date": "Due date",
-    "document_type": "Document type",
-}
-
-_FIELD_REVIEW_SOURCE_LABELS = {
-    "email": "Email",
-    "attachment": "Invoice attachment",
-    "llm": "Current invoice parse",
-    "parser": "Current invoice parse",
-    "current_parse": "Current invoice parse",
-    "ocr": "Current invoice parse",
-}
-
-_FIELD_REVIEW_REASON_LABELS = {
-    "source_value_mismatch": "Email and attachment disagree.",
-    "attachment_llm_mismatch": "Attachment and model output disagree.",
-}
+# _FIELD_REVIEW_LABELS — imported from ap_field_review
+# _FIELD_REVIEW_SOURCE_LABELS — imported from ap_field_review
+# _FIELD_REVIEW_REASON_LABELS — imported from ap_field_review
+# _field_review_label — imported from ap_field_review
+# _field_review_source_label — imported from ap_field_review
+# _format_field_review_value — imported from ap_field_review
+# _join_human_list — imported from ap_field_review
+# _current_field_review_value (payload variant) — imported from ap_field_review
+# _infer_field_review_source — imported from ap_field_review
 
 
-def _field_review_label(field: Any) -> str:
-    token = str(field or "").strip().lower()
-    if not token:
-        return "Field"
-    return _FIELD_REVIEW_LABELS.get(token) or token.replace("_", " ").title()
-
-
-def _field_review_source_label(source: Any) -> str:
-    token = str(source or "").strip().lower()
-    if not token:
-        return "Source"
-    return _FIELD_REVIEW_SOURCE_LABELS.get(token) or token.replace("_", " ").title()
-
-
-def _format_field_review_value(field: str, value: Any, payload: Dict[str, Any]) -> str:
-    if value in (None, ""):
-        return "Not found"
-    normalized_field = str(field or "").strip().lower()
-    if normalized_field == "amount":
-        try:
-            amount_value = float(value)
-            currency = str(payload.get("currency") or "USD").strip().upper() or "USD"
-            return f"{currency} {amount_value:,.2f}"
-        except (TypeError, ValueError):
-            return str(value)
-    return str(value)
-
-
-def _join_human_list(values: List[str]) -> str:
-    cleaned = [str(value).strip() for value in values if str(value or "").strip()]
-    if not cleaned:
-        return ""
-    if len(cleaned) == 1:
-        return cleaned[0]
-    if len(cleaned) == 2:
-        return f"{cleaned[0]} and {cleaned[1]}"
-    return f"{', '.join(cleaned[:-1])}, and {cleaned[-1]}"
-
-
-def _current_field_review_value(payload: Dict[str, Any], field: str) -> Any:
-    token = str(field or "").strip().lower()
-    if token == "vendor":
-        return payload.get("vendor_name") or payload.get("vendor")
-    if token == "document_type":
-        return payload.get("document_type")
-    return payload.get(token)
-
-
-def _infer_field_review_source(current_value: Any, email_value: Any, attachment_value: Any) -> Optional[str]:
-    if current_value not in (None, ""):
-        if attachment_value not in (None, "") and current_value == attachment_value:
-            return "attachment"
-        if email_value not in (None, "") and current_value == email_value:
-            return "email"
-    return None
-
-
-def _build_field_review_surface(payload: Dict[str, Any]) -> Dict[str, Any]:
-    field_provenance = payload.get("field_provenance") if isinstance(payload.get("field_provenance"), dict) else {}
-    field_evidence = payload.get("field_evidence") if isinstance(payload.get("field_evidence"), dict) else {}
-    source_conflicts = payload.get("source_conflicts") if isinstance(payload.get("source_conflicts"), list) else []
-    confidence_blockers = payload.get("confidence_blockers") if isinstance(payload.get("confidence_blockers"), list) else []
-    confidence_gate = payload.get("confidence_gate") if isinstance(payload.get("confidence_gate"), dict) else {}
-    field_confidences = (
-        payload.get("field_confidences")
-        if isinstance(payload.get("field_confidences"), dict)
-        else confidence_gate.get("field_confidences")
-    )
-    if not isinstance(field_confidences, dict):
-        field_confidences = {}
-    threshold_pct = confidence_gate.get("threshold_pct")
-    if threshold_pct is None:
-        threshold_pct = 95
-
-    blockers: List[Dict[str, Any]] = []
-    blocked_fields: List[str] = []
-    blocked_field_labels: List[str] = []
-    seen_fields: set[str] = set()
-
-    for conflict in source_conflicts:
-        if not isinstance(conflict, dict) or not bool(conflict.get("blocking")):
-            continue
-        field = str(conflict.get("field") or "").strip().lower()
-        if not field:
-            continue
-
-        provenance_entry = field_provenance.get(field) if isinstance(field_provenance.get(field), dict) else {}
-        evidence_entry = field_evidence.get(field) if isinstance(field_evidence.get(field), dict) else {}
-        values = conflict.get("values") if isinstance(conflict.get("values"), dict) else {}
-
-        winning_source = (
-            str(provenance_entry.get("source") or "").strip().lower()
-            or str(conflict.get("preferred_source") or "").strip().lower()
-            or str(evidence_entry.get("source") or "").strip().lower()
-            or "attachment"
-        )
-        winning_value = provenance_entry.get("value")
-        if winning_value in (None, ""):
-            winning_value = evidence_entry.get("selected_value")
-        if winning_value in (None, "") and winning_source:
-            winning_value = values.get(winning_source)
-
-        email_value = values.get("email")
-        if email_value in (None, ""):
-            email_value = evidence_entry.get("email_value")
-        attachment_value = values.get("attachment")
-        if attachment_value in (None, ""):
-            attachment_value = evidence_entry.get("attachment_value")
-
-        field_label = _field_review_label(field)
-        winner_label = _field_review_source_label(winning_source)
-        attachment_name = str(evidence_entry.get("attachment_name") or "").strip() or None
-        reason = str(conflict.get("reason") or "").strip().lower() or "source_value_mismatch"
-        winner_reason = f"{winner_label} currently wins because Clearledgr selected that value as canonical."
-        if winning_source == "attachment" and attachment_name:
-            winner_reason = (
-                f"{winner_label} currently wins because Clearledgr selected the value from {attachment_name} as canonical."
-            )
-
-        blockers.append(
-            {
-                "kind": "source_conflict",
-                "field": field,
-                "field_label": field_label,
-                "blocking": True,
-                "reason": reason,
-                "reason_label": _FIELD_REVIEW_REASON_LABELS.get(reason) or "Sources disagree and require review.",
-                "email_value": email_value,
-                "email_value_display": _format_field_review_value(field, email_value, payload),
-                "attachment_value": attachment_value,
-                "attachment_value_display": _format_field_review_value(field, attachment_value, payload),
-                "winning_source": winning_source,
-                "winning_source_label": winner_label,
-                "winning_value": winning_value,
-                "winning_value_display": _format_field_review_value(field, winning_value, payload),
-                "attachment_name": attachment_name,
-                "paused_reason": (
-                    f"Workflow paused until {field_label.lower()} is confirmed because the email and attachment disagree."
-                ),
-                "winner_reason": winner_reason,
-            }
-        )
-        if field not in seen_fields:
-            seen_fields.add(field)
-            blocked_fields.append(field)
-            blocked_field_labels.append(field_label.lower())
-
-    for blocker in confidence_blockers:
-        if isinstance(blocker, str):
-            field = str(blocker or "").strip().lower()
-            reason = "critical_field_review_required"
-        elif isinstance(blocker, dict):
-            field = str(blocker.get("field") or blocker.get("code") or "").strip().lower()
-            reason = str(blocker.get("reason") or blocker.get("code") or "critical_field_review_required").strip().lower()
-        else:
-            continue
-        if not field or field in seen_fields:
-            continue
-        field_label = _field_review_label(field)
-        provenance_entry = field_provenance.get(field) if isinstance(field_provenance.get(field), dict) else {}
-        evidence_entry = field_evidence.get(field) if isinstance(field_evidence.get(field), dict) else {}
-        candidate_values = provenance_entry.get("candidates") if isinstance(provenance_entry.get("candidates"), dict) else {}
-        confidence_value = blocker.get("confidence") if isinstance(blocker, dict) else None
-        if confidence_value in (None, ""):
-            confidence_value = field_confidences.get(field)
-        confidence_pct = blocker.get("confidence_pct") if isinstance(blocker, dict) else None
-        if confidence_pct in (None, "") and confidence_value not in (None, ""):
-            try:
-                confidence_pct = round(float(confidence_value) * 100)
-            except (TypeError, ValueError):
-                confidence_pct = None
-        blocker_threshold_pct = blocker.get("threshold_pct") if isinstance(blocker, dict) else None
-        if blocker_threshold_pct in (None, ""):
-            blocker_threshold_pct = threshold_pct
-        current_source = (
-            str(provenance_entry.get("source") or "").strip().lower()
-            or str(evidence_entry.get("source") or "").strip().lower()
-            or None
-        )
-        current_value = provenance_entry.get("value")
-        if current_value in (None, ""):
-            current_value = evidence_entry.get("selected_value")
-        if current_value in (None, ""):
-            current_value = _current_field_review_value(payload, field)
-        email_value = candidate_values.get("email")
-        if email_value in (None, ""):
-            email_value = evidence_entry.get("email_value")
-        attachment_value = candidate_values.get("attachment")
-        if attachment_value in (None, ""):
-            attachment_value = evidence_entry.get("attachment_value")
-        inferred_source = _infer_field_review_source(current_value, email_value, attachment_value)
-        if not current_source:
-            current_source = inferred_source
-        current_source_label = _field_review_source_label(current_source) if current_source else None
-        current_value_display = _format_field_review_value(field, current_value, payload)
-        if confidence_pct not in (None, "") and blocker_threshold_pct not in (None, ""):
-            paused_reason = (
-                f"Review {field_label.lower()} before this invoice moves forward."
-            )
-            winner_reason = (
-                f"Clearledgr read {current_value_display}"
-                f"{f' from the {current_source_label.lower()}' if current_source_label else ''}. "
-                f"Because {field_label.lower()} is a critical field, a person needs to confirm it before approval continues."
-            )
-            auto_check_note = (
-                f"Auto-pass rule: {blocker_threshold_pct}% minimum. "
-                f"This read scored {confidence_pct}%."
-            )
-        else:
-            paused_reason = f"Review {field_label.lower()} before this invoice moves forward."
-            winner_reason = (
-                f"Clearledgr needs the {field_label.lower()} confirmed before this invoice can continue."
-            )
-            auto_check_note = None
-        blockers.append(
-            {
-                "kind": "confidence",
-                "field": field,
-                "field_label": field_label,
-                "blocking": True,
-                "reason": reason,
-                "reason_label": "This field did not clear the automatic check.",
-                "paused_reason": paused_reason,
-                "current_value": current_value,
-                "current_value_display": current_value_display,
-                "current_source": current_source,
-                "current_source_label": current_source_label,
-                "email_value": email_value,
-                "email_value_display": _format_field_review_value(field, email_value, payload),
-                "attachment_value": attachment_value,
-                "attachment_value_display": _format_field_review_value(field, attachment_value, payload),
-                "confidence": confidence_value,
-                "confidence_pct": confidence_pct,
-                "threshold_pct": blocker_threshold_pct,
-                "winner_reason": winner_reason,
-                "auto_check_note": auto_check_note,
-            }
-        )
-        seen_fields.add(field)
-        blocked_fields.append(field)
-        blocked_field_labels.append(field_label.lower())
-
-    pause_reason = ""
-    if len(blockers) == 1:
-        pause_reason = str(blockers[0].get("paused_reason") or "").strip()
-    if not pause_reason and blocked_field_labels:
-        pause_reason = (
-            f"Review {_join_human_list(blocked_field_labels)} "
-            f"before this invoice moves forward."
-        )
-        if any(str(entry.get("kind") or "") == "source_conflict" for entry in blockers):
-            pause_reason = (
-                f"Workflow paused until {_join_human_list(blocked_field_labels)} "
-                f"is confirmed because the email and attachment disagree."
-            )
-    if not pause_reason and bool(payload.get("requires_field_review")):
-        pause_reason = "Review the extracted fields before this invoice moves forward."
-
-    return {
-        "field_review_blockers": blockers,
-        "blocked_fields": blocked_fields,
-        "workflow_paused_reason": pause_reason or None,
-    }
-
+# _build_field_review_surface — imported from ap_field_review
 
 _PIPELINE_EXCEPTION_BLOCKER_MAP = {
     "policy_validation_failed": {
@@ -1542,24 +1182,8 @@ def _build_budget_blocker_detail(summary: Dict[str, Any]) -> str:
     return "Budget review is required before this invoice can continue."
 
 
-_FAILED_POST_PAUSE_REASONS = {
-    "erp_not_connected": "Connect an ERP before this invoice can be posted.",
-    "erp_not_configured": "Finish ERP configuration before this invoice can be posted.",
-    "erp_type_unsupported": "This ERP connection does not support invoice posting yet.",
-    "posting_blocked": "ERP posting is paused by rollout controls right now.",
-}
-
-
-def _failed_post_pause_reason(item: Dict[str, Any]) -> Optional[str]:
-    state = str(item.get("state") or "").strip().lower()
-    if state != "failed_post":
-        return None
-    exception_code = str(item.get("exception_code") or "").strip().lower()
-    if exception_code in _FAILED_POST_PAUSE_REASONS:
-        return _FAILED_POST_PAUSE_REASONS[exception_code]
-    last_error = str(item.get("last_error") or "").strip()
-    return last_error or None
-
+# _FAILED_POST_PAUSE_REASONS — imported from ap_vendor_analysis
+# _failed_post_pause_reason — imported from ap_vendor_analysis
 
 def _build_pipeline_blockers(payload: Dict[str, Any], budget_summary: Dict[str, Any]) -> List[Dict[str, Any]]:
     blockers: List[Dict[str, Any]] = []
@@ -2134,45 +1758,10 @@ def build_worklist_item(
     return payload
 
 
-OPEN_AP_STATES = {
-    "received",
-    "validated",
-    "needs_info",
-    "needs_approval",
-    "pending_approval",
-    "approved",
-    "ready_to_post",
-    "failed_post",
-}
-
-
-def _safe_sort_timestamp(value: Any) -> float:
-    parsed = _parse_iso(value)
-    return parsed.timestamp() if parsed else 0.0
-
-
-def _is_open_ap_state(state: Any) -> bool:
-    return str(state or "").strip().lower() in OPEN_AP_STATES
-
-
-def _summarize_related_item(item: Dict[str, Any]) -> Dict[str, Any]:
-    state = str(item.get("state") or "").strip().lower()
-    return {
-        "id": item.get("id"),
-        "vendor_name": item.get("vendor_name"),
-        "invoice_number": item.get("invoice_number"),
-        "amount": _safe_float(item.get("amount")),
-        "currency": item.get("currency") or "USD",
-        "state": state,
-        "due_date": item.get("due_date"),
-        "updated_at": item.get("updated_at") or item.get("created_at"),
-        "thread_id": item.get("thread_id"),
-        "message_id": item.get("message_id"),
-        "erp_reference": item.get("erp_reference"),
-        "exception_code": item.get("exception_code"),
-        "is_open": _is_open_ap_state(state),
-    }
-
+# OPEN_AP_STATES — imported from ap_vendor_analysis
+# _safe_sort_timestamp — imported from ap_vendor_analysis
+# _is_open_ap_state — imported from ap_vendor_analysis
+# _summarize_related_item — imported from ap_vendor_analysis
 
 def _group_sources_by_type(sources: List[Dict[str, Any]]) -> Dict[str, Any]:
     rows: Dict[str, Dict[str, Any]] = {}
@@ -2267,83 +1856,9 @@ def _build_related_records_payload(
     }
 
 
-def _classify_vendor_issue(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    state = str(item.get("state") or "").strip().lower()
-    workflow_pause_reason = str(
-        item.get("workflow_paused_reason")
-        or _failed_post_pause_reason(item)
-        or ""
-    ).strip()
-    needs_info_question = str(item.get("needs_info_question") or "").strip()
-    field_review_blockers = item.get("field_review_blockers") if isinstance(item.get("field_review_blockers"), list) else []
-    entity_routing_status = str(item.get("entity_routing_status") or "").strip().lower()
-    entity_route_reason = str(item.get("entity_route_reason") or "").strip()
-    exception_code = str(item.get("exception_code") or "").strip().lower()
-
-    if entity_routing_status == "needs_review":
-        return {
-            "kind": "entity_route",
-            "label": "Entity routing",
-            "summary": entity_route_reason or "Choose the legal entity before the invoice can continue.",
-            "priority": 0,
-        }
-    if state == "failed_post":
-        return {
-            "kind": "failed_post",
-            "label": "Posting retry",
-            "summary": workflow_pause_reason or "ERP posting failed and needs a retry or connector review.",
-            "priority": 1,
-        }
-    if state == "needs_info":
-        return {
-            "kind": "needs_info",
-            "label": "Needs info",
-            "summary": needs_info_question or workflow_pause_reason or "Follow up with the vendor or finance team for the missing information.",
-            "priority": 2,
-        }
-    if bool(item.get("requires_field_review")) or field_review_blockers:
-        return {
-            "kind": "field_review",
-            "label": "Field review",
-            "summary": workflow_pause_reason or "Resolve the blocked invoice fields before continuing.",
-            "priority": 3,
-        }
-    if exception_code:
-        return {
-            "kind": "policy_exception",
-            "label": "Policy / exception",
-            "summary": workflow_pause_reason or f"Resolve the {exception_code.replace('_', ' ')} blocker before continuing.",
-            "priority": 4,
-        }
-    return None
-
-
-def _summarize_vendor_issue(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    issue = _classify_vendor_issue(item)
-    if not issue:
-        return None
-    return {
-        **_summarize_related_item(item),
-        "issue_kind": issue["kind"],
-        "issue_label": issue["label"],
-        "issue_summary": issue["summary"],
-        "entity_routing_status": item.get("entity_routing_status"),
-        "entity_route_reason": item.get("entity_route_reason"),
-        "requires_field_review": bool(item.get("requires_field_review")),
-        "next_action": item.get("next_action"),
-        "needs_info_question": item.get("needs_info_question"),
-    }
-
-
-def _sort_vendor_issue_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return sorted(
-        items,
-        key=lambda item: (
-            int((_classify_vendor_issue(item) or {}).get("priority") or 99),
-            -_safe_sort_timestamp(item.get("updated_at") or item.get("created_at")),
-        ),
-    )
-
+# _classify_vendor_issue — imported from ap_vendor_analysis
+# _summarize_vendor_issue — imported from ap_vendor_analysis
+# _sort_vendor_issue_items — imported from ap_vendor_analysis
 
 def _build_vendor_summary_rows(
     db: ClearledgrDB,
@@ -2352,143 +1867,10 @@ def _build_vendor_summary_rows(
     search: str = "",
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
-    approval_policy = _approval_followup_policy(organization_id)
-    organization_settings = _load_org_settings_for_item(db, organization_id)
-    raw_rows = db.list_ap_items(organization_id, limit=5000)
-    items = build_worklist_items(
-        db,
-        raw_rows,
-        build_item=build_worklist_item,
-        approval_policy=approval_policy,
-        organization_settings=organization_settings,
+    return _vendor_summary_rows_impl(
+        db, organization_id, search=search, limit=limit,
+        build_worklist_item=build_worklist_item,
     )
-    vendor_profiles = (
-        db.get_vendor_profiles_bulk(
-            organization_id,
-            [
-                str(item.get("vendor_name") or item.get("vendor") or "Unknown").strip() or "Unknown"
-                for item in items
-            ],
-        )
-        if hasattr(db, "get_vendor_profiles_bulk")
-        else {}
-    )
-    vendor_rows: Dict[str, Dict[str, Any]] = {}
-
-    for raw_item, item in zip(raw_rows, items):
-        vendor_name = str(item.get("vendor_name") or item.get("vendor") or "Unknown").strip() or "Unknown"
-        key = vendor_name.lower()
-        row = vendor_rows.setdefault(
-            key,
-            {
-                "vendor_name": vendor_name,
-                "invoice_count": 0,
-                "open_count": 0,
-                "posted_count": 0,
-                "failed_count": 0,
-                "approval_count": 0,
-                "needs_info_count": 0,
-                "issue_count": 0,
-                "issue_kinds": Counter(),
-                "top_exception_codes": Counter(),
-                "total_amount": 0.0,
-                "last_activity_at": "",
-                "sender_emails": set(),
-                "top_states": Counter(),
-            },
-        )
-        row["invoice_count"] += 1
-        row["total_amount"] += _safe_float(item.get("amount"))
-        state = str(item.get("state") or "").strip().lower()
-        row["top_states"][state] += 1
-        if _is_open_ap_state(state):
-            row["open_count"] += 1
-        if state in {"posted_to_erp", "closed"}:
-            row["posted_count"] += 1
-        if state == "failed_post":
-            row["failed_count"] += 1
-        if state in {"needs_approval", "pending_approval"}:
-            row["approval_count"] += 1
-        if state == "needs_info":
-            row["needs_info_count"] += 1
-        issue = _classify_vendor_issue(item)
-        if issue:
-            row["issue_count"] += 1
-            row["issue_kinds"][issue["kind"]] += 1
-        exception_code = str(
-            raw_item.get("exception_code")
-            or item.get("exception_code")
-            or ""
-        ).strip().lower()
-        if exception_code:
-            row["top_exception_codes"][exception_code] += 1
-        updated_at = str(item.get("updated_at") or item.get("created_at") or "")
-        if updated_at > str(row.get("last_activity_at") or ""):
-            row["last_activity_at"] = updated_at
-        sender = str(item.get("sender") or "").strip()
-        if sender:
-            row["sender_emails"].add(sender)
-
-    search_lc = str(search or "").strip().lower()
-    rows: List[Dict[str, Any]] = []
-    for row in vendor_rows.values():
-        if search_lc and search_lc not in str(row.get("vendor_name") or "").lower():
-            continue
-        vendor_name = str(row.get("vendor_name") or "")
-        profile = (
-            vendor_profiles.get(vendor_name)
-            if isinstance(vendor_profiles, dict)
-            else None
-        ) or (db.get_vendor_profile(organization_id, vendor_name) if vendor_name else None)
-        rows.append(
-            {
-                "vendor_name": vendor_name,
-                "invoice_count": int(row.get("invoice_count") or 0),
-                "open_count": int(row.get("open_count") or 0),
-                "posted_count": int(row.get("posted_count") or 0),
-                "failed_count": int(row.get("failed_count") or 0),
-                "approval_count": int(row.get("approval_count") or 0),
-                "needs_info_count": int(row.get("needs_info_count") or 0),
-                "issue_count": int(row.get("issue_count") or 0),
-                "issue_summary": {
-                    "field_review": int(Counter(row.get("issue_kinds") or {}).get("field_review") or 0),
-                    "entity_route": int(Counter(row.get("issue_kinds") or {}).get("entity_route") or 0),
-                    "needs_info": int(Counter(row.get("issue_kinds") or {}).get("needs_info") or 0),
-                    "failed_post": int(Counter(row.get("issue_kinds") or {}).get("failed_post") or 0),
-                    "policy_exception": int(Counter(row.get("issue_kinds") or {}).get("policy_exception") or 0),
-                },
-                "total_amount": round(_safe_float(row.get("total_amount")), 2),
-                "last_activity_at": row.get("last_activity_at") or None,
-                "primary_email": sorted(row.get("sender_emails") or [""])[0] if row.get("sender_emails") else None,
-                "sender_emails": sorted(row.get("sender_emails") or [])[:5],
-                "top_states": [
-                    {"state": state, "count": count}
-                    for state, count in Counter(row.get("top_states") or {}).most_common(4)
-                ],
-                "top_exception_codes": [
-                    {"exception_code": code, "count": count}
-                    for code, count in Counter(row.get("top_exception_codes") or {}).most_common(3)
-                ],
-                "profile": {
-                    "requires_po": bool((profile or {}).get("requires_po")),
-                    "payment_terms": (profile or {}).get("payment_terms"),
-                    "always_approved": bool((profile or {}).get("always_approved")),
-                    "approval_override_rate": _safe_float((profile or {}).get("approval_override_rate")),
-                    "anomaly_flags": list((profile or {}).get("anomaly_flags") or [])[:4],
-                },
-            }
-        )
-
-    rows.sort(
-        key=lambda row: (
-            int(row.get("issue_count") or 0),
-            int(row.get("open_count") or 0),
-            _safe_float(row.get("total_amount")),
-            _safe_sort_timestamp(row.get("last_activity_at")),
-        ),
-        reverse=True,
-    )
-    return rows[: max(1, min(limit, 200))]
 
 
 def _build_vendor_detail_payload(
@@ -2499,78 +1881,10 @@ def _build_vendor_detail_payload(
     days: int = 180,
     invoice_limit: int = 20,
 ) -> Dict[str, Any]:
-    summary_rows = _build_vendor_summary_rows(db, organization_id, search=vendor_name, limit=200)
-    summary = next(
-        (
-            row
-            for row in summary_rows
-            if str(row.get("vendor_name") or "").strip().lower() == str(vendor_name or "").strip().lower()
-        ),
-        None,
+    return _vendor_detail_payload_impl(
+        db, organization_id, vendor_name, days=days, invoice_limit=invoice_limit,
+        build_worklist_item=build_worklist_item,
     )
-    if not summary:
-        raise HTTPException(status_code=404, detail="vendor_not_found")
-
-    canonical_vendor_name = str(summary.get("vendor_name") or vendor_name).strip()
-    profile = db.get_vendor_profile(organization_id, canonical_vendor_name) or {}
-    history = db.get_vendor_invoice_history(organization_id, canonical_vendor_name, limit=max(6, min(invoice_limit, 30)))
-    approval_policy = _approval_followup_policy(organization_id)
-    organization_settings = _load_org_settings_for_item(db, organization_id)
-    raw_vendor_rows = db.get_ap_items_by_vendor(
-        organization_id,
-        canonical_vendor_name,
-        days=max(30, min(days, 365)),
-        limit=max(6, min(invoice_limit, 30)),
-    )
-    items = build_worklist_items(
-        db,
-        raw_vendor_rows,
-        build_item=build_worklist_item,
-        approval_policy=approval_policy,
-        organization_settings=organization_settings,
-    )
-    open_issue_items = _sort_vendor_issue_items([item for item in items if _classify_vendor_issue(item)])
-    exception_counts = Counter(
-        str(raw_item.get("exception_code") or item.get("exception_code") or "").strip().lower()
-        for raw_item, item in zip(raw_vendor_rows, items)
-        if str(raw_item.get("exception_code") or item.get("exception_code") or "").strip()
-    )
-    linked_item_rows = [_summarize_related_item(item) for item in items[:12]]
-
-    return {
-        "vendor_name": canonical_vendor_name,
-        "summary": summary,
-        "profile": {
-            **profile,
-            "vendor_aliases": list(profile.get("vendor_aliases") or [])[:8],
-            "sender_domains": list(profile.get("sender_domains") or [])[:8],
-            "anomaly_flags": list(profile.get("anomaly_flags") or [])[:8],
-            "metadata": _parse_json(profile.get("metadata")),
-        },
-        "recent_items": linked_item_rows,
-        "open_issues": [
-            issue
-            for issue in (
-                _summarize_vendor_issue(item)
-                for item in open_issue_items[:12]
-            )
-            if issue
-        ],
-        "issue_summary": {
-            "total": len(open_issue_items),
-            "field_review": sum(1 for item in open_issue_items if (_classify_vendor_issue(item) or {}).get("kind") == "field_review"),
-            "entity_route": sum(1 for item in open_issue_items if (_classify_vendor_issue(item) or {}).get("kind") == "entity_route"),
-            "needs_info": sum(1 for item in open_issue_items if (_classify_vendor_issue(item) or {}).get("kind") == "needs_info"),
-            "failed_post": sum(1 for item in open_issue_items if (_classify_vendor_issue(item) or {}).get("kind") == "failed_post"),
-            "policy_exception": sum(1 for item in open_issue_items if (_classify_vendor_issue(item) or {}).get("kind") == "policy_exception"),
-        },
-        "history": history,
-        "top_exception_codes": [
-            {"exception_code": code, "count": count}
-            for code, count in exception_counts.most_common(6)
-        ],
-    }
-
 
 def _classify_upcoming_status(due_at: Optional[datetime], now: datetime) -> str:
     if due_at is None:
@@ -2926,70 +2240,9 @@ def _preview_field_review_resolution(
     }
 
 
-def _field_review_value_equals(left: Any, right: Any) -> bool:
-    if left == right:
-        return True
-    try:
-        return abs(float(left) - float(right)) < 1e-9
-    except (TypeError, ValueError):
-        return str(left or "").strip() == str(right or "").strip()
-
-
-def _current_field_review_value(item: Dict[str, Any], field_token: str) -> Any:
-    if field_token == "vendor":
-        return item.get("vendor_name") or item.get("vendor")
-    if field_token == "invoice_number":
-        return item.get("invoice_number")
-    if field_token == "document_type":
-        metadata = _parse_json(item.get("metadata"))
-        return metadata.get("document_type") or metadata.get("email_type") or item.get("document_type")
-    return item.get(field_token)
-
-
-def _derive_field_review_outcome(
-    *,
-    item: Dict[str, Any],
-    field_token: str,
-    blocker: Optional[Dict[str, Any]],
-    resolved_value: Any,
-    resolved_source: str,
-) -> Dict[str, Any]:
-    previous_source = str((blocker or {}).get("winning_source") or "").strip().lower()
-    previous_value = (blocker or {}).get("winning_value")
-    current_value = _current_field_review_value(item, field_token)
-    tags = set()
-
-    if resolved_source == "email":
-        tags.add("resolved_with_email")
-    elif resolved_source == "attachment":
-        tags.add("resolved_with_attachment")
-    elif resolved_source == "manual":
-        tags.add("manual_entry")
-
-    if previous_source and previous_source != resolved_source:
-        tags.add("rejected_source")
-
-    if resolved_source == "manual":
-        outcome_type = "corrected"
-    elif previous_source:
-        outcome_type = (
-            "confirmed_correct"
-            if previous_source == resolved_source and _field_review_value_equals(previous_value, resolved_value)
-            else "corrected"
-        )
-    else:
-        outcome_type = (
-            "confirmed_correct"
-            if _field_review_value_equals(current_value, resolved_value)
-            else "corrected"
-        )
-
-    tags.add(outcome_type)
-    return {
-        "outcome_type": outcome_type,
-        "outcome_tags": sorted(tags),
-    }
-
+# _field_review_value_equals — imported from ap_field_review
+# _current_field_review_value — imported from ap_field_review
+# _derive_field_review_outcome — imported from ap_field_review
 
 def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any]:
     metadata = _parse_json(item.get("metadata"))

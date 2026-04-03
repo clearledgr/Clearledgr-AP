@@ -3,13 +3,60 @@ Clearledgr Core Data Models
 
 This is the SINGLE SOURCE OF TRUTH for all data in Clearledgr.
 All surfaces (Gmail, Sheets, Slack) read and write through these models.
+
+Naming conventions for key identifiers:
+
+* **APItemId** — UUID primary key of an ``ap_items`` row.  Every DB lookup
+  and update uses this.
+* **InvoiceKey** — Natural composite key (org + vendor + number + date).
+  Uniqueness check during ingestion uses this.
+* **InvoiceNumber** — Raw vendor-provided invoice number extracted from the
+  email or attachment.
+* **OrganizationId** — UUID identifying a tenant / organization row.
 """
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional, List, Dict, Any
+from typing import NewType, Optional, List, Dict, Any
 from dataclasses import dataclass, field, asdict
 import uuid
+
+# ---------------------------------------------------------------------------
+# Semantic type aliases — use these in new code to clarify intent.
+# Existing call-sites are *not* updated yet; these are for gradual adoption.
+# ---------------------------------------------------------------------------
+APItemId = NewType("APItemId", str)
+"""UUID primary key of an ``ap_items`` row."""
+
+InvoiceKey = NewType("InvoiceKey", str)
+"""Natural composite key (org + vendor + number + date)."""
+
+InvoiceNumber = NewType("InvoiceNumber", str)
+"""Raw vendor-provided invoice number."""
+
+OrganizationId = NewType("OrganizationId", str)
+"""UUID identifying a tenant / organization row."""
+
+__all__ = [
+    # Type aliases
+    "APItemId",
+    "InvoiceKey",
+    "InvoiceNumber",
+    "OrganizationId",
+    # Enums
+    "TransactionSource",
+    "TransactionStatus",
+    "ExceptionType",
+    "ExceptionPriority",
+    "ApprovalStatus",
+    # Dataclasses
+    "Transaction",
+    "Match",
+    "Exception",
+    "DraftEntry",
+    "FinanceEmail",
+    "AuditLog",
+]
 
 
 class TransactionSource(str, Enum):

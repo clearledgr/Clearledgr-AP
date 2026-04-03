@@ -344,15 +344,27 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
     async def process_new_invoice(self, invoice: InvoiceData, ap_decision=None) -> Dict[str, Any]:
         """
         Process a newly detected invoice email.
-        
+
         Flow:
         1. Save invoice to database with 'received' status
         2. If confidence >= threshold, auto-approve and post
         3. Otherwise, send to Slack for approval
-        
+
         Returns:
             Dict with status, invoice_id, and action taken
         """
+        # --- L7: lightweight input validation at service boundary ---
+        if not isinstance(invoice, InvoiceData):
+            return {"status": "error", "reason": "invalid_invoice_data"}
+        if not str(invoice.gmail_id or "").strip():
+            return {"status": "error", "reason": "missing_gmail_id"}
+        if not str(invoice.vendor_name or "").strip():
+            return {"status": "error", "reason": "missing_vendor_name"}
+        if not str(invoice.subject or "").strip():
+            return {"status": "error", "reason": "missing_subject"}
+        if not str(invoice.sender or "").strip():
+            return {"status": "error", "reason": "missing_sender"}
+
         existing = self.db.get_invoice_status(invoice.gmail_id)
         if existing:
             if existing.get("status") == "posted":

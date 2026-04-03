@@ -61,6 +61,12 @@ class InvoicePostingMixin:
 
         Called when user clicks Approve in Slack or Gmail extension.
         """
+        # --- L7: lightweight input validation at service boundary ---
+        if not str(gmail_id or "").strip():
+            return {"status": "error", "reason": "missing_gmail_id"}
+        if not str(approved_by or "").strip():
+            return {"status": "error", "reason": "missing_approved_by"}
+
         # Get invoice data
         invoice_data = self.db.get_invoice_status(gmail_id)
         if not invoice_data:
