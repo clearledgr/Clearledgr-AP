@@ -869,7 +869,28 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
                             "payment_closure_method": closure_method,
                             "payment_completed_at": now_iso,
                         })
-                    # Gap 4: Log payment event
+                    # Auto-close AP item after credit closure (#34)
+                    if ap_item_id:
+                        try:
+                            ap_item = db.get_ap_item(ap_item_id)
+                            if ap_item and str(ap_item.get("state") or "").lower() == "posted_to_erp":
+                                db.update_ap_item(ap_item_id, state="closed")
+                                if hasattr(db, "append_ap_audit_event"):
+                                    db.append_ap_audit_event(
+                                        ap_item_id=ap_item_id,
+                                        event_type="closed_by_credit",
+                                        prev_state="posted_to_erp",
+                                        new_state="closed",
+                                        actor_type="system",
+                                        actor_id="payment_poll",
+                                        organization_id=org_id,
+                                        payload={"closure_method": closure_method},
+                                    )
+                                logger.info("Auto-closed ap_item=%s after credit closure", ap_item_id)
+                        except Exception as close_exc:
+                            logger.warning("Could not auto-close ap_item=%s: %s", ap_item_id, close_exc)
+
+                    # Log payment event
                     if hasattr(db, "append_payment_event"):
                         db.append_payment_event(
                             payment_id=payment["id"],
@@ -916,7 +937,28 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
                             "payment_method": status.get("payment_method", ""),
                             "payment_reference": status.get("payment_reference", ""),
                         })
-                    # Gap 4: Log payment event
+                    # Auto-close AP item after full payment (#34)
+                    if ap_item_id:
+                        try:
+                            ap_item = db.get_ap_item(ap_item_id)
+                            if ap_item and str(ap_item.get("state") or "").lower() == "posted_to_erp":
+                                db.update_ap_item(ap_item_id, state="closed")
+                                if hasattr(db, "append_ap_audit_event"):
+                                    db.append_ap_audit_event(
+                                        ap_item_id=ap_item_id,
+                                        event_type="closed_by_payment",
+                                        prev_state="posted_to_erp",
+                                        new_state="closed",
+                                        actor_type="system",
+                                        actor_id="payment_poll",
+                                        organization_id=org_id,
+                                        payload={"payment_reference": status.get("payment_reference", "")},
+                                    )
+                                logger.info("Auto-closed ap_item=%s after payment completed", ap_item_id)
+                        except Exception as close_exc:
+                            logger.warning("Could not auto-close ap_item=%s: %s", ap_item_id, close_exc)
+
+                    # Log payment event
                     if hasattr(db, "append_payment_event"):
                         db.append_payment_event(
                             payment_id=payment["id"],
