@@ -1772,6 +1772,107 @@ def patch_subscription_plan(
     return {"success": True, "organization_id": org_id, "subscription": sub.to_dict()}
 
 
+# ------------------------------------------------------------------
+# Entity management (multi-entity support)
+# ------------------------------------------------------------------
+
+class EntityCreateRequest(BaseModel):
+    organization_id: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=200)
+    code: Optional[str] = Field(default=None, max_length=50)
+    erp_connection_id: Optional[str] = None
+    gl_mapping: Optional[Dict[str, Any]] = None
+    approval_rules: Optional[Dict[str, Any]] = None
+    default_currency: str = Field(default="USD", max_length=10)
+
+
+class EntityUpdateRequest(BaseModel):
+    organization_id: Optional[str] = None
+    name: Optional[str] = Field(default=None, max_length=200)
+    code: Optional[str] = Field(default=None, max_length=50)
+    erp_connection_id: Optional[str] = None
+    gl_mapping: Optional[Dict[str, Any]] = None
+    approval_rules: Optional[Dict[str, Any]] = None
+    default_currency: Optional[str] = Field(default=None, max_length=10)
+
+
+@router.get("/entities")
+def list_entities(
+    organization_id: Optional[str] = Query(default=None),
+    include_inactive: bool = Query(default=False),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    entities = db.list_entities(org_id, include_inactive=include_inactive)
+    return {"organization_id": org_id, "entities": entities}
+
+
+@router.post("/entities")
+def create_entity(
+    request: EntityCreateRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, request.organization_id)
+    db = get_db()
+    entity = db.create_entity(
+        organization_id=org_id,
+        name=request.name,
+        code=request.code,
+        erp_connection_id=request.erp_connection_id,
+        gl_mapping=request.gl_mapping,
+        approval_rules=request.approval_rules,
+        currency=request.default_currency,
+    )
+    return {"success": True, "entity": entity}
+
+
+@router.patch("/entities/{entity_id}")
+def update_entity(
+    entity_id: str,
+    request: EntityUpdateRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, request.organization_id)
+    db = get_db()
+    # Verify entity belongs to this org
+    existing = db.get_entity(entity_id)
+    if not existing or existing.get("organization_id") != org_id:
+        raise HTTPException(status_code=404, detail="entity_not_found")
+    updates: Dict[str, Any] = {}
+    if request.name is not None:
+        updates["name"] = request.name
+    if request.code is not None:
+        updates["code"] = request.code
+    if request.erp_connection_id is not None:
+        updates["erp_connection_id"] = request.erp_connection_id
+    if request.gl_mapping is not None:
+        updates["gl_mapping"] = request.gl_mapping
+    if request.approval_rules is not None:
+        updates["approval_rules"] = request.approval_rules
+    if request.default_currency is not None:
+        updates["default_currency"] = request.default_currency
+    if not updates:
+        raise HTTPException(status_code=400, detail="no_fields_to_update")
+    db.update_entity(entity_id, **updates)
+    return {"success": True, "entity": db.get_entity(entity_id)}
+
+
+@router.delete("/entities/{entity_id}")
+def deactivate_entity(
+    entity_id: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    existing = db.get_entity(entity_id)
+    if not existing or existing.get("organization_id") != org_id:
+        raise HTTPException(status_code=404, detail="entity_not_found")
+    db.delete_entity(entity_id)
+    return {"success": True, "entity_id": entity_id, "deactivated": True}
+
+
 @router.get("/health")
 def get_admin_health(
     organization_id: Optional[str] = Query(default=None),

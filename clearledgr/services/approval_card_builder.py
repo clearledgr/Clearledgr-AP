@@ -426,6 +426,32 @@ def build_approval_blocks(
         ]
     })
 
+    # ========== LINE ITEMS (show when present) ==========
+    _card_line_items = getattr(invoice, "line_items", None)
+    if not _card_line_items and extra_context:
+        _card_line_items = (extra_context or {}).get("line_items")
+    if isinstance(_card_line_items, list) and _card_line_items:
+        _max_display = 5
+        _li_lines = []
+        for _li in _card_line_items[:_max_display]:
+            if not isinstance(_li, dict):
+                continue
+            desc = str(_li.get("description") or "Item")[:40]
+            amt = _li.get("amount")
+            try:
+                amt_str = f"${float(amt):,.2f}" if amt is not None else ""
+            except (TypeError, ValueError):
+                amt_str = ""
+            _li_lines.append(f"- {desc}  {amt_str}".rstrip())
+        if _li_lines:
+            _li_text = "\n".join(_li_lines)
+            if len(_card_line_items) > _max_display:
+                _li_text += f"\n_...and {len(_card_line_items) - _max_display} more_"
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Line items ({len(_card_line_items)}):*\n{_li_text}"},
+            })
+
     # ========== FLAGS (only when something needs attention) ==========
 
     # Budget impact — only show if warning/critical/exceeded

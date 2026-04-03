@@ -1290,6 +1290,7 @@ async def process_invoice_email(
         user_id=user_id,
         organization_id=organization_id,
         invoice_text=invoice_text,  # For discount detection
+        line_items=extraction.get("line_items") if isinstance(extraction.get("line_items"), list) else None,
     )
     
     if extracted_document_type != "invoice":

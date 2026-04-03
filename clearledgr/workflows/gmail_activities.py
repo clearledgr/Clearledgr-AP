@@ -256,7 +256,10 @@ async def extract_email_data_activity(payload: Dict[str, Any]) -> Dict[str, Any]
         "source_conflicts": parsed.get("source_conflicts") if isinstance(parsed.get("source_conflicts"), list) else [],
         "requires_extraction_review": bool(parsed.get("requires_extraction_review")),
         "conflict_actions": parsed.get("conflict_actions") if isinstance(parsed.get("conflict_actions"), list) else [],
-        "attachment_count": len(payload.get("attachments") or []),
+        "attachment_count": int(parsed.get("attachment_count") or len(payload.get("attachments") or [])),
+        "invoice_count": int(parsed.get("invoice_count") or 1),
+        "multiple_invoices": bool(parsed.get("multiple_invoices")),
+        "invoices": parsed.get("invoices") if isinstance(parsed.get("invoices"), list) else [],
         "attachment_names": [
             str(att.get("filename") or att.get("name") or "").strip()
             for att in (payload.get("attachments") or [])

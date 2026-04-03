@@ -1522,6 +1522,7 @@ async def submit_for_approval(
         reasoning_summary=reasoning_summary,
         reasoning_factors=reasoning_factors,
         reasoning_risks=reasoning_risks,
+        line_items=request.line_items if hasattr(request, "line_items") and isinstance(getattr(request, "line_items", None), list) else None,
     )
 
     # Respect agent decision when present

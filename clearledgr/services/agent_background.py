@@ -221,6 +221,11 @@ async def _run_loop():
             if tick % 6 == 0:
                 await _run_task_scheduler_checks()
 
+            # Every 12th tick (~3 hours): verify recent ERP postings
+            if tick % 12 == 0:
+                for org_id in org_ids:
+                    await _verify_recent_erp_postings(org_id)
+
             # Every hour (4 ticks)
             if tick % 4 == 0:
                 for org_id in org_ids:
@@ -659,6 +664,93 @@ async def _run_erp_reconciliation(org_id: str):
             )
     except Exception as e:
         logger.error("ERP follow-on reconciliation failed for org=%s: %s", org_id, e)
+
+
+async def _verify_recent_erp_postings(org_id: str):
+    """Verify that recently posted AP items actually exist in the ERP.
+
+    Queries items with state ``posted_to_erp`` from the last 24 hours and
+    calls ``verify_bill_posted`` for each.  If the bill is not found, sets
+    ``exception_code = 'erp_sync_mismatch'`` on the AP item so it surfaces
+    in the worklist.
+    """
+    try:
+        from clearledgr.core.database import get_db
+        from clearledgr.integrations.erp_router import verify_bill_posted
+
+        db = get_db()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
+        # Fetch recently-posted items
+        sql = db._prepare_sql(
+            "SELECT * FROM ap_items "
+            "WHERE organization_id = ? AND state = 'posted_to_erp' "
+            "AND updated_at >= ? "
+            "ORDER BY updated_at DESC LIMIT 50"
+        )
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (org_id, cutoff))
+            rows = [dict(r) for r in cur.fetchall()]
+
+        if not rows:
+            return
+
+        mismatches = 0
+        for item in rows:
+            invoice_number = item.get("invoice_number") or item.get("erp_reference")
+            if not invoice_number:
+                continue
+
+            # Skip items already flagged
+            if item.get("exception_code") == "erp_sync_mismatch":
+                continue
+
+            try:
+                result = await verify_bill_posted(
+                    organization_id=org_id,
+                    invoice_number=str(invoice_number),
+                    expected_amount=float(item["amount"]) if item.get("amount") else None,
+                )
+            except Exception as ver_exc:
+                logger.debug("ERP verification lookup failed for %s: %s", item.get("id"), ver_exc)
+                continue
+
+            if not result.get("verified", True):
+                mismatches += 1
+                ap_item_id = item.get("id")
+                logger.warning(
+                    "ERP sync mismatch: AP item %s (invoice %s) not found in ERP — reason=%s",
+                    ap_item_id,
+                    invoice_number,
+                    result.get("reason"),
+                )
+                try:
+                    db.update_ap_item(
+                        ap_item_id,
+                        exception_code="erp_sync_mismatch",
+                        exception_severity="high",
+                    )
+                    db.append_ap_audit_event({
+                        "ap_item_id": ap_item_id,
+                        "event_type": "erp_sync_mismatch",
+                        "actor_type": "system",
+                        "actor_id": "agent_background",
+                        "reason": result.get("reason", "bill_not_found_in_erp"),
+                        "organization_id": org_id,
+                        "source": "agent_background",
+                        "idempotency_key": f"erp_sync_mismatch:{ap_item_id}",
+                    })
+                except Exception as update_exc:
+                    logger.error("Failed to flag ERP sync mismatch for %s: %s", ap_item_id, update_exc)
+
+        if mismatches:
+            logger.info(
+                "ERP sync verification: %d mismatch(es) out of %d item(s) for org=%s",
+                mismatches, len(rows), org_id,
+            )
+    except Exception as exc:
+        logger.error("ERP sync verification failed for org=%s: %s", org_id, exc)
 
 
 async def _check_period_end(org_id: str):

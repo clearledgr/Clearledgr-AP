@@ -404,7 +404,17 @@ class EmailParser:
         ]
         ocr_status = "requires_ocr" if attachments_requiring_ocr else None
 
-        return {
+        # --- Multi-invoice detection ---
+        # When multiple parsed attachments each contain a distinct invoice
+        # (different vendor OR invoice number OR amount), expose them as
+        # separate extraction results so the triage layer can create one AP
+        # item per invoice.
+        distinct_invoices = self._detect_distinct_invoices(
+            attachment_extractions, parsed_attachments, email_fields
+        )
+        multiple_invoices = len(distinct_invoices) > 1
+
+        result = {
             "email_type": email_type,
             "vendor": vendor,
             "sender": sender,
@@ -428,8 +438,67 @@ class EmailParser:
             "requires_extraction_review": any(bool(entry.get("blocking")) for entry in source_conflicts),
             "conflict_actions": conflict_actions,
             "forwarded": forwarded,
+            "attachment_count": len(attachments),
+            "invoice_count": len(distinct_invoices) if multiple_invoices else 1,
+            "multiple_invoices": multiple_invoices,
             "parsed_at": datetime.now(timezone.utc).isoformat()
         }
+        if multiple_invoices:
+            result["invoices"] = distinct_invoices
+        return result
+
+    def _detect_distinct_invoices(
+        self,
+        attachment_extractions: List[Dict[str, Any]],
+        parsed_attachments: List[Dict[str, Any]],
+        email_fields: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Return a list of distinct invoice extraction dicts when multiple
+        attachments each represent a separate invoice.
+
+        An invoice extraction is considered *distinct* when at least one of
+        (vendor, invoice_number, amount) differs from every other extraction.
+        Extractions that are not invoice-typed are skipped.
+        """
+        invoice_extractions: List[Dict[str, Any]] = []
+        for idx, att in enumerate(parsed_attachments):
+            ext = att.get("extraction")
+            if not isinstance(ext, dict) or not ext:
+                continue
+            att_type = str(att.get("type") or "").strip().lower()
+            if att_type not in ("invoice", "document", ""):
+                continue
+            # Need at least one identifying field
+            vendor = str(ext.get("vendor") or "").strip().lower()
+            inv_num = str(ext.get("invoice_number") or "").strip().lower()
+            amount = self._safe_float(ext.get("amount"))
+            if not vendor and not inv_num and amount == 0.0:
+                continue
+            invoice_extractions.append({
+                "vendor": ext.get("vendor") or email_fields.get("vendor"),
+                "amount": self._safe_float(ext.get("amount")),
+                "currency": ext.get("currency") or email_fields.get("currency"),
+                "invoice_number": ext.get("invoice_number"),
+                "invoice_date": ext.get("date") or ext.get("invoice_date"),
+                "due_date": ext.get("due_date"),
+                "confidence": self._safe_float(ext.get("confidence"), 0.5),
+                "attachment_index": idx,
+                "attachment_name": att.get("name"),
+                "_key": (vendor, inv_num, amount),
+            })
+
+        if len(invoice_extractions) < 2:
+            return invoice_extractions
+
+        # Deduplicate: keep only truly distinct invoices
+        distinct: List[Dict[str, Any]] = []
+        seen_keys: set = set()
+        for inv in invoice_extractions:
+            key = inv.pop("_key")
+            if key not in seen_keys:
+                seen_keys.add(key)
+                distinct.append(inv)
+        return distinct
 
     def _primary_amount_details(self, amounts: List[Any]) -> Dict[str, Any]:
         if not isinstance(amounts, list) or not amounts:

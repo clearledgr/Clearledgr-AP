@@ -174,6 +174,55 @@ class IntegrationStore:
             rows = cur.fetchall()
         return [self._decrypt_erp_row(dict(row)) for row in rows]
 
+    def get_erp_connection_by_id(self, connection_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single ERP connection by its ID."""
+        self.initialize()
+        sql = self._prepare_sql("SELECT * FROM erp_connections WHERE id = ? AND is_active = 1")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (connection_id,))
+            row = cur.fetchone()
+        if not row:
+            return None
+        return self._decrypt_erp_row(dict(row))
+
+    def save_erp_connection_for_entity(
+        self,
+        organization_id: str,
+        erp_type: str,
+        entity_id: str,
+        access_token: Optional[str] = None,
+        refresh_token: Optional[str] = None,
+        realm_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        base_url: Optional[str] = None,
+        credentials: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Save an ERP connection scoped to a specific entity. Returns the connection ID."""
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+        import uuid
+        connection_id = f"ERP-{uuid.uuid4().hex}"
+        credentials_json = json.dumps(credentials) if credentials else None
+        encrypted_access = self._encrypt_secret(access_token) if access_token else None
+        encrypted_refresh = self._encrypt_secret(refresh_token) if refresh_token else None
+        encrypted_creds = self._encrypt_secret(credentials_json) if credentials_json else None
+
+        sql = self._prepare_sql("""
+            INSERT INTO erp_connections
+            (id, organization_id, erp_type, entity_id, access_token, refresh_token, realm_id, tenant_id, base_url,
+             credentials, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        """)
+        params = (connection_id, organization_id, erp_type, entity_id, encrypted_access, encrypted_refresh, realm_id,
+                  tenant_id, base_url, encrypted_creds, now, now)
+
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            conn.commit()
+        return connection_id
+
     def delete_erp_connection(self, organization_id: str, erp_type: str) -> bool:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()

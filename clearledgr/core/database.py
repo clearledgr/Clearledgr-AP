@@ -57,6 +57,7 @@ def _load_store_symbols() -> None:
     global TaskStore
     global VendorStore
     global ReconStore
+    global EntityStore
 
     if "APStore" in globals():
         return
@@ -75,6 +76,7 @@ def _load_store_symbols() -> None:
     from clearledgr.core.stores.task_store import TaskStore as _TaskStore
     from clearledgr.core.stores.vendor_store import VendorStore as _VendorStore
     from clearledgr.core.stores.recon_store import ReconStore as _ReconStore
+    from clearledgr.core.stores.entity_store import EntityStore as _EntityStore
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -88,6 +90,7 @@ def _load_store_symbols() -> None:
     TaskStore = _TaskStore
     VendorStore = _VendorStore
     ReconStore = _ReconStore
+    EntityStore = _EntityStore
 
 
 class _ClearledgrDBBase:
@@ -1097,6 +1100,16 @@ class _ClearledgrDBBase:
             for sql in ReconStore.RECON_TABLES_SQL:
                 cur.execute(sql)
 
+            # Multi-entity support (P0: Cowrywise has entities in Africa and US)
+            cur.execute(EntityStore.ENTITIES_TABLE_SQL)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_entities_org ON entities(organization_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_entities_org_code ON entities(organization_id, code)")
+            # Add entity_id to ap_items for entity-level routing
+            self._ensure_column(cur, "ap_items", "entity_id", "TEXT")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_entity ON ap_items(organization_id, entity_id)")
+            # Add entity_id to erp_connections so each entity can have its own connection
+            self._ensure_column(cur, "erp_connections", "entity_id", "TEXT")
+
             conn.commit()
 
         self._initialized = True
@@ -1129,6 +1142,7 @@ def _get_db_impl_class():
             APRuntimeStore,
             ApprovalChainStore,
             AuthStore,
+            EntityStore,
             IntegrationStore,
             BrowserAgentStore,
             PolicyStore,

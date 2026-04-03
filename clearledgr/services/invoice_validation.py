@@ -492,6 +492,7 @@ class InvoiceValidationMixin:
                 or ""
             ).strip()
             or None,
+            line_items=metadata.get("line_items") if isinstance(metadata.get("line_items"), list) else None,
         )
 
     def _persist_financial_action_field_review_gate(

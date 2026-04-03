@@ -109,6 +109,7 @@ async def execute_ap_invoice_processing(
         invoice_text=str(invoice.get("invoice_text") or "").strip() or None,
         correlation_id=resolved_correlation_id,
         field_confidences=invoice.get("field_confidences") if isinstance(invoice.get("field_confidences"), dict) else None,
+        line_items=invoice.get("line_items") if isinstance(invoice.get("line_items"), list) else None,
     )
 
     autonomy_policy = runtime.ap_autonomy_policy(

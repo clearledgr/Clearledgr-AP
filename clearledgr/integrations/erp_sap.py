@@ -275,7 +275,7 @@ async def post_bill_to_sap(
             sap_bill["DocumentLines"].append({
                 "LineNum": i,
                 "ItemDescription": item.get("description", ""),
-                "AccountCode": item.get("account_code", expense_account),
+                "AccountCode": item.get("gl_code") or item.get("account_code") or expense_account,
                 "LineTotal": item.get("amount", 0),
             })
     else:

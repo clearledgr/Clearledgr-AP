@@ -169,17 +169,18 @@ def test_missing_thread_id():
 
 
 def test_ap_skill_has_five_tools():
-    """APSkill.get_tools() returns exactly 5 tools and includes request_vendor_info."""
+    """APSkill.get_tools() returns exactly 6 tools and includes request_vendor_info + verify_erp_posting."""
     skill = APSkill("org-test")
     tools = skill.get_tools()
     names = [t.name for t in tools]
 
-    assert len(tools) == 5
+    assert len(tools) == 6
     assert "request_vendor_info" in names
     assert "enrich_with_context" in names
     assert "run_validation_gate" in names
     assert "get_ap_decision" in names
     assert "execute_routing" in names
+    assert "verify_erp_posting" in names
 
 
 def test_system_prompt_mentions_vendor_info():

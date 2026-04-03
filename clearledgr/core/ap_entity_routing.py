@@ -271,10 +271,25 @@ def _rule_matches(rule: Dict[str, Any], payload: Dict[str, Any]) -> bool:
     return True
 
 
+def _db_entities_as_candidates(db_entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert DB entity rows to entity routing candidates."""
+    candidates: List[Dict[str, Any]] = []
+    for ent in db_entities:
+        candidate = normalize_entity_candidate({
+            "entity_id": ent.get("id"),
+            "entity_code": ent.get("code"),
+            "entity_name": ent.get("name"),
+        })
+        if candidate:
+            candidates.append(candidate)
+    return candidates
+
+
 def resolve_entity_routing(
     metadata: Dict[str, Any],
     item: Optional[Dict[str, Any]] = None,
     organization_settings: Optional[Dict[str, Any]] = None,
+    db_entities: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     payload = item if isinstance(item, dict) else {}
     metadata = metadata if isinstance(metadata, dict) else {}
@@ -287,6 +302,23 @@ def resolve_entity_routing(
         or payload.get("entity_candidates")
     )
     config = normalize_entity_routing_settings(organization_settings)
+
+    # Merge DB-backed entities into configured entities when available.
+    # DB entities take precedence — they are the source of truth for
+    # multi-entity orgs (Cowrywise pattern).
+    if db_entities:
+        db_candidates = _db_entities_as_candidates(db_entities)
+        existing_configured = config.get("entities") if isinstance(config.get("entities"), list) else []
+        # Merge: DB entities first, then any extra configured entities not in DB
+        merged: List[Dict[str, Any]] = list(db_candidates)
+        for cfg_ent in existing_configured:
+            if not match_entity_candidate(merged,
+                                          entity_id=cfg_ent.get("entity_id"),
+                                          entity_code=cfg_ent.get("entity_code"),
+                                          entity_name=cfg_ent.get("entity_name")):
+                merged.append(cfg_ent)
+        config["entities"] = merged
+        config["enabled"] = True
     configured_entities = config.get("entities") if isinstance(config.get("entities"), list) else []
     configured_rules = config.get("rules") if isinstance(config.get("rules"), list) else []
     matched_configured_candidates: List[Dict[str, Any]] = []

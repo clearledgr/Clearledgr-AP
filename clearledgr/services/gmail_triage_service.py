@@ -57,6 +57,65 @@ async def run_inline_gmail_triage(
 
     extraction = await extract_email_data_activity({**payload, "classification": classification})
 
+    # --- Multi-invoice handling ---
+    # When the parser detects multiple distinct invoices in the same email
+    # (e.g. separate PDF attachments), run the triage pipeline once per
+    # sub-invoice and return a combined result so the caller can create
+    # one AP item per invoice, all linked to the same source thread.
+    if extraction.get("multiple_invoices") and isinstance(extraction.get("invoices"), list):
+        sub_invoices = extraction["invoices"]
+        if len(sub_invoices) > 1:
+            logger.info(
+                "Multi-invoice email detected for email_id=%s: %d invoices",
+                payload.get("email_id"),
+                len(sub_invoices),
+            )
+            trail.log(
+                invoice_id=payload.get("email_id"),
+                event_type=AuditEventType.EXTRACTED,
+                summary=f"Multi-invoice email: {len(sub_invoices)} distinct invoices detected",
+                details={"invoice_count": len(sub_invoices)},
+            )
+
+            sub_results = []
+            for idx, sub_inv in enumerate(sub_invoices):
+                # Build a per-invoice extraction by overlaying sub-invoice
+                # fields onto the shared extraction base.
+                sub_extraction = dict(extraction)
+                sub_extraction.pop("invoices", None)
+                sub_extraction.pop("multiple_invoices", None)
+                sub_extraction["vendor"] = sub_inv.get("vendor") or extraction.get("vendor")
+                sub_extraction["amount"] = sub_inv.get("amount") if sub_inv.get("amount") is not None else extraction.get("amount")
+                sub_extraction["total_amount"] = sub_extraction["amount"]
+                sub_extraction["currency"] = sub_inv.get("currency") or extraction.get("currency")
+                sub_extraction["invoice_number"] = sub_inv.get("invoice_number") or extraction.get("invoice_number")
+                sub_extraction["due_date"] = sub_inv.get("due_date") or extraction.get("due_date")
+                sub_extraction["invoice_date"] = sub_inv.get("invoice_date") or extraction.get("invoice_date")
+                sub_extraction["confidence"] = sub_inv.get("confidence", extraction.get("confidence", 0))
+                sub_extraction["attachment_name"] = sub_inv.get("attachment_name")
+                sub_extraction["sub_invoice_index"] = idx
+
+                sub_results.append({
+                    "email_id": payload.get("email_id"),
+                    "classification": classification,
+                    "extraction": sub_extraction,
+                    "action": "triaged",
+                    "ai_powered": True,
+                    "sub_invoice_index": idx,
+                })
+
+            return {
+                "email_id": payload.get("email_id"),
+                "classification": classification,
+                "extraction": extraction,
+                "action": "triaged",
+                "ai_powered": True,
+                "multiple_invoices": True,
+                "invoice_count": len(sub_invoices),
+                "attachment_count": extraction.get("attachment_count", 0),
+                "invoices": sub_results,
+            }
+
     # C7: Validate that critical extraction fields are present
     if not extraction.get("vendor") or extraction.get("amount") is None:
         extraction["extraction_incomplete"] = True

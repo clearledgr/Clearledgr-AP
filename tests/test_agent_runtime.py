@@ -98,7 +98,7 @@ def test_ap_skill_registration():
     assert "ap_invoice_processing" in runtime._skills
     tools = ap.get_tools()
     tool_names = {t.name for t in tools}
-    assert {"enrich_with_context", "run_validation_gate", "get_ap_decision", "execute_routing", "request_vendor_info"} == tool_names
+    assert {"enrich_with_context", "run_validation_gate", "get_ap_decision", "execute_routing", "request_vendor_info", "verify_erp_posting"} == tool_names
 
 
 def test_ap_skill_get_ap_decision_handles_sync_decider_without_fallback():

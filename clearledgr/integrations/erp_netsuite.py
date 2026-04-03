@@ -320,7 +320,7 @@ async def post_bill_to_netsuite(
         for i, item in enumerate(bill.line_items):
             ns_bill["expense"]["items"].append({
                 "line": i + 1,
-                "account": {"id": item.get("account_id", expense_account)},
+                "account": {"id": item.get("gl_code") or item.get("account_id") or expense_account},
                 "amount": item.get("amount", 0),
                 "memo": item.get("description", ""),
             })

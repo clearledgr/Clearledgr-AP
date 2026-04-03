@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import csv
+import io
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 
 from clearledgr.core.auth import get_current_user
 from clearledgr.api.deps import verify_org_access
@@ -95,6 +98,93 @@ def get_ap_aggregation_metrics(
         vendor_limit=vendor_limit,
     )
     return {"metrics": metrics}
+
+
+@router.get("/audit/export")
+def export_audit_trail(
+    organization_id: str = Query(default="default"),
+    format: str = Query(default="csv"),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    vendor: Optional[str] = None,
+    state: Optional[str] = None,
+    limit: int = Query(default=10000, ge=1, le=50000),
+    _user=Depends(get_current_user),
+) -> Any:
+    """Export audit trail events as CSV or JSON.
+
+    Filters by organization, date range, vendor, and AP item state.
+    """
+    verify_org_access(organization_id, _user)
+    db = shared.get_db()
+
+    # Fetch audit events joined with AP item data
+    events = db.list_recent_ap_audit_events(organization_id, limit=limit)
+
+    # Apply optional filters
+    if start_date:
+        events = [
+            e for e in events
+            if str(e.get("ts") or "") >= start_date
+        ]
+    if end_date:
+        events = [
+            e for e in events
+            if str(e.get("ts") or "") <= end_date
+        ]
+    if vendor:
+        vendor_lower = vendor.lower()
+        events = [
+            e for e in events
+            if vendor_lower in str(e.get("vendor_name") or "").lower()
+        ]
+    if state:
+        events = [
+            e for e in events
+            if str(e.get("new_state") or "") == state
+            or str(e.get("prev_state") or "") == state
+        ]
+
+    export_fields = [
+        "id", "ap_item_id", "event_type", "ts", "actor_type", "actor_id",
+        "prev_state", "new_state", "decision_reason", "organization_id",
+        "vendor_name", "amount", "currency", "invoice_number",
+    ]
+
+    if format == "json":
+        rows = []
+        for e in events:
+            row = {field: e.get(field) for field in export_fields}
+            row["details"] = e.get("payload_json") or {}
+            rows.append(row)
+        return {"events": rows, "count": len(rows), "organization_id": organization_id}
+
+    # Default: CSV streaming response
+    def _generate_csv():
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=export_fields + ["details"])
+        writer.writeheader()
+        yield output.getvalue()
+        output.seek(0)
+        output.truncate(0)
+        for e in events:
+            row = {field: e.get(field, "") for field in export_fields}
+            details = e.get("payload_json")
+            if isinstance(details, dict):
+                import json
+                row["details"] = json.dumps(details)
+            else:
+                row["details"] = str(details or "")
+            writer.writerow(row)
+            yield output.getvalue()
+            output.seek(0)
+            output.truncate(0)
+
+    return StreamingResponse(
+        _generate_csv(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=audit_trail.csv"},
+    )
 
 
 @router.get("/{ap_item_id}")

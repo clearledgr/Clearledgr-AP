@@ -229,6 +229,7 @@ class TemporalRuntime:
                 potential_duplicates=int(invoice_payload.get("potential_duplicates") or 0),
                 insights=invoice_payload.get("insights"),
                 field_confidences=invoice_payload.get("field_confidences"),
+                line_items=invoice_payload.get("line_items") if isinstance(invoice_payload.get("line_items"), list) else None,
             )
             if not invoice.gmail_id:
                 raise ValueError("missing_gmail_id")

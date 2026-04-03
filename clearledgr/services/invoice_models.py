@@ -1,7 +1,7 @@
 """Invoice data model — extracted from invoice_workflow.py for modularity."""
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -38,3 +38,13 @@ class InvoiceData:
     field_confidences: Optional[Dict[str, Any]] = None
     correlation_id: Optional[str] = None
     erp_preflight: Optional[Dict[str, Any]] = None
+    # Payment terms (e.g. "Net 30", "Due on receipt", "2/10 Net 30")
+    payment_terms: Optional[str] = None
+    # Tax extraction
+    tax_amount: Optional[float] = None
+    tax_rate: Optional[float] = None
+    subtotal: Optional[float] = None
+    # Line items (structured extraction)
+    # Each line item: {"description": str, "quantity": float, "unit_price": float,
+    #   "amount": float, "gl_code": Optional[str], "tax_amount": Optional[float]}
+    line_items: Optional[List[Dict[str, Any]]] = None

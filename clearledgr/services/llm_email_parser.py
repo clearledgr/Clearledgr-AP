@@ -110,7 +110,20 @@ Return exactly this JSON shape (use null for any field you cannot determine with
   "invoice_date": "<YYYY-MM-DD or null>",
   "due_date": "<YYYY-MM-DD or null>",
   "po_number": "<purchase order reference or null>",
-  "payment_terms": "<e.g. Net 30 or null>",
+  "payment_terms": "<e.g. Net 30, Due on receipt, 2/10 NET 30 — or null>",
+  "tax_amount": "<total tax amount if shown (number or null)>",
+  "tax_rate": "<tax rate as decimal if shown, e.g. 0.1 for 10% — or null>",
+  "subtotal": "<pre-tax subtotal if shown (number or null)>",
+  "line_items": [
+    {{
+      "description": "<what was purchased>",
+      "quantity": <number of units, default 1 if not specified>,
+      "unit_price": <price per unit>,
+      "amount": <total for this line (quantity * unit_price)>,
+      "gl_code": "<GL/account code if specified on the line, or null>",
+      "tax_amount": <tax for this line if specified, or null>
+    }}
+  ],
   "field_confidences": {{
     "vendor": <0.0–1.0>,
     "amount": <0.0–1.0>,
@@ -120,6 +133,8 @@ Return exactly this JSON shape (use null for any field you cannot determine with
   "confidence": <overall 0.0–1.0>,
   "reasoning": "<one sentence explaining document_type classification and any vendor disambiguation>"
 }}
+
+If no line items are discernible, return "line_items": null.
 
 Classification rules:
 - "invoice"         — a request for payment that has NOT yet been paid
@@ -331,10 +346,15 @@ def _llm_result_to_parse_email_dict(
         "payment_processor": llm.get("payment_processor"),
         "po_number": llm.get("po_number"),
         "payment_terms": llm.get("payment_terms"),
+        "tax_amount": _safe_float(llm.get("tax_amount")),
+        "tax_rate": _safe_float(llm.get("tax_rate")),
+        "subtotal": _safe_float(llm.get("subtotal")),
         "invoice_date": invoice_date,
         "due_date": due_date,
         "extraction_model": model,
         "extraction_method": "llm",
+        # Line items (structured extraction from invoice)
+        "line_items": llm.get("line_items") if isinstance(llm.get("line_items"), list) else None,
     }
 
 
@@ -434,6 +454,9 @@ def _merge_attachment_evidence(
     )
     merged["primary_source"] = local_result.get("primary_source") or merged.get("primary_source")
     merged["field_confidences"] = field_confidences
+    # Promote local line_items if LLM didn't extract any
+    if not merged.get("line_items") and isinstance(local_result.get("line_items"), list) and local_result["line_items"]:
+        merged["line_items"] = local_result["line_items"]
 
     if promoted_fields:
         merged["extraction_method"] = "llm+attachment_evidence"

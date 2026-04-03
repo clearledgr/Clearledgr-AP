@@ -409,6 +409,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         # Deterministic controls always run before confidence-based routing.
         validation_gate = await self._evaluate_deterministic_validation(invoice)
         confidence_gate = validation_gate.get("confidence_gate") if isinstance(validation_gate, dict) else None
+        _line_items_meta = {}
+        if isinstance(invoice.line_items, list) and invoice.line_items:
+            _line_items_meta["line_items"] = invoice.line_items
         self._update_ap_item_metadata(
             invoice_id,
             {
@@ -423,6 +426,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 "field_confidences": invoice.field_confidences or {},
                 "correlation_id": correlation_id,
                 "erp_preflight": invoice.erp_preflight or {},
+                **_line_items_meta,
             },
         )
 

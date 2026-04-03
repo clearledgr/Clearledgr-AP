@@ -58,6 +58,8 @@ class APStore:
         "exception_code", "exception_severity",
         # Extraction accuracy: per-field confidence JSON for trend analysis
         "field_confidences",
+        # Multi-entity routing: which legal entity this AP item belongs to
+        "entity_id",
     })
 
     # ------------------------------------------------------------------
@@ -102,8 +104,8 @@ class APStore:
              supersedes_ap_item_id, supersedes_invoice_key, superseded_by_ap_item_id, resubmission_reason, erp_reference,
              erp_posted_at, workflow_id, run_id, approval_surface, approval_policy_version, post_attempted_at,
              last_error, po_number, attachment_url, exception_code, exception_severity,
-             organization_id, user_id, created_at, updated_at, metadata, field_confidences)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             organization_id, user_id, entity_id, created_at, updated_at, metadata, field_confidences)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         values = (
             item_id,
@@ -144,6 +146,7 @@ class APStore:
             payload.get("exception_severity"),
             payload.get("organization_id"),
             payload.get("user_id"),
+            payload.get("entity_id"),
             now,
             now,
             metadata,

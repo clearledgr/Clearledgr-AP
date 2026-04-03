@@ -285,6 +285,35 @@ async def _handle_execute_routing(
         return {"ok": False, "error": str(exc)}
 
 
+async def _handle_verify_erp_posting(
+    invoice_payload: Dict[str, Any],
+    organization_id: str = "default",
+    **_kwargs,
+) -> Dict[str, Any]:
+    """Verify a posted invoice exists in the connected ERP."""
+    try:
+        from clearledgr.integrations.erp_router import verify_bill_posted
+
+        erp_reference = invoice_payload.get("erp_reference")
+        invoice_number = invoice_payload.get("invoice_number")
+        amount = invoice_payload.get("amount")
+
+        # Need at least an invoice number to look up
+        lookup_key = invoice_number or erp_reference
+        if not lookup_key:
+            return {"ok": True, "verified": False, "reason": "no_erp_reference"}
+
+        result = await verify_bill_posted(
+            organization_id=organization_id,
+            invoice_number=str(lookup_key),
+            expected_amount=float(amount) if amount is not None else None,
+        )
+        return {"ok": True, **result}
+    except Exception as exc:
+        logger.warning("[APSkill] verify_erp_posting failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
 async def _handle_request_vendor_info(
     invoice_payload: Dict[str, Any],
     question: Optional[str] = None,
@@ -497,6 +526,25 @@ class APSkill(FinanceSkill):
                     "required": ["invoice_payload"],
                 },
                 handler=_handle_request_vendor_info,
+            ),
+            AgentTool(
+                name="verify_erp_posting",
+                description=(
+                    "Verify that a posted invoice actually exists in the connected ERP. "
+                    "Call this after execute_routing returns a posted status to confirm "
+                    "the bill landed in QuickBooks/Xero/SAP/NetSuite."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "invoice_payload": {
+                            "type": "object",
+                            "description": "The full invoice data dict (must include invoice_number or erp_reference).",
+                        },
+                    },
+                    "required": ["invoice_payload"],
+                },
+                handler=_handle_verify_erp_posting,
             ),
         ]
 

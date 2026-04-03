@@ -295,6 +295,7 @@ class InvoicePostingMixin:
         self._transition_invoice_state(gmail_id, "ready_to_post", correlation_id=correlation_id)
 
         # Build invoice object for ERP
+        _approve_meta = self._parse_metadata_dict((self.db.get_ap_item(ap_item_id) or {}).get("metadata")) if ap_item_id else {}
         invoice = InvoiceData(
             gmail_id=gmail_id,
             subject=invoice_data.get("email_subject", ""),
@@ -307,6 +308,7 @@ class InvoicePostingMixin:
             organization_id=self.organization_id,
             invoice_text=invoice_data.get("email_body", ""),  # For discount detection
             budget_impact=budget_checks,
+            line_items=_approve_meta.get("line_items") if isinstance(_approve_meta.get("line_items"), list) else None,
         )
         if isinstance(field_confidences, dict) and field_confidences:
             self._update_ap_item_metadata(ap_item_id, {"field_confidences": field_confidences})
@@ -1203,6 +1205,7 @@ class InvoicePostingMixin:
             description=f"Invoice from {invoice.vendor_name}",
             po_number=invoice.po_number,
             attachment_url=invoice.attachment_url,
+            line_items=invoice.line_items,
         )
 
         ap_item_id = self._lookup_ap_item_id(

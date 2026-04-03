@@ -1549,6 +1549,11 @@ def build_worklist_item(
     payload["risk_signals"] = metadata.get("risk_signals") or {}
     payload["source_ranking"] = metadata.get("source_ranking") or {}
     payload["navigator"] = metadata.get("navigator") or {}
+    payload["line_items"] = metadata.get("line_items") if isinstance(metadata.get("line_items"), list) else []
+    payload["payment_terms"] = metadata.get("payment_terms")
+    payload["tax_amount"] = metadata.get("tax_amount")
+    payload["tax_rate"] = metadata.get("tax_rate")
+    payload["subtotal"] = metadata.get("subtotal")
     # Document type: use stored value from ingestion, or infer from subject.
     # Non-invoice finance docs should stay out of AP payable routing.
     _doc_type = metadata.get("email_type") or metadata.get("document_type")
@@ -1573,7 +1578,17 @@ def build_worklist_item(
         else:
             _doc_type = "receipt" if any(kw in _subject_lc for kw in _receipt_kw) else "invoice"
     payload["document_type"] = _normalize_document_type_token(_doc_type)
-    entity_routing = resolve_entity_routing(metadata, payload, organization_settings=org_settings)
+    # Load DB-backed entities for multi-entity orgs (backward compatible: empty list = no-op)
+    _db_entities: list = []
+    try:
+        org_id_for_entity = payload.get("organization_id")
+        if org_id_for_entity and hasattr(db, "list_entities"):
+            _db_entities = db.list_entities(org_id_for_entity)
+    except Exception:
+        pass
+    entity_routing = resolve_entity_routing(
+        metadata, payload, organization_settings=org_settings, db_entities=_db_entities,
+    )
     selected_entity = entity_routing.get("selected") if isinstance(entity_routing.get("selected"), dict) else {}
     payload["entity_routing"] = entity_routing
     payload["entity_routing_status"] = str(entity_routing.get("status") or "").strip() or "not_needed"
@@ -2387,6 +2402,24 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
         summary_lines.append(f"Connected systems: {', '.join(connected_systems)}.")
     if budget_summary.get("status") in {"critical", "exceeded"}:
         summary_lines.append(f"Budget status is {budget_summary.get('status')}; approval decision is required.")
+    # Line items summary for sidebar
+    _sidebar_line_items = metadata.get("line_items") if isinstance(metadata.get("line_items"), list) else []
+    if _sidebar_line_items:
+        _li_parts = []
+        for _li in _sidebar_line_items[:5]:
+            if isinstance(_li, dict):
+                desc = str(_li.get("description") or "Item")[:30]
+                amt = _li.get("amount")
+                if amt is not None:
+                    try:
+                        _li_parts.append(f"{desc} (${float(amt):,.2f})")
+                    except (TypeError, ValueError):
+                        _li_parts.append(desc)
+                else:
+                    _li_parts.append(desc)
+        if _li_parts:
+            _li_more = f" and {len(_sidebar_line_items) - 5} more" if len(_sidebar_line_items) > 5 else ""
+            summary_lines.append(f"{len(_sidebar_line_items)} line items: {', '.join(_li_parts)}{_li_more}")
     if metadata.get("has_context_conflict"):
         summary_lines.append("Context conflict detected; review merge/source evidence before posting.")
     if not summary_lines:
@@ -2472,6 +2505,7 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
         "po_match": metadata.get("po_match") or metadata.get("po_match_result") or {},
         "budget": budget_summary,
         "risk_signals": metadata.get("risk_signals") or {},
+        "line_items": _sidebar_line_items,
         "bank": multi_system.get("bank") if isinstance(multi_system.get("bank"), dict) else {},
         "card_statements": multi_system.get("card_statements")
         if isinstance(multi_system.get("card_statements"), dict)

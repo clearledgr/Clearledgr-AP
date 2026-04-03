@@ -162,16 +162,8 @@ def _get_db():
     return _canonical_get_db()
 
 
-def get_erp_connection(organization_id: str) -> Optional[ERPConnection]:
-    """Get ERP connection for an organization from database."""
-    db = _get_db()
-    connections = db.get_erp_connections(organization_id)
-
-    if not connections:
-        return None
-
-    # Return the first active connection
-    conn = connections[0]
+def _erp_connection_from_row(conn: Dict[str, Any]) -> ERPConnection:
+    """Convert a raw DB row into an ERPConnection dataclass."""
     creds = conn.get('credentials', {}) or {}
     if isinstance(creds, str):
         try:
@@ -197,6 +189,42 @@ def get_erp_connection(organization_id: str) -> Optional[ERPConnection]:
         token_id=creds.get('token_id'),
         token_secret=creds.get('token_secret'),
     )
+
+
+def get_erp_connection(
+    organization_id: str,
+    entity_id: Optional[str] = None,
+) -> Optional[ERPConnection]:
+    """Get ERP connection for an organization from database.
+
+    When *entity_id* is provided, the function first tries to resolve an
+    entity-specific ERP connection (via the entity's ``erp_connection_id``).
+    If the entity has no dedicated connection, or if no entity_id is
+    provided, the org-level default connection is returned.
+
+    This keeps everything backward-compatible: orgs without entities
+    continue to work exactly as before.
+    """
+    db = _get_db()
+
+    # Try entity-specific connection first
+    if entity_id:
+        try:
+            entity = db.get_entity(entity_id)
+            if entity and entity.get("erp_connection_id"):
+                entity_conn = db.get_erp_connection_by_id(entity["erp_connection_id"])
+                if entity_conn:
+                    return _erp_connection_from_row(entity_conn)
+        except Exception:
+            logger.debug("Entity ERP lookup failed for %s, falling back to org default", entity_id)
+
+    # Fall back to org-level default
+    connections = db.get_erp_connections(organization_id)
+    if not connections:
+        return None
+
+    # Return the first active connection
+    return _erp_connection_from_row(connections[0])
 
 
 def set_erp_connection(organization_id: str, connection: ERPConnection):
@@ -323,6 +351,27 @@ def _get_org_gl_map(organization_id: str) -> Dict[str, str]:
         return {}
 
 
+def _get_entity_gl_map(organization_id: str, entity_id: Optional[str]) -> Dict[str, str]:
+    """Load entity-specific GL account mapping from the entity's gl_mapping_json."""
+    if not entity_id:
+        return {}
+    try:
+        db = _get_db()
+        entity = db.get_entity(entity_id)
+        if not entity:
+            return {}
+        gl_mapping = entity.get("gl_mapping") or {}
+        if isinstance(gl_mapping, str):
+            import json as _json
+            try:
+                gl_mapping = _json.loads(gl_mapping)
+            except Exception:
+                return {}
+        return dict(gl_mapping) if isinstance(gl_mapping, dict) else {}
+    except Exception:
+        return {}
+
+
 def get_account_code(
     erp_type: str,
     account_type: str,
@@ -389,10 +438,15 @@ async def post_bill(
     bill: Bill,
     ap_item_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
+    entity_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Post a vendor bill to the organization's ERP.
 
     This is the primary function for invoice processing — posts as AP Bill.
+
+    When *entity_id* is provided, the function looks up the entity's
+    dedicated ERP connection and GL mapping.  If the entity has no
+    dedicated connection, the org-level default is used.
 
     Idempotency: If *ap_item_id* is provided the function checks whether
     the AP item already has an ``erp_reference``.  If it does the post is
@@ -441,13 +495,13 @@ async def post_bill(
         except Exception:
             pass  # Non-fatal — proceed with post
 
-    connection = get_erp_connection(organization_id)
+    connection = get_erp_connection(organization_id, entity_id=entity_id)
 
     if not connection:
         logger.warning("No ERP connected for %s", organization_id)
         return {"status": "skipped", "reason": "No ERP Connected", "idempotency_key": idempotency_key}
 
-    gl_map = _get_org_gl_map(organization_id)
+    gl_map = _get_entity_gl_map(organization_id, entity_id) or _get_org_gl_map(organization_id)
 
     if connection.type == "quickbooks":
         result = await post_bill_to_quickbooks(connection, bill, gl_map=gl_map)
