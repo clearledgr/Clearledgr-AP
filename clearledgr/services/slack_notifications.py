@@ -1454,3 +1454,91 @@ async def send_payment_credit_applied_notification(
         ap_item_id=ap_item_id,
         organization_id=organization_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Vendor communication notifications
+# ---------------------------------------------------------------------------
+
+
+async def send_vendor_response_notification(
+    organization_id: str,
+    vendor: str,
+    invoice_number: str,
+    ap_item_id: str,
+) -> bool:
+    """Notify the finance channel that a vendor replied to a follow-up."""
+    text = (
+        f"Vendor {vendor} replied to your follow-up about invoice #{invoice_number}. "
+        f"Review the response and decide next steps."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":incoming_envelope: *Vendor Response Received*\n"
+                    f"*{vendor}* replied to the follow-up for invoice *#{invoice_number}*.\n"
+                    f"Review the response in Gmail and decide next steps."
+                ),
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"AP Item: {ap_item_id}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+async def send_vendor_escalation_notification(
+    organization_id: str,
+    vendor: str,
+    invoice_number: str,
+    days_waiting: int,
+    attempts: int,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify the finance channel that a vendor is unresponsive after max follow-ups."""
+    text = (
+        f"Vendor {vendor} unresponsive after {attempts} follow-up(s) over "
+        f"{days_waiting} days for invoice #{invoice_number}. Manual escalation required."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":rotating_light: *Vendor Unresponsive — Escalation Required*\n"
+                    f"*{vendor}* has not replied after *{attempts}* follow-up(s) "
+                    f"over *{days_waiting} day(s)* for invoice *#{invoice_number}*.\n"
+                    f"Manual escalation or alternative contact is needed."
+                ),
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"AP Item: {ap_item_id or 'N/A'}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )

@@ -7,6 +7,10 @@ Automatically drafts follow-up emails when invoice information is missing:
 - Missing due date
 - Incomplete vendor details
 
+Also provides:
+- Response detection — check if a vendor replied to a follow-up
+- Escalation logic — resend or escalate when vendor is unresponsive
+
 This handles the "invisible work" problem by automating clarification requests.
 """
 
@@ -15,7 +19,7 @@ import logging
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -360,6 +364,122 @@ Best regards"""
             logger.error("create_gmail_draft failed for ap_item_id=%s: %s", ap_item_id, exc)
             return None
     
+    async def check_vendor_response(
+        self,
+        gmail_client: Any,
+        ap_item_id: str,
+        thread_id: str,
+        followup_sent_at: str,
+        vendor_email: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Check if a vendor has replied to a follow-up email.
+
+        Inspects the Gmail thread for messages arriving after
+        *followup_sent_at* whose sender matches *vendor_email* (or
+        the vendor's domain).
+
+        Returns a dict with response info if found, or ``None``.
+        """
+        try:
+            messages = await gmail_client.get_thread(thread_id)
+        except Exception as exc:
+            logger.warning(
+                "check_vendor_response: could not fetch thread %s: %s",
+                thread_id, exc,
+            )
+            return None
+
+        # Parse the sent-at cutoff
+        try:
+            cutoff = datetime.fromisoformat(
+                followup_sent_at.replace("Z", "+00:00")
+            )
+        except (ValueError, AttributeError):
+            cutoff = datetime.min.replace(tzinfo=timezone.utc)
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=timezone.utc)
+
+        vendor_lower = (vendor_email or "").strip().lower()
+        vendor_domain = vendor_lower.split("@")[-1] if "@" in vendor_lower else ""
+
+        for msg in messages:
+            msg_date = getattr(msg, "date", None)
+            if msg_date is None:
+                continue
+            if msg_date.tzinfo is None:
+                msg_date = msg_date.replace(tzinfo=timezone.utc)
+            if msg_date <= cutoff:
+                continue
+
+            sender = (getattr(msg, "sender", "") or "").strip().lower()
+            # Match on exact email or domain
+            if vendor_lower and vendor_lower in sender:
+                return {
+                    "response_detected": True,
+                    "message_id": getattr(msg, "id", ""),
+                    "sender": sender,
+                    "date": msg_date.isoformat(),
+                    "snippet": getattr(msg, "snippet", "")[:200],
+                    "ap_item_id": ap_item_id,
+                }
+            if vendor_domain and vendor_domain in sender:
+                return {
+                    "response_detected": True,
+                    "message_id": getattr(msg, "id", ""),
+                    "sender": sender,
+                    "date": msg_date.isoformat(),
+                    "snippet": getattr(msg, "snippet", "")[:200],
+                    "ap_item_id": ap_item_id,
+                }
+
+        return None
+
+    def check_followup_escalation(
+        self,
+        ap_item_id: str,
+        followup_sent_at: str,
+        escalation_days: int = 3,
+        max_followups: int = 3,
+        followup_attempt_count: int = 1,
+    ) -> Optional[Dict[str, Any]]:
+        """Determine whether to resend or escalate a pending follow-up.
+
+        Returns:
+        - ``{"action": "resend", "attempt": N+1}`` if time to re-send
+        - ``{"action": "escalate", "reason": "vendor_unresponsive"}`` if
+          max follow-ups exceeded
+        - ``None`` if not yet due for escalation
+        """
+        try:
+            sent_at = datetime.fromisoformat(
+                followup_sent_at.replace("Z", "+00:00")
+            )
+        except (ValueError, AttributeError):
+            return None
+        if sent_at.tzinfo is None:
+            sent_at = sent_at.replace(tzinfo=timezone.utc)
+
+        now = datetime.now(timezone.utc)
+        elapsed = now - sent_at
+        if elapsed < timedelta(days=escalation_days):
+            return None  # not yet overdue
+
+        if followup_attempt_count >= max_followups:
+            return {
+                "action": "escalate",
+                "reason": "vendor_unresponsive",
+                "ap_item_id": ap_item_id,
+                "attempts": followup_attempt_count,
+                "days_waiting": elapsed.days,
+            }
+
+        return {
+            "action": "resend",
+            "attempt": followup_attempt_count + 1,
+            "ap_item_id": ap_item_id,
+            "days_waiting": elapsed.days,
+        }
+
     def _vendor_requires_po(self, vendor: str) -> bool:
         """
         Check if this vendor typically requires PO numbers.

@@ -320,10 +320,13 @@ async def _handle_request_vendor_info(
     organization_id: str = "default",
     **_kwargs,
 ) -> Dict[str, Any]:
-    """Draft a Gmail follow-up when the invoice is missing information.
+    """Send (or draft) a Gmail follow-up when the invoice is missing information.
 
-    Calls AutoFollowUpService to detect missing fields, then creates a
-    Gmail draft so the AP clerk can review and send it.  NEVER raises.
+    Attempts to send the email directly using ``gmail_client.send_message()``.
+    If sending fails (e.g. missing gmail.send scope), falls back to creating
+    a draft.  All sends are recorded in AP item metadata for audit trail.
+
+    NEVER raises.
     """
     try:
         from clearledgr.services.auto_followup import get_auto_followup_service
@@ -331,11 +334,12 @@ async def _handle_request_vendor_info(
         followup_svc = get_auto_followup_service(organization_id)
         missing_info = followup_svc.detect_missing_info(invoice_payload)
 
-        # If nothing is missing and no explicit question, skip draft
+        # If nothing is missing and no explicit question, skip
         if not missing_info and not question:
             return {
                 "ok": True,
                 "draft_created": False,
+                "sent": False,
                 "reason": "no_missing_info",
                 "missing_info": [],
             }
@@ -355,6 +359,7 @@ async def _handle_request_vendor_info(
             return {
                 "ok": False,
                 "draft_created": False,
+                "sent": False,
                 "error": "Missing thread_id or sender_email — cannot create draft",
                 "missing_info": [m.value for m in missing_info],
             }
@@ -365,25 +370,138 @@ async def _handle_request_vendor_info(
         gmail_client = get_gmail_client(organization_id)
 
         ap_item_id = invoice_payload.get("id") or invoice_payload.get("ap_item_id") or ""
-        draft_id = await followup_svc.create_gmail_draft(
-            gmail_client=gmail_client,
-            ap_item_id=ap_item_id,
-            thread_id=thread_id,
-            to_email=to_email,
-            invoice_data=invoice_payload,
-            question=question,
-        )
+
+        # --- Build subject & body ---
+        original_subject = invoice_payload.get("subject") or "Invoice follow-up"
+        vendor = invoice_payload.get("vendor_name") or invoice_payload.get("vendor") or "Unknown vendor"
+        amount = invoice_payload.get("amount") or 0
+        invoice_number = invoice_payload.get("invoice_number") or "N/A"
+
+        # Pick template or use Claude-generated question
+        template_id: Optional[str] = None
+        if question:
+            subject = f"Re: {original_subject} — Clarification Needed"
+            body = (
+                f"Hi,\n\n"
+                f"We are reviewing invoice #{invoice_number} from {vendor} "
+                f"(${amount:,.2f}) and need the following information before we can process payment:\n\n"
+                f"{question}\n\n"
+                f"Please reply at your earliest convenience.\n\n"
+                f"Best regards"
+            )
+            template_id = "general_inquiry"
+        else:
+            # Try template-based rendering
+            try:
+                from clearledgr.services.vendor_communication_templates import render_template
+
+                # Map missing info to template ID
+                _MISSING_TO_TEMPLATE = {
+                    "po_number": "missing_po",
+                    "amount": "missing_amount",
+                    "due_date": "missing_due_date",
+                    "bank_details": "bank_details_verification",
+                }
+                primary_type = missing_info[0].value if missing_info else "general_inquiry"
+                template_id = _MISSING_TO_TEMPLATE.get(primary_type, "general_inquiry")
+                rendered = render_template(template_id, {
+                    "original_subject": original_subject,
+                    "invoice_number": invoice_number,
+                    "vendor_name": vendor,
+                    "amount": f"{amount:,.2f}" if amount else "N/A",
+                    "currency": invoice_payload.get("currency", "USD"),
+                    "company_name": "Clearledgr",
+                    "question": question or "",
+                })
+                subject = rendered["subject"]
+                body = rendered["body"]
+            except Exception:
+                # Fall back to simple subject/body
+                subject = f"Re: {original_subject} — Clarification Needed"
+                body = (
+                    f"Hi,\n\n"
+                    f"We need additional information to process invoice #{invoice_number} "
+                    f"from {vendor} (${amount:,.2f}).\n\n"
+                    f"Please reply at your earliest convenience.\n\n"
+                    f"Best regards"
+                )
+
+        # --- Attempt to send directly ---
+        sent = False
+        sent_message_id: Optional[str] = None
+        draft_id: Optional[str] = None
+
+        try:
+            result = await gmail_client.send_message(
+                to=to_email,
+                subject=subject,
+                body=body,
+                thread_id=thread_id,
+            )
+            sent = True
+            sent_message_id = result.get("id")
+            logger.info(
+                "Vendor follow-up SENT for ap_item_id=%s thread=%s message_id=%s",
+                ap_item_id, thread_id, sent_message_id,
+            )
+        except Exception as send_exc:
+            logger.info(
+                "Direct send failed for ap_item_id=%s (%s), falling back to draft",
+                ap_item_id, send_exc,
+            )
+            # Fall back to draft
+            draft_id = await followup_svc.create_gmail_draft(
+                gmail_client=gmail_client,
+                ap_item_id=ap_item_id,
+                thread_id=thread_id,
+                to_email=to_email,
+                invoice_data=invoice_payload,
+                question=question,
+            )
+
+        # --- Record in AP item metadata (audit trail) ---
+        try:
+            from clearledgr.core.database import get_db
+            from datetime import datetime as _dt, timezone as _tz
+
+            db = get_db()
+            now_iso = _dt.now(_tz.utc).isoformat()
+
+            ap_item = db.get_ap_item(ap_item_id) if ap_item_id else None
+            if ap_item:
+                metadata = json.loads(ap_item.get("metadata") or "{}") if isinstance(ap_item.get("metadata"), str) else (ap_item.get("metadata") or {})
+                prev_count = int(metadata.get("followup_attempt_count") or 0)
+                metadata["followup_sent_at"] = now_iso
+                metadata["followup_attempt_count"] = prev_count + 1
+                metadata["followup_template"] = template_id
+                metadata["followup_to"] = to_email
+                metadata["followup_method"] = "sent" if sent else "draft"
+                if sent:
+                    metadata["followup_message_id"] = sent_message_id
+                    metadata.pop("pending_followup", None)
+                else:
+                    metadata["pending_followup"] = {
+                        "to": to_email,
+                        "subject": subject,
+                        "created_at": now_iso,
+                        "draft_id": draft_id,
+                    }
+                db.update_ap_item(ap_item_id, metadata=json.dumps(metadata))
+        except Exception as meta_exc:
+            logger.warning("[APSkill] Could not update AP item metadata: %s", meta_exc)
 
         return {
             "ok": True,
+            "sent": sent,
             "draft_created": bool(draft_id),
             "draft_id": draft_id,
+            "message_id": sent_message_id,
             "to": to_email,
             "missing_info": [m.value for m in missing_info],
         }
     except Exception as exc:
         logger.warning("[APSkill] request_vendor_info failed: %s", exc)
-        return {"ok": False, "draft_created": False, "error": str(exc)}
+        return {"ok": False, "draft_created": False, "sent": False, "error": str(exc)}
 
 
 async def _handle_check_payment_readiness(

@@ -211,6 +211,11 @@ async def _run_loop():
             except Exception as exc:
                 logger.warning("Notification retry drain failed: %s", exc)
 
+            # Every 2nd tick (~30 min): scan for vendor follow-up responses
+            if tick % 2 == 0:
+                for org_id in org_ids:
+                    await _check_vendor_followup_responses(org_id)
+
             # Every 15 minutes: check overdue and stale tasks + approval timeouts
             if tick % 1 == 0:  # runs every iteration (15 min sleep)
                 await _check_overdue_tasks()
@@ -1115,6 +1120,188 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
     except Exception as exc:
         logger.error("Payment status polling failed for org=%s: %s", org_id, exc)
         return {"checked": 0, "updated": 0}
+
+
+async def _check_vendor_followup_responses(org_id: str):
+    """Scan AP items in ``needs_info`` for vendor replies to follow-ups.
+
+    For each item with ``pending_followup`` or ``followup_sent_at`` metadata:
+    1. Check Gmail thread for vendor reply.
+    2. If reply found: update metadata, transition needs_info -> validated,
+       notify Slack.
+    3. If no reply: check escalation (resend or escalate).
+    """
+    try:
+        import json as _json
+        from clearledgr.core.database import get_db
+        from clearledgr.services.auto_followup import get_auto_followup_service
+        from clearledgr.services.gmail_api import GmailAPIClient, token_store
+
+        db = get_db()
+        items = db.list_ap_items(org_id, state="needs_info", limit=100)
+        if not items:
+            return
+
+        followup_svc = get_auto_followup_service(org_id)
+
+        for item in items:
+            ap_item_id = item.get("id")
+            if not ap_item_id:
+                continue
+
+            try:
+                metadata = _json.loads(item.get("metadata") or "{}") if isinstance(item.get("metadata"), str) else (item.get("metadata") or {})
+            except Exception:
+                metadata = {}
+
+            followup_sent_at = metadata.get("followup_sent_at")
+            if not followup_sent_at:
+                continue
+
+            thread_id = item.get("thread_id") or metadata.get("followup_thread_id")
+            vendor_email = metadata.get("followup_to") or ""
+            if not thread_id or not vendor_email:
+                continue
+
+            # --- Get a Gmail client for this org ---
+            gmail_client = None
+            try:
+                tokens = token_store.list_all()
+                if tokens:
+                    gmail_client = GmailAPIClient(tokens[0].user_id)
+                    if not await gmail_client.ensure_authenticated():
+                        gmail_client = None
+            except Exception:
+                gmail_client = None
+
+            if not gmail_client:
+                continue
+
+            # --- Check for vendor response ---
+            response = await followup_svc.check_vendor_response(
+                gmail_client=gmail_client,
+                ap_item_id=ap_item_id,
+                thread_id=thread_id,
+                followup_sent_at=followup_sent_at,
+                vendor_email=vendor_email,
+            )
+
+            if response:
+                now_iso = datetime.now(timezone.utc).isoformat()
+                metadata["vendor_response_received"] = True
+                metadata["vendor_response_at"] = now_iso
+                metadata["vendor_response_message_id"] = response.get("message_id")
+                metadata.pop("pending_followup", None)
+
+                try:
+                    db.update_ap_item(
+                        ap_item_id,
+                        metadata=_json.dumps(metadata),
+                        state="validated",
+                    )
+                except Exception as trans_exc:
+                    logger.warning(
+                        "Could not transition ap_item=%s back to validated: %s",
+                        ap_item_id, trans_exc,
+                    )
+
+                vendor_name = item.get("vendor_name") or "Unknown"
+                invoice_num = item.get("invoice_number") or "N/A"
+                try:
+                    from clearledgr.services.slack_notifications import send_vendor_response_notification
+                    await send_vendor_response_notification(
+                        organization_id=org_id,
+                        vendor=vendor_name,
+                        invoice_number=invoice_num,
+                        ap_item_id=ap_item_id,
+                    )
+                except Exception as notify_exc:
+                    logger.warning("Vendor response notification failed: %s", notify_exc)
+
+                logger.info(
+                    "Vendor response detected for ap_item=%s, transitioned back to validated",
+                    ap_item_id,
+                )
+                continue
+
+            # --- No response yet — check escalation ---
+            attempt_count = int(metadata.get("followup_attempt_count") or 1)
+            escalation = followup_svc.check_followup_escalation(
+                ap_item_id=ap_item_id,
+                followup_sent_at=followup_sent_at,
+                followup_attempt_count=attempt_count,
+            )
+
+            if not escalation:
+                continue
+
+            action = escalation.get("action")
+            vendor_name = item.get("vendor_name") or "Unknown"
+            invoice_num = item.get("invoice_number") or "N/A"
+
+            if action == "resend":
+                # Re-send follow-up
+                try:
+                    original_question = metadata.get("followup_question") or metadata.get("pending_followup", {}).get("question") or ""
+                    original_subject = item.get("subject") or "Invoice follow-up"
+
+                    from clearledgr.services.vendor_communication_templates import render_template
+                    rendered = render_template("followup_reminder", {
+                        "original_subject": original_subject,
+                        "original_question": original_question or "the information previously requested",
+                        "invoice_number": invoice_num,
+                        "amount": f"{item.get('amount', 0):,.2f}",
+                        "currency": item.get("currency") or "USD",
+                        "company_name": "Clearledgr",
+                    })
+
+                    await gmail_client.send_message(
+                        to=vendor_email,
+                        subject=rendered["subject"],
+                        body=rendered["body"],
+                        thread_id=thread_id,
+                    )
+
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    metadata["followup_sent_at"] = now_iso
+                    metadata["followup_attempt_count"] = escalation["attempt"]
+                    db.update_ap_item(ap_item_id, metadata=_json.dumps(metadata))
+
+                    logger.info(
+                        "Re-sent follow-up #%d for ap_item=%s",
+                        escalation["attempt"], ap_item_id,
+                    )
+                except Exception as resend_exc:
+                    logger.warning("Follow-up resend failed for ap_item=%s: %s", ap_item_id, resend_exc)
+
+            elif action == "escalate":
+                # Mark as vendor_unresponsive
+                try:
+                    metadata["exception_code"] = "vendor_unresponsive"
+                    metadata["escalated_at"] = datetime.now(timezone.utc).isoformat()
+                    db.update_ap_item(ap_item_id, metadata=_json.dumps(metadata))
+                except Exception:
+                    pass
+
+                try:
+                    from clearledgr.services.slack_notifications import send_vendor_escalation_notification
+                    await send_vendor_escalation_notification(
+                        organization_id=org_id,
+                        vendor=vendor_name,
+                        invoice_number=invoice_num,
+                        days_waiting=escalation.get("days_waiting", 0),
+                        attempts=escalation.get("attempts", 0),
+                        ap_item_id=ap_item_id,
+                    )
+                except Exception as notify_exc:
+                    logger.warning("Vendor escalation notification failed: %s", notify_exc)
+
+                logger.info(
+                    "Vendor unresponsive — escalated ap_item=%s after %d attempts",
+                    ap_item_id, escalation.get("attempts", 0),
+                )
+    except Exception as exc:
+        logger.error("Vendor followup response check failed for org=%s: %s", org_id, exc)
 
 
 async def _check_period_end(org_id: str):

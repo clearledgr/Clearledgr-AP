@@ -110,6 +110,7 @@ GMAIL_PROFILE_URL = f"{GMAIL_API_BASE}/users/me/profile"
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",   # Read emails
     "https://www.googleapis.com/auth/gmail.modify",     # Manage labels, create drafts
+    "https://www.googleapis.com/auth/gmail.send",       # Send emails (vendor follow-ups)
     "https://www.googleapis.com/auth/spreadsheets",     # Read/write Google Sheets (reconciliation)
 ]
 
@@ -589,6 +590,57 @@ class GmailAPIClient:
             response.raise_for_status()
             data = response.json()
             return data.get("id", "")
+
+    async def send_draft(self, draft_id: str) -> Dict[str, Any]:
+        """Send an existing draft. Returns the sent message metadata.
+
+        Requires the ``gmail.send`` OAuth scope.  After a successful send the
+        draft is removed from the user's Drafts folder by Gmail automatically.
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{GMAIL_API_BASE}/users/me/drafts/send",
+                headers={**self._headers(), "Content-Type": "application/json"},
+                json={"id": draft_id},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def send_message(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        thread_id: Optional[str] = None,
+        in_reply_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Send an email directly (no draft). Returns the sent message metadata.
+
+        Requires the ``gmail.send`` OAuth scope.  Used for automated vendor
+        follow-ups where the agent sends on behalf of the connected account.
+        """
+        import email.mime.text
+
+        msg = email.mime.text.MIMEText(body, "plain")
+        msg["To"] = to
+        msg["Subject"] = subject
+        if in_reply_to:
+            msg["In-Reply-To"] = in_reply_to
+            msg["References"] = in_reply_to
+
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+        payload: Dict[str, Any] = {"raw": raw}
+        if thread_id:
+            payload["threadId"] = thread_id
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{GMAIL_API_BASE}/users/me/messages/send",
+                headers={**self._headers(), "Content-Type": "application/json"},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
 
     async def list_labels(self) -> List[Dict[str, Any]]:
         """List all labels."""
