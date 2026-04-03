@@ -756,28 +756,78 @@ function TeamPage({ bootstrap, orgId, onRefresh }) {
 function PlanPage({ bootstrap, orgId, onRefresh }) {
   const sub = bootstrap?.subscription || {};
   const usage = sub.usage || {};
-  const usageKeys = Object.keys(usage);
-  const planName = (sub.plan || 'free').charAt(0).toUpperCase() + (sub.plan || 'free').slice(1);
+  const limits = sub.limits || {};
+  const features = sub.features || {};
+  const currentPlan = sub.plan || 'free';
+  const planName = currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1);
+
+  const plans = [
+    { id: 'free', name: 'Free', monthly: '$0', annual: '$0', desc: 'Gmail sidebar, 10 extractions/mo, no ERP posting' },
+    { id: 'starter', name: 'Starter', monthly: '$79', annual: '$65', desc: '1 ERP, Slack/Teams, 50 AI credits/user' },
+    { id: 'professional', name: 'Professional', monthly: '$149', annual: '$125', desc: '3 ERPs, multi-currency, 200 AI credits/user' },
+    { id: 'enterprise', name: 'Enterprise', monthly: '$299', annual: '$249', desc: 'Unlimited, SSO, dedicated support' },
+  ];
+
   const [changePlan] = useAction(async (plan) => {
     await api('/api/workspace/subscription/plan', { method: 'PATCH', body: JSON.stringify({ organization_id: orgId, plan }) });
     toast(`Plan updated to ${plan}.`); onRefresh();
   });
+
+  const creditsUsed = usage.ai_credits_this_month || 0;
+  const creditsLimit = limits.ai_credits_per_month || 0;
+  const creditsLabel = creditsLimit === -1 ? 'Unlimited' : `${creditsUsed} / ${creditsLimit}`;
+  const invoicesUsed = usage.invoices_this_month || 0;
+  const invoicesLimit = limits.invoices_per_month || 0;
+  const invoicesLabel = invoicesLimit === -1 ? `${invoicesUsed} (unlimited)` : `${invoicesUsed} / ${invoicesLimit}`;
 
   return html`
     <div class="panel">
       <h3>Your plan</h3>
       <div style="display:flex;align-items:center;gap:12px;margin:12px 0 16px">
         <span style="font-size:28px;font-weight:700;letter-spacing:-0.02em">${planName}</span>
-        <span class="status-badge connected">${sub.status || 'Active'}</span>
-      </div>
-      <p class="muted">Choose your plan. Billing portal coming soon.</p>
-      <div class="row" style="margin-top:12px">
-        ${['free', 'trial', 'pro', 'enterprise'].map(p => html`<button class=${sub.plan === p ? '' : 'alt'} onClick=${() => changePlan(p)} disabled=${sub.plan === p}>${p.charAt(0).toUpperCase() + p.slice(1)}</button>`)}
+        <span class="status-badge ${sub.status === 'trialing' ? '' : 'connected'}">${sub.status === 'trialing' ? 'Trial' : 'Active'}</span>
+        ${sub.status === 'trialing' && sub.trial_days_remaining > 0 ? html`<span class="muted">${sub.trial_days_remaining} days left</span>` : null}
       </div>
     </div>
+
     <div class="panel"><h3>Usage this period</h3>
-      ${usageKeys.length ? html`<div class="kpi-row">${usageKeys.map(k => html`<div class="kpi-card"><strong>${typeof usage[k] === 'number' ? usage[k].toLocaleString() : usage[k]}</strong><span>${k.replace(/_/g, ' ')}</span></div>`)}</div>` : html`<p class="muted">Usage data will appear here once invoices are processed.</p>`}
+      <div class="kpi-row">
+        <div class="kpi-card"><strong>${invoicesLabel}</strong><span>Invoices</span></div>
+        <div class="kpi-card"><strong>${creditsLabel}</strong><span>AI credits</span></div>
+        <div class="kpi-card"><strong>${usage.vendors_count || 0}</strong><span>Vendors</span></div>
+        <div class="kpi-card"><strong>${usage.users_count || 1}</strong><span>Users</span></div>
+      </div>
     </div>
+
+    <div class="panel"><h3>Plans</h3>
+      <p class="muted" style="margin-bottom:16px">Per user/month. Annual pricing shown in parentheses.</p>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+        ${plans.map(p => html`
+          <div style="padding:16px;border:1px solid ${currentPlan === p.id ? 'var(--accent, #00d67e)' : 'var(--line, #e2e8f0)'};border-radius:12px;${currentPlan === p.id ? 'background:var(--accent-soft, #ecfdf5)' : ''}">
+            <div style="font-weight:700;font-size:1.05rem;margin-bottom:4px">${p.name}</div>
+            <div style="font-size:1.4rem;font-weight:700;letter-spacing:-0.02em">${p.monthly}<span style="font-size:0.8rem;font-weight:400;color:var(--ink-muted, #94a3b8)">/mo</span></div>
+            <div style="font-size:0.78rem;color:var(--ink-muted, #94a3b8);margin-bottom:10px">${p.annual}/mo annual</div>
+            <p style="font-size:0.85rem;color:var(--ink-soft, #475569);margin:0 0 12px;line-height:1.4">${p.desc}</p>
+            <button class=${currentPlan === p.id ? '' : 'alt'} onClick=${() => changePlan(p.id)} disabled=${currentPlan === p.id} style="width:100%">
+              ${currentPlan === p.id ? 'Current plan' : p.id === 'enterprise' ? 'Contact us' : 'Switch'}
+            </button>
+          </div>
+        `)}
+      </div>
+    </div>
+
+    ${features ? html`
+    <div class="panel"><h3>Your features</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;font-size:0.88rem">
+        ${Object.entries(features).filter(([,v]) => typeof v === 'boolean').map(([k, v]) => html`
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 0">
+            <span style="color:${v ? 'var(--accent, #00d67e)' : 'var(--ink-muted, #94a3b8)'}">${v ? '✓' : '—'}</span>
+            <span style="color:${v ? 'var(--ink, #0f172a)' : 'var(--ink-muted, #94a3b8)'}">${k.replace(/_/g, ' ')}</span>
+          </div>
+        `)}
+      </div>
+    </div>
+    ` : null}
   `;
 }
 
