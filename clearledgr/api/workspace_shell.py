@@ -1756,22 +1756,17 @@ def patch_subscription_plan(
     service = _get_subscription_service()
     PlanTier = _plan_tier()
     plan = request.plan.lower().strip()
+
     if plan == PlanTier.FREE.value:
-        sub = service.downgrade_to_free(org_id)
-    elif plan == PlanTier.TRIAL.value:
+        sub = service.downgrade_plan(org_id, PlanTier.FREE)
+    elif plan == "trial":
         sub = service.start_trial(org_id)
-    elif plan == PlanTier.PRO.value:
-        sub = service.upgrade_to_pro(org_id)
+    elif plan == PlanTier.STARTER.value:
+        sub = service.upgrade_plan(org_id, PlanTier.STARTER)
+    elif plan == PlanTier.PROFESSIONAL.value:
+        sub = service.upgrade_plan(org_id, PlanTier.PROFESSIONAL)
     elif plan == PlanTier.ENTERPRISE.value:
-        # Enterprise plan controls now; billing integration remains deferred.
-        record = get_db().upsert_subscription_record(
-            org_id,
-            {
-                "plan": PlanTier.ENTERPRISE.value,
-                "status": "active",
-            },
-        )
-        sub = service._subscription_from_row(record, org_id)
+        sub = service.upgrade_plan(org_id, PlanTier.ENTERPRISE)
     else:
         raise HTTPException(status_code=400, detail="invalid_plan")
     return {"success": True, "organization_id": org_id, "subscription": sub.to_dict()}
