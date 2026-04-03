@@ -57,6 +57,7 @@ class ExceptionResolver:
             "vendor_mismatch": self._resolve_vendor_mismatch,
             "vendor_unresponsive": self._resolve_vendor_unresponsive,
             "posting_exhausted": self._resolve_posting_exhausted,
+            "erp_sync_mismatch": self._resolve_erp_sync_mismatch,
         }
 
         strategy = strategies.get(exception_code)
@@ -447,6 +448,103 @@ class ExceptionResolver:
                 f"Check ERP connection status and retry manually."
             ),
         }
+
+    async def _resolve_erp_sync_mismatch(
+        self, ap_item: Dict[str, Any], exception_code: str
+    ) -> Dict[str, Any]:
+        """Bill posted in Clearledgr but not found in ERP.
+
+        Attempts to re-post the bill. If re-post succeeds, clears the
+        exception. If it fails, surfaces the error for manual review.
+        """
+        ap_item_id = ap_item.get("id")
+        erp_reference = ap_item.get("erp_reference")
+        invoice_number = ap_item.get("invoice_number")
+        state = str(ap_item.get("state") or "").lower()
+
+        # Only attempt re-post if still in posted_to_erp state
+        if state != "posted_to_erp":
+            return {
+                "resolved": False,
+                "reason": f"item_in_wrong_state:{state}",
+                "suggestion": "Item is no longer in posted_to_erp state. Review manually.",
+            }
+
+        # First, re-verify — the bill might have appeared since the last check
+        try:
+            from clearledgr.integrations.erp_router import verify_bill_posted
+
+            verify = await verify_bill_posted(
+                organization_id=self.organization_id,
+                invoice_number=str(invoice_number or erp_reference or ""),
+                expected_amount=float(ap_item["amount"]) if ap_item.get("amount") else None,
+            )
+            if verify.get("verified"):
+                # Bill is actually there — false alarm, clear exception
+                self.db.update_ap_item(
+                    ap_item_id,
+                    exception_code=None,
+                    exception_severity=None,
+                )
+                return {
+                    "resolved": True,
+                    "action": "erp_sync_confirmed_on_recheck",
+                    "erp_bill": verify.get("bill"),
+                }
+        except Exception as ver_exc:
+            logger.debug("ERP re-verify failed for %s: %s", ap_item_id, ver_exc)
+
+        # Bill genuinely missing — attempt re-post
+        try:
+            from clearledgr.integrations.erp_router import post_bill, Bill
+
+            metadata = self._parse_metadata(ap_item)
+            line_items = metadata.get("line_items")
+
+            bill = Bill(
+                vendor_name=ap_item.get("vendor_name") or "",
+                amount=float(ap_item.get("amount") or 0),
+                invoice_number=invoice_number or "",
+                date=ap_item.get("invoice_date") or ap_item.get("due_date") or "",
+                currency=ap_item.get("currency") or "USD",
+                description=f"Re-post: {invoice_number or ap_item_id}",
+                gl_code=metadata.get("gl_code") or "",
+                line_items=line_items,
+            )
+
+            result = await post_bill(
+                organization_id=self.organization_id,
+                bill=bill,
+                entity_id=ap_item.get("entity_id"),
+            )
+
+            if result.get("status") == "success":
+                new_ref = result.get("erp_reference") or result.get("bill_id")
+                self.db.update_ap_item(
+                    ap_item_id,
+                    erp_reference=new_ref or erp_reference,
+                    exception_code=None,
+                    exception_severity=None,
+                )
+                return {
+                    "resolved": True,
+                    "action": "re_posted_to_erp",
+                    "new_erp_reference": new_ref,
+                }
+            else:
+                return {
+                    "resolved": False,
+                    "action": "re_post_failed",
+                    "erp_error": result.get("error") or result.get("reason"),
+                    "suggestion": "Re-post to ERP failed. Check ERP connection and retry manually.",
+                }
+        except Exception as post_exc:
+            return {
+                "resolved": False,
+                "action": "re_post_exception",
+                "error": str(post_exc),
+                "suggestion": "Could not re-post to ERP. Manual intervention required.",
+            }
 
     # ------------------------------------------------------------------
     # Helpers
