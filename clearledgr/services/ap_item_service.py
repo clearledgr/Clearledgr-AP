@@ -1554,6 +1554,9 @@ def build_worklist_item(
     payload["tax_amount"] = metadata.get("tax_amount")
     payload["tax_rate"] = metadata.get("tax_rate")
     payload["subtotal"] = metadata.get("subtotal")
+    payload["discount_amount"] = metadata.get("discount_amount")
+    payload["discount_terms"] = metadata.get("discount_terms")
+    payload["bank_details"] = metadata.get("bank_details")
     # Document type: use stored value from ingestion, or infer from subject.
     # Non-invoice finance docs should stay out of AP payable routing.
     _doc_type = metadata.get("email_type") or metadata.get("document_type")

@@ -1536,6 +1536,68 @@ class InvoiceValidationMixin:
             except Exception as fuzzy_dedup_exc:
                 logger.warning("Fuzzy duplicate check failed (non-fatal): %s", fuzzy_dedup_exc)
 
+        # 4b) Discount amount consistency check.
+        if invoice.discount_amount is not None and invoice.discount_amount > 0:
+            # Informational: check if discount + amount ~= subtotal
+            if invoice.subtotal is not None and invoice.subtotal > 0 and invoice.amount is not None:
+                expected_subtotal = invoice.amount + invoice.discount_amount
+                tolerance = max(invoice.subtotal * 0.02, 0.01)  # 2% tolerance
+                if abs(expected_subtotal - invoice.subtotal) <= tolerance:
+                    # Discount makes mathematical sense — informational note only
+                    add_reason(
+                        "discount_applied",
+                        f"Discount of {invoice.discount_amount} applied; "
+                        f"amount ({invoice.amount}) + discount ({invoice.discount_amount}) "
+                        f"≈ subtotal ({invoice.subtotal})",
+                        severity="info",
+                        details={
+                            "discount_amount": invoice.discount_amount,
+                            "discount_terms": invoice.discount_terms,
+                        },
+                    )
+                else:
+                    add_reason(
+                        "discount_amount_inconsistent",
+                        f"Discount amount ({invoice.discount_amount}) doesn't reconcile: "
+                        f"amount ({invoice.amount}) + discount ({invoice.discount_amount}) = "
+                        f"{expected_subtotal}, but subtotal is {invoice.subtotal}",
+                        severity="warning",
+                        details={
+                            "discount_amount": invoice.discount_amount,
+                            "expected_subtotal": expected_subtotal,
+                            "actual_subtotal": invoice.subtotal,
+                        },
+                    )
+
+        # 4c) Bank/payment details mismatch check.
+        if isinstance(invoice.bank_details, dict) and invoice.bank_details:
+            try:
+                vendor_intelligence = invoice.vendor_intelligence or {}
+                vendor_bank_changed_at = vendor_intelligence.get("bank_details_changed_at")
+                stored_bank = vendor_intelligence.get("bank_details")
+                if vendor_bank_changed_at and isinstance(stored_bank, dict) and stored_bank:
+                    # Compare extracted bank details against stored vendor bank details
+                    mismatch_fields = []
+                    for bk in ("account_number", "routing_number", "iban", "swift", "sort_code"):
+                        extracted_val = (invoice.bank_details.get(bk) or "").strip()
+                        stored_val = (stored_bank.get(bk) or "").strip()
+                        if extracted_val and stored_val and extracted_val != stored_val:
+                            mismatch_fields.append(bk)
+                    if mismatch_fields:
+                        sev = "error" if (invoice.amount or 0) >= 5000 else "warning"
+                        add_reason(
+                            "bank_details_mismatch_from_invoice",
+                            f"Bank details on invoice differ from vendor profile on: {', '.join(mismatch_fields)}",
+                            severity=sev,
+                            details={
+                                "mismatched_fields": mismatch_fields,
+                                "invoice_bank_details": invoice.bank_details,
+                                "stored_bank_details": stored_bank,
+                            },
+                        )
+            except Exception as bank_exc:
+                logger.warning("Bank details comparison failed (non-fatal): %s", bank_exc)
+
         # 5) Critical-field confidence gate (launch-critical, server-enforced).
         confidence_gate = self._evaluate_invoice_confidence_gate(invoice)
         if confidence_gate.get("requires_field_review"):

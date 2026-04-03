@@ -10,6 +10,7 @@ Parses finance-related emails and attachments:
 """
 
 import re
+import zipfile
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -271,6 +272,29 @@ class EmailParser:
             "amount_score": 1.0,
         }
         for attachment in attachments:
+            att_name = (attachment.get('name') or attachment.get('filename') or '').lower()
+            att_content_base64 = attachment.get('content_base64')
+
+            # ZIP archive: extract inner files and process each individually
+            if att_name.endswith('.zip') and att_content_base64:
+                archive_files = self._extract_archive_attachments(
+                    att_content_base64,
+                    attachment.get('name') or attachment.get('filename') or 'unknown.zip',
+                )
+                for af in archive_files:
+                    result = self._parse_attachment(af)
+                    if result:
+                        parsed_attachments.append(result)
+                        extraction = result.get("extraction")
+                        if isinstance(extraction, dict) and extraction:
+                            attachment_extractions.append(extraction)
+                continue  # Skip processing the ZIP itself
+
+            # RAR: not supported (requires third-party library)
+            if att_name.endswith('.rar'):
+                logger.warning("RAR archive detected (%s) — skipping (not supported)", att_name)
+                continue
+
             parsed = self._parse_attachment(attachment)
             if parsed:
                 parsed_attachments.append(parsed)
@@ -1607,7 +1631,46 @@ class EmailParser:
                 return currency
         
         return 'USD'  # Default to USD as most common
-    
+
+    def _extract_archive_attachments(self, content_base64: str, filename: str) -> List[Dict[str, Any]]:
+        """Extract files from a ZIP archive attachment."""
+        try:
+            data = base64.b64decode(content_base64)
+            extracted: List[Dict[str, Any]] = []
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    # Only process common invoice file types
+                    name_lower = info.filename.lower()
+                    if not any(name_lower.endswith(ext) for ext in ('.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.tif')):
+                        continue
+                    # Size limit: skip files > 25MB
+                    if info.file_size > 25 * 1024 * 1024:
+                        continue
+                    file_data = zf.read(info.filename)
+                    # Determine content type
+                    if name_lower.endswith('.pdf'):
+                        content_type = "application/pdf"
+                    elif name_lower.endswith('.png'):
+                        content_type = "image/png"
+                    elif name_lower.endswith(('.tiff', '.tif')):
+                        content_type = "image/tiff"
+                    else:
+                        content_type = "image/jpeg"
+                    extracted.append({
+                        "filename": info.filename,
+                        "name": info.filename,
+                        "content_base64": base64.b64encode(file_data).decode("utf-8"),
+                        "content_type": content_type,
+                        "size": info.file_size,
+                        "source": f"archive:{filename}",
+                    })
+            return extracted
+        except Exception as exc:
+            logger.warning("Failed to extract archive %s: %s", filename, exc)
+            return []
+
     def _parse_attachment(self, attachment: Dict) -> Optional[Dict[str, Any]]:
         """Parse an email attachment."""
         name = (attachment.get('name') or attachment.get('filename') or '').lower()

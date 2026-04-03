@@ -412,6 +412,13 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         _line_items_meta = {}
         if isinstance(invoice.line_items, list) and invoice.line_items:
             _line_items_meta["line_items"] = invoice.line_items
+        _extra_extraction_meta: Dict[str, Any] = {}
+        if invoice.discount_amount is not None:
+            _extra_extraction_meta["discount_amount"] = invoice.discount_amount
+        if invoice.discount_terms:
+            _extra_extraction_meta["discount_terms"] = invoice.discount_terms
+        if invoice.bank_details:
+            _extra_extraction_meta["bank_details"] = invoice.bank_details
         self._update_ap_item_metadata(
             invoice_id,
             {
@@ -427,6 +434,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 "correlation_id": correlation_id,
                 "erp_preflight": invoice.erp_preflight or {},
                 **_line_items_meta,
+                **_extra_extraction_meta,
             },
         )
 

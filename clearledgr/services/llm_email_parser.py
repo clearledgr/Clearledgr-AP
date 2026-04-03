@@ -114,6 +114,16 @@ Return exactly this JSON shape (use null for any field you cannot determine with
   "tax_amount": "<total tax amount if shown (number or null)>",
   "tax_rate": "<tax rate as decimal if shown, e.g. 0.1 for 10% — or null>",
   "subtotal": "<pre-tax subtotal if shown (number or null)>",
+  "discount_amount": "<total discount amount if shown (number or null)>",
+  "discount_terms": "<discount terms if shown (e.g. '2/10 NET 30', '5% early payment') or null>",
+  "bank_details": {{
+    "bank_name": "<bank or financial institution name if shown>",
+    "account_number": "<account number if shown>",
+    "routing_number": "<routing/ABA number if shown>",
+    "iban": "<IBAN if shown>",
+    "swift": "<SWIFT/BIC code if shown>",
+    "sort_code": "<sort code if shown (UK)>"
+  }},
   "line_items": [
     {{
       "description": "<what was purchased>",
@@ -252,6 +262,19 @@ def _safe_float(value: Any) -> Optional[float]:
         return None
 
 
+def _parse_bank_details(raw: Any) -> Optional[Dict[str, Any]]:
+    """Validate and clean bank_details dict from Claude's response."""
+    if not isinstance(raw, dict):
+        return None
+    _BANK_FIELDS = {"bank_name", "account_number", "routing_number", "iban", "swift", "sort_code"}
+    cleaned = {}
+    for key in _BANK_FIELDS:
+        val = raw.get(key)
+        if val is not None and str(val).strip():
+            cleaned[key] = str(val).strip()
+    return cleaned if cleaned else None
+
+
 def _categorize_attachments(
     attachments: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], str]:
@@ -355,6 +378,11 @@ def _llm_result_to_parse_email_dict(
         "extraction_method": "llm",
         # Line items (structured extraction from invoice)
         "line_items": llm.get("line_items") if isinstance(llm.get("line_items"), list) else None,
+        # Discount extraction
+        "discount_amount": _safe_float(llm.get("discount_amount")),
+        "discount_terms": str(llm.get("discount_terms")) if llm.get("discount_terms") else None,
+        # Bank/payment details
+        "bank_details": _parse_bank_details(llm.get("bank_details")),
     }
 
 

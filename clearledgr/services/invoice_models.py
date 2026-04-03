@@ -44,6 +44,12 @@ class InvoiceData:
     tax_amount: Optional[float] = None
     tax_rate: Optional[float] = None
     subtotal: Optional[float] = None
+    # Discount extraction
+    discount_amount: Optional[float] = None
+    discount_terms: Optional[str] = None  # e.g., "2/10 NET 30" (2% discount if paid in 10 days)
+    # Bank/payment details extracted from invoice
+    bank_details: Optional[Dict[str, Any]] = None
+    # Dict shape: {"bank_name": str, "account_number": str, "routing_number": str, "iban": str, "swift": str, "sort_code": str}
     # Line items (structured extraction)
     # Each line item: {"description": str, "quantity": float, "unit_price": float,
     #   "amount": float, "gl_code": Optional[str], "tax_amount": Optional[float]}
