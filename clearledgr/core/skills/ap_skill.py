@@ -445,10 +445,20 @@ async def _handle_request_vendor_info(
                 ap_item_id, thread_id, sent_message_id,
             )
         except Exception as send_exc:
-            logger.info(
-                "Direct send failed for ap_item_id=%s (%s), falling back to draft",
-                ap_item_id, send_exc,
-            )
+            # Detect scope issue so operator knows to re-authenticate
+            exc_str = str(send_exc).lower()
+            if "insufficient" in exc_str or "403" in exc_str or "scope" in exc_str:
+                logger.warning(
+                    "Gmail send failed for ap_item_id=%s — likely missing gmail.send scope. "
+                    "User should re-authenticate Gmail to enable direct sending. "
+                    "Falling back to draft. Error: %s",
+                    ap_item_id, send_exc,
+                )
+            else:
+                logger.info(
+                    "Direct send failed for ap_item_id=%s (%s), falling back to draft",
+                    ap_item_id, send_exc,
+                )
             # Fall back to draft
             draft_id = await followup_svc.create_gmail_draft(
                 gmail_client=gmail_client,
