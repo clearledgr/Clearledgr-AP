@@ -674,6 +674,27 @@ async def _handle_check_payment_readiness(
 
 
 # ---------------------------------------------------------------------------
+# Spend analysis handler
+# ---------------------------------------------------------------------------
+
+async def _handle_analyze_spending(
+    period_days: int = 30,
+    organization_id: str = "default",
+    **_kwargs,
+) -> Dict[str, Any]:
+    """Run portfolio-level spend analysis for the organization."""
+    try:
+        from clearledgr.services.spend_analysis import get_spend_analysis_service
+
+        service = get_spend_analysis_service(organization_id)
+        result = service.analyze(period_days=period_days)
+        return {"ok": True, **result}
+    except Exception as exc:
+        logger.warning("[APSkill] analyze_spending failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # APSkill
 # ---------------------------------------------------------------------------
 
@@ -885,6 +906,27 @@ class APSkill(FinanceSkill):
                 },
                 handler=_handle_check_payment_readiness,
             ),
+            AgentTool(
+                name="analyze_spending",
+                description=(
+                    "Run portfolio-level spend analysis: top vendors, GL breakdown, "
+                    "monthly trends, budget utilization, and anomaly detection. "
+                    "Call this when the user asks about spend patterns, budgets, or "
+                    "vendor cost trends. Does NOT modify any data."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "period_days": {
+                            "type": "integer",
+                            "description": "Number of days to analyze (default 30).",
+                            "default": 30,
+                        },
+                    },
+                    "required": [],
+                },
+                handler=_handle_analyze_spending,
+            ),
         ]
 
     def build_system_prompt(self, task: AgentTask) -> str:
@@ -950,5 +992,6 @@ Rules:
 - Only call request_vendor_info when the decision is "needs_info"
 - After calling execute_routing (and optionally request_vendor_info), you are done — do not call more tools
 - If cross-invoice warnings mention duplicates, factor that into your decision — prefer "escalate"
+- Use analyze_spending when asked about spend patterns, budget status, or vendor cost trends — it is read-only
 
 When you are finished, respond with a brief summary of what was decided and why."""

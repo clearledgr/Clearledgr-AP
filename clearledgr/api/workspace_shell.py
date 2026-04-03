@@ -1956,6 +1956,23 @@ def get_payments_summary(
     return {"summary": summary, "total": sum(summary.values())}
 
 
+# ------------------------------------------------------------------
+# Spend analysis
+# ------------------------------------------------------------------
+
+@router.get("/spend-analysis")
+def get_spend_analysis(
+    period_days: int = Query(default=30, ge=1, le=365),
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Portfolio-level spend analysis: top vendors, GL breakdown, trends, anomalies."""
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.spend_analysis import get_spend_analysis_service
+    service = get_spend_analysis_service(org_id)
+    return service.analyze(period_days=period_days)
+
+
 @router.get("/health")
 def get_admin_health(
     organization_id: Optional[str] = Query(default=None),

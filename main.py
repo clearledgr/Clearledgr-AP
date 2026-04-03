@@ -262,6 +262,7 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/subscription/plan",
     "/api/workspace/team/invites",
     "/api/workspace/user/preferences",
+    "/api/workspace/spend-analysis",
 }
 
 STRICT_PROFILE_ALLOWED_AUTH_PATHS = {
