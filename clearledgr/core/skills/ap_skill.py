@@ -386,6 +386,85 @@ async def _handle_request_vendor_info(
         return {"ok": False, "draft_created": False, "error": str(exc)}
 
 
+async def _handle_check_payment_readiness(
+    invoice_payload: Dict[str, Any],
+    organization_id: str = "default",
+    **_kwargs,
+) -> Dict[str, Any]:
+    """Check if a posted invoice is ready for payment and surface the payment record.
+
+    This tool NEVER triggers a payment.  It only looks up the payment tracking
+    record and returns its current status.
+    """
+    try:
+        from clearledgr.core.database import get_db
+
+        db = get_db()
+        ap_item_id = (
+            invoice_payload.get("id")
+            or invoice_payload.get("ap_item_id")
+            or ""
+        )
+        gmail_id = invoice_payload.get("gmail_id") or invoice_payload.get("thread_id") or ""
+
+        # Try to find the AP item to check state
+        ap_item = None
+        if ap_item_id:
+            ap_item = db.get_ap_item(ap_item_id)
+        if not ap_item and gmail_id:
+            ap_item = db.get_invoice_status(gmail_id)
+
+        if not ap_item:
+            return {
+                "ok": True,
+                "payment_ready": False,
+                "reason": "ap_item_not_found",
+            }
+
+        state = str(ap_item.get("state") or "").strip().lower()
+        if state not in {"posted_to_erp", "closed"}:
+            return {
+                "ok": True,
+                "payment_ready": False,
+                "reason": "not_posted",
+                "current_state": state,
+            }
+
+        # Look up payment record
+        resolved_ap_id = ap_item.get("id") or ap_item_id
+        payment = db.get_payment_by_ap_item(resolved_ap_id) if resolved_ap_id else None
+
+        if not payment:
+            return {
+                "ok": True,
+                "payment_ready": True,
+                "reason": "posted_but_no_payment_record",
+                "current_state": state,
+                "vendor_name": ap_item.get("vendor_name"),
+                "amount": ap_item.get("amount"),
+                "currency": ap_item.get("currency") or "USD",
+                "due_date": ap_item.get("due_date"),
+                "erp_reference": ap_item.get("erp_reference"),
+            }
+
+        return {
+            "ok": True,
+            "payment_ready": True,
+            "payment_id": payment.get("id"),
+            "payment_status": payment.get("status"),
+            "vendor_name": payment.get("vendor_name"),
+            "amount": payment.get("amount"),
+            "currency": payment.get("currency") or "USD",
+            "due_date": payment.get("due_date"),
+            "erp_reference": payment.get("erp_reference"),
+            "payment_method": payment.get("payment_method"),
+            "scheduled_date": payment.get("scheduled_date"),
+        }
+    except Exception as exc:
+        logger.warning("[APSkill] check_payment_readiness failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
 # ---------------------------------------------------------------------------
 # APSkill
 # ---------------------------------------------------------------------------
@@ -545,6 +624,26 @@ class APSkill(FinanceSkill):
                     "required": ["invoice_payload"],
                 },
                 handler=_handle_verify_erp_posting,
+            ),
+            AgentTool(
+                name="check_payment_readiness",
+                description=(
+                    "Check if a posted invoice is ready for payment and return the "
+                    "payment tracking record. This NEVER triggers a payment — it only "
+                    "surfaces the current payment status and due date. Call this after "
+                    "verify_erp_posting to see if a payment record was created."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "invoice_payload": {
+                            "type": "object",
+                            "description": "The full invoice data dict (must include id or gmail_id).",
+                        },
+                    },
+                    "required": ["invoice_payload"],
+                },
+                handler=_handle_check_payment_readiness,
             ),
         ]
 

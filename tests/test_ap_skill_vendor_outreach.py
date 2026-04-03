@@ -174,13 +174,14 @@ def test_ap_skill_has_five_tools():
     tools = skill.get_tools()
     names = [t.name for t in tools]
 
-    assert len(tools) == 6
+    assert len(tools) == 7
     assert "request_vendor_info" in names
     assert "enrich_with_context" in names
     assert "run_validation_gate" in names
     assert "get_ap_decision" in names
     assert "execute_routing" in names
     assert "verify_erp_posting" in names
+    assert "check_payment_readiness" in names
 
 
 def test_system_prompt_mentions_vendor_info():

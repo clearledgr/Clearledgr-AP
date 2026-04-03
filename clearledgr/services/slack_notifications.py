@@ -1141,3 +1141,64 @@ class SlackNotificationService:
         except Exception as e:
             logger.error(f"Failed to send Slack notification: {e}")
             return False
+
+
+# ---------------------------------------------------------------------------
+# Payment readiness notification
+# ---------------------------------------------------------------------------
+
+async def send_payment_ready_notification(
+    organization_id: str,
+    ap_item_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str,
+    due_date: Optional[str],
+    erp_reference: Optional[str],
+) -> bool:
+    """Notify the finance channel that an invoice is posted and ready for payment.
+
+    This is a simple informational notification — it does NOT trigger any
+    payment execution.  Humans decide when and how to pay.
+    """
+    due_str = due_date or "not specified"
+    erp_str = erp_reference or "N/A"
+
+    text = (
+        f"Invoice from {vendor_name} for {currency} {amount:,.2f} is posted to ERP "
+        f"and ready for payment. Due: {due_str}. ERP ref: {erp_str}."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":white_check_mark: *Payment Ready*\n"
+                    f"Invoice from *{vendor_name}* for *{currency} {amount:,.2f}* "
+                    f"is posted to ERP and ready for payment."
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Due Date:*\n{due_str}"},
+                {"type": "mrkdwn", "text": f"*ERP Reference:*\n{erp_str}"},
+            ],
+        },
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"AP Item: {ap_item_id}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )

@@ -58,6 +58,7 @@ def _load_store_symbols() -> None:
     global VendorStore
     global ReconStore
     global EntityStore
+    global PaymentStore
 
     if "APStore" in globals():
         return
@@ -77,6 +78,7 @@ def _load_store_symbols() -> None:
     from clearledgr.core.stores.vendor_store import VendorStore as _VendorStore
     from clearledgr.core.stores.recon_store import ReconStore as _ReconStore
     from clearledgr.core.stores.entity_store import EntityStore as _EntityStore
+    from clearledgr.core.stores.payment_store import PaymentStore as _PaymentStore
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -91,6 +93,7 @@ def _load_store_symbols() -> None:
     VendorStore = _VendorStore
     ReconStore = _ReconStore
     EntityStore = _EntityStore
+    PaymentStore = _PaymentStore
 
 
 class _ClearledgrDBBase:
@@ -1100,6 +1103,25 @@ class _ClearledgrDBBase:
             for sql in ReconStore.RECON_TABLES_SQL:
                 cur.execute(sql)
 
+            # Payment tracking (informational — agent never executes payments)
+            cur.execute(PaymentStore.PAYMENT_TABLE_SQL)
+            # Evolve legacy payments table (old schema: id, organization_id, payment_data, created_at, updated_at)
+            self._ensure_column(cur, "payments", "ap_item_id", "TEXT")
+            self._ensure_column(cur, "payments", "vendor_name", "TEXT")
+            self._ensure_column(cur, "payments", "amount", "REAL")
+            self._ensure_column(cur, "payments", "currency", "TEXT DEFAULT 'USD'")
+            self._ensure_column(cur, "payments", "status", "TEXT DEFAULT 'ready_for_payment'")
+            self._ensure_column(cur, "payments", "payment_method", "TEXT")
+            self._ensure_column(cur, "payments", "payment_reference", "TEXT")
+            self._ensure_column(cur, "payments", "due_date", "TEXT")
+            self._ensure_column(cur, "payments", "scheduled_date", "TEXT")
+            self._ensure_column(cur, "payments", "completed_date", "TEXT")
+            self._ensure_column(cur, "payments", "erp_reference", "TEXT")
+            self._ensure_column(cur, "payments", "notes", "TEXT")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_org ON payments(organization_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_ap_item ON payments(ap_item_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_org_status ON payments(organization_id, status)")
+
             # Multi-entity support (P0: Cowrywise has entities in Africa and US)
             cur.execute(EntityStore.ENTITIES_TABLE_SQL)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_entities_org ON entities(organization_id)")
@@ -1150,6 +1172,7 @@ def _get_db_impl_class():
             TaskStore,
             VendorStore,
             ReconStore,
+            PaymentStore,
             _ClearledgrDBBase,
         ):
             pass

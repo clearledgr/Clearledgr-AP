@@ -459,6 +459,56 @@ class InvoicePostingMixin:
             except Exception:
                 pass  # Non-fatal
 
+            # Create payment tracking record (informational — never executes payment)
+            try:
+                from clearledgr.core.database import get_db as _get_db_for_payment
+                _pay_db = _get_db_for_payment()
+                payment_record = _pay_db.create_payment({
+                    "ap_item_id": ap_item_id or gmail_id,
+                    "organization_id": self.organization_id,
+                    "vendor_name": invoice.vendor_name,
+                    "amount": invoice.amount,
+                    "currency": invoice.currency,
+                    "status": "ready_for_payment",
+                    "due_date": getattr(invoice, "due_date", None),
+                    "erp_reference": erp_reference,
+                })
+                # Store payment_id in AP item metadata for cross-reference
+                if ap_item_id:
+                    try:
+                        _existing_meta = self._parse_metadata_dict(
+                            (self.db.get_ap_item(ap_item_id) or {}).get("metadata")
+                        )
+                        _existing_meta["payment_id"] = payment_record["id"]
+                        _existing_meta["payment_status"] = "ready_for_payment"
+                        self.db.update_ap_item(
+                            ap_item_id,
+                            metadata=json.dumps(_existing_meta),
+                            _actor_type="system",
+                            _actor_id="payment_tracking",
+                        )
+                    except Exception as _meta_err:
+                        logger.debug("payment metadata persist failed: %s", _meta_err)
+                # Slack notification for payment readiness (fire-and-forget)
+                try:
+                    from clearledgr.services.slack_notifications import (
+                        send_payment_ready_notification,
+                    )
+                    import asyncio
+                    asyncio.ensure_future(send_payment_ready_notification(
+                        organization_id=self.organization_id,
+                        ap_item_id=ap_item_id or gmail_id,
+                        vendor_name=invoice.vendor_name,
+                        amount=invoice.amount,
+                        currency=invoice.currency,
+                        due_date=getattr(invoice, "due_date", None),
+                        erp_reference=erp_reference,
+                    ))
+                except Exception as _slack_err:
+                    logger.debug("payment ready slack notification skipped: %s", _slack_err)
+            except Exception as pay_err:
+                logger.warning("Failed to create payment tracking record: %s", pay_err)
+
             # M1: Transition posted_to_erp -> closed (terminal state).
             try:
                 self._transition_invoice_state(

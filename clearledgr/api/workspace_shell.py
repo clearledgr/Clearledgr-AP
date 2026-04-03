@@ -1873,6 +1873,89 @@ def deactivate_entity(
     return {"success": True, "entity_id": entity_id, "deactivated": True}
 
 
+# ---------------------------------------------------------------------------
+# Payment tracking (informational — agent never executes payments)
+# ---------------------------------------------------------------------------
+
+class PaymentStatusUpdate(BaseModel):
+    status: Optional[str] = None
+    payment_method: Optional[str] = None
+    payment_reference: Optional[str] = None
+    scheduled_date: Optional[str] = None
+    completed_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.get("/payments")
+def list_payments(
+    organization_id: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    vendor: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    user: TokenData = Depends(get_current_user),
+):
+    """List payment tracking records for an organization.
+
+    Filter by status (ready_for_payment, scheduled, processing, completed,
+    failed, cancelled) and/or vendor name.
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    payments = db.list_payments_by_org(
+        org_id, status=status, vendor=vendor, limit=limit, offset=offset,
+    )
+    return {"payments": payments, "count": len(payments)}
+
+
+@router.patch("/payments/{payment_id}")
+def update_payment_status(
+    payment_id: str,
+    body: PaymentStatusUpdate,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Update a payment record status.
+
+    Humans use this to mark payments as scheduled, processing, completed,
+    cancelled, or failed.  The agent never calls this endpoint.
+    """
+    from clearledgr.services.payment_models import PAYMENT_STATUSES
+
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    existing = db.get_payment(payment_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="payment_not_found")
+    if existing.get("organization_id") != org_id:
+        raise HTTPException(status_code=403, detail="payment_org_mismatch")
+
+    updates = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None}
+    if "status" in updates and updates["status"] not in PAYMENT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid_status: must be one of {sorted(PAYMENT_STATUSES)}",
+        )
+
+    if not updates:
+        return existing
+
+    updated = db.update_payment(payment_id, **updates)
+    return updated or existing
+
+
+@router.get("/payments/summary")
+def get_payments_summary(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Return payment counts grouped by status."""
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    summary = db.get_payment_summary(org_id)
+    return {"summary": summary, "total": sum(summary.values())}
+
+
 @router.get("/health")
 def get_admin_health(
     organization_id: Optional[str] = Query(default=None),

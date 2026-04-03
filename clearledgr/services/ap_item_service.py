@@ -1753,6 +1753,16 @@ def build_worklist_item(
     if not str(payload.get("workflow_paused_reason") or "").strip():
         payload["workflow_paused_reason"] = _failed_post_pause_reason(payload)
 
+    # Payment tracking: surface payment status for posted invoices.
+    if state_token in {"posted_to_erp", "closed"}:
+        payload["payment_status"] = metadata.get("payment_status", "ready_for_payment")
+        payload["payment_due_date"] = metadata.get("due_date") or payload.get("due_date")
+        payload["payment_id"] = metadata.get("payment_id")
+    else:
+        payload["payment_status"] = None
+        payload["payment_due_date"] = None
+        payload["payment_id"] = None
+
     # Correction learning: surface GL suggestion + previously-corrected fields.
     # suggest() is in-memory after rule load — fast per call.
     try:
