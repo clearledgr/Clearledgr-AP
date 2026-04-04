@@ -214,14 +214,39 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
     );
   }
   if (state === 'needs_info') {
+    const workflowPause = getWorkflowPauseReason(item);
+    const disputeStatus = item?.dispute_status;
+    const infoLabel = disputeStatus === 'vendor_contacted'
+      ? 'Waiting on vendor response'
+      : disputeStatus === 'escalated'
+      ? 'Dispute escalated — vendor unresponsive'
+      : isInvoiceDocument ? 'Missing invoice details' : 'Missing document details';
     push(
       'info',
-      isInvoiceDocument ? 'Missing invoice details' : 'Missing document details',
-      `Clearledgr still needs more information before this ${isInvoiceDocument ? 'invoice' : 'record'} can continue.`,
+      infoLabel,
+      workflowPause
+        || `Clearledgr still needs more information before this ${isInvoiceDocument ? 'invoice' : 'record'} can continue.`,
     );
   }
   if (state === 'failed_post') {
     push('erp', 'ERP posting failed', 'Retry the ERP post or review the connector result.');
+  }
+
+  // Validation gate warnings
+  const gateReasons = Array.isArray(item?.validation_reasons) ? item.validation_reasons : [];
+  for (const reason of gateReasons) {
+    const code = String(reason?.code || '').trim();
+    if (code === 'period_locked') {
+      push('period_locked', 'Period is locked', reason.message || 'Cannot post — accounting period is closed.');
+    } else if (code === 'payment_terms_mismatch') {
+      push('terms_mismatch', 'Payment terms changed', reason.message || 'Invoice terms differ from vendor profile.');
+    } else if (code === 'bank_details_mismatch_from_invoice') {
+      push('bank_change', 'Bank details changed', reason.message || 'Vendor bank details differ from previous invoices.');
+    } else if (code === 'invalid_vendor_tax_id') {
+      push('tax_id', 'Invalid vendor tax ID', reason.message || 'Vendor tax ID format is invalid.');
+    } else if (code === 'invalid_gl_code') {
+      push('gl_code', 'Invalid GL code', reason.message || 'GL code not found in chart of accounts.');
+    }
   }
   if (blockers.length === 0 && state === 'received') {
     push(
@@ -1053,6 +1078,40 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
               </div>`
             : html`<p class="muted">No active blockers.</p>`}
         </div>
+
+        ${Array.isArray(item?.line_items) && item.line_items.length > 0 && html`
+          <div class="panel">
+            <h3 style="margin-top:0">Line items (${item.line_items.length})</h3>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              ${item.line_items.slice(0, 15).map((li, i) => html`
+                <div key=${i} style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+                  <div>
+                    <div>${li.description || `Line ${i + 1}`}</div>
+                    ${li.gl_code && html`<div class="muted" style="font-size:12px">GL: ${li.gl_code}</div>`}
+                  </div>
+                  <div style="font-weight:600">${formatAmount(li.amount || 0, item.currency || 'USD')}</div>
+                </div>
+              `)}
+            </div>
+            ${item.tax_amount && html`<div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px;font-weight:600">
+              <div>Tax</div>
+              <div>${formatAmount(item.tax_amount, item.currency || 'USD')}</div>
+            </div>`}
+            ${item.discount_amount && html`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:var(--green)">
+              <div>Discount${item.discount_terms ? ` (${item.discount_terms})` : ''}</div>
+              <div>-${formatAmount(item.discount_amount, item.currency || 'USD')}</div>
+            </div>`}
+          </div>
+        `}
+
+        ${item?.payment_status && item.payment_status !== 'none' && html`
+          <div class="panel">
+            <h3 style="margin-top:0">Payment</h3>
+            ${detailRow('Status', (item.payment_status || '').replace(/_/g, ' '))}
+            ${item.payment_reference && detailRow('Reference', item.payment_reference)}
+            ${item.payment_method && detailRow('Method', item.payment_method)}
+          </div>
+        `}
 
         ${(state === 'needs_approval' || entityNeedsReview) && html`
           <div class="panel">

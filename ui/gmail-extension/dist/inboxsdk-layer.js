@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:82f0031860c87c6a97cd53adcf6179c1dbf03412e912fa7f872d843f6b8702d9 */
+/* clearledgr-source-fingerprint:5aba47e42f4ebbc3605e014933f53277e6fa8bbdd8f6f0d1160d53ce2cd1db7d */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -65856,10 +65856,28 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       push("approval", approvalFollowup?.escalation_due ? "Approval escalation due" : approvalFollowup?.sla_breached ? "Approval follow-up due" : "Waiting on approver", approvalFollowup?.escalation_due ? "Approval has been waiting past the escalation policy and should be escalated or reassigned." : approvalFollowup?.sla_breached ? "Approval has been waiting past the reminder SLA and should be nudged." : pendingAssignees.length ? `Waiting on ${pendingAssignees.slice(0, 3).join(", ")}.` : "The approval request is still pending.");
     }
     if (state === "needs_info") {
-      push("info", isInvoiceDocument ? "Missing invoice details" : "Missing document details", `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
+      const workflowPause = getWorkflowPauseReason(item);
+      const disputeStatus = item?.dispute_status;
+      const infoLabel = disputeStatus === "vendor_contacted" ? "Waiting on vendor response" : disputeStatus === "escalated" ? "Dispute escalated — vendor unresponsive" : isInvoiceDocument ? "Missing invoice details" : "Missing document details";
+      push("info", infoLabel, workflowPause || `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
     }
     if (state === "failed_post") {
       push("erp", "ERP posting failed", "Retry the ERP post or review the connector result.");
+    }
+    const gateReasons = Array.isArray(item?.validation_reasons) ? item.validation_reasons : [];
+    for (const reason of gateReasons) {
+      const code = String(reason?.code || "").trim();
+      if (code === "period_locked") {
+        push("period_locked", "Period is locked", reason.message || "Cannot post — accounting period is closed.");
+      } else if (code === "payment_terms_mismatch") {
+        push("terms_mismatch", "Payment terms changed", reason.message || "Invoice terms differ from vendor profile.");
+      } else if (code === "bank_details_mismatch_from_invoice") {
+        push("bank_change", "Bank details changed", reason.message || "Vendor bank details differ from previous invoices.");
+      } else if (code === "invalid_vendor_tax_id") {
+        push("tax_id", "Invalid vendor tax ID", reason.message || "Vendor tax ID format is invalid.");
+      } else if (code === "invalid_gl_code") {
+        push("gl_code", "Invalid GL code", reason.message || "GL code not found in chart of accounts.");
+      }
     }
     if (blockers.length === 0 && state === "received") {
       push("received", isInvoiceDocument ? "Ready for approval" : "Needs finance review", isInvoiceDocument ? "This invoice is ready to send for approval." : getNonInvoiceWorkflowGuidance(documentType));
@@ -66595,6 +66613,40 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 `)}
               </div>` : html14`<p class="muted">No active blockers.</p>`}
         </div>
+
+        ${Array.isArray(item?.line_items) && item.line_items.length > 0 && html14`
+          <div class="panel">
+            <h3 style="margin-top:0">Line items (${item.line_items.length})</h3>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              ${item.line_items.slice(0, 15).map((li, i3) => html14`
+                <div key=${i3} style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+                  <div>
+                    <div>${li.description || `Line ${i3 + 1}`}</div>
+                    ${li.gl_code && html14`<div class="muted" style="font-size:12px">GL: ${li.gl_code}</div>`}
+                  </div>
+                  <div style="font-weight:600">${formatAmount(li.amount || 0, item.currency || "USD")}</div>
+                </div>
+              `)}
+            </div>
+            ${item.tax_amount && html14`<div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px;font-weight:600">
+              <div>Tax</div>
+              <div>${formatAmount(item.tax_amount, item.currency || "USD")}</div>
+            </div>`}
+            ${item.discount_amount && html14`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:var(--green)">
+              <div>Discount${item.discount_terms ? ` (${item.discount_terms})` : ""}</div>
+              <div>-${formatAmount(item.discount_amount, item.currency || "USD")}</div>
+            </div>`}
+          </div>
+        `}
+
+        ${item?.payment_status && item.payment_status !== "none" && html14`
+          <div class="panel">
+            <h3 style="margin-top:0">Payment</h3>
+            ${detailRow("Status", (item.payment_status || "").replace(/_/g, " "))}
+            ${item.payment_reference && detailRow("Reference", item.payment_reference)}
+            ${item.payment_method && detailRow("Method", item.payment_method)}
+          </div>
+        `}
 
         ${(state === "needs_approval" || entityNeedsReview) && html14`
           <div class="panel">
