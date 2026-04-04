@@ -140,12 +140,8 @@ async def resolve_non_invoice_review(
     verify_org_access(item.get("organization_id") or organization_id or "default", user)
 
     metadata = shared._parse_json(item.get("metadata"))
-    # Prefer metadata document_type over column default for backward compat
-    # (old records have column default "invoice" but correct type in metadata)
-    column_type = item.get("document_type") or ""
-    meta_type = metadata.get("document_type") or metadata.get("email_type") or ""
     document_type = shared._normalize_document_type_token(
-        meta_type if meta_type and column_type == "invoice" else (column_type or meta_type)
+        item.get("document_type") or "invoice"
     )
     if document_type == "invoice":
         raise HTTPException(status_code=400, detail="invoice_document_not_supported")

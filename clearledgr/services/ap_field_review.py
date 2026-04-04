@@ -88,14 +88,12 @@ def _normalize_field_review_source(raw: Any) -> str:
 
 
 def _normalize_document_type_token(raw: Any) -> str:
+    """Normalize document type using the canonical routing table."""
+    from clearledgr.services.document_routing import get_route
     token = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if token == "credit_memo":
-        return "credit_note"
-    if token == "payment_confirmation":
-        return "payment"
-    if token == "bank_statement":
-        return "statement"
-    return token or "invoice"
+    if not token:
+        return "invoice"
+    return get_route(token).type
 
 
 def _get_conflict_field(raw: Any) -> str:

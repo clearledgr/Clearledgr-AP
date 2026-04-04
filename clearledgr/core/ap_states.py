@@ -42,15 +42,15 @@ class APState(str, Enum):
 
 
 VALID_TRANSITIONS: Dict[APState, FrozenSet[APState]] = {
-    APState.RECEIVED: frozenset({APState.VALIDATED}),
-    APState.VALIDATED: frozenset({APState.NEEDS_APPROVAL, APState.NEEDS_INFO}),
-    APState.NEEDS_INFO: frozenset({APState.VALIDATED}),
-    APState.NEEDS_APPROVAL: frozenset({APState.APPROVED, APState.REJECTED, APState.NEEDS_INFO}),
-    APState.APPROVED: frozenset({APState.READY_TO_POST, APState.NEEDS_INFO}),
-    APState.REJECTED: frozenset(),  # terminal
-    APState.READY_TO_POST: frozenset({APState.POSTED_TO_ERP, APState.FAILED_POST}),
+    APState.RECEIVED: frozenset({APState.VALIDATED, APState.CLOSED, APState.REJECTED}),
+    APState.VALIDATED: frozenset({APState.NEEDS_APPROVAL, APState.NEEDS_INFO, APState.CLOSED}),
+    APState.NEEDS_INFO: frozenset({APState.VALIDATED, APState.CLOSED}),
+    APState.NEEDS_APPROVAL: frozenset({APState.APPROVED, APState.REJECTED, APState.NEEDS_INFO, APState.CLOSED}),
+    APState.APPROVED: frozenset({APState.READY_TO_POST, APState.NEEDS_INFO, APState.CLOSED}),
+    APState.REJECTED: frozenset({APState.CLOSED}),
+    APState.READY_TO_POST: frozenset({APState.POSTED_TO_ERP, APState.FAILED_POST, APState.CLOSED}),
     APState.POSTED_TO_ERP: frozenset({APState.CLOSED}),
-    APState.FAILED_POST: frozenset({APState.READY_TO_POST}),  # retry
+    APState.FAILED_POST: frozenset({APState.READY_TO_POST, APState.CLOSED}),
     APState.CLOSED: frozenset(),  # terminal
 }
 

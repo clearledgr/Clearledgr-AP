@@ -342,12 +342,17 @@ def _coerce_optional_float(value: Any) -> Optional[float]:
 
 _NON_INVOICE_ALLOWED_OUTCOMES = {
     "credit_note": {"apply_to_invoice", "record_vendor_credit", "needs_followup"},
+    "debit_note": {"apply_to_invoice", "needs_followup"},
     "refund": {"link_to_payment", "record_vendor_refund", "needs_followup"},
-    "receipt": {"link_to_payment", "archive_receipt", "needs_followup"},
-    "payment": {"link_to_payment", "record_payment_confirmation", "needs_followup"},
-    "payment_request": {"route_outside_invoice_workflow", "needs_followup"},
+    "receipt": {"link_to_payment", "archive_receipt", "record_payment_confirmation", "needs_followup"},
+    "remittance_advice": {"link_to_payment", "archive_receipt", "needs_followup"},
+    "subscription_notification": {"archive_receipt", "needs_followup"},
     "statement": {"send_to_reconciliation", "needs_followup"},
-    "bank_statement": {"send_to_reconciliation", "needs_followup"},
+    "bank_notification": {"send_to_reconciliation", "archive_receipt", "needs_followup"},
+    "po_confirmation": {"mark_reviewed", "needs_followup"},
+    "tax_document": {"mark_reviewed", "needs_followup"},
+    "contract_renewal": {"mark_reviewed", "needs_followup"},
+    "dispute_response": {"mark_reviewed", "needs_followup"},
     "other": {"mark_reviewed", "needs_followup"},
 }
 
@@ -377,6 +382,8 @@ def _non_invoice_resolution_state(
 ) -> str:
     if outcome == "needs_followup":
         return APState.NEEDS_INFO.value
+    if close_record:
+        return APState.CLOSED.value
     return current_state
 
 
@@ -1557,29 +1564,8 @@ def build_worklist_item(
     payload["discount_amount"] = metadata.get("discount_amount")
     payload["discount_terms"] = metadata.get("discount_terms")
     payload["bank_details"] = metadata.get("bank_details")
-    # Document type: use stored value from ingestion, or infer from subject.
-    # Non-invoice finance docs should stay out of AP payable routing.
-    _doc_type = metadata.get("email_type") or metadata.get("document_type")
-    if not _doc_type:
-        _subject_lc = str(payload.get("subject") or "").lower()
-        _receipt_kw = {"receipt", "order confirmation", "order receipt", "subscription receipt", "payment receipt"}
-        _payment_kw = {"payment confirmation", "payment received", "payment processed", "payment successful", "payment completed"}
-        _refund_kw = {"refund"}
-        _credit_note_kw = {"credit note", "credit memo"}
-        _statement_kw = {"bank statement", "card statement", "account statement", "billing statement"}
-        _payment_request_kw = {"payment request", "requesting payment", "please pay"}
-        if any(kw in _subject_lc for kw in _credit_note_kw):
-            _doc_type = "credit_note"
-        elif any(kw in _subject_lc for kw in _refund_kw):
-            _doc_type = "refund"
-        elif any(kw in _subject_lc for kw in _statement_kw):
-            _doc_type = "statement"
-        elif any(kw in _subject_lc for kw in _payment_request_kw):
-            _doc_type = "payment_request"
-        elif any(kw in _subject_lc for kw in _payment_kw):
-            _doc_type = "payment"
-        else:
-            _doc_type = "receipt" if any(kw in _subject_lc for kw in _receipt_kw) else "invoice"
+    # Document type: column is source of truth. Falls back to metadata for old records.
+    _doc_type = payload.get("document_type") or metadata.get("document_type") or metadata.get("email_type") or "invoice"
     payload["document_type"] = _normalize_document_type_token(_doc_type)
     # Load DB-backed entities for multi-entity orgs (backward compatible: empty list = no-op)
     _db_entities: list = []

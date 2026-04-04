@@ -53,14 +53,12 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def _normalize_document_type_token(raw: Any) -> str:
+    """Normalize document type using the canonical routing table."""
+    from clearledgr.services.document_routing import get_route
     token = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if token == "credit_memo":
-        return "credit_note"
-    if token == "payment_confirmation":
-        return "payment"
-    if token == "bank_statement":
-        return "statement"
-    return token or "invoice"
+    if not token:
+        return "invoice"
+    return get_route(token).type
 
 
 def _filter_allowed_ap_item_updates(db: ClearledgrDB, updates: Dict[str, Any]) -> Dict[str, Any]:

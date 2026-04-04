@@ -876,7 +876,7 @@ class TestHelperFunctions:
         assert _normalize_document_type_token("credit memo") == "credit_note"
 
     def test_normalize_document_type_token_payment_confirmation(self):
-        assert _normalize_document_type_token("payment_confirmation") == "payment"
+        assert _normalize_document_type_token("payment_confirmation") == "receipt"
 
     def test_normalize_document_type_token_bank_statement(self):
         assert _normalize_document_type_token("bank_statement") == "statement"
