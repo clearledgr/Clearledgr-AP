@@ -1163,10 +1163,9 @@ function registerAppMenuAndRoutes() {
 bootstrap();
 
 console.log(
-  '%cClearledgr',
-  'font-size:16px;font-weight:bold;color:#00D67E;'
-);
-console.log(
-  '%cYou found us in the console. That means you care how things work.\nSo do we. That\'s why AP lives in Gmail, not another tab.\n\nhttps://clearledgr.com',
-  'font-size:12px;color:#6B7280;'
+  '\n%cClearledgr\n%cThe Gmail AP Workspace\nfor Finance Teams\n\n%cYou found us in the console.\nThat means you care how things work.\nSo do we.\n\n%chttps://clearledgr.com\n',
+  'font-size:28px;font-weight:800;color:#00D67E;line-height:1.2;',
+  'font-size:18px;font-weight:600;color:#0A1628;line-height:1.3;',
+  'font-size:14px;color:#6B7280;line-height:1.5;',
+  'font-size:13px;color:#00D67E;font-weight:600;',
 );

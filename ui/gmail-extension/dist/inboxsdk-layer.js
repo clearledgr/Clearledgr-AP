@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:ed875bdf745f22326aa94100042775985e73dc3474a9b01560ecb8bf53b4e6d6 */
+/* clearledgr-source-fingerprint:02b720962e9ab7c01954f617c1af16575da1e2a418e7dd09316c94a131ab9b4d */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -69457,9 +69457,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
   }
   bootstrap();
-  console.log("%cClearledgr", "font-size:16px;font-weight:bold;color:#00D67E;");
-  console.log(`%cYou found us in the console. That means you care how things work.
-So do we. That's why AP lives in Gmail, not another tab.
+  console.log(`
+%cClearledgr
+%cThe Gmail AP Workspace
+for Finance Teams
 
-https://clearledgr.com`, "font-size:12px;color:#6B7280;");
+%cYou found us in the console.
+That means you care how things work.
+So do we.
+
+%chttps://clearledgr.com
+`, "font-size:28px;font-weight:800;color:#00D67E;line-height:1.2;", "font-size:18px;font-weight:600;color:#0A1628;line-height:1.3;", "font-size:14px;color:#6B7280;line-height:1.5;", "font-size:13px;color:#00D67E;font-weight:600;");
 })();
