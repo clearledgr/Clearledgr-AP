@@ -341,15 +341,16 @@ Total items: 39 (32 done, 3 N/A, 4 remaining)
 - Complete Type II audit (~3-6 month observation period)
 **Estimated effort:** 3-6 months (process work, minimal code changes)
 
-### 29. [MISSING] Database migrations
+### 29. [DONE] Database migrations
 **Priority:** P2
-**What's missing:** Tables created lazily. No migration framework.
-**What's needed:**
-- Integrate Alembic (SQLAlchemy migration tool) or a lightweight alternative
-- Generate initial migration from current schema
-- Migration on startup or deploy
-- Rollback capability
-**Estimated effort:** 3-5 days
+**Status:** Completed 2026-04-04
+**What was built:**
+- `clearledgr/core/migrations.py` — lightweight migration framework (no Alembic)
+- `schema_versions` table tracks applied migrations with timestamps
+- `@migration(version, description)` decorator for numbered migrations
+- Runs on startup after initialize(), only applies pending versions
+- 6 initial migrations covering all new tables and columns from this session
+- New schema changes go as migrations, not _ensure_column calls
 
 ### 30. [DONE] Monitoring/alerting integration
 **Priority:** P2

@@ -1218,6 +1218,13 @@ class _ClearledgrDBBase:
 
         self._initialized = True
 
+        # Run numbered migrations (new schema changes go here, not _ensure_column)
+        try:
+            from clearledgr.core.migrations import run_migrations
+            run_migrations(self)
+        except Exception as exc:
+            logger.error("Database migrations failed: %s", exc)
+
 
 # ARCHITECTURE NOTE: ClearledgrDB uses mixin inheritance for store methods.
 # Each mixin (APStore, AuthStore, IntegrationStore, PolicyStore, etc.) adds
