@@ -62,8 +62,8 @@ async def _handle_enrich_with_context(
             resolved_name = get_vendor_dedup_service(organization_id).resolve_vendor_name(invoice.vendor_name or "")
             if resolved_name and resolved_name != invoice.vendor_name:
                 invoice.vendor_name = resolved_name
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Vendor dedup resolution failed: %s", exc)
 
         # --- Gap 3: Self-reflection validates extraction before enrichment ---
         reflection_data: Dict[str, Any] = {}
@@ -565,8 +565,8 @@ async def _handle_resolve_exception(
             try:
                 meta = json.loads(ap_item.get("metadata") or "{}") if isinstance(ap_item.get("metadata"), str) else (ap_item.get("metadata") or {})
                 resolved_code = meta.get("exception_code") or ""
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Metadata parse for exception_code failed: %s", exc)
 
         if not resolved_code:
             return {

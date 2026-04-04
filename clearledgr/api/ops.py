@@ -1,8 +1,11 @@
 """Operational health endpoints for AP v1 tenants."""
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -526,8 +529,8 @@ async def get_extraction_quality(
                 payload = _json.loads(payload)
             field = str(payload.get("field") or payload.get("corrected_field") or "unknown")
             corrected_fields[field] = corrected_fields.get(field, 0) + 1
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Payload parse failed: %s", exc)
 
     # Total AP items created in window for rate denominator
     total_items = 0
@@ -682,8 +685,8 @@ def _evaluate_monitoring_thresholds(
                     attempted += 1
                 elif et == "erp_post_failed":
                     failed += 1
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Ops query failed: %s", exc)
     post_failure_rate_pct = round((failed / attempted * 100) if attempted else 0.0, 2)
 
     # ── 2. Exception rate (items in exception/failed states / total active) ──
@@ -707,8 +710,8 @@ def _evaluate_monitoring_thresholds(
                     total_active += 1
                 if state in _exception_states:
                     exception_count += 1
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Ops query failed: %s", exc)
     exception_rate_pct = round((exception_count / total_active * 100) if total_active else 0.0, 2)
 
     # ── 3. Extraction correction rate ───────────────────────────────────────
@@ -732,8 +735,8 @@ def _evaluate_monitoring_thresholds(
             cur.execute(_total_sql, (organization_id, cutoff))
             row = cur.fetchone()
             total_items = int((dict(row) if row else {}).get("cnt") or 0)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Ops query failed: %s", exc)
     correction_rate_pct = round((correction_count / total_items * 100) if total_items else 0.0, 2)
 
     # ── 4. Duplicate posting count ───────────────────────────────────────────
@@ -750,8 +753,8 @@ def _evaluate_monitoring_thresholds(
             cur.execute(_dup_sql, (organization_id, cutoff))
             row = cur.fetchone()
             duplicate_post_count = int((dict(row) if row else {}).get("cnt") or 0)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Ops query failed: %s", exc)
 
     # ── Thresholds ──────────────────────────────────────────────────────────
     thresh_post_failure_pct = _threshold_pct("AP_ALERT_POST_FAILURE_RATE_PCT", 20.0)
@@ -891,8 +894,8 @@ async def get_ap_decision_health(
                         "model": meta.get("ap_decision_model", "unknown"),
                         "state": (dict(row) or {}).get("state"),
                     })
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Ops query failed: %s", exc)
 
     decision_count = len(decisions)
     fallback_count = sum(1 for d in decisions if d.get("model") == "fallback")
@@ -915,8 +918,8 @@ async def get_ap_decision_health(
             cur.execute(sql2, (organization_id, cutoff))
             row = cur.fetchone()
             overrides = int((dict(row) if row else {}).get("cnt") or 0)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Ops query failed: %s", exc)
 
     override_rate_pct = round(overrides / decision_count * 100, 2) if decision_count else 0.0
 

@@ -427,8 +427,8 @@ class AgentPlanningEngine:
                 )
                 try:
                     db.fail_task_run(row["id"], error="input_payload_corrupted")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Could not mark task_run %s as failed: %s", row.get("id", "?"), exc)
                 continue
             task = AgentTask(
                 task_type=row["task_type"],

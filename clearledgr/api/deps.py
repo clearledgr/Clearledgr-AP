@@ -1,7 +1,10 @@
 """FastAPI dependencies for Clearledgr core services."""
+import logging
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Request
+
+logger = logging.getLogger(__name__)
 
 from clearledgr.di.container import container
 
@@ -54,8 +57,8 @@ async def soft_org_guard(request: Request, user: Optional[object] = None) -> Non
                 try:
                     payload = decode_token(token)
                     resolved_user = _token_data_from_payload(payload)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Bearer token decode failed: %s", exc)
             if resolved_user is None and api_key:
                 db = get_db()
                 key_record = db.validate_api_key(api_key)

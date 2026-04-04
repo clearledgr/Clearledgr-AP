@@ -601,8 +601,8 @@ class FinanceAgentRuntime:
             if updates and hasattr(self.db, "update_ap_item"):
                 try:
                     self.db.update_ap_item(str(existing.get("id") or "").strip(), **updates)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.error("Failed to persist extraction updates for ap_item %s: %s", ap_item_id, exc)
             if hasattr(self.db, "get_ap_item"):
                 try:
                     item = self.db.get_ap_item(str(existing.get("id") or "").strip())
@@ -671,8 +671,8 @@ class FinanceAgentRuntime:
                             },
                         }
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Source link (thread) failed: %s", exc)
             if message_id:
                 try:
                     self.db.link_ap_item_source(
@@ -694,8 +694,8 @@ class FinanceAgentRuntime:
                             },
                         }
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Source link (message) failed: %s", exc)
 
         return item
 
@@ -718,8 +718,8 @@ class FinanceAgentRuntime:
         if ap_item_id and hasattr(self.db, "update_ap_item"):
             try:
                 self.db.update_ap_item(ap_item_id, metadata=metadata)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.error("Metadata merge persistence failed for %s: %s", ap_item_id, exc)
         return metadata
 
     def merge_item_metadata(self, item: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -1414,18 +1414,18 @@ class FinanceAgentRuntime:
                     exception_severity=None,
                     last_error=None,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Stale exception clear failed: %s", exc)
         if ap_item_id and hasattr(self.db, "update_ap_item_metadata_merge"):
             try:
                 self.db.update_ap_item_metadata_merge(ap_item_id, refresh_metadata)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Metadata merge (refresh) failed: %s", exc)
         if ap_item_id and hasattr(self.db, "get_ap_item"):
             try:
                 seeded_item = self.db.get_ap_item(ap_item_id) or seeded_item
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Item reload failed: %s", exc)
 
         return {
             "status": "refreshed",

@@ -1098,8 +1098,8 @@ class ReassignApprovalHandler(APIntentHandler):
         if chain_id and hasattr(runtime.db, "db_reassign_pending_step_approvers"):
             try:
                 runtime.db.db_reassign_pending_step_approvers(chain_id, [assignee], comments=note)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.error("Approval chain reassignment failed for chain %s: %s", chain_id, exc)
 
         slack_thread = runtime.db.get_slack_thread(email_id) if hasattr(runtime.db, "get_slack_thread") else None
         if slack_thread and getattr(workflow, "slack_client", None):

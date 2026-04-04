@@ -620,9 +620,9 @@ async def bulk_scan_emails(
             results["processed"] += 1
             if triage.get("action") != "skipped":
                 results["labeled"] += 1
-        except Exception:
-            pass
-    
+        except Exception as exc:
+            logger.warning("Triage failed for email %s: %s", entry.get("email_id", "?"), exc)
+
     return results
 
 

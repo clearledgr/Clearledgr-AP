@@ -142,8 +142,8 @@ class GLCorrectionService:
             if custom:
                 for acc in custom:
                     self._gl_accounts.append(GLAccount(**acc))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Custom GL account load failed: %s", exc)
     
     def correct_gl_code(
         self,
@@ -310,8 +310,8 @@ class GLCorrectionService:
                     "confidence": suggestion["confidence"],
                     "source": "learning",
                 })
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("GL learning suggestion failed: %s", exc)
 
         # Vendor intelligence
         try:
@@ -325,8 +325,8 @@ class GLCorrectionService:
                     "confidence": 0.7,
                     "source": "vendor_intelligence",
                 })
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Vendor intelligence GL suggestion failed: %s", exc)
 
         if not candidates:
             # Default to general operating expenses

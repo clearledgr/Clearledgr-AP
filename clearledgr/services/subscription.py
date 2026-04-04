@@ -558,8 +558,8 @@ class SubscriptionService:
                         self._reset_monthly_counters(sub)
                         sub = self.get_subscription(organization_id)
                         current_value = 0
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.error("Monthly usage counter reset failed for org %s: %s", organization_id, exc)
 
         if sub.limits is None:
             return {"allowed": False, "limit": 0, "current": current_value}

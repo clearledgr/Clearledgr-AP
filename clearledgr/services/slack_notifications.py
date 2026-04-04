@@ -876,8 +876,8 @@ async def send_overdue_summary(
         kpis: Dict[str, Any] = {}
         try:
             kpis = db.get_ap_kpis(organization_id) or {}
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("KPI fetch failed: %s", exc)
 
         # --- KPI summary line ---
         touchless = kpis.get("touchless_rate", {})

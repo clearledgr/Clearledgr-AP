@@ -250,8 +250,8 @@ async def run_monitoring_checks(organization_id: str = "default") -> Dict[str, A
             try:
                 from clearledgr.services.agent_background import _slack_alert
                 await _slack_alert(msg, organization_id=organization_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Slack alert delivery failed: %s", exc)
 
         if "webhook" in channels:
             try:
@@ -261,8 +261,8 @@ async def run_monitoring_checks(organization_id: str = "default") -> Dict[str, A
                     event_type="monitor.alert",
                     payload=alert,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Webhook alert delivery failed: %s", exc)
 
         # Sentry breadcrumb
         try:

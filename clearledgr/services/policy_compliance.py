@@ -974,8 +974,8 @@ class PolicyComplianceService:
                 config=policy.__dict__,
                 updated_by="policy_compliance_service",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("Policy persistence failed for org %s: %s", self.organization_id, exc)
 
     def update_policy(self, policy_id: str, updates: Dict[str, Any]) -> bool:
         """Update an existing policy."""

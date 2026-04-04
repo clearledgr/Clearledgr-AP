@@ -83,8 +83,8 @@ async def execute_ap_invoice_processing(
         try:
             from clearledgr.services.subscription import get_subscription_service
             get_subscription_service().increment_usage(invoice_org, "invoices_this_month")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Usage tracking failed: %s", exc)
 
     amount_value = runtime._safe_float(invoice.get("amount"))
     confidence_value = runtime._safe_float(invoice.get("confidence"))

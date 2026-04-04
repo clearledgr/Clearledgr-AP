@@ -8,11 +8,14 @@ stub/placeholder implementation.
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from clearledgr.core.database import ClearledgrDB, get_db
+
+logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -252,8 +255,8 @@ class TemporalRuntime:
             if ap_item_id:
                 try:
                     self.db.update_ap_item(ap_item_id, workflow_id=workflow_id, run_id=workflow_id)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Workflow ID link failed: %s", exc)
 
             completed_at = _now_iso()
             self._update_run(

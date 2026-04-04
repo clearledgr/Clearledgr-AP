@@ -1646,8 +1646,8 @@ class InvoiceValidationMixin:
                                 details={"gl_code": gl, "line_description": item.get("description", "")},
                             )
                             break  # One warning is enough
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("GL code validation against CoA skipped: %s", exc)
 
         # 5a) Period close — block posting to locked periods.
         try:

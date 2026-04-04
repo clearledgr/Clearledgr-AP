@@ -248,8 +248,8 @@ def _pending_approver_ids(db: ClearledgrDB, ap_item_id: str, metadata: Dict[str,
                 pending = [str(value).strip() for value in rows if str(value).strip()]
                 if pending:
                     return pending
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Pending approver lookup failed: %s", exc)
     raw = metadata.get("approval_sent_to")
     if isinstance(raw, list):
         return [str(value).strip() for value in raw if str(value).strip()]
@@ -1587,8 +1587,8 @@ def build_worklist_item(
         org_id_for_entity = payload.get("organization_id")
         if org_id_for_entity and hasattr(db, "list_entities"):
             _db_entities = db.list_entities(org_id_for_entity)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Entity listing failed: %s", exc)
     entity_routing = resolve_entity_routing(
         metadata, payload, organization_settings=org_settings, db_entities=_db_entities,
     )
@@ -1622,8 +1622,8 @@ def build_worklist_item(
     elif hasattr(db, "_worklist_priority_score"):
         try:
             payload["priority_score"] = db._worklist_priority_score(payload)  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Priority score calculation failed: %s", exc)
 
     # Claude AP reasoning — surface proactively so the sidebar card can display it.
     payload["ap_decision_reasoning"] = (

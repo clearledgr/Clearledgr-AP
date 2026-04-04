@@ -42,16 +42,16 @@ def _active_org_ids() -> List[str]:
     if hasattr(db, "list_organizations_with_ap_items"):
         try:
             org_ids.extend(db.list_organizations_with_ap_items() or [])
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Org discovery method 1 failed: %s", exc)
     if hasattr(db, "list_organizations"):
         try:
             for row in db.list_organizations(limit=500) or []:
                 if not isinstance(row, dict):
                     continue
                 org_ids.append(row.get("id") or row.get("organization_id"))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Org discovery method 2 failed: %s", exc)
     try:
         from clearledgr.services.email_tasks import get_tasks
 
@@ -59,8 +59,8 @@ def _active_org_ids() -> List[str]:
             if not isinstance(task, dict):
                 continue
             org_ids.append(task.get("organization_id"))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Org discovery method 3 failed: %s", exc)
 
     normalized: List[str] = []
     seen = set()
@@ -585,8 +585,8 @@ async def _check_approval_timeouts(org_id: str):
                 try:
                     from clearledgr.services.approval_delegation import get_delegation_service
                     approver_ids = get_delegation_service(org_id).resolve_approvers(approver_ids)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Delegation resolution failed: %s", exc)
                 reminder_sent = await send_approval_reminder(
                     ap_item=item,
                     approver_ids=approver_ids,
@@ -1176,8 +1176,8 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
                         except Exception as notify_exc:
                             logger.warning("Overdue payment notification failed: %s", notify_exc)
                         updated += 1
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Overdue check failed for payment %s: %s", payment.get("id", "?"), exc)
         except Exception as exc:
             logger.warning("Overdue payment check failed for org=%s: %s", org_id, exc)
 
@@ -1290,8 +1290,8 @@ async def _check_vendor_followup_responses(org_id: str):
                         d = dsp_svc.open_dispute(ap_item_id, "missing_info", vendor_name=vendor_name)
                         dsp_svc.mark_vendor_contacted(d["id"], followup_thread_id=thread_id)
                         dsp_svc.mark_response_received(d["id"])
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Dispute update failed for ap_item %s: %s", ap_item_id, exc)
 
                 try:
                     from clearledgr.services.slack_notifications import send_vendor_response_notification
@@ -1366,8 +1366,8 @@ async def _check_vendor_followup_responses(org_id: str):
                     metadata["exception_code"] = "vendor_unresponsive"
                     metadata["escalated_at"] = datetime.now(timezone.utc).isoformat()
                     db.update_ap_item(ap_item_id, metadata=_json.dumps(metadata))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Escalation metadata update failed for ap_item %s: %s", ap_item_id, exc)
 
                 try:
                     from clearledgr.services.slack_notifications import send_vendor_escalation_notification

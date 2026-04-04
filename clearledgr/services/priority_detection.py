@@ -374,8 +374,8 @@ class PriorityDetectionService:
                     weight=self.WEIGHTS["relationship_risk"],
                     reason=f"Previous late payments to this vendor ({late_count})",
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Vendor lateness lookup failed: %s", exc)
 
         return PriorityFactor(
             name="Relationship Risk",

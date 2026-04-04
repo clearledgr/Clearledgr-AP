@@ -752,8 +752,8 @@ class InvoicePostingMixin:
                 self.db.db_update_chain_status(
                     chain["id"], status="rejected", current_step=0, completed_at=now_iso,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("Approval chain rejection update failed for %s: %s", ap_item_id, exc)
 
         logger.info(f"Invoice rejected: {gmail_id} by {rejected_by} - {reason}")
 
@@ -1356,8 +1356,8 @@ class InvoicePostingMixin:
                             }
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.error("Post-action verification persistence failed: %s", exc)
 
         if result.get("status") == "success":
             result["vendor_id"] = vendor_id

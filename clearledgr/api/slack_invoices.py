@@ -411,8 +411,8 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
     if normalized.ap_item_id and hasattr(db, "get_ap_item"):
         try:
             ap_item_row = db.get_ap_item(normalized.ap_item_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("AP item pre-fetch failed: %s", exc)
 
     precedence = _resolve_action_precedence(
         normalized,

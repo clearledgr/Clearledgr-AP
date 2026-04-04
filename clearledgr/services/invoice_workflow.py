@@ -245,8 +245,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 gl_sug = svc.suggest("gl_code", {"vendor": invoice.vendor_name})
                 if gl_sug:
                     suggestions["gl_code"] = gl_sug
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Correction learning suggest failed: %s", exc)
 
             org_config: Dict[str, Any] = {}
             try:
@@ -258,8 +258,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     _cfg = _raw_settings.get("org_config") or {}
                     if isinstance(_cfg, dict):
                         org_config = _cfg
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Org config load failed: %s", exc)
 
             # ---- Cross-invoice duplicate/anomaly analysis ----
             cross_analysis_dict: Optional[Dict[str, Any]] = None

@@ -235,8 +235,8 @@ class BudgetAwarenessService:
                     custom_budgets = raw_settings.get("budgets")
                     if isinstance(custom_budgets, list) and custom_budgets:
                         return [self._dict_to_budget(b) for b in custom_budgets]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Custom budget load failed: %s", exc)
         return DEFAULT_BUDGETS.copy()
     
     def _dict_to_budget(self, data: Dict[str, Any]) -> Budget:
@@ -376,8 +376,8 @@ class BudgetAwarenessService:
             total = sum(spending.values())
             self._spending[budget_id] = total
             return total
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Spending lookup failed: %s", exc)
         return 0
     
     def record_spending(
