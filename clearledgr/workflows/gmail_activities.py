@@ -108,6 +108,10 @@ def _normalize_email_type(raw_type: str) -> str:
         return "PAYMENT_REQUEST"
     if normalized == "invoice":
         return "INVOICE"
+    if normalized == "subscription_notification":
+        return "SUBSCRIPTION_NOTIFICATION"
+    if normalized == "receipt":
+        return "RECEIPT"
     return "NOISE"
 
 

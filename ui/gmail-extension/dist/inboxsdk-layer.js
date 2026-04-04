@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:13dc023a5f0b62654fee2e740a6abe73b1d74cca6923bfe0a23ad230a74b4788 */
+/* clearledgr-source-fingerprint:67ff4f997f2b045212e6e9b3166950978a3d5735cef32be2308739c987cd8dc2 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -58315,6 +58315,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     payment_request: "payment_request",
     payment_requests: "payment_request",
     paymentrequest: "payment_request",
+    subscription_notification: "subscription",
+    subscription: "subscription",
+    saas_charge: "subscription",
+    recurring_charge: "subscription",
     statement: "statement",
     statements: "statement",
     bank_statement: "statement",
@@ -58328,6 +58332,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     refund: "Refund",
     credit_note: "Credit note",
     payment_request: "Payment request",
+    subscription: "Subscription charge",
     statement: "Bank statement",
     other: "Finance document"
   };
@@ -58338,6 +58343,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     refund: "Refunds",
     credit_note: "Credit notes",
     payment_request: "Payment requests",
+    subscription: "Subscription charges",
     statement: "Bank statements",
     other: "Finance documents"
   };
@@ -58380,7 +58386,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       case "refund":
         return "Review this refund and link it to the related payment or vendor balance activity.";
       case "receipt":
-        return "Review this receipt as supporting evidence for a completed expense or purchase.";
+        return "Payment already completed. Recorded for bookkeeping — no action needed.";
+      case "subscription":
+        return "SaaS subscription charge — card was already billed. Recorded for GL coding and expense tracking. No approval needed.";
       case "payment_request":
         return "Review this payment request before routing it outside the invoice workflow. It is not an AP invoice.";
       case "statement":

@@ -1,9 +1,11 @@
 """AP-specific email classifier (single source of truth).
 
 Classifies emails into:
-- INVOICE
-- PAYMENT_REQUEST
-- NOISE (everything else, including receipts, statements, confirmations)
+- INVOICE — vendor bill requiring approval and payment (real AP payable)
+- PAYMENT_REQUEST — non-invoice payment request (reimbursement, wire, contractor)
+- SUBSCRIPTION_NOTIFICATION — SaaS/recurring charge already billed to card (Google, AWS, Slack)
+- RECEIPT — payment confirmation for a completed transaction
+- NOISE — everything else (marketing, security alerts, newsletters)
 """
 from __future__ import annotations
 
@@ -63,6 +65,57 @@ BILLING_SENDER_PATTERNS = [
     r"\bfinance@",
 ]
 
+# SaaS / subscription notification patterns — already charged, not a payable
+SUBSCRIPTION_PATTERNS = [
+    r"\byour\s+(?:monthly\s+)?(?:invoice|bill|statement)\s+is\s+(?:ready|available)\b",
+    r"\bsubscription\s+(?:invoice|charge|billing|renewal)\b",
+    r"\brecurring\s+(?:charge|payment|billing)\b",
+    r"\bmonthly\s+(?:charge|statement|billing)\b",
+    r"\bauto[\-\s]?(?:pay|charge|billed|debit)\b",
+    r"\bcharged?\s+(?:to\s+)?(?:your\s+)?(?:card|account|payment\s+method)\b",
+    r"\byour\s+(?:card|payment\s+method)\s+(?:was|has\s+been)\s+charged\b",
+    r"\bpayment\s+(?:was\s+)?(?:processed|successful|completed)\b",
+]
+
+# Known SaaS/subscription senders (domain patterns)
+KNOWN_SUBSCRIPTION_SENDERS = [
+    r"@google\.com$",
+    r"@amazon\.com$",
+    r"@aws\.amazon\.com$",
+    r"@cloud\.google\.com$",
+    r"@microsoft\.com$",
+    r"@slack\.com$",
+    r"@github\.com$",
+    r"@zoom\.us$",
+    r"@atlassian\.com$",
+    r"@dropbox\.com$",
+    r"@hubspot\.com$",
+    r"@salesforce\.com$",
+    r"@twilio\.com$",
+    r"@stripe\.com$",
+    r"@heroku\.com$",
+    r"@digitalocean\.com$",
+    r"@netlify\.com$",
+    r"@vercel\.com$",
+    r"@notion\.so$",
+    r"@figma\.com$",
+    r"@linear\.app$",
+    r"@intercom\.io$",
+    r"@mixpanel\.com$",
+    r"@datadog\.com$",
+    r"@sentry\.io$",
+    r"@cloudflare\.com$",
+]
+
+RECEIPT_PATTERNS = [
+    r"\breceipt\s+(?:for|of)\b",
+    r"\bpayment\s+receipt\b",
+    r"\btransaction\s+receipt\b",
+    r"\bthank\s+you\s+for\s+your\s+payment\b",
+    r"\byour\s+payment\s+(?:of|for)\b",
+    r"\bpayment\s+confirmation\b",
+]
+
 AMOUNT_PATTERN = re.compile(
     r"(\$|€|£|USD|EUR|GBP)\s*[\d,]+(?:\.\d{2})?",
     re.IGNORECASE,
@@ -98,9 +151,13 @@ def classify_ap_email(
             prompt = f"""Classify this email for AP workflow. Return ONLY valid JSON.
 
 Allowed types:
-- INVOICE (actual invoice/bill with amount due)
-- PAYMENT_REQUEST (non-invoice pay request, reimbursement, transfer)
-- NOISE (everything else: receipts, statements, marketing, confirmations)
+- INVOICE — actual vendor bill with amount due that requires approval and payment
+- PAYMENT_REQUEST — non-invoice payment request (reimbursement, wire transfer, contractor)
+- SUBSCRIPTION_NOTIFICATION — SaaS/cloud billing notification where card was already charged (Google Cloud, AWS, Slack, etc). NOT a payable — just a record of a charge that already happened.
+- RECEIPT — payment confirmation or receipt for a completed transaction
+- NOISE — everything else (marketing, security alerts, newsletters, promotions)
+
+Key distinction: If a SaaS provider (Google, AWS, Microsoft, Slack) sends an "invoice" for a subscription that auto-charges a card, that is SUBSCRIPTION_NOTIFICATION, not INVOICE. A real INVOICE is from a vendor who expects you to initiate payment.
 
 Subject: {subject}
 Sender: {sender}
@@ -111,7 +168,7 @@ Return JSON:
 """
             result = llm.generate_json(prompt)
             doc_type = str(result.get("type", "NOISE")).upper()
-            if doc_type not in {"INVOICE", "PAYMENT_REQUEST", "NOISE"}:
+            if doc_type not in {"INVOICE", "PAYMENT_REQUEST", "SUBSCRIPTION_NOTIFICATION", "RECEIPT", "NOISE"}:
                 doc_type = "NOISE"
             confidence = float(result.get("confidence", 0.6))
             return {
@@ -124,7 +181,49 @@ Return JSON:
     except Exception as exc:  # noqa: BLE001
         logger.warning("AP LLM classification failed, using rules: %s", exc)
 
-    # Rule-based classification — score everything first, then decide
+    # Rule-based classification — check subscription/receipt FIRST, then invoice/payment
+
+    # --- Subscription notification detection (highest priority) ---
+    subscription_score = 0
+    subscription_hits = _count_matches(SUBSCRIPTION_PATTERNS, combined)
+    subscription_score += subscription_hits * 2
+
+    # Known SaaS sender is a strong subscription signal
+    is_known_saas_sender = any(re.search(p, sender_lower) for p in KNOWN_SUBSCRIPTION_SENDERS)
+    if is_known_saas_sender:
+        subscription_score += 3
+
+    # "invoice is available" + known SaaS sender = subscription, not payable
+    if is_known_saas_sender and re.search(r"\binvoice\s+is\s+available\b", combined):
+        subscription_score += 3
+
+    # "charged to your card/account" is definitive
+    if re.search(r"\bcharged?\s+(?:to\s+)?(?:your\s+)?(?:card|account|payment\s+method)\b", combined):
+        subscription_score += 4
+
+    if subscription_score >= 3:
+        return {
+            "type": "SUBSCRIPTION_NOTIFICATION",
+            "confidence": min(0.95, 0.7 + 0.03 * subscription_score),
+            "reason": "subscription_notification_signals" + (
+                " (known_saas_sender)" if is_known_saas_sender else ""
+            ),
+            "method": "rules",
+            "score": subscription_score,
+        }
+
+    # --- Receipt detection ---
+    receipt_hits = _count_matches(RECEIPT_PATTERNS, combined)
+    if receipt_hits >= 1 and re.search(r"\breceipt\b", combined):
+        return {
+            "type": "RECEIPT",
+            "confidence": min(0.90, 0.65 + 0.05 * receipt_hits),
+            "reason": "receipt_signals",
+            "method": "rules",
+            "score": receipt_hits,
+        }
+
+    # --- Standard AP classification ---
     noise_hits = _count_matches(NOISE_PATTERNS, combined)
 
     invoice_score = 0
@@ -148,12 +247,12 @@ Return JSON:
     if any(re.search(p, sender_lower) for p in BILLING_SENDER_PATTERNS):
         invoice_score += 1
 
-    # "receipt" in subject/body is AP-relevant (vendor receipts, SaaS receipts)
-    if re.search(r"\breceipt\b", combined):
-        invoice_score += 2
+    # "receipt" without strong receipt patterns → treat as AP signal
+    if re.search(r"\breceipt\b", combined) and receipt_hits == 0:
+        invoice_score += 1
 
-    # "your invoice is available" is a strong invoice signal
-    if re.search(r"\binvoice\s+is\s+available\b", combined):
+    # "your invoice is available" from non-SaaS sender = real invoice
+    if re.search(r"\binvoice\s+is\s+available\b", combined) and not is_known_saas_sender:
         invoice_score += 3
 
     attachment_names = " ".join([str(a.get("filename") or a.get("name") or "") for a in attachments]).lower()

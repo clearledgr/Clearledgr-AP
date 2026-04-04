@@ -55,6 +55,47 @@ async def run_inline_gmail_triage(
             "action": "skipped",
         }
 
+    # Subscription notifications (Google Cloud, AWS, Slack, etc.) — already charged,
+    # not a payable. Extract data for record-keeping but skip the approval workflow.
+    if classification.get("type") == "SUBSCRIPTION_NOTIFICATION":
+        extraction = await extract_email_data_activity({**payload, "classification": classification})
+        trail.log(
+            invoice_id=payload.get("email_id"),
+            event_type=AuditEventType.EXTRACTED,
+            summary=f"Subscription notification from {extraction.get('vendor') or payload.get('sender')}",
+            details={"amount": extraction.get("amount"), "vendor": extraction.get("vendor")},
+        )
+        return {
+            "email_id": payload.get("email_id"),
+            "classification": classification,
+            "extraction": extraction,
+            "action": "recorded",
+            "document_type": "subscription_notification",
+            "workflow": "auto_record",
+            "reason": "SaaS/subscription charge — card already billed, no approval needed",
+            "suggested_state": "closed",
+        }
+
+    # Receipts — payment already completed, just record it.
+    if classification.get("type") == "RECEIPT":
+        extraction = await extract_email_data_activity({**payload, "classification": classification})
+        trail.log(
+            invoice_id=payload.get("email_id"),
+            event_type=AuditEventType.EXTRACTED,
+            summary=f"Receipt from {extraction.get('vendor') or payload.get('sender')}",
+            details={"amount": extraction.get("amount")},
+        )
+        return {
+            "email_id": payload.get("email_id"),
+            "classification": classification,
+            "extraction": extraction,
+            "action": "recorded",
+            "document_type": "receipt",
+            "workflow": "auto_record",
+            "reason": "Payment receipt — transaction already completed",
+            "suggested_state": "closed",
+        }
+
     extraction = await extract_email_data_activity({**payload, "classification": classification})
 
     # --- Multi-invoice handling ---
