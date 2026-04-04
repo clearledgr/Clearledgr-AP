@@ -452,6 +452,29 @@ class FinanceAgentRuntime:
     def organization_settings(self) -> Dict[str, Any]:
         return self._organization_settings()
 
+    @staticmethod
+    def _initial_state_for_document(invoice: Dict[str, Any]) -> str:
+        """Determine initial AP state based on document classification.
+
+        Subscription notifications and receipts go straight to 'closed' —
+        they are records of charges already made, not payables.
+        """
+        doc_type = str(
+            invoice.get("document_type")
+            or invoice.get("classification", {}).get("type", "")
+            if isinstance(invoice.get("classification"), dict)
+            else invoice.get("document_type", "")
+        ).strip().lower()
+        if doc_type in ("subscription_notification", "subscription", "receipt"):
+            return "closed"
+        workflow = str(invoice.get("workflow") or "").strip().lower()
+        if workflow == "auto_record":
+            return "closed"
+        suggested = str(invoice.get("suggested_state") or "").strip().lower()
+        if suggested == "closed":
+            return "closed"
+        return "received"
+
     def _seed_ap_item_for_invoice_processing(
         self,
         invoice: Dict[str, Any],
@@ -633,7 +656,7 @@ class FinanceAgentRuntime:
                 "invoice_number": invoice_number,
                 "due_date": due_date,
                 "attachment_url": attachment_url,
-                "state": "received",
+                "state": self._initial_state_for_document(invoice),
                 "confidence": confidence,
                 "field_confidences": invoice.get("field_confidences") if isinstance(invoice.get("field_confidences"), dict) else None,
                 "exception_code": invoice.get("exception_code"),
