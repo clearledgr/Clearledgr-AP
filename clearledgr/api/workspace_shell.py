@@ -1417,7 +1417,7 @@ def get_user_preferences(
     organization_id: Optional[str] = Query(default=None),
     user: TokenData = Depends(get_current_user),
 ):
-    _require_ops(user)
+    _require_ops_access(user)
     org_id = _resolve_org_id(user, organization_id)
     db = get_db()
     current_user = db.get_user(user.user_id)
@@ -1437,7 +1437,7 @@ def patch_user_preferences(
     request: UserPreferencesPatchRequest,
     user: TokenData = Depends(get_current_user),
 ):
-    _require_ops(user)
+    _require_ops_access(user)
     org_id = _resolve_org_id(user, request.organization_id)
     db = get_db()
     current_user = db.get_user(user.user_id)
