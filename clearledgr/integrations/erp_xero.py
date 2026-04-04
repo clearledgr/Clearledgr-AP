@@ -214,6 +214,22 @@ async def post_bill_to_xero(
             "TaxType": "NONE",
         })
 
+    # Apply tax to line items if tax_amount provided
+    if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
+        for li in xero_bill["LineItems"]:
+            li["TaxType"] = "OUTPUT"  # Standard tax
+        xero_bill["TotalTax"] = bill.tax_amount
+
+    # Apply discount as negative line
+    if getattr(bill, "discount_amount", None) and bill.discount_amount > 0:
+        xero_bill["LineItems"].append({
+            "Description": f"Discount ({bill.discount_terms or 'early payment'})",
+            "Quantity": 1,
+            "UnitAmount": -bill.discount_amount,
+            "AccountCode": expense_account,
+            "TaxType": "NONE",
+        })
+
     url = "https://api.xero.com/api.xro/2.0/Invoices"
 
     try:
@@ -888,3 +904,91 @@ async def get_chart_of_accounts_xero(connection) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error("Failed to fetch Xero chart of accounts: %s", type(e).__name__)
         return []
+
+
+# ==================== Vendor List ====================
+
+
+async def list_all_vendors_xero(connection) -> List[Dict[str, Any]]:
+    """Fetch all supplier contacts from Xero with pagination.
+
+    Xero Contacts API uses ``page`` (1-indexed, 100 per page).
+    Filters to ``IsSupplier==true`` to get vendors only.
+    Returns a normalized list of vendor dicts.  Returns ``[]`` on any error.
+    """
+    if not connection.access_token or not connection.tenant_id:
+        return []
+
+    url = "https://api.xero.com/api.xro/2.0/Contacts"
+    headers = {
+        "Authorization": f"Bearer {connection.access_token}",
+        "xero-tenant-id": str(connection.tenant_id or ""),
+    }
+    page = 1
+    all_vendors: List[Dict[str, Any]] = []
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            while True:
+                response = await client.get(
+                    url,
+                    params={
+                        "where": "IsSupplier==true",
+                        "page": page,
+                    },
+                    headers=headers,
+                    timeout=60,
+                )
+
+                if response.status_code == 401:
+                    logger.warning("Xero token expired during vendor list fetch")
+                    break
+
+                response.raise_for_status()
+                result = response.json()
+
+                contacts = result.get("Contacts", [])
+                if not contacts:
+                    break
+
+                for c in contacts:
+                    addrs = c.get("Addresses") or []
+                    addr_parts = []
+                    for a in addrs:
+                        if a.get("AddressType") == "POBOX" or a.get("AddressType") == "STREET":
+                            addr_parts = list(filter(None, [
+                                a.get("AddressLine1"), a.get("City"),
+                                a.get("Region"), a.get("PostalCode"),
+                                a.get("Country"),
+                            ]))
+                            break
+
+                    phones = c.get("Phones") or []
+                    phone = ""
+                    for p in phones:
+                        if p.get("PhoneNumber"):
+                            phone = str(p["PhoneNumber"])
+                            break
+
+                    all_vendors.append({
+                        "vendor_id": str(c.get("ContactID") or ""),
+                        "name": str(c.get("Name") or ""),
+                        "email": str(c.get("EmailAddress") or ""),
+                        "phone": phone,
+                        "tax_id": str(c.get("TaxNumber") or ""),
+                        "currency": str(c.get("DefaultCurrency") or ""),
+                        "active": str(c.get("ContactStatus") or "").upper() == "ACTIVE",
+                        "address": ", ".join(addr_parts),
+                        "payment_terms": "",
+                        "balance": float(c.get("Balances", {}).get("AccountsPayable", {}).get("Outstanding") or 0),
+                    })
+
+                if len(contacts) < 100:
+                    break
+                page += 1
+
+        return all_vendors
+
+    except Exception as e:
+        logger.error("Failed to fetch Xero vendor list: %s", type(e).__name__)
+        return all_vendors or []

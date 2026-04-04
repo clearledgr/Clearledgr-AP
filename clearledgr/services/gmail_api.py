@@ -260,15 +260,26 @@ class GmailAPIClient:
         self._token: Optional[GmailToken] = None
     
     async def ensure_authenticated(self) -> bool:
-        """Ensure we have valid credentials for this user."""
+        """Ensure we have valid credentials for this user.
+
+        Returns False if no token exists or refresh fails.
+        Distinguishes between "not authorized" and "refresh failed" via logging.
+        """
         self._token = token_store.get(self.user_id)
-        
+
         if not self._token:
             return False
-        
+
         if self._token.is_expired():
-            await self._refresh_token()
-        
+            try:
+                await self._refresh_token()
+            except ValueError as exc:
+                logger.error("Gmail token refresh failed for %s (re-auth required): %s", self.user_id, exc)
+                return False
+            except Exception as exc:
+                logger.error("Gmail token refresh unexpected error for %s: %s", self.user_id, exc)
+                return False
+
         return True
     
     async def _refresh_token(self) -> None:

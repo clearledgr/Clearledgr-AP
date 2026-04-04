@@ -56,6 +56,15 @@ async def _handle_enrich_with_context(
         invoice = _build_invoice(invoice_payload)
         db = get_db()
 
+        # --- Resolve vendor aliases (dedup integration) ---
+        try:
+            from clearledgr.services.vendor_dedup import get_vendor_dedup_service
+            resolved_name = get_vendor_dedup_service(organization_id).resolve_vendor_name(invoice.vendor_name or "")
+            if resolved_name and resolved_name != invoice.vendor_name:
+                invoice.vendor_name = resolved_name
+        except Exception:
+            pass
+
         # --- Gap 3: Self-reflection validates extraction before enrichment ---
         reflection_data: Dict[str, Any] = {}
         invoice_text = getattr(invoice, "invoice_text", "") or ""

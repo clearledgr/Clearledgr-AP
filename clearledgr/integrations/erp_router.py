@@ -72,6 +72,7 @@ from clearledgr.integrations.erp_quickbooks import (  # noqa: F401, E402
     _attach_to_quickbooks,
     get_payment_status_quickbooks,
     get_chart_of_accounts_quickbooks,
+    list_all_vendors_quickbooks,
 )
 
 # ---------------------------------------------------------------------------
@@ -92,6 +93,7 @@ from clearledgr.integrations.erp_xero import (  # noqa: F401, E402
     _attach_to_xero,
     get_payment_status_xero,
     get_chart_of_accounts_xero,
+    list_all_vendors_xero,
 )
 
 # ---------------------------------------------------------------------------
@@ -114,6 +116,7 @@ from clearledgr.integrations.erp_netsuite import (  # noqa: F401, E402
     _attach_to_netsuite,
     get_payment_status_netsuite,
     get_chart_of_accounts_netsuite,
+    list_all_vendors_netsuite,
 )
 
 # ---------------------------------------------------------------------------
@@ -138,6 +141,7 @@ from clearledgr.integrations.erp_sap import (  # noqa: F401, E402
     _attach_to_sap,
     get_payment_status_sap,
     get_chart_of_accounts_sap,
+    list_all_vendors_sap,
 )
 
 
@@ -408,6 +412,11 @@ class Bill:
     line_items: Optional[List[Dict[str, Any]]] = None
     attachment_url: Optional[str] = None
     po_number: Optional[str] = None
+    tax_amount: Optional[float] = None
+    tax_rate: Optional[float] = None
+    discount_amount: Optional[float] = None
+    discount_terms: Optional[str] = None
+    payment_terms: Optional[str] = None
 
 
 @dataclass
@@ -1306,3 +1315,134 @@ async def get_chart_of_accounts(
         _save_chart_of_accounts_cache(org_id, accounts, erp_type)
 
     return accounts
+
+
+# =====================================================================
+# Vendor list — full directory from ERP with caching
+# =====================================================================
+
+_VENDOR_LIST_FETCHERS = {
+    "quickbooks": list_all_vendors_quickbooks,
+    "xero": list_all_vendors_xero,
+    "netsuite": list_all_vendors_netsuite,
+    "sap": list_all_vendors_sap,
+}
+
+# Cache TTL: 24 hours
+_VENDOR_LIST_CACHE_TTL_SECONDS = 24 * 60 * 60
+
+
+def _get_cached_vendor_list(
+    organization_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Return cached vendor list from org settings_json, or None if stale/missing."""
+    import json as _json
+
+    try:
+        db = _get_db()
+        org = db.get_organization(organization_id)
+        if not org:
+            return None
+        settings = org.get("settings_json") or org.get("settings") or {}
+        if isinstance(settings, str):
+            try:
+                settings = _json.loads(settings)
+            except Exception:
+                return None
+        cache = settings.get("vendor_list_cache")
+        if not isinstance(cache, dict):
+            return None
+        fetched_at = cache.get("fetched_at")
+        if not fetched_at:
+            return None
+        try:
+            fetched_dt = datetime.fromisoformat(fetched_at)
+            if fetched_dt.tzinfo is None:
+                fetched_dt = fetched_dt.replace(tzinfo=timezone.utc)
+            age_seconds = (datetime.now(timezone.utc) - fetched_dt).total_seconds()
+            if age_seconds > _VENDOR_LIST_CACHE_TTL_SECONDS:
+                return None
+        except (ValueError, TypeError):
+            return None
+        return cache
+    except Exception:
+        return None
+
+
+def _save_vendor_list_cache(
+    organization_id: str,
+    vendors: List[Dict[str, Any]],
+    erp_type: str,
+) -> None:
+    """Store vendor list in org settings_json for caching."""
+    import json as _json
+
+    try:
+        db = _get_db()
+        org = db.get_organization(organization_id)
+        if not org:
+            return
+        settings = org.get("settings_json") or org.get("settings") or {}
+        if isinstance(settings, str):
+            try:
+                settings = _json.loads(settings)
+            except Exception:
+                settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+
+        settings["vendor_list_cache"] = {
+            "vendors": vendors,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "erp_type": erp_type,
+            "vendor_count": len(vendors),
+        }
+
+        db.update_organization(organization_id, settings_json=settings)
+    except Exception as exc:
+        logger.warning("Failed to cache vendor list for org %s: %s", organization_id, exc)
+
+
+async def list_all_vendors(
+    organization_id: str,
+    entity_id: Optional[str] = None,
+    force_refresh: bool = False,
+) -> List[Dict[str, Any]]:
+    """Fetch full vendor directory from the connected ERP.
+
+    Results are cached in organization settings for 24h.
+    Pass force_refresh=True to bypass cache.
+
+    Returns an empty list on any error so the caller is never blocked.
+    """
+    org_id = str(organization_id or "").strip() or "default"
+
+    # Check cache first (unless force_refresh)
+    if not force_refresh:
+        cached = _get_cached_vendor_list(org_id)
+        if cached is not None:
+            return cached.get("vendors", [])
+
+    # Resolve ERP connection
+    connection = get_erp_connection(org_id, entity_id=entity_id)
+    if not connection:
+        logger.debug("No ERP connection for org %s, returning empty vendor list", org_id)
+        return []
+
+    erp_type = str(connection.type or "").strip().lower()
+    fetcher = _VENDOR_LIST_FETCHERS.get(erp_type)
+    if not fetcher:
+        logger.warning("No vendor-list fetcher for ERP type: %s", erp_type)
+        return []
+
+    try:
+        vendors = await fetcher(connection)
+    except Exception as exc:
+        logger.error("Vendor list fetch failed for org %s (%s): %s", org_id, erp_type, exc)
+        return []
+
+    # Cache the result
+    if vendors:
+        _save_vendor_list_cache(org_id, vendors, erp_type)
+
+    return vendors

@@ -59,6 +59,8 @@ def _load_store_symbols() -> None:
     global ReconStore
     global EntityStore
     global PaymentStore
+    global WebhookStore
+    global DisputeStore
 
     if "APStore" in globals():
         return
@@ -79,6 +81,8 @@ def _load_store_symbols() -> None:
     from clearledgr.core.stores.recon_store import ReconStore as _ReconStore
     from clearledgr.core.stores.entity_store import EntityStore as _EntityStore
     from clearledgr.core.stores.payment_store import PaymentStore as _PaymentStore
+    from clearledgr.core.stores.webhook_store import WebhookStore as _WebhookStore
+    from clearledgr.core.stores.dispute_store import DisputeStore as _DisputeStore
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -94,6 +98,8 @@ def _load_store_symbols() -> None:
     ReconStore = _ReconStore
     EntityStore = _EntityStore
     PaymentStore = _PaymentStore
+    WebhookStore = _WebhookStore
+    DisputeStore = _DisputeStore
 
 
 class _ClearledgrDBBase:
@@ -471,6 +477,18 @@ class _ClearledgrDBBase:
             """)
 
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS outlook_autopilot_state (
+                    user_id TEXT PRIMARY KEY,
+                    email TEXT,
+                    subscription_id TEXT,
+                    subscription_expiration TEXT,
+                    last_scan_at TEXT,
+                    last_error TEXT,
+                    updated_at TEXT
+                )
+            """)
+
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS erp_connections (
                     id TEXT PRIMARY KEY,
                     organization_id TEXT NOT NULL,
@@ -711,6 +729,61 @@ class _ClearledgrDBBase:
                     status TEXT DEFAULT 'pending',
                     created_at TEXT,
                     updated_at TEXT
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    event_types TEXT NOT NULL DEFAULT '[]',
+                    secret TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    description TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    UNIQUE(organization_id, url)
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS disputes (
+                    id TEXT PRIMARY KEY,
+                    ap_item_id TEXT NOT NULL,
+                    organization_id TEXT NOT NULL,
+                    dispute_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    vendor_name TEXT,
+                    vendor_email TEXT,
+                    description TEXT,
+                    resolution TEXT,
+                    followup_thread_id TEXT,
+                    followup_count INTEGER DEFAULT 0,
+                    opened_at TEXT NOT NULL,
+                    vendor_contacted_at TEXT,
+                    response_received_at TEXT,
+                    resolved_at TEXT,
+                    escalated_at TEXT,
+                    updated_at TEXT
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS delegation_rules (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT NOT NULL,
+                    delegator_id TEXT NOT NULL,
+                    delegator_email TEXT NOT NULL,
+                    delegate_id TEXT NOT NULL,
+                    delegate_email TEXT NOT NULL,
+                    is_active INTEGER DEFAULT 1,
+                    reason TEXT,
+                    starts_at TEXT,
+                    ends_at TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    UNIQUE(organization_id, delegator_email, delegate_email)
                 )
             """)
 
@@ -1180,6 +1253,8 @@ def _get_db_impl_class():
             VendorStore,
             ReconStore,
             PaymentStore,
+            WebhookStore,
+            DisputeStore,
             _ClearledgrDBBase,
         ):
             pass

@@ -89,6 +89,66 @@ class IntegrationStore:
             conn.commit()
 
     # ------------------------------------------------------------------
+    # Outlook autopilot state
+    # ------------------------------------------------------------------
+
+    def get_outlook_autopilot_state(self, user_id: str) -> Optional[Dict[str, Any]]:
+        self.initialize()
+        sql = self._prepare_sql("SELECT * FROM outlook_autopilot_state WHERE user_id = ?")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (user_id,))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def list_outlook_autopilot_states(self) -> List[Dict[str, Any]]:
+        self.initialize()
+        sql = "SELECT * FROM outlook_autopilot_state"
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql)
+            rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
+    def save_outlook_autopilot_state(
+        self,
+        user_id: str,
+        email: Optional[str] = None,
+        subscription_id: Optional[str] = None,
+        subscription_expiration: Optional[str] = None,
+        last_scan_at: Optional[str] = None,
+        last_error: Optional[str] = None,
+    ) -> None:
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+
+        if self.use_postgres:
+            sql = self._prepare_sql("""
+                INSERT INTO outlook_autopilot_state
+                (user_id, email, subscription_id, subscription_expiration, last_scan_at, last_error, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (user_id)
+                DO UPDATE SET email = EXCLUDED.email,
+                              subscription_id = EXCLUDED.subscription_id,
+                              subscription_expiration = EXCLUDED.subscription_expiration,
+                              last_scan_at = EXCLUDED.last_scan_at,
+                              last_error = EXCLUDED.last_error,
+                              updated_at = EXCLUDED.updated_at
+            """)
+        else:
+            sql = self._prepare_sql("""
+                INSERT OR REPLACE INTO outlook_autopilot_state
+                (user_id, email, subscription_id, subscription_expiration, last_scan_at, last_error, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """)
+        params = (user_id, email, subscription_id, subscription_expiration, last_scan_at, last_error, now)
+
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            conn.commit()
+
+    # ------------------------------------------------------------------
     # ERP connections
     # ------------------------------------------------------------------
 

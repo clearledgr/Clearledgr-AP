@@ -287,7 +287,34 @@ class APStore:
                 )
 
             conn.commit()
-            return cur.rowcount > 0
+            updated = cur.rowcount > 0
+
+        # --- Post-commit: emit webhook for state transitions (non-blocking) ---
+        if updated and prev_state is not None and new_state is not None:
+            try:
+                import asyncio
+                from clearledgr.services.webhook_delivery import emit_state_change_webhook
+
+                org_id = kwargs.get("organization_id") or (
+                    current.get("organization_id") if current else None
+                ) or ""
+                coro = emit_state_change_webhook(
+                    organization_id=org_id,
+                    ap_item_id=ap_item_id,
+                    new_state=kwargs["state"],
+                    prev_state=str(prev_state),
+                    item_data=current,
+                )
+                # Fire-and-forget: schedule on the running loop if available
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(coro)
+                except RuntimeError:
+                    pass  # No event loop running — skip (sync context)
+            except Exception as wh_exc:
+                logger.warning("[APStore] Webhook emission failed for %s (will retry via queue): %s", ap_item_id, wh_exc)
+
+        return updated
 
     def update_ap_item_metadata_merge(self, ap_item_id: str, patch: Dict[str, Any]) -> bool:
         """Merge *patch* into an AP item's existing metadata JSON column.

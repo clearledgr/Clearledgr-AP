@@ -100,6 +100,8 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
       <span class="secondary-chip">Total spend ${fmtDollar(vendors.reduce((sum, vendor) => sum + Number(vendor.total_amount || 0), 0))}</span>
     </div>
 
+    <${DedupBanner} api=${api} orgId=${orgId} toast=${toast} />
+
     <div class="panel">
 
       <div style="position:relative">
@@ -156,6 +158,50 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
               </div>
             `)}
       </div>
+    </div>
+  `;
+}
+
+function DedupBanner({ api, orgId, toast }) {
+  const [clusters, setClusters] = useState([]);
+  const [merging, setMerging] = useState('');
+  useEffect(() => {
+    api(`/api/workspace/vendor-intelligence/duplicates?organization_id=${encodeURIComponent(orgId)}`)
+      .then((d) => setClusters(d?.clusters || []))
+      .catch(() => {});
+  }, [api, orgId]);
+  if (!clusters.length) return null;
+  const doMerge = async (cluster) => {
+    const canonical = cluster.canonical.vendor_name;
+    const dupes = cluster.duplicates.map((d) => d.vendor_name);
+    setMerging(canonical);
+    try {
+      await api(`/api/workspace/vendor-intelligence/merge`, {
+        method: 'POST',
+        body: JSON.stringify({ canonical, duplicates: dupes }),
+      });
+      setClusters((prev) => prev.filter((c) => c.canonical.vendor_name !== canonical));
+      toast?.(`Merged ${dupes.join(', ')} into ${canonical}`, 'success');
+    } catch (e) {
+      toast?.('Merge failed', 'error');
+    }
+    setMerging('');
+  };
+  return html`
+    <div class="panel" style="border-left:3px solid var(--amber);margin-bottom:14px">
+      <h3 style="margin-top:0">Possible duplicate vendors (${clusters.length})</h3>
+      <p class="muted" style="margin:0 0 8px;font-size:12px">These vendors have similar names and may be the same entity.</p>
+      ${clusters.slice(0, 5).map((c) => html`
+        <div key=${c.canonical.vendor_name} style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <div>
+            <strong>${c.canonical.vendor_name}</strong> (${c.canonical.invoice_count} invoices)
+            <div class="muted">${c.duplicates.map((d) => `${d.vendor_name} (${d.similarity * 100 | 0}%)`).join(', ')}</div>
+          </div>
+          <button class="btn-secondary btn-sm" onClick=${() => doMerge(c)} disabled=${merging === c.canonical.vendor_name}>
+            ${merging === c.canonical.vendor_name ? 'Merging...' : 'Merge'}
+          </button>
+        </div>
+      `)}
     </div>
   `;
 }

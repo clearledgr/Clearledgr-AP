@@ -1256,6 +1256,11 @@ class InvoicePostingMixin:
             po_number=invoice.po_number,
             attachment_url=invoice.attachment_url,
             line_items=invoice.line_items,
+            tax_amount=getattr(invoice, "tax_amount", None),
+            tax_rate=getattr(invoice, "tax_rate", None),
+            discount_amount=getattr(invoice, "discount_amount", None),
+            discount_terms=getattr(invoice, "discount_terms", None),
+            payment_terms=getattr(invoice, "payment_terms", None),
         )
 
         ap_item_id = self._lookup_ap_item_id(

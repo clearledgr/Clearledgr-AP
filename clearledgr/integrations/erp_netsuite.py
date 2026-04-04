@@ -332,6 +332,23 @@ async def post_bill_to_netsuite(
             "memo": bill.description or f"Invoice {bill.invoice_number}",
         })
 
+    # Add tax if provided
+    if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
+        ns_bill["taxTotal"] = bill.tax_amount
+
+    # Discount as negative expense line
+    if getattr(bill, "discount_amount", None) and bill.discount_amount > 0:
+        ns_bill["expense"]["items"].append({
+            "line": len(ns_bill["expense"]["items"]) + 1,
+            "account": {"id": expense_account},
+            "amount": -bill.discount_amount,
+            "memo": f"Discount ({getattr(bill, 'discount_terms', '') or 'early payment'})",
+        })
+
+    # Payment terms in memo
+    if getattr(bill, "payment_terms", None):
+        ns_bill["memo"] = f"{ns_bill['memo']} | Terms: {bill.payment_terms}"
+
     url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/vendorBill"
     auth_header = _oauth_header(connection, "POST", url)
 
@@ -1154,3 +1171,102 @@ async def get_chart_of_accounts_netsuite(connection) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error("Failed to fetch NetSuite chart of accounts: %s", type(e).__name__)
         return []
+
+
+# ==================== Vendor List ====================
+
+
+async def list_all_vendors_netsuite(connection) -> List[Dict[str, Any]]:
+    """Fetch all vendors from NetSuite via SuiteQL with pagination.
+
+    SuiteQL uses ``offset`` + ``limit`` query params.
+    Returns a normalized list of vendor dicts.  Returns ``[]`` on any error.
+    """
+    if not connection.account_id:
+        return []
+
+    suiteql_url = (
+        f"https://{connection.account_id}.suitetalk.api.netsuite.com"
+        "/services/rest/query/v1/suiteql"
+    )
+
+    query = (
+        "SELECT id, companyName, email, phone, "
+        "defaultAddress, terms, isInactive, currency "
+        "FROM vendor"
+    )
+    page_size = 1000
+    offset = 0
+    all_vendors: List[Dict[str, Any]] = []
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            while True:
+                auth_header = _oauth_header(connection, "POST", suiteql_url)
+                response = await client.post(
+                    suiteql_url,
+                    json={"q": query},
+                    headers={
+                        "Authorization": auth_header,
+                        "Content-Type": "application/json",
+                        "Prefer": "transient",
+                    },
+                    params={"limit": page_size, "offset": offset},
+                    timeout=60,
+                )
+
+                if response.status_code == 401:
+                    logger.warning("NetSuite token expired during vendor list fetch")
+                    break
+
+                response.raise_for_status()
+                result = response.json()
+
+                items = result.get("items", [])
+                if not items:
+                    break
+
+                for v in items:
+                    is_inactive = v.get("isinactive") or v.get("isInactive")
+                    active = True
+                    if isinstance(is_inactive, str):
+                        active = is_inactive.strip().upper() not in {"T", "TRUE", "YES", "1"}
+                    elif isinstance(is_inactive, bool):
+                        active = not is_inactive
+
+                    currency_val = v.get("currency")
+                    currency = ""
+                    if isinstance(currency_val, dict):
+                        currency = str(currency_val.get("refName") or currency_val.get("name") or "")
+                    elif currency_val:
+                        currency = str(currency_val)
+
+                    terms_val = v.get("terms")
+                    terms = ""
+                    if isinstance(terms_val, dict):
+                        terms = str(terms_val.get("refName") or terms_val.get("name") or "")
+                    elif terms_val:
+                        terms = str(terms_val)
+
+                    all_vendors.append({
+                        "vendor_id": str(v.get("id") or ""),
+                        "name": str(v.get("companyname") or v.get("companyName") or ""),
+                        "email": str(v.get("email") or ""),
+                        "phone": str(v.get("phone") or ""),
+                        "tax_id": "",
+                        "currency": currency,
+                        "active": active,
+                        "address": str(v.get("defaultaddress") or v.get("defaultAddress") or ""),
+                        "payment_terms": terms,
+                        "balance": 0.0,
+                    })
+
+                if len(items) < page_size:
+                    break
+                offset += page_size
+
+        return all_vendors
+
+    except Exception as e:
+        logger.error("Failed to fetch NetSuite vendor list: %s", type(e).__name__)
+        return all_vendors or []

@@ -124,6 +124,30 @@ app = FastAPI(
 )
 
 
+# ---------------------------------------------------------------------------
+# Sentry error tracking (opt-in via SENTRY_DSN env var)
+# ---------------------------------------------------------------------------
+_sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+if _sentry_dsn:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.httpx import HttpxIntegration
+
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            environment=os.getenv("ENV", "development"),
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+            send_default_pii=False,
+            integrations=[FastApiIntegration(), HttpxIntegration()],
+        )
+        logger.info("Sentry error tracking initialized")
+    except ImportError:
+        logger.warning("SENTRY_DSN set but sentry-sdk not installed — pip install sentry-sdk[fastapi]")
+    except Exception as exc:
+        logger.warning("Sentry initialization failed: %s", exc)
+
+
 def _env_flag(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -177,6 +201,12 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
     # OAuth callbacks required for ERP admin connect flows.
     "/erp/quickbooks/callback",
     "/erp/xero/callback",
+    # Outlook OAuth + webhooks
+    "/outlook/connect/start",
+    "/outlook/callback",
+    "/outlook/disconnect",
+    "/outlook/status",
+    "/outlook/webhook",
 }
 
 STRICT_PROFILE_ALLOWED_PREFIXES = (
@@ -197,6 +227,7 @@ STRICT_PROFILE_ALLOWED_OPS_PATHS = {
     "/api/ops/ap-decision-health",
     "/api/ops/monitoring-thresholds",
     "/api/ops/monitoring-thresholds/check",
+    "/api/ops/monitoring-health",
     "/api/ops/retry-queue",
 }
 
@@ -264,6 +295,19 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/team/invites",
     "/api/workspace/user/preferences",
     "/api/workspace/spend-analysis",
+    "/api/workspace/erp-vendors",
+    "/api/workspace/reports/export",
+    "/api/workspace/webhooks",
+    "/api/workspace/vendor-intelligence/duplicates",
+    "/api/workspace/vendor-intelligence/merge",
+    "/api/workspace/disputes",
+    "/api/workspace/disputes/summary",
+    "/api/workspace/delegation-rules",
+    "/api/workspace/period-close/current",
+    "/api/workspace/vendor-intelligence/reconcile-statement",
+    "/api/workspace/tax-compliance/summary",
+    "/api/workspace/tax-compliance/validate-tax-id",
+    "/api/workspace/reports/export-to-sheets",
 }
 
 STRICT_PROFILE_ALLOWED_AUTH_PATHS = {
@@ -351,6 +395,17 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/extension/workflow/[^/]+$",
         r"^/extension/by-thread/[^/]+$",
         r"^/gmail/status/[^/]+$",
+        r"^/api/workspace/webhooks/[^/]+$",
+        r"^/api/workspace/webhooks/[^/]+/test$",
+        r"^/api/workspace/vendor-intelligence/profiles/[^/]+/aliases$",
+        r"^/api/workspace/vendor-intelligence/profiles/[^/]+/aliases/[^/]+$",
+        r"^/api/workspace/disputes/[^/]+/resolve$",
+        r"^/api/workspace/disputes/[^/]+/escalate$",
+        r"^/api/workspace/delegation-rules/[^/]+/deactivate$",
+        r"^/api/workspace/period-close/accruals/[^/]+$",
+        r"^/api/workspace/period-close/backdated/[^/]+$",
+        r"^/api/workspace/period-close/lock/[^/]+$",
+        r"^/api/workspace/period-close/unlock/[^/]+$",
     )
 )
 
@@ -746,6 +801,13 @@ except ImportError:
 try:
     from clearledgr.api.gmail_webhooks import router as gmail_webhooks_router
     app.include_router(gmail_webhooks_router)
+except ImportError:
+    pass
+
+# Outlook / Microsoft 365 routes (OAuth + webhooks)
+try:
+    from clearledgr.api.outlook_routes import router as outlook_router
+    app.include_router(outlook_router)
 except ImportError:
     pass
 

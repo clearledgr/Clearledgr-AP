@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:a24f3751d0326130d5647f7d01754ddd3e253ee723f2a859e66cfc037ce5ad23 */
+/* clearledgr-source-fingerprint:82f0031860c87c6a97cd53adcf6179c1dbf03412e912fa7f872d843f6b8702d9 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59639,10 +59639,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       add("approval", approvalFollowup?.escalation_due ? "Approval escalation due" : approvalFollowup?.sla_breached ? "Approval follow-up due" : "Waiting on approver", approvalFollowup?.escalation_due ? "Approval has been waiting past the escalation policy and should be escalated or reassigned." : approvalFollowup?.sla_breached ? "Approval has been waiting past the reminder SLA and should be nudged." : pendingAssignees.length ? `Waiting on ${pendingAssignees.slice(0, 3).join(", ")}.` : "The approval request is still outstanding.");
     }
     if (state === "needs_info") {
-      add("needs_info", isInvoiceDocument ? "Missing invoice details" : "Missing document details", `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
+      const disputeStatus = item?.dispute_status;
+      const disputeLabel = disputeStatus === "vendor_contacted" ? "Waiting on vendor response" : disputeStatus === "escalated" ? "Dispute escalated — vendor unresponsive" : isInvoiceDocument ? "Missing invoice details" : "Missing document details";
+      add("needs_info", disputeLabel, `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
     }
     if (state === "failed_post") {
       add("failed_post", "ERP posting failed", "Retry the ERP post or review the connector response.");
+    }
+    const gateReasons = Array.isArray(item?.validation_reasons) ? item.validation_reasons : [];
+    for (const reason of gateReasons) {
+      const code = String(reason?.code || "").trim();
+      if (code === "period_locked") {
+        add("period_locked", "Period is locked", reason.message || "Cannot post — accounting period is closed.");
+      } else if (code === "payment_terms_mismatch") {
+        add("terms_mismatch", "Payment terms changed", reason.message || "Invoice terms differ from vendor profile.");
+      } else if (code === "bank_details_mismatch_from_invoice") {
+        add("bank_change", "Bank details changed", reason.message || "Vendor bank details differ from previous invoices.");
+      } else if (code === "invalid_vendor_tax_id") {
+        add("tax_id", "Invalid vendor tax ID", reason.message || "Vendor tax ID format is invalid.");
+      } else if (code === "invalid_gl_code") {
+        add("gl_code", "Invalid GL code", reason.message || "GL code not found in chart of accounts.");
+      }
     }
     if (blockers.length === 0 && state === "received") {
       add("received", isInvoiceDocument ? "Ready for approval" : "Needs finance review", isInvoiceDocument ? "This invoice is ready to send for approval." : getNonInvoiceWorkflowGuidance(documentType));
@@ -59868,11 +59885,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const invoiceNumber = item.invoice_number || "N/A";
     const dueDate = item.due_date || "N/A";
     const referenceText = invoiceNumber !== "N/A" ? `${documentLabel} #: ${invoiceNumber}` : documentLabel;
-    const metaLine = [
-      amountLabel,
-      referenceText,
-      ...isInvoiceDocument ? [`Due: ${dueDate}`, item.po_number ? `PO: ${item.po_number}` : "No PO"] : []
-    ].join(" · ");
+    const taxAmount = item.tax_amount ? formatAmount(item.tax_amount, item.currency || "USD") : "";
+    const discountAmount = item.discount_amount ? formatAmount(item.discount_amount, item.currency || "USD") : "";
+    const metaParts = [amountLabel];
+    if (taxAmount)
+      metaParts.push(`Tax: ${taxAmount}`);
+    if (discountAmount)
+      metaParts.push(`Disc: -${discountAmount}`);
+    metaParts.push(referenceText);
+    if (isInvoiceDocument) {
+      metaParts.push(`Due: ${dueDate}`);
+      metaParts.push(item.po_number ? `PO: ${item.po_number}` : "No PO");
+      if (item.payment_terms)
+        metaParts.push(item.payment_terms);
+    }
+    const metaLine = metaParts.join(" · ");
     const contextPayload = item?.id ? s3.contextState.get(item.id) || null : null;
     const budgetContext = normalizeBudgetContext(contextPayload || {}, item);
     const blockers = getBlockers(item, state, budgetContext, documentType);
@@ -60191,6 +60218,41 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
           `)}
         </div>
+      `}
+
+      ${Array.isArray(item?.line_items) && item.line_items.length > 0 && html2`
+        <details class="cl-section cl-disclosure">
+          <summary class="cl-section-title">Line items (${item.line_items.length})</summary>
+          <div class="cl-evidence-list">
+            ${item.line_items.slice(0, 10).map((li, i3) => html2`
+              <div key=${i3} class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>${li.description || `Line ${i3 + 1}`}</div>
+                  ${li.gl_code && html2`<div class="cl-evidence-detail">GL: ${li.gl_code}</div>`}
+                </div>
+                <div class="cl-evidence-status">${formatAmount(li.amount || 0, item.currency || "USD")}</div>
+              </div>
+            `)}
+          </div>
+        </details>
+      `}
+
+      ${item?.payment_status && item.payment_status !== "none" && html2`
+        <div class="cl-section" aria-label="Payment status">
+          <div class="cl-evidence-row">
+            <div class="cl-evidence-copy">
+              <div>Payment</div>
+              <div class="cl-evidence-detail">${item.payment_reference || ""}</div>
+            </div>
+            <div class="cl-evidence-status">
+              <span class="cl-state-pill ${item.payment_status}">${(item.payment_status || "").replace(/_/g, " ")}</span>
+            </div>
+          </div>
+        </div>
+      `}
+
+      ${item?.erp_sync_status && item.erp_sync_status !== "verified" && item.state === "posted_to_erp" && html2`
+        <div class="cl-state-note">ERP sync: ${item.erp_sync_status === "mismatch" ? "Mismatch detected — verify posting" : item.erp_sync_status}</div>
       `}
 
       ${pauseReason && fieldReviewBlockers.length === 0 && html2`<div class="cl-state-note">${pauseReason}</div>`}
@@ -60631,9 +60693,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
   ];
   var DEFAULT_ROUTE = "clearledgr/pipeline";
-  function getRouteById(id) {
-    return ROUTES.find((route) => route.id === id) || null;
-  }
   function resolveCapabilities(options = {}) {
     if (options?.capabilities && typeof options.capabilities === "object") {
       return options.capabilities;
@@ -60670,16 +60729,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return true;
     return capabilities[route.viewCapability] !== false;
   }
-  function canManageRoute(route, options = {}) {
-    const capabilities = resolveCapabilities(options);
-    if (!route)
-      return false;
-    if (!route.manageCapability)
-      return true;
-    if (!capabilities)
-      return false;
-    return capabilities[route.manageCapability] !== false;
-  }
   function getNavEligibleRoutes(options = {}) {
     return ROUTES.filter((route) => canViewRoute(route, options)).sort((left, right) => Number(left.navOrder || 0) - Number(right.navOrder || 0));
   }
@@ -60712,43 +60761,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       } catch {}
     }
     return normalized;
-  }
-  function getRoutePreferenceState(routeId, preferences = {}, options = {}) {
-    const route = getRouteById(routeId);
-    if (!route) {
-      return {
-        visible: false,
-        pinned: false,
-        hidden: false,
-        defaultPinned: false,
-        canHide: false,
-        viewCapability: "",
-        manageCapability: "",
-        canManage: false
-      };
-    }
-    const prefs = normalizeRoutePreferences(preferences, options);
-    const hidden = prefs.hidden.includes(route.id);
-    const pinned = prefs.pinned.includes(route.id);
-    const defaultPinned = Boolean(route.defaultPinned);
-    const visible = !hidden && (defaultPinned || pinned);
-    return {
-      visible,
-      pinned,
-      hidden,
-      defaultPinned,
-      canHide: route.canHide !== false,
-      viewCapability: route.viewCapability || "",
-      manageCapability: route.manageCapability || "",
-      canManage: canManageRoute(route, options)
-    };
-  }
-  function getVisibleNavRoutes(preferences = {}, options = {}) {
-    const prefs = normalizeRoutePreferences(preferences, options);
-    return getNavEligibleRoutes(options).filter((route) => {
-      const state = getRoutePreferenceState(route.id, prefs, options);
-      return state.visible;
-    });
   }
   function getMenuNavRoutes(preferences = {}, options = {}) {
     const groupWeight = { primary: 0, secondary: 1 };
@@ -62006,11 +62018,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return html4`<div class="home-banner warning">
     <div style="min-width:0;flex:1">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-        <span style="font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:#FEF3C7;color:#A16207">Setup still needed</span>
+        <span style="font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:${showGmailAction ? "#FEF3C7" : "#EFF6FF"};color:${showGmailAction ? "#A16207" : "#1D4ED8"}">
+          ${showGmailAction ? "Setup needed" : "Optional setup"}
+        </span>
       </div>
-      <strong style="display:block;font-size:16px;line-height:1.35;margin-bottom:4px">Finish setup to keep invoices moving</strong>
+      <strong style="display:block;font-size:16px;line-height:1.35;margin-bottom:4px">
+        ${showGmailAction ? "Connect Gmail to start processing" : "Connect more integrations"}
+      </strong>
       <p class="muted" style="margin:0;max-width:none">
-        ${adminAccess ? `${missingSetup.join(", ")} still need attention before invoices can move all the way through the flow.` : `${missingSetup.join(", ")} still need attention. Ask an admin to finish setup.`}
+        ${adminAccess ? showGmailAction ? `${missingSetup.join(", ")} still need attention before invoices can be processed.` : `${missingSetup.join(", ")} — connect these to unlock approvals, ERP posting, and full automation.` : `${missingSetup.join(", ")} still need attention. Ask an admin to finish setup.`}
       </p>
     </div>
     ${adminAccess && html4`<div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -62204,11 +62220,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           Welcome to Clearledgr
         </h2>
         <p style="font-size:15px;color:var(--ink-secondary);margin:0 0 12px">
-          ${allReady ? "Pipeline is your AP control plane. Use Gmail for the active record when context matters." : `${greeting}${firstName ? `, ${firstName}` : ""}. Finish setup, then use Pipeline to pick up invoice work.`}
+          ${allReady ? "Pipeline is your AP control plane. Use Gmail for the active record when context matters." : gmailOk ? `${greeting}${firstName ? `, ${firstName}` : ""}. Clearledgr is processing invoices. Connect more integrations to unlock approvals and ERP posting.` : `${greeting}${firstName ? `, ${firstName}` : ""}. Connect Gmail to start processing invoices.`}
         </p>
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-          <span style="font-size:12px;padding:4px 10px;border-radius:999px;background:${allReady ? "#ECFDF5" : "#FEFCE8"};color:${allReady ? "#047857" : "#A16207"}">
-            ${allReady ? "Ready to work" : "Setup incomplete"}
+          <span style="font-size:12px;padding:4px 10px;border-radius:999px;background:${allReady ? "#ECFDF5" : gmailOk ? "#EFF6FF" : "#FEFCE8"};color:${allReady ? "#047857" : gmailOk ? "#1D4ED8" : "#A16207"}">
+            ${allReady ? "Fully configured" : gmailOk ? "Processing invoices" : "Setup needed"}
           </span>
           ${lastScanAt ? html4`<span style="font-size:12px;padding:4px 10px;border-radius:999px;background:var(--bg);color:var(--ink-secondary)">Last scan ${fmtDateTime(lastScanAt)}</span>` : null}
         </div>
@@ -63233,7 +63249,44 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
     `}
 
+    <${DisputesPanel} api=${api} orgId=${orgId} navigate=${navigate} />
+
     <${ActionDialog} ...${dialog} />
+  `;
+  }
+  function DisputesPanel({ api, orgId, navigate }) {
+    const [summary, setSummary] = d2(null);
+    const [disputes, setDisputes] = d2([]);
+    y2(() => {
+      if (!api)
+        return;
+      api(`/api/workspace/disputes/summary?organization_id=${encodeURIComponent(orgId)}`).then(setSummary).catch(() => {});
+      api(`/api/workspace/disputes?organization_id=${encodeURIComponent(orgId)}&limit=10`).then((d3) => setDisputes(d3?.disputes || [])).catch(() => {});
+    }, [api, orgId]);
+    const openDisputes = disputes.filter((d3) => !["resolved", "closed"].includes(d3.status));
+    if (!summary || summary.total === 0)
+      return null;
+    return html5`
+    <div class="panel" style="margin-top:16px">
+      <h3 style="margin-top:0">Active disputes (${summary.open_count || 0})</h3>
+      <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+        ${Object.entries(summary.by_status || {}).map(([status, count]) => html5`
+          <span key=${status} class="secondary-chip">${status.replace(/_/g, " ")} ${count}</span>
+        `)}
+      </div>
+      ${openDisputes.slice(0, 5).map((d3) => html5`
+        <div key=${d3.id} style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <strong>${d3.vendor_name || "Unknown"}</strong>
+              <span class="muted" style="margin-left:6px">${(d3.dispute_type || "").replace(/_/g, " ")}</span>
+            </div>
+            <span class="status-badge ${d3.status === "escalated" ? "" : "connected"}">${(d3.status || "").replace(/_/g, " ")}</span>
+          </div>
+          ${d3.description && html5`<div class="muted" style="margin-top:2px">${d3.description}</div>`}
+        </div>
+      `)}
+    </div>
   `;
   }
 
@@ -63649,7 +63702,66 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             ${canManageConnections ? "You can change connection setup from here." : "You can review status here, but only admins can reconnect Gmail, change approval routing, or update ERP setup."}
           </div>
         </div>
+
+        <${WebhooksPanel} api=${api} canManage=${canManageConnections} />
       </div>
+    </div>
+  `;
+  }
+  function WebhooksPanel({ api, canManage }) {
+    const [webhooks, setWebhooks] = useState([]);
+    const [url, setUrl] = useState("");
+    const [events, setEvents] = useState("*");
+    const [adding, setAdding] = useState(false);
+    useEffect(() => {
+      api.fetch("/api/workspace/webhooks").then((d3) => setWebhooks(d3?.webhooks || [])).catch(() => {});
+    }, []);
+    const addWebhook = async () => {
+      if (!url.trim())
+        return;
+      setAdding(true);
+      try {
+        const result = await api.fetch("/api/workspace/webhooks", {
+          method: "POST",
+          body: JSON.stringify({ url: url.trim(), event_types: events.split(",").map((e3) => e3.trim()).filter(Boolean) })
+        });
+        if (result?.id)
+          setWebhooks((prev) => [...prev, result]);
+        setUrl("");
+      } catch (e3) {
+        console.warn("Add webhook failed:", e3);
+      }
+      setAdding(false);
+    };
+    const removeWebhook = async (id) => {
+      try {
+        await api.fetch(`/api/workspace/webhooks/${id}`, { method: "DELETE" });
+        setWebhooks((prev) => prev.filter((w3) => w3.id !== id));
+      } catch (e3) {
+        console.warn("Remove webhook failed:", e3);
+      }
+    };
+    return html8`
+    <div class="panel">
+      <h3 style="margin-top:0">Outgoing webhooks</h3>
+      <p class="muted" style="margin:0 0 8px;font-size:12px">Notify external systems when AP events happen (invoice approved, posted, etc).</p>
+      ${webhooks.length === 0 && html8`<div class="muted" style="font-size:12px;padding:8px 0">No webhooks configured</div>`}
+      ${webhooks.map((wh) => html8`
+        <div key=${wh.id} style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <div>
+            <div style="font-weight:600">${wh.url}</div>
+            <div class="muted">${Array.isArray(wh.event_types) ? wh.event_types.join(", ") : "*"}</div>
+          </div>
+          ${canManage && html8`<button class="btn-secondary btn-sm" onClick=${() => removeWebhook(wh.id)}>Remove</button>`}
+        </div>
+      `)}
+      ${canManage && html8`
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <input type="text" placeholder="https://..." value=${url} onInput=${(e3) => setUrl(e3.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
+          <button class="btn-secondary btn-sm" onClick=${addWebhook} disabled=${adding || !url.trim()}>${adding ? "..." : "Add"}</button>
+        </div>
+        <div class="muted" style="font-size:11px;margin-top:4px">Events: * (all), or comma-separated: invoice.approved, invoice.posted_to_erp</div>
+      `}
     </div>
   `;
   }
@@ -63811,7 +63923,74 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             ${canManageRules ? "You can change the rule thresholds from this page." : "This page stays readable for operators, but only admins can change the policy."}
           </div>
         </div>
+
+        <${DelegationPanel} api=${api} canManage=${canManageRules} />
       </div>
+    </div>
+  `;
+  }
+  function DelegationPanel({ api, canManage }) {
+    const [rules, setRules] = useState([]);
+    const [delegator, setDelegator] = useState("");
+    const [delegate, setDelegate] = useState("");
+    const [reason, setReason] = useState("");
+    const [adding, setAdding] = useState(false);
+    useEffect(() => {
+      api.fetch("/api/workspace/delegation-rules").then((d3) => setRules(d3?.rules || [])).catch(() => {});
+    }, []);
+    const addRule = async () => {
+      if (!delegator.trim() || !delegate.trim())
+        return;
+      setAdding(true);
+      try {
+        const result = await api.fetch("/api/workspace/delegation-rules", {
+          method: "POST",
+          body: JSON.stringify({ delegator_email: delegator.trim(), delegate_email: delegate.trim(), reason: reason.trim() })
+        });
+        if (result?.id)
+          setRules((prev) => [...prev, result]);
+        setDelegator("");
+        setDelegate("");
+        setReason("");
+      } catch (e3) {
+        console.warn("Add delegation failed:", e3);
+      }
+      setAdding(false);
+    };
+    const deactivate = async (id) => {
+      try {
+        await api.fetch(`/api/workspace/delegation-rules/${id}/deactivate`, { method: "POST" });
+        setRules((prev) => prev.filter((r3) => r3.id !== id));
+      } catch (e3) {
+        console.warn("Deactivate failed:", e3);
+      }
+    };
+    return html9`
+    <div class="panel">
+      <h3 style="margin-top:0">Approval delegation</h3>
+      <p class="muted" style="margin:0 0 8px;font-size:12px">When an approver is OOO, their pending approvals route to their delegate.</p>
+      ${rules.length === 0 && html9`<div class="muted" style="font-size:12px;padding:8px 0">No active delegation rules</div>`}
+      ${rules.map((r3) => html9`
+        <div key=${r3.id} style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <div>
+            <div><strong>${r3.delegator_email}</strong> → ${r3.delegate_email}</div>
+            ${r3.reason && html9`<div class="muted">${r3.reason}</div>`}
+          </div>
+          ${canManage && html9`<button class="btn-secondary btn-sm" onClick=${() => deactivate(r3.id)}>Remove</button>`}
+        </div>
+      `)}
+      ${canManage && html9`
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">
+          <div style="display:flex;gap:6px">
+            <input type="email" placeholder="Approver email" value=${delegator} onInput=${(e3) => setDelegator(e3.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
+            <input type="email" placeholder="Delegate email" value=${delegate} onInput=${(e3) => setDelegate(e3.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
+          </div>
+          <div style="display:flex;gap:6px">
+            <input type="text" placeholder="Reason (optional)" value=${reason} onInput=${(e3) => setReason(e3.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
+            <button class="btn-secondary btn-sm" onClick=${addRule} disabled=${adding || !delegator.trim() || !delegate.trim()}>${adding ? "..." : "Add"}</button>
+          </div>
+        </div>
+      `}
     </div>
   `;
   }
@@ -64168,7 +64347,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
   // src/routes/pages/HealthPage.js
   var html12 = htm_module_default.bind(_);
-  function HealthPage({ bootstrap }) {
+  function HealthPage({ bootstrap, api }) {
     const health = bootstrap?.health || {};
     const integrations = health.integrations || {};
     const actions = health.required_actions || [];
@@ -64209,7 +64388,37 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     })}
               </div>` : html12`<div class="secondary-empty">No integration data yet.</div>`}
         </div>
+        <${MonitoringPanel} api=${api} />
       </div>
+    </div>
+  `;
+  }
+  function MonitoringPanel({ api }) {
+    const [data, setData] = d2(null);
+    y2(() => {
+      if (!api)
+        return;
+      api.fetch("/api/ops/monitoring-health").then(setData).catch(() => {});
+    }, []);
+    if (!data)
+      return null;
+    return html12`
+    <div class="panel">
+      <h3 style="margin-top:0">System monitoring</h3>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span class="status-badge ${data.healthy ? "connected" : ""}">${data.healthy ? "Healthy" : `${data.alert_count} alert${data.alert_count !== 1 ? "s" : ""}`}</span>
+        <span class="muted" style="font-size:11px">${data.check_count} checks run</span>
+      </div>
+      ${(data.checks || []).map((check) => html12`
+        <div key=${check.check} style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <div>
+            <div style="font-weight:${check.alert ? "700" : "400"};color:${check.alert ? check.severity === "critical" ? "#B91C1C" : "#A16207" : "inherit"}">
+              ${check.check.replace(/_/g, " ")}
+            </div>
+          </div>
+          <div style="font-weight:600">${check.value}${typeof check.threshold === "number" ? ` / ${check.threshold}` : ""}</div>
+        </div>
+      `)}
     </div>
   `;
   }
@@ -66699,6 +66908,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <span class="secondary-chip">Total spend ${fmtDollar(vendors.reduce((sum, vendor) => sum + Number(vendor.total_amount || 0), 0))}</span>
     </div>
 
+    <${DedupBanner} api=${api} orgId=${orgId} toast=${toast} />
+
     <div class="panel">
 
       <div style="position:relative">
@@ -66751,6 +66962,48 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               </div>
             `)}
       </div>
+    </div>
+  `;
+  }
+  function DedupBanner({ api, orgId, toast }) {
+    const [clusters, setClusters] = d2([]);
+    const [merging, setMerging] = d2("");
+    y2(() => {
+      api(`/api/workspace/vendor-intelligence/duplicates?organization_id=${encodeURIComponent(orgId)}`).then((d3) => setClusters(d3?.clusters || [])).catch(() => {});
+    }, [api, orgId]);
+    if (!clusters.length)
+      return null;
+    const doMerge = async (cluster) => {
+      const canonical = cluster.canonical.vendor_name;
+      const dupes = cluster.duplicates.map((d3) => d3.vendor_name);
+      setMerging(canonical);
+      try {
+        await api(`/api/workspace/vendor-intelligence/merge`, {
+          method: "POST",
+          body: JSON.stringify({ canonical, duplicates: dupes })
+        });
+        setClusters((prev) => prev.filter((c3) => c3.canonical.vendor_name !== canonical));
+        toast?.(`Merged ${dupes.join(", ")} into ${canonical}`, "success");
+      } catch (e3) {
+        toast?.("Merge failed", "error");
+      }
+      setMerging("");
+    };
+    return html15`
+    <div class="panel" style="border-left:3px solid var(--amber);margin-bottom:14px">
+      <h3 style="margin-top:0">Possible duplicate vendors (${clusters.length})</h3>
+      <p class="muted" style="margin:0 0 8px;font-size:12px">These vendors have similar names and may be the same entity.</p>
+      ${clusters.slice(0, 5).map((c3) => html15`
+        <div key=${c3.canonical.vendor_name} style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <div>
+            <strong>${c3.canonical.vendor_name}</strong> (${c3.canonical.invoice_count} invoices)
+            <div class="muted">${c3.duplicates.map((d3) => `${d3.vendor_name} (${d3.similarity * 100 | 0}%)`).join(", ")}</div>
+          </div>
+          <button class="btn-secondary btn-sm" onClick=${() => doMerge(c3)} disabled=${merging === c3.canonical.vendor_name}>
+            ${merging === c3.canonical.vendor_name ? "Merging..." : "Merge"}
+          </button>
+        </div>
+      `)}
     </div>
   `;
   }
@@ -67718,7 +67971,181 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             `)}
           </div>
         </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Export reports</h3>
+          <p class="muted" style="margin:0 0 12px">Download AP data as CSV for month-end close, audits, or reconciliation.</p>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div>
+              <${ExportButton} api=${api} reportType="ap_aging" label="AP Aging Report" description="Open payables by aging bucket (current, 30, 60, 90+ days)" />
+              <${SheetsExportButton} api=${api} reportType="ap_aging" label="AP Aging" />
+            </div>
+            <div>
+              <${ExportButton} api=${api} reportType="vendor_spend" label="Vendor Spend Report" description="Top vendors, GL categories, and monthly trends" />
+              <${SheetsExportButton} api=${api} reportType="vendor_spend" label="Vendor Spend" />
+            </div>
+            <div>
+              <${ExportButton} api=${api} reportType="posting_status" label="Posting Status Report" description="AP items with posting timing and ERP references" />
+              <${SheetsExportButton} api=${api} reportType="posting_status" label="Posting Status" />
+            </div>
+          </div>
+        </div>
+
+        <${SpendAnalysisPanel} api=${api} />
+        <${AgingPanel} api=${api} />
+        <${PeriodClosePanel} api=${api} />
+        <${TaxCompliancePanel} api=${api} />
       </div>
+    </div>
+  `;
+  }
+  function SheetsExportButton({ api, reportType, label }) {
+    const [sheetUrl, setSheetUrl] = d2("");
+    const [exporting, setExporting] = d2(false);
+    const [result, setResult] = d2(null);
+    const doExport = async () => {
+      if (!sheetUrl.trim())
+        return;
+      setExporting(true);
+      setResult(null);
+      try {
+        const res = await api.fetch("/api/workspace/reports/export-to-sheets", {
+          method: "POST",
+          body: JSON.stringify({ spreadsheet_url: sheetUrl.trim(), report_type: reportType })
+        });
+        setResult(res?.ok ? `${res.rows_written} rows written to "${res.sheet_name}"` : res?.error || "Export failed");
+      } catch (e3) {
+        setResult("Export failed");
+      }
+      setExporting(false);
+    };
+    return html18`
+    <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+      <input type="text" placeholder="Paste Google Sheets URL..." value=${sheetUrl} onInput=${(e3) => setSheetUrl(e3.target.value)}
+        style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:11px" />
+      <button class="btn-secondary btn-sm" onClick=${doExport} disabled=${exporting || !sheetUrl.trim()}>
+        ${exporting ? "..." : "Push to Sheets"}
+      </button>
+    </div>
+    ${result && html18`<div class="muted" style="font-size:11px;margin-top:2px">${result}</div>`}
+  `;
+  }
+  function ExportButton({ api, reportType, label, description }) {
+    const [downloading, setDownloading] = d2(false);
+    const doExport = async () => {
+      setDownloading(true);
+      try {
+        const resp = await api.fetch(`/api/workspace/reports/export?report_type=${reportType}&format=csv`);
+        if (resp && resp.ok !== false) {
+          const blob = new Blob([typeof resp === "string" ? resp : JSON.stringify(resp)], { type: "text/csv" });
+          const url = URL.createObjectURL(blob);
+          const a3 = document.createElement("a");
+          a3.href = url;
+          a3.download = `${reportType}.csv`;
+          a3.click();
+          URL.revokeObjectURL(url);
+        }
+      } catch (e3) {
+        console.warn("Export failed:", e3);
+      }
+      setDownloading(false);
+    };
+    return html18`
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+      <div>
+        <strong style="display:block;font-size:13px">${label}</strong>
+        <span class="muted" style="font-size:12px">${description}</span>
+      </div>
+      <button class="btn-secondary btn-sm" onClick=${doExport} disabled=${downloading}>${downloading ? "Downloading..." : "CSV"}</button>
+    </div>
+  `;
+  }
+  function SpendAnalysisPanel({ api }) {
+    const [data, setData] = d2(null);
+    y2(() => {
+      api.fetch("/api/workspace/spend-analysis?period_days=30").then(setData).catch(() => {});
+    }, []);
+    if (!data || !data.top_vendors?.length)
+      return null;
+    return html18`
+    <div class="panel">
+      <h3 style="margin-top:0">Spend analysis (30 days)</h3>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        ${data.top_vendors.slice(0, 6).map((v3) => html18`
+          <${ReportRow} key=${v3.vendor_name} label=${v3.vendor_name} value=${fmtDollar(v3.total_spend)} detail=${`${v3.invoice_count} invoice${v3.invoice_count !== 1 ? "s" : ""}`} />
+        `)}
+      </div>
+      ${data.anomalies?.length > 0 && html18`
+        <div style="margin-top:12px;padding:8px 10px;background:#FEF3C7;border-radius:var(--radius-md);font-size:12px">
+          ${data.anomalies.slice(0, 3).map((a3) => html18`<div key=${a3.vendor}>${a3.message}</div>`)}
+        </div>
+      `}
+    </div>
+  `;
+  }
+  function AgingPanel({ api }) {
+    const [data, setData] = d2(null);
+    y2(() => {
+      api.fetch("/api/ap/items/aging").then(setData).catch(() => {});
+    }, []);
+    if (!data || !data.summary)
+      return null;
+    const s3 = data.summary;
+    return html18`
+    <div class="panel">
+      <h3 style="margin-top:0">AP aging</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <${MetricCard2} label="Open invoices" value=${s3.total_open_count || 0} />
+        <${MetricCard2} label="Overdue" value=${s3.overdue_count || 0} detail=${s3.overdue_pct ? `${s3.overdue_pct}% of open` : ""} />
+      </div>
+      ${s3.weighted_avg_days_past_due != null && html18`
+        <div class="muted" style="font-size:12px;text-align:center">Weighted avg days past due: ${s3.weighted_avg_days_past_due}</div>
+      `}
+    </div>
+  `;
+  }
+  function PeriodClosePanel({ api }) {
+    const [data, setData] = d2(null);
+    y2(() => {
+      api.fetch("/api/workspace/period-close/current").then(setData).catch(() => {});
+    }, []);
+    if (!data)
+      return null;
+    return html18`
+    <div class="panel">
+      <h3 style="margin-top:0">Period close</h3>
+      <${ReportRow} label="Current period" value=${data.period} detail=${data.is_locked ? "LOCKED" : `Closes ${data.closes_on}`} />
+      ${data.in_closing_window && html18`
+        <div style="margin-top:6px;padding:8px 10px;background:#FEF3C7;border-radius:var(--radius-md);font-size:12px">
+          Closing window — ${data.days_until_close} day${data.days_until_close !== 1 ? "s" : ""} until cutoff
+        </div>
+      `}
+    </div>
+  `;
+  }
+  function TaxCompliancePanel({ api }) {
+    const [data, setData] = d2(null);
+    y2(() => {
+      api.fetch("/api/workspace/tax-compliance/summary").then(setData).catch(() => {});
+    }, []);
+    if (!data || !data.vendor_count)
+      return null;
+    return html18`
+    <div class="panel">
+      <h3 style="margin-top:0">Tax compliance</h3>
+      <${ReportRow} label="Vendors tracked" value=${data.vendor_count} />
+      ${data.missing_tax_id_count > 0 && html18`
+        <${ReportRow} label="Missing tax ID" value=${data.missing_tax_id_count} detail="Vendors without a validated tax ID" />
+      `}
+      ${data.invalid_tax_id_count > 0 && html18`
+        <${ReportRow} label="Invalid tax ID format" value=${data.invalid_tax_id_count} />
+      `}
+      ${data.reverse_charge_applicable?.length > 0 && html18`
+        <${ReportRow} label="Reverse charge applicable" value=${data.reverse_charge_applicable.length} detail="Intra-EU B2B transactions" />
+      `}
+      ${data.wht_applicable?.length > 0 && html18`
+        <${ReportRow} label="WHT applicable" value=${data.wht_applicable.length} detail="Withholding tax required" />
+      `}
     </div>
   `;
   }
@@ -67992,6 +68419,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var sidebarContainer = null;
   var appMenuItemView = null;
   var appMenuPanelView = null;
+  var appMenuPanelReady = null;
   var appMenuNavItemViews = [];
   var fallbackNavItemViews = [];
   function injectFonts() {
@@ -68246,6 +68674,59 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }).catch(() => {});
     });
   }
+  function registerInboxHeadsUp() {
+    if (!sdk?.Global)
+      return;
+    const headsUpEl = document.createElement("div");
+    headsUpEl.id = "cl-inbox-headsup";
+    headsUpEl.style.cssText = 'display:none;padding:8px 16px;background:#0A1628;color:#fff;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;display:flex;align-items:center;gap:12px;cursor:pointer;';
+    const updateHeadsUp = () => {
+      const items = store_default.queue || [];
+      const needsApproval = items.filter((i3) => i3.state === "needs_approval").length;
+      const failedPost = items.filter((i3) => i3.state === "failed_post").length;
+      const needsInfo = items.filter((i3) => i3.state === "needs_info").length;
+      const overdue = items.filter((i3) => {
+        if (!i3.due_date)
+          return false;
+        try {
+          return new Date(i3.due_date) < new Date;
+        } catch {
+          return false;
+        }
+      }).length;
+      const parts = [];
+      if (needsApproval)
+        parts.push(`${needsApproval} awaiting approval`);
+      if (failedPost)
+        parts.push(`${failedPost} failed post`);
+      if (needsInfo)
+        parts.push(`${needsInfo} needs info`);
+      if (overdue)
+        parts.push(`${overdue} overdue`);
+      if (parts.length === 0) {
+        headsUpEl.style.display = "none";
+        return;
+      }
+      headsUpEl.style.display = "flex";
+      headsUpEl.innerHTML = `
+      <span style="width:8px;height:8px;border-radius:50%;background:#00D67E;flex-shrink:0"></span>
+      <span><strong>Clearledgr</strong> · ${parts.join(" · ")}</span>
+      <span style="margin-left:auto;opacity:0.6;font-size:11px">Open pipeline ›</span>
+    `;
+    };
+    headsUpEl.addEventListener("click", () => {
+      if (sdk?.Router)
+        sdk.Router.goto("clearledgr/pipeline");
+    });
+    try {
+      const target = document.querySelector('[role="main"]') || document.body;
+      target.insertBefore(headsUpEl, target.firstChild);
+    } catch (_2) {
+      document.body.appendChild(headsUpEl);
+    }
+    store_default.subscribe(updateHeadsUp);
+    updateHeadsUp();
+  }
   function registerBulkActions() {
     if (!sdk?.Toolbars)
       return;
@@ -68462,6 +68943,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     registerThreadRowLabels();
     registerToolbarIcon();
     registerBulkActions();
+    registerInboxHeadsUp();
     registerKeyboardShortcuts();
     registerSearchSuggestions();
     watchForSettingsPage(queueManager);
@@ -68497,13 +68979,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       });
       handles.length = 0;
     }
-    function rebuildMenuNavigation() {
+    async function rebuildMenuNavigation() {
       if (!routeAccessResolved)
         return;
+      if (appMenuPanelReady) {
+        try {
+          await appMenuPanelReady;
+        } catch (_2) {}
+      }
       const routeOptions = currentRouteAccess;
       const routePreferences = readRoutePreferences(routeOptions);
       const menuRoutes = getMenuNavRoutes(routePreferences, routeOptions);
-      const visibleRoutes = getVisibleNavRoutes(routePreferences, routeOptions);
       const pipelineScope = {
         orgId: queueManager?.runtimeConfig?.organizationId || "default",
         userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || ""
@@ -68537,7 +69023,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return;
       }
       if (sdk.NavMenu && typeof sdk.NavMenu.addNavItem === "function") {
-        visibleRoutes.forEach((route) => {
+        menuRoutes.forEach((route) => {
           const navHandle = sdk.NavMenu.addNavItem({
             name: route.title,
             routeID: route.id,
@@ -68855,7 +69341,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         });
         if (appMenuItemView && typeof appMenuItemView.addCollapsiblePanel === "function") {
           injectAppMenuPanelStyles();
-          appMenuItemView.addCollapsiblePanel({
+          appMenuPanelReady = appMenuItemView.addCollapsiblePanel({
             className: "cl-appmenu-panel"
           }).then((panel) => {
             if (!panel || typeof panel.addNavItem !== "function")
@@ -68866,8 +69352,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 appMenuPanelView = null;
               });
             } catch (_2) {}
-            rebuildMenuNavigation();
-          }).catch((err) => console.warn("[Clearledgr] CollapsiblePanel failed:", err));
+          }).catch((err) => {
+            console.warn("[Clearledgr] CollapsiblePanel failed:", err);
+            appMenuPanelReady = null;
+          });
         }
       } catch (err) {
         console.warn("[Clearledgr] AppMenu not available, falling back to NavMenu", err);

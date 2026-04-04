@@ -7,9 +7,12 @@ Provides intelligent matching beyond exact/tolerance comparisons:
 - Reference ID partial matching
 - Amount clustering for related transactions
 """
+import logging
 from typing import Dict, List, Tuple, Optional
 import re
 from difflib import SequenceMatcher
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_vendor(vendor: str) -> str:
@@ -314,9 +317,15 @@ def smart_match_score(
                 "impact": "positive" if date_score >= 0.5 else "negative",
                 "score": date_score
             })
-        except Exception:
-            pass
-    
+        except (ValueError, TypeError) as date_exc:
+            logger.debug("Date comparison failed: %s", date_exc)
+            reasoning.append({
+                "factor": "Date",
+                "observation": f"Date parse error: {date_exc}",
+                "impact": "neutral",
+                "score": 0.0,
+            })
+
     # Vendor matching
     source_vendor = source.get("vendor") or source.get("description") or ""
     cand_vendor = candidate.get("vendor") or candidate.get("description") or ""

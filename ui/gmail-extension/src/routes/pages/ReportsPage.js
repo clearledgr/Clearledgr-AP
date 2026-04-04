@@ -342,7 +342,178 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
             `)}
           </div>
         </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Export reports</h3>
+          <p class="muted" style="margin:0 0 12px">Download AP data as CSV for month-end close, audits, or reconciliation.</p>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div>
+              <${ExportButton} api=${api} reportType="ap_aging" label="AP Aging Report" description="Open payables by aging bucket (current, 30, 60, 90+ days)" />
+              <${SheetsExportButton} api=${api} reportType="ap_aging" label="AP Aging" />
+            </div>
+            <div>
+              <${ExportButton} api=${api} reportType="vendor_spend" label="Vendor Spend Report" description="Top vendors, GL categories, and monthly trends" />
+              <${SheetsExportButton} api=${api} reportType="vendor_spend" label="Vendor Spend" />
+            </div>
+            <div>
+              <${ExportButton} api=${api} reportType="posting_status" label="Posting Status Report" description="AP items with posting timing and ERP references" />
+              <${SheetsExportButton} api=${api} reportType="posting_status" label="Posting Status" />
+            </div>
+          </div>
+        </div>
+
+        <${SpendAnalysisPanel} api=${api} />
+        <${AgingPanel} api=${api} />
+        <${PeriodClosePanel} api=${api} />
+        <${TaxCompliancePanel} api=${api} />
       </div>
+    </div>
+  `;
+}
+
+function SheetsExportButton({ api, reportType, label }) {
+  const [sheetUrl, setSheetUrl] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [result, setResult] = useState(null);
+  const doExport = async () => {
+    if (!sheetUrl.trim()) return;
+    setExporting(true);
+    setResult(null);
+    try {
+      const res = await api.fetch('/api/workspace/reports/export-to-sheets', {
+        method: 'POST',
+        body: JSON.stringify({ spreadsheet_url: sheetUrl.trim(), report_type: reportType }),
+      });
+      setResult(res?.ok ? `${res.rows_written} rows written to "${res.sheet_name}"` : (res?.error || 'Export failed'));
+    } catch (e) { setResult('Export failed'); }
+    setExporting(false);
+  };
+  return html`
+    <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+      <input type="text" placeholder="Paste Google Sheets URL..." value=${sheetUrl} onInput=${(e) => setSheetUrl(e.target.value)}
+        style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:11px" />
+      <button class="btn-secondary btn-sm" onClick=${doExport} disabled=${exporting || !sheetUrl.trim()}>
+        ${exporting ? '...' : 'Push to Sheets'}
+      </button>
+    </div>
+    ${result && html`<div class="muted" style="font-size:11px;margin-top:2px">${result}</div>`}
+  `;
+}
+
+function ExportButton({ api, reportType, label, description }) {
+  const [downloading, setDownloading] = useState(false);
+  const doExport = async () => {
+    setDownloading(true);
+    try {
+      const resp = await api.fetch(`/api/workspace/reports/export?report_type=${reportType}&format=csv`);
+      if (resp && resp.ok !== false) {
+        const blob = new Blob([typeof resp === 'string' ? resp : JSON.stringify(resp)], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${reportType}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) { console.warn('Export failed:', e); }
+    setDownloading(false);
+  };
+  return html`
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+      <div>
+        <strong style="display:block;font-size:13px">${label}</strong>
+        <span class="muted" style="font-size:12px">${description}</span>
+      </div>
+      <button class="btn-secondary btn-sm" onClick=${doExport} disabled=${downloading}>${downloading ? 'Downloading...' : 'CSV'}</button>
+    </div>
+  `;
+}
+
+function SpendAnalysisPanel({ api }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    api.fetch('/api/workspace/spend-analysis?period_days=30').then(setData).catch(() => {});
+  }, []);
+  if (!data || !data.top_vendors?.length) return null;
+  return html`
+    <div class="panel">
+      <h3 style="margin-top:0">Spend analysis (30 days)</h3>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        ${data.top_vendors.slice(0, 6).map((v) => html`
+          <${ReportRow} key=${v.vendor_name} label=${v.vendor_name} value=${fmtDollar(v.total_spend)} detail=${`${v.invoice_count} invoice${v.invoice_count !== 1 ? 's' : ''}`} />
+        `)}
+      </div>
+      ${data.anomalies?.length > 0 && html`
+        <div style="margin-top:12px;padding:8px 10px;background:#FEF3C7;border-radius:var(--radius-md);font-size:12px">
+          ${data.anomalies.slice(0, 3).map((a) => html`<div key=${a.vendor}>${a.message}</div>`)}
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function AgingPanel({ api }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    api.fetch('/api/ap/items/aging').then(setData).catch(() => {});
+  }, []);
+  if (!data || !data.summary) return null;
+  const s = data.summary;
+  return html`
+    <div class="panel">
+      <h3 style="margin-top:0">AP aging</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <${MetricCard} label="Open invoices" value=${s.total_open_count || 0} />
+        <${MetricCard} label="Overdue" value=${s.overdue_count || 0} detail=${s.overdue_pct ? `${s.overdue_pct}% of open` : ''} />
+      </div>
+      ${s.weighted_avg_days_past_due != null && html`
+        <div class="muted" style="font-size:12px;text-align:center">Weighted avg days past due: ${s.weighted_avg_days_past_due}</div>
+      `}
+    </div>
+  `;
+}
+
+function PeriodClosePanel({ api }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    api.fetch('/api/workspace/period-close/current').then(setData).catch(() => {});
+  }, []);
+  if (!data) return null;
+  return html`
+    <div class="panel">
+      <h3 style="margin-top:0">Period close</h3>
+      <${ReportRow} label="Current period" value=${data.period} detail=${data.is_locked ? 'LOCKED' : `Closes ${data.closes_on}`} />
+      ${data.in_closing_window && html`
+        <div style="margin-top:6px;padding:8px 10px;background:#FEF3C7;border-radius:var(--radius-md);font-size:12px">
+          Closing window — ${data.days_until_close} day${data.days_until_close !== 1 ? 's' : ''} until cutoff
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function TaxCompliancePanel({ api }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    api.fetch('/api/workspace/tax-compliance/summary').then(setData).catch(() => {});
+  }, []);
+  if (!data || !data.vendor_count) return null;
+  return html`
+    <div class="panel">
+      <h3 style="margin-top:0">Tax compliance</h3>
+      <${ReportRow} label="Vendors tracked" value=${data.vendor_count} />
+      ${data.missing_tax_id_count > 0 && html`
+        <${ReportRow} label="Missing tax ID" value=${data.missing_tax_id_count} detail="Vendors without a validated tax ID" />
+      `}
+      ${data.invalid_tax_id_count > 0 && html`
+        <${ReportRow} label="Invalid tax ID format" value=${data.invalid_tax_id_count} />
+      `}
+      ${data.reverse_charge_applicable?.length > 0 && html`
+        <${ReportRow} label="Reverse charge applicable" value=${data.reverse_charge_applicable.length} detail="Intra-EU B2B transactions" />
+      `}
+      ${data.wht_applicable?.length > 0 && html`
+        <${ReportRow} label="WHT applicable" value=${data.wht_applicable.length} detail="Withholding tax required" />
+      `}
     </div>
   `;
 }

@@ -984,6 +984,44 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
       </div>
     `}
 
+    <${DisputesPanel} api=${api} orgId=${orgId} navigate=${navigate} />
+
     <${ActionDialog} ...${dialog} />
+  `;
+}
+
+function DisputesPanel({ api, orgId, navigate }) {
+  const [summary, setSummary] = useState(null);
+  const [disputes, setDisputes] = useState([]);
+  useEffect(() => {
+    if (!api) return;
+    api(`/api/workspace/disputes/summary?organization_id=${encodeURIComponent(orgId)}`)
+      .then(setSummary).catch(() => {});
+    api(`/api/workspace/disputes?organization_id=${encodeURIComponent(orgId)}&limit=10`)
+      .then((d) => setDisputes(d?.disputes || [])).catch(() => {});
+  }, [api, orgId]);
+  const openDisputes = disputes.filter((d) => !['resolved', 'closed'].includes(d.status));
+  if (!summary || summary.total === 0) return null;
+  return html`
+    <div class="panel" style="margin-top:16px">
+      <h3 style="margin-top:0">Active disputes (${summary.open_count || 0})</h3>
+      <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+        ${Object.entries(summary.by_status || {}).map(([status, count]) => html`
+          <span key=${status} class="secondary-chip">${status.replace(/_/g, ' ')} ${count}</span>
+        `)}
+      </div>
+      ${openDisputes.slice(0, 5).map((d) => html`
+        <div key=${d.id} style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <strong>${d.vendor_name || 'Unknown'}</strong>
+              <span class="muted" style="margin-left:6px">${(d.dispute_type || '').replace(/_/g, ' ')}</span>
+            </div>
+            <span class="status-badge ${d.status === 'escalated' ? '' : 'connected'}">${(d.status || '').replace(/_/g, ' ')}</span>
+          </div>
+          ${d.description && html`<div class="muted" style="margin-top:2px">${d.description}</div>`}
+        </div>
+      `)}
+    </div>
   `;
 }

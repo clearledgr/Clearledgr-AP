@@ -1,9 +1,10 @@
 import { h } from 'preact';
+import { useState, useEffect } from 'preact/hooks';
 import htm from 'htm';
 
 const html = htm.bind(h);
 
-export default function HealthPage({ bootstrap }) {
+export default function HealthPage({ bootstrap, api }) {
   const health = bootstrap?.health || {};
   const integrations = health.integrations || {};
   const actions = health.required_actions || [];
@@ -49,7 +50,36 @@ export default function HealthPage({ bootstrap }) {
               </div>`
             : html`<div class="secondary-empty">No integration data yet.</div>`}
         </div>
+        <${MonitoringPanel} api=${api} />
       </div>
+    </div>
+  `;
+}
+
+function MonitoringPanel({ api }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    if (!api) return;
+    api.fetch('/api/ops/monitoring-health').then(setData).catch(() => {});
+  }, []);
+  if (!data) return null;
+  return html`
+    <div class="panel">
+      <h3 style="margin-top:0">System monitoring</h3>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span class="status-badge ${data.healthy ? 'connected' : ''}">${data.healthy ? 'Healthy' : `${data.alert_count} alert${data.alert_count !== 1 ? 's' : ''}`}</span>
+        <span class="muted" style="font-size:11px">${data.check_count} checks run</span>
+      </div>
+      ${(data.checks || []).map((check) => html`
+        <div key=${check.check} style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <div>
+            <div style="font-weight:${check.alert ? '700' : '400'};color:${check.alert ? (check.severity === 'critical' ? '#B91C1C' : '#A16207') : 'inherit'}">
+              ${check.check.replace(/_/g, ' ')}
+            </div>
+          </div>
+          <div style="font-weight:600">${check.value}${typeof check.threshold === 'number' ? ` / ${check.threshold}` : ''}</div>
+        </div>
+      `)}
     </div>
   `;
 }

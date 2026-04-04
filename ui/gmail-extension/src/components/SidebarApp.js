@@ -284,15 +284,38 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
   }
 
   if (state === 'needs_info') {
+    const disputeStatus = item?.dispute_status;
+    const disputeLabel = disputeStatus === 'vendor_contacted'
+      ? 'Waiting on vendor response'
+      : disputeStatus === 'escalated'
+      ? 'Dispute escalated — vendor unresponsive'
+      : isInvoiceDocument ? 'Missing invoice details' : 'Missing document details';
     add(
       'needs_info',
-      isInvoiceDocument ? 'Missing invoice details' : 'Missing document details',
+      disputeLabel,
       `Clearledgr still needs more information before this ${isInvoiceDocument ? 'invoice' : 'record'} can continue.`,
     );
   }
 
   if (state === 'failed_post') {
     add('failed_post', 'ERP posting failed', 'Retry the ERP post or review the connector response.');
+  }
+
+  // Validation gate warnings surfaced as blockers
+  const gateReasons = Array.isArray(item?.validation_reasons) ? item.validation_reasons : [];
+  for (const reason of gateReasons) {
+    const code = String(reason?.code || '').trim();
+    if (code === 'period_locked') {
+      add('period_locked', 'Period is locked', reason.message || 'Cannot post — accounting period is closed.');
+    } else if (code === 'payment_terms_mismatch') {
+      add('terms_mismatch', 'Payment terms changed', reason.message || 'Invoice terms differ from vendor profile.');
+    } else if (code === 'bank_details_mismatch_from_invoice') {
+      add('bank_change', 'Bank details changed', reason.message || 'Vendor bank details differ from previous invoices.');
+    } else if (code === 'invalid_vendor_tax_id') {
+      add('tax_id', 'Invalid vendor tax ID', reason.message || 'Vendor tax ID format is invalid.');
+    } else if (code === 'invalid_gl_code') {
+      add('gl_code', 'Invalid GL code', reason.message || 'GL code not found in chart of accounts.');
+    }
   }
 
   if (blockers.length === 0 && state === 'received') {
@@ -548,11 +571,18 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   const invoiceNumber = item.invoice_number || 'N/A';
   const dueDate = item.due_date || 'N/A';
   const referenceText = invoiceNumber !== 'N/A' ? `${documentLabel} #: ${invoiceNumber}` : documentLabel;
-  const metaLine = [
-    amountLabel,
-    referenceText,
-    ...(isInvoiceDocument ? [`Due: ${dueDate}`, item.po_number ? `PO: ${item.po_number}` : 'No PO'] : []),
-  ].join(' · ');
+  const taxAmount = item.tax_amount ? formatAmount(item.tax_amount, item.currency || 'USD') : '';
+  const discountAmount = item.discount_amount ? formatAmount(item.discount_amount, item.currency || 'USD') : '';
+  const metaParts = [amountLabel];
+  if (taxAmount) metaParts.push(`Tax: ${taxAmount}`);
+  if (discountAmount) metaParts.push(`Disc: -${discountAmount}`);
+  metaParts.push(referenceText);
+  if (isInvoiceDocument) {
+    metaParts.push(`Due: ${dueDate}`);
+    metaParts.push(item.po_number ? `PO: ${item.po_number}` : 'No PO');
+    if (item.payment_terms) metaParts.push(item.payment_terms);
+  }
+  const metaLine = metaParts.join(' · ');
   const contextPayload = item?.id ? s.contextState.get(item.id) || null : null;
   const budgetContext = normalizeBudgetContext(contextPayload || {}, item);
   const blockers = getBlockers(item, state, budgetContext, documentType);
@@ -913,6 +943,41 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
             </div>
           `)}
         </div>
+      `}
+
+      ${Array.isArray(item?.line_items) && item.line_items.length > 0 && html`
+        <details class="cl-section cl-disclosure">
+          <summary class="cl-section-title">Line items (${item.line_items.length})</summary>
+          <div class="cl-evidence-list">
+            ${item.line_items.slice(0, 10).map((li, i) => html`
+              <div key=${i} class="cl-evidence-row">
+                <div class="cl-evidence-copy">
+                  <div>${li.description || `Line ${i + 1}`}</div>
+                  ${li.gl_code && html`<div class="cl-evidence-detail">GL: ${li.gl_code}</div>`}
+                </div>
+                <div class="cl-evidence-status">${formatAmount(li.amount || 0, item.currency || 'USD')}</div>
+              </div>
+            `)}
+          </div>
+        </details>
+      `}
+
+      ${item?.payment_status && item.payment_status !== 'none' && html`
+        <div class="cl-section" aria-label="Payment status">
+          <div class="cl-evidence-row">
+            <div class="cl-evidence-copy">
+              <div>Payment</div>
+              <div class="cl-evidence-detail">${item.payment_reference || ''}</div>
+            </div>
+            <div class="cl-evidence-status">
+              <span class="cl-state-pill ${item.payment_status}">${(item.payment_status || '').replace(/_/g, ' ')}</span>
+            </div>
+          </div>
+        </div>
+      `}
+
+      ${item?.erp_sync_status && item.erp_sync_status !== 'verified' && item.state === 'posted_to_erp' && html`
+        <div class="cl-state-note">ERP sync: ${item.erp_sync_status === 'mismatch' ? 'Mismatch detected — verify posting' : item.erp_sync_status}</div>
       `}
 
       ${pauseReason && fieldReviewBlockers.length === 0 && html`<div class="cl-state-note">${pauseReason}</div>`}

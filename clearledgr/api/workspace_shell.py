@@ -1619,6 +1619,260 @@ async def get_chart_of_accounts_endpoint(
     }
 
 
+@router.get("/reports/export")
+async def export_report(
+    report_type: str = Query(..., description="Report type: ap_aging, vendor_spend, posting_status"),
+    format: str = Query(default="csv", description="Export format: csv or json"),
+    organization_id: Optional[str] = Query(default=None),
+    period_days: int = Query(default=30, ge=1, le=365),
+    start_date: Optional[str] = Query(default=None),
+    end_date: Optional[str] = Query(default=None),
+    vendor: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Export a report as CSV or JSON.
+
+    Supported report types:
+    - ``ap_aging``: Open payables by aging bucket and vendor
+    - ``vendor_spend``: Top vendors, GL categories, monthly trends
+    - ``posting_status``: AP items with posting timing (filterable by date/vendor)
+
+    For audit trail export, use ``GET /api/ap/items/audit/export`` instead.
+    """
+    from clearledgr.services.report_export import (
+        REPORT_TYPES,
+        generate_report,
+        rows_to_csv,
+    )
+
+    org_id = _resolve_org_id(user, organization_id)
+
+    if report_type not in REPORT_TYPES:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Unknown report_type. Must be one of: {sorted(REPORT_TYPES)}"},
+        )
+
+    rows, columns = generate_report(
+        report_type=report_type,
+        organization_id=org_id,
+        period_days=period_days,
+        start_date=start_date,
+        end_date=end_date,
+        vendor=vendor,
+    )
+
+    if format == "json":
+        return {
+            "report_type": report_type,
+            "organization_id": org_id,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "row_count": len(rows),
+            "columns": columns,
+            "rows": rows,
+        }
+
+    # CSV download
+    csv_content = rows_to_csv(rows, columns)
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={report_type}_{org_id}.csv",
+        },
+    )
+
+
+@router.get("/webhooks")
+def list_webhooks(
+    organization_id: Optional[str] = Query(default=None),
+    active_only: bool = Query(default=True),
+    user: TokenData = Depends(get_current_user),
+):
+    """List webhook subscriptions for this organization."""
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    subs = db.list_webhook_subscriptions(org_id, active_only=active_only)
+    # Redact secrets in response
+    for s in subs:
+        if s.get("secret"):
+            s["secret"] = "***"
+    return {"webhooks": subs, "count": len(subs)}
+
+
+@router.post("/webhooks")
+def create_webhook(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+    body: dict = {},
+):
+    """Register a new webhook subscription.
+
+    Body:
+        url: str (required)
+        event_types: List[str] (required) — e.g. ["invoice.approved", "invoice.posted_to_erp"] or ["*"] for all
+        secret: str (optional) — HMAC signing secret
+        description: str (optional)
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    url = (body.get("url") or "").strip()
+    event_types = body.get("event_types") or []
+    secret = body.get("secret", "")
+    description = body.get("description", "")
+
+    if not url:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=400, content={"error": "url is required"})
+    if not event_types:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=400, content={"error": "event_types is required"})
+
+    db = get_db()
+    sub = db.create_webhook_subscription(
+        organization_id=org_id,
+        url=url,
+        event_types=event_types,
+        secret=secret,
+        description=description,
+    )
+    if sub.get("secret"):
+        sub["secret"] = "***"
+    return sub
+
+
+@router.delete("/webhooks/{webhook_id}")
+def delete_webhook(
+    webhook_id: str,
+    user: TokenData = Depends(get_current_user),
+):
+    """Delete a webhook subscription."""
+    db = get_db()
+    sub = db.get_webhook_subscription(webhook_id)
+    if not sub:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Webhook not found"})
+
+    # Verify org access
+    org_id = sub.get("organization_id", "default")
+    _resolve_org_id(user, org_id)
+
+    db.delete_webhook_subscription(webhook_id)
+    return {"status": "deleted", "id": webhook_id}
+
+
+@router.post("/webhooks/{webhook_id}/test")
+async def test_webhook(
+    webhook_id: str,
+    user: TokenData = Depends(get_current_user),
+):
+    """Send a test event to a webhook."""
+    db = get_db()
+    sub = db.get_webhook_subscription(webhook_id)
+    if not sub:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Webhook not found"})
+
+    from clearledgr.services.webhook_delivery import deliver_webhook
+
+    ok = await deliver_webhook(
+        url=sub["url"],
+        event_type="test.ping",
+        payload={"message": "Clearledgr webhook test", "webhook_id": webhook_id},
+        secret=sub.get("secret", ""),
+    )
+    return {"delivered": ok, "url": sub["url"], "event": "test.ping"}
+
+
+@router.post("/reports/export-to-sheets")
+async def export_report_to_sheets(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+    body: dict = {},
+):
+    """Push a report to a Google Sheet.
+
+    Body:
+        spreadsheet_url: str (required) — full Google Sheets URL
+        report_type: str (required) — ap_aging, vendor_spend, posting_status
+        period_days: int (optional, default 30)
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    spreadsheet_url = (body.get("spreadsheet_url") or "").strip()
+    report_type = (body.get("report_type") or "").strip()
+
+    if not spreadsheet_url or not report_type:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=400, content={"error": "spreadsheet_url and report_type are required"})
+
+    from clearledgr.services.sheets_api import SheetsAPIClient
+    spreadsheet_id = SheetsAPIClient.extract_spreadsheet_id(spreadsheet_url)
+    if not spreadsheet_id:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=400, content={"error": "Could not parse spreadsheet ID from URL"})
+
+    from clearledgr.services.sheets_export import export_report_to_sheets as _export
+    result = await _export(
+        user_id=user.user_id,
+        spreadsheet_id=spreadsheet_id,
+        report_type=report_type,
+        organization_id=org_id,
+        period_days=body.get("period_days", 30),
+    )
+    return result
+
+
+@router.get("/erp-vendors")
+async def get_erp_vendor_list(
+    organization_id: Optional[str] = Query(default=None),
+    force_refresh: bool = Query(default=False),
+    active_only: bool = Query(default=True),
+    search: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Return full vendor directory from the connected ERP.
+
+    Results are cached for 24h in org settings. Use ``force_refresh=true``
+    to bypass cache and pull fresh data from the ERP.  Supports optional
+    filters: ``active_only`` (default true) and ``search`` (case-insensitive
+    name/email substring match).
+    """
+    org_id = _resolve_org_id(user, organization_id)
+
+    from clearledgr.integrations.erp_router import (
+        list_all_vendors as _list_vendors,
+        get_erp_connection as _get_erp_conn,
+    )
+
+    vendors = await _list_vendors(
+        organization_id=org_id,
+        force_refresh=force_refresh,
+    )
+
+    # Apply filters
+    if active_only:
+        vendors = [v for v in vendors if v.get("active", True)]
+    if search:
+        needle = search.strip().lower()
+        vendors = [
+            v for v in vendors
+            if needle in str(v.get("name") or "").lower()
+            or needle in str(v.get("email") or "").lower()
+        ]
+
+    erp_conn = _get_erp_conn(org_id)
+    erp_type = erp_conn.type if erp_conn else None
+
+    return {
+        "organization_id": org_id,
+        "erp_type": erp_type,
+        "vendors": vendors,
+        "vendor_count": len(vendors),
+        "filtered": bool(search or active_only),
+    }
+
+
 @router.post("/vendor-intelligence/bootstrap")
 def bootstrap_vendor_intelligence(
     organization_id: Optional[str] = Query(default=None),
@@ -1733,6 +1987,387 @@ def patch_vendor_profile(
         "vendor_name": vendor_name,
         "profile": profile,
     }
+
+
+@router.get("/vendor-intelligence/duplicates")
+def detect_vendor_duplicates(
+    organization_id: Optional[str] = Query(default=None),
+    threshold: float = Query(default=0.75, ge=0.5, le=1.0),
+    user: TokenData = Depends(get_current_user),
+):
+    """Detect duplicate vendor profiles using fuzzy name matching."""
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.vendor_dedup import get_vendor_dedup_service
+    service = get_vendor_dedup_service(org_id)
+    clusters = service.detect_duplicates(threshold=threshold)
+    return {
+        "organization_id": org_id,
+        "threshold": threshold,
+        "clusters": clusters,
+        "cluster_count": len(clusters),
+    }
+
+
+@router.post("/vendor-intelligence/merge")
+def merge_vendors(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+    body: dict = {},
+):
+    """Merge duplicate vendors into a canonical profile.
+
+    Body:
+        canonical: str — the vendor name to keep
+        duplicates: List[str] — vendor names to merge into canonical
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+
+    canonical = (body.get("canonical") or "").strip()
+    duplicates = body.get("duplicates") or []
+    if not canonical or not duplicates:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=400,
+            content={"error": "canonical and duplicates are required"},
+        )
+
+    from clearledgr.services.vendor_dedup import get_vendor_dedup_service
+    service = get_vendor_dedup_service(org_id)
+    result = service.merge_vendors(canonical, duplicates)
+    return result
+
+
+@router.post("/vendor-intelligence/profiles/{vendor_name}/aliases")
+def add_vendor_alias(
+    vendor_name: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+    body: dict = {},
+):
+    """Add an alias to a vendor profile."""
+    org_id = _resolve_org_id(user, organization_id)
+    alias = (body.get("alias") or "").strip()
+    if not alias:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=400, content={"error": "alias is required"})
+
+    from clearledgr.services.vendor_dedup import get_vendor_dedup_service
+    service = get_vendor_dedup_service(org_id)
+    return service.add_alias(vendor_name, alias)
+
+
+@router.delete("/vendor-intelligence/profiles/{vendor_name}/aliases/{alias}")
+def remove_vendor_alias(
+    vendor_name: str,
+    alias: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Remove an alias from a vendor profile."""
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.vendor_dedup import get_vendor_dedup_service
+    service = get_vendor_dedup_service(org_id)
+    return service.remove_alias(vendor_name, alias)
+
+
+@router.get("/disputes")
+def list_disputes(
+    organization_id: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    user: TokenData = Depends(get_current_user),
+):
+    """List disputes for this organization, optionally filtered by status."""
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    disputes = db.list_disputes(org_id, status=status, limit=limit)
+    return {"disputes": disputes, "count": len(disputes)}
+
+
+@router.get("/disputes/summary")
+def get_dispute_summary(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Get dispute summary stats (counts by status and type)."""
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.dispute_service import get_dispute_service
+    return get_dispute_service(org_id).get_dispute_summary()
+
+
+@router.post("/disputes")
+def create_dispute(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+    body: dict = {},
+):
+    """Open a new dispute for an AP item.
+
+    Body:
+        ap_item_id: str (required)
+        dispute_type: str (required) — missing_po, wrong_amount, vendor_mismatch, missing_info, duplicate, bank_detail_change, other
+        description: str (optional)
+        vendor_name: str (optional, auto-filled from AP item)
+        vendor_email: str (optional)
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    ap_item_id = (body.get("ap_item_id") or "").strip()
+    dispute_type = (body.get("dispute_type") or "").strip()
+    if not ap_item_id or not dispute_type:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=400, content={"error": "ap_item_id and dispute_type are required"})
+
+    from clearledgr.services.dispute_service import get_dispute_service
+    svc = get_dispute_service(org_id)
+    return svc.open_dispute(
+        ap_item_id=ap_item_id,
+        dispute_type=dispute_type,
+        description=body.get("description", ""),
+        vendor_name=body.get("vendor_name", ""),
+        vendor_email=body.get("vendor_email", ""),
+    )
+
+
+@router.post("/disputes/{dispute_id}/resolve")
+def resolve_dispute(
+    dispute_id: str,
+    user: TokenData = Depends(get_current_user),
+    body: dict = {},
+):
+    """Resolve a dispute with a resolution description."""
+    resolution = (body.get("resolution") or "").strip()
+    if not resolution:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=400, content={"error": "resolution is required"})
+
+    db = get_db()
+    dispute = db.get_dispute(dispute_id)
+    if not dispute:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Dispute not found"})
+
+    from clearledgr.services.dispute_service import get_dispute_service
+    svc = get_dispute_service(dispute["organization_id"])
+    svc.resolve_dispute(dispute_id, resolution)
+    return {"status": "resolved", "id": dispute_id}
+
+
+@router.post("/disputes/{dispute_id}/escalate")
+def escalate_dispute(
+    dispute_id: str,
+    user: TokenData = Depends(get_current_user),
+):
+    """Escalate a dispute."""
+    db = get_db()
+    dispute = db.get_dispute(dispute_id)
+    if not dispute:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Dispute not found"})
+
+    from clearledgr.services.dispute_service import get_dispute_service
+    svc = get_dispute_service(dispute["organization_id"])
+    svc.escalate_dispute(dispute_id)
+    return {"status": "escalated", "id": dispute_id}
+
+
+@router.get("/delegation-rules")
+def list_delegation_rules(
+    organization_id: Optional[str] = Query(default=None),
+    active_only: bool = Query(default=True),
+    user: TokenData = Depends(get_current_user),
+):
+    """List approval delegation rules."""
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.approval_delegation import get_delegation_service
+    return {
+        "rules": get_delegation_service(org_id).list_rules(active_only=active_only),
+        "organization_id": org_id,
+    }
+
+
+@router.post("/delegation-rules")
+def create_delegation_rule(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+    body: dict = {},
+):
+    """Create a delegation rule (approver A delegates to B).
+
+    Body:
+        delegator_email: str (required) — the approver going OOO
+        delegate_email: str (required) — who takes over
+        reason: str (optional) — e.g. "Annual leave 10-20 April"
+        starts_at: str (optional) — ISO datetime, delegation starts
+        ends_at: str (optional) — ISO datetime, delegation ends
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    delegator_email = (body.get("delegator_email") or "").strip()
+    delegate_email = (body.get("delegate_email") or "").strip()
+    if not delegator_email or not delegate_email:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=400, content={"error": "delegator_email and delegate_email are required"})
+
+    from clearledgr.services.approval_delegation import get_delegation_service
+    return get_delegation_service(org_id).create_rule(
+        delegator_id=body.get("delegator_id", delegator_email),
+        delegator_email=delegator_email,
+        delegate_id=body.get("delegate_id", delegate_email),
+        delegate_email=delegate_email,
+        reason=body.get("reason", ""),
+        starts_at=body.get("starts_at"),
+        ends_at=body.get("ends_at"),
+    )
+
+
+@router.post("/delegation-rules/{rule_id}/deactivate")
+def deactivate_delegation_rule(
+    rule_id: str,
+    user: TokenData = Depends(get_current_user),
+):
+    """Deactivate a delegation rule (approver returns from OOO)."""
+    from clearledgr.services.approval_delegation import get_delegation_service
+    org_id = _resolve_org_id(user, None)
+    ok = get_delegation_service(org_id).deactivate_rule(rule_id)
+    if not ok:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Rule not found"})
+    return {"status": "deactivated", "id": rule_id}
+
+
+@router.get("/period-close/current")
+def get_current_period(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Get current accounting period and close status."""
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.period_close import get_period_close_service
+    return get_period_close_service(org_id).get_current_period()
+
+
+@router.get("/period-close/accruals/{period}")
+def get_accrual_report(
+    period: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Generate accrual report for a period (YYYY-MM).
+
+    Returns uninvoiced liabilities: AP items that are approved/posted but not yet paid.
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.period_close import get_period_close_service
+    return get_period_close_service(org_id).generate_accrual_report(period)
+
+
+@router.get("/period-close/backdated/{period}")
+def get_backdated_invoices(
+    period: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Find invoices received after cutoff that belong to a prior period."""
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.period_close import get_period_close_service
+    items = get_period_close_service(org_id).detect_backdated_invoices(period)
+    return {"period": period, "backdated_count": len(items), "items": items}
+
+
+@router.post("/period-close/lock/{period}")
+def lock_period(
+    period: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Lock a period — prevents posting invoices dated in this month."""
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.period_close import get_period_close_service
+    ok = get_period_close_service(org_id).lock_period(period)
+    return {"status": "locked" if ok else "already_locked", "period": period}
+
+
+@router.post("/period-close/unlock/{period}")
+def unlock_period(
+    period: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Unlock a period."""
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.period_close import get_period_close_service
+    ok = get_period_close_service(org_id).unlock_period(period)
+    return {"status": "unlocked" if ok else "not_locked", "period": period}
+
+
+@router.post("/vendor-intelligence/reconcile-statement")
+def reconcile_vendor_statement(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+    body: dict = {},
+):
+    """Reconcile a vendor statement against Clearledgr AP items.
+
+    Body:
+        vendor_name: str (required)
+        statement_items: List[{date, reference, amount, description}] (required)
+        period_days: int (optional, default 180)
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    vendor_name = (body.get("vendor_name") or "").strip()
+    statement_items = body.get("statement_items") or []
+
+    if not vendor_name or not statement_items:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=400,
+            content={"error": "vendor_name and statement_items are required"},
+        )
+
+    from clearledgr.services.vendor_statement_recon import get_vendor_statement_recon
+    svc = get_vendor_statement_recon(org_id)
+    return svc.reconcile(
+        vendor_name=vendor_name,
+        statement_items=statement_items,
+        period_days=body.get("period_days", 180),
+    )
+
+
+@router.get("/tax-compliance/summary")
+def get_tax_summary(
+    organization_id: Optional[str] = Query(default=None),
+    year: int = Query(default=0),
+    buyer_country: str = Query(default=""),
+    user: TokenData = Depends(get_current_user),
+):
+    """Tax compliance summary — vendor payment totals, VAT validation, reverse charge, WHT.
+
+    Pass ``buyer_country`` (2-letter ISO code, e.g. "NG", "GB", "DE") to enable
+    reverse charge and WHT detection.
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.tax_compliance import get_tax_compliance_service
+    return get_tax_compliance_service(org_id).generate_tax_summary(
+        year=year, buyer_country=buyer_country,
+    )
+
+
+@router.post("/tax-compliance/validate-tax-id")
+def validate_tax_id_endpoint(
+    user: TokenData = Depends(get_current_user),
+    body: dict = {},
+):
+    """Validate a tax ID / VAT number format by country."""
+    tax_id = (body.get("tax_id") or "").strip()
+    country_code = (body.get("country_code") or "").strip()
+    if not tax_id:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=400, content={"error": "tax_id is required"})
+
+    from clearledgr.services.tax_compliance import validate_tax_id
+    return validate_tax_id(tax_id, country_code)
 
 
 @router.get("/team/invites")

@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
+  xsi:type="MailApp">
+
+  <Id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</Id>
+  <Version>1.2026.001</Version>
+  <ProviderName>Clearledgr</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+
+  <DisplayName DefaultValue="Clearledgr"/>
+  <Description DefaultValue="Finance execution agents embedded in Outlook — AP workflows, vendor intelligence, and approvals right inside your inbox."/>
+
+  <IconUrl DefaultValue="https://app.clearledgr.com/outlook/assets/icon-64.png"/>
+  <HighResolutionIconUrl DefaultValue="https://app.clearledgr.com/outlook/assets/icon-128.png"/>
+  <SupportUrl DefaultValue="https://clearledgr.com/support"/>
+
+  <AppDomains>
+    <AppDomain>https://app.clearledgr.com</AppDomain>
+    <AppDomain>https://api.clearledgr.com</AppDomain>
+    <AppDomain>http://localhost:8010</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Mailbox"/>
+  </Hosts>
+
+  <Requirements>
+    <Sets>
+      <Set Name="Mailbox" MinVersion="1.1"/>
+    </Sets>
+  </Requirements>
+
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="https://app.clearledgr.com/outlook/taskpane.html"/>
+        <RequestedHeight>450</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
+
+  <Permissions>ReadWriteMailbox</Permissions>
+
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
+  </Rule>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1" xsi:type="VersionOverridesV1_1">
+
+      <Requirements>
+        <bt:Sets DefaultMinVersion="1.5">
+          <bt:Set Name="Mailbox"/>
+        </bt:Sets>
+      </Requirements>
+
+      <Hosts>
+        <Host xsi:type="MailHost">
+          <DesktopFormFactor>
+
+            <FunctionFile resid="functionFile"/>
+
+            <ExtensionPoint xsi:type="MessageReadCommandSurface">
+              <OfficeTab id="TabDefault">
+                <Group id="clearledgrGroup">
+                  <Label resid="groupLabel"/>
+
+                  <Control xsi:type="Button" id="showTaskpane">
+                    <Label resid="taskpaneLabel"/>
+                    <Supertip>
+                      <Title resid="taskpaneLabel"/>
+                      <Description resid="taskpaneDesc"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="icon16"/>
+                      <bt:Image size="32" resid="icon32"/>
+                      <bt:Image size="80" resid="icon80"/>
+                    </Icon>
+                    <Action xsi:type="ShowTaskpane">
+                      <SourceLocation resid="taskpaneUrl"/>
+                    </Action>
+                  </Control>
+
+                </Group>
+              </OfficeTab>
+            </ExtensionPoint>
+
+          </DesktopFormFactor>
+        </Host>
+      </Hosts>
+
+      <Resources>
+        <bt:Images>
+          <bt:Image id="icon16" DefaultValue="https://app.clearledgr.com/outlook/assets/icon-16.png"/>
+          <bt:Image id="icon32" DefaultValue="https://app.clearledgr.com/outlook/assets/icon-32.png"/>
+          <bt:Image id="icon80" DefaultValue="https://app.clearledgr.com/outlook/assets/icon-80.png"/>
+        </bt:Images>
+        <bt:Urls>
+          <bt:Url id="taskpaneUrl" DefaultValue="https://app.clearledgr.com/outlook/taskpane.html"/>
+          <bt:Url id="functionFile" DefaultValue="https://app.clearledgr.com/outlook/functions.html"/>
+        </bt:Urls>
+        <bt:ShortStrings>
+          <bt:String id="groupLabel" DefaultValue="Clearledgr"/>
+          <bt:String id="taskpaneLabel" DefaultValue="Open Clearledgr"/>
+          <bt:String id="taskpaneDesc" DefaultValue="View invoice details, approve, and manage AP workflows"/>
+        </bt:ShortStrings>
+        <bt:LongStrings>
+          <bt:String id="taskpaneDesc" DefaultValue="View invoice details, approve, and manage AP workflows directly from your inbox."/>
+        </bt:LongStrings>
+      </Resources>
+
+    </VersionOverrides>
+  </VersionOverrides>
+
+</OfficeApp>

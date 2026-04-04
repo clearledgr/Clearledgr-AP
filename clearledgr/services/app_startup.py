@@ -23,6 +23,16 @@ async def run_deferred_startup(app: Any) -> None:
         logger.warning("Gmail autopilot not started: %s", exc)
 
     try:
+        from clearledgr.services.outlook_autopilot import start_outlook_autopilot
+
+        await asyncio.wait_for(start_outlook_autopilot(app), timeout=10.0)
+        logger.info("Outlook autopilot started")
+    except asyncio.TimeoutError:
+        logger.warning("Outlook autopilot startup timed out (10s) — skipping")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Outlook autopilot not started: %s", exc)
+
+    try:
         from clearledgr.services.agent_background import start_agent_background
 
         await asyncio.wait_for(start_agent_background(app), timeout=10.0)

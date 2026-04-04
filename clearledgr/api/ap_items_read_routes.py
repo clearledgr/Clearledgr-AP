@@ -100,6 +100,18 @@ def get_ap_aggregation_metrics(
     return {"metrics": metrics}
 
 
+@router.get("/aging")
+def get_ap_aging_report(
+    organization_id: str = Query(default="default"),
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    """AP aging report — open payables bucketed by days past due."""
+    verify_org_access(organization_id, _user)
+    from clearledgr.services.ap_aging_report import get_ap_aging_report as _get_report
+    report = _get_report(organization_id)
+    return report.generate()
+
+
 @router.get("/audit/export")
 def export_audit_trail(
     organization_id: str = Query(default="default"),

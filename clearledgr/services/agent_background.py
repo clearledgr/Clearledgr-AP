@@ -246,6 +246,9 @@ async def _run_loop():
                 # Poll ERP for payment status changes every ~1 hour
                 for org_id in org_ids:
                     await _poll_payment_statuses(org_id)
+                # Run monitoring health checks every ~1 hour
+                for org_id in org_ids:
+                    await _run_monitoring_checks(org_id)
 
             # Daily (96 ticks at 15-min intervals, but we check by hour)
             now = datetime.now(timezone.utc)
@@ -255,6 +258,10 @@ async def _run_loop():
             if tick % 4 == 0 and now.hour == 7:
                 for org_id in org_ids:
                     await _check_period_end(org_id)
+            # Daily vendor master sync at 2am UTC (3am CET / 3am WAT)
+            if tick % 4 == 0 and now.hour == 2:
+                for org_id in org_ids:
+                    await _sync_vendor_master_data(org_id)
 
         except asyncio.CancelledError:
             logger.info("Agent background loop cancelled")
@@ -574,6 +581,12 @@ async def _check_approval_timeouts(org_id: str):
                     continue  # already sent and recorded in DB
 
                 approver_ids = db.get_pending_approver_ids(ap_item_id)
+                # Resolve delegation — swap OOO approvers with their delegates
+                try:
+                    from clearledgr.services.approval_delegation import get_delegation_service
+                    approver_ids = get_delegation_service(org_id).resolve_approvers(approver_ids)
+                except Exception:
+                    pass
                 reminder_sent = await send_approval_reminder(
                     ap_item=item,
                     approver_ids=approver_ids,
@@ -642,6 +655,16 @@ async def _check_approval_timeouts(org_id: str):
                     milestone,
                     ap_item_id,
                 )
+        # Auto-reassign pending approvals to delegates (OOO)
+        try:
+            from clearledgr.services.approval_delegation import get_delegation_service
+            delegation_svc = get_delegation_service(org_id)
+            reassigned = delegation_svc.auto_reassign_pending_approvals()
+            if reassigned:
+                logger.info("Delegation: reassigned %d pending approval(s) for org=%s", reassigned, org_id)
+        except Exception as deleg_exc:
+            logger.warning("Delegation auto-reassign failed: %s", deleg_exc)
+
     except Exception as exc:
         logger.error("Approval timeout check failed: %s", exc)
 
@@ -1254,6 +1277,22 @@ async def _check_vendor_followup_responses(org_id: str):
 
                 vendor_name = item.get("vendor_name") or "Unknown"
                 invoice_num = item.get("invoice_number") or "N/A"
+
+                # Create/update dispute record for tracking
+                try:
+                    from clearledgr.services.dispute_service import get_dispute_service
+                    dsp_svc = get_dispute_service(org_id)
+                    existing_disputes = db.get_disputes_for_item(ap_item_id)
+                    open_disputes = [d for d in existing_disputes if d.get("status") not in ("resolved", "closed")]
+                    if open_disputes:
+                        dsp_svc.mark_response_received(open_disputes[0]["id"])
+                    else:
+                        d = dsp_svc.open_dispute(ap_item_id, "missing_info", vendor_name=vendor_name)
+                        dsp_svc.mark_vendor_contacted(d["id"], followup_thread_id=thread_id)
+                        dsp_svc.mark_response_received(d["id"])
+                except Exception:
+                    pass
+
                 try:
                     from clearledgr.services.slack_notifications import send_vendor_response_notification
                     await send_vendor_response_notification(
@@ -1447,3 +1486,53 @@ async def _check_period_end(org_id: str):
             )
     except Exception as e:
         logger.error("Period-end detection failed: %s", e)
+
+
+async def _sync_vendor_master_data(org_id: str):
+    """Sync vendor master data from ERP to Clearledgr vendor profiles (daily)."""
+    try:
+        from clearledgr.services.vendor_erp_sync import sync_vendors_from_erp
+
+        summary = await sync_vendors_from_erp(organization_id=org_id)
+        synced = summary.get("synced_count", 0)
+        new_count = summary.get("new_vendor_count", 0)
+        deactivated = summary.get("deactivated_count", 0)
+        terms_changed = summary.get("terms_changed_count", 0)
+
+        if synced:
+            logger.info(
+                "Vendor master sync completed for org=%s: %d synced, %d new, %d deactivated",
+                org_id, synced, new_count, deactivated,
+            )
+        # Alert on significant changes
+        alerts = []
+        if new_count:
+            alerts.append(f"{new_count} new vendor(s) added")
+        if deactivated:
+            vendors = ", ".join(summary.get("deactivated_vendors", [])[:5])
+            alerts.append(f"{deactivated} vendor(s) deactivated ({vendors})")
+        if terms_changed:
+            alerts.append(f"{terms_changed} vendor(s) changed payment terms")
+        if alerts:
+            await _slack_alert(
+                f":arrows_counterclockwise: *Vendor Master Sync*\n"
+                + "\n".join(f"• {a}" for a in alerts),
+                organization_id=org_id,
+            )
+    except Exception as e:
+        logger.error("Vendor master sync failed for org=%s: %s", org_id, e)
+
+
+async def _run_monitoring_checks(org_id: str):
+    """Run monitoring health checks and emit alerts on threshold breaches."""
+    try:
+        from clearledgr.services.monitoring import run_monitoring_checks
+
+        result = await run_monitoring_checks(organization_id=org_id)
+        if result.get("alert_count", 0) > 0:
+            logger.warning(
+                "Monitoring: %d alert(s) for org=%s",
+                result["alert_count"], org_id,
+            )
+    except Exception as e:
+        logger.error("Monitoring checks failed for org=%s: %s", org_id, e)

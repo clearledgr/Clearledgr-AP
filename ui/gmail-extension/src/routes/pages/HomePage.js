@@ -124,12 +124,18 @@ function SetupNotice({
   return html`<div class="home-banner warning">
     <div style="min-width:0;flex:1">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-        <span style="font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:#FEF3C7;color:#A16207">Setup still needed</span>
+        <span style="font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:${showGmailAction ? '#FEF3C7' : '#EFF6FF'};color:${showGmailAction ? '#A16207' : '#1D4ED8'}">
+          ${showGmailAction ? 'Setup needed' : 'Optional setup'}
+        </span>
       </div>
-      <strong style="display:block;font-size:16px;line-height:1.35;margin-bottom:4px">Finish setup to keep invoices moving</strong>
+      <strong style="display:block;font-size:16px;line-height:1.35;margin-bottom:4px">
+        ${showGmailAction ? 'Connect Gmail to start processing' : 'Connect more integrations'}
+      </strong>
       <p class="muted" style="margin:0;max-width:none">
         ${adminAccess
-          ? `${missingSetup.join(', ')} still need attention before invoices can move all the way through the flow.`
+          ? (showGmailAction
+            ? `${missingSetup.join(', ')} still need attention before invoices can be processed.`
+            : `${missingSetup.join(', ')} — connect these to unlock approvals, ERP posting, and full automation.`)
           : `${missingSetup.join(', ')} still need attention. Ask an admin to finish setup.`}
       </p>
     </div>
@@ -353,11 +359,13 @@ export default function HomePage({
         <p style="font-size:15px;color:var(--ink-secondary);margin:0 0 12px">
           ${allReady
             ? 'Pipeline is your AP control plane. Use Gmail for the active record when context matters.'
-            : `${greeting}${firstName ? `, ${firstName}` : ''}. Finish setup, then use Pipeline to pick up invoice work.`}
+            : gmailOk
+              ? `${greeting}${firstName ? `, ${firstName}` : ''}. Clearledgr is processing invoices. Connect more integrations to unlock approvals and ERP posting.`
+              : `${greeting}${firstName ? `, ${firstName}` : ''}. Connect Gmail to start processing invoices.`}
         </p>
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-          <span style="font-size:12px;padding:4px 10px;border-radius:999px;background:${allReady ? '#ECFDF5' : '#FEFCE8'};color:${allReady ? '#047857' : '#A16207'}">
-            ${allReady ? 'Ready to work' : 'Setup incomplete'}
+          <span style="font-size:12px;padding:4px 10px;border-radius:999px;background:${allReady ? '#ECFDF5' : gmailOk ? '#EFF6FF' : '#FEFCE8'};color:${allReady ? '#047857' : gmailOk ? '#1D4ED8' : '#A16207'}">
+            ${allReady ? 'Fully configured' : gmailOk ? 'Processing invoices' : 'Setup needed'}
           </span>
           ${lastScanAt
             ? html`<span style="font-size:12px;padding:4px 10px;border-radius:999px;background:var(--bg);color:var(--ink-secondary)">Last scan ${fmtDateTime(lastScanAt)}</span>`

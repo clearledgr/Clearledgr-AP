@@ -78,6 +78,7 @@ let _pendingComposePrefill = null;
 let sidebarContainer = null;
 let appMenuItemView = null;
 let appMenuPanelView = null;
+let appMenuPanelReady = null; // Promise that resolves when panel is available
 let appMenuNavItemViews = [];
 let fallbackNavItemViews = [];
 
@@ -393,6 +394,61 @@ function registerThreadRowLabels() {
   });
 }
 
+function registerInboxHeadsUp() {
+  // Inbox heads-up: priority summary bar at top of inbox (Streak-style)
+  // Uses a global banner that updates as queue state changes.
+  if (!sdk?.Global) return;
+
+  const headsUpEl = document.createElement('div');
+  headsUpEl.id = 'cl-inbox-headsup';
+  headsUpEl.style.cssText = 'display:none;padding:8px 16px;background:#0A1628;color:#fff;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;display:flex;align-items:center;gap:12px;cursor:pointer;';
+
+  const updateHeadsUp = () => {
+    const items = store.queue || [];
+    const needsApproval = items.filter((i) => i.state === 'needs_approval').length;
+    const failedPost = items.filter((i) => i.state === 'failed_post').length;
+    const needsInfo = items.filter((i) => i.state === 'needs_info').length;
+    const overdue = items.filter((i) => {
+      if (!i.due_date) return false;
+      try { return new Date(i.due_date) < new Date(); } catch { return false; }
+    }).length;
+
+    const parts = [];
+    if (needsApproval) parts.push(`${needsApproval} awaiting approval`);
+    if (failedPost) parts.push(`${failedPost} failed post`);
+    if (needsInfo) parts.push(`${needsInfo} needs info`);
+    if (overdue) parts.push(`${overdue} overdue`);
+
+    if (parts.length === 0) {
+      headsUpEl.style.display = 'none';
+      return;
+    }
+
+    headsUpEl.style.display = 'flex';
+    headsUpEl.innerHTML = `
+      <span style="width:8px;height:8px;border-radius:50%;background:#00D67E;flex-shrink:0"></span>
+      <span><strong>Clearledgr</strong> \u00B7 ${parts.join(' \u00B7 ')}</span>
+      <span style="margin-left:auto;opacity:0.6;font-size:11px">Open pipeline \u203A</span>
+    `;
+  };
+
+  headsUpEl.addEventListener('click', () => {
+    if (sdk?.Router) sdk.Router.goto('clearledgr/pipeline');
+  });
+
+  // Insert at top of Gmail main area
+  try {
+    const target = document.querySelector('[role="main"]') || document.body;
+    target.insertBefore(headsUpEl, target.firstChild);
+  } catch (_) {
+    document.body.appendChild(headsUpEl);
+  }
+
+  // Update on store changes
+  store.subscribe(updateHeadsUp);
+  updateHeadsUp();
+}
+
 function registerBulkActions() {
   // Bulk action toolbar button — appears when multiple emails are selected
   if (!sdk?.Toolbars) return;
@@ -640,6 +696,7 @@ async function bootstrap() {
   registerThreadRowLabels();
   registerToolbarIcon();
   registerBulkActions();
+  registerInboxHeadsUp();
   registerKeyboardShortcuts();
   registerSearchSuggestions();
   watchForSettingsPage(queueManager);
@@ -680,12 +737,17 @@ function registerAppMenuAndRoutes() {
     handles.length = 0;
   }
 
-  function rebuildMenuNavigation() {
+  async function rebuildMenuNavigation() {
     if (!routeAccessResolved) return;
+
+    // Wait for the AppMenu panel to be ready before populating
+    if (appMenuPanelReady) {
+      try { await appMenuPanelReady; } catch (_) { /* panel failed, will use fallback */ }
+    }
+
     const routeOptions = currentRouteAccess;
     const routePreferences = readRoutePreferences(routeOptions);
     const menuRoutes = getMenuNavRoutes(routePreferences, routeOptions);
-    const visibleRoutes = getVisibleNavRoutes(routePreferences, routeOptions);
     const pipelineScope = {
       orgId: queueManager?.runtimeConfig?.organizationId || 'default',
       userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
@@ -722,8 +784,9 @@ function registerAppMenuAndRoutes() {
       return;
     }
 
+    // Fallback only if AppMenu panel genuinely failed (not just slow)
     if (sdk.NavMenu && typeof sdk.NavMenu.addNavItem === 'function') {
-      visibleRoutes.forEach((route) => {
+      menuRoutes.forEach((route) => {
         const navHandle = sdk.NavMenu.addNavItem({
           name: route.title,
           routeID: route.id,
@@ -1075,16 +1138,18 @@ function registerAppMenuAndRoutes() {
 
       if (appMenuItemView && typeof appMenuItemView.addCollapsiblePanel === 'function') {
         injectAppMenuPanelStyles();
-        appMenuItemView.addCollapsiblePanel({
+        appMenuPanelReady = appMenuItemView.addCollapsiblePanel({
           className: 'cl-appmenu-panel',
         })
           .then((panel) => {
             if (!panel || typeof panel.addNavItem !== 'function') return;
             appMenuPanelView = panel;
             try { panel.on?.('destroy', () => { appMenuPanelView = null; }); } catch (_) { /* best effort */ }
-            rebuildMenuNavigation();
           })
-          .catch((err) => console.warn('[Clearledgr] CollapsiblePanel failed:', err));
+          .catch((err) => {
+            console.warn('[Clearledgr] CollapsiblePanel failed:', err);
+            appMenuPanelReady = null;
+          });
       }
     } catch (err) {
       console.warn('[Clearledgr] AppMenu not available, falling back to NavMenu', err);

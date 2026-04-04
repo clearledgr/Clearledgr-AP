@@ -211,6 +211,28 @@ async def post_bill_to_quickbooks(
             }
         })
 
+    # Add tax line if tax_amount is provided
+    if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
+        qb_bill["TxnTaxDetail"] = {
+            "TotalTax": bill.tax_amount,
+        }
+
+    # Apply discount if provided
+    if getattr(bill, "discount_amount", None) and bill.discount_amount > 0:
+        qb_bill["Line"].append({
+            "Id": str(len(qb_bill["Line"]) + 1),
+            "DetailType": "DiscountLineDetail",
+            "Amount": bill.discount_amount,
+            "DiscountLineDetail": {
+                "PercentBased": False,
+            },
+        })
+
+    # Set payment terms memo
+    if getattr(bill, "payment_terms", None):
+        existing_note = qb_bill.get("PrivateNote", "")
+        qb_bill["PrivateNote"] = f"{existing_note} | Terms: {bill.payment_terms}".strip(" |")
+
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/bill"
 
     try:
@@ -1029,3 +1051,77 @@ async def get_chart_of_accounts_quickbooks(connection) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error("Failed to fetch QuickBooks chart of accounts: %s", type(e).__name__)
         return []
+
+
+# ==================== Vendor List ====================
+
+
+async def list_all_vendors_quickbooks(connection) -> List[Dict[str, Any]]:
+    """Fetch all vendors from QuickBooks Online with pagination.
+
+    QuickBooks Query API uses STARTPOSITION (1-based) and MAXRESULTS.
+    Returns a normalized list of vendor dicts.  Returns ``[]`` on any error.
+    """
+    if not connection.access_token or not connection.realm_id:
+        return []
+
+    url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
+    page_size = 1000
+    start_position = 1
+    all_vendors: List[Dict[str, Any]] = []
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            while True:
+                query = (
+                    f"SELECT * FROM Vendor STARTPOSITION {start_position} "
+                    f"MAXRESULTS {page_size}"
+                )
+                response = await client.get(
+                    url,
+                    params={"query": query},
+                    headers=_quickbooks_headers(connection),
+                    timeout=60,
+                )
+
+                if response.status_code == 401:
+                    logger.warning("QuickBooks token expired during vendor list fetch")
+                    break
+
+                response.raise_for_status()
+                result = response.json()
+
+                vendors = result.get("QueryResponse", {}).get("Vendor", [])
+                if not vendors:
+                    break
+
+                for v in vendors:
+                    addr = v.get("BillAddr") or {}
+                    all_vendors.append({
+                        "vendor_id": str(v.get("Id") or ""),
+                        "name": str(v.get("DisplayName") or ""),
+                        "email": str((v.get("PrimaryEmailAddr") or {}).get("Address") or ""),
+                        "phone": str((v.get("PrimaryPhone") or {}).get("FreeFormNumber") or ""),
+                        "tax_id": str(v.get("TaxIdentifier") or ""),
+                        "currency": str((v.get("CurrencyRef") or {}).get("value") or ""),
+                        "active": v.get("Active", True) is True,
+                        "address": ", ".join(
+                            filter(None, [
+                                addr.get("Line1"), addr.get("City"),
+                                addr.get("CountrySubDivisionCode"), addr.get("PostalCode"),
+                                addr.get("Country"),
+                            ])
+                        ),
+                        "payment_terms": "",
+                        "balance": float(v.get("Balance") or 0),
+                    })
+
+                if len(vendors) < page_size:
+                    break
+                start_position += page_size
+
+        return all_vendors
+
+    except Exception as e:
+        logger.error("Failed to fetch QuickBooks vendor list: %s", type(e).__name__)
+        return all_vendors or []

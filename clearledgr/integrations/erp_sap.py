@@ -286,6 +286,20 @@ async def post_bill_to_sap(
             "LineTotal": bill.amount,
         })
 
+    # Tax handling for SAP
+    if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
+        for dl in sap_bill["DocumentLines"]:
+            dl["TaxTotal"] = bill.tax_amount / max(len(sap_bill["DocumentLines"]), 1)
+
+    # Discount as negative line
+    if getattr(bill, "discount_amount", None) and bill.discount_amount > 0:
+        sap_bill["DocumentLines"].append({
+            "LineNum": len(sap_bill["DocumentLines"]),
+            "ItemDescription": f"Discount ({getattr(bill, 'discount_terms', '') or 'early payment'})",
+            "AccountCode": expense_account,
+            "LineTotal": -bill.discount_amount,
+        })
+
     url = f"{connection.base_url}/PurchaseInvoices"
 
     try:
@@ -1091,3 +1105,86 @@ async def get_chart_of_accounts_sap(connection) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error("Failed to fetch SAP chart of accounts: %s", type(e).__name__)
         return []
+
+
+# ==================== Vendor List ====================
+
+
+async def list_all_vendors_sap(connection) -> List[Dict[str, Any]]:
+    """Fetch all supplier business partners from SAP Business One with pagination.
+
+    SAP OData uses ``$skip`` + ``$top`` for pagination.
+    Filters to ``CardType eq 'cSupplier'`` for vendors only.
+    Returns a normalized list of vendor dicts.  Returns ``[]`` on any error.
+    """
+    if not connection.access_token or not connection.base_url:
+        return []
+
+    page_size = 500
+    skip = 0
+    all_vendors: List[Dict[str, Any]] = []
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            session = await _open_sap_service_layer_session(connection, client)
+            if session.get("status") != "success":
+                logger.warning("SAP session setup failed for vendor list fetch")
+                return []
+
+            headers = session.get("headers", {})
+
+            while True:
+                url = (
+                    f"{connection.base_url}/b1s/v1/BusinessPartners"
+                    f"?$filter=CardType eq 'cSupplier'"
+                    f"&$select=CardCode,CardName,EmailAddress,Phone1,"
+                    f"Address,FederalTaxID,Currency,PayTermsGrpCode,CurrentAccountBalance,Valid"
+                    f"&$top={page_size}&$skip={skip}"
+                )
+                response = await client.get(url, headers=headers, timeout=60)
+
+                if response.status_code == 401:
+                    logger.warning("SAP token expired during vendor list fetch")
+                    break
+
+                response.raise_for_status()
+                result = response.json()
+
+                items = result.get("value", [])
+                if not items:
+                    break
+
+                for v in items:
+                    valid_flag = v.get("Valid")
+                    active = True
+                    if isinstance(valid_flag, str):
+                        active = valid_flag.strip().lower() in {"y", "yes", "true", "tyes"}
+                    elif isinstance(valid_flag, bool):
+                        active = valid_flag
+                    elif valid_flag == "tNO":
+                        active = False
+                    elif valid_flag == "tYES":
+                        active = True
+
+                    all_vendors.append({
+                        "vendor_id": str(v.get("CardCode") or ""),
+                        "name": str(v.get("CardName") or ""),
+                        "email": str(v.get("EmailAddress") or ""),
+                        "phone": str(v.get("Phone1") or ""),
+                        "tax_id": str(v.get("FederalTaxID") or ""),
+                        "currency": str(v.get("Currency") or ""),
+                        "active": active,
+                        "address": str(v.get("Address") or ""),
+                        "payment_terms": str(v.get("PayTermsGrpCode") or ""),
+                        "balance": float(v.get("CurrentAccountBalance") or 0),
+                    })
+
+                if len(items) < page_size:
+                    break
+                skip += page_size
+
+        return all_vendors
+
+    except Exception as e:
+        logger.error("Failed to fetch SAP vendor list: %s", type(e).__name__)
+        return all_vendors or []

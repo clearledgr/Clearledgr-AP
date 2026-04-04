@@ -1598,6 +1598,101 @@ class InvoiceValidationMixin:
             except Exception as bank_exc:
                 logger.warning("Bank details comparison failed (non-fatal): %s", bank_exc)
 
+        # 5a-pre) Payment terms mismatch detection.
+        try:
+            invoice_terms = getattr(invoice, "payment_terms", None) or ""
+            if invoice_terms and invoice.vendor_name:
+                vp = None
+                try:
+                    vp = self.db.get_vendor_profile(self.organization_id, invoice.vendor_name) or {}
+                except Exception:
+                    vp = {}
+                profile_terms = vp.get("payment_terms") or ""
+                if profile_terms and invoice_terms.strip().lower() != profile_terms.strip().lower():
+                    add_reason(
+                        "payment_terms_mismatch",
+                        f"Invoice terms '{invoice_terms}' differ from vendor profile terms '{profile_terms}'",
+                        severity="warning",
+                        details={"invoice_terms": invoice_terms, "profile_terms": profile_terms},
+                    )
+        except Exception:
+            pass
+
+        # 5a-pre2) GL code validation against cached chart of accounts.
+        try:
+            if invoice.line_items:
+                from clearledgr.integrations.erp_router import get_chart_of_accounts
+                import asyncio as _aio
+                try:
+                    loop = _aio.get_running_loop()
+                    coa = []  # Can't await in sync context; skip if no loop
+                except RuntimeError:
+                    coa = []
+                if not coa:
+                    # Try cached CoA from org settings
+                    from clearledgr.integrations.erp_router import _get_cached_chart_of_accounts
+                    cached = _get_cached_chart_of_accounts(self.organization_id)
+                    if cached:
+                        coa = cached.get("accounts", [])
+                if coa:
+                    valid_codes = {str(a.get("code") or a.get("id") or "").strip() for a in coa if a.get("active", True)}
+                    for item in invoice.line_items:
+                        gl = str(item.get("gl_code") or "").strip()
+                        if gl and valid_codes and gl not in valid_codes:
+                            add_reason(
+                                "invalid_gl_code",
+                                f"GL code '{gl}' not found in chart of accounts",
+                                severity="warning",
+                                details={"gl_code": gl, "line_description": item.get("description", "")},
+                            )
+                            break  # One warning is enough
+        except Exception:
+            pass
+
+        # 5a) Period close — block posting to locked periods.
+        try:
+            from clearledgr.services.period_close import get_period_close_service
+            period_check = get_period_close_service(self.organization_id).check_posting_allowed(
+                getattr(invoice, "invoice_date", None),
+            )
+            if not period_check.get("allowed", True):
+                add_reason(
+                    "period_locked",
+                    period_check.get("message", f"Period {period_check.get('period')} is locked"),
+                    severity="error",
+                    details=period_check,
+                )
+        except Exception:
+            pass
+
+        # 5b) Tax compliance — validate vendor tax ID if available.
+        try:
+            from clearledgr.services.tax_compliance import validate_tax_id
+            vendor_profile = None
+            try:
+                vendor_profile = self.db.get_vendor_profile(self.organization_id, invoice.vendor_name) or {}
+            except Exception:
+                vendor_profile = {}
+            meta = vendor_profile.get("metadata") or {}
+            if isinstance(meta, str):
+                import json as _json
+                try:
+                    meta = _json.loads(meta)
+                except Exception:
+                    meta = {}
+            erp_tax_id = meta.get("erp_tax_id") or ""
+            if erp_tax_id:
+                tax_valid = validate_tax_id(erp_tax_id)
+                if not tax_valid.get("valid"):
+                    add_reason(
+                        "invalid_vendor_tax_id",
+                        f"Vendor tax ID '{erp_tax_id}' has invalid format",
+                        severity="warning",
+                        details=tax_valid,
+                    )
+        except Exception:
+            pass
+
         # 5) Critical-field confidence gate (launch-critical, server-enforced).
         confidence_gate = self._evaluate_invoice_confidence_gate(invoice)
         if confidence_gate.get("requires_field_review"):

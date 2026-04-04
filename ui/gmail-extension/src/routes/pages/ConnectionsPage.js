@@ -210,7 +210,61 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
               : 'You can review status here, but only admins can reconnect Gmail, change approval routing, or update ERP setup.'}
           </div>
         </div>
+
+        <${WebhooksPanel} api=${api} canManage=${canManageConnections} />
       </div>
+    </div>
+  `;
+}
+
+function WebhooksPanel({ api, canManage }) {
+  const [webhooks, setWebhooks] = useState([]);
+  const [url, setUrl] = useState('');
+  const [events, setEvents] = useState('*');
+  const [adding, setAdding] = useState(false);
+  useEffect(() => {
+    api.fetch('/api/workspace/webhooks').then((d) => setWebhooks(d?.webhooks || [])).catch(() => {});
+  }, []);
+  const addWebhook = async () => {
+    if (!url.trim()) return;
+    setAdding(true);
+    try {
+      const result = await api.fetch('/api/workspace/webhooks', {
+        method: 'POST',
+        body: JSON.stringify({ url: url.trim(), event_types: events.split(',').map((e) => e.trim()).filter(Boolean) }),
+      });
+      if (result?.id) setWebhooks((prev) => [...prev, result]);
+      setUrl('');
+    } catch (e) { console.warn('Add webhook failed:', e); }
+    setAdding(false);
+  };
+  const removeWebhook = async (id) => {
+    try {
+      await api.fetch(`/api/workspace/webhooks/${id}`, { method: 'DELETE' });
+      setWebhooks((prev) => prev.filter((w) => w.id !== id));
+    } catch (e) { console.warn('Remove webhook failed:', e); }
+  };
+  return html`
+    <div class="panel">
+      <h3 style="margin-top:0">Outgoing webhooks</h3>
+      <p class="muted" style="margin:0 0 8px;font-size:12px">Notify external systems when AP events happen (invoice approved, posted, etc).</p>
+      ${webhooks.length === 0 && html`<div class="muted" style="font-size:12px;padding:8px 0">No webhooks configured</div>`}
+      ${webhooks.map((wh) => html`
+        <div key=${wh.id} style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <div>
+            <div style="font-weight:600">${wh.url}</div>
+            <div class="muted">${Array.isArray(wh.event_types) ? wh.event_types.join(', ') : '*'}</div>
+          </div>
+          ${canManage && html`<button class="btn-secondary btn-sm" onClick=${() => removeWebhook(wh.id)}>Remove</button>`}
+        </div>
+      `)}
+      ${canManage && html`
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <input type="text" placeholder="https://..." value=${url} onInput=${(e) => setUrl(e.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
+          <button class="btn-secondary btn-sm" onClick=${addWebhook} disabled=${adding || !url.trim()}>${adding ? '...' : 'Add'}</button>
+        </div>
+        <div class="muted" style="font-size:11px;margin-top:4px">Events: * (all), or comma-separated: invoice.approved, invoice.posted_to_erp</div>
+      `}
     </div>
   `;
 }

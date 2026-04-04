@@ -1,0 +1,19 @@
+{
+  "name": "clearledgr-outlook-addin",
+  "version": "1.2026.001",
+  "description": "Clearledgr Outlook Add-in — Finance execution agents in Outlook",
+  "private": true,
+  "scripts": {
+    "dev": "npx http-server . -p 3000 -c-1 --cors",
+    "build": "echo 'Static add-in — no build step needed. Serve taskpane.html via HTTPS.'",
+    "validate": "npx office-addin-manifest validate manifest.xml",
+    "sideload": "npx office-addin-dev-certs install && npx office-addin-debugging start manifest.xml"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "office-addin-manifest": "^1.12.0",
+    "office-addin-debugging": "^5.0.0",
+    "office-addin-dev-certs": "^1.11.0",
+    "http-server": "^14.1.0"
+  }
+}

@@ -1017,6 +1017,25 @@ async def check_and_alert_thresholds(
 
 
 # ---------------------------------------------------------------------------
+# Monitoring health checks — broad system health (beyond AP thresholds)
+# ---------------------------------------------------------------------------
+
+@router.get("/monitoring-health")
+async def get_monitoring_health(
+    organization_id: str = Query("default"),
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Run all monitoring health checks (dead letters, auth, autopilot, overdue, posting).
+
+    Returns per-check status with alert flag and severity.  Broader than
+    ``/monitoring-thresholds`` which focuses on AP-specific metrics only.
+    """
+    _assert_org_access(user, organization_id)
+    from clearledgr.services.monitoring import run_monitoring_checks
+    return await run_monitoring_checks(organization_id=organization_id)
+
+
+# ---------------------------------------------------------------------------
 # Gap #18 — Dead-letter queue ops surface (PLAN.md §8.4)
 # ---------------------------------------------------------------------------
 

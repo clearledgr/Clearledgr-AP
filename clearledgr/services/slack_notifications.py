@@ -250,7 +250,10 @@ async def process_retry_queue() -> int:
         channel = str(notif.get("channel") or "").strip()
         ok = False
         try:
-            if channel == "slack_response_url":
+            if channel == "webhook":
+                from clearledgr.services.webhook_delivery import retry_webhook_delivery
+                ok = await retry_webhook_delivery(notif)
+            elif channel == "slack_response_url":
                 ok = await _retry_slack_response_url(payload)
             elif channel == "teams_card_update":
                 ok = await _retry_teams_card_update(payload)

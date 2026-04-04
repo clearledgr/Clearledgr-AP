@@ -206,7 +206,69 @@ export default function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
               : 'This page stays readable for operators, but only admins can change the policy.'}
           </div>
         </div>
+
+        <${DelegationPanel} api=${api} canManage=${canManageRules} />
       </div>
+    </div>
+  `;
+}
+
+function DelegationPanel({ api, canManage }) {
+  const [rules, setRules] = useState([]);
+  const [delegator, setDelegator] = useState('');
+  const [delegate, setDelegate] = useState('');
+  const [reason, setReason] = useState('');
+  const [adding, setAdding] = useState(false);
+  useEffect(() => {
+    api.fetch('/api/workspace/delegation-rules').then((d) => setRules(d?.rules || [])).catch(() => {});
+  }, []);
+  const addRule = async () => {
+    if (!delegator.trim() || !delegate.trim()) return;
+    setAdding(true);
+    try {
+      const result = await api.fetch('/api/workspace/delegation-rules', {
+        method: 'POST',
+        body: JSON.stringify({ delegator_email: delegator.trim(), delegate_email: delegate.trim(), reason: reason.trim() }),
+      });
+      if (result?.id) setRules((prev) => [...prev, result]);
+      setDelegator('');
+      setDelegate('');
+      setReason('');
+    } catch (e) { console.warn('Add delegation failed:', e); }
+    setAdding(false);
+  };
+  const deactivate = async (id) => {
+    try {
+      await api.fetch(`/api/workspace/delegation-rules/${id}/deactivate`, { method: 'POST' });
+      setRules((prev) => prev.filter((r) => r.id !== id));
+    } catch (e) { console.warn('Deactivate failed:', e); }
+  };
+  return html`
+    <div class="panel">
+      <h3 style="margin-top:0">Approval delegation</h3>
+      <p class="muted" style="margin:0 0 8px;font-size:12px">When an approver is OOO, their pending approvals route to their delegate.</p>
+      ${rules.length === 0 && html`<div class="muted" style="font-size:12px;padding:8px 0">No active delegation rules</div>`}
+      ${rules.map((r) => html`
+        <div key=${r.id} style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <div>
+            <div><strong>${r.delegator_email}</strong> → ${r.delegate_email}</div>
+            ${r.reason && html`<div class="muted">${r.reason}</div>`}
+          </div>
+          ${canManage && html`<button class="btn-secondary btn-sm" onClick=${() => deactivate(r.id)}>Remove</button>`}
+        </div>
+      `)}
+      ${canManage && html`
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">
+          <div style="display:flex;gap:6px">
+            <input type="email" placeholder="Approver email" value=${delegator} onInput=${(e) => setDelegator(e.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
+            <input type="email" placeholder="Delegate email" value=${delegate} onInput=${(e) => setDelegate(e.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
+          </div>
+          <div style="display:flex;gap:6px">
+            <input type="text" placeholder="Reason (optional)" value=${reason} onInput=${(e) => setReason(e.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
+            <button class="btn-secondary btn-sm" onClick=${addRule} disabled=${adding || !delegator.trim() || !delegate.trim()}>${adding ? '...' : 'Add'}</button>
+          </div>
+        </div>
+      `}
     </div>
   `;
 }
