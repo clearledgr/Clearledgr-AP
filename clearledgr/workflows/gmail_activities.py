@@ -103,15 +103,10 @@ def _amount_from_extraction(extraction: Dict[str, Any]) -> float:
 
 
 def _normalize_email_type(raw_type: str) -> str:
-    normalized = str(raw_type or "").strip().lower()
-    if normalized == "payment_request":
-        return "PAYMENT_REQUEST"
-    if normalized == "invoice":
-        return "INVOICE"
-    if normalized == "subscription_notification":
-        return "SUBSCRIPTION_NOTIFICATION"
-    if normalized == "receipt":
-        return "RECEIPT"
+    normalized = str(raw_type or "").strip().upper()
+    from clearledgr.services.document_routing import VALID_DOCUMENT_TYPES
+    if normalized.lower() in VALID_DOCUMENT_TYPES:
+        return normalized
     return "NOISE"
 
 

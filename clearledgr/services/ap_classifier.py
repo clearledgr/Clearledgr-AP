@@ -116,6 +116,52 @@ RECEIPT_PATTERNS = [
     r"\bpayment\s+confirmation\b",
 ]
 
+CREDIT_NOTE_PATTERNS = [
+    r"\bcredit\s+(?:note|memo)\b",
+    r"\bcredit\s+applied\b",
+    r"\badjustment\s+(?:note|memo|credit)\b",
+]
+
+STATEMENT_PATTERNS = [
+    r"\baccount\s+statement\b",
+    r"\bstatement\s+of\s+account\b",
+    r"\bvendor\s+statement\b",
+    r"\bmonthly\s+statement\b",
+    r"\bbalance\s+(?:brought|carried)\s+forward\b",
+]
+
+REMITTANCE_PATTERNS = [
+    r"\bremittance\s+advice\b",
+    r"\bpayment\s+advice\b",
+    r"\bfunds?\s+(?:transfer|sent|remitted)\b",
+]
+
+BANK_NOTIFICATION_PATTERNS = [
+    r"\bdirect\s+debit\b",
+    r"\bbank\s+(?:charge|notification|alert)\b",
+    r"\bforeign\s+exchange\b",
+    r"\bfx\s+(?:confirmation|rate)\b",
+]
+
+PO_CONFIRMATION_PATTERNS = [
+    r"\bpurchase\s+order\s+(?:confirmation|acknowledged?|accepted)\b",
+    r"\border\s+(?:confirmation|acknowledged?|accepted)\b",
+    r"\bpo\s+(?:confirmation|acknowledged?)\b",
+]
+
+TAX_DOCUMENT_PATTERNS = [
+    r"\bvat\s+(?:invoice|receipt|certificate)\b",
+    r"\bwithholding\s+tax\b",
+    r"\bwht\s+certificate\b",
+    r"\btax\s+(?:receipt|certificate|invoice)\b",
+]
+
+CONTRACT_PATTERNS = [
+    r"\bcontract\s+(?:renewal|extension|amendment)\b",
+    r"\brenewal\s+(?:notice|reminder)\b",
+    r"\bservice\s+agreement\b",
+]
+
 AMOUNT_PATTERN = re.compile(
     r"(\$|€|£|USD|EUR|GBP)\s*[\d,]+(?:\.\d{2})?",
     re.IGNORECASE,
@@ -148,16 +194,30 @@ def classify_ap_email(
     try:
         llm = MultiModalLLMService()
         if llm.is_available:
-            prompt = f"""Classify this email for AP workflow. Return ONLY valid JSON.
+            prompt = f"""Classify this email for a finance team's AP workflow. Return ONLY valid JSON.
 
 Allowed types:
-- INVOICE — actual vendor bill with amount due that requires approval and payment
-- PAYMENT_REQUEST — non-invoice payment request (reimbursement, wire transfer, contractor)
-- SUBSCRIPTION_NOTIFICATION — SaaS/cloud billing notification where card was already charged (Google Cloud, AWS, Slack, etc). NOT a payable — just a record of a charge that already happened.
-- RECEIPT — payment confirmation or receipt for a completed transaction
-- NOISE — everything else (marketing, security alerts, newsletters, promotions)
+- INVOICE — vendor bill requiring approval and payment (the vendor expects YOU to pay)
+- PAYMENT_REQUEST — non-invoice payment request (reimbursement, wire, contractor payment)
+- DEBIT_NOTE — additional charge from a vendor, linked to an original invoice
+- CREDIT_NOTE — vendor credit that reduces what you owe
+- SUBSCRIPTION_NOTIFICATION — SaaS/cloud billing where card was ALREADY charged (Google Cloud, AWS, Slack). Not a payable.
+- RECEIPT — payment confirmation for a completed transaction
+- REMITTANCE_ADVICE — proof that payment was sent to a vendor
+- STATEMENT — vendor account summary (not a payable, used for reconciliation)
+- BANK_NOTIFICATION — bank charge, direct debit, FX confirmation
+- PO_CONFIRMATION — vendor confirming a purchase order
+- TAX_DOCUMENT — VAT invoice, WHT certificate, tax receipt
+- CONTRACT_RENEWAL — vendor contract or renewal notice
+- DISPUTE_RESPONSE — vendor reply to an existing dispute/query
+- REFUND — refund notification
+- NOISE — not finance-related (marketing, security, newsletters)
 
-Key distinction: If a SaaS provider (Google, AWS, Microsoft, Slack) sends an "invoice" for a subscription that auto-charges a card, that is SUBSCRIPTION_NOTIFICATION, not INVOICE. A real INVOICE is from a vendor who expects you to initiate payment.
+Key distinctions:
+- SaaS "invoice" that auto-charges a card = SUBSCRIPTION_NOTIFICATION
+- Vendor bill that expects you to initiate payment = INVOICE
+- "Your payment has been received" = RECEIPT
+- "Credit memo" or "credit note" reducing balance = CREDIT_NOTE
 
 Subject: {subject}
 Sender: {sender}
@@ -168,7 +228,8 @@ Return JSON:
 """
             result = llm.generate_json(prompt)
             doc_type = str(result.get("type", "NOISE")).upper()
-            if doc_type not in {"INVOICE", "PAYMENT_REQUEST", "SUBSCRIPTION_NOTIFICATION", "RECEIPT", "NOISE"}:
+            from clearledgr.services.document_routing import VALID_DOCUMENT_TYPES
+            if doc_type.lower() not in VALID_DOCUMENT_TYPES:
                 doc_type = "NOISE"
             confidence = float(result.get("confidence", 0.6))
             return {
@@ -221,6 +282,83 @@ Return JSON:
             "reason": "receipt_signals",
             "method": "rules",
             "score": receipt_hits,
+        }
+
+    # --- Credit note detection ---
+    credit_hits = _count_matches(CREDIT_NOTE_PATTERNS, combined)
+    if credit_hits >= 1:
+        return {
+            "type": "CREDIT_NOTE",
+            "confidence": min(0.90, 0.70 + 0.05 * credit_hits),
+            "reason": "credit_note_signals",
+            "method": "rules",
+            "score": credit_hits,
+        }
+
+    # --- Statement detection ---
+    statement_hits = _count_matches(STATEMENT_PATTERNS, combined)
+    if statement_hits >= 1:
+        return {
+            "type": "STATEMENT",
+            "confidence": min(0.90, 0.70 + 0.05 * statement_hits),
+            "reason": "statement_signals",
+            "method": "rules",
+            "score": statement_hits,
+        }
+
+    # --- Remittance advice ---
+    remittance_hits = _count_matches(REMITTANCE_PATTERNS, combined)
+    if remittance_hits >= 1:
+        return {
+            "type": "REMITTANCE_ADVICE",
+            "confidence": min(0.90, 0.70 + 0.05 * remittance_hits),
+            "reason": "remittance_signals",
+            "method": "rules",
+            "score": remittance_hits,
+        }
+
+    # --- Bank notification ---
+    bank_hits = _count_matches(BANK_NOTIFICATION_PATTERNS, combined)
+    if bank_hits >= 1:
+        return {
+            "type": "BANK_NOTIFICATION",
+            "confidence": min(0.85, 0.65 + 0.05 * bank_hits),
+            "reason": "bank_notification_signals",
+            "method": "rules",
+            "score": bank_hits,
+        }
+
+    # --- PO confirmation ---
+    po_conf_hits = _count_matches(PO_CONFIRMATION_PATTERNS, combined)
+    if po_conf_hits >= 1:
+        return {
+            "type": "PO_CONFIRMATION",
+            "confidence": min(0.85, 0.65 + 0.05 * po_conf_hits),
+            "reason": "po_confirmation_signals",
+            "method": "rules",
+            "score": po_conf_hits,
+        }
+
+    # --- Tax document ---
+    tax_hits = _count_matches(TAX_DOCUMENT_PATTERNS, combined)
+    if tax_hits >= 1:
+        return {
+            "type": "TAX_DOCUMENT",
+            "confidence": min(0.85, 0.65 + 0.05 * tax_hits),
+            "reason": "tax_document_signals",
+            "method": "rules",
+            "score": tax_hits,
+        }
+
+    # --- Contract renewal ---
+    contract_hits = _count_matches(CONTRACT_PATTERNS, combined)
+    if contract_hits >= 1:
+        return {
+            "type": "CONTRACT_RENEWAL",
+            "confidence": min(0.80, 0.60 + 0.05 * contract_hits),
+            "reason": "contract_signals",
+            "method": "rules",
+            "score": contract_hits,
         }
 
     # --- Standard AP classification ---

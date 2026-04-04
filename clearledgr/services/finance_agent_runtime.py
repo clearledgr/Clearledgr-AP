@@ -454,25 +454,22 @@ class FinanceAgentRuntime:
 
     @staticmethod
     def _initial_state_for_document(invoice: Dict[str, Any]) -> str:
-        """Determine initial AP state based on document classification.
+        """Determine initial AP state based on document routing table."""
+        from clearledgr.services.document_routing import get_route
 
-        Subscription notifications and receipts go straight to 'closed' —
-        they are records of charges already made, not payables.
-        """
         doc_type = str(
             invoice.get("document_type")
-            or invoice.get("classification", {}).get("type", "")
-            if isinstance(invoice.get("classification"), dict)
-            else invoice.get("document_type", "")
+            or (invoice.get("classification", {}).get("type", "")
+                if isinstance(invoice.get("classification"), dict)
+                else "")
         ).strip().lower()
-        if doc_type in ("subscription_notification", "subscription", "receipt"):
-            return "closed"
-        workflow = str(invoice.get("workflow") or "").strip().lower()
-        if workflow == "auto_record":
-            return "closed"
+        if doc_type:
+            return get_route(doc_type).initial_state
+
+        # Fallback: check triage result fields
         suggested = str(invoice.get("suggested_state") or "").strip().lower()
-        if suggested == "closed":
-            return "closed"
+        if suggested in ("closed", "received"):
+            return suggested
         return "received"
 
     def _seed_ap_item_for_invoice_processing(

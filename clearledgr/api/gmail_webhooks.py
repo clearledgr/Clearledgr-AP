@@ -964,41 +964,24 @@ async def process_single_email(
             logger.info("Skipping non-AP email: %s", message.subject)
         return
 
-    # Subscription notifications — record for GL tracking but skip AP workflow
-    if category == "subscription_notification":
-        finance_email = _save_label_only_finance_email(
-            db,
-            message=message,
-            user_id=user_id,
-            organization_id=organization_id,
-            document_type="subscription",
-            parsed=label_parse,
-        )
-        await _sync_message_finance_labels(
-            client,
-            user_id=user_id,
-            organization_id=organization_id,
-            message_id=message.id,
-            thread_id=getattr(message, "thread_id", None),
-            finance_email=finance_email,
-            document_type="subscription",
-            db=db,
-        )
-        logger.info(
-            "Subscription notification recorded (no AP workflow): %s from %s",
-            message.subject, message.sender,
-        )
-        return
+    # Use document routing table to decide workflow
+    from clearledgr.services.document_routing import get_route, AP_ITEM_TYPES
 
-    if category not in {"invoice", "payment_request"}:
-        doc_type = label_only_category if label_only_category in {"payment", "receipt", "refund", "credit_note", "statement"} else category
-        if doc_type in {"payment", "receipt", "refund", "credit_note", "statement"}:
+    route = get_route(category)
+
+    # Non-AP document types: record for tracking, label in Gmail, skip AP workflow
+    if category not in AP_ITEM_TYPES:
+        resolved_type = label_only_category if label_only_category in {
+            "payment", "receipt", "refund", "credit_note", "statement",
+            "subscription", "remittance_advice", "bank_notification",
+        } else category
+        if resolved_type != "noise":
             finance_email = _save_label_only_finance_email(
                 db,
                 message=message,
                 user_id=user_id,
                 organization_id=organization_id,
-                document_type=doc_type,
+                document_type=resolved_type,
                 parsed=label_parse,
             )
             await _sync_message_finance_labels(
@@ -1008,11 +991,15 @@ async def process_single_email(
                 message_id=message.id,
                 thread_id=getattr(message, "thread_id", None),
                 finance_email=finance_email,
-                document_type=doc_type,
+                document_type=resolved_type,
                 db=db,
             )
+            logger.info(
+                "%s recorded (no AP workflow): %s from %s",
+                route.label, message.subject, message.sender,
+            )
         else:
-            logger.info("Skipping non-AP email: %s (%s)", message.subject, category or "unknown")
+            logger.info("Skipping non-finance email: %s", message.subject)
         return
 
     # Store as detected finance email

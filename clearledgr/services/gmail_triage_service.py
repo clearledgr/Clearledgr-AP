@@ -48,21 +48,26 @@ async def run_inline_gmail_triage(
         reasoning=classification.get("reason", "AI classification"),
     )
 
-    if classification.get("type") == "NOISE":
+    # Use the document routing table to determine workflow
+    from clearledgr.services.document_routing import get_route
+
+    doc_type = str(classification.get("type") or "noise").lower()
+    route = get_route(doc_type)
+
+    if doc_type == "noise":
         return {
             "email_id": payload.get("email_id"),
             "classification": classification,
             "action": "skipped",
         }
 
-    # Subscription notifications (Google Cloud, AWS, Slack, etc.) — already charged,
-    # not a payable. Extract data for record-keeping but skip the approval workflow.
-    if classification.get("type") == "SUBSCRIPTION_NOTIFICATION":
+    # Non-AP documents: extract data for records but skip approval workflow
+    if route.auto_close:
         extraction = await extract_email_data_activity({**payload, "classification": classification})
         trail.log(
             invoice_id=payload.get("email_id"),
             event_type=AuditEventType.EXTRACTED,
-            summary=f"Subscription notification from {extraction.get('vendor') or payload.get('sender')}",
+            summary=f"{route.label} from {extraction.get('vendor') or payload.get('sender')}",
             details={"amount": extraction.get("amount"), "vendor": extraction.get("vendor")},
         )
         return {
@@ -70,30 +75,14 @@ async def run_inline_gmail_triage(
             "classification": classification,
             "extraction": extraction,
             "action": "recorded",
-            "document_type": "subscription_notification",
+            "document_type": doc_type,
             "workflow": "auto_record",
-            "reason": "SaaS/subscription charge — card already billed, no approval needed",
-            "suggested_state": "closed",
-        }
-
-    # Receipts — payment already completed, just record it.
-    if classification.get("type") == "RECEIPT":
-        extraction = await extract_email_data_activity({**payload, "classification": classification})
-        trail.log(
-            invoice_id=payload.get("email_id"),
-            event_type=AuditEventType.EXTRACTED,
-            summary=f"Receipt from {extraction.get('vendor') or payload.get('sender')}",
-            details={"amount": extraction.get("amount")},
-        )
-        return {
-            "email_id": payload.get("email_id"),
-            "classification": classification,
-            "extraction": extraction,
-            "action": "recorded",
-            "document_type": "receipt",
-            "workflow": "auto_record",
-            "reason": "Payment receipt — transaction already completed",
-            "suggested_state": "closed",
+            "reason": route.workflow_guidance,
+            "suggested_state": route.initial_state,
+            "creates_ap_item": route.creates_ap_item,
+            "needs_approval": route.needs_approval,
+            "gmail_label": route.gmail_label,
+            "match_to": route.match_to,
         }
 
     extraction = await extract_email_data_activity({**payload, "classification": classification})
