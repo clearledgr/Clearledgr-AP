@@ -162,6 +162,21 @@ CONTRACT_PATTERNS = [
     r"\bservice\s+agreement\b",
 ]
 
+DEBIT_NOTE_PATTERNS = [
+    r"\bdebit\s+note\b",
+    r"\bdebit\s+memo\b",
+    r"\badditional\s+charge\b",
+    r"\bsurcharge\b",
+    r"\badjustment\s+(?:invoice|debit)\b",
+]
+
+DISPUTE_RESPONSE_PATTERNS = [
+    r"\bre(?:garding|:\s*)\s*(?:your\s+)?(?:query|dispute|claim|complaint)\b",
+    r"\bin\s+response\s+to\s+your\s+(?:query|dispute|email|request)\b",
+    r"\bdispute\s+(?:resolution|response|update)\b",
+    r"\bclaim\s+(?:update|response|resolution)\b",
+]
+
 AMOUNT_PATTERN = re.compile(
     r"(\$|€|£|USD|EUR|GBP)\s*[\d,]+(?:\.\d{2})?",
     re.IGNORECASE,
@@ -359,6 +374,28 @@ Return JSON:
             "reason": "contract_signals",
             "method": "rules",
             "score": contract_hits,
+        }
+
+    # --- Debit note ---
+    debit_hits = _count_matches(DEBIT_NOTE_PATTERNS, combined)
+    if debit_hits >= 1:
+        return {
+            "type": "DEBIT_NOTE",
+            "confidence": min(0.85, 0.65 + 0.05 * debit_hits),
+            "reason": "debit_note_signals",
+            "method": "rules",
+            "score": debit_hits,
+        }
+
+    # --- Dispute response ---
+    dispute_hits = _count_matches(DISPUTE_RESPONSE_PATTERNS, combined)
+    if dispute_hits >= 1:
+        return {
+            "type": "DISPUTE_RESPONSE",
+            "confidence": min(0.80, 0.60 + 0.05 * dispute_hits),
+            "reason": "dispute_response_signals",
+            "method": "rules",
+            "score": dispute_hits,
         }
 
     # --- Standard AP classification ---

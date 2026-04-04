@@ -1028,25 +1028,17 @@ async def process_single_email(
         finance_email_payload["id"] = existing_finance_email_id
     db.save_finance_email(FinanceEmail(**finance_email_payload))
     
-    # Process invoices through the invoice workflow
-    if category == "invoice":
-        await process_invoice_email(
-            client=client,
-            message=message,
-            user_id=user_id,
-            organization_id=organization_id,
-            confidence=classification.get("confidence", 0.0),
-        )
-    
-    # Process payment requests (non-invoice payment asks)
-    elif category == "payment_request":
-        await process_payment_request_email(
-            client=client,
-            message=message,
-            user_id=user_id,
-            organization_id=organization_id,
-            confidence=classification.get("confidence", 0.0),
-        )
+    # All AP_ITEM_TYPES go through the invoice processing pipeline.
+    # The routing table determines the initial state (received vs closed)
+    # and whether approval is needed. No hardcoded type checks.
+    await process_invoice_email(
+        client=client,
+        message=message,
+        user_id=user_id,
+        organization_id=organization_id,
+        confidence=classification.get("confidence", 0.0),
+        document_type=category,
+    )
 
 
 async def classify_email_with_llm(
@@ -1087,6 +1079,7 @@ async def process_invoice_email(
     organization_id: str,
     confidence: float,
     *,
+    document_type: str = "invoice",
     run_runtime: bool = True,
     create_draft: bool = True,
     refresh_reason: Optional[str] = None,
@@ -1363,6 +1356,7 @@ async def process_invoice_email(
         "conflict_actions": conflict_actions,
         "exception_code": extraction_exception_code,
         "exception_severity": extraction_exception_severity,
+        "document_type": document_type,
     }
 
     try:
