@@ -69,10 +69,19 @@ class PaymentStore:
     def create_payment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Create a payment tracking record.
 
-        Returns the inserted row as a dict.
+        Idempotent: if a non-terminal payment already exists for this
+        ap_item_id, returns the existing record instead of creating a duplicate.
         """
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
+
+        # Idempotency: check for existing active payment for this AP item
+        ap_item_id = payload.get("ap_item_id")
+        if ap_item_id:
+            existing = self._find_active_payment_for_item(ap_item_id)
+            if existing:
+                return existing
+
         payment_id = payload.get("id") or f"PAY-{uuid.uuid4().hex[:12]}"
 
         sql = self._prepare_sql("""
@@ -122,6 +131,24 @@ class PaymentStore:
             "created_at": now,
             "updated_at": now,
         }
+
+    def _find_active_payment_for_item(self, ap_item_id: str) -> Optional[Dict[str, Any]]:
+        """Find an existing non-terminal payment for this AP item."""
+        terminal_statuses = ("completed", "closed_by_credit", "failed", "reversed")
+        sql = self._prepare_sql(
+            "SELECT * FROM payments WHERE ap_item_id = ? AND status NOT IN ("
+            + ",".join("?" for _ in terminal_statuses)
+            + ") ORDER BY created_at DESC LIMIT 1"
+        )
+        try:
+            with self.connect() as conn:
+                cur = conn.execute(sql, (ap_item_id, *terminal_statuses))
+                row = cur.fetchone()
+            if row:
+                return dict(row) if hasattr(row, "keys") else self._payment_row_to_dict(row, cur.description)
+        except Exception:
+            pass
+        return None
 
     def get_payment(self, payment_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a single payment record by ID."""
