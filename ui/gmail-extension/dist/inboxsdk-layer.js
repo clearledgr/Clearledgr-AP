@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:5df46d7f4e7814ff5ec4d754638e9155f4781d9cc0e7da1ec1128404808c1748 */
+/* clearledgr-source-fingerprint:13dc023a5f0b62654fee2e740a6abe73b1d74cca6923bfe0a23ad230a74b4788 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -69111,8 +69111,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     store_default.openComposeWithPrefill = openComposeWithPrefill;
     let bootstrapCache = null;
     let bootstrapPromise = null;
-    let currentRouteAccess = { capabilities: {} };
-    let routeAccessResolved = false;
+    let currentRouteAccess = { capabilities: getCapabilities({}) };
+    let routeAccessResolved = true;
     async function getBootstrap() {
       if (bootstrapCache)
         return bootstrapCache;

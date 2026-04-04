@@ -828,8 +828,10 @@ function registerAppMenuAndRoutes() {
 
   let bootstrapCache = null;
   let bootstrapPromise = null;
-  let currentRouteAccess = { capabilities: {} };
-  let routeAccessResolved = false;
+  // Start with full view access — never gate navigation on bootstrap.
+  // Manage capabilities get refined when bootstrap resolves.
+  let currentRouteAccess = { capabilities: getCapabilities({}) };
+  let routeAccessResolved = true;
 
   async function getBootstrap() {
     if (bootstrapCache) return bootstrapCache;

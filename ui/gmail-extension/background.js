@@ -317,6 +317,9 @@ async function registerGmailTokenWithBackend(accessToken) {
 }
 
 async function ensureGmailAuthWithBackend(interactive = true) {
+  // Streak pattern: use the Google OAuth token directly as the Bearer token.
+  // The backend validates it against Google's tokeninfo endpoint.
+  // No separate JWT exchange — one token, one auth path.
   const wantsInteractive = Boolean(interactive);
   const now = Date.now();
   if (wantsInteractive) {
@@ -333,30 +336,25 @@ async function ensureGmailAuthWithBackend(interactive = true) {
   if (authFlowPromise) return authFlowPromise;
 
   const run = async () => {
-    let attemptedFreshToken = false;
-    while (true) {
-      codeExchangeResult = null;
-      // Explicit user reconnects must run a fresh OAuth code exchange so the
-      // backend receives a refresh token, not just another short-lived access token.
-      const token = await getAuthToken(wantsInteractive, { forceFresh: wantsInteractive });
-      // If token came from code exchange, backend already has it (with refresh token)
-      if (codeExchangeResult) {
-        const result = codeExchangeResult;
-        codeExchangeResult = null;
-        return result;
-      }
-      try {
-        return await registerGmailTokenWithBackend(token);
-      } catch (error) {
-        const message = String(error?.message || '');
-        if (!attemptedFreshToken && message.includes('invalid_google_access_token')) {
-          attemptedFreshToken = true;
-          await clearCachedAuthToken();
-          continue;
-        }
-        throw error;
-      }
+    const token = await getAuthToken(wantsInteractive, { forceFresh: wantsInteractive });
+    if (!token) {
+      return { success: false, error: 'no_google_token' };
     }
+
+    // Also register with backend for autopilot (server-side Gmail access)
+    // but don't block auth on it — fire and forget
+    try {
+      registerGmailTokenWithBackend(token).catch(() => {});
+    } catch (_) { /* best effort */ }
+
+    const profile = await getProfileUserInfo();
+    return {
+      success: true,
+      backendAccessToken: token,  // Use Google token directly
+      backendExpiresIn: getTokenTtlSeconds(),
+      organizationId: 'default',
+      email: profile?.email || null,
+    };
   };
 
   authFlowPromise = run().finally(() => {

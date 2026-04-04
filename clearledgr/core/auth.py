@@ -242,17 +242,29 @@ def get_current_user(
     workspace_access_cookie: Optional[str] = Cookie(default=None, alias="clearledgr_workspace_access"),
 ) -> TokenData:
     """
-    Get current authenticated user from JWT token or API key.
+    Get current authenticated user.
 
-    Supports:
-    - Bearer token: Authorization: Bearer <jwt>
-    - API key: X-API-Key: <key>
+    Supports (in order):
+    1. Bearer token: Clearledgr JWT OR Google OAuth access token (Streak-style)
+    2. API key: X-API-Key header
+    3. Session cookie
     """
     if credentials and credentials.credentials:
-        payload = decode_token(credentials.credentials)
-        if payload.get("type") != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type")
-        return _token_data_from_payload(payload)
+        token = credentials.credentials
+        # Try Clearledgr JWT first
+        try:
+            payload = decode_token(token)
+            if payload.get("type") == "access":
+                return _token_data_from_payload(payload)
+        except HTTPException:
+            pass  # Not a Clearledgr JWT — try Google OAuth below
+
+        # Try Google OAuth token (Streak pattern: extension passes Google token directly)
+        google_user = _validate_google_token(token)
+        if google_user:
+            return google_user
+
+        raise HTTPException(status_code=401, detail="Invalid token")
 
     if x_api_key:
         db = _get_db()
@@ -268,15 +280,97 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     if workspace_access_cookie:
-        payload = decode_token(workspace_access_cookie)
-        if payload.get("type") != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type")
-        return _token_data_from_payload(payload)
+        try:
+            payload = decode_token(workspace_access_cookie)
+            if payload.get("type") == "access":
+                return _token_data_from_payload(payload)
+        except HTTPException:
+            pass
+        # Cookie might also be a Google token
+        google_user = _validate_google_token(workspace_access_cookie)
+        if google_user:
+            return google_user
 
     raise HTTPException(
         status_code=401,
         detail="Not authenticated. Provide Bearer token, X-API-Key header, or valid workspace session cookie.",
     )
+
+
+# Cache Google token validation results to avoid hitting tokeninfo on every request
+_google_token_cache: Dict[str, tuple] = {}  # token -> (TokenData, expires_at)
+_GOOGLE_TOKEN_CACHE_TTL = 300  # 5 minutes
+
+
+def _validate_google_token(token: str) -> Optional[TokenData]:
+    """Validate a Google OAuth access token and resolve to a Clearledgr user.
+
+    Calls Google's tokeninfo endpoint to verify the token and get the email.
+    Then looks up the user in the database by email.
+    Results are cached for 5 minutes to avoid hammering Google on every request.
+    """
+    # Check cache first
+    cached = _google_token_cache.get(token)
+    if cached:
+        token_data, expires_at = cached
+        if datetime.now(timezone.utc) < expires_at:
+            return token_data
+        else:
+            _google_token_cache.pop(token, None)
+
+    try:
+        import httpx
+        response = httpx.get(
+            "https://www.googleapis.com/oauth2/v3/tokeninfo",
+            params={"access_token": token},
+            timeout=10,
+        )
+        if response.status_code != 200:
+            return None
+
+        info = response.json()
+        email = info.get("email")
+        if not email:
+            return None
+
+        # Look up user by email
+        db = _get_db()
+        user = db.get_user_by_email(email)
+        if not user:
+            # Auto-provision: create user on first Google auth (like Streak)
+            user = db.create_user(
+                email=email,
+                name=email.split("@")[0],
+                role="operator",
+            )
+            logger.info("Auto-provisioned user from Google OAuth: %s", email)
+
+        token_data = TokenData(
+            user_id=user.get("id") or user.get("user_id") or email,
+            email=email,
+            organization_id=user.get("organization_id", "default"),
+            role=user.get("role", "operator"),
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+        # Cache the result
+        _google_token_cache[token] = (
+            token_data,
+            datetime.now(timezone.utc) + timedelta(seconds=_GOOGLE_TOKEN_CACHE_TTL),
+        )
+
+        # Evict stale entries
+        if len(_google_token_cache) > 100:
+            now = datetime.now(timezone.utc)
+            stale = [k for k, (_, exp) in _google_token_cache.items() if now >= exp]
+            for k in stale:
+                _google_token_cache.pop(k, None)
+
+        return token_data
+
+    except Exception as exc:
+        logger.debug("Google token validation failed: %s", exc)
+        return None
 
 
 def normalize_user_role(role: Optional[str]) -> str:
