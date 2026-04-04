@@ -1163,10 +1163,10 @@ function registerAppMenuAndRoutes() {
 bootstrap();
 
 console.log(
-  '%c🧾 Clearledgr — The Gmail AP Workspace for Finance Teams',
-  'font-size:14px;font-weight:bold;color:#00D67E;'
+  '%cClearledgr',
+  'font-size:16px;font-weight:bold;color:#00D67E;'
 );
 console.log(
-  '%cCurious how we built AP automation inside Gmail?\nWe\'re looking for engineers who think finance software should live where finance teams work.\n\nhttps://clearledgr.com/careers',
+  '%cYou found us in the console. That means you care how things work.\nSo do we. That\'s why AP lives in Gmail, not another tab.\n\nhttps://clearledgr.com',
   'font-size:12px;color:#6B7280;'
 );

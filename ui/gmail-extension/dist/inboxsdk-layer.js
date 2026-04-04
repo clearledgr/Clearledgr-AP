@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:9c3c1503e080f93e2901cf8db4fad36d4a4ce628a42b9df63bf25f319a8d6921 */
+/* clearledgr-source-fingerprint:ed875bdf745f22326aa94100042775985e73dc3474a9b01560ecb8bf53b4e6d6 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -69457,9 +69457,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
   }
   bootstrap();
-  console.log("%c\uD83E\uDDFE Clearledgr — The Gmail AP Workspace for Finance Teams", "font-size:14px;font-weight:bold;color:#00D67E;");
-  console.log(`%cCurious how we built AP automation inside Gmail?
-We're looking for engineers who think finance software should live where finance teams work.
+  console.log("%cClearledgr", "font-size:16px;font-weight:bold;color:#00D67E;");
+  console.log(`%cYou found us in the console. That means you care how things work.
+So do we. That's why AP lives in Gmail, not another tab.
 
-https://clearledgr.com/careers`, "font-size:12px;color:#6B7280;");
+https://clearledgr.com`, "font-size:12px;color:#6B7280;");
 })();
