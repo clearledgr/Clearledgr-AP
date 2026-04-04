@@ -863,7 +863,7 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     store.setSelectedItem(String(item.id));
     focusPipelineItem(pipelineScope, item, 'thread');
     if (!gotoRoute('clearledgr/pipeline')) {
-      showToast('Unable to open pipeline', 'error');
+      showToast('Unable to open invoices', 'error');
     }
   }, [gotoRoute, item, pipelineScope]);
   const openSource = useCallback(() => {
@@ -993,7 +993,7 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
       `}
 
       <div id="cl-agent-actions" class="cl-thread-actions">
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open in pipeline</button>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open in invoices</button>
         ${canOpenSource && html`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource}>Open email</button>
         `}
@@ -1131,7 +1131,7 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
 function EmptyState({ queueCount }) {
   const openPipeline = useCallback(() => {
     if (!navigateInboxRoute('clearledgr/pipeline', store.sdk)) {
-      showToast('Unable to open pipeline', 'error');
+      showToast('Unable to open invoices', 'error');
     }
   }, []);
   const openHome = useCallback(() => {
@@ -1146,7 +1146,7 @@ function EmptyState({ queueCount }) {
       <p>No record is linked to this email yet.</p>
       <p class="cl-muted">Open the queue to work records Clearledgr has already found.</p>
       <div class="cl-thread-actions">
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
       </div>
     </div></div>`;
   }
@@ -1156,7 +1156,7 @@ function EmptyState({ queueCount }) {
       <p>${queueCount} record${queueCount !== 1 ? 's are' : ' is'} ready in the queue.</p>
       <p class="cl-muted">Open an email to work one record, or open Pipeline to see the full queue.</p>
       <div class="cl-thread-actions">
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
       </div>
     </div></div>`;
@@ -1166,7 +1166,7 @@ function EmptyState({ queueCount }) {
     <p>Nothing is waiting right now.</p>
     <p class="cl-muted">Pipeline is still the control plane. Home is available if you want the lighter overview.</p>
     <div class="cl-thread-actions">
-      <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
+      <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
       <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
     </div>
   </div></div>`;

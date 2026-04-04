@@ -60,6 +60,8 @@ class APStore:
         "field_confidences",
         # Multi-entity routing: which legal entity this AP item belongs to
         "entity_id",
+        # Document classification type (invoice, subscription_notification, credit_note, etc.)
+        "document_type",
     })
 
     # ------------------------------------------------------------------
@@ -104,8 +106,8 @@ class APStore:
              supersedes_ap_item_id, supersedes_invoice_key, superseded_by_ap_item_id, resubmission_reason, erp_reference,
              erp_posted_at, workflow_id, run_id, approval_surface, approval_policy_version, post_attempted_at,
              last_error, po_number, attachment_url, exception_code, exception_severity,
-             organization_id, user_id, entity_id, created_at, updated_at, metadata, field_confidences)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             organization_id, user_id, entity_id, created_at, updated_at, metadata, field_confidences, document_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         values = (
             item_id,
@@ -151,6 +153,7 @@ class APStore:
             now,
             metadata,
             field_confidences_json,
+            payload.get("document_type") or "invoice",
         )
         with self.connect() as conn:
             cur = conn.cursor()

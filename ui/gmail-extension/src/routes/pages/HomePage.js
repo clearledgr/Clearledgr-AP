@@ -358,7 +358,7 @@ export default function HomePage({
         </h2>
         <p style="font-size:15px;color:var(--ink-secondary);margin:0 0 12px">
           ${allReady
-            ? 'Pipeline is your AP control plane. Use Gmail for the active record when context matters.'
+            ? 'Invoices is your AP queue. Use Gmail for the active record when context matters.'
             : gmailOk
               ? `${greeting}${firstName ? `, ${firstName}` : ''}. Clearledgr is processing invoices. Connect more integrations to unlock approvals and ERP posting.`
               : `${greeting}${firstName ? `, ${firstName}` : ''}. Connect Gmail to start processing invoices.`}
@@ -418,7 +418,7 @@ export default function HomePage({
         detail=${savedOrStarterViews.length > 0
           ? 'Open the views you come back to most.'
           : 'Jump straight to the part of the queue you need.'}
-        actionLabel="Open pipeline"
+        actionLabel="Open invoices"
         onAction=${() => navigate('clearledgr/pipeline')}
         panelMinHeight=${220}
       >

@@ -13,8 +13,8 @@ export const NAV_PREFS_STORAGE_KEY = 'clearledgr_nav_preferences_v1';
 export const ROUTES = [
   {
     id: 'clearledgr/pipeline',
-    title: 'Pipeline',
-    subtitle: 'Control the AP queue across entities and states.',
+    title: 'Invoices',
+    subtitle: 'All invoices and finance documents across states.',
     icon: 'pipeline',
     navOrder: 10,
     defaultPinned: true,

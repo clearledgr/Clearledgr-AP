@@ -666,6 +666,7 @@ class _ClearledgrDBBase:
                     created_at TEXT,
                     updated_at TEXT,
                     metadata TEXT,
+                    document_type TEXT DEFAULT 'invoice',
                     UNIQUE(organization_id, invoice_key)
                 )
             """)
@@ -1208,6 +1209,7 @@ class _ClearledgrDBBase:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_entities_org_code ON entities(organization_id, code)")
             # Add entity_id to ap_items for entity-level routing
             self._ensure_column(cur, "ap_items", "entity_id", "TEXT")
+            self._ensure_column(cur, "ap_items", "document_type", "TEXT DEFAULT 'invoice'")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_entity ON ap_items(organization_id, entity_id)")
             # Add entity_id to erp_connections so each entity can have its own connection
             self._ensure_column(cur, "erp_connections", "entity_id", "TEXT")

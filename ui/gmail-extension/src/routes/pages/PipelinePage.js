@@ -408,9 +408,9 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
       const data = await api(`/extension/worklist?organization_id=${encodeURIComponent(orgId)}&limit=500`);
       setItems(Array.isArray(data?.items) ? data.items : []);
       setNavState(readPipelineNavigation(pipelineScope));
-      toast('Pipeline refreshed.', 'success');
+      toast('Invoices refreshed.', 'success');
     } catch {
-      toast('Could not refresh the pipeline.', 'error');
+      toast('Could not refresh invoices.', 'error');
     } finally {
       setLoading(false);
     }
@@ -788,8 +788,8 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
     <div class="panel" style="padding:16px 18px">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px">
         <div>
-          <h3 style="margin:0 0 4px">Pipeline views</h3>
-          <p class="muted" style="margin:0">Work the queue by slice, then save and pin the views you reopen most often.</p>
+          <h3 style="margin:0 0 4px">Saved views</h3>
+          <p class="muted" style="margin:0">Work invoices by state, then save and pin the views you reopen most.</p>
         </div>
         <div class="toolbar-actions">
           <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/home')}>Open Home</button>

@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:cf4735ad55da65fa75202a343da41d5b138ac317b13f3ab3c5f9195f8ef2ba7c */
+/* clearledgr-source-fingerprint:e0cd311df263687e46533eecbf5c824bb3b7d88cbca23c78b256c2d18cfbece8 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -60184,7 +60184,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       store_default.setSelectedItem(String(item.id));
       focusPipelineItem(pipelineScope, item, "thread");
       if (!gotoRoute("clearledgr/pipeline")) {
-        showToast("Unable to open pipeline", "error");
+        showToast("Unable to open invoices", "error");
       }
     }, [gotoRoute, item, pipelineScope]);
     const openSource = q2(() => {
@@ -60310,7 +60310,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       `}
 
       <div id="cl-agent-actions" class="cl-thread-actions">
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open in pipeline</button>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open in invoices</button>
         ${canOpenSource && html2`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource}>Open email</button>
         `}
@@ -60443,7 +60443,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function EmptyState({ queueCount }) {
     const openPipeline = q2(() => {
       if (!navigateInboxRoute("clearledgr/pipeline", store_default.sdk)) {
-        showToast("Unable to open pipeline", "error");
+        showToast("Unable to open invoices", "error");
       }
     }, []);
     const openHome = q2(() => {
@@ -60457,7 +60457,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <p>No record is linked to this email yet.</p>
       <p class="cl-muted">Open the queue to work records Clearledgr has already found.</p>
       <div class="cl-thread-actions">
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
       </div>
     </div></div>`;
     }
@@ -60466,7 +60466,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <p>${queueCount} record${queueCount !== 1 ? "s are" : " is"} ready in the queue.</p>
       <p class="cl-muted">Open an email to work one record, or open Pipeline to see the full queue.</p>
       <div class="cl-thread-actions">
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
       </div>
     </div></div>`;
@@ -60475,7 +60475,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <p>Nothing is waiting right now.</p>
     <p class="cl-muted">Pipeline is still the control plane. Home is available if you want the lighter overview.</p>
     <div class="cl-thread-actions">
-      <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open pipeline</button>
+      <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
       <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
     </div>
   </div></div>`;
@@ -60589,8 +60589,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var ROUTES = [
     {
       id: "clearledgr/pipeline",
-      title: "Pipeline",
-      subtitle: "Control the AP queue across entities and states.",
+      title: "Invoices",
+      subtitle: "All invoices and finance documents across states.",
       icon: "pipeline",
       navOrder: 10,
       defaultPinned: true,
@@ -62261,7 +62261,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           Welcome to Clearledgr
         </h2>
         <p style="font-size:15px;color:var(--ink-secondary);margin:0 0 12px">
-          ${allReady ? "Pipeline is your AP control plane. Use Gmail for the active record when context matters." : gmailOk ? `${greeting}${firstName ? `, ${firstName}` : ""}. Clearledgr is processing invoices. Connect more integrations to unlock approvals and ERP posting.` : `${greeting}${firstName ? `, ${firstName}` : ""}. Connect Gmail to start processing invoices.`}
+          ${allReady ? "Invoices is your AP queue. Use Gmail for the active record when context matters." : gmailOk ? `${greeting}${firstName ? `, ${firstName}` : ""}. Clearledgr is processing invoices. Connect more integrations to unlock approvals and ERP posting.` : `${greeting}${firstName ? `, ${firstName}` : ""}. Connect Gmail to start processing invoices.`}
         </p>
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
           <span style="font-size:12px;padding:4px 10px;border-radius:999px;background:${allReady ? "#ECFDF5" : gmailOk ? "#EFF6FF" : "#FEFCE8"};color:${allReady ? "#047857" : gmailOk ? "#1D4ED8" : "#A16207"}">
@@ -62306,7 +62306,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <${SectionPanel}
         title=${savedOrStarterViews.length > 0 ? "Saved views" : "Queue slices"}
         detail=${savedOrStarterViews.length > 0 ? "Open the views you come back to most." : "Jump straight to the part of the queue you need."}
-        actionLabel="Open pipeline"
+        actionLabel="Open invoices"
         onAction=${() => navigate("clearledgr/pipeline")}
         panelMinHeight=${220}
       >
@@ -64792,9 +64792,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         const data = await api(`/extension/worklist?organization_id=${encodeURIComponent(orgId)}&limit=500`);
         setItems(Array.isArray(data?.items) ? data.items : []);
         setNavState(readPipelineNavigation(pipelineScope));
-        toast("Pipeline refreshed.", "success");
+        toast("Invoices refreshed.", "success");
       } catch {
-        toast("Could not refresh the pipeline.", "error");
+        toast("Could not refresh invoices.", "error");
       } finally {
         setLoading(false);
       }
@@ -65118,8 +65118,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <div class="panel" style="padding:16px 18px">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px">
         <div>
-          <h3 style="margin:0 0 4px">Pipeline views</h3>
-          <p class="muted" style="margin:0">Work the queue by slice, then save and pin the views you reopen most often.</p>
+          <h3 style="margin:0 0 4px">Saved views</h3>
+          <p class="muted" style="margin:0">Work invoices by state, then save and pin the views you reopen most.</p>
         </div>
         <div class="toolbar-actions">
           <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/home")}>Open Home</button>

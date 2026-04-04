@@ -654,6 +654,7 @@ class FinanceAgentRuntime:
                 "due_date": due_date,
                 "attachment_url": attachment_url,
                 "state": self._initial_state_for_document(invoice),
+                "document_type": str(invoice.get("document_type") or "invoice").strip().lower(),
                 "confidence": confidence,
                 "field_confidences": invoice.get("field_confidences") if isinstance(invoice.get("field_confidences"), dict) else None,
                 "exception_code": invoice.get("exception_code"),
