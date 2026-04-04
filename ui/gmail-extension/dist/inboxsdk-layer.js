@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:5aba47e42f4ebbc3605e014933f53277e6fa8bbdd8f6f0d1160d53ce2cd1db7d */
+/* clearledgr-source-fingerprint:5df46d7f4e7814ff5ec4d754638e9155f4781d9cc0e7da1ec1128404808c1748 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -61794,28 +61794,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function getFallbackCapabilities(role) {
     const normalizedRole = normalizeRole(role);
-    const hasWorkspaceRole = Boolean(normalizedRole);
     const isAdmin = ["owner", "admin", "api"].includes(normalizedRole);
     const isOps = ["owner", "admin", "operator", "api"].includes(normalizedRole);
     return {
       view_home: true,
       view_pipeline: true,
-      view_review: hasWorkspaceRole,
-      view_upcoming: hasWorkspaceRole,
-      view_activity: hasWorkspaceRole,
-      view_vendors: hasWorkspaceRole,
-      view_templates: hasWorkspaceRole,
-      view_connections: hasWorkspaceRole,
-      view_rules: hasWorkspaceRole,
-      view_settings: hasWorkspaceRole,
-      view_team: hasWorkspaceRole,
-      view_company: hasWorkspaceRole,
-      view_plan: hasWorkspaceRole,
-      view_reconciliation: hasWorkspaceRole,
-      view_system_status: hasWorkspaceRole,
-      view_reports: hasWorkspaceRole,
-      view_ops_workspace: isOps,
-      operate_records: isOps,
+      view_review: true,
+      view_upcoming: true,
+      view_activity: true,
+      view_vendors: true,
+      view_templates: true,
+      view_connections: true,
+      view_rules: true,
+      view_settings: true,
+      view_team: true,
+      view_company: true,
+      view_plan: true,
+      view_reconciliation: true,
+      view_system_status: true,
+      view_reports: true,
+      view_ops_workspace: isOps || !normalizedRole,
+      operate_records: isOps || !normalizedRole,
       manage_connections: isAdmin,
       manage_rules: isAdmin,
       manage_settings: isAdmin,

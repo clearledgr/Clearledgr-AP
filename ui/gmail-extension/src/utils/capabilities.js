@@ -8,29 +8,31 @@ function isCapabilityMap(value) {
 
 export function getFallbackCapabilities(role) {
   const normalizedRole = normalizeRole(role);
-  const hasWorkspaceRole = Boolean(normalizedRole);
   const isAdmin = ['owner', 'admin', 'api'].includes(normalizedRole);
   const isOps = ['owner', 'admin', 'operator', 'api'].includes(normalizedRole);
 
+  // All view capabilities default to true — never lock users out of
+  // navigation because bootstrap failed or role is unknown. Manage
+  // capabilities (destructive actions) require confirmed role.
   return {
     view_home: true,
     view_pipeline: true,
-    view_review: hasWorkspaceRole,
-    view_upcoming: hasWorkspaceRole,
-    view_activity: hasWorkspaceRole,
-    view_vendors: hasWorkspaceRole,
-    view_templates: hasWorkspaceRole,
-    view_connections: hasWorkspaceRole,
-    view_rules: hasWorkspaceRole,
-    view_settings: hasWorkspaceRole,
-    view_team: hasWorkspaceRole,
-    view_company: hasWorkspaceRole,
-    view_plan: hasWorkspaceRole,
-    view_reconciliation: hasWorkspaceRole,
-    view_system_status: hasWorkspaceRole,
-    view_reports: hasWorkspaceRole,
-    view_ops_workspace: isOps,
-    operate_records: isOps,
+    view_review: true,
+    view_upcoming: true,
+    view_activity: true,
+    view_vendors: true,
+    view_templates: true,
+    view_connections: true,
+    view_rules: true,
+    view_settings: true,
+    view_team: true,
+    view_company: true,
+    view_plan: true,
+    view_reconciliation: true,
+    view_system_status: true,
+    view_reports: true,
+    view_ops_workspace: isOps || !normalizedRole,
+    operate_records: isOps || !normalizedRole,
     manage_connections: isAdmin,
     manage_rules: isAdmin,
     manage_settings: isAdmin,
