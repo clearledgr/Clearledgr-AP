@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Clearledgr",
-  "version": "0.14.0",
-  "version_name": "0.14.0 — 14 document types, 1 routing table, 0 excuses",
+  "version": "0.4.0",
+  "version_name": "0.4.0",
   "description": "Finance execution agents embedded in your inbox — invoices, subscriptions, approvals, and ERP posting without leaving Gmail",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr37O2Lz2TJyC7Oe3/res2gv4geyo7JqTt7lBaeBxlmGLDW9Z+pPGz5wb09g1icMychN9fRJhoVkySD74ZbOf+lMsrtayCntO1IO+IrJGDRBP5/4kWxvyeeG8xqNe5/ScbvahmBxr9SuHJSjJiAYmLhHKeF0c7/5AP2kwa8XN3Azu/A6YbY+zaeaEH/UXOo9oF6y4SnedV1Fj1JT+QvjxAXR8/L2y/LXfAsTwFgIogKsTNVNG5AJoL/Gzb2Y5+fSL947aoFH7x4yNdPnOFNuOjPxvJ/4oKe/oIncD9y9i35j4dRo7cfzz45lzqbo26ompScYxq3ZrE9T79L9HDZ0ZhQIDAQAB",
   "permissions": [
