@@ -1161,3 +1161,12 @@ function registerAppMenuAndRoutes() {
 }
 
 bootstrap();
+
+console.log(
+  '%c🧾 Clearledgr — The Gmail AP Workspace for Finance Teams',
+  'font-size:14px;font-weight:bold;color:#00D67E;'
+);
+console.log(
+  '%cCurious how we built AP automation inside Gmail?\nWe\'re looking for engineers who think finance software should live where finance teams work.\n\nhttps://clearledgr.com/careers',
+  'font-size:12px;color:#6B7280;'
+);
