@@ -1075,12 +1075,14 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
         </div>
       `}
 
-      <${FieldReviewPanel}
-        blockers=${fieldReviewBlockers}
-        pauseReason=${pauseReason}
-        onResolve=${readOnlyMode ? null : doResolveFieldReview}
-        resolvingField=${resolvePending ? resolvingFieldKey : ''}
-      />
+      ${!['closed', 'rejected', 'posted_to_erp'].includes(state) && html`
+        <${FieldReviewPanel}
+          blockers=${fieldReviewBlockers}
+          pauseReason=${pauseReason}
+          onResolve=${readOnlyMode ? null : doResolveFieldReview}
+          resolvingField=${resolvePending ? resolvingFieldKey : ''}
+        />
+      `}
       ${Boolean(financeEffectNotice || Object.keys(financeEffectSummary).length > 0) && html`
         <div class="cl-section" aria-label="Credits and payments">
           <div class="cl-section-title">Credits and payments</div>

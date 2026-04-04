@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:02b720962e9ab7c01954f617c1af16575da1e2a418e7dd09316c94a131ab9b4d */
+/* clearledgr-source-fingerprint:4d65b5a03d85f3ba1bc4326106858675a1655e3a1529fa6b6d7dd773ef065689 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -60388,12 +60388,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       `}
 
-      <${FieldReviewPanel}
-        blockers=${fieldReviewBlockers}
-        pauseReason=${pauseReason}
-        onResolve=${readOnlyMode ? null : doResolveFieldReview}
-        resolvingField=${resolvePending ? resolvingFieldKey : ""}
-      />
+      ${!["closed", "rejected", "posted_to_erp"].includes(state) && html2`
+        <${FieldReviewPanel}
+          blockers=${fieldReviewBlockers}
+          pauseReason=${pauseReason}
+          onResolve=${readOnlyMode ? null : doResolveFieldReview}
+          resolvingField=${resolvePending ? resolvingFieldKey : ""}
+        />
+      `}
       ${Boolean(financeEffectNotice || Object.keys(financeEffectSummary).length > 0) && html2`
         <div class="cl-section" aria-label="Credits and payments">
           <div class="cl-section-title">Credits and payments</div>
