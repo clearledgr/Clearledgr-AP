@@ -102,6 +102,25 @@ def _amount_from_extraction(extraction: Dict[str, Any]) -> float:
     )
 
 
+def _detect_discount_opportunity(
+    amount: float, payment_terms: Any, invoice_date: Any, currency: str,
+) -> Optional[Dict[str, Any]]:
+    """Detect early payment discount opportunity from payment terms."""
+    try:
+        from clearledgr.services.discount_optimizer import calculate_discount_opportunity
+        terms_str = str(payment_terms or "").strip()
+        if not terms_str or amount <= 0:
+            return None
+        return calculate_discount_opportunity(
+            amount=amount,
+            payment_terms=terms_str,
+            invoice_date=str(invoice_date or ""),
+            currency=currency,
+        )
+    except Exception:
+        return None
+
+
 def _normalize_email_type(raw_type: str) -> str:
     normalized = str(raw_type or "").strip().upper()
     from clearledgr.services.document_routing import VALID_DOCUMENT_TYPES
@@ -266,6 +285,11 @@ async def extract_email_data_activity(payload: Dict[str, Any]) -> Dict[str, Any]
             for att in (payload.get("attachments") or [])
             if isinstance(att, dict) and str(att.get("filename") or att.get("name") or "").strip()
         ],
+        # Early payment discount opportunity
+        "discount_opportunity": _detect_discount_opportunity(
+            amount=amount, payment_terms=parsed.get("payment_terms"),
+            invoice_date=_normalize_date(parsed.get("invoice_date")), currency=currency,
+        ),
         "raw_parser": {
             "invoice_numbers": parsed.get("invoice_numbers") or [],
             "dates": parsed.get("dates") or [],

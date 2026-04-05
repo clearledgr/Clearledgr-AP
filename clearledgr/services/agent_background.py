@@ -263,6 +263,11 @@ async def _run_loop():
                 for org_id in org_ids:
                     await _sync_vendor_master_data(org_id)
 
+            # Scheduled report delivery — check every hour
+            if tick % 4 == 0:
+                for org_id in org_ids:
+                    await _deliver_scheduled_reports(org_id)
+
         except asyncio.CancelledError:
             logger.info("Agent background loop cancelled")
             return
@@ -1521,6 +1526,18 @@ async def _sync_vendor_master_data(org_id: str):
             )
     except Exception as e:
         logger.error("Vendor master sync failed for org=%s: %s", org_id, e)
+
+
+async def _deliver_scheduled_reports(org_id: str):
+    """Check and deliver any scheduled reports that are due."""
+    try:
+        from clearledgr.services.scheduled_reports import get_scheduled_report_service
+        service = get_scheduled_report_service(org_id)
+        delivered = await service.run_due_reports()
+        if delivered:
+            logger.info("Scheduled reports: delivered %d for org=%s", delivered, org_id)
+    except Exception as e:
+        logger.error("Scheduled report delivery failed for org=%s: %s", org_id, e)
 
 
 async def _run_monitoring_checks(org_id: str):

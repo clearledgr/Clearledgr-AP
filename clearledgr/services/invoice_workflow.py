@@ -159,32 +159,70 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
 
         thresholds = self._settings.get("approval_thresholds", [])
 
+        # Build invoice context for rule matching
+        invoice_gl = str(getattr(invoice, "gl_code", "") or "").strip().lower() if hasattr(invoice, "gl_code") else ""
+        invoice_dept = str(getattr(invoice, "department", "") or "").strip().lower() if hasattr(invoice, "department") else ""
+        invoice_vendor = str(getattr(invoice, "vendor_name", "") or "").strip().lower() if hasattr(invoice, "vendor_name") else ""
+        invoice_entity = str(getattr(invoice, "entity_code", "") or "").strip().lower() if hasattr(invoice, "entity_code") else ""
+
         for threshold in thresholds:
             min_amt = threshold.get("min_amount", 0)
             max_amt = threshold.get("max_amount")
 
-            if amount >= min_amt and (max_amt is None or amount < max_amt):
-                raw_approvers = (
-                    threshold.get("approvers")
-                    or threshold.get("required_approvers")
-                    or []
-                )
-                if not isinstance(raw_approvers, list):
-                    raw_approvers = [raw_approvers] if raw_approvers else []
-                routing["channel"] = (
-                    str(
-                        threshold.get("approver_channel")
-                        or threshold.get("channel")
-                        or self.slack_channel
-                    ).strip()
+            # Amount filter
+            if not (amount >= min_amt and (max_amt is None or amount < max_amt)):
+                continue
+
+            # GL code filter (if specified in rule)
+            rule_gl = [g.strip().lower() for g in (threshold.get("gl_codes") or []) if g]
+            if rule_gl and invoice_gl and invoice_gl not in rule_gl:
+                continue
+
+            # Department/cost center filter
+            rule_dept = [d.strip().lower() for d in (threshold.get("departments") or []) if d]
+            if rule_dept and invoice_dept and invoice_dept not in rule_dept:
+                continue
+
+            # Vendor filter
+            rule_vendor = [v.strip().lower() for v in (threshold.get("vendors") or []) if v]
+            if rule_vendor and invoice_vendor and invoice_vendor not in rule_vendor:
+                continue
+
+            # Entity filter
+            rule_entity = [e.strip().lower() for e in (threshold.get("entities") or []) if e]
+            if rule_entity and invoice_entity and invoice_entity not in rule_entity:
+                continue
+
+            # Match found — extract routing config
+            raw_approvers = (
+                threshold.get("approvers")
+                or threshold.get("required_approvers")
+                or []
+            )
+            if not isinstance(raw_approvers, list):
+                raw_approvers = [raw_approvers] if raw_approvers else []
+            routing["channel"] = (
+                str(
+                    threshold.get("approver_channel")
+                    or threshold.get("channel")
                     or self.slack_channel
-                )
-                routing["approvers"] = [
-                    str(value).strip()
-                    for value in raw_approvers
-                    if str(value).strip()
-                ]
-                return routing
+                ).strip()
+                or self.slack_channel
+            )
+            routing["approvers"] = [
+                str(value).strip()
+                for value in raw_approvers
+                if str(value).strip()
+            ]
+            routing["approval_type"] = threshold.get("approval_type", "any")
+            routing["matched_rule"] = {
+                "gl_codes": rule_gl or None,
+                "departments": rule_dept or None,
+                "vendors": rule_vendor or None,
+                "entities": rule_entity or None,
+                "amount_range": [min_amt, max_amt],
+            }
+            return routing
 
         return routing
     

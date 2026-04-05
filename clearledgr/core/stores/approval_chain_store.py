@@ -31,6 +31,7 @@ class ApprovalChainStore:
             department TEXT,
             status TEXT NOT NULL DEFAULT 'pending',
             current_step INTEGER NOT NULL DEFAULT 0,
+            chain_type TEXT NOT NULL DEFAULT 'sequential',
             requester_id TEXT,
             requester_name TEXT,
             created_at TEXT NOT NULL,
@@ -220,6 +221,34 @@ class ApprovalChainStore:
             cur = conn.cursor()
             cur.execute(sql, (status, current_step, completed_at, chain_id))
             conn.commit()
+
+    def db_check_parallel_chain_complete(self, chain_id: str) -> Dict[str, Any]:
+        """Check if all steps in a parallel approval chain are resolved.
+
+        Returns {complete: bool, approved: bool, pending_count: int, approved_count: int, rejected: bool}
+        """
+        chain = self.db_get_approval_chain(chain_id)
+        if not chain:
+            return {"complete": False, "approved": False, "pending_count": 0, "approved_count": 0, "rejected": False}
+
+        steps = chain.get("steps") or []
+        pending = sum(1 for s in steps if s.get("status") == "pending")
+        approved = sum(1 for s in steps if s.get("status") == "approved")
+        rejected = any(s.get("status") == "rejected" for s in steps)
+
+        # Parallel chain: complete when all steps resolved (no pending)
+        # Or when any step is rejected (reject entire chain)
+        complete = pending == 0 or rejected
+        all_approved = approved == len(steps) and not rejected
+
+        return {
+            "complete": complete,
+            "approved": all_approved,
+            "rejected": rejected,
+            "pending_count": pending,
+            "approved_count": approved,
+            "total_steps": len(steps),
+        }
 
     def db_list_pending_chains_for_user(
         self, organization_id: str, user_id: str

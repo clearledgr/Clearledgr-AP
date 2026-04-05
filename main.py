@@ -811,6 +811,13 @@ try:
 except ImportError:
     pass
 
+# Vendor self-service portal
+try:
+    from clearledgr.api.vendor_portal import router as vendor_portal_router
+    app.include_router(vendor_portal_router)
+except ImportError:
+    pass
+
 # ERP Connections API (OAuth flows)
 try:
     if STRICT_PROFILE_ACTIVE:
