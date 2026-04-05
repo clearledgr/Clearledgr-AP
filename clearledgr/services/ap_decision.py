@@ -249,6 +249,26 @@ def _build_reasoning_prompt(
 
         if requires_po:
             vendor_lines.append("Policy: PO reference required for this vendor")
+
+        # Sender domain comparison for fraud detection
+        known_domains = vendor_profile.get("sender_domains") or []
+        if isinstance(known_domains, str):
+            import json as _json
+            try:
+                known_domains = _json.loads(known_domains)
+            except Exception:
+                known_domains = []
+        sender_domain = (invoice.sender or "").split("@")[-1].lower().strip() if hasattr(invoice, "sender") else ""
+        if sender_domain and known_domains:
+            if sender_domain not in [d.lower() for d in known_domains]:
+                vendor_lines.append(
+                    f"⚠ FRAUD RISK: Email from '{sender_domain}' but known domains are: {', '.join(known_domains[:3])}. "
+                    "Possible vendor impersonation."
+                )
+            else:
+                vendor_lines.append(f"Sender domain: {sender_domain} (matches known domains)")
+        elif sender_domain and not known_domains:
+            vendor_lines.append(f"Sender domain: {sender_domain} (first email — no baseline)")
     else:
         vendor_lines.append("History: no prior invoices — first time seen")
 

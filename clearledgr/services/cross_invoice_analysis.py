@@ -25,6 +25,114 @@ from clearledgr.core.database import get_db
 logger = logging.getLogger(__name__)
 
 
+def _ai_evaluate_duplicates(
+    current_vendor: str,
+    current_amount: float,
+    current_invoice_number: Optional[str],
+    current_date: Optional[str],
+    flagged: List["DuplicateAlert"],
+) -> List["DuplicateAlert"]:
+    """Ask Claude to reason about whether flagged items are true duplicates.
+
+    Claude considers: amendments, credit notes, recurring invoices,
+    partial payments, and replacement invoices — things deterministic
+    scoring can't distinguish.
+    """
+    try:
+        import os, json
+        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            return flagged
+
+        import httpx
+        matches_text = "\n".join(
+            f"  - Invoice #{d.details.get('matching_invoice_number', '?')}, "
+            f"amount {d.details.get('matching_amount', '?')}, "
+            f"date {d.details.get('matching_date', '?')}, "
+            f"score {d.match_score:.1%}: {d.message}"
+            for d in flagged
+        )
+
+        prompt = f"""You are an AP automation expert. Evaluate these potential duplicate invoices.
+
+CURRENT INVOICE:
+  Vendor: {current_vendor}
+  Amount: {current_amount}
+  Invoice #: {current_invoice_number or 'N/A'}
+  Date: {current_date or 'N/A'}
+
+FLAGGED MATCHES:
+{matches_text}
+
+For each match, determine:
+1. Is this a TRUE DUPLICATE (same invoice submitted twice)?
+2. Is this a RECURRING INVOICE (same vendor, similar amount, different period)?
+3. Is this an AMENDMENT/REVISION (replaces the original)?
+4. Is this a CREDIT NOTE or DEBIT NOTE against the original?
+5. Is this UNRELATED (coincidental match)?
+
+Return JSON array with one object per match:
+[{{"invoice_number": "...", "verdict": "duplicate|recurring|amendment|credit|unrelated", "confidence": 0.0-1.0, "reasoning": "one sentence"}}]
+
+Return ONLY valid JSON."""
+
+        response = httpx.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 500,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=15,
+        )
+
+        if response.status_code != 200:
+            return flagged
+
+        text = response.json().get("content", [{}])[0].get("text", "")
+        verdicts = json.loads(text)
+
+        # Enrich flagged duplicates with AI verdicts
+        for i, dup in enumerate(flagged):
+            if i < len(verdicts):
+                v = verdicts[i]
+                verdict = v.get("verdict", "duplicate")
+                dup.details["ai_verdict"] = verdict
+                dup.details["ai_reasoning"] = v.get("reasoning", "")
+                dup.details["ai_confidence"] = v.get("confidence", 0.5)
+
+                # Downgrade score for non-duplicates
+                if verdict in ("recurring", "unrelated"):
+                    dup = DuplicateAlert(
+                        severity="info",
+                        message=f"{verdict.title()}: {v.get('reasoning', dup.message)}",
+                        matching_invoice_id=dup.matching_invoice_id,
+                        match_score=max(0.1, dup.match_score * 0.3),
+                        details=dup.details,
+                    )
+                    flagged[i] = dup
+                elif verdict == "amendment":
+                    dup.details["is_amendment"] = True
+                    dup = DuplicateAlert(
+                        severity="warning",
+                        message=f"Amendment: {v.get('reasoning', dup.message)}",
+                        matching_invoice_id=dup.matching_invoice_id,
+                        match_score=dup.match_score,
+                        details=dup.details,
+                    )
+                    flagged[i] = dup
+
+        return flagged
+    except Exception as exc:
+        logger.debug("AI duplicate evaluation failed: %s", exc)
+        return flagged
+
+
 def _normalize_invoice_number(raw: str) -> str:
     """Normalize invoice number for comparison: lowercase, strip whitespace and common prefixes."""
     val = str(raw or "").strip().lower()
@@ -264,8 +372,19 @@ class CrossInvoiceAnalyzer:
         
         # Sort by match score
         duplicates.sort(key=lambda d: d.match_score, reverse=True)
-        
-        return duplicates[:3]  # Return top 3 potential duplicates
+        top_duplicates = duplicates[:3]
+
+        # AI reasoning: ask Claude to evaluate flagged duplicates
+        if top_duplicates:
+            top_duplicates = _ai_evaluate_duplicates(
+                current_vendor=vendor,
+                current_amount=amount,
+                current_invoice_number=invoice_number,
+                current_date=invoice_date,
+                flagged=top_duplicates,
+            )
+
+        return top_duplicates
     
     def _check_anomalies(
         self,

@@ -167,7 +167,7 @@ class ExceptionResolver:
     async def _resolve_amount_anomaly(
         self, ap_item: Dict[str, Any], exception_code: str
     ) -> Dict[str, Any]:
-        """Calculate specific discrepancy and suggest correction."""
+        """Calculate discrepancy and use AI to reason about likely cause."""
         vendor = ap_item.get("vendor_name") or ""
         try:
             amount = float(ap_item.get("amount") or 0)
@@ -188,17 +188,90 @@ class ExceptionResolver:
         deviation = abs(amount - avg) / avg
         direction = "above" if amount > avg else "below"
 
+        # AI reasoning about why the amount differs
+        ai_reason = await self._ai_reason_amount_variance(
+            vendor=vendor,
+            invoice_amount=amount,
+            average_amount=avg,
+            deviation_pct=round(deviation * 100, 1),
+            direction=direction,
+            ap_item=ap_item,
+        )
+
         return {
-            "resolved": False,  # Amount anomalies always need human review
+            "resolved": False,  # Amount anomalies still need human review
             "action": "discrepancy_calculated",
             "invoice_amount": amount,
             "vendor_average": avg,
             "deviation_percent": round(deviation * 100, 1),
-            "suggestion": (
+            "ai_analysis": ai_reason,
+            "suggestion": ai_reason or (
                 f"Invoice is {round(deviation * 100)}% {direction} vendor average "
                 f"(${avg:,.2f}). Verify with vendor."
             ),
         }
+
+    async def _ai_reason_amount_variance(
+        self,
+        vendor: str,
+        invoice_amount: float,
+        average_amount: float,
+        deviation_pct: float,
+        direction: str,
+        ap_item: Dict[str, Any],
+    ) -> str:
+        """Ask Claude to reason about why the invoice amount differs from history."""
+        try:
+            import os, json, httpx
+            api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+            if not api_key:
+                return ""
+
+            metadata = ap_item.get("metadata") or {}
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+            line_items = metadata.get("line_items") or []
+            po_number = ap_item.get("po_number") or ""
+
+            prompt = f"""You are an AP automation expert. An invoice amount differs from this vendor's history.
+
+Vendor: {vendor}
+Invoice amount: {ap_item.get('currency', 'USD')} {invoice_amount:,.2f}
+Vendor average: {ap_item.get('currency', 'USD')} {average_amount:,.2f}
+Deviation: {deviation_pct}% {direction} average
+PO reference: {po_number or 'None'}
+Line items: {json.dumps(line_items[:5]) if line_items else 'Not available'}
+
+What is the most likely reason for this variance? Consider:
+- Tax or VAT changes
+- Discount applied or removed
+- Partial delivery / partial billing
+- Price increase / new pricing tier
+- Currency conversion difference
+- Additional services or items
+- Credit or debit adjustment
+
+Respond in ONE sentence with the most likely explanation and whether this needs human review or can be auto-approved."""
+
+            response = httpx.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 150,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=10,
+            )
+            if response.status_code == 200:
+                return response.json().get("content", [{}])[0].get("text", "").strip()
+        except Exception as exc:
+            logger.debug("AI amount variance reasoning failed: %s", exc)
+        return ""
 
     # ------------------------------------------------------------------
     # Strategy: Vendor Not Found in ERP (auto-resolves)
