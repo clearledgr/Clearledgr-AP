@@ -201,10 +201,6 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
     # OAuth callbacks required for ERP admin connect flows.
     "/erp/quickbooks/callback",
     "/erp/xero/callback",
-    # Vendor self-service portal (token-based, no login)
-    "/vendor-portal/status",
-    "/vendor-portal/invoices",
-    "/vendor-portal/bank-details",
     # Outlook OAuth + webhooks
     "/outlook/connect/start",
     "/outlook/callback",
@@ -812,13 +808,6 @@ except ImportError:
 try:
     from clearledgr.api.outlook_routes import router as outlook_router
     app.include_router(outlook_router)
-except ImportError:
-    pass
-
-# Vendor self-service portal
-try:
-    from clearledgr.api.vendor_portal import router as vendor_portal_router
-    app.include_router(vendor_portal_router)
 except ImportError:
     pass
 
