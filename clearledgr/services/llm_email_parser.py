@@ -927,8 +927,18 @@ class LLMEmailParser:
                 )
 
         if not self._api_key:
-            logger.info("[LLMEmailParser] No ANTHROPIC_API_KEY — using regex fallback")
-            return self._regex_fallback(subject, body, sender, attachments, local_result=local_result)
+            logger.warning("[LLMEmailParser] No ANTHROPIC_API_KEY — extraction will be degraded (regex only)")
+            result = self._regex_fallback(subject, body, sender, attachments, local_result=local_result)
+            result["extraction_degraded"] = True
+            result["extraction_degraded_reason"] = "ANTHROPIC_API_KEY not configured"
+            if result.get("confidence", 0) > 0.7:
+                result["confidence"] = 0.7
+            fc = result.get("field_confidences") or {}
+            for field in fc:
+                if fc[field] > 0.7:
+                    fc[field] = 0.7
+            result["field_confidences"] = fc
+            return result
 
         try:
             return self._extract_with_llm(
@@ -941,8 +951,10 @@ class LLMEmailParser:
                 thread_id=thread_id,
             )
         except Exception as exc:
-            logger.warning("[LLMEmailParser] LLM extraction failed (%s) — using regex fallback", exc)
-            return self._regex_fallback(
+            logger.error("[LLMEmailParser] LLM extraction FAILED: %s", exc)
+            # Fall back to regex but MARK the result as degraded so the UI
+            # and validation gate know this extraction is lower quality
+            result = self._regex_fallback(
                 subject,
                 body,
                 sender,
@@ -950,6 +962,17 @@ class LLMEmailParser:
                 local_result=local_result,
                 extraction_error=str(exc),
             )
+            result["extraction_degraded"] = True
+            result["extraction_degraded_reason"] = f"AI unavailable: {exc}"
+            # Cap confidence — regex extraction should never claim high confidence
+            if result.get("confidence", 0) > 0.7:
+                result["confidence"] = 0.7
+            fc = result.get("field_confidences") or {}
+            for field in fc:
+                if fc[field] > 0.7:
+                    fc[field] = 0.7
+            result["field_confidences"] = fc
+            return result
 
     def _extract_with_llm(
         self,

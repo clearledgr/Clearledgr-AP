@@ -266,24 +266,44 @@ async def post_bill_to_quickbooks(
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
-        logger.error("QuickBooks Bill API HTTP error: status=%d", status_code)
+        # Parse QuickBooks error response for actionable details
+        erp_error_detail = ""
+        erp_error_code = ""
+        try:
+            error_body = e.response.json()
+            fault = error_body.get("Fault", {})
+            errors = fault.get("Error") or []
+            if errors:
+                erp_error_detail = errors[0].get("Detail") or errors[0].get("Message") or ""
+                erp_error_code = errors[0].get("code") or ""
+        except Exception:
+            erp_error_detail = e.response.text[:200] if hasattr(e.response, "text") else ""
+
         reason = f"http_{status_code}"
         if status_code == 404:
             reason = "erp_realm_id_invalid"
-            logger.error(
-                "QuickBooks 404 — likely realm_id mismatch (realm_id=%s). "
-                "Verify the company is accessible with current credentials.",
-                connection.realm_id,
-            )
+        elif "Duplicate" in erp_error_detail:
+            reason = "erp_duplicate_bill"
+        elif "Account" in erp_error_detail and "not found" in erp_error_detail.lower():
+            reason = "erp_gl_account_invalid"
+        elif "Vendor" in erp_error_detail and "not found" in erp_error_detail.lower():
+            reason = "erp_vendor_not_found"
+
+        logger.error(
+            "QuickBooks Bill API error: status=%d reason=%s detail=%s",
+            status_code, reason, erp_error_detail[:200],
+        )
         return {
             "status": "error",
             "erp": "quickbooks",
             "reason": reason,
+            "erp_error_detail": erp_error_detail,
+            "erp_error_code": erp_error_code,
             "needs_reauth": status_code == 401,
         }
     except Exception as e:
-        logger.error("QuickBooks Bill error: %s", type(e).__name__)
-        return {"status": "error", "erp": "quickbooks", "reason": "bill_posting_failed"}
+        logger.error("QuickBooks Bill error: %s: %s", type(e).__name__, e)
+        return {"status": "error", "erp": "quickbooks", "reason": "bill_posting_failed", "erp_error_detail": str(e)}
 
 
 # ==================== Bill Lookup ====================
