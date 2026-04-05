@@ -69,7 +69,7 @@ class ExceptionResolver:
             }
 
         try:
-            return await strategy(ap_item, exception_code)
+            result = await strategy(ap_item, exception_code)
         except Exception as exc:
             logger.warning(
                 "[ExceptionResolver] strategy %s failed for ap_item %s: %s",
@@ -77,11 +77,83 @@ class ExceptionResolver:
                 ap_item.get("id"),
                 exc,
             )
-            return {
+            result = {
                 "resolved": False,
                 "reason": f"strategy_error: {exc}",
                 "exception_code": exception_code,
             }
+
+        # When the individual strategy can't resolve, ask Claude to reason
+        # across the full item context and suggest a resolution path.
+        if not result.get("resolved"):
+            ai_suggestion = await self._ai_reason_exception(ap_item, exception_code, result)
+            if ai_suggestion:
+                result["ai_suggestion"] = ai_suggestion
+                result["ai_reasoning"] = True
+
+        return result
+
+    async def _ai_reason_exception(
+        self,
+        ap_item: Dict[str, Any],
+        exception_code: str,
+        strategy_result: Dict[str, Any],
+    ) -> str:
+        """Ask Claude to reason about an unresolved exception with full context."""
+        try:
+            import os, json, httpx
+            api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+            if not api_key:
+                return ""
+
+            metadata = ap_item.get("metadata") or {}
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+
+            prompt = f"""You are an AP automation expert. An invoice exception could not be auto-resolved.
+
+INVOICE:
+  Vendor: {ap_item.get('vendor_name', 'Unknown')}
+  Amount: {ap_item.get('currency', 'USD')} {ap_item.get('amount', 0)}
+  Invoice #: {ap_item.get('invoice_number', 'N/A')}
+  State: {ap_item.get('state', 'unknown')}
+  Exception: {exception_code}
+
+STRATEGY RESULT:
+  {json.dumps(strategy_result, default=str)[:500]}
+
+CONTEXT:
+  PO reference: {ap_item.get('po_number', 'None')}
+  Confidence: {ap_item.get('confidence', 0)}
+  Document type: {ap_item.get('document_type', 'invoice')}
+
+What should the AP team do? Consider:
+1. Is there a root cause that a different strategy would address?
+2. Can multiple issues be resolved in sequence? (e.g., fix vendor name first, then PO will match)
+3. Is this safe to override, or does it genuinely need human judgment?
+4. Who is the best person to route this to (AP clerk, manager, vendor, ERP admin)?
+
+Respond in 2-3 sentences: the likely root cause, what to do, and who should handle it."""
+
+            response = httpx.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 200,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=10,
+            )
+            if response.status_code == 200:
+                return response.json().get("content", [{}])[0].get("text", "").strip()
+        except Exception as exc:
+            logger.debug("AI exception reasoning failed: %s", exc)
+        return ""
 
     # ------------------------------------------------------------------
     # Strategy: Missing PO

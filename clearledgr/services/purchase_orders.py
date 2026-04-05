@@ -649,16 +649,89 @@ class PurchaseOrderService:
         po: PurchaseOrder,
         invoice_line: Dict[str, Any],
     ) -> Optional[POLineItem]:
-        """Find matching PO line for an invoice line."""
+        """Find matching PO line for an invoice line.
+
+        Tries deterministic matching first (item number, description substring),
+        then falls back to AI semantic matching via Claude.
+        """
         item_number = invoice_line.get("item_number", "")
         description = invoice_line.get("description", "").lower()
-        
+
+        # Deterministic match first (fast)
         for po_line in po.line_items:
             if item_number and po_line.item_number == item_number:
                 return po_line
             if description and description in po_line.description.lower():
                 return po_line
-        
+
+        # AI semantic match (when deterministic fails)
+        if description and po.line_items:
+            return self._ai_match_po_line(invoice_line, po.line_items)
+
+        return None
+
+    def _ai_match_po_line(
+        self,
+        invoice_line: Dict[str, Any],
+        po_lines: List[POLineItem],
+    ) -> Optional[POLineItem]:
+        """Use Claude to semantically match an invoice line to a PO line."""
+        try:
+            import os, json, httpx
+            api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+            if not api_key:
+                return None
+
+            inv_desc = invoice_line.get("description", "")
+            inv_qty = invoice_line.get("quantity", 1)
+            inv_amount = invoice_line.get("amount", 0)
+
+            po_lines_text = "\n".join(
+                f"  Line {i}: {pl.description} (qty: {pl.quantity}, unit price: {pl.unit_price})"
+                for i, pl in enumerate(po_lines)
+            )
+
+            prompt = f"""Match this invoice line item to the correct PO line.
+
+INVOICE LINE:
+  Description: {inv_desc}
+  Quantity: {inv_qty}
+  Amount: {inv_amount}
+
+PO LINES:
+{po_lines_text}
+
+Which PO line (if any) matches this invoice line? Consider that descriptions may use different words for the same item (e.g. "Cloud services" = "SaaS subscription", "Office supplies" = "Stationery").
+
+Return JSON: {{"match_index": <0-based index or null if no match>, "confidence": 0.0-1.0, "reasoning": "one sentence"}}
+Return ONLY valid JSON."""
+
+            response = httpx.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 100,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=10,
+            )
+            if response.status_code != 200:
+                return None
+
+            text = response.json().get("content", [{}])[0].get("text", "")
+            result = json.loads(text)
+            idx = result.get("match_index")
+            conf = result.get("confidence", 0)
+
+            if idx is not None and 0 <= idx < len(po_lines) and conf >= 0.6:
+                return po_lines[idx]
+        except Exception as exc:
+            logger.debug("AI PO line matching failed: %s", exc)
         return None
     
     def _update_po_invoiced(
