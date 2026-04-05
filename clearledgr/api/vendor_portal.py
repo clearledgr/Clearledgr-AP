@@ -41,44 +41,62 @@ def generate_vendor_portal_token(
     vendor_name: str,
     expires_hours: int = 720,  # 30 days
 ) -> str:
-    """Generate a signed token for vendor portal access."""
-    import time
-    expires_at = int(time.time()) + (expires_hours * 3600)
-    payload = f"{organization_id}:{vendor_name}:{expires_at}"
+    """Generate a signed token for vendor portal access.
+
+    Uses JSON payload to avoid colon-splitting issues with vendor names.
+    Full HMAC-SHA256 (not truncated) for security.
+    """
+    import base64, json, time
+
+    payload = json.dumps({
+        "org": organization_id,
+        "vendor": vendor_name,
+        "exp": int(time.time()) + (expires_hours * 3600),
+    }, separators=(",", ":"))
     sig = hmac.new(
         _get_portal_secret().encode(),
         payload.encode(),
         hashlib.sha256,
-    ).hexdigest()[:16]
-    import base64
-    token = base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode()
+    ).hexdigest()
+    token = base64.urlsafe_b64encode(f"{payload}|{sig}".encode()).decode()
     return token
 
 
 def _validate_portal_token(token: str) -> Dict[str, str]:
     """Validate and decode a vendor portal token."""
-    import base64, time
+    import base64, json, time
+
     try:
         decoded = base64.urlsafe_b64decode(token.encode()).decode()
-        parts = decoded.rsplit(":", 1)
-        if len(parts) != 2:
-            raise ValueError("Invalid token format")
-        payload, sig = parts[0], parts[1]
-        expected_sig = hmac.new(
-            _get_portal_secret().encode(),
-            payload.encode(),
-            hashlib.sha256,
-        ).hexdigest()[:16]
-        if not hmac.compare_digest(sig, expected_sig):
-            raise ValueError("Invalid signature")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired portal token")
 
-        org_id, vendor_name, expires_at = payload.split(":", 2)
-        if int(expires_at) < int(time.time()):
-            raise ValueError("Token expired")
+    parts = decoded.rsplit("|", 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=401, detail="Invalid or expired portal token")
 
-        return {"organization_id": org_id, "vendor_name": vendor_name}
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid portal token: {exc}")
+    payload_str, sig = parts[0], parts[1]
+    expected_sig = hmac.new(
+        _get_portal_secret().encode(),
+        payload_str.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(sig, expected_sig):
+        raise HTTPException(status_code=401, detail="Invalid or expired portal token")
+
+    try:
+        payload = json.loads(payload_str)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=401, detail="Invalid or expired portal token")
+
+    if int(payload.get("exp", 0)) < int(time.time()):
+        raise HTTPException(status_code=401, detail="Invalid or expired portal token")
+
+    return {
+        "organization_id": payload.get("org", ""),
+        "vendor_name": payload.get("vendor", ""),
+    }
 
 
 @router.get("/status")
@@ -137,6 +155,20 @@ def vendor_invoice_list(
         ctx["organization_id"], ctx["vendor_name"], days=365, limit=limit,
     )
 
+    # Sanitize: don't expose internal state names or ERP references to vendors
+    _STATE_TO_VENDOR_STATUS = {
+        "received": "processing",
+        "validated": "processing",
+        "needs_info": "information_requested",
+        "needs_approval": "under_review",
+        "approved": "approved",
+        "ready_to_post": "approved",
+        "posted_to_erp": "approved_pending_payment",
+        "closed": "paid",
+        "rejected": "rejected",
+        "failed_post": "processing",
+    }
+
     return {
         "vendor_name": ctx["vendor_name"],
         "invoices": [
@@ -145,9 +177,8 @@ def vendor_invoice_list(
                 "amount": item.get("amount"),
                 "currency": item.get("currency", "USD"),
                 "due_date": item.get("due_date"),
-                "state": item.get("state"),
-                "created_at": item.get("created_at"),
-                "erp_reference": item.get("erp_reference"),
+                "status": _STATE_TO_VENDOR_STATUS.get(item.get("state", ""), "processing"),
+                "received_at": item.get("created_at"),
             }
             for item in items
         ],
@@ -158,7 +189,7 @@ def vendor_invoice_list(
 @router.post("/bank-details")
 def submit_bank_details(
     token: str = Query(..., description="Vendor portal access token"),
-    body: dict = {},
+    body: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """Submit updated bank details (queued for AP team review, not auto-applied)."""
     ctx = _validate_portal_token(token)
@@ -177,9 +208,9 @@ def submit_bank_details(
         dispute = svc.open_dispute(
             ap_item_id=ap_item_id,
             dispute_type="bank_detail_change",
-            description=f"Vendor submitted updated bank details via portal: {body.get('bank_name', 'N/A')}",
+            description=f"Vendor submitted updated bank details via portal: {(body or {}).get('bank_name', 'N/A')}",
             vendor_name=ctx["vendor_name"],
-            vendor_email=body.get("contact_email", ""),
+            vendor_email=(body or {}).get("contact_email", ""),
         )
 
         logger.info(

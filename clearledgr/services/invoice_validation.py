@@ -1716,6 +1716,33 @@ class InvoiceValidationMixin:
         except Exception:
             pass
 
+        # 5c) Currency mismatch — convert if entity default differs from invoice currency.
+        try:
+            invoice_currency = str(invoice.currency or "").strip().upper()
+            if invoice_currency and invoice_currency != "USD":
+                from clearledgr.services.fx_conversion import convert
+                org_currency = str(
+                    (self._settings or {}).get("default_currency", "USD")
+                ).strip().upper()
+                if org_currency and invoice_currency != org_currency:
+                    fx = convert(invoice.amount or 0, invoice_currency, org_currency)
+                    if fx.get("converted_amount") is not None:
+                        add_reason(
+                            "currency_conversion_applied",
+                            f"Invoice in {invoice_currency}, org uses {org_currency}. "
+                            f"Converted: {org_currency} {fx['converted_amount']:,.2f} (rate: {fx['rate']})",
+                            severity="info",
+                            details=fx,
+                        )
+                    elif fx.get("error"):
+                        add_reason(
+                            "currency_conversion_unavailable",
+                            f"Cannot convert {invoice_currency} to {org_currency}: {fx['error']}",
+                            severity="warning",
+                        )
+        except Exception:
+            pass
+
         # 5) Critical-field confidence gate (launch-critical, server-enforced).
         confidence_gate = self._evaluate_invoice_confidence_gate(invoice)
         if confidence_gate.get("requires_field_review"):

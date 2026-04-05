@@ -201,6 +201,10 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
     # OAuth callbacks required for ERP admin connect flows.
     "/erp/quickbooks/callback",
     "/erp/xero/callback",
+    # Vendor self-service portal (token-based, no login)
+    "/vendor-portal/status",
+    "/vendor-portal/invoices",
+    "/vendor-portal/bank-details",
     # Outlook OAuth + webhooks
     "/outlook/connect/start",
     "/outlook/callback",

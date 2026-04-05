@@ -223,20 +223,21 @@ async def _call_claude_vision_single_pass(
 
     try:
         import httpx as _httpx
-        response = _httpx.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-sonnet-4-6",
-                "max_tokens": 2000,
-                "messages": [{"role": "user", "content": content}],
-            },
-            timeout=30,
-        )
+        async with _httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-6",
+                    "max_tokens": 2000,
+                    "messages": [{"role": "user", "content": content}],
+                },
+                timeout=30,
+            )
         if response.status_code != 200:
             return None
         return response.json().get("content", [{}])[0].get("text", "")
@@ -249,20 +250,21 @@ async def _async_post(*, api_key: str, model: str, prompt: str, max_tokens: int)
     """Make an async Claude API call."""
     import httpx as _httpx
 
-    response = _httpx.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={
-            "model": model,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        },
-        timeout=20,
-    )
+    async with _httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=20,
+        )
     if response.status_code != 200:
         return None
     return response.json().get("content", [{}])[0].get("text", "")

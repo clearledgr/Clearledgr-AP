@@ -242,11 +242,12 @@ class ScheduledReportService:
                 settings = json.loads(settings)
             deliveries = settings.get("report_deliveries") or {}
             return deliveries.get(schedule_id)
-        except Exception:
+        except Exception as exc:
+            logger.debug("[ScheduledReports] _get_last_delivered failed: %s", exc)
             return None
 
     def _mark_delivered(self, schedule_id: str, now: datetime) -> None:
-        """Mark a schedule as delivered."""
+        """Mark a schedule as delivered. Logs on failure to prevent infinite re-delivery."""
         try:
             org = self.db.get_organization(self.organization_id) or {}
             settings = org.get("settings_json") or org.get("settings") or {}
@@ -258,8 +259,11 @@ class ScheduledReportService:
             deliveries[schedule_id] = now.isoformat()
             settings["report_deliveries"] = deliveries
             self.db.update_organization(self.organization_id, settings_json=settings)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error(
+                "[ScheduledReports] Failed to mark %s as delivered — report may re-send next hour: %s",
+                schedule_id, exc,
+            )
 
 
 def get_scheduled_report_service(organization_id: str = "default") -> ScheduledReportService:
