@@ -813,7 +813,19 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     )
             except Exception as exc:
                 logger.error("[VendorStore] Failed to update vendor profile after auto-post: %s", exc)
-            
+
+            # Record outcome for adaptive threshold learning
+            try:
+                from clearledgr.services.adaptive_thresholds import get_adaptive_threshold_service
+                get_adaptive_threshold_service(self.organization_id).record_decision_outcome(
+                    vendor_name=invoice.vendor_name,
+                    agent_recommendation=str(agent_rec or "approve"),
+                    operator_decision="approved",
+                    confidence=invoice.confidence,
+                )
+            except Exception:
+                pass
+
             # Notify in Slack (informational, not approval)
             try:
                 await self._send_posted_notification(invoice, result, reason)

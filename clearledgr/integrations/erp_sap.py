@@ -332,7 +332,26 @@ async def post_bill_to_sap(
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
-        logger.error("SAP A/P Invoice HTTP error: status=%d", status_code)
+        # Parse SAP B1 error response for actionable details
+        erp_error_detail = ""
+        erp_error_code = ""
+        try:
+            payload = e.response.json()
+            # SAP B1: {"error": {"code": -5002, "message": {"lang": "en-us", "value": "..."}}}
+            sap_error = payload.get("error") or {}
+            erp_error_code = str(sap_error.get("code") or "")
+            message_obj = sap_error.get("message")
+            if isinstance(message_obj, dict):
+                erp_error_detail = message_obj.get("value") or ""
+            elif isinstance(message_obj, str):
+                erp_error_detail = message_obj
+            # Fallback to the general extraction helper
+            if not erp_error_detail:
+                erp_error_detail = _extract_sap_validation_message(payload) or ""
+        except Exception:
+            erp_error_detail = e.response.text[:200] if hasattr(e.response, "text") else ""
+
+        detail_lower = erp_error_detail.lower()
         reason = f"http_{status_code}"
         if status_code == 404:
             reason = "erp_configuration_stale"
@@ -341,22 +360,30 @@ async def post_bill_to_sap(
                 "Verify the SAP Service Layer endpoint and company are accessible.",
                 connection.base_url, connection.company_code,
             )
-        try:
-            payload = e.response.json()
-        except Exception:
-            payload = None
-        validation_message = _extract_sap_validation_message(payload)
-        if validation_message and status_code != 404:
-            reason = validation_message
+        elif "duplicate" in detail_lower or "already exists" in detail_lower:
+            reason = "erp_duplicate_bill"
+        elif "account" in detail_lower and ("invalid" in detail_lower or "not found" in detail_lower or "no matching" in detail_lower):
+            reason = "erp_gl_account_invalid"
+        elif "vendor" in detail_lower and ("not found" in detail_lower or "invalid" in detail_lower or "no matching" in detail_lower):
+            reason = "erp_vendor_not_found"
+        elif "business partner" in detail_lower and ("not found" in detail_lower or "no matching" in detail_lower):
+            reason = "erp_vendor_not_found"
+
+        logger.error(
+            "SAP A/P Invoice API error: status=%d reason=%s code=%s detail=%s",
+            status_code, reason, erp_error_code, erp_error_detail[:200],
+        )
         return {
             "status": "error",
             "erp": "sap",
             "reason": reason,
+            "erp_error_detail": erp_error_detail,
+            "erp_error_code": erp_error_code,
             "needs_reauth": status_code == 401,
         }
     except Exception as e:
-        logger.error("SAP A/P Invoice error: %s", type(e).__name__)
-        return {"status": "error", "erp": "sap", "reason": "bill_posting_failed"}
+        logger.error("SAP A/P Invoice error: %s: %s", type(e).__name__, e)
+        return {"status": "error", "erp": "sap", "reason": "bill_posting_failed", "erp_error_detail": str(e)}
 
 
 # ==================== Bill & Credit Note Lookup ====================

@@ -266,7 +266,28 @@ async def post_bill_to_xero(
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
-        logger.error("Xero Bill API HTTP error: status=%d", status_code)
+        # Parse Xero error response for actionable details
+        erp_error_detail = ""
+        erp_error_code = ""
+        try:
+            error_body = e.response.json()
+            erp_error_code = str(error_body.get("ErrorNumber") or "")
+            # Xero nests validation errors inside Elements[].ValidationErrors[]
+            elements = error_body.get("Elements") or []
+            validation_msgs = []
+            for elem in elements:
+                for verr in (elem.get("ValidationErrors") or []):
+                    msg = verr.get("Message") or ""
+                    if msg:
+                        validation_msgs.append(msg)
+            if validation_msgs:
+                erp_error_detail = "; ".join(validation_msgs)
+            else:
+                erp_error_detail = error_body.get("Message") or ""
+        except Exception:
+            erp_error_detail = e.response.text[:200] if hasattr(e.response, "text") else ""
+
+        detail_lower = erp_error_detail.lower()
         reason = f"http_{status_code}"
         if status_code == 404:
             reason = "erp_configuration_stale"
@@ -275,10 +296,23 @@ async def post_bill_to_xero(
                 "Verify the organisation is accessible with current credentials.",
                 connection.tenant_id,
             )
+        elif "already exists" in detail_lower or "duplicate" in detail_lower:
+            reason = "erp_duplicate_bill"
+        elif "account code" in detail_lower and ("not valid" in detail_lower or "not found" in detail_lower):
+            reason = "erp_gl_account_invalid"
+        elif "contact" in detail_lower and "not found" in detail_lower:
+            reason = "erp_vendor_not_found"
+
+        logger.error(
+            "Xero Bill API error: status=%d reason=%s detail=%s",
+            status_code, reason, erp_error_detail[:200],
+        )
         return {
             "status": "error",
             "erp": "xero",
             "reason": reason,
+            "erp_error_detail": erp_error_detail,
+            "erp_error_code": erp_error_code,
             "needs_reauth": status_code == 401,
         }
     except Exception as e:

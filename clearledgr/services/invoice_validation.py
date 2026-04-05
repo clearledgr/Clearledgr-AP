@@ -79,6 +79,29 @@ class InvoiceValidationMixin:
         learned_threshold_overrides = None
         learned_profile_id = None
         learned_signal_count = 0
+
+        # Calibrate field confidences based on historical correction rates
+        if invoice.organization_id and invoice.vendor_name and invoice.field_confidences:
+            try:
+                from clearledgr.services.confidence_calibration import get_confidence_calibrator
+                calibrator = get_confidence_calibrator(str(invoice.organization_id))
+                calibrated = calibrator.calibrate(invoice.vendor_name, invoice.field_confidences)
+                if calibrated:
+                    invoice.field_confidences = calibrated
+            except Exception:
+                pass
+
+            # Record this extraction for calibration tracking
+            try:
+                from clearledgr.services.confidence_calibration import get_confidence_calibrator
+                calibrator = get_confidence_calibrator(str(invoice.organization_id))
+                calibrator.record_extraction(
+                    invoice.vendor_name,
+                    list(invoice.field_confidences.keys()),
+                )
+            except Exception:
+                pass
+
         if invoice.organization_id and invoice.vendor_name:
             try:
                 from clearledgr.services.correction_learning import get_correction_learning_service

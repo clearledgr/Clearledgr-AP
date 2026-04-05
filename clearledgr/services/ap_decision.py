@@ -610,7 +610,14 @@ class APDecisionService:
         vendor_profile = vendor_profile or {}
         cross_invoice_analysis = cross_invoice_analysis or {}
         org_config = org_config or {}
-        auto_threshold = float(org_config.get("auto_approve_confidence_threshold", 0.95))
+        # Adaptive threshold: learned from operator feedback per vendor, falls back to org config
+        try:
+            from clearledgr.services.adaptive_thresholds import get_adaptive_threshold_service
+            auto_threshold = get_adaptive_threshold_service(
+                org_config.get("organization_id", "default")
+            ).get_threshold_for_vendor(invoice.vendor_name)
+        except Exception:
+            auto_threshold = float(org_config.get("auto_approve_confidence_threshold", 0.95))
         strictness_bias = str(decision_feedback.get("strictness_bias") or "neutral").strip().lower()
         has_strict_feedback = strictness_bias == "strict" and int(decision_feedback.get("total_feedback") or 0) >= 3
 

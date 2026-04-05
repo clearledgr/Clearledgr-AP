@@ -2678,6 +2678,16 @@ async def _execute_field_review_resolution(
     except Exception:
         logger.exception("field review correction learning capture failed for %s", ap_item_id)
 
+    # Record correction for confidence calibration
+    try:
+        from clearledgr.services.confidence_calibration import get_confidence_calibrator
+        vendor = item.get("vendor_name") or ""
+        if vendor:
+            calibrator = get_confidence_calibrator(str(item.get("organization_id") or organization_id or "default"))
+            calibrator.record_correction(vendor, normalized_field)
+    except Exception:
+        pass
+
     refreshed = _require_item(db, ap_item_id)
     normalized_item = build_worklist_item(db, refreshed)
     auto_resume_result: Optional[Dict[str, Any]] = None

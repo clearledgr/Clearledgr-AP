@@ -39,6 +39,19 @@ async def run_inline_gmail_triage(
         details={"subject": payload.get("subject"), "sender": payload.get("sender")},
     )
 
+    # --- Single-pass: try processing everything in one Claude call ---
+    single_pass_result = await _try_single_pass(payload, org_id, request_attachments)
+    if single_pass_result:
+        trail.log(
+            invoice_id=payload.get("email_id"),
+            event_type=AuditEventType.CLASSIFIED,
+            summary=f"Single-pass: classified as {single_pass_result.get('classification', {}).get('document_type', '?')}",
+            confidence=single_pass_result.get("classification", {}).get("confidence", 0),
+            reasoning="single_pass_processor",
+        )
+        return _format_single_pass_result(single_pass_result, payload, org_id)
+
+    # --- Multi-call fallback: existing pipeline ---
     classification = await classify_email_activity(payload)
     trail.log(
         invoice_id=payload.get("email_id"),
@@ -323,5 +336,133 @@ async def run_inline_gmail_triage(
         except Exception as reasoning_exc:
             logger.warning("Agent reasoning failed for email_id=%s: %s", payload.get("email_id"), reasoning_exc)
             result["intelligence"]["agent_reasoning_error"] = str(reasoning_exc)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Single-pass helpers
+# ---------------------------------------------------------------------------
+
+async def _try_single_pass(
+    payload: Dict[str, Any],
+    org_id: str,
+    attachments: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Attempt single-pass processing. Returns None if it fails."""
+    try:
+        from clearledgr.services.single_pass_processor import process_invoice_single_pass
+        from clearledgr.services.llm_email_parser import (
+            _build_vendor_context,
+            _build_thread_context,
+        )
+
+        vendor_context = _build_vendor_context(
+            payload.get("sender", ""),
+            payload.get("subject", ""),
+            org_id,
+        )
+        thread_context = _build_thread_context(
+            payload.get("thread_id"),
+            org_id,
+        ) if payload.get("thread_id") else ""
+
+        # Build recent invoices context for duplicate detection
+        recent_context = ""
+        try:
+            from clearledgr.core.database import get_db
+            db = get_db()
+            recent = db.get_ap_items_by_vendor(org_id, payload.get("sender", "").split("@")[0], days=90, limit=5)
+            if recent:
+                lines = []
+                for r in recent[:3]:
+                    lines.append(
+                        f"  #{r.get('invoice_number', '?')} — {r.get('currency', 'USD')} {r.get('amount', 0)} — "
+                        f"state: {r.get('state', '?')} — date: {r.get('created_at', '?')[:10]}"
+                    )
+                recent_context = "\n".join(lines)
+        except Exception:
+            pass
+
+        # Determine if there are visual attachments
+        visual_atts = [
+            a for a in attachments
+            if any(t in str(a.get("mimeType") or a.get("content_type") or "").lower()
+                   for t in ("pdf", "image", "png", "jpeg", "jpg"))
+        ]
+
+        result = await process_invoice_single_pass(
+            subject=payload.get("subject", ""),
+            sender=payload.get("sender", ""),
+            body=payload.get("body") or payload.get("snippet") or "",
+            attachment_text="",  # Text attachments not passed to single-pass yet
+            has_visual_attachments=bool(visual_atts),
+            visual_attachments=visual_atts if visual_atts else None,
+            organization_id=org_id,
+            thread_id=payload.get("thread_id"),
+            vendor_context=vendor_context,
+            thread_context=thread_context,
+            recent_invoices_context=recent_context,
+        )
+
+        return result
+    except Exception as exc:
+        logger.debug("[Triage] Single-pass failed, falling back to multi-call: %s", exc)
+        return None
+
+
+def _format_single_pass_result(
+    sp: Dict[str, Any],
+    payload: Dict[str, Any],
+    org_id: str,
+) -> Dict[str, Any]:
+    """Convert single-pass result into the standard triage result format."""
+    from clearledgr.services.document_routing import get_route
+
+    classification = sp.get("classification", {})
+    extraction = sp.get("extraction", {})
+    routing = sp.get("routing_decision", {})
+    doc_type = classification.get("document_type", "invoice")
+    route = get_route(doc_type)
+
+    # Build standard triage result
+    result: Dict[str, Any] = {
+        "email_id": payload.get("email_id"),
+        "classification": {
+            "type": doc_type.upper(),
+            "confidence": classification.get("confidence", 0),
+            "reason": classification.get("reasoning", ""),
+            "method": "single_pass",
+        },
+        "extraction": extraction,
+        "processing_mode": "single_pass",
+        "api_calls": 1,
+    }
+
+    if route.auto_close:
+        result["action"] = "recorded"
+        result["document_type"] = doc_type
+        result["workflow"] = "auto_record"
+        result["reason"] = route.workflow_guidance
+        result["suggested_state"] = route.initial_state
+        result["creates_ap_item"] = route.creates_ap_item
+        result["needs_approval"] = route.needs_approval
+    else:
+        result["action"] = "processed"
+        result["document_type"] = doc_type
+        result["intelligence"] = {
+            "gl_coding": sp.get("gl_coding", {}),
+            "duplicate_analysis": sp.get("duplicate_analysis", {}),
+            "risk_assessment": sp.get("risk_assessment", {}),
+            "routing_decision": routing,
+        }
+        # Map single-pass fields to standard extraction fields
+        result["vendor"] = extraction.get("vendor")
+        result["amount"] = extraction.get("amount")
+        result["currency"] = extraction.get("currency")
+        result["invoice_number"] = extraction.get("invoice_number")
+        result["due_date"] = extraction.get("due_date")
+        result["confidence"] = extraction.get("overall_confidence", 0)
+        result["field_confidences"] = extraction.get("field_confidences", {})
 
     return result

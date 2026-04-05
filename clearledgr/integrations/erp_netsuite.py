@@ -413,7 +413,31 @@ async def post_bill_to_netsuite(
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
-        logger.error("NetSuite Vendor Bill API HTTP error: status=%d", status_code)
+        # Parse NetSuite error response for actionable details
+        erp_error_detail = ""
+        erp_error_code = ""
+        try:
+            error_body = e.response.json()
+            # NetSuite REST: {"status": {"isSuccess": false, "statusDetail": [{"code": "...", "message": "..."}]}}
+            status_obj = error_body.get("status") or {}
+            status_details = status_obj.get("statusDetail") or []
+            if status_details:
+                first = status_details[0]
+                erp_error_code = first.get("code") or ""
+                erp_error_detail = first.get("message") or ""
+            # Fallback: some NetSuite errors use top-level "message" or "error.message"
+            if not erp_error_detail:
+                ns_error = error_body.get("error") or {}
+                if isinstance(ns_error, dict):
+                    erp_error_detail = ns_error.get("message") or ""
+                    erp_error_code = erp_error_code or (ns_error.get("code") or "")
+            if not erp_error_detail:
+                erp_error_detail = error_body.get("message") or error_body.get("title") or ""
+        except Exception:
+            erp_error_detail = e.response.text[:200] if hasattr(e.response, "text") else ""
+
+        detail_lower = erp_error_detail.lower()
+        code_upper = erp_error_code.upper()
         reason = f"http_{status_code}"
         if status_code == 404:
             reason = "erp_configuration_stale"
@@ -422,15 +446,30 @@ async def post_bill_to_netsuite(
                 "Verify the account is accessible with current credentials.",
                 connection.account_id,
             )
+        elif "duplicate" in detail_lower or code_upper == "DUPLICATE_REFERENCE_NUMBER":
+            reason = "erp_duplicate_bill"
+        elif "invalid account" in detail_lower or code_upper == "INVALID_KEY_OR_REF" and "account" in detail_lower:
+            reason = "erp_gl_account_invalid"
+        elif "vendor" in detail_lower and ("not found" in detail_lower or "invalid" in detail_lower) or code_upper == "INVALID_KEY_OR_REF" and "vendor" in detail_lower:
+            reason = "erp_vendor_not_found"
+        elif code_upper == "INVALID_KEY_OR_REF":
+            reason = "erp_invalid_reference"
+
+        logger.error(
+            "NetSuite Vendor Bill API error: status=%d reason=%s code=%s detail=%s",
+            status_code, reason, erp_error_code, erp_error_detail[:200],
+        )
         return {
             "status": "error",
             "erp": "netsuite",
             "reason": reason,
+            "erp_error_detail": erp_error_detail,
+            "erp_error_code": erp_error_code,
             "needs_reauth": status_code == 401,
         }
     except Exception as e:
-        logger.error("NetSuite Vendor Bill error: %s", type(e).__name__)
-        return {"status": "error", "erp": "netsuite", "reason": "bill_posting_failed"}
+        logger.error("NetSuite Vendor Bill error: %s: %s", type(e).__name__, e)
+        return {"status": "error", "erp": "netsuite", "reason": "bill_posting_failed", "erp_error_detail": str(e)}
 
 
 # ==================== Bill & Credit Note Lookup ====================
