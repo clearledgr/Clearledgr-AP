@@ -200,6 +200,8 @@ async def extract_email_data_activity(payload: Dict[str, Any]) -> Dict[str, Any]
         body=body or snippet,
         sender=sender,
         attachments=attachments,
+        organization_id=str(payload.get("organization_id") or "default"),
+        thread_id=payload.get("thread_id"),
     )
     parsed = parsed if isinstance(parsed, dict) else {}
 

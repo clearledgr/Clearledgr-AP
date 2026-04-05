@@ -1088,6 +1088,32 @@ class CorrectionLearningService:
         self._review_snapshot_cache[cache_key] = (now_mono, snapshot)
         return dict(snapshot)
 
+    def get_recent_corrections(self, vendor_name: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Get recent field corrections for a vendor to feed into extraction prompt."""
+        try:
+            normalized = str(vendor_name or "").strip().lower()
+            if not normalized:
+                return []
+            results = []
+            for rule in self._rules:
+                if rule.rule_type == "vendor_alias" and str(rule.condition.get("raw_vendor", "")).strip().lower() == normalized:
+                    results.append({
+                        "field": "vendor",
+                        "original": rule.condition.get("raw_vendor", ""),
+                        "corrected": rule.action.get("normalized_vendor", ""),
+                    })
+                elif rule.rule_type == "field_correction":
+                    rule_vendor = str(rule.condition.get("vendor_name", "")).strip().lower()
+                    if rule_vendor == normalized:
+                        results.append({
+                            "field": rule.condition.get("field", ""),
+                            "original": rule.condition.get("original_value", ""),
+                            "corrected": rule.action.get("corrected_value", ""),
+                        })
+            return results[:limit]
+        except Exception:
+            return []
+
     def get_extraction_confidence_adjustments(
         self,
         *,

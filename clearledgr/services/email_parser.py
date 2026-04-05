@@ -2215,19 +2215,26 @@ def parse_email(
     subject: str,
     body: str,
     sender: str,
-    attachments: List[Dict] = None
+    attachments: List[Dict] = None,
+    *,
+    organization_id: str = "default",
+    thread_id: str = None,
 ) -> Dict[str, Any]:
     """Parse an email and extract financial data.
 
     Primary path: LLMEmailParser (Claude Haiku for text, Sonnet for vision).
     Automatic fallback: regex EmailParser when Claude is unavailable or fails.
 
-    All callers get the same dict shape regardless of which path ran, with
-    additional LLM-enriched fields (field_confidences, reasoning_summary,
-    payment_processor, extraction_method) when LLM is available.
+    When organization_id and thread_id are provided, extraction includes
+    vendor history, past corrections, and thread context — making each
+    extraction smarter than the last.
     """
     from clearledgr.services.llm_email_parser import parse_email_with_llm
-    return parse_email_with_llm(subject, body, sender, attachments)
+    return parse_email_with_llm(
+        subject, body, sender, attachments,
+        organization_id=organization_id,
+        thread_id=thread_id,
+    )
 
 
 def parse_invoice_text(text: str) -> Dict[str, Any]:
