@@ -253,6 +253,47 @@ class TestEmitStateChangeWebhook:
         count = asyncio.run(emit_state_change_webhook("default", "ap-4", "unknown_state"))
         assert count == 0
 
+    def test_sync_state_transition_enqueues_webhook_without_instantiating_coroutine(self, db):
+        item = db.create_ap_item(
+            {
+                "invoice_key": "webhook|sync|100.00|",
+                "thread_id": "thread-webhook-sync",
+                "message_id": "msg-webhook-sync",
+                "subject": "Invoice",
+                "sender": "vendor@example.com",
+                "vendor_name": "Webhook Vendor",
+                "amount": 100.0,
+                "currency": "USD",
+                "invoice_number": "INV-WH-1",
+                "state": "received",
+                "organization_id": "default",
+                "user_id": "webhook-test",
+            }
+        )
+
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+            with patch(
+                "clearledgr.services.webhook_delivery.emit_state_change_webhook",
+                new_callable=AsyncMock,
+            ) as mock_emit:
+                assert db.update_ap_item(
+                    item["id"],
+                    state="validated",
+                    _actor_type="system",
+                    _actor_id="tester",
+                )
+
+        mock_emit.assert_not_called()
+        pending = db.get_pending_notifications(limit=10)
+        webhook_notifs = [n for n in pending if n.get("channel") == "webhook"]
+        assert len(webhook_notifs) == 1
+        payload = webhook_notifs[0]["payload_json"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        assert payload["event_type"] == "ap_item.state_changed"
+        assert payload["ap_item_id"] == item["id"]
+        assert payload["new_state"] == "validated"
+
 
 # ---------------------------------------------------------------------------
 # API endpoint tests

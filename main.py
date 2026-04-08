@@ -25,7 +25,7 @@ load_dotenv()
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
@@ -155,8 +155,19 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _process_role() -> str:
+    raw = str(os.getenv("CLEARLEDGR_PROCESS_ROLE", "all") or "").strip().lower()
+    if raw in {"api"}:
+        return "web"
+    if raw in {"web", "worker", "all"}:
+        return raw
+    return "all"
+
+
 def _should_skip_deferred_startup() -> bool:
-    return _env_flag("CLEARLEDGR_SKIP_DEFERRED_STARTUP", default=False)
+    if _env_flag("CLEARLEDGR_SKIP_DEFERRED_STARTUP", default=False):
+        return True
+    return _process_role() == "web"
 
 
 def _runtime_surface_contract() -> Dict[str, Any]:
@@ -178,6 +189,7 @@ def _runtime_surface_contract() -> Dict[str, Any]:
 
     return {
         "environment": env_name,
+        "process_role": _process_role(),
         "production_like": prod_like,
         "strict_requested": True,
         "strict_forced_on_in_production": False,
@@ -188,6 +200,29 @@ def _runtime_surface_contract() -> Dict[str, Any]:
         "warnings": warnings,
         "profile": "strict",
     }
+
+
+def _request_transport_scheme(request: Request) -> str:
+    forwarded_proto = str(request.headers.get("x-forwarded-proto", "") or "").strip().lower()
+    if forwarded_proto:
+        return forwarded_proto.split(",")[0].strip().lower()
+    forwarded_scheme = str(request.headers.get("x-forwarded-scheme", "") or "").strip().lower()
+    if forwarded_scheme:
+        return forwarded_scheme.split(",")[0].strip().lower()
+    return str(request.url.scheme or "http").strip().lower() or "http"
+
+
+class ProxyAwareHTTPSRedirectMiddleware(BaseHTTPMiddleware):
+    """Honor edge TLS headers and keep internal health checks unredirected."""
+
+    _NO_REDIRECT_PATHS = frozenset({"/health"})
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path in self._NO_REDIRECT_PATHS:
+            return await call_next(request)
+        if _request_transport_scheme(request) == "https":
+            return await call_next(request)
+        return RedirectResponse(str(request.url.replace(scheme="https")), status_code=307)
 
 
 STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
@@ -276,6 +311,7 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/integrations/erp/connect/start",
     "/api/workspace/integrations/gmail/connect/start",
     "/api/workspace/integrations/slack/channel",
+    "/api/workspace/integrations/slack/manifest",
     "/api/workspace/integrations/slack/install/callback",
     "/api/workspace/integrations/slack/install/start",
     "/api/workspace/integrations/slack/test",
@@ -293,6 +329,7 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/subscription",
     "/api/workspace/subscription/plan",
     "/api/workspace/team/invites",
+    "/api/workspace/team/approvers",
     "/api/workspace/user/preferences",
     "/api/workspace/spend-analysis",
     "/api/workspace/erp-vendors",
@@ -344,14 +381,18 @@ STRICT_PROFILE_ALLOWED_AGENT_PATHS = {
 
 STRICT_PROFILE_ALLOWED_AP_PATHS = {
     "/api/ap/audit/recent",
+    "/api/ap/items/compose/create",
+    "/api/ap/items/compose/lookup",
     "/api/ap/items/field-review/bulk-resolve",
     "/api/ap/items/metrics/aggregation",
+    "/api/ap/items/search",
     "/api/ap/items/upcoming",
     "/api/ap/items/vendors",
     "/api/ap/policies",
 }
 
 STRICT_PROFILE_ALLOWED_INTERACTIVE_CALLBACK_PATHS = {
+    "/slack/interactions",
     "/slack/invoices/interactive",
     "/teams/invoices/interactive",
 }
@@ -376,9 +417,17 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/ap/items/[^/]+/resubmit$",
         r"^/api/ap/items/[^/]+/retry-post$",
         r"^/api/ap/items/[^/]+/field-review/resolve$",
+        r"^/api/ap/items/[^/]+/fields$",
+        r"^/api/ap/items/[^/]+/gmail-link$",
+        r"^/api/ap/items/[^/]+/compose-link$",
+        r"^/api/ap/items/[^/]+/notes$",
+        r"^/api/ap/items/[^/]+/comments$",
+        r"^/api/ap/items/[^/]+/files$",
         r"^/api/ap/items/[^/]+/sources$",
         r"^/api/ap/items/[^/]+/sources/link$",
         r"^/api/ap/items/[^/]+/split$",
+        r"^/api/ap/items/[^/]+/tasks$",
+        r"^/api/ap/items/tasks/[^/]+/(status|assign|comments)$",
         r"^/api/ap/items/vendors/[^/]+$",
         r"^/api/ap/policies/[^/]+$",
         r"^/api/ap/policies/[^/]+/audit$",
@@ -466,12 +515,16 @@ STRICT_PROFILE_ACTIVE = bool(_runtime_surface_contract().get("strict_effective")
 
 from clearledgr.api.v1 import router as v1_router
 from clearledgr.api.gmail_extension import router as gmail_extension_router
-from clearledgr.api.slack_invoices import router as slack_invoices_router
+from clearledgr.api.slack_invoices import (
+    legacy_router as slack_legacy_router,
+    router as slack_invoices_router,
+)
 from clearledgr.api.teams_invoices import router as teams_invoices_router
 
 app.include_router(v1_router)
 app.include_router(gmail_extension_router)
 app.include_router(slack_invoices_router)
+app.include_router(slack_legacy_router)
 app.include_router(teams_invoices_router)
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
@@ -765,11 +818,7 @@ _cors_allow_origins, _cors_allow_origin_regex = _resolve_cors_policy(
 
 # HTTPS enforcement in production
 if os.getenv("ENV", "dev").lower() in ("production", "prod"):
-    try:
-        from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
-        app.add_middleware(HTTPSRedirectMiddleware)
-    except ImportError:
-        logger.warning("HTTPSRedirectMiddleware not available")
+    app.add_middleware(ProxyAwareHTTPSRedirectMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

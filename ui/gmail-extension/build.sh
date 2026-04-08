@@ -6,6 +6,7 @@
 #   ./build.sh dev      # Development build (127.0.0.1 API)
 #   ./build.sh staging  # Staging build (staging.clearledgr.com)
 #   ./build.sh prod     # Production build (api.clearledgr.com)
+#   CLEARLEDGR_API_URL=https://your-app.up.railway.app ./build.sh railway
 #   ./build.sh pack     # Create signed CRX for enterprise deployment
 #
 
@@ -63,6 +64,14 @@ case $ENV in
   staging)
     API_URL="https://staging-api.clearledgr.com"
     ;;
+  railway)
+    API_URL="${CLEARLEDGR_API_URL:-}"
+    if [ -z "$API_URL" ]; then
+      echo "CLEARLEDGR_API_URL is required for railway builds"
+      echo "Example: CLEARLEDGR_API_URL=https://clearledgr-api-production.up.railway.app ./build.sh railway"
+      exit 1
+    fi
+    ;;
   prod)
     API_URL="https://api.clearledgr.com"
     ;;
@@ -71,7 +80,7 @@ case $ENV in
     ;;
   *)
     echo "Unknown environment: $ENV"
-    echo "Usage: ./build.sh [dev|staging|prod|pack]"
+    echo "Usage: ./build.sh [dev|staging|railway|prod|pack]"
     exit 1
     ;;
 esac
@@ -145,7 +154,7 @@ echo ""
 if [ "$ENV" = "pack" ]; then
   echo "Creating signed CRX for enterprise deployment..."
   
-  KEY_FILE="$SCRIPT_DIR/clearledgr.pem"
+  KEY_FILE="$SCRIPT_DIR/../../keys/clearledgr.pem"
   
   if [ ! -f "$KEY_FILE" ]; then
     echo "Generating new signing key..."

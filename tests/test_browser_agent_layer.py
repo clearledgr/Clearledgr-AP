@@ -1162,6 +1162,10 @@ def test_admin_bootstrap_dashboard_includes_agentic_snapshot(client, db):
     assert "shadow_action_match_pct" in snapshot
     assert "post_verification_rate_pct" in snapshot
     assert "top_blockers" in snapshot
+    proof = dashboard.get("proof_snapshot") or {}
+    assert "auto_approved_rate_pct" in proof
+    assert "posting_success_rate_pct" in proof
+    assert "recovery_success_rate_pct" in proof
 
 
 def test_autopilot_status_includes_agent_runtime_truth_claims(client, monkeypatch):

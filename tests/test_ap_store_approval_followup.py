@@ -54,3 +54,24 @@ def test_get_pending_approver_ids_falls_back_to_pending_chain_steps(tmp_path, mo
     db.db_create_approval_chain(chain)
 
     assert db.get_pending_approver_ids("ap-followup-1") == ["U123", "U456"]
+
+
+def test_get_pending_approver_ids_prefers_delivery_targets_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key-for-approval-followup")
+    db = ClearledgrDB(db_path=str(tmp_path / "approval-followup-delivery.db"))
+    db.initialize()
+
+    db.create_ap_item(
+        {
+            "id": "ap-followup-2",
+            "organization_id": "default",
+            "thread_id": "gmail-thread-followup-2",
+            "state": "needs_approval",
+            "metadata": {
+                "approval_sent_to": ["approver@company.com"],
+                "approval_delivery_targets": ["U999"],
+            },
+        }
+    )
+
+    assert db.get_pending_approver_ids("ap-followup-2") == ["U999"]

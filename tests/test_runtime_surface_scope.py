@@ -21,8 +21,17 @@ def _main_module():
     return importlib.import_module("main")
 
 
+def _reload_main_module():
+    module = _main_module()
+    return importlib.reload(module)
+
+
 def _runtime_surface_contract():
     return _main_module()._runtime_surface_contract()
+
+
+def _should_skip_deferred_startup():
+    return _main_module()._should_skip_deferred_startup()
 
 
 def _app():
@@ -100,6 +109,39 @@ def test_strict_profile_contract_ignores_legacy_runtime_flags(monkeypatch):
 
         mounted = _mounted_paths()
         assert "/outlook/status/{user_id}" not in mounted
+
+
+def test_production_https_redirect_respects_proxy_headers_and_exempts_health(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+
+    app = _reload_main_module().app
+
+    with TestClient(app) as client:
+        health = client.get("/health", follow_redirects=False)
+        assert health.status_code == 200
+
+        proxied = client.get("/openapi.json", headers={"x-forwarded-proto": "https"}, follow_redirects=False)
+        assert proxied.status_code == 200
+
+        redirected = client.get("/openapi.json", follow_redirects=False)
+        assert redirected.status_code == 307
+        assert redirected.headers["location"].startswith("https://")
+
+
+def test_web_process_role_skips_deferred_startup(monkeypatch):
+    monkeypatch.delenv("CLEARLEDGR_SKIP_DEFERRED_STARTUP", raising=False)
+    monkeypatch.setenv("CLEARLEDGR_PROCESS_ROLE", "web")
+
+    assert _should_skip_deferred_startup() is True
+    assert _runtime_surface_contract()["process_role"] == "web"
+
+
+def test_worker_process_role_keeps_deferred_startup_enabled(monkeypatch):
+    monkeypatch.delenv("CLEARLEDGR_SKIP_DEFERRED_STARTUP", raising=False)
+    monkeypatch.setenv("CLEARLEDGR_PROCESS_ROLE", "worker")
+
+    assert _should_skip_deferred_startup() is False
+    assert _runtime_surface_contract()["process_role"] == "worker"
 
 
 def test_legacy_surface_override_does_not_restore_deleted_legacy_routes(monkeypatch):

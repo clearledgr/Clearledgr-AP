@@ -129,7 +129,10 @@ class TemporalRuntime:
         persisted and returned as `unsupported`/`queued` without raising.
         """
         normalized_name = str(workflow_name or "").strip() or "unknown"
-        org_id = str((payload or {}).get("organization_id") or "default")
+        _raw_org = (payload or {}).get("organization_id")
+        if not _raw_org:
+            logger.warning("organization_id missing in start_workflow payload (workflow=%s), falling back to 'default'", normalized_name)
+        org_id = str(_raw_org or "default")
 
         if normalized_name in {"APInvoiceWorkflow", "APInvoiceEntryWorkflow"}:
             return await self.start_invoice(
@@ -181,7 +184,10 @@ class TemporalRuntime:
     ) -> Dict[str, Any]:
         """Execute an AP invoice entry workflow via the declarative AP workflow map."""
         invoice_payload = dict((payload or {}).get("invoice") or payload or {})
-        org_id = str(organization_id or invoice_payload.get("organization_id") or "default")
+        _raw_org = organization_id or invoice_payload.get("organization_id")
+        if not _raw_org:
+            logger.warning("organization_id missing in start_invoice (workflow=%s), falling back to 'default'", workflow_name)
+        org_id = str(_raw_org or "default")
 
         run = self._create_run(
             workflow_name=workflow_name,

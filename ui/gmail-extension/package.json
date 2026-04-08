@@ -11,7 +11,7 @@
     "verify:bundle": "node scripts/verify-bundle-parity.cjs",
     "verify:bundle:strict": "node scripts/verify-bundle-parity.cjs --check-git-clean",
     "test": "node --test tests/*.test.cjs",
-    "test:components": "vitest run",
+    "test:components": "node --test --test-concurrency=1 src/components/*.test.js src/utils/*.test.js",
     "test:integration": "node --test tests/inboxsdk-layer.integration.test.cjs tests/inboxsdk-layer-ui.test.cjs tests/bundle-contract.test.cjs tests/queue-manager.auth.test.cjs tests/queue-manager.agent-intents.test.cjs && npm run verify:bundle",
     "test:browser-harness": "RUN_GMAIL_BROWSER_HARNESS=1 node --test tests/inboxsdk-layer.browser-harness.test.cjs",
     "test:browser-harness:ci": "RUN_GMAIL_BROWSER_HARNESS=1 GMAIL_BROWSER_HARNESS_REQUIRE_BROWSER=1 node --test tests/inboxsdk-layer.browser-harness.test.cjs",
@@ -40,6 +40,7 @@
     "@testing-library/preact": "^3.2.4",
     "@testing-library/user-event": "^14.6.1",
     "acorn": "^8.15.0",
+    "happy-dom": "^20.8.9",
     "jsdom": "^27.0.1",
     "vitest": "^3.2.4"
   }

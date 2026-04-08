@@ -138,6 +138,88 @@ def test_scanned_pdf_ocr_fallback_recovers_invoice_fields(monkeypatch):
     assert parsed["vendor"] == "Google Cloud EMEA Limited"
 
 
+def test_forwarded_school_invoice_uses_issuer_signals_over_ocr_fragment(monkeypatch):
+    parser = EmailParser()
+
+    monkeypatch.setattr(
+        parser,
+        "_extract_pdf_text",
+        lambda _content_base64, max_pages=None: (
+            "--- Page 1 OCR ---\n"
+            "age ake L Rk _ 7\n"
+            "Tuition Fees LLNP0000127 hs = Men\n"
+            "F mae ia\n"
+            "Client Code: KP457516\n"
+            "Issue Date: 01/04/2026\n"
+            "Due date: 16/04/2026\n"
+            "Payee:\n"
+            "Little learners nursery and preschool\n"
+            "Payer:\n"
+            "Mbalam Emmanuel\n"
+            "Total payment 5,000.00 GHS\n"
+            "Total due amount: (5,000.00) GHS\n"
+        ),
+    )
+
+    parsed = parser.parse_email(
+        sender="Mo Mbalam <israelmbalam@gmail.com>",
+        subject="Fwd: Tuition fees from Little Learners Nursery and Preschool",
+        body=(
+            "Please find attached this invoice for Jayden-Manuel\n\n"
+            "---------- Forwarded message ---------\n"
+            "From: Little Learners Nursery And Preschool <no-reply@kinderpedia.co>\n"
+            "Date: Wed, Apr 1, 2026 at 9:41 AM\n"
+            "Subject: Tuition fees from Little Learners Nursery and Preschool\n\n"
+            "Issued by:\n"
+            "Little learners nursery and preschool\n"
+            "Please settle before 16 April 2026.\n"
+        ),
+        attachments=[
+            {
+                "filename": "Little Learners Nursery Tuition Fees.pdf",
+                "content_type": "application/pdf",
+                "content_base64": "ZHVtbXk=",
+            }
+        ],
+    )
+
+    assert parsed["vendor"].lower() == "little learners nursery and preschool"
+    assert parsed["primary_amount"] == 5000.0
+    assert parsed["currency"] == "GHS"
+    assert parsed["field_provenance"]["due_date"]["value"] == "2026-04-16"
+
+
+def test_invoice_text_prefers_payee_label_and_ghana_cedi_totals():
+    parser = EmailParser()
+
+    parsed = parser.parse_invoice_text(
+        "F mae ia\n"
+        "Issue Date: 01/04/2026\n"
+        "Due date: 16/04/2026\n"
+        "Payee:\n"
+        "Little learners nursery and preschool\n"
+        "Payer:\n"
+        "Mbalam Emmanuel\n"
+        "Total payment 5,000.00 GHS\n"
+        "Total due amount: (5,000.00) GHS\n"
+    )
+
+    assert parsed["vendor"].lower() == "little learners nursery and preschool"
+    assert parsed["amount"]["value"] == 5000.0
+    assert parsed["currency"] == "GHS"
+
+
+def test_invoice_text_strips_trailing_payer_label_from_vendor():
+    parser = EmailParser()
+
+    parsed = parser.parse_invoice_text(
+        "Payee: Little learners nursery and preschool Payer: Mbalam Emmanuel\n"
+        "Total payment 5,000.00 GHS\n"
+    )
+
+    assert parsed["vendor"].lower() == "little learners nursery and preschool"
+
+
 def test_attachment_mismatch_returns_provenance_and_blocking_conflict(monkeypatch):
     parser = EmailParser()
 

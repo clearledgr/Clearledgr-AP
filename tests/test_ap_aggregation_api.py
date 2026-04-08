@@ -133,7 +133,9 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "created_at": approved_created_at,
             "updated_at": posted_at,
             "erp_posted_at": posted_at,
-            "metadata": {},
+            "metadata": {
+                "ap_decision_recommendation": "approve",
+            },
         }
     )
 
@@ -155,7 +157,9 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "created_at": approved_created_at,
             "updated_at": posted_at,
             "erp_posted_at": posted_at,
-            "metadata": {},
+            "metadata": {
+                "ap_decision_recommendation": "approve",
+            },
         }
     )
     db.save_approval(
@@ -169,6 +173,66 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "approved_at": approved_at,
             "organization_id": "default",
             "created_at": approved_created_at,
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": touchless_item["id"],
+            "event_type": "erp_post_attempted",
+            "actor_type": "system",
+            "actor_id": "erp-adapter",
+            "organization_id": "default",
+            "ts": approved_at,
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": touchless_item["id"],
+            "event_type": "erp_post_succeeded",
+            "actor_type": "system",
+            "actor_id": "erp-adapter",
+            "organization_id": "default",
+            "ts": posted_at,
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": handled_item["id"],
+            "event_type": "erp_post_attempted",
+            "actor_type": "system",
+            "actor_id": "erp-adapter",
+            "organization_id": "default",
+            "ts": approved_at,
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": handled_item["id"],
+            "event_type": "erp_post_failed",
+            "actor_type": "system",
+            "actor_id": "erp-adapter",
+            "organization_id": "default",
+            "ts": approved_at,
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": handled_item["id"],
+            "event_type": "erp_post_succeeded",
+            "actor_type": "system",
+            "actor_id": "erp-adapter",
+            "organization_id": "default",
+            "ts": posted_at,
+        }
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": handled_item["id"],
+            "event_type": "ap_decision_override",
+            "actor_type": "user",
+            "actor_id": "ops-user-1",
+            "organization_id": "default",
+            "ts": posted_at,
         }
     )
 
@@ -313,3 +377,12 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
     assert pilot_scorecard["approval_workflow"]["reassigned_open_count"] == 1
     assert pilot_scorecard["entity_routing"]["single_candidate_resolved_count"] == 1
     assert any("approvals are currently beyond the" in line for line in pilot_scorecard["highlights"])
+
+    proof_scorecard = payload["proof_scorecard"]
+    assert proof_scorecard["summary"]["auto_approved_rate_pct"] == 50.0
+    assert proof_scorecard["summary"]["human_override_rate_pct"] == 50.0
+    assert proof_scorecard["summary"]["posting_success_rate_pct"] == 100.0
+    assert proof_scorecard["summary"]["recovery_success_rate_pct"] == 100.0
+    assert proof_scorecard["posting_reliability"]["attempted_count"] == 2
+    assert proof_scorecard["recovery"]["attempted_count"] == 1
+    assert proof_scorecard["recovery"]["recovered_count"] == 1

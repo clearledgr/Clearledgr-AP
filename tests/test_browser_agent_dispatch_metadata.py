@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from clearledgr.core import database as db_module
+from clearledgr.services.agent_memory import AgentMemoryService
 from clearledgr.services import browser_agent as browser_agent_module
 
 
@@ -80,3 +81,57 @@ def test_dispatch_macro_records_dispatched_at_for_follow_on_sessions(db):
     assert metadata["last_macro_name"] == "apply_credit_note_in_erp"
     assert metadata["workflow_id"] == "erp_credit_application_fallback"
     assert metadata["correlation_id"] == "corr-follow-on-dispatch"
+
+
+def test_browser_agent_session_payload_includes_canonical_agent_memory(db):
+    item = _create_item(db)
+    db.upsert_vendor_profile(
+        "default",
+        "Vendor",
+        payment_terms="Net 30",
+        invoice_count=4,
+    )
+    db.create_workflow_run(
+        {
+            "organization_id": "default",
+            "workflow_name": "erp_posting_fallback",
+            "workflow_type": "browser_fallback",
+            "ap_item_id": str(item["id"]),
+            "status": "running",
+            "metadata": {"source": "test"},
+        }
+    )
+    db.create_agent_retry_job(
+        {
+            "organization_id": "default",
+            "ap_item_id": str(item["id"]),
+            "job_type": "erp_post_retry",
+            "status": "pending",
+        }
+    )
+
+    AgentMemoryService("default", db=db).capture_runtime_state(
+        skill_id="ap_v1",
+        ap_item=item,
+        ap_item_id=str(item["id"]),
+        event_type="approval_request_routed",
+        reason="awaiting_approver",
+        response={"status": "pending_approval"},
+        actor_id="tester",
+        correlation_id="corr-browser-memory-1",
+    )
+
+    service = browser_agent_module.get_browser_agent_service()
+    session = service.create_session(
+        organization_id="default",
+        ap_item_id=str(item["id"]),
+        created_by="tester",
+        metadata={"workflow_id": "erp_posting_fallback"},
+    )
+    payload = service.get_session(str(session["id"]))
+
+    assert payload["session"]["agent_next_action"]["type"] == "await_approval"
+    assert payload["agent_memory"]["identity_memory"]["name"] == "Clearledgr AP Agent"
+    assert payload["agent_memory"]["semantic_memory"]["vendor_profile"]["payment_terms"] == "Net 30"
+    assert payload["agent_memory"]["episodic_memory"]["workflow_runs"]
+    assert payload["agent_memory"]["episodic_memory"]["retry_jobs"]

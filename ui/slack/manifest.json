@@ -56,19 +56,15 @@
   "oauth_config": {
     "scopes": {
       "bot": [
-        "app_mentions:read",
-        "channels:history",
         "channels:read",
         "chat:write",
         "commands",
-        "files:read",
-        "groups:history",
         "groups:read",
-        "im:history",
-        "im:read",
         "im:write",
-        "reactions:write",
-        "users:read"
+        "users:read",
+        "users:read.email"
+      ],
+      "user": [
       ]
     },
     "redirect_urls": [

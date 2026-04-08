@@ -54,6 +54,39 @@ class TestPostSlackBlocks:
             result = _run(_post_slack_blocks([{"type": "section"}], "test"))
             assert result is False
 
+    def test_retries_with_runtime_channel_when_primary_channel_not_found(self, monkeypatch):
+        monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+        runtime = {"bot_token": "xoxb-test", "approval_channel": "cl-finance-ap", "mode": "per_org"}
+
+        first_response = MagicMock(status_code=200, content=b'{"ok": false, "error": "channel_not_found"}')
+        first_response.json.return_value = {"ok": False, "error": "channel_not_found"}
+        second_response = MagicMock(status_code=200, content=b'{"ok": true}')
+        second_response.json.return_value = {"ok": True}
+
+        with patch("clearledgr.services.slack_notifications.resolve_slack_runtime", return_value=runtime):
+            with patch("httpx.AsyncClient") as MockClient:
+                instance = AsyncMock()
+                instance.post = AsyncMock(side_effect=[first_response, second_response])
+                instance.__aenter__ = AsyncMock(return_value=instance)
+                instance.__aexit__ = AsyncMock(return_value=False)
+                MockClient.return_value = instance
+
+                result = _run(
+                    _post_slack_blocks(
+                        [{"type": "section"}],
+                        "test",
+                        preferred_channel="C0AN8FFHAPJ",
+                        organization_id="default",
+                    )
+                )
+
+        assert result is True
+        assert instance.post.await_count == 2
+        first_payload = instance.post.await_args_list[0].kwargs["json"]
+        second_payload = instance.post.await_args_list[1].kwargs["json"]
+        assert first_payload["channel"] == "C0AN8FFHAPJ"
+        assert second_payload["channel"] == "cl-finance-ap"
+
 
 # ---------------------------------------------------------------------------
 # send_with_retry
@@ -129,6 +162,9 @@ class TestSendApprovalReminder:
     def test_posts_channel_reminder_when_no_pending_approvers(self):
         instance = MagicMock()
         instance.send_dm = AsyncMock()
+        instance.resolve_user_targets = AsyncMock(
+            return_value={"delivery_ids": [], "mentions": [], "labels": [], "unresolved": []}
+        )
 
         with patch("clearledgr.services.slack_api.get_slack_client", return_value=instance):
             with patch(
@@ -166,6 +202,9 @@ class TestSendApprovalReminder:
     def test_dm_reminder_includes_action_buttons(self):
         instance = MagicMock()
         instance.send_dm = AsyncMock()
+        instance.resolve_user_targets = AsyncMock(
+            return_value={"delivery_ids": ["U123"], "mentions": ["<@U123>"], "labels": ["U123"], "unresolved": []}
+        )
 
         with patch("clearledgr.services.slack_api.get_slack_client", return_value=instance):
             result = _run(
@@ -196,6 +235,57 @@ class TestSendApprovalReminder:
             "reject_invoice_AP-123",
             "request_info_AP-123",
         ]
+
+    def test_escalation_posts_channel_with_approver_mentions(self):
+        instance = MagicMock()
+        instance.send_dm = AsyncMock()
+        instance.resolve_user_targets = AsyncMock(
+            return_value={
+                "delivery_ids": ["U123"],
+                "mentions": ["<@U123>"],
+                "labels": ["approver@company.com"],
+                "unresolved": [],
+            }
+        )
+
+        with patch("clearledgr.services.slack_api.get_slack_client", return_value=instance):
+            with patch(
+                "clearledgr.services.slack_notifications._post_slack_blocks",
+                new=AsyncMock(return_value=True),
+            ) as post_blocks:
+                result = _run(
+                    send_approval_reminder(
+                        ap_item={
+                            "id": "AP-ESC-1",
+                            "vendor_name": "Approval Reminder Co",
+                            "amount": 420.0,
+                            "currency": "USD",
+                            "invoice_number": "INV-ESC-1",
+                            "organization_id": "default",
+                            "metadata": {"approval_channel": "C-APPROVALS"},
+                        },
+                        approver_ids=["approver@company.com"],
+                        hours_pending=24,
+                        organization_id="default",
+                        stage="escalation",
+                    )
+                )
+
+        assert result is True
+        instance.send_dm.assert_awaited_once()
+        dm_args = instance.send_dm.await_args
+        assert dm_args.args[0] == "U123"
+        assert "<@U123>" not in dm_args.args[1]
+        assert "Approval ESCALATION" in dm_args.args[1]
+        posted_text = post_blocks.await_args.kwargs["text"]
+        posted_blocks = post_blocks.await_args.kwargs["blocks"]
+        assert "<@U123>" in posted_text
+        approver_block = next(
+            block for block in posted_blocks
+            if block.get("type") == "section"
+            and "Pending approvers" in str((block.get("text") or {}).get("text") or "")
+        )
+        assert "<@U123>" in approver_block["text"]["text"]
 
 
 # ---------------------------------------------------------------------------

@@ -67,7 +67,7 @@ function emitSingleQueueItem(runtime, item, context = null) {
   if (item?.id && context) {
     contexts.set(item.id, context);
   }
-  queueManager.emitQueueUpdated([item], { state: 'idle' }, new Map(), [], new Map(), new Map(), contexts);
+  queueManager.emitQueueUpdated([item], { state: 'idle' }, new Map(), [], new Map(), new Map(), contexts, new Map(), new Map(), new Map(), new Map());
 }
 
 function wrapSidebarHtml(innerHtml) {
@@ -235,7 +235,7 @@ async function captureSidebarAuthRequired(browser, outputPath) {
   const runtime = await createInboxSdkIntegrationRuntime({ queueManager: { debugUiEnabled: false } });
   const sidebar = runtime.getState().workSidebarEl || runtime.getState().globalSidebarEl;
   const queueManager = runtime.getQueueManager();
-  queueManager.emitQueueUpdated([], { state: 'auth_required', message: 'Authorize Gmail to start monitoring.' }, new Map(), [], new Map(), new Map(), new Map());
+  queueManager.emitQueueUpdated([], { state: 'auth_required', message: 'Authorize Gmail to start monitoring.' }, new Map(), [], new Map(), new Map(), new Map(), new Map(), new Map(), new Map(), new Map());
   await runtime.flush();
 
   const page = await browser.newPage({ viewport: { width: 980, height: 980 } });

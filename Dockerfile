@@ -41,6 +41,7 @@ ENV PORT=8010
 ENV HOST=0.0.0.0
 ENV WORKERS=4
 ENV LOG_LEVEL=info
+ENV CLEARLEDGR_PROCESS_ROLE=web
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
@@ -48,5 +49,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 EXPOSE 8010
 
-# Run with gunicorn for production
-CMD ["sh", "-c", "gunicorn main:app --workers ${WORKERS} --worker-class uvicorn.workers.UvicornWorker --bind ${HOST}:${PORT} --access-logfile - --error-logfile - --log-level ${LOG_LEVEL}"]
+# Run API service by default; worker service should override start command.
+CMD ["sh", "scripts/start-api.sh"]

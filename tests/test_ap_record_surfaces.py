@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import asyncio
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -176,6 +177,49 @@ def test_detail_endpoint_returns_canonical_ap_item(client, db):
     assert payload["vendor_name"] == "Google Payments"
 
 
+def test_detail_endpoint_includes_agent_memory_surface(client, db):
+    item = db.create_ap_item(
+        _item_payload(
+            "detail-agent-memory",
+            "default",
+            vendor_name="Canonical Memory Co",
+            state="needs_approval",
+        )
+    )
+
+    class _FakeMemory:
+        def build_surface(self, *, ap_item_id: str, skill_id: str = "ap_v1") -> dict:
+            assert ap_item_id == item["id"]
+            assert skill_id == "ap_v1"
+            return {
+                "profile": {"name": "Clearledgr AP Agent", "autonomy_level": "assisted"},
+                "belief": {"vendor_name": "Canonical Memory Co", "reason": "Awaiting approval response."},
+                "current_state": "validated",
+                "status": "pending_approval",
+                "evidence": {"thread_id": item["thread_id"]},
+                "uncertainties": {"reason_codes": ["vendor_unscored"]},
+                "next_action": {"type": "await_approval", "label": "Wait for approval decision"},
+                "summary": {"reason": "Awaiting approval response."},
+                "episode": {"status": "pending_approval"},
+            }
+
+    with patch(
+        "clearledgr.services.agent_memory.get_agent_memory_service",
+        return_value=_FakeMemory(),
+    ):
+        response = client.get(
+            f"/api/ap/items/{item['id']}?organization_id=default",
+            headers=_auth_headers("default"),
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent_profile"]["name"] == "Clearledgr AP Agent"
+    assert payload["agent_next_action"]["type"] == "await_approval"
+    assert payload["agent_memory"]["belief"]["vendor_name"] == "Canonical Memory Co"
+    assert payload["next_action"] == "approve_or_reject"
+
+
 def test_detail_endpoint_resolves_invoice_number_alias(client, db):
     item = db.create_ap_item(
         _item_payload(
@@ -227,6 +271,50 @@ def test_build_worklist_item_surfaces_attachment_metadata_from_sources(db):
     assert normalized["attachment_count"] == 2
     assert normalized["attachment_url"] == "https://files.example/invoice.pdf"
     assert normalized["attachment_names"] == ["invoice.pdf", "backup.pdf"]
+
+
+def test_build_worklist_item_includes_agent_memory_projection(db):
+    item = db.create_ap_item(
+        _item_payload(
+            "agent-memory-1",
+            "default",
+            vendor_name="Agent Memory Vendor",
+            state="needs_approval",
+        )
+    )
+
+    class _FakeMemory:
+        def build_surface(self, *, ap_item_id: str, skill_id: str = "ap_v1") -> dict:
+            assert ap_item_id == item["id"]
+            assert skill_id == "ap_v1"
+            return {
+                "profile": {
+                    "name": "Clearledgr AP Agent",
+                    "mission": "Own the AP lane",
+                    "autonomy_level": "assisted",
+                },
+                "belief": {"vendor_name": "Agent Memory Vendor", "reason": "Approval is pending."},
+                "current_state": "validated",
+                "status": "pending_approval",
+                "evidence": {"thread_id": item["thread_id"]},
+                "uncertainties": {"reason_codes": ["vendor_unscored"]},
+                "next_action": {"type": "await_approval", "label": "Wait for approval decision"},
+                "summary": {"reason": "Approval is pending."},
+                "episode": {"status": "pending_approval"},
+            }
+
+    with patch(
+        "clearledgr.services.agent_memory.get_agent_memory_service",
+        return_value=_FakeMemory(),
+    ):
+        normalized = build_worklist_item(db, item)
+
+    assert normalized["agent_profile"]["autonomy_level"] == "assisted"
+    assert normalized["agent_belief_state"]["vendor_name"] == "Agent Memory Vendor"
+    assert normalized["agent_next_action"]["type"] == "await_approval"
+    assert normalized["agent_summary"]["reason"] == "Approval is pending."
+    assert normalized["agent_memory"]["episode"]["status"] == "pending_approval"
+    assert normalized["next_action"] == "approve_or_reject"
 
 
 def test_build_worklist_item_recovers_google_invoice_attachment_signal_for_legacy_rows(db):
@@ -1224,3 +1312,271 @@ def test_build_worklist_item_requires_manual_review_when_multi_entity_rules_do_n
     assert len(normalized["entity_candidates"]) == 2
     assert normalized["entity_route_reason"] == "No entity routing rule matched this invoice."
     assert normalized["next_action"] == "resolve_entity_route"
+
+
+def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_record(client, db):
+    item = db.create_ap_item(
+        _item_payload(
+            "gmail-record-1",
+            "default",
+            vendor_name="Acme Supplies",
+            invoice_number="INV-GMAIL-1",
+            state="received",
+        )
+    )
+    db.create_ap_item(
+        _item_payload(
+            "gmail-record-2",
+            "default",
+            vendor_name="Northwind Logistics",
+            invoice_number="INV-NORTH-2",
+            state="validated",
+        )
+    )
+
+    assert _is_strict_profile_allowed_path("/api/ap/items/search") is True
+    assert _is_strict_profile_allowed_path("/api/ap/items/compose/create") is True
+    assert _is_strict_profile_allowed_path("/api/ap/items/compose/lookup") is True
+    assert _is_strict_profile_allowed_path(f"/api/ap/items/{item['id']}/comments") is True
+    assert _is_strict_profile_allowed_path(f"/api/ap/items/{item['id']}/compose-link") is True
+    assert _is_strict_profile_allowed_path(f"/api/ap/items/{item['id']}/fields") is True
+    assert _is_strict_profile_allowed_path(f"/api/ap/items/{item['id']}/files") is True
+    assert _is_strict_profile_allowed_path(f"/api/ap/items/{item['id']}/gmail-link") is True
+    assert _is_strict_profile_allowed_path(f"/api/ap/items/{item['id']}/tasks") is True
+    assert _is_strict_profile_allowed_path(f"/api/ap/items/{item['id']}/notes") is True
+    assert _is_strict_profile_allowed_path("/api/ap/items/tasks/task-1/status") is True
+    assert _is_strict_profile_allowed_path("/api/ap/items/tasks/task-1/assign") is True
+    assert _is_strict_profile_allowed_path("/api/ap/items/tasks/task-1/comments") is True
+
+    search_response = client.get(
+        "/api/ap/items/search?organization_id=default&q=Northwind",
+        headers=_auth_headers("default"),
+    )
+    assert search_response.status_code == 200
+    assert [row["vendor_name"] for row in search_response.json()["items"]] == ["Northwind Logistics"]
+
+    fields_response = client.patch(
+        f"/api/ap/items/{item['id']}/fields",
+        json={"vendor_name": "Acme Holdings", "po_number": "PO-77"},
+        headers=_auth_headers("default"),
+    )
+    assert fields_response.status_code == 200
+    fields_payload = fields_response.json()
+    assert fields_payload["status"] == "updated"
+    updated = db.get_ap_item(item["id"])
+    assert updated["vendor_name"] == "Acme Holdings"
+    assert updated["po_number"] == "PO-77"
+
+    task_title = f"Call vendor {datetime.now(timezone.utc).timestamp()}"
+
+    task_create_response = client.post(
+        f"/api/ap/items/{item['id']}/tasks",
+        json={"title": task_title, "due_date": "2026-04-10"},
+        headers=_auth_headers("default"),
+    )
+    assert task_create_response.status_code == 200
+    assert task_create_response.json()["status"] == "created"
+
+    tasks_response = client.get(
+        f"/api/ap/items/{item['id']}/tasks",
+        headers=_auth_headers("default"),
+    )
+    assert tasks_response.status_code == 200
+    tasks_payload = tasks_response.json()
+    matching_task = next(task for task in tasks_payload["tasks"] if task["title"] == task_title)
+    task_id = matching_task["task_id"]
+
+    task_status_response = client.post(
+        f"/api/ap/items/tasks/{task_id}/status",
+        json={"status": "in_progress"},
+        headers=_auth_headers("default"),
+    )
+    assert task_status_response.status_code == 200
+    assert task_status_response.json()["task"]["status"] == "in_progress"
+
+
+    task_assign_response = client.post(
+        f"/api/ap/items/tasks/{task_id}/assign",
+        json={"assignee_email": "ap-owner@default.example"},
+        headers=_auth_headers("default"),
+    )
+    assert task_assign_response.status_code == 200
+    assert task_assign_response.json()["task"]["assignee_email"] == "ap-owner@default.example"
+
+    task_comment_response = client.post(
+        f"/api/ap/items/tasks/{task_id}/comments",
+        json={"comment": "Waiting on vendor callback."},
+        headers=_auth_headers("default"),
+    )
+    assert task_comment_response.status_code == 200
+    assert task_comment_response.json()["task"]["comments"][0]["comment"] == "Waiting on vendor callback."
+
+    note_create_response = client.post(
+        f"/api/ap/items/{item['id']}/notes",
+        json={"body": "Vendor promised revised invoice on Friday."},
+        headers=_auth_headers("default"),
+    )
+    assert note_create_response.status_code == 200
+    assert note_create_response.json()["status"] == "created"
+
+    notes_response = client.get(
+        f"/api/ap/items/{item['id']}/notes",
+        headers=_auth_headers("default"),
+    )
+    assert notes_response.status_code == 200
+    notes_payload = notes_response.json()
+    assert notes_payload["count"] == 1
+    assert notes_payload["notes"][0]["body"] == "Vendor promised revised invoice on Friday."
+
+    comment_create_response = client.post(
+        f"/api/ap/items/{item['id']}/comments",
+        json={"body": "Controller approved the revised draft response."},
+        headers=_auth_headers("default"),
+    )
+    assert comment_create_response.status_code == 200
+    assert comment_create_response.json()["status"] == "created"
+
+    comments_response = client.get(
+        f"/api/ap/items/{item['id']}/comments",
+        headers=_auth_headers("default"),
+    )
+    assert comments_response.status_code == 200
+    comments_payload = comments_response.json()
+    assert comments_payload["count"] == 1
+    assert comments_payload["comments"][0]["body"] == "Controller approved the revised draft response."
+
+    file_create_response = client.post(
+        f"/api/ap/items/{item['id']}/files",
+        json={"label": "Vendor quote", "url": "https://docs.example.com/vendor-quote", "file_type": "drive_link"},
+        headers=_auth_headers("default"),
+    )
+    assert file_create_response.status_code == 200
+    assert file_create_response.json()["status"] == "created"
+
+    files_response = client.get(
+        f"/api/ap/items/{item['id']}/files",
+        headers=_auth_headers("default"),
+    )
+    assert files_response.status_code == 200
+    files_payload = files_response.json()
+    assert files_payload["count"] == 1
+    assert files_payload["files"][0]["label"] == "Vendor quote"
+
+    link_response = client.post(
+        f"/api/ap/items/{item['id']}/gmail-link",
+        json={
+            "thread_id": "thread-gmail-linked",
+            "message_id": "msg-gmail-linked",
+            "subject": "Invoice follow-up",
+            "sender": "billing@acme.example",
+        },
+        headers=_auth_headers("default"),
+    )
+    assert link_response.status_code == 200
+    link_payload = link_response.json()
+    assert link_payload["status"] == "linked"
+    assert link_payload["ap_item"]["thread_id"] == "thread-gmail-linked"
+    assert link_payload["ap_item"]["message_id"] == "msg-gmail-linked"
+
+    compose_create_response = client.post(
+        "/api/ap/items/compose/create",
+        json={
+            "draft_id": "draft-compose-1",
+            "thread_id": "thread-compose-1",
+            "subject": "Vendor follow-up for INV-200",
+            "recipients": ["vendor@northwind.example"],
+            "body_preview": "Can you confirm the credit memo amount?",
+            "note": "Drafted from Gmail compose.",
+        },
+        headers=_auth_headers("default"),
+    )
+    assert compose_create_response.status_code == 200
+    compose_create_payload = compose_create_response.json()
+    assert compose_create_payload["status"] == "created"
+    created_compose_item_id = compose_create_payload["ap_item"]["id"]
+
+    compose_lookup_response = client.get(
+        "/api/ap/items/compose/lookup?organization_id=default&draft_id=draft-compose-1",
+        headers=_auth_headers("default"),
+    )
+    assert compose_lookup_response.status_code == 200
+    assert compose_lookup_response.json()["status"] == "found"
+    assert compose_lookup_response.json()["ap_item"]["id"] == created_compose_item_id
+
+    compose_link_response = client.post(
+        f"/api/ap/items/{item['id']}/compose-link",
+        json={
+            "draft_id": "draft-compose-2",
+            "thread_id": "thread-compose-2",
+            "subject": "Re: INV-GMAIL-1 follow-up",
+            "recipients": ["billing@acme.example"],
+            "body_preview": "Sharing the updated payment timeline.",
+        },
+        headers=_auth_headers("default"),
+    )
+    assert compose_link_response.status_code == 200
+    assert compose_link_response.json()["status"] == "linked"
+
+
+def test_workspace_team_approver_directory_is_available_in_strict_profile_and_resolves_slack_users(client, db):
+    admin = db.create_user(
+        email="admin@company.com",
+        name="Admin User",
+        organization_id="default",
+        role="admin",
+    )
+    db.update_user(admin["id"], slack_user_id="UADMIN")
+    approver = db.create_user(
+        email="approver@company.com",
+        name="Approver User",
+        organization_id="default",
+        role="operator",
+    )
+    unresolved = db.create_user(
+        email="missing@company.com",
+        name="Missing User",
+        organization_id="default",
+        role="operator",
+    )
+
+    class _SlackClient:
+        async def lookup_user_by_email(self, email):
+            if email == "approver@company.com":
+                return {"id": "UAPPROVER"}
+            if email == "missing@company.com":
+                return None
+            return None
+
+    assert _is_strict_profile_allowed_path("/api/workspace/team/approvers") is True
+
+    with patch("clearledgr.api.workspace_shell._resolve_slack_runtime", return_value={"connected": True}), patch(
+        "clearledgr.api.workspace_shell._get_slack_client",
+        return_value=_SlackClient(),
+    ):
+        response = client.get(
+            "/api/workspace/team/approvers?organization_id=default",
+            headers=_auth_headers("default", admin["id"], "admin"),
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["slack_connected"] is True
+
+    rows = {entry["email"]: entry for entry in payload["approvers"]}
+    assert rows["admin@company.com"]["slack_user_id"] == "UADMIN"
+    assert rows["admin@company.com"]["slack_resolution"] == "resolved"
+    assert rows["admin@company.com"]["approval_ready"] is True
+    assert rows["admin@company.com"]["slack_mention"] == "<@UADMIN>"
+
+    assert rows["approver@company.com"]["slack_user_id"] == "UAPPROVER"
+    assert rows["approver@company.com"]["slack_resolution"] == "resolved"
+    assert rows["approver@company.com"]["approval_ready"] is True
+    assert rows["approver@company.com"]["slack_mention"] == "<@UAPPROVER>"
+
+    assert rows["missing@company.com"]["slack_user_id"] is None
+    assert rows["missing@company.com"]["slack_resolution"] == "not_found"
+    assert rows["missing@company.com"]["approval_ready"] is False
+
+    refreshed = db.get_user(approver["id"])
+    assert refreshed["slack_user_id"] == "UAPPROVER"
+    assert db.get_user(unresolved["id"])["slack_user_id"] in (None, "")

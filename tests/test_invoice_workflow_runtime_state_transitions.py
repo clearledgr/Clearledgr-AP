@@ -561,6 +561,54 @@ def test_approve_invoice_records_vendor_outcome_and_feedback(service, db, monkey
     assert profile["invoice_count"] >= 1
 
 
+def test_approve_invoice_persists_actor_identity_and_label(service, db, monkeypatch):
+    item = _create_ap_item(db, gmail_id="gmail-approve-actor-identity", state="needs_approval")
+    monkeypatch.setattr(service, "_load_budget_context_from_invoice_row", lambda _row: [])
+    monkeypatch.setattr(service, "_check_po_exception_block", lambda _row: {"blocked": False, "exceptions": []})
+
+    async def _fake_post(_invoice, **_kwargs):
+        return {"status": "success", "bill_id": "BILL-ACTOR-1", "vendor_id": "VEN-1"}
+
+    monkeypatch.setattr(service, "_post_to_erp", _fake_post)
+
+    result = asyncio.run(
+        service.approve_invoice(
+            gmail_id="gmail-approve-actor-identity",
+            approved_by="U0AD3P193V4",
+            actor_display="Mo Mbalam",
+            actor_email="mo@clearledgr.com",
+            actor_platform_id="U0AD3P193V4",
+            actor_identity={
+                "platform": "slack",
+                "platform_user_id": "U0AD3P193V4",
+                "email": "mo@clearledgr.com",
+                "display_name": "Mo Mbalam",
+            },
+            source_channel="slack",
+            source_channel_id="C-APPROVALS",
+            source_message_ref="1710000000.999",
+            decision_idempotency_key="decision-actor-1",
+        )
+    )
+
+    assert result["status"] == "approved"
+    assert result["approved_by"] == "mo@clearledgr.com"
+    assert result["approved_by_label"] == "Mo Mbalam (mo@clearledgr.com)"
+    assert result["approver_identity"]["platform_user_id"] == "U0AD3P193V4"
+
+    approval = db.get_approval_by_decision_key(item["id"], "decision-actor-1")
+    assert approval is not None
+    assert approval["approved_by"] == "mo@clearledgr.com"
+    payload = approval["decision_payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    assert payload["actor_label"] == "Mo Mbalam (mo@clearledgr.com)"
+    assert payload["actor_email"] == "mo@clearledgr.com"
+    assert payload["actor_platform_id"] == "U0AD3P193V4"
+    assert payload["actor_identity"]["display_name"] == "Mo Mbalam"
+    assert payload["actor_identity"]["platform"] == "slack"
+
+
 def test_approve_invoice_failure_transitions_to_failed_post(service, db, monkeypatch):
     item = _create_ap_item(db, gmail_id="gmail-approve-fail", state="needs_approval")
 

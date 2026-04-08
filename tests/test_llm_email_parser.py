@@ -1,5 +1,9 @@
 from clearledgr.services import llm_email_parser as llm_email_parser_module
-from clearledgr.services.llm_email_parser import LLMEmailParser, _merge_attachment_evidence
+from clearledgr.services.llm_email_parser import (
+    LLMEmailParser,
+    _merge_attachment_evidence,
+    _merge_source_trace,
+)
 
 
 def test_llm_result_maps_credit_note_document_type():
@@ -200,3 +204,39 @@ def test_authoritative_attachment_result_skips_llm(monkeypatch):
     assert result["vendor"] == "Google Cloud EMEA Limited"
     assert result["primary_amount"] == 40.23
     assert result["field_confidences"]["amount"] >= 0.95
+
+
+def test_merge_source_trace_preserves_attachment_value_when_llm_is_blank():
+    merged = {
+        "vendor": "Little learners nursery and preschool",
+        "primary_amount": 5000.0,
+        "currency": "GHS",
+        "primary_invoice": "000127",
+        "invoice_date": None,
+        "primary_date": None,
+        "due_date": None,
+    }
+    local_result = {
+        "field_provenance": {
+            "due_date": {
+                "source": "attachment",
+                "value": None,
+                "candidates": {"attachment": "2026-04-16"},
+            }
+        },
+        "field_evidence": {
+            "due_date": {
+                "source": "attachment",
+                "selected_value": None,
+                "attachment_value": "2026-04-16",
+            }
+        },
+        "source_conflicts": [],
+        "conflict_actions": [],
+    }
+
+    result = _merge_source_trace(merged, local_result)
+
+    assert result["due_date"] == "2026-04-16"
+    assert result["field_provenance"]["due_date"]["source"] == "attachment"
+    assert result["field_evidence"]["due_date"]["selected_value"] == "2026-04-16"

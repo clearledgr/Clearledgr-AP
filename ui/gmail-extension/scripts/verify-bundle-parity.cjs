@@ -53,13 +53,18 @@ function verifyManifestContract() {
   if (!fs.existsSync(MANIFEST_PATH)) fail(`Missing manifest: ${MANIFEST_PATH}`);
   const manifest = readJson(MANIFEST_PATH);
   const scripts = manifest?.content_scripts;
-  if (!Array.isArray(scripts) || scripts.length === 0) {
-    fail('manifest.content_scripts is missing.');
+  if (!Array.isArray(scripts) || scripts.length < 2) {
+    fail('manifest.content_scripts must include the route capture script and the audited Gmail bundle.');
   }
-  const contentScript = scripts[0];
-  const jsList = Array.isArray(contentScript?.js) ? contentScript.js : [];
-  if (!jsList.includes('dist/inboxsdk-layer.js')) {
-    fail('Manifest content script must include dist/inboxsdk-layer.js');
+  const earlyScript = scripts[0];
+  const bundleScript = scripts[1];
+  const earlyJsList = Array.isArray(earlyScript?.js) ? earlyScript.js : [];
+  const bundleJsList = Array.isArray(bundleScript?.js) ? bundleScript.js : [];
+  if (!earlyJsList.includes('route-capture.js') || earlyScript?.run_at !== 'document_start') {
+    fail('Manifest must capture Clearledgr direct-route intent at document_start before Gmail rewrites the hash.');
+  }
+  if (!bundleJsList.includes('dist/inboxsdk-layer.js') || bundleScript?.run_at !== 'document_idle') {
+    fail('Manifest content script must include dist/inboxsdk-layer.js at document_idle.');
   }
 }
 

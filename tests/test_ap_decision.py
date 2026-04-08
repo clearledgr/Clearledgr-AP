@@ -65,7 +65,7 @@ def _fake_claude_response(recommendation: str, reasoning: str, info_needed=None,
     }
     return {
         "content": [{"type": "text", "text": json.dumps(payload)}],
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-4-20250514",
     }
 
 

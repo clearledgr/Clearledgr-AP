@@ -58,3 +58,13 @@ def reset_service_singletons():
         _gl_correction_services.clear()
     except Exception:
         pass
+    try:
+        from clearledgr.services.agent_memory import _agent_memory_services
+        _agent_memory_services.clear()
+    except Exception:
+        pass
+    try:
+        from clearledgr.services.finance_learning import _finance_learning_services
+        _finance_learning_services.clear()
+    except Exception:
+        pass

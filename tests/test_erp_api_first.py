@@ -13,8 +13,10 @@ if str(ROOT) not in sys.path:
 
 from clearledgr.core import database as db_module
 from clearledgr.integrations.erp_router import Bill, ERPConnection
+from clearledgr.services.agent_memory import get_agent_memory_service
 from clearledgr.services import browser_agent as browser_agent_module
 from clearledgr.services import erp_api_first as erp_api_first_module
+from clearledgr.services.finance_learning import get_finance_learning_service
 
 
 @pytest.fixture()
@@ -943,6 +945,45 @@ def test_reconcile_browser_fallback_completion_updates_ap_item_and_is_idempotent
 
     event_types = _event_types(db, str(item["id"]))
     assert "erp_browser_fallback_completed" in event_types
+
+
+def test_reconcile_browser_fallback_completion_updates_canonical_memory_and_learning(db):
+    item = _create_item(db)
+    _move_item_to_failed_post(db, str(item["id"]))
+    session = db.create_agent_session(
+        {
+            "organization_id": "default",
+            "ap_item_id": str(item["id"]),
+            "created_by": "runner-service",
+            "metadata": {"workflow_id": "erp_posting_fallback"},
+        }
+    )
+
+    result = erp_api_first_module.reconcile_browser_fallback_completion(
+        session_id=str(session["id"]),
+        macro_name="post_invoice_to_erp",
+        status="completed",
+        actor_id="runner-service",
+        erp_reference="ERP-MEM-1",
+        evidence={"receipt_id": "erp-mem-1"},
+        idempotency_key="fallback-memory-1",
+        correlation_id="corr-memory-erp-1",
+        db=db,
+    )
+
+    assert result["status"] == "success"
+    surface = get_agent_memory_service("default", db=db).build_surface(
+        ap_item_id=str(item["id"]),
+        skill_id="ap_v1",
+    )
+    learning_events = get_finance_learning_service("default", db=db).list_learning_events(
+        ap_item_id=str(item["id"]),
+        limit=10,
+    )
+
+    assert surface["status"] == "posted_to_erp"
+    assert surface["next_action"]["type"] == "monitor_completion"
+    assert any(event["event_type"] == "erp_browser_fallback_completed" for event in learning_events)
 
 
 def test_post_bill_api_first_treats_already_posted_as_successful_idempotent_result(db, monkeypatch):

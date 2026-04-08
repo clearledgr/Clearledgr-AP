@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:4d65b5a03d85f3ba1bc4326106858675a1655e3a1529fa6b6d7dd773ef065689 */
+/* clearledgr-source-fingerprint:727d2829e1c15401112ce21bd732186aff421fd04694ac0ac7810e89d6579151 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -53350,6 +53350,74 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // queue-manager.js
+  function normalizeBackendUrl(raw) {
+    let url = String(raw || "").trim();
+    if (!url)
+      return "";
+    if (!/^https?:\/\//i.test(url))
+      url = `http://${url}`;
+    if (url.endsWith("/v1"))
+      url = url.slice(0, -3);
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname === "0.0.0.0" || parsed.hostname === "localhost") {
+        parsed.hostname = "127.0.0.1";
+      }
+      return parsed.toString().replace(/\/+$/, "");
+    } catch (_2) {
+      return url.replace(/\/+$/, "");
+    }
+  }
+  function selectBackendUrl(storedUrl, configuredUrl) {
+    const configured = normalizeBackendUrl(configuredUrl);
+    const stored = normalizeBackendUrl(storedUrl);
+    if (!configuredUrl)
+      return stored;
+    if (!storedUrl)
+      return configured;
+    try {
+      const configuredParsed = new URL(configured);
+      const storedParsed = new URL(stored);
+      const configuredHost = configuredParsed.hostname.toLowerCase();
+      const storedHost = storedParsed.hostname.toLowerCase();
+      const configuredSecure = configuredParsed.protocol === "https:";
+      const looksEphemeralStoredHost = storedHost === "127.0.0.1" || storedHost === "localhost" || storedHost.endsWith(".trycloudflare.com") || storedHost.endsWith(".up.railway.app");
+      if (configuredSecure && configuredHost === "api.clearledgr.com" && looksEphemeralStoredHost) {
+        return configured;
+      }
+    } catch (_2) {
+      return configured || stored;
+    }
+    return stored;
+  }
+  function shouldClearStoredBackendOverride(storedUrl, configuredUrl) {
+    const configured = normalizeBackendUrl(configuredUrl);
+    const stored = normalizeBackendUrl(storedUrl);
+    if (!configuredUrl || !storedUrl)
+      return false;
+    try {
+      const configuredParsed = new URL(configured);
+      const storedParsed = new URL(stored);
+      const configuredHost = configuredParsed.hostname.toLowerCase();
+      const storedHost = storedParsed.hostname.toLowerCase();
+      return configuredParsed.protocol === "https:" && configuredHost === "api.clearledgr.com" && (storedHost === "127.0.0.1" || storedHost === "localhost" || storedHost.endsWith(".trycloudflare.com") || storedHost.endsWith(".up.railway.app"));
+    } catch (_2) {
+      return false;
+    }
+  }
+  async function clearStoredBackendOverride(data, nested, configuredBackendUrl) {
+    const storedBackendUrl = data.backendUrl || nested.backendUrl || nested.apiEndpoint || null;
+    if (!shouldClearStoredBackendOverride(storedBackendUrl, configuredBackendUrl))
+      return;
+    const nextNested = { ...nested };
+    delete nextNested.backendUrl;
+    delete nextNested.apiEndpoint;
+    try {
+      await chrome.storage.sync.set({ settings: nextNested });
+      await chrome.storage.sync.remove(["backendUrl"]);
+    } catch (_2) {}
+  }
+
   class ClearledgrQueueManager {
     constructor() {
       this.queue = [];
@@ -53396,6 +53464,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this.contextByItem = new Map;
       this.sourceRequests = new Map;
       this.contextRequests = new Map;
+      this.tasksByItem = new Map;
+      this.taskRequests = new Map;
+      this.notesByItem = new Map;
+      this.noteRequests = new Map;
+      this.commentsByItem = new Map;
+      this.commentRequests = new Map;
+      this.filesByItem = new Map;
+      this.fileRequests = new Map;
       this.kpiSnapshot = null;
       this.kpiUpdatedAt = null;
       this.kpiRequest = null;
@@ -53422,7 +53498,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     emitQueueUpdated() {
       this.listeners.forEach((callback) => {
         try {
-          callback(this.queue, this.scanStatus, this.agentSessionsByItem, this.browserTabContext, this.agentInsightsByItem, this.sourcesByItem, this.contextByItem, this.kpiSnapshot);
+          callback(this.queue, this.scanStatus, this.agentSessionsByItem, this.browserTabContext, this.agentInsightsByItem, this.sourcesByItem, this.contextByItem, this.tasksByItem, this.notesByItem, this.commentsByItem, this.filesByItem, this.kpiSnapshot);
         } catch (_2) {}
       });
     }
@@ -53884,7 +53960,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const configuredBackendUrl = String(extensionConfig.API_URL || extensionConfig.BACKEND_URL || "").trim();
       const configuredApiKey = String(extensionConfig.BACKEND_API_KEY || extensionConfig.API_KEY || "").trim();
       const configuredAuthEntryMode = String(extensionConfig.AUTH_ENTRY_MODE || extensionConfig.SIDEBAR_AUTH_ENTRY_MODE || "").trim().toLowerCase();
-      const backendUrl = String(raw.backendUrl || configuredBackendUrl || "http://127.0.0.1:8010").trim().replace(/\/+$/, "");
+      await clearStoredBackendOverride(data, nested, configuredBackendUrl);
+      const backendUrl = selectBackendUrl(raw.backendUrl, configuredBackendUrl || "http://127.0.0.1:8010") || "http://127.0.0.1:8010";
       const authEntryMode = String(raw.authEntryMode || configuredAuthEntryMode || "inline").trim().toLowerCase() === "inline" ? "inline" : "routed";
       return {
         backendUrl,
@@ -54074,10 +54151,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     normalizeWorklistItem(item) {
       const normalized = { ...item || {} };
       const primary = normalized.primary_source || {};
+      const metadata = this.parseMetadata(normalized.metadata);
       if (!normalized.thread_id && primary.thread_id)
         normalized.thread_id = primary.thread_id;
       if (!normalized.message_id && primary.message_id)
         normalized.message_id = primary.message_id;
+      if (!normalized.currency && metadata.currency)
+        normalized.currency = metadata.currency;
+      normalized.currency = String(normalized.currency || "").trim().toUpperCase() || null;
       if (normalized.source_count === undefined || normalized.source_count === null) {
         normalized.source_count = 0;
       }
@@ -54390,6 +54471,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this.contextRequests.delete(apItemId);
       this.sourcesByItem.delete(apItemId);
       this.sourceRequests.delete(apItemId);
+      this.tasksByItem.delete(apItemId);
+      this.taskRequests.delete(apItemId);
+      this.notesByItem.delete(apItemId);
+      this.noteRequests.delete(apItemId);
+      this.commentsByItem.delete(apItemId);
+      this.commentRequests.delete(apItemId);
+      this.filesByItem.delete(apItemId);
+      this.fileRequests.delete(apItemId);
     }
     async fetchAuditTrail(apItemId, { force = false } = {}) {
       if (!apItemId || !this.runtimeConfig?.backendUrl)
@@ -54418,6 +54507,327 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       })();
       this.auditRequests.set(apItemId, request);
       return request;
+    }
+    async fetchItemTasks(apItemId, { force = false, includeCompleted = true } = {}) {
+      if (!apItemId || !this.runtimeConfig?.backendUrl)
+        return [];
+      if (!force && this.tasksByItem.has(apItemId)) {
+        return this.tasksByItem.get(apItemId) || [];
+      }
+      if (this.taskRequests.has(apItemId)) {
+        return this.taskRequests.get(apItemId);
+      }
+      const request = (async () => {
+        try {
+          const url = new URL(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/tasks`);
+          if (!includeCompleted)
+            url.searchParams.set("include_completed", "false");
+          const response = await this.backendFetch(url.toString(), { method: "GET" });
+          if (!response.ok)
+            return [];
+          const payload = await response.json();
+          const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
+          this.tasksByItem.set(apItemId, tasks);
+          this.emitQueueUpdated();
+          return tasks;
+        } catch (_2) {
+          return [];
+        } finally {
+          this.taskRequests.delete(apItemId);
+        }
+      })();
+      this.taskRequests.set(apItemId, request);
+      return request;
+    }
+    async fetchItemNotes(apItemId, { force = false } = {}) {
+      if (!apItemId || !this.runtimeConfig?.backendUrl)
+        return [];
+      if (!force && this.notesByItem.has(apItemId)) {
+        return this.notesByItem.get(apItemId) || [];
+      }
+      if (this.noteRequests.has(apItemId)) {
+        return this.noteRequests.get(apItemId);
+      }
+      const request = (async () => {
+        try {
+          const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/notes`, { method: "GET" });
+          if (!response.ok)
+            return [];
+          const payload = await response.json();
+          const notes = Array.isArray(payload?.notes) ? payload.notes : [];
+          this.notesByItem.set(apItemId, notes);
+          this.emitQueueUpdated();
+          return notes;
+        } catch (_2) {
+          return [];
+        } finally {
+          this.noteRequests.delete(apItemId);
+        }
+      })();
+      this.noteRequests.set(apItemId, request);
+      return request;
+    }
+    async fetchItemComments(apItemId, { force = false } = {}) {
+      if (!apItemId || !this.runtimeConfig?.backendUrl)
+        return [];
+      if (!force && this.commentsByItem.has(apItemId)) {
+        return this.commentsByItem.get(apItemId) || [];
+      }
+      if (this.commentRequests.has(apItemId)) {
+        return this.commentRequests.get(apItemId);
+      }
+      const request = (async () => {
+        try {
+          const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/comments`, { method: "GET" });
+          if (!response.ok)
+            return [];
+          const payload = await response.json();
+          const comments = Array.isArray(payload?.comments) ? payload.comments : [];
+          this.commentsByItem.set(apItemId, comments);
+          this.emitQueueUpdated();
+          return comments;
+        } catch (_2) {
+          return [];
+        } finally {
+          this.commentRequests.delete(apItemId);
+        }
+      })();
+      this.commentRequests.set(apItemId, request);
+      return request;
+    }
+    async fetchItemFiles(apItemId, { force = false } = {}) {
+      if (!apItemId || !this.runtimeConfig?.backendUrl)
+        return [];
+      if (!force && this.filesByItem.has(apItemId)) {
+        return this.filesByItem.get(apItemId) || [];
+      }
+      if (this.fileRequests.has(apItemId)) {
+        return this.fileRequests.get(apItemId);
+      }
+      const request = (async () => {
+        try {
+          const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/files`, { method: "GET" });
+          if (!response.ok)
+            return [];
+          const payload = await response.json();
+          const files = Array.isArray(payload?.files) ? payload.files : [];
+          this.filesByItem.set(apItemId, files);
+          this.emitQueueUpdated();
+          return files;
+        } catch (_2) {
+          return [];
+        } finally {
+          this.fileRequests.delete(apItemId);
+        }
+      })();
+      this.fileRequests.set(apItemId, request);
+      return request;
+    }
+    async createTask(item, payload = {}) {
+      if (!item?.id || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid" };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      if (!response.ok) {
+        return { status: "error", reason: `task_create_${response.status}` };
+      }
+      const result = await response.json();
+      await this.fetchItemTasks(item.id, { force: true });
+      await this.fetchAuditTrail(item.id, { force: true });
+      return result;
+    }
+    async updateTaskStatus(taskId, payload = {}, itemId = "") {
+      if (!taskId || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid" };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/tasks/${encodeURIComponent(taskId)}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      if (!response.ok)
+        return { status: "error", reason: `task_status_${response.status}` };
+      const result = await response.json();
+      if (itemId)
+        await this.fetchItemTasks(itemId, { force: true });
+      return result;
+    }
+    async assignTask(taskId, payload = {}, itemId = "") {
+      if (!taskId || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid" };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/tasks/${encodeURIComponent(taskId)}/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      if (!response.ok)
+        return { status: "error", reason: `task_assign_${response.status}` };
+      const result = await response.json();
+      if (itemId)
+        await this.fetchItemTasks(itemId, { force: true });
+      return result;
+    }
+    async addTaskComment(taskId, payload = {}, itemId = "") {
+      if (!taskId || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid" };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/tasks/${encodeURIComponent(taskId)}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      if (!response.ok)
+        return { status: "error", reason: `task_comment_${response.status}` };
+      const result = await response.json();
+      if (itemId)
+        await this.fetchItemTasks(itemId, { force: true });
+      return result;
+    }
+    async addItemNote(item, payload = {}) {
+      if (!item?.id || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid" };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      if (!response.ok)
+        return { status: "error", reason: `note_create_${response.status}` };
+      const result = await response.json();
+      await this.fetchItemNotes(item.id, { force: true });
+      await this.fetchAuditTrail(item.id, { force: true });
+      return result;
+    }
+    async addItemComment(item, payload = {}) {
+      if (!item?.id || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid" };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      if (!response.ok)
+        return { status: "error", reason: `comment_create_${response.status}` };
+      const result = await response.json();
+      await this.fetchItemComments(item.id, { force: true });
+      await this.fetchAuditTrail(item.id, { force: true });
+      return result;
+    }
+    async addItemFileLink(item, payload = {}) {
+      if (!item?.id || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid" };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/files`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      if (!response.ok)
+        return { status: "error", reason: `file_create_${response.status}` };
+      const result = await response.json();
+      await this.fetchItemFiles(item.id, { force: true });
+      await this.fetchAuditTrail(item.id, { force: true });
+      return result;
+    }
+    async updateRecordFields(item, payload = {}) {
+      if (!item?.id || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid" };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/fields`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      if (!response.ok)
+        return { status: "error", reason: `field_update_${response.status}` };
+      const result = await response.json();
+      this.invalidateItemCaches(item.id);
+      await this.refreshQueue();
+      return result;
+    }
+    async searchRecordCandidates(query, { limit = 12 } = {}) {
+      if (!this.runtimeConfig?.backendUrl)
+        return [];
+      const url = new URL(`${this.runtimeConfig.backendUrl}/api/ap/items/search`);
+      url.searchParams.set("organization_id", this.runtimeConfig.organizationId || "default");
+      url.searchParams.set("q", String(query || ""));
+      url.searchParams.set("limit", String(limit));
+      const response = await this.backendFetch(url.toString(), { method: "GET" });
+      if (!response.ok)
+        return [];
+      const payload = await response.json();
+      return Array.isArray(payload?.items) ? payload.items : [];
+    }
+    async lookupComposeRecord(payload = {}) {
+      if (!this.runtimeConfig?.backendUrl)
+        return { status: "missing", ap_item: null };
+      const url = new URL(`${this.runtimeConfig.backendUrl}/api/ap/items/compose/lookup`);
+      url.searchParams.set("organization_id", this.runtimeConfig.organizationId || "default");
+      if (payload?.draft_id)
+        url.searchParams.set("draft_id", String(payload.draft_id));
+      if (payload?.thread_id)
+        url.searchParams.set("thread_id", String(payload.thread_id));
+      const response = await this.backendFetch(url.toString(), { method: "GET" });
+      if (!response.ok)
+        return { status: "missing", ap_item: null };
+      return response.json();
+    }
+    async createRecordFromComposeDraft(payload = {}) {
+      if (!this.runtimeConfig?.backendUrl)
+        return { status: "invalid", ap_item: null };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/compose/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      if (!response.ok)
+        return { status: "error", reason: `compose_create_${response.status}`, ap_item: null };
+      const result = await response.json();
+      this.invalidateItemCaches(result?.ap_item?.id || "");
+      await this.refreshQueue();
+      return result;
+    }
+    async recoverCurrentThread(threadId) {
+      if (!threadId || !this.runtimeConfig?.backendUrl)
+        return { found: false, recovered: false, item: null };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/extension/by-thread/${encodeURIComponent(threadId)}/recover`, { method: "POST" });
+      if (!response.ok)
+        return { found: false, recovered: false, item: null };
+      const payload = await response.json();
+      if (payload?.item) {
+        this.upsertQueueItem(payload.item);
+        this.emitQueueUpdated();
+      }
+      return payload || { found: false, recovered: false, item: null };
+    }
+    async linkCurrentThreadToItem(item, payload = {}) {
+      if (!item?.id || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid" };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/gmail-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      if (!response.ok)
+        return { status: "error", reason: `gmail_link_${response.status}` };
+      const result = await response.json();
+      this.invalidateItemCaches(item.id);
+      await this.refreshQueue();
+      return result;
+    }
+    async linkComposeDraftToItem(item, payload = {}) {
+      if (!item?.id || !this.runtimeConfig?.backendUrl)
+        return { status: "invalid", ap_item: null };
+      const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/compose-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      if (!response.ok)
+        return { status: "error", reason: `compose_link_${response.status}`, ap_item: null };
+      const result = await response.json();
+      this.invalidateItemCaches(item.id);
+      await this.refreshQueue();
+      return result;
     }
     async ensureAgentSession(item) {
       if (!item?.id || !this.runtimeConfig?.backendUrl)
@@ -54771,10 +55181,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (!item || !this.runtimeConfig?.backendUrl)
         return null;
       const locator = this.buildItemLocator(item);
+      const metadata = this.parseMetadata(item?.metadata);
       const extraction = {
         vendor: item.vendor_name || item.vendor || "",
         amount: item.amount,
-        currency: item.currency || "USD",
+        currency: item.currency || metadata.currency || null,
         invoice_number: item.invoice_number || ""
       };
       try {
@@ -55315,6 +55726,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     agentInsightsState: new Map,
     sourcesState: new Map,
     contextState: new Map,
+    tasksState: new Map,
+    notesState: new Map,
+    commentsState: new Map,
+    filesState: new Map,
     activeContextTab: "email",
     contextUiState: { itemId: null, loading: false, error: "" },
     agentSummaryState: { itemId: null, mode: null, loading: false, error: "", data: null },
@@ -55540,6 +55955,32 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var SIDEBAR_CSS = `
       /* Fonts loaded via <link> tags in injectFonts() — no @import needed */
 
+      body {
+        --cl-gmail-sidebar-shell-width: clamp(344px, 24vw, 360px);
+        --cl-gmail-sidebar-rail-gap: 84px;
+        --cl-gmail-sidebar-content-width: calc(var(--cl-gmail-sidebar-shell-width) - var(--cl-gmail-sidebar-rail-gap));
+      }
+
+      body .nH.companion_container_app_sidebar_visible {
+        width: calc(100% - var(--cl-gmail-sidebar-shell-width)) !important;
+      }
+      body .companion_app_sidebar_visible .addon_sidebar .inboxsdk__ZsVjiThsnbCmCG_X1Vvn {
+        width: var(--cl-gmail-sidebar-content-width) !important;
+        min-width: var(--cl-gmail-sidebar-content-width) !important;
+        max-width: var(--cl-gmail-sidebar-content-width) !important;
+      }
+      body .companion_app_sidebar_visible .addon_sidebar .inboxsdk__ZsVjiThsnbCmCG_X1Vvn > * {
+        min-width: 0;
+      }
+      .cl-sidebar-host {
+        height: 100%;
+        width: 100%;
+        min-width: 0;
+      }
+      .cl-sidebar-host > .cl-sidebar {
+        height: 100%;
+      }
+
       .cl-sidebar {
         --cl-bg: #FAFAF8;
         --cl-surface: #FFFFFF;
@@ -55574,8 +56015,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         --cl-font-mono: 'Geist Mono', 'SF Mono', monospace;
         --cl-transition: 0.15s ease;
         --cl-shell-pad-y: 10px;
-        --cl-shell-pad-x: 8px;
-        --cl-surface-pad: 9px;
+        --cl-shell-pad-x: 10px;
+        --cl-surface-pad: 11px;
         --cl-panel-pad: 10px;
         font-family: var(--cl-font-body);
         -webkit-font-smoothing: antialiased;
@@ -55584,7 +56025,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         padding: var(--cl-shell-pad-y) var(--cl-shell-pad-x);
         display: flex;
         flex-direction: column;
-        gap: 7px;
+        flex: 1 1 auto;
+        gap: 8px;
         height: 100%;
         width: 100%;
         min-width: 0;
@@ -55626,6 +56068,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         align-items: center;
         gap: 6px;
       }
+      .cl-header-queue {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
       .cl-header-badge {
         font-size: 11px;
         font-weight: 600;
@@ -55633,6 +56080,45 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         background: var(--cl-accent-soft, #ECFDF5);
         padding: 2px 8px;
         border-radius: 999px;
+      }
+      .cl-header-count {
+        appearance: none;
+        border: 0;
+        background: var(--cl-accent-soft, #ECFDF5);
+        color: var(--cl-brand-muted, #10B981);
+        font-size: 11px;
+        font-weight: 700;
+        border-radius: 999px;
+        padding: 2px 8px;
+        line-height: 1.8;
+        cursor: pointer;
+        font-variant-numeric: tabular-nums;
+      }
+      .cl-header-count:hover {
+        filter: brightness(0.98);
+      }
+      .cl-header-nav-btn {
+        width: 22px;
+        height: 22px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--cl-border);
+        background: var(--cl-surface);
+        color: var(--cl-secondary);
+        border-radius: 999px;
+        padding: 0;
+        font-size: 13px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .cl-header-nav-btn:hover:not(:disabled) {
+        background: var(--cl-bg);
+        border-color: var(--cl-border-hover);
+      }
+      .cl-header-nav-btn:disabled {
+        opacity: 0.45;
+        cursor: default;
       }
 
       /* ==================== TOAST ==================== */
@@ -55646,12 +56132,36 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         padding: 10px 14px;
         display: none;
         box-shadow: var(--cl-shadow-md);
+        cursor: pointer;
       }
       .cl-toast[data-tone="error"] {
         background: var(--cl-red);
       }
       .cl-toast[data-tone="success"] {
         background: var(--cl-green);
+      }
+
+      /* ==================== SPINNER ==================== */
+
+      .cl-spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid var(--cl-border);
+        border-top-color: var(--cl-accent);
+        border-radius: 50%;
+        animation: cl-spin 0.6s linear infinite;
+        margin: 0 auto;
+      }
+      .cl-spinner-sm { width: 14px; height: 14px; border-width: 1.5px; }
+      @keyframes cl-spin { to { transform: rotate(360deg); } }
+      .cl-loading-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 24px 0;
+        color: var(--cl-muted);
+        font-size: 12px;
       }
 
       /* ==================== ACTION DIALOG ==================== */
@@ -55767,19 +56277,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         background: var(--cl-surface);
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-md);
-        padding: var(--cl-surface-pad);
+        padding: calc(var(--cl-surface-pad) - 2px) calc(var(--cl-surface-pad) - 1px);
         display: flex;
         flex-direction: column;
-        gap: 10px;
-        box-shadow: var(--cl-shadow-sm);
+        gap: 8px;
+        box-shadow: none;
         min-width: 0;
       }
       .cl-section-title {
-        font-size: 11px;
-        font-weight: 600;
+        font-size: 10.5px;
+        font-weight: 700;
         color: var(--cl-muted);
         text-transform: uppercase;
-        letter-spacing: 0.05em;
+        letter-spacing: 0.06em;
+      }
+      .cl-section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
       }
 
       /* ==================== INVOICE CARD ==================== */
@@ -55791,8 +56308,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         padding: var(--cl-surface-pad);
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        box-shadow: var(--cl-shadow-sm);
+        gap: 12px;
+        box-shadow: none;
         min-width: 0;
       }
 
@@ -55845,14 +56362,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 6px;
+        gap: 10px;
         flex-wrap: wrap;
       }
       .cl-thread-header-copy {
         min-width: 0;
         display: flex;
         flex-direction: column;
-        gap: 3px;
+        gap: 4px;
         flex: 1 1 180px;
       }
       .cl-thread-header-with-thumb {
@@ -55862,9 +56379,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       .cl-thread-title {
         font-weight: 700;
-        font-size: 14px;
+        font-size: 15px;
         letter-spacing: -0.01em;
         color: var(--cl-primary);
+        line-height: 1.2;
       }
 
       /* Amount display */
@@ -55908,9 +56426,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         color: var(--cl-secondary);
       }
       .cl-thread-meta-inline {
-        font-size: 11.5px;
+        font-size: 11px;
         color: var(--cl-secondary);
-        line-height: 1.38;
+        line-height: 1.45;
         overflow-wrap: anywhere;
       }
       .cl-thread-header > .cl-pill {
@@ -55926,8 +56444,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       .cl-blocker-row {
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
-        background: var(--cl-bg);
-        padding: 8px 9px;
+        background: #fcfcfb;
+        padding: 9px 10px;
         display: flex;
         flex-direction: column;
         gap: 3px;
@@ -55948,11 +56466,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         line-height: 1.45;
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
-        background: var(--cl-surface);
-        padding: 8px 9px;
+        background: #fcfcfb;
+        padding: 8px 10px;
+        box-shadow: inset 3px 0 0 rgba(15, 23, 42, 0.06);
       }
       .cl-review-panel {
-        border: 1px solid #fcd34d;
+        border: 1px solid var(--cl-amber);
         border-radius: var(--cl-radius-sm);
         background: var(--cl-amber-soft);
         padding: 8px 9px;
@@ -55963,6 +56482,44 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       .cl-review-copy {
         font-size: 12px;
         color: #78350f;
+        line-height: 1.45;
+      }
+      .cl-summary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .cl-summary-card {
+        border: 1px solid var(--cl-border);
+        border-radius: var(--cl-radius-sm);
+        background: var(--cl-bg);
+        padding: 10px 11px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+      .cl-summary-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--cl-muted);
+      }
+      .cl-summary-value {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--cl-primary);
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+      }
+      .cl-summary-value-compact {
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .cl-summary-detail {
+        font-size: 11px;
+        color: var(--cl-muted);
         line-height: 1.45;
       }
       .cl-review-card {
@@ -56003,7 +56560,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
       .cl-evidence-section {
         border-top: 1px solid var(--cl-border);
-        padding-top: 8px;
+        padding-top: 10px;
         display: flex;
         flex-direction: column;
         gap: 8px;
@@ -56011,7 +56568,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       .cl-evidence-list {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 7px;
       }
       .cl-evidence-row {
         display: flex;
@@ -56019,31 +56576,151 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         justify-content: space-between;
         gap: 10px;
         font-size: 12px;
+        padding: 9px 10px;
+        border: 1px solid var(--cl-border);
+        border-radius: var(--cl-radius-sm);
+        background: var(--cl-bg);
       }
       .cl-evidence-main {
         min-width: 0;
         display: flex;
         flex-direction: column;
-        gap: 2px;
+        gap: 3px;
+      }
+      .cl-evidence-copy {
+        min-width: 0;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
       }
       .cl-evidence-label {
         color: var(--cl-secondary);
+        font-weight: 600;
       }
       .cl-evidence-detail {
         font-size: 11px;
         color: var(--cl-muted);
-        line-height: 1.35;
+        line-height: 1.45;
       }
       .cl-evidence-status {
-        font-weight: 600;
-        color: var(--cl-primary);
         flex-shrink: 0;
+      }
+      .cl-evidence-status-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 22px;
+        padding: 0 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: rgba(255, 255, 255, 0.92);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--cl-primary);
+      }
+      .cl-agent-view {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .cl-agent-view-identity {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        padding: 10px;
+        border: 1px solid var(--cl-border);
+        border-radius: var(--cl-radius-sm);
+        background: linear-gradient(180deg, #fcfdfc 0%, #f8faf8 100%);
+      }
+      .cl-agent-view-identity-bar {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .cl-agent-view-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        max-width: 100%;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: var(--cl-accent-soft);
+        color: var(--cl-primary);
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1.35;
+        text-align: right;
+      }
+      .cl-agent-view-mission {
+        font-size: 12px;
+        color: var(--cl-secondary);
+        line-height: 1.5;
+      }
+      .cl-agent-view-grid {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+      }
+      .cl-agent-view-card {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+        padding: 9px 10px;
+        border: 1px solid var(--cl-border);
+        border-radius: var(--cl-radius-sm);
+        background: var(--cl-surface);
+      }
+      .cl-agent-view-stat-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .cl-agent-view-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--cl-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .cl-agent-view-value {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--cl-primary);
+        line-height: 1.4;
+        text-align: right;
+        overflow-wrap: anywhere;
+      }
+      .cl-agent-view-detail {
+        font-size: 11px;
+        color: var(--cl-secondary);
+        line-height: 1.45;
+      }
+      .cl-agent-view-card[data-tone="attention"] .cl-agent-view-value {
+        color: var(--cl-amber);
       }
       .cl-evidence-status[data-status="ok"] {
         color: var(--cl-green);
       }
+      .cl-evidence-status[data-status="ok"] .cl-evidence-status-pill {
+        color: var(--cl-green);
+        border-color: rgba(22, 163, 74, 0.18);
+        background: rgba(240, 253, 244, 0.96);
+      }
       .cl-evidence-status[data-status="missing"] {
         color: var(--cl-muted);
+      }
+      .cl-evidence-status[data-status="missing"] .cl-evidence-status-pill {
+        color: var(--cl-muted);
+        border-color: rgba(148, 163, 184, 0.18);
+        background: rgba(248, 250, 252, 0.96);
       }
 
       /* Decision / reasoning banners */
@@ -56160,6 +56837,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         background: var(--cl-bg);
         display: flex;
         flex-direction: column;
+        overflow: hidden;
       }
       .cl-operator-brief[data-tone="warning"] {
         border-color: #fcd34d;
@@ -56172,8 +56850,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       .cl-operator-brief-row {
         display: flex;
         flex-direction: column;
-        gap: 2px;
-        padding: 8px 10px;
+        gap: 3px;
+        padding: 9px 11px;
       }
       .cl-operator-brief-row + .cl-operator-brief-row {
         border-top: 1px dashed var(--cl-border);
@@ -56216,8 +56894,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       .cl-btn:hover:not(:disabled) {
         background: var(--cl-accent-hover);
-        transform: translateY(-1px);
-        box-shadow: var(--cl-shadow-sm);
+        transform: none;
+        box-shadow: none;
       }
       .cl-btn:active:not(:disabled) {
         transform: translateY(0);
@@ -56255,31 +56933,248 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         color: white !important;
       }
       .cl-btn-small {
-        font-size: 11.5px;
+        font-size: 11px;
         padding: 4px 9px;
       }
       .cl-primary-cta {
-        margin-top: 4px;
+        margin-top: 2px;
         width: 100%;
-        padding: 9px 14px;
+        padding: 10px 14px;
         font-size: 13px;
         font-weight: 700;
         border-radius: var(--cl-radius-sm);
         letter-spacing: -0.01em;
+        line-height: 1.2;
       }
 
       /* ==================== THREAD ACTIONS ==================== */
 
       .cl-thread-actions {
         display: flex;
-        gap: 5px;
-        margin-top: 2px;
+        gap: 7px;
+        margin-top: 0;
         flex-wrap: wrap;
+      }
+      .cl-thread-actions-secondary {
+        padding-top: 6px;
+        border-top: 1px solid var(--cl-border);
+      }
+      .cl-operator-overrides {
+        border-top: 1px solid var(--cl-border);
+        padding-top: 8px;
+        margin-top: 2px;
+      }
+      .cl-operator-overrides-summary {
+        list-style: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .cl-operator-overrides-summary::-webkit-details-marker {
+        display: none;
+      }
+      .cl-operator-overrides-title {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--cl-secondary);
+        letter-spacing: 0.01em;
+      }
+      .cl-operator-overrides-count {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 20px;
+        height: 20px;
+        padding: 0 6px;
+        border-radius: 999px;
+        border: 1px solid var(--cl-border);
+        background: var(--cl-bg);
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--cl-secondary);
+      }
+      .cl-operator-overrides-copy {
+        margin-top: 7px;
+        font-size: 11px;
+        line-height: 1.45;
+        color: var(--cl-muted);
+      }
+      .cl-operator-overrides .cl-thread-actions-secondary {
+        border-top: none;
+        padding-top: 8px;
+      }
+      .cl-thread-links {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .cl-thread-link-btn {
+        border: none;
+        padding: 0;
+        margin: 0;
+        background: none;
+        color: var(--cl-secondary);
+        font: inherit;
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .cl-thread-link-btn:hover {
+        color: var(--cl-primary);
+        text-decoration: underline;
+      }
+      .cl-thread-link-btn:focus-visible {
+        outline: 2px solid var(--cl-accent);
+        outline-offset: 2px;
+        border-radius: 4px;
       }
       .cl-auth-copy {
         font-size: 12px;
         color: var(--cl-secondary);
         line-height: 1.45;
+      }
+      .cl-card-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .cl-mini-card {
+        padding: 10px 11px;
+        border: 1px solid var(--cl-border);
+        border-radius: var(--cl-radius-sm);
+        background: var(--cl-bg);
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .cl-mini-card-main {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .cl-mini-card-copy {
+        min-width: 0;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .cl-mini-card-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--cl-muted);
+      }
+      .cl-mini-card-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--cl-primary);
+        line-height: 1.35;
+      }
+      .cl-mini-card-meta {
+        font-size: 11.5px;
+        color: var(--cl-muted);
+        line-height: 1.45;
+      }
+      .cl-mini-card-body {
+        font-size: 12px;
+        color: var(--cl-secondary);
+        line-height: 1.5;
+      }
+      .cl-mini-card-actions {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        flex-shrink: 0;
+      }
+      .cl-mini-card-comments {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding-top: 1px;
+      }
+      .cl-mini-card-comment {
+        font-size: 12px;
+        color: var(--cl-muted);
+        line-height: 1.45;
+      }
+      .cl-mini-card-comment strong {
+        color: var(--cl-secondary);
+      }
+      .cl-inline-form {
+        display: grid;
+        gap: 8px;
+        align-items: center;
+      }
+      .cl-inline-form-wide {
+        grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr) auto;
+      }
+      .cl-inline-form-task {
+        grid-template-columns: minmax(0, 1fr) auto auto;
+      }
+      .cl-inline-form-comment {
+        grid-template-columns: minmax(0, 1fr) auto;
+      }
+      .cl-input {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--cl-border);
+        border-radius: var(--cl-radius-sm);
+        font: inherit;
+        font-size: 12px;
+        color: var(--cl-primary);
+        background: var(--cl-surface);
+        box-sizing: border-box;
+      }
+      .cl-input:focus {
+        border-color: var(--cl-accent);
+        outline: none;
+        box-shadow: 0 0 0 3px var(--cl-accent-soft);
+      }
+      .cl-field-list {
+        display: flex;
+        flex-direction: column;
+      }
+      .cl-field-row {
+        padding: 9px 0;
+        border-bottom: 1px solid var(--cl-border);
+      }
+      .cl-field-row:last-child {
+        padding-bottom: 0;
+        border-bottom: none;
+      }
+      .cl-field-row-body {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .cl-field-main {
+        min-width: 0;
+        flex: 1;
+      }
+      .cl-field-label {
+        font-size: 11.5px;
+        color: var(--cl-muted);
+      }
+      .cl-field-value {
+        font-size: 13px;
+        font-weight: 600;
+        margin-top: 4px;
+        line-height: 1.45;
+        color: var(--cl-primary);
+      }
+      .cl-field-input {
+        margin-top: 6px;
       }
 
       /* ==================== BLOCKED / EMPTY STATES ==================== */
@@ -56515,6 +57410,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         flex-direction: column;
         gap: 4px;
       }
+      @media (max-width: 420px) {
+        .cl-inline-form-wide,
+        .cl-inline-form-task,
+        .cl-inline-form-comment {
+          grid-template-columns: 1fr;
+        }
+        .cl-summary-grid {
+          grid-template-columns: 1fr;
+        }
+        .cl-mini-card-actions {
+          width: 100%;
+          justify-content: flex-start;
+        }
+      }
       .cl-source-main {
         display: flex;
         align-items: center;
@@ -56669,6 +57578,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         margin-top: 4px;
         padding-top: 8px;
       }
+      .cl-disclosure-summary {
+        list-style: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .cl-disclosure-summary::-webkit-details-marker {
+        display: none;
+      }
+      .cl-disclosure-count {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 22px;
+        height: 22px;
+        padding: 0 7px;
+        border-radius: 999px;
+        border: 1px solid var(--cl-border);
+        background: var(--cl-bg);
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--cl-secondary);
+      }
       .cl-details summary {
         list-style: none;
         cursor: pointer;
@@ -56715,8 +57649,38 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       /* ==================== EMPTY / THREAD META ==================== */
 
       .cl-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
         font-size: 12px;
         color: var(--cl-muted);
+        text-align: left;
+      }
+      .cl-empty p {
+        margin: 0;
+        line-height: 1.45;
+      }
+      .cl-empty p:first-child {
+        color: var(--cl-primary);
+        font-weight: 600;
+      }
+      .cl-empty-stretch {
+        align-items: stretch;
+      }
+      .cl-empty-actions {
+        margin-top: 2px;
+      }
+      .cl-empty-primary {
+        margin-top: 0;
+      }
+      .cl-empty-search {
+        width: 100%;
+        margin-top: 2px;
+      }
+      .cl-empty-results {
+        width: 100%;
+        margin-top: 2px;
       }
       .cl-thread-meta {
         font-size: 12px;
@@ -57103,28 +58067,28 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       .cl-audit-list {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 8px;
       }
       .cl-audit-group {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 8px;
       }
       .cl-audit-section-title {
-        font-size: 11px;
+        font-size: 10px;
         font-weight: 700;
-        letter-spacing: 0.04em;
+        letter-spacing: 0.06em;
         text-transform: uppercase;
         color: var(--cl-muted);
       }
       .cl-audit-row {
         border: 1px solid var(--cl-border);
         border-radius: var(--cl-radius-sm);
-        padding: 10px;
-        background: var(--cl-card);
+        padding: 10px 11px;
+        background: var(--cl-bg);
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 6px;
         overflow: hidden;
       }
       .cl-audit-row[data-importance="high"] {
@@ -57151,10 +58115,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       .cl-audit-type {
         font-size: 12px;
-        font-weight: 600;
+        font-weight: 700;
         color: var(--cl-primary);
         flex: 1;
         min-width: 0;
+        line-height: 1.4;
       }
       .cl-audit-badges {
         display: flex;
@@ -57166,7 +58131,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         align-items: center;
         border-radius: 999px;
         padding: 2px 7px;
-        font-size: 10px;
+        font-size: 9.5px;
         font-weight: 700;
         letter-spacing: 0.03em;
         text-transform: uppercase;
@@ -57187,15 +58152,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         color: var(--cl-muted);
       }
       .cl-audit-time {
-        font-size: 11px;
+        font-size: 10.5px;
         color: var(--cl-muted);
         white-space: nowrap;
         font-variant-numeric: tabular-nums;
       }
       .cl-audit-detail {
-        font-size: 12px;
+        font-size: 11.5px;
         color: var(--cl-secondary);
-        line-height: 1.4;
+        line-height: 1.5;
         white-space: normal;
         overflow-wrap: anywhere;
         word-break: break-word;
@@ -57211,6 +58176,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         display: flex;
         flex-wrap: wrap;
         gap: 4px;
+        padding-top: 2px;
       }
       .cl-audit-evidence-label {
         font-weight: 700;
@@ -57218,19 +58184,35 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       .cl-audit-hint {
         color: var(--cl-secondary);
+        padding-top: 1px;
       }
       .cl-audit-secondary {
         border-top: 1px dashed var(--cl-border);
-        padding-top: 6px;
+        padding-top: 8px;
       }
       .cl-audit-secondary-summary {
         cursor: pointer;
         color: var(--cl-secondary);
-        font-size: 12px;
+        font-size: 11.5px;
         font-weight: 600;
         list-style: none;
       }
       .cl-audit-secondary-summary::-webkit-details-marker {
+        display: none;
+      }
+      .cl-audit-disclosure {
+        border-top: 1px solid var(--cl-border);
+        padding-top: 10px;
+      }
+      .cl-audit-disclosure-summary {
+        list-style: none;
+        cursor: pointer;
+        color: var(--cl-secondary);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+      .cl-audit-disclosure-summary::-webkit-details-marker {
         display: none;
       }
       .cl-audit-detail-wrap {
@@ -57620,13 +58602,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function getStateLabel(state) {
     return STATE_LABELS[state] || "Received";
   }
-  function formatAmount(amount, currency = "USD") {
+  function normalizeCurrencyCode(currency) {
+    return String(currency ?? "").trim().toUpperCase();
+  }
+  function formatAmount(amount, currency = "") {
     if (amount === null || amount === undefined || amount === "")
       return "Amount unavailable";
     const numeric = Number(amount);
     if (!Number.isFinite(numeric))
       return "Amount unavailable";
-    return `${currency} ${numeric.toFixed(2)}`;
+    const normalizedCurrency = normalizeCurrencyCode(currency);
+    const amountLabel = numeric.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+    return normalizedCurrency ? `${normalizedCurrency} ${amountLabel}` : amountLabel;
   }
   function formatDateTime(value) {
     if (!value)
@@ -57648,6 +58638,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function humanizeSnakeText(value) {
     return String(value || "").replace(/_/g, " ").trim().replace(/\b\w/g, (ch) => ch.toUpperCase());
+  }
+  function normalizeAgentMemoryToken(value) {
+    return String(value || "").trim().toLowerCase().replace(/[-\s]+/g, "_");
+  }
+  function isInternalAgentMemoryReason(value) {
+    const token = normalizeAgentMemoryToken(value);
+    if (!token)
+      return false;
+    return token.startsWith("ap_") || token.startsWith("gate:") || token.includes("field_review_required") || token === "ap_skill_not_ready" || token === "legal_transition_correctness" || token === "operator_acceptance" || token === "enabled_connector_readiness";
   }
   var FIELD_LABELS = {
     amount: "Amount",
@@ -57687,13 +58686,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "Source";
     return SOURCE_LABELS[token] || humanizeSnakeText(token);
   }
-  function formatFieldReviewValue(field, value, currency = "USD") {
+  function formatFieldReviewValue(field, value, currency = "") {
     if (value === null || value === undefined || value === "")
       return "Not found";
     if (String(field || "").trim().toLowerCase() === "amount") {
       const numeric = Number(value);
       if (Number.isFinite(numeric))
-        return `${currency} ${numeric.toFixed(2)}`;
+        return formatAmount(numeric, currency);
     }
     return String(value);
   }
@@ -57725,7 +58724,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const conflicts = Array.isArray(item?.source_conflicts) ? item.source_conflicts : [];
     const blockers = [];
     const seen = new Set;
-    const currency = String(item?.currency || "USD").trim().toUpperCase() || "USD";
+    const currency = normalizeCurrencyCode(item?.currency);
     for (const conflict of conflicts) {
       if (!conflict || typeof conflict !== "object" || !conflict.blocking)
         continue;
@@ -57808,7 +58807,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function getWorkflowPauseReason(item = {}) {
     const explicit = String(item?.workflow_paused_reason || "").trim();
-    if (explicit)
+    if (explicit && !isInternalAgentMemoryReason(explicit))
       return explicit;
     const blockers = getFieldReviewBlockers(item);
     if (blockers.length === 0 && !item?.requires_field_review)
@@ -57853,7 +58852,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (!Number.isFinite(creditTotal) && !Number.isFinite(netCashTotal))
       return "";
     if ((creditTotal > 0 || netCashTotal !== 0) && Number.isFinite(remainingBalance)) {
-      return `Remaining balance after credits and payments: ${formatAmount(remainingBalance, summary.currency || item?.currency || "USD")}.`;
+      return `Remaining balance after credits and payments: ${formatAmount(remainingBalance, summary.currency || item?.currency)}.`;
     }
     return "";
   }
@@ -57938,6 +58937,233 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
     ];
   }
+  var AGENT_REASON_CODE_LABELS = {
+    vendor_unscored: "Vendor details need review",
+    field_review_required: "",
+    confidence_field_review_required: "",
+    blocking_source_conflicts: "Email and attachment do not match",
+    linked_finance_effect_review_required: "Credits or payments still need review",
+    linked_credit_adjustment_present: "Linked credit changes the payable amount",
+    linked_cash_application_present: "Linked cash activity changes settlement",
+    linked_over_credit: "Linked credits exceed the invoice amount",
+    linked_overpayment: "Linked cash exceeds the remaining balance",
+    linked_refund_exceeds_cash_out: "Linked refund exceeds recorded cash out",
+    ap_skill_not_ready: "",
+    legal_transition_correctness: "",
+    "gate:legal_transition_correctness": ""
+  };
+  function normalizeAgentMemorySection(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  }
+  function formatAgentStateLabel(value) {
+    const token = String(value || "").trim().toLowerCase();
+    if (!token)
+      return "";
+    return STATE_LABELS[token] ? getStateLabel(token) : humanizeSnakeText(token);
+  }
+  function formatAgentStateSummary(currentState = "", status = "") {
+    const labels = Array.from(new Set([
+      formatAgentStateLabel(currentState),
+      formatAgentStateLabel(status)
+    ].filter(Boolean)));
+    return labels.join(" · ");
+  }
+  function formatAgentReasonCode(value) {
+    const token = normalizeAgentMemoryToken(value);
+    if (!token)
+      return "";
+    if (Object.prototype.hasOwnProperty.call(AGENT_REASON_CODE_LABELS, token)) {
+      return AGENT_REASON_CODE_LABELS[token];
+    }
+    if (isInternalAgentMemoryReason(token))
+      return "";
+    return humanizeSnakeText(token);
+  }
+  function buildFieldReviewNextStep(item = {}) {
+    const blockers = getFieldReviewBlockers(item);
+    const fieldLabels = blockers.map((blocker) => String(blocker?.field_label || "").trim().toLowerCase()).filter(Boolean);
+    const uniqueLabels = Array.from(new Set(fieldLabels));
+    if (uniqueLabels.length === 0)
+      return "Check the invoice details";
+    if (uniqueLabels.length === 1)
+      return `Confirm the ${uniqueLabels[0]}`;
+    if (uniqueLabels.length === 2)
+      return `Confirm the ${uniqueLabels[0]} and ${uniqueLabels[1]}`;
+    return `Confirm ${uniqueLabels.length} invoice details`;
+  }
+  function formatAgentNextActionLabel(value, item = {}, nextActionType = "", currentState = "", status = "") {
+    const explicit = String(value || "").trim();
+    const typeToken = normalizeAgentMemoryToken(nextActionType);
+    const stateToken = normalizeAgentMemoryToken(currentState || status || item?.state || "");
+    if (item?.requires_field_review || typeToken === "human_field_review" || isInternalAgentMemoryReason(explicit)) {
+      return buildFieldReviewNextStep(item);
+    }
+    if (typeToken === "await_approval" || stateToken === "needs_approval" || stateToken === "pending_approval") {
+      return "Waiting for approval";
+    }
+    if (typeToken === "await_vendor_info" || stateToken === "needs_info") {
+      return "Waiting for vendor reply";
+    }
+    if (typeToken === "operator_recovery") {
+      return "Review the issue and decide what to do next";
+    }
+    if (typeToken === "monitor_completion") {
+      return "Clearledgr is finishing the workflow";
+    }
+    if (typeToken === "reprocess_after_correction") {
+      return "Clearledgr is rerunning this invoice with the corrected details";
+    }
+    if (typeToken === "manual_review") {
+      return "Review this record";
+    }
+    if (explicit && !isInternalAgentMemoryReason(explicit))
+      return explicit;
+    return "Review this record";
+  }
+  function formatAgentBeliefReason(value, item = {}) {
+    const explicit = String(value || "").trim();
+    const token = normalizeAgentMemoryToken(explicit || item?.state || "");
+    if (item?.requires_field_review || isInternalAgentMemoryReason(explicit)) {
+      return getWorkflowPauseReason(item) || "Check the invoice details before Clearledgr continues.";
+    }
+    if (!explicit) {
+      if (token === "pending_approval" || token === "needs_approval") {
+        return "Approval has already been requested. Clearledgr is waiting for the approver response.";
+      }
+      if (token === "needs_info") {
+        return "Clearledgr is waiting for the missing information before this record can continue.";
+      }
+      if (token === "failed_post") {
+        return "Posting failed. Clearledgr needs a retry or connector review before it can continue.";
+      }
+      return "";
+    }
+    if (token === "pending_approval" || token === "needs_approval" || token === "awaiting_approval_response") {
+      return "Approval has already been requested. Clearledgr is waiting for the approver response.";
+    }
+    if (token === "needs_info" || token === "await_vendor_info") {
+      return "Clearledgr is waiting for the missing information before this record can continue.";
+    }
+    if (token === "failed_post" || token === "erp_post_failed") {
+      return "Posting failed. Clearledgr needs a retry or connector review before it can continue.";
+    }
+    return explicit;
+  }
+  function formatAgentActionActor(owner = "", item = {}, nextActionType = "", currentState = "", status = "") {
+    const ownerToken = normalizeAgentMemoryToken(owner);
+    const typeToken = normalizeAgentMemoryToken(nextActionType);
+    const stateToken = normalizeAgentMemoryToken(currentState || status || item?.state || "");
+    if (item?.requires_field_review || typeToken === "human_field_review")
+      return "You";
+    if (ownerToken === "agent" || typeToken === "monitor_completion" || typeToken === "reprocess_after_correction")
+      return "Clearledgr";
+    if (ownerToken === "approver" || typeToken === "await_approval" || stateToken === "needs_approval" || stateToken === "pending_approval")
+      return "Approver";
+    if (ownerToken === "vendor" || typeToken === "await_vendor_info" || stateToken === "needs_info")
+      return "Vendor";
+    if (ownerToken === "operator" || typeToken === "operator_recovery" || typeToken === "manual_review")
+      return "You";
+    return ownerToken ? humanizeSnakeText(ownerToken) : "";
+  }
+  function formatAgentResponsibility(owner = "", item = {}, nextActionType = "", currentState = "", status = "") {
+    const ownerToken = normalizeAgentMemoryToken(owner);
+    const typeToken = normalizeAgentMemoryToken(nextActionType);
+    const stateToken = normalizeAgentMemoryToken(currentState || status || item?.state || "");
+    if (item?.requires_field_review || typeToken === "human_field_review")
+      return "Needs your review";
+    if (ownerToken === "agent" || typeToken === "monitor_completion")
+      return "Clearledgr is handling this";
+    if (ownerToken === "approver" || typeToken === "await_approval" || stateToken === "needs_approval")
+      return "Waiting on approver";
+    if (ownerToken === "vendor" || typeToken === "await_vendor_info" || stateToken === "needs_info")
+      return "Waiting on vendor";
+    if (ownerToken === "operator" || typeToken === "operator_recovery" || typeToken === "manual_review")
+      return "Needs your review";
+    return "";
+  }
+  function summarizeAgentHighlights(item = {}, reasonCodes = [], confidenceBlockers = [], sourceConflicts = []) {
+    const highlights = [];
+    reasonCodes.filter(Boolean).forEach((entry) => {
+      if (!highlights.includes(entry))
+        highlights.push(entry);
+    });
+    const fieldReviewBlockers = getFieldReviewBlockers(item);
+    const fieldLabels = Array.from(new Set(fieldReviewBlockers.map((blocker) => String(blocker?.field_label || "").trim().toLowerCase()).filter(Boolean)));
+    const sourceConflictCount = fieldReviewBlockers.filter((blocker) => blocker?.kind === "source_conflict").length || sourceConflicts.length;
+    if (fieldLabels.length === 1) {
+      highlights.push(`${humanizeSnakeText(fieldLabels[0])} still needs confirmation`);
+    } else if (fieldLabels.length === 2) {
+      highlights.push(`${humanizeSnakeText(fieldLabels[0])} and ${humanizeSnakeText(fieldLabels[1])} still need confirmation`);
+    } else if (fieldLabels.length > 2) {
+      highlights.push(`${fieldLabels.length} invoice details still need confirmation`);
+    } else if (confidenceBlockers.length > 0) {
+      highlights.push(`${confidenceBlockers.length} field check${confidenceBlockers.length === 1 ? "" : "s"} still ${confidenceBlockers.length === 1 ? "needs" : "need"} confirmation`);
+    }
+    if (sourceConflictCount > 0) {
+      highlights.push(sourceConflictCount === 1 ? "Email and attachment still do not match" : `${sourceConflictCount} email and attachment conflicts still need review`);
+    }
+    return Array.from(new Set(highlights.filter(Boolean)));
+  }
+  function getAgentMemoryView(item = {}) {
+    const memory = normalizeAgentMemorySection(item?.agent_memory);
+    const profile = Object.keys(normalizeAgentMemorySection(item?.agent_profile)).length > 0 ? normalizeAgentMemorySection(item?.agent_profile) : normalizeAgentMemorySection(memory.profile);
+    const belief = Object.keys(normalizeAgentMemorySection(item?.agent_belief_state)).length > 0 ? normalizeAgentMemorySection(item?.agent_belief_state) : normalizeAgentMemorySection(memory.belief);
+    const nextAction = Object.keys(normalizeAgentMemorySection(item?.agent_next_action)).length > 0 ? normalizeAgentMemorySection(item?.agent_next_action) : normalizeAgentMemorySection(memory.next_action);
+    const summary = Object.keys(normalizeAgentMemorySection(item?.agent_summary)).length > 0 ? normalizeAgentMemorySection(item?.agent_summary) : normalizeAgentMemorySection(memory.summary);
+    const episode = Object.keys(normalizeAgentMemorySection(item?.agent_episode)).length > 0 ? normalizeAgentMemorySection(item?.agent_episode) : normalizeAgentMemorySection(memory.episode);
+    const uncertainties = normalizeAgentMemorySection(memory.uncertainties);
+    const evidence = normalizeAgentMemorySection(memory.evidence);
+    const reasonCodes = Array.isArray(uncertainties.reason_codes) ? Array.from(new Set(uncertainties.reason_codes.map((code) => formatAgentReasonCode(code)).filter(Boolean))) : [];
+    const confidenceBlockers = Array.isArray(uncertainties.confidence_blockers) ? uncertainties.confidence_blockers : [];
+    const sourceConflicts = Array.isArray(uncertainties.source_conflicts) ? uncertainties.source_conflicts : [];
+    const currentState = String(memory.current_state || belief.current_state || item?.state || "").trim();
+    const status = String(memory.status || belief.status || episode.status || "").trim();
+    const nextActionType = String(nextAction.type || "").trim();
+    const nextActionLabel = formatAgentNextActionLabel(String(nextAction.label || item?.next_action || "").trim(), item, nextActionType, currentState, status);
+    const beliefReason = formatAgentBeliefReason(String(summary.reason || belief.reason || episode.summary || "").trim(), item);
+    const autonomyLevel = String(profile.autonomy_level || "").trim();
+    const nextActionOwner = String(nextAction.owner || "").trim();
+    const mission = String(profile.mission || "").trim();
+    const doctrineVersion = String(profile.doctrine_version || "").trim();
+    const riskPosture = String(profile.risk_posture || "").trim();
+    const highlights = summarizeAgentHighlights(item, reasonCodes, confidenceBlockers, sourceConflicts);
+    const stateSummaryLabel = formatAgentStateSummary(currentState, status);
+    const hasMemory = Boolean(Object.keys(memory).length || Object.keys(profile).length || Object.keys(belief).length || Object.keys(nextAction).length || Object.keys(summary).length || Object.keys(episode).length);
+    return {
+      hasMemory,
+      hasContext: Boolean(nextActionLabel || beliefReason || currentState || status || highlights.length),
+      profile,
+      belief,
+      nextAction,
+      summary,
+      episode,
+      uncertainties,
+      evidence,
+      name: String(profile.name || "").trim() || "Clearledgr AP Agent",
+      mission,
+      doctrineVersion,
+      riskPosture,
+      autonomyLevel,
+      autonomyLabel: autonomyLevel ? humanizeSnakeText(autonomyLevel) : "",
+      currentState,
+      currentStateLabel: formatAgentStateLabel(currentState),
+      status,
+      statusLabel: formatAgentStateLabel(status),
+      stateSummaryLabel,
+      beliefReason,
+      nextActionLabel,
+      nextActionType,
+      nextActionTypeLabel: nextActionType ? humanizeSnakeText(nextActionType) : "",
+      nextActionOwner,
+      nextActionOwnerLabel: nextActionOwner ? humanizeSnakeText(nextActionOwner) : "",
+      nextActionActorLabel: formatAgentActionActor(nextActionOwner, item, nextActionType, currentState, status),
+      nextActionResponsibility: formatAgentResponsibility(nextActionOwner, item, nextActionType, currentState, status),
+      reasonCodes,
+      highlights,
+      confidenceBlockers,
+      sourceConflicts
+    };
+  }
   function openSourceEmail(item) {
     const threadId = getSourceThreadId(item);
     if (threadId) {
@@ -57979,19 +59205,43 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "Budget context is missing for this invoice";
     if (ec === "policy_validation_failed")
       return "Invoice violated AP policy checks";
+    if (ec === "erp_not_connected")
+      return "ERP is not connected for posting";
+    if (ec === "erp_not_configured")
+      return "ERP setup is incomplete for posting";
+    if (ec === "erp_type_unsupported")
+      return "Connected ERP does not support this posting path";
+    if (ec === "posting_blocked")
+      return "ERP posting is paused for this workspace";
     const state = String(item?.state || "");
-    if (state === "needs_info")
+    const erpUnavailable = String(item?.erp_status || "").trim().toLowerCase() === "not_connected" || item?.erp_connector_available === false || item?.connector_available === false;
+    const erpConnected = item?.erp_connector_available === true || Boolean(String(item?.erp_type || "").trim());
+    const followupNextAction = String(item?.followup_next_action || "").trim().toLowerCase();
+    const approvalFollowup = item?.approval_followup && typeof item.approval_followup === "object" ? item.approval_followup : {};
+    if (state === "needs_info") {
+      if (followupNextAction === "await_vendor_response")
+        return "Waiting on vendor reply";
+      if (followupNextAction === "manual_vendor_escalation")
+        return "Vendor follow-up needs escalation";
       return "Missing required invoice fields";
-    if (state === "needs_approval" || state === "pending_approval")
-      return "Pending human approval";
+    }
+    if (state === "needs_approval" || state === "pending_approval") {
+      if (approvalFollowup?.escalation_due)
+        return "Approval needs escalation";
+      if (approvalFollowup?.sla_breached)
+        return "Approval reminder is due";
+      return "Waiting on approver decision";
+    }
     if (state === "failed_post")
-      return "ERP posting failed and needs retry";
+      return erpUnavailable ? "ERP is not connected for posting" : "ERP posting failed and needs retry";
     if (state === "approved")
-      return "Approved and waiting for ERP posting";
+      return erpUnavailable ? "ERP is not connected for posting" : erpConnected ? "Approved and waiting for ERP posting" : "Approved and waiting for ERP posting";
     if (state === "ready_to_post")
-      return "Ready to post to ERP";
+      return erpUnavailable ? "ERP is not connected for posting" : erpConnected ? "Ready to post to ERP" : "Ready to post to ERP";
     if (state === "posted_to_erp" || state === "closed")
       return "Posted successfully";
+    if (state === "rejected")
+      return "Invoice has been rejected";
     return "Under AP review";
   }
   function getExceptionReason(exceptionCode) {
@@ -58016,6 +59266,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "Automatic review could not continue for this invoice";
     if (c3 === "erp_post_failed")
       return "Posting to the ERP failed and needs retry";
+    if (c3 === "erp_not_connected")
+      return "Connect an ERP before posting this invoice";
+    if (c3 === "erp_not_configured")
+      return "Finish ERP configuration before posting this invoice";
+    if (c3 === "erp_type_unsupported")
+      return "This ERP connection does not support invoice posting yet";
+    if (c3 === "posting_blocked")
+      return "ERP posting is paused by rollout controls right now";
     return "";
   }
   function getExceptionLabel(exceptionCode) {
@@ -58030,6 +59288,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "Budget overrun";
     if (c3 === "missing_budget_context")
       return "Missing budget context";
+    if (c3 === "erp_not_connected")
+      return "ERP not connected";
+    if (c3 === "erp_not_configured")
+      return "ERP not configured";
+    if (c3 === "erp_type_unsupported")
+      return "ERP not supported";
+    if (c3 === "posting_blocked")
+      return "ERP posting paused";
     if (c3 === "policy_validation_failed")
       return "Policy review";
     if (c3 === "duplicate_invoice")
@@ -58074,7 +59340,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function buildAuditRow(event) {
     const payload = getAuditEventPayload(event);
     const eventType = normalizeAuditEventType(event?.event_type || event?.eventType || payload?.event_type || event?.action || "action_recorded");
-    const safeTitle = eventType === "state_transition" ? "Status updated" : "Action recorded";
+    let safeTitle = eventType === "state_transition" ? "Status updated" : "Action recorded";
     let safeDetail = "Action recorded for this invoice.";
     if (eventType === "state_transition")
       safeDetail = "Invoice status changed.";
@@ -58088,10 +59354,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const evidenceDetail = trimText(String(event?.operator_evidence_detail || event?.operator?.evidence_detail || event?.operator?.evidence?.detail || "").trim(), 180);
     const actionHint = trimText(String(event?.operator_action_hint || event?.operator_next_action || event?.operator?.next_action || event?.operator?.action_hint || "").trim(), 160);
     const timestampRaw = getAuditEventTimestamp(event);
+    const rawTitle = trimText(String(event?.operator_title || "").trim(), 72);
+    const normalizedRawTitle = rawTitle.toLowerCase();
+    const normalizedPlainTitle = normalizedRawTitle.replace(/[:\-–—]+/g, " ").replace(/\s+/g, " ").trim();
+    const genericStateTitle = normalizedRawTitle.startsWith("status updated") || normalizedRawTitle.startsWith("status changed") || /^(status (updated|changed))( (updated|changed|update))?$/.test(normalizedPlainTitle) || ["updated", "update", "changed"].includes(normalizedPlainTitle);
+    const genericActionTitle = ["updated", "update", "action recorded", "event"].includes(normalizedPlainTitle);
+    if (genericStateTitle) {
+      safeTitle = "Status updated";
+      safeDetail = "Invoice status changed.";
+    }
+    const shouldUseSafeTitle = !rawTitle || eventType === "state_transition" && genericStateTitle || genericStateTitle || eventType !== "state_transition" && genericActionTitle;
     return {
       event,
       eventType,
-      title: trimText(String(event?.operator_title || safeTitle), 72),
+      title: shouldUseSafeTitle ? safeTitle : rawTitle,
       detail: trimText(String(event?.operator_message || safeDetail).trim(), 160),
       timestampRaw,
       timestamp: formatDateTime(event?.ts || event?.created_at || event?.createdAt || event?.updated_at || event?.updatedAt || event?.timestamp),
@@ -58187,15 +59463,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const isRequired = requiredProp !== undefined ? Boolean(requiredProp) : Boolean(defaults.required);
     const isConfirmOnly = dialogMode === "confirm";
     y2(() => {
-      if (visible) {
-        setValue(defaultValue || "");
-        setTimeout(() => {
-          if (isConfirmOnly)
-            confirmRef.current?.focus();
-          else
-            inputRef.current?.focus();
-        }, 0);
-      }
+      if (!visible)
+        return;
+      setValue(defaultValue || "");
+      const focusTimer = setTimeout(() => {
+        if (isConfirmOnly)
+          confirmRef.current?.focus();
+        else
+          inputRef.current?.focus();
+      }, 0);
+      return () => clearTimeout(focusTimer);
     }, [visible, defaultValue, isConfirmOnly]);
     const handleConfirm = q2(() => {
       if (isConfirmOnly) {
@@ -58453,6 +59730,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function humanizeToken(value) {
     return String(value || "").trim().replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
   }
+  function hasErpPostingConnection(item = null) {
+    const status = String(item?.erp_status || "").trim().toLowerCase();
+    if (status === "not_connected")
+      return false;
+    if (item?.erp_connector_available === false)
+      return false;
+    if (Boolean(item?.erp_connector_available))
+      return true;
+    if (String(item?.erp_type || "").trim())
+      return true;
+    return false;
+  }
   function getAuditReasonTokens(event) {
     const payload = parseJsonObject(event?.payload_json || event?.payloadJson || event?.payload) || {};
     const response = payload?.response && typeof payload.response === "object" ? payload.response : {};
@@ -58525,6 +59814,88 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return false;
     return normalizeWorkState(state || item?.state || "") === "needs_approval";
   }
+  function getAgentExecutionMode(state, item = null, documentType = "invoice") {
+    const normalized = normalizeWorkState(state || item?.state || "");
+    if (!isInvoiceDocumentType(documentType))
+      return "manual";
+    const approvalFollowup = item?.approval_followup && typeof item.approval_followup === "object" ? item.approval_followup : {};
+    const followupNextAction = String(item?.followup_next_action || "").trim().toLowerCase();
+    if (normalized === "needs_approval") {
+      if (approvalFollowup?.escalation_due || approvalFollowup?.sla_breached) {
+        return "operator_attention";
+      }
+      return "agent_monitoring";
+    }
+    if (normalized === "needs_info") {
+      if (followupNextAction === "await_vendor_response")
+        return "agent_waiting";
+      if (followupNextAction === "manual_vendor_escalation")
+        return "operator_attention";
+      return "manual";
+    }
+    if (normalized === "approved" || normalized === "ready_to_post") {
+      if (!hasErpPostingConnection(item))
+        return "operator_attention";
+      return "agent_progressing";
+    }
+    if (normalized === "posted_to_erp" || normalized === "closed")
+      return "completed";
+    return "manual";
+  }
+  function getDefaultNextMoveLabel(state, item = null, actorRole = "operator", documentType = "invoice") {
+    const primaryAction = getPrimaryActionConfig(state, actorRole, documentType, item);
+    if (primaryAction?.label)
+      return primaryAction.label;
+    const normalized = normalizeWorkState(state || item?.state || "");
+    if (!isInvoiceDocumentType(documentType)) {
+      return `Review ${getDocumentTypeLabel(documentType, { lowercase: true })}`;
+    }
+    if (normalized === "needs_approval")
+      return "Wait for approval decision";
+    if (normalized === "needs_info") {
+      const followupNextAction = String(item?.followup_next_action || "").trim().toLowerCase();
+      if (followupNextAction === "await_vendor_response")
+        return "Wait for vendor response";
+      if (followupNextAction === "manual_vendor_escalation")
+        return "Escalate vendor follow-up";
+      return "Prepare info request";
+    }
+    if ((normalized === "approved" || normalized === "ready_to_post") && !hasErpPostingConnection(item)) {
+      return "Connect ERP";
+    }
+    if (normalized === "approved")
+      return "Prepare ERP post";
+    if (normalized === "posted_to_erp" || normalized === "closed")
+      return "Record is complete";
+    if (normalized === "rejected")
+      return "Record rejected";
+    return "Review current AP state";
+  }
+  function getOperatorOverrideCopy(state, item = null, documentType = "invoice") {
+    const mode = getAgentExecutionMode(state, item, documentType);
+    if (mode === "agent_monitoring") {
+      return {
+        title: "Operator overrides",
+        detail: "Clearledgr is monitoring this approval. Use these only if you need to intervene before the reminder or escalation policy runs."
+      };
+    }
+    if (mode === "agent_waiting") {
+      return {
+        title: "Operator overrides",
+        detail: "Clearledgr already prepared the vendor follow-up and is waiting for a reply. Use these only if you need to intervene early."
+      };
+    }
+    if (mode === "agent_progressing") {
+      return {
+        title: "Operator overrides",
+        detail: "Clearledgr is already moving this record forward. Use these only if you need to step in manually."
+      };
+    }
+    return {
+      title: "Operator overrides",
+      detail: "Use these actions only when you need to override the normal agent path."
+    };
+  }
   function getPrimaryActionConfig(state, actorRole = "operator", documentType = "invoice", item = null) {
     if (!hasOpsAccessRole(actorRole))
       return null;
@@ -58549,12 +59920,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (canEscalateApproval(item, normalized, actorRole, documentType)) {
         return { id: "escalate_approval", label: "Escalate approval" };
       }
+      if (!item?.approval_followup?.sla_breached)
+        return null;
       return { id: "nudge_approver", label: "Nudge approver" };
     }
     if (normalized === "ready_to_post") {
+      if (!hasErpPostingConnection(item))
+        return null;
       return { id: "preview_erp_post", label: "Preview ERP post" };
     }
     if (normalized === "failed_post") {
+      if (!hasErpPostingConnection(item))
+        return null;
       return { id: "retry_erp_post", label: "Retry ERP post" };
     }
     return null;
@@ -58608,8 +59985,28 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return "The vendor has not replied yet. Send the next follow-up when you are ready.";
       }
     }
+    if (normalized === "needs_approval") {
+      const approvalFollowup = item?.approval_followup && typeof item.approval_followup === "object" ? item.approval_followup : {};
+      const pendingAssignees = Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees : [];
+      if (approvalFollowup?.escalation_due) {
+        return "Approval is past the escalation window. Clearledgr is waiting for an operator to escalate or reassign it.";
+      }
+      if (approvalFollowup?.sla_breached) {
+        return "Approval is past the reminder SLA. Clearledgr can send another reminder now.";
+      }
+      if (pendingAssignees.length > 0) {
+        return `Waiting on ${pendingAssignees.slice(0, 3).join(", ")}. Clearledgr is monitoring this approval and will remind or escalate if it slips.`;
+      }
+      return "Waiting on approval. Clearledgr is monitoring this request and will remind or escalate if it slips.";
+    }
+    if ((normalized === "approved" || normalized === "ready_to_post" || normalized === "failed_post") && !hasErpPostingConnection(item)) {
+      return "ERP is not connected. Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.";
+    }
     if (normalized === "approved") {
       return "Approval received. Clearledgr is preparing the posting step.";
+    }
+    if (normalized === "ready_to_post") {
+      return "Invoice is ready and Clearledgr can post it to the ERP.";
     }
     if (normalized === "posted_to_erp" || normalized === "closed") {
       return "Invoice has already been posted to the ERP.";
@@ -58664,8 +60061,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return false;
   }
 
-  // src/utils/vendor-route.js
-  var ACTIVE_VENDOR_NAME_STORAGE_KEY = "clearledgr_active_vendor_name";
+  // src/utils/record-route.js
+  var ACTIVE_RECORD_ID_STORAGE_KEY = "clearledgr_active_ap_item_id";
   function safeDecode(value) {
     const text = String(value || "").trim();
     if (!text)
@@ -58676,8 +60073,49 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return text;
     }
   }
-  function normalizeVendorRouteName(value) {
+  function normalizeRecordRouteId(value) {
     return safeDecode(value).trim();
+  }
+  function rememberRecordRouteId(recordId) {
+    const normalized = normalizeRecordRouteId(recordId);
+    if (!normalized)
+      return "";
+    writeLocalStorage(ACTIVE_RECORD_ID_STORAGE_KEY, normalized);
+    return normalized;
+  }
+  function navigateToRecordDetail(navigate, recordId) {
+    const normalized = rememberRecordRouteId(recordId);
+    if (!normalized || typeof navigate !== "function")
+      return false;
+    navigate("clearledgr/invoice/:id", { id: normalized });
+    return true;
+  }
+  function resolveRecordRouteId(params = {}, hash = "") {
+    const paramId = normalizeRecordRouteId(params?.id);
+    if (paramId)
+      return paramId;
+    const hashText = String(hash || "");
+    const hashMatch = hashText.match(/clearledgr\/invoice\/([^?]+)/);
+    const hashId = normalizeRecordRouteId(hashMatch?.[1]);
+    if (hashId)
+      return hashId;
+    return normalizeRecordRouteId(readLocalStorage(ACTIVE_RECORD_ID_STORAGE_KEY));
+  }
+
+  // src/utils/vendor-route.js
+  var ACTIVE_VENDOR_NAME_STORAGE_KEY = "clearledgr_active_vendor_name";
+  function safeDecode2(value) {
+    const text = String(value || "").trim();
+    if (!text)
+      return "";
+    try {
+      return decodeURIComponent(text);
+    } catch {
+      return text;
+    }
+  }
+  function normalizeVendorRouteName(value) {
+    return safeDecode2(value).trim();
   }
   function rememberVendorRouteName(vendorName) {
     const normalized = normalizeVendorRouteName(vendorName);
@@ -58731,14 +60169,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     { id: "waiting_on_approval", label: "Waiting on approval", description: "Invoices routed to approvers and still waiting." },
     { id: "ready_to_post", label: "Ready to post", description: "Approved invoices ready for ERP posting." },
     { id: "needs_info", label: "Needs info", description: "Invoices blocked on vendor or field follow-up." },
-    { id: "failed_post", label: "Failed post", description: "Invoices that need ERP retry or posting recovery." },
-    { id: "blocked_exception", label: "Blocked / exception", description: "Entity, policy, budget, confidence, PO, or processing blockers." },
+    { id: "failed_post", label: "Failed post", description: "Invoices that need ERP recovery or connector setup before posting can continue." },
+    { id: "blocked_exception", label: "Review / exception", description: "Invoices paused by entity, policy, budget, field, PO, or setup issues." },
     { id: "due_soon", label: "Due soon", description: "Open invoices due within the next 7 days." },
     { id: "overdue", label: "Overdue", description: "Open invoices already past due." }
   ];
   function buildDefaultFilters() {
     return {
-      state: "all",
       vendor: "",
       due: "all",
       blocker: "all",
@@ -58803,6 +60240,97 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function normalizeText(value, fallback = "") {
     return String(value || "").trim() || fallback;
   }
+  function buildFallbackBlockerCopy(kind, type, source = {}) {
+    const normalizedState = normalizePipelineState(source?.state);
+    if (kind === "approval") {
+      return {
+        chip_label: "Waiting on approver",
+        title: "Waiting on approver",
+        detail: getWorkStateNotice(normalizedState, "invoice", source) || "Approval is still pending."
+      };
+    }
+    if (kind === "info") {
+      return {
+        chip_label: "Waiting on vendor",
+        title: "Waiting on vendor",
+        detail: getWorkStateNotice(normalizedState, "invoice", source) || "Vendor information is still missing."
+      };
+    }
+    if (kind === "erp") {
+      if (!hasErpPostingConnection(source)) {
+        return {
+          chip_label: "ERP not connected",
+          title: "ERP is not connected",
+          detail: "Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice."
+        };
+      }
+      return {
+        chip_label: "ERP retry",
+        title: "ERP posting needs attention",
+        detail: getIssueSummary2(source) || "ERP posting needs review before this invoice can continue."
+      };
+    }
+    if (kind === "exception") {
+      const label = getExceptionLabel(type) || "Needs review";
+      return {
+        chip_label: label,
+        title: label,
+        detail: getIssueSummary2(source) || "Clearledgr needs review before this invoice can continue."
+      };
+    }
+    if (kind === "confidence") {
+      return {
+        chip_label: "Field review",
+        title: "Needs a field check",
+        detail: normalizeText(source?.workflow_paused_reason) || "Check the extracted fields before Clearledgr continues."
+      };
+    }
+    if (kind === "budget") {
+      return {
+        chip_label: "Budget review",
+        title: "Budget review required",
+        detail: "A budget decision is still required before this invoice can continue."
+      };
+    }
+    if (kind === "entity") {
+      return {
+        chip_label: "Entity review",
+        title: "Entity route needs review",
+        detail: normalizeText(source?.entity_route_reason) || "Choose the correct legal entity before this invoice can continue."
+      };
+    }
+    if (kind === "po") {
+      return {
+        chip_label: "PO review",
+        title: "PO review required",
+        detail: getIssueSummary2(source) || "PO matching still needs review before this invoice can continue."
+      };
+    }
+    if (kind === "processing") {
+      return {
+        chip_label: "Processing issue",
+        title: "Processing issue",
+        detail: "Clearledgr needs another pass before this invoice can continue."
+      };
+    }
+    return { chip_label: "", title: "", detail: "" };
+  }
+  function enrichPipelineBlocker(blocker = {}, source = {}) {
+    const kind = normalizeText(blocker?.kind).toLowerCase();
+    const type = normalizeText(blocker?.type).toLowerCase();
+    const fallback = buildFallbackBlockerCopy(kind, type, source);
+    return {
+      ...blocker,
+      kind,
+      type,
+      chip_label: normalizeText(blocker?.chip_label, fallback.chip_label),
+      title: normalizeText(blocker?.title, fallback.title),
+      detail: normalizeText(blocker?.detail, fallback.detail),
+      field: normalizeText(blocker?.field).toLowerCase(),
+      severity: normalizeText(blocker?.severity).toLowerCase(),
+      code: normalizeText(blocker?.code).toLowerCase()
+    };
+  }
   function normalizeUserEmail(value) {
     return normalizeText(value).toLowerCase();
   }
@@ -58847,7 +60375,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function normalizeFilters(filters = {}) {
     return {
-      state: normalizeText(filters?.state, "all"),
       vendor: normalizeVendorFilter(filters?.vendor),
       due: normalizeText(filters?.due, "all"),
       blocker: normalizeText(filters?.blocker, "all"),
@@ -59259,13 +60786,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const normalizedStatus = normalizeText(source?.erp_status).toLowerCase();
     if (normalizedStatus)
       return normalizedStatus;
+    const hasConnection = hasErpPostingConnection(source);
     if (state === "posted_to_erp" || state === "closed" || source?.erp_reference || source?.erp_bill_id)
       return "posted";
+    if (!hasConnection && ["approved", "ready_to_post", "failed_post"].includes(state))
+      return "not_connected";
     if (state === "failed_post")
       return "failed";
     if (state === "ready_to_post" || state === "approved")
       return "ready";
-    if (source?.erp_connector_available || source?.connector_available)
+    if (hasConnection)
       return "connected";
     return "not_connected";
   }
@@ -59273,17 +60803,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const source = item && typeof item === "object" ? item : {};
     const existing = Array.isArray(source?.pipeline_blockers) ? source.pipeline_blockers : [];
     if (existing.length > 0) {
-      return existing.map((blocker) => ({
-        ...blocker,
-        kind: normalizeText(blocker?.kind).toLowerCase(),
-        type: normalizeText(blocker?.type).toLowerCase(),
-        chip_label: normalizeText(blocker?.chip_label),
-        title: normalizeText(blocker?.title),
-        detail: normalizeText(blocker?.detail),
-        field: normalizeText(blocker?.field).toLowerCase(),
-        severity: normalizeText(blocker?.severity).toLowerCase(),
-        code: normalizeText(blocker?.code).toLowerCase()
-      })).filter((blocker) => blocker.kind && blocker.type);
+      return existing.map((blocker) => enrichPipelineBlocker(blocker, source)).filter((blocker) => blocker.kind && blocker.type);
     }
     const blockers = [];
     const state = normalizePipelineState(source.state);
@@ -59297,7 +60817,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       blockers.push({ kind: "info", type: "needs_info" });
     }
     if (state === "failed_post") {
-      blockers.push({ kind: "erp", type: "posting_failed" });
+      blockers.push({
+        kind: "erp",
+        type: hasErpPostingConnection(source) ? "posting_failed" : "erp_not_connected"
+      });
     }
     if (String(source?.entity_routing_status || source?.entity_routing?.status || "").trim().toLowerCase() === "needs_review") {
       blockers.push({ kind: "entity", type: "entity_review" });
@@ -59316,7 +60839,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (exceptionCode && exceptionCode !== "planner_failed" && (exceptionCode.includes("po") || !source?.po_number && exceptionCode)) {
       blockers.push({ kind: "po", type: exceptionCode });
     }
-    return blockers;
+    return blockers.map((blocker) => enrichPipelineBlocker(blocker, source));
   }
   function getPipelineBlockerKinds(item = {}) {
     return [...new Set(getPipelineBlockers(item).map((blocker) => blocker.kind).filter(Boolean))];
@@ -59340,6 +60863,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       case "failed_post":
         return state === "failed_post";
       case "blocked_exception":
+        if (isClosedPipelineState(state))
+          return false;
         return blockers.some((kind) => ["entity", "exception", "confidence", "budget", "po", "erp", "processing"].includes(kind));
       case "due_soon":
         if (!dueDate || isClosedPipelineState(state))
@@ -59362,8 +60887,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const approvalWaitMinutes = getApprovalWaitMinutes(item, now);
     const erpStatus = getErpStatus(item);
     const normalizedFilters = normalizeFilters(filters);
-    if (normalizedFilters.state !== "all" && state !== normalizePipelineState(normalizedFilters.state))
-      return false;
     if (normalizedFilters.vendor && !vendor.includes(normalizedFilters.vendor.toLowerCase()))
       return false;
     if (normalizedFilters.due === "overdue") {
@@ -59554,10 +61077,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     _toastEl.dataset.tone = tone;
     _toastEl.style.display = "block";
     clearTimeout(_toastTimer);
+    const duration = tone === "error" ? 6000 : 3000;
     _toastTimer = setTimeout(() => {
       if (_toastEl)
         _toastEl.style.display = "none";
-    }, 3000);
+    }, duration);
+    _toastTimer?.unref?.();
   }
   function humanizeActionFailure(reason) {
     const token = String(reason || "").trim();
@@ -59576,7 +61101,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       state_not_waiting_for_approval: "This invoice is no longer waiting on approval.",
       waiting_for_sla_window: "Follow-up already sent. Wait for the vendor response before nudging again.",
       followup_attempt_limit_reached: "Clearledgr reached the vendor follow-up limit. This now needs manual escalation.",
-      state_not_needs_info: "This invoice is no longer waiting on vendor information."
+      state_not_needs_info: "This invoice is no longer waiting on vendor information.",
+      segregation_of_duties_violation: "You cannot approve this invoice because you submitted or processed it. Another team member must approve.",
+      not_authorized_approver: "You are not a designated approver for this invoice. Only named approvers in the routing rule can approve."
     };
     return map[token] || token.replace(/_/g, " ");
   }
@@ -59591,10 +61118,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     y2(() => {
       _toastEl = ref.current;
       return () => {
+        clearTimeout(_toastTimer);
+        _toastTimer = null;
         _toastEl = null;
       };
     }, []);
-    return html2`<div ref=${ref} class="cl-toast" style="display:none"></div>`;
+    return html2`<div ref=${ref} class="cl-toast" style="display:none" onClick=${() => {
+      if (_toastEl)
+        _toastEl.style.display = "none";
+      clearTimeout(_toastTimer);
+    }}></div>`;
   }
   function ScanStatus() {
     const s3 = useStore();
@@ -59678,15 +61211,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     if (state === "needs_approval") {
       const pendingAssignees = Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees : [];
-      add("approval", approvalFollowup?.escalation_due ? "Approval escalation due" : approvalFollowup?.sla_breached ? "Approval follow-up due" : "Waiting on approver", approvalFollowup?.escalation_due ? "Approval has been waiting past the escalation policy and should be escalated or reassigned." : approvalFollowup?.sla_breached ? "Approval has been waiting past the reminder SLA and should be nudged." : pendingAssignees.length ? `Waiting on ${pendingAssignees.slice(0, 3).join(", ")}.` : "The approval request is still outstanding.");
+      add("approval", approvalFollowup?.escalation_due ? "Approval needs escalation" : approvalFollowup?.sla_breached ? "Approval reminder is due" : "Waiting on approver", approvalFollowup?.escalation_due || approvalFollowup?.sla_breached || pendingAssignees.length ? getWorkStateNotice(state, documentType, item) : "The approval request is still outstanding.");
     }
     if (state === "needs_info") {
       const disputeStatus = item?.dispute_status;
       const disputeLabel = disputeStatus === "vendor_contacted" ? "Waiting on vendor response" : disputeStatus === "escalated" ? "Dispute escalated — vendor unresponsive" : isInvoiceDocument ? "Missing invoice details" : "Missing document details";
-      add("needs_info", disputeLabel, `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
+      add("needs_info", disputeLabel, getWorkStateNotice(state, documentType, item) || `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
     }
-    if (state === "failed_post") {
-      add("failed_post", "ERP posting failed", "Retry the ERP post or review the connector response.");
+    if ((state === "approved" || state === "ready_to_post") && !exceptionReason && !hasErpPostingConnection(item)) {
+      add("erp_setup", "ERP is not connected", "Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.");
+    }
+    if (state === "failed_post" && !exceptionReason) {
+      add("failed_post", hasErpPostingConnection(item) ? "ERP posting failed" : "ERP is not connected", hasErpPostingConnection(item) ? "Retry the ERP post or review the connector response." : "Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.");
     }
     const gateReasons = Array.isArray(item?.validation_reasons) ? item.validation_reasons : [];
     for (const reason of gateReasons) {
@@ -59722,7 +61258,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <span class="cl-evidence-label">${entry.label}</span>
               ${entry.detail && html2`<span class="cl-evidence-detail">${entry.detail}</span>`}
             </div>
-            <span class="cl-evidence-status" data-status=${entry.status}>${entry.text}</span>
+            <span class="cl-evidence-status" data-status=${entry.status}>
+              <span class="cl-evidence-status-pill">${entry.text}</span>
+            </span>
           </div>
         `)}
       </div>
@@ -59843,8 +61381,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       secondaryLimit: 2
     });
     return html2`
-    <details class="cl-details">
-      <summary>View audit${totalEvents ? ` (${totalEvents})` : ""}</summary>
+    <details class="cl-details cl-audit-disclosure">
+      <summary class="cl-audit-disclosure-summary">View audit${totalEvents ? ` (${totalEvents})` : ""}</summary>
       <div class="cl-audit-list">
         ${loading && html2`<div class="cl-empty">Loading audit…</div>`}
         ${!loading && totalEvents === 0 && html2`<div class="cl-empty">No audit events yet.</div>`}
@@ -59914,21 +61452,475 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
-  function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
+  function AgentViewSection({ view, item, fallbackNextMove = "Review this record" }) {
+    if (!view?.hasContext)
+      return null;
+    const needsReview = Boolean(item?.requires_field_review || view.nextActionType === "human_field_review");
+    const uncertaintyLabel = view.highlights.slice(0, 2).join(" · ");
+    const nextMove = view.nextActionLabel || fallbackNextMove || view.currentStateLabel || view.statusLabel || "Review this record";
+    const whyNow = view.beliefReason || (needsReview ? "Clearledgr paused because this invoice still needs a quick check before it can continue." : "Clearledgr is holding the current workflow context on this record.");
+    const ownerLine = view.nextActionResponsibility || "";
+    const tone = uncertaintyLabel ? "warning" : "good";
+    const sectionTitle = needsReview ? "Before Clearledgr continues" : "What happens next";
+    const reasonLabel = needsReview ? "Why it paused" : "Why it is waiting";
+    return html2`
+    <div class="cl-section" aria-label=${sectionTitle}>
+      <div class="cl-section-title">${sectionTitle}</div>
+      <div class="cl-operator-brief" data-tone=${tone}>
+        <div class="cl-operator-brief-row">
+          <div class="cl-operator-brief-label">Next step</div>
+          <div class="cl-operator-brief-text">${nextMove}</div>
+          ${ownerLine && html2`<div class="cl-operator-brief-outcome">${ownerLine}</div>`}
+        </div>
+        <div class="cl-operator-brief-row">
+          <div class="cl-operator-brief-label">${reasonLabel}</div>
+          <div class="cl-operator-brief-text">${whyNow}</div>
+        </div>
+        ${uncertaintyLabel && html2`
+          <div class="cl-operator-brief-row">
+            <div class="cl-operator-brief-label">Needs attention</div>
+            <div class="cl-operator-brief-text">${uncertaintyLabel}</div>
+            <div class="cl-operator-brief-outcome">${view.highlights.length} open item${view.highlights.length === 1 ? "" : "s"}</div>
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+  }
+  function RelatedRecordMiniRow({ label, item, onOpen }) {
+    if (!item?.id)
+      return null;
+    return html2`
+    <div class="cl-mini-card">
+      <div class="cl-mini-card-main">
+        <div class="cl-mini-card-copy">
+          <div class="cl-mini-card-label">${label}</div>
+          <div class="cl-mini-card-title">${item.vendor_name || "Unknown vendor"} · ${item.invoice_number || "No invoice #"}</div>
+          <div class="cl-mini-card-meta">
+            ${formatAmount(item.amount, item.currency)} · ${String(item.state || "received").replace(/_/g, " ")}
+          </div>
+        </div>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${onOpen}>Open</button>
+      </div>
+    </div>
+  `;
+  }
+  function RelatedRecordsSection({ item, contextPayload, onOpenRecord, onOpenVendor }) {
+    const relatedRecords = contextPayload?.related_records || {};
+    const linkedFinanceDocuments = Array.isArray(item?.linked_finance_documents) ? item.linked_finance_documents.slice(0, 4) : [];
+    const rows = [];
+    if (relatedRecords?.supersession?.previous_item) {
+      rows.push({ key: `prev-${relatedRecords.supersession.previous_item.id}`, label: "Supersedes", item: relatedRecords.supersession.previous_item });
+    }
+    if (relatedRecords?.supersession?.next_item) {
+      rows.push({ key: `next-${relatedRecords.supersession.next_item.id}`, label: "Superseded by", item: relatedRecords.supersession.next_item });
+    }
+    (relatedRecords?.same_invoice_number_items || []).slice(0, 2).forEach((relatedItem) => {
+      rows.push({ key: `same-${relatedItem.id}`, label: "Same invoice number", item: relatedItem });
+    });
+    (relatedRecords?.vendor_recent_items || []).slice(0, 2).forEach((relatedItem) => {
+      rows.push({ key: `vendor-${relatedItem.id}`, label: "Recent vendor item", item: relatedItem });
+    });
+    linkedFinanceDocuments.forEach((relatedItem, index) => {
+      rows.push({
+        key: `linked-${relatedItem.source_ap_item_id || index}`,
+        label: `${getDocumentTypeLabel(relatedItem.document_type || "other")} linked`,
+        item: {
+          id: relatedItem.source_ap_item_id,
+          vendor_name: relatedItem.vendor_name,
+          invoice_number: relatedItem.invoice_number,
+          amount: relatedItem.amount,
+          currency: relatedItem.currency,
+          state: relatedItem.outcome
+        }
+      });
+    });
+    if (rows.length === 0)
+      return null;
+    return html2`
+    <div class="cl-section" aria-label="Related records">
+      <div class="cl-section-head">
+        <div class="cl-section-title">Related records</div>
+        ${(item?.vendor_name || item?.vendor) && html2`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${onOpenVendor}>Vendor</button>
+        `}
+      </div>
+      <div class="cl-card-stack">
+        ${rows.slice(0, 6).map((entry) => html2`
+          <${RelatedRecordMiniRow}
+            key=${entry.key}
+            label=${entry.label}
+            item=${entry.item}
+            onOpen=${() => onOpenRecord(entry.item)}
+          />
+        `)}
+      </div>
+    </div>
+  `;
+  }
+  function FilesSection({ item, contextPayload, files, queueManager, readOnlyMode }) {
+    const attachmentNames = Array.isArray(item?.attachment_names) ? item.attachment_names.filter(Boolean) : [];
+    const dmsDocuments = Array.isArray(contextPayload?.web?.dms_documents) ? contextPayload.web.dms_documents : Array.isArray(contextPayload?.dms_documents?.documents) ? contextPayload.dms_documents.documents : [];
+    const procurementDocs = Array.isArray(contextPayload?.web?.procurement) ? contextPayload.web.procurement : [];
+    const linkedFiles = Array.isArray(files) ? files : [];
+    const [labelDraft, setLabelDraft] = d2("");
+    const [urlDraft, setUrlDraft] = d2("");
+    const [saving, setSaving] = d2(false);
+    const fileCount = attachmentNames.length + dmsDocuments.length + procurementDocs.length + linkedFiles.length;
+    if (!fileCount && readOnlyMode)
+      return null;
+    const addFileLink = async () => {
+      const label = String(labelDraft || "").trim();
+      const url = String(urlDraft || "").trim();
+      if (!label || !url)
+        return;
+      setSaving(true);
+      try {
+        const result = await queueManager.addItemFileLink(item, { label, url, file_type: "link", source: "gmail_sidebar" });
+        const ok = String(result?.status || "").toLowerCase() === "created";
+        showToast(ok ? "File link added" : result?.reason || "Could not add file link", ok ? "success" : "error");
+        if (ok) {
+          setLabelDraft("");
+          setUrlDraft("");
+        }
+      } finally {
+        setSaving(false);
+      }
+    };
+    return html2`
+    <div class="cl-section" aria-label="Files">
+      <div class="cl-section-title">Files and evidence</div>
+      ${!readOnlyMode && html2`
+        <div class="cl-inline-form cl-inline-form-wide">
+          <input class="cl-input" value=${labelDraft} placeholder="Link label" onInput=${(event) => setLabelDraft(event.target.value)} />
+          <input class="cl-input" value=${urlDraft} placeholder="Paste Drive, DMS, or procurement URL" onInput=${(event) => setUrlDraft(event.target.value)} />
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${addFileLink} disabled=${saving}>${saving ? "Saving…" : "Add link"}</button>
+        </div>
+      `}
+      <div class="cl-card-stack">
+        ${linkedFiles.length === 0 && fileCount === 0 && html2`<div class="cl-muted">No linked files on this record yet.</div>`}
+        ${linkedFiles.map((file) => html2`
+          <div key=${file.id} class="cl-evidence-row">
+            <div class="cl-evidence-main">
+              <span class="cl-evidence-label">${file.label || file.file_name || "Linked file"}</span>
+              <span class="cl-evidence-detail">
+                ${file.note || file.file_name || file.url || "Linked on this finance record"}
+                ${file.url && html2`
+                  <span>
+                    · 
+                    <a href=${file.url} target="_blank" rel="noreferrer noopener" style="color:var(--cl-accent);text-decoration:none">Open link</a>
+                  </span>
+                `}
+              </span>
+            </div>
+            <span class="cl-evidence-status" data-status="ok">${file.file_type || "Linked"}</span>
+          </div>
+        `)}
+        ${attachmentNames.map((name, index) => html2`
+          <div key=${`attachment-${index}`} class="cl-evidence-row">
+            <div class="cl-evidence-main">
+              <span class="cl-evidence-label">Email attachment</span>
+              <span class="cl-evidence-detail">${name}</span>
+            </div>
+            <span class="cl-evidence-status" data-status="ok">Attached</span>
+          </div>
+        `)}
+        ${dmsDocuments.slice(0, 3).map((doc, index) => html2`
+          <div key=${`dms-${index}`} class="cl-evidence-row">
+            <div class="cl-evidence-main">
+              <span class="cl-evidence-label">DMS document</span>
+              <span class="cl-evidence-detail">${doc?.subject || doc?.source_ref || "Linked document"}</span>
+            </div>
+            <span class="cl-evidence-status" data-status="ok">Linked</span>
+          </div>
+        `)}
+        ${procurementDocs.slice(0, 2).map((doc, index) => html2`
+          <div key=${`proc-${index}`} class="cl-evidence-row">
+            <div class="cl-evidence-main">
+              <span class="cl-evidence-label">Procurement</span>
+              <span class="cl-evidence-detail">${doc?.subject || doc?.source_ref || "Procurement evidence"}</span>
+            </div>
+            <span class="cl-evidence-status" data-status="ok">Linked</span>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+  }
+  function EditableFieldRow({ label, value, fieldKey, type = "text", placeholder = "", onSave, savingField }) {
+    const [editing, setEditing] = d2(false);
+    const [draft, setDraft] = d2(value ?? "");
+    y2(() => {
+      setDraft(value ?? "");
+    }, [value]);
+    const save = async () => {
+      await onSave(fieldKey, draft);
+      setEditing(false);
+    };
+    return html2`
+    <div class="cl-field-row">
+      <div class="cl-field-row-body">
+        <div class="cl-field-main">
+          <div class="cl-field-label">${label}</div>
+          ${editing ? html2`
+                <input
+                  class="cl-input cl-field-input"
+                  type=${type}
+                  value=${draft ?? ""}
+                  placeholder=${placeholder}
+                  onInput=${(event) => setDraft(event.target.value)}
+                />
+              ` : html2`<div class="cl-field-value">${value || "—"}</div>`}
+        </div>
+        ${editing ? html2`
+              <div class="cl-mini-card-actions">
+                <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => {
+      setDraft(value ?? "");
+      setEditing(false);
+    }}>Cancel</button>
+                <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${save} disabled=${savingField === fieldKey}>
+                  ${savingField === fieldKey ? "Saving…" : "Save"}
+                </button>
+              </div>
+            ` : html2`<button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => setEditing(true)}>Edit</button>`}
+      </div>
+    </div>
+  `;
+  }
+  function RecordEditorSection({ item, queueManager, readOnlyMode }) {
+    const [savingField, setSavingField] = d2("");
+    if (readOnlyMode)
+      return null;
+    const saveField = async (fieldKey, fieldValue) => {
+      setSavingField(fieldKey);
+      try {
+        const payload = { [fieldKey]: fieldKey === "amount" && fieldValue !== "" ? Number(fieldValue) : fieldValue };
+        const result = await queueManager.updateRecordFields(item, payload);
+        const ok = String(result?.status || "").toLowerCase() === "updated";
+        showToast(ok ? `${fieldKey.replace(/_/g, " ")} updated` : result?.reason || "Could not update record", ok ? "success" : "error");
+      } finally {
+        setSavingField("");
+      }
+    };
+    return html2`
+    <div class="cl-section" aria-label="Edit record">
+      <div class="cl-section-title">Edit record</div>
+      <div class="cl-field-list">
+        <${EditableFieldRow} label="Vendor" fieldKey="vendor_name" value=${item?.vendor_name || item?.vendor || ""} onSave=${saveField} savingField=${savingField} />
+        <${EditableFieldRow} label="Invoice #" fieldKey="invoice_number" value=${item?.invoice_number || ""} onSave=${saveField} savingField=${savingField} />
+        <${EditableFieldRow} label="Amount" fieldKey="amount" type="number" value=${item?.amount ?? ""} onSave=${saveField} savingField=${savingField} />
+        <${EditableFieldRow} label="Due date" fieldKey="due_date" type="date" value=${item?.due_date || ""} onSave=${saveField} savingField=${savingField} />
+        <${EditableFieldRow} label="PO number" fieldKey="po_number" value=${item?.po_number || ""} onSave=${saveField} savingField=${savingField} />
+      </div>
+    </div>
+  `;
+  }
+  function TaskSection({ item, tasks, queueManager, readOnlyMode = false }) {
+    const [title, setTitle] = d2("");
+    const [dueDate, setDueDate] = d2("");
+    const [creating, setCreating] = d2(false);
+    const [commentDrafts, setCommentDrafts] = d2({});
+    const myEmail = String(queueManager?.runtimeConfig?.userEmail || "").trim();
+    const createTask = async () => {
+      if (!title.trim())
+        return;
+      setCreating(true);
+      try {
+        const result = await queueManager.createTask(item, {
+          title: title.trim(),
+          due_date: dueDate || undefined,
+          task_type: "follow_up",
+          priority: "medium"
+        });
+        const ok = String(result?.status || "").toLowerCase() === "created";
+        showToast(ok ? "Task added" : result?.reason || "Could not add task", ok ? "success" : "error");
+        if (ok) {
+          setTitle("");
+          setDueDate("");
+        }
+      } finally {
+        setCreating(false);
+      }
+    };
+    const updateStatus = async (task, status) => {
+      const result = await queueManager.updateTaskStatus(task.task_id, { status }, item.id);
+      const ok = String(result?.status || "").toLowerCase() === "updated";
+      showToast(ok ? "Task updated" : result?.reason || "Could not update task", ok ? "success" : "error");
+    };
+    const assignToMe = async (task) => {
+      if (!myEmail)
+        return;
+      const result = await queueManager.assignTask(task.task_id, { assignee_email: myEmail }, item.id);
+      const ok = String(result?.status || "").toLowerCase() === "updated";
+      showToast(ok ? "Task assigned" : result?.reason || "Could not assign task", ok ? "success" : "error");
+    };
+    const addComment = async (task) => {
+      const comment = String(commentDrafts[task.task_id] || "").trim();
+      if (!comment)
+        return;
+      const result = await queueManager.addTaskComment(task.task_id, { comment }, item.id);
+      const ok = String(result?.status || "").toLowerCase() === "created";
+      showToast(ok ? "Comment added" : result?.reason || "Could not add comment", ok ? "success" : "error");
+      if (ok) {
+        setCommentDrafts((current) => ({ ...current, [task.task_id]: "" }));
+      }
+    };
+    return html2`
+    <div class="cl-section" aria-label="Tasks">
+      <div class="cl-section-title">Tasks</div>
+      ${!readOnlyMode && html2`
+        <div class="cl-inline-form cl-inline-form-task">
+          <input class="cl-input" value=${title} placeholder="Add follow-up task" onInput=${(event) => setTitle(event.target.value)} />
+          <input class="cl-input" type="date" value=${dueDate} onInput=${(event) => setDueDate(event.target.value)} />
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${createTask} disabled=${creating}>${creating ? "Adding…" : "Add"}</button>
+        </div>
+      `}
+      <div class="cl-card-stack">
+        ${(tasks || []).length === 0 && html2`<div class="cl-muted">No tasks on this record yet.</div>`}
+        ${(tasks || []).slice(0, 6).map((task) => html2`
+          <div key=${task.task_id} class="cl-mini-card">
+            <div class="cl-mini-card-main">
+              <div class="cl-mini-card-copy">
+                <div class="cl-mini-card-title">${task.title}</div>
+                <div class="cl-mini-card-meta">
+                  ${String(task.status || "open").replace(/_/g, " ")}
+                  ${task.due_date ? ` · Due ${task.due_date}` : ""}
+                  ${task.assignee_email ? ` · ${task.assignee_email}` : ""}
+                </div>
+                ${task.description && html2`<div class="cl-mini-card-body">${task.description}</div>`}
+              </div>
+              ${!readOnlyMode && html2`
+                <div class="cl-mini-card-actions">
+                  ${task.status !== "in_progress" && task.status !== "completed" && html2`
+                    <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => updateStatus(task, "in_progress")}>Start</button>
+                  `}
+                  ${task.status !== "completed" && html2`
+                    <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => updateStatus(task, "completed")}>Done</button>
+                  `}
+                  ${myEmail && task.assignee_email !== myEmail && html2`
+                    <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => assignToMe(task)}>Assign me</button>
+                  `}
+                </div>
+              `}
+            </div>
+            ${!readOnlyMode && html2`
+              <div class="cl-inline-form cl-inline-form-comment">
+                <input
+                  class="cl-input"
+                  value=${commentDrafts[task.task_id] || ""}
+                  placeholder="Add task comment"
+                  onInput=${(event) => setCommentDrafts((current) => ({ ...current, [task.task_id]: event.target.value }))}
+                />
+                <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => addComment(task)}>Comment</button>
+              </div>
+            `}
+            ${Array.isArray(task.comments) && task.comments.length > 0 && html2`
+              <div class="cl-mini-card-comments">
+                ${task.comments.slice(0, 2).map((comment) => html2`
+                  <div key=${comment.comment_id} class="cl-mini-card-comment">
+                    <strong>${comment.user_email}</strong>: ${comment.comment}
+                  </div>
+                `)}
+              </div>
+            `}
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+  }
+  function NotesSection({ item, notes, queueManager, readOnlyMode }) {
+    const [draft, setDraft] = d2("");
+    const [saving, setSaving] = d2(false);
+    const addNote = async () => {
+      const body = String(draft || "").trim();
+      if (!body)
+        return;
+      setSaving(true);
+      try {
+        const result = await queueManager.addItemNote(item, { body });
+        const ok = String(result?.status || "").toLowerCase() === "created";
+        showToast(ok ? "Note added" : result?.reason || "Could not add note", ok ? "success" : "error");
+        if (ok)
+          setDraft("");
+      } finally {
+        setSaving(false);
+      }
+    };
+    return html2`
+    <div class="cl-section" aria-label="Notes">
+      <div class="cl-section-title">Notes</div>
+      ${!readOnlyMode && html2`
+        <div class="cl-inline-form cl-inline-form-comment">
+          <input class="cl-input" value=${draft} placeholder="Add note on this record" onInput=${(event) => setDraft(event.target.value)} />
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${addNote} disabled=${saving}>${saving ? "Saving…" : "Add note"}</button>
+        </div>
+      `}
+      <div class="cl-card-stack">
+        ${(notes || []).length === 0 && html2`<div class="cl-muted">No notes on this record yet.</div>`}
+        ${(notes || []).slice(0, 5).map((note) => html2`
+          <div key=${note.id} class="cl-mini-card">
+            <div class="cl-mini-card-meta">${note.author || "Operator"}${note.created_at ? ` · ${new Date(note.created_at).toLocaleString([], { hour: "2-digit", minute: "2-digit", month: "short", day: "numeric" })}` : ""}</div>
+            <div class="cl-mini-card-body">${note.body}</div>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+  }
+  function CommentsSection({ item, comments, queueManager, readOnlyMode }) {
+    const [draft, setDraft] = d2("");
+    const [saving, setSaving] = d2(false);
+    const addComment = async () => {
+      const body = String(draft || "").trim();
+      if (!body)
+        return;
+      setSaving(true);
+      try {
+        const result = await queueManager.addItemComment(item, { body });
+        const ok = String(result?.status || "").toLowerCase() === "created";
+        showToast(ok ? "Comment added" : result?.reason || "Could not add comment", ok ? "success" : "error");
+        if (ok)
+          setDraft("");
+      } finally {
+        setSaving(false);
+      }
+    };
+    return html2`
+    <div class="cl-section" aria-label="Comments">
+      <div class="cl-section-title">Comments</div>
+      ${!readOnlyMode && html2`
+        <div class="cl-inline-form cl-inline-form-comment">
+          <input class="cl-input" value=${draft} placeholder="Add discussion on this record" onInput=${(event) => setDraft(event.target.value)} />
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${addComment} disabled=${saving}>${saving ? "Saving…" : "Add comment"}</button>
+        </div>
+      `}
+      <div class="cl-card-stack">
+        ${(comments || []).length === 0 && html2`<div class="cl-muted">No comments on this record yet.</div>`}
+        ${(comments || []).slice(0, 5).map((comment) => html2`
+          <div key=${comment.id} class="cl-mini-card">
+            <div class="cl-mini-card-meta">${comment.author || "Operator"}${comment.created_at ? ` · ${new Date(comment.created_at).toLocaleString([], { hour: "2-digit", minute: "2-digit", month: "short", day: "numeric" })}` : ""}</div>
+            <div class="cl-mini-card-body">${comment.body}</div>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+  }
+  function WorkPanel({ item, queueManager }) {
     const s3 = useStore();
     const actorRole = s3.currentUserRole || queueManager?.currentUserRole || "operator";
-    const humanIndex = itemIndex >= 0 ? itemIndex + 1 : 1;
     const state = normalizeWorkState(item?.state || "received");
     const documentType = normalizeDocumentType(item?.document_type);
     const documentLabel = getDocumentTypeLabel(documentType);
     const isInvoiceDocument = isInvoiceDocumentType(documentType);
     const vendor = item.vendor_name || item.vendor || item.sender || "Unknown vendor";
-    const amountLabel = formatAmount(item.amount, item.currency || "USD");
+    const amountLabel = formatAmount(item.amount, item.currency);
     const invoiceNumber = item.invoice_number || "N/A";
     const dueDate = item.due_date || "N/A";
     const referenceText = invoiceNumber !== "N/A" ? `${documentLabel} #: ${invoiceNumber}` : documentLabel;
-    const taxAmount = item.tax_amount ? formatAmount(item.tax_amount, item.currency || "USD") : "";
-    const discountAmount = item.discount_amount ? formatAmount(item.discount_amount, item.currency || "USD") : "";
+    const taxAmount = item.tax_amount ? formatAmount(item.tax_amount, item.currency) : "";
+    const discountAmount = item.discount_amount ? formatAmount(item.discount_amount, item.currency) : "";
     const metaParts = [amountLabel];
     if (taxAmount)
       metaParts.push(`Tax: ${taxAmount}`);
@@ -59960,6 +61952,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : "";
     const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
     const entityNeedsReview = needsEntityRouting(item, state, documentType);
+    const agentView = getAgentMemoryView(item);
+    const tasks = item?.id ? s3.tasksState.get(item.id) || [] : [];
+    const notes = item?.id ? s3.notesState.get(item.id) || [] : [];
+    const comments = item?.id ? s3.commentsState.get(item.id) || [] : [];
+    const files = item?.id ? s3.filesState.get(item.id) || [] : [];
     const [optimisticState, setOptimisticState] = d2(null);
     const displayState = normalizeWorkState(optimisticState || state);
     const readOnlyMode = !hasOpsAccessRole(actorRole);
@@ -60060,6 +62057,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       await queueManager.refreshQueue();
     });
     const [doPost, postPending] = useAction(async () => {
+      if (!hasErpPostingConnection(item)) {
+        showToast("Connect an ERP before posting this invoice.", "error");
+        return;
+      }
       setOptimisticState("posted_to_erp");
       const result = await queueManager.approveAndPost(item, { override: false });
       const ok = ["posted", "approved", "posted_to_erp"].includes(String(result?.status || "").toLowerCase());
@@ -60176,14 +62177,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (ok)
         await queueManager.refreshQueue();
     });
-    const goPrev = q2(() => store_default.selectItemByOffset(-1), []);
-    const goNext = q2(() => store_default.selectItemByOffset(1), []);
     const openPipeline = q2(() => {
       if (!item?.id)
         return;
       store_default.setSelectedItem(String(item.id));
       focusPipelineItem(pipelineScope, item, "thread");
-      if (!gotoRoute("clearledgr/pipeline")) {
+      if (!gotoRoute("clearledgr/invoices")) {
         showToast("Unable to open invoices", "error");
       }
     }, [gotoRoute, item, pipelineScope]);
@@ -60199,8 +62198,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         showToast("Unable to open vendor record", "error");
       }
     }, [gotoRoute, item]);
+    const openRelatedRecord = q2((relatedItem) => {
+      if (!relatedItem?.id)
+        return;
+      focusPipelineItem(pipelineScope, relatedItem, "related_record");
+      if (!navigateToRecordDetail(gotoRoute, relatedItem.id)) {
+        showToast("Unable to open related record", "error");
+      }
+    }, [gotoRoute, pipelineScope]);
     const basePrimaryAction = pauseReason || item?.finance_effect_review_required ? null : getPrimaryActionConfig(displayState, actorRole, documentType, item);
     const primaryAction = resumeWorkflowEligible && ["preview_erp_post", "retry_erp_post"].includes(basePrimaryAction?.id) ? { id: "resume_workflow", label: "Resume workflow" } : basePrimaryAction;
+    const fallbackNextMove = primaryAction?.label || getDefaultNextMoveLabel(displayState, item, actorRole, documentType);
+    const operatorOverrideCopy = getOperatorOverrideCopy(displayState, item, documentType);
     let primaryHandler = null;
     let primaryPending = false;
     let primaryClass = "";
@@ -60231,18 +62240,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       primaryPending = resumePending;
       primaryClass = "cl-btn-approve";
     }
+    const showReject = canRejectWorkItem(displayState, actorRole, documentType);
+    const showReassign = canReassignApproval(item, displayState, actorRole, documentType);
+    const showEscalate = canEscalateApproval(item, displayState, actorRole, documentType) && primaryAction?.id !== "escalate_approval";
+    const showResolveEntity = entityNeedsReview && primaryAction?.id !== "resolve_entity_route";
+    const showNudge = canNudgeApprover(displayState, actorRole, documentType) && primaryAction?.id !== "nudge_approver";
+    const hasSecondaryActions = showReject || showReassign || showEscalate || showResolveEntity || showNudge;
     return html2`
     <div id="cl-thread-context" class="cl-thread-card cl-work-surface">
-      ${totalItems > 1 && html2`
-        <div class="cl-navigator">
-          <div class="cl-nav-label">Record ${humanIndex} of ${totalItems}</div>
-          <div class="cl-nav-buttons">
-            <button class="cl-nav-btn" onClick=${goPrev} disabled=${itemIndex <= 0} aria-label="Previous">‹</button>
-            <button class="cl-nav-btn" onClick=${goNext} disabled=${itemIndex >= totalItems - 1} aria-label="Next">›</button>
-          </div>
-        </div>
-      `}
-
       <div class="cl-thread-header">
         <div class="cl-thread-header-copy">
           <div class="cl-thread-title">${vendor}</div>
@@ -60262,17 +62267,22 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       `}
 
+      <${AgentViewSection} view=${agentView} item=${item} fallbackNextMove=${fallbackNextMove} />
+
       ${Array.isArray(item?.line_items) && item.line_items.length > 0 && html2`
         <details class="cl-section cl-disclosure">
-          <summary class="cl-section-title">Line items (${item.line_items.length})</summary>
-          <div class="cl-evidence-list">
+          <summary class="cl-disclosure-summary">
+            <span class="cl-section-title">Line items</span>
+            <span class="cl-disclosure-count">${item.line_items.length}</span>
+          </summary>
+          <div class="cl-card-stack">
             ${item.line_items.slice(0, 10).map((li, i3) => html2`
               <div key=${i3} class="cl-evidence-row">
                 <div class="cl-evidence-copy">
                   <div>${li.description || `Line ${i3 + 1}`}</div>
                   ${li.gl_code && html2`<div class="cl-evidence-detail">GL: ${li.gl_code}</div>`}
                 </div>
-                <div class="cl-evidence-status">${formatAmount(li.amount || 0, item.currency || "USD")}</div>
+                <div class="cl-evidence-status">${formatAmount(li.amount || 0, item.currency)}</div>
               </div>
             `)}
           </div>
@@ -60281,6 +62291,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
       ${item?.payment_status && item.payment_status !== "none" && html2`
         <div class="cl-section" aria-label="Payment status">
+          <div class="cl-section-title">Payment status</div>
           <div class="cl-evidence-row">
             <div class="cl-evidence-copy">
               <div>Payment</div>
@@ -60309,76 +62320,78 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </button>
       `}
 
-      <div id="cl-agent-actions" class="cl-thread-actions">
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open in invoices</button>
-        ${canOpenSource && html2`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource}>Open email</button>
-        `}
-        ${(item?.vendor_name || item?.vendor) && html2`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openVendorRecord}>Open vendor record</button>
-        `}
-        ${canRejectWorkItem(displayState, actorRole, documentType) && html2`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
-        `}
-        ${canReassignApproval(item, displayState, actorRole, documentType) && html2`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReassignApproval} disabled=${reassignPending}>
-            ${reassignPending ? "Reassigning…" : "Reassign approver"}
-          </button>
-        `}
-        ${canEscalateApproval(item, displayState, actorRole, documentType) && primaryAction?.id !== "escalate_approval" && html2`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doEscalateApproval} disabled=${escalatePending}>
-            ${escalatePending ? "Escalating…" : "Escalate approval"}
-          </button>
-        `}
-        ${entityNeedsReview && primaryAction?.id !== "resolve_entity_route" && html2`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doResolveEntityRoute} disabled=${resolveEntityPending}>
-            ${resolveEntityPending ? "Resolving…" : "Resolve entity"}
-          </button>
-        `}
-        ${canNudgeApprover(displayState, actorRole, documentType) && primaryAction?.id !== "nudge_approver" && html2`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Nudge approver</button>
-        `}
+      <div class="cl-thread-links" aria-label="Record links">
+        <button class="cl-thread-link-btn" onClick=${openPipeline}>Open in invoices</button>
+        ${canOpenSource && html2`<button class="cl-thread-link-btn" onClick=${openSource}>Open email</button>`}
+        ${(item?.vendor_name || item?.vendor) && html2`<button class="cl-thread-link-btn" onClick=${openVendorRecord}>Open vendor record</button>`}
       </div>
+
+      ${hasSecondaryActions && html2`
+        <details id="cl-agent-actions" class="cl-details cl-operator-overrides">
+          <summary class="cl-operator-overrides-summary">
+            <span class="cl-operator-overrides-title">${operatorOverrideCopy.title}</span>
+            <span class="cl-operator-overrides-count">
+              ${[showReject, showReassign, showEscalate, showResolveEntity, showNudge].filter(Boolean).length}
+            </span>
+          </summary>
+          <div class="cl-operator-overrides-copy">${operatorOverrideCopy.detail}</div>
+          <div class="cl-thread-actions cl-thread-actions-secondary">
+            ${showReject && html2`
+              <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
+            `}
+            ${showReassign && html2`
+              <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReassignApproval} disabled=${reassignPending}>
+                ${reassignPending ? "Reassigning…" : "Reassign approver"}
+              </button>
+            `}
+            ${showEscalate && html2`
+              <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doEscalateApproval} disabled=${escalatePending}>
+                ${escalatePending ? "Escalating…" : "Escalate approval"}
+              </button>
+            `}
+            ${showResolveEntity && html2`
+              <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doResolveEntityRoute} disabled=${resolveEntityPending}>
+                ${resolveEntityPending ? "Resolving…" : "Resolve entity"}
+              </button>
+            `}
+            ${showNudge && html2`
+              <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Nudge approver</button>
+            `}
+          </div>
+        </details>
+      `}
 
       ${(displayState === "needs_approval" || entityNeedsReview) && html2`
         <div class="cl-section" aria-label="Follow-up and routing">
           <div class="cl-section-title">Follow-up and routing</div>
-          <div class="cl-evidence-list">
+          <div class="cl-summary-grid">
             ${displayState === "needs_approval" && html2`
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Approval wait</div>
-                  <div class="cl-evidence-detail">
-                    ${approvalFollowup?.escalation_due ? "Past escalation policy" : approvalFollowup?.sla_breached ? "Past reminder SLA" : "Still within SLA"}
-                  </div>
+              <div class="cl-summary-card">
+                <div class="cl-summary-label">Approval wait</div>
+                <div class="cl-summary-value">${approvalFollowup?.wait_minutes ? `${approvalFollowup.wait_minutes}m` : "—"}</div>
+                <div class="cl-summary-detail">
+                  ${approvalFollowup?.escalation_due ? "Past escalation policy" : approvalFollowup?.sla_breached ? "Past reminder SLA" : "Still within SLA"}
                 </div>
-                <div class="cl-evidence-status">${approvalFollowup?.wait_minutes ? `${approvalFollowup.wait_minutes}m` : "—"}</div>
               </div>
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Pending approvers</div>
-                </div>
-                <div class="cl-evidence-status">
+              <div class="cl-summary-card">
+                <div class="cl-summary-label">Pending approvers</div>
+                <div class="cl-summary-value cl-summary-value-compact">
                   ${Array.isArray(approvalFollowup?.pending_assignees) && approvalFollowup.pending_assignees.length ? approvalFollowup.pending_assignees.join(", ") : "Not recorded"}
                 </div>
               </div>
             `}
             ${isInvoiceDocument && html2`
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Entity route</div>
-                  ${item?.entity_route_reason && html2`<div class="cl-evidence-detail">${item.entity_route_reason}</div>`}
-                </div>
-                <div class="cl-evidence-status">
+              <div class="cl-summary-card">
+                <div class="cl-summary-label">Entity route</div>
+                <div class="cl-summary-value cl-summary-value-compact">
                   ${entityNeedsReview ? "Needs review" : item?.entity_code || item?.entity_name || "Not set"}
                 </div>
+                ${item?.entity_route_reason && html2`<div class="cl-summary-detail">${item.entity_route_reason}</div>`}
               </div>
               ${entityCandidates.length > 0 && html2`
-                <div class="cl-evidence-row">
-                  <div class="cl-evidence-copy">
-                    <div>Entity candidates</div>
-                  </div>
-                  <div class="cl-evidence-status">
+                <div class="cl-summary-card">
+                  <div class="cl-summary-label">Entity candidates</div>
+                  <div class="cl-summary-value cl-summary-value-compact">
                     ${entityCandidates.slice(0, 3).map((candidate) => candidate?.label || candidate?.entity_name || candidate?.entity_code).filter(Boolean).join(", ")}
                   </div>
                 </div>
@@ -60400,31 +62413,25 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <div class="cl-section" aria-label="Credits and payments">
           <div class="cl-section-title">Credits and payments</div>
           ${financeEffectNotice && html2`<div class="cl-review-copy">${financeEffectNotice}</div>`}
-          <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="cl-card-stack">
             ${Object.keys(financeEffectSummary).length > 0 && html2`
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Original amount</div>
+              <div class="cl-summary-grid">
+                <div class="cl-summary-card">
+                  <div class="cl-summary-label">Original amount</div>
+                  <div class="cl-summary-value">${formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency)}</div>
                 </div>
-                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency || "USD")}</div>
-              </div>
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Credits applied</div>
+                <div class="cl-summary-card">
+                  <div class="cl-summary-label">Credits applied</div>
+                  <div class="cl-summary-value">${formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency)}</div>
                 </div>
-                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency || "USD")}</div>
-              </div>
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Net cash applied</div>
+                <div class="cl-summary-card">
+                  <div class="cl-summary-label">Net cash applied</div>
+                  <div class="cl-summary-value">${formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency)}</div>
                 </div>
-                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency || "USD")}</div>
-              </div>
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Remaining balance</div>
+                <div class="cl-summary-card">
+                  <div class="cl-summary-label">Remaining balance</div>
+                  <div class="cl-summary-value">${formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency)}</div>
                 </div>
-                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency || "USD")}</div>
               </div>
             `}
             ${financeEffectBlockers.map((blocker) => html2`
@@ -60436,15 +62443,59 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         </div>
       `}
+      <${RelatedRecordsSection}
+        item=${item}
+        contextPayload=${contextPayload}
+        onOpenRecord=${openRelatedRecord}
+        onOpenVendor=${openVendorRecord}
+      />
+      <${TaskSection}
+        item=${item}
+        tasks=${tasks}
+        queueManager=${queueManager}
+        readOnlyMode=${readOnlyMode}
+      />
+      <${CommentsSection}
+        item=${item}
+        comments=${comments}
+        queueManager=${queueManager}
+        readOnlyMode=${readOnlyMode}
+      />
+      <${NotesSection}
+        item=${item}
+        notes=${notes}
+        queueManager=${queueManager}
+        readOnlyMode=${readOnlyMode}
+      />
+      <${FilesSection}
+        item=${item}
+        contextPayload=${contextPayload}
+        files=${files}
+        queueManager=${queueManager}
+        readOnlyMode=${readOnlyMode}
+      />
+      <${RecordEditorSection}
+        item=${item}
+        queueManager=${queueManager}
+        readOnlyMode=${readOnlyMode}
+      />
       <${EvidenceChecklist} entries=${evidence} />
       <${AuditDisclosure} events=${auditEvents} loading=${Boolean(s3.auditState.loading && s3.auditState.itemId === item.id)} />
       <${ActionDialog} ...${dialog} />
     </div>
   `;
   }
-  function EmptyState({ queueCount }) {
+  function EmptyState({ queueCount, queueManager }) {
+    const actorRole = store_default.currentUserRole || queueManager?.currentUserRole || "operator";
+    const canMutate = hasOpsAccessRole(actorRole);
+    const [search, setSearch] = d2("");
+    const [searching, setSearching] = d2(false);
+    const [hasSearched, setHasSearched] = d2(false);
+    const [results, setResults] = d2([]);
+    const [recovering, setRecovering] = d2(false);
+    const [linkingId, setLinkingId] = d2("");
     const openPipeline = q2(() => {
-      if (!navigateInboxRoute("clearledgr/pipeline", store_default.sdk)) {
+      if (!navigateInboxRoute("clearledgr/invoices", store_default.sdk)) {
         showToast("Unable to open invoices", "error");
       }
     }, []);
@@ -60454,20 +62505,136 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
     }, []);
     const threadSelected = Boolean(store_default.currentThreadId);
+    const threadId = String(store_default.currentThreadId || "").trim();
+    const searchCandidates = q2(async () => {
+      const query = String(search || "").trim();
+      if (!query || !queueManager?.searchRecordCandidates) {
+        setHasSearched(false);
+        setResults([]);
+        return;
+      }
+      setHasSearched(true);
+      setSearching(true);
+      try {
+        const items = await queueManager.searchRecordCandidates(query, { limit: 8 });
+        setResults(Array.isArray(items) ? items : []);
+      } finally {
+        setSearching(false);
+      }
+    }, [queueManager, search]);
+    const createFromThread = q2(async () => {
+      if (!threadId || !queueManager?.recoverCurrentThread)
+        return;
+      setRecovering(true);
+      try {
+        const result = await queueManager.recoverCurrentThread(threadId);
+        if (result?.item?.id) {
+          store_default.setSelectedItem(result.item.id);
+          showToast("Finance record created from this email.", "success");
+          return;
+        }
+        showToast("Clearledgr could not create a finance record from this email yet.", "warning");
+      } finally {
+        setRecovering(false);
+      }
+    }, [queueManager, threadId]);
+    const linkThreadToItem = q2(async (candidate) => {
+      if (!threadId || !candidate?.id || !queueManager?.linkCurrentThreadToItem)
+        return;
+      setLinkingId(String(candidate.id));
+      try {
+        const result = await queueManager.linkCurrentThreadToItem(candidate, { thread_id: threadId });
+        const linkedItem = result?.ap_item || candidate;
+        if (linkedItem?.id) {
+          store_default.setSelectedItem(linkedItem.id);
+          showToast(`Linked this thread to ${linkedItem.vendor_name || linkedItem.invoice_number || "the selected record"}.`, "success");
+          return;
+        }
+        showToast(result?.reason || "Could not link this thread to the selected record.", "error");
+      } finally {
+        setLinkingId("");
+      }
+    }, [queueManager, threadId]);
     if (threadSelected) {
-      return html2`<div class="cl-section"><div class="cl-empty">
-      <p>No record is linked to this email yet.</p>
-      <p class="cl-muted">Open the queue to work records Clearledgr has already found.</p>
-      <div class="cl-thread-actions">
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
+      if (!canMutate) {
+        return html2`<div class="cl-section"><div class="cl-empty">
+        <p>No finance record is linked to this email yet.</p>
+        <p class="cl-muted">Open the queue to review records Clearledgr already found. Only operators can create or link records from Gmail.</p>
+        <div class="cl-thread-actions cl-empty-actions">
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
+        </div>
+      </div></div>`;
+      }
+      return html2`
+      <div class="cl-section">
+        <div class="cl-empty cl-empty-stretch">
+        <p>No finance record is linked to this email yet.</p>
+        <p class="cl-muted">Create one from this email or link this email to an existing record.</p>
+        <div class="cl-thread-actions cl-empty-actions">
+            <button class="cl-btn cl-primary-cta cl-empty-primary" onClick=${createFromThread} disabled=${recovering}>
+              ${recovering ? "Creating…" : "Create record from email"}
+            </button>
+            <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
+          </div>
+          <div class="cl-inline-form cl-inline-form-comment cl-empty-search">
+            <input
+              class="cl-input"
+              value=${search}
+              placeholder="Search existing records by vendor, invoice, or email"
+              onInput=${(event) => {
+        setSearch(event.target.value);
+        setHasSearched(false);
+      }}
+              onKeyDown=${(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          searchCandidates();
+        }
+      }}
+            />
+            <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${searchCandidates} disabled=${searching}>
+              ${searching ? "Searching…" : "Find record"}
+            </button>
+          </div>
+          ${searching && html2`<div class="cl-muted">Looking for matching finance records…</div>`}
+          ${!searching && hasSearched && search.trim() && results.length === 0 && html2`
+            <div class="cl-muted">No matching finance records found yet.</div>
+          `}
+          ${results.length > 0 && html2`
+            <div class="cl-card-stack cl-empty-results">
+              ${results.map((candidate) => html2`
+                <div key=${candidate.id} class="cl-mini-card">
+                  <div class="cl-mini-card-main">
+                    <div class="cl-mini-card-copy">
+                      <div class="cl-mini-card-title">${candidate.vendor_name || "Unknown vendor"}</div>
+                      <div class="cl-mini-card-meta">
+                        ${candidate.invoice_number || "No invoice #"} · ${formatAmount(candidate.amount, candidate.currency)}
+                      </div>
+                      <div class="cl-mini-card-meta">
+                        ${String(candidate.state || "received").replace(/_/g, " ")}
+                      </div>
+                    </div>
+                    <button
+                      class="cl-btn cl-btn-secondary cl-btn-small"
+                      onClick=${() => linkThreadToItem(candidate)}
+                      disabled=${linkingId === String(candidate.id)}
+                    >
+                      ${linkingId === String(candidate.id) ? "Linking…" : "Link email"}
+                    </button>
+                  </div>
+                </div>
+              `)}
+            </div>
+          `}
+        </div>
       </div>
-    </div></div>`;
+    `;
     }
     if (queueCount > 0) {
       return html2`<div class="cl-section"><div class="cl-empty">
       <p>${queueCount} record${queueCount !== 1 ? "s are" : " is"} ready in the queue.</p>
-      <p class="cl-muted">Open an email to work one record, or open Pipeline to see the full queue.</p>
-      <div class="cl-thread-actions">
+      <p class="cl-muted">Open an email to work one record, or open Invoices to see the full queue.</p>
+      <div class="cl-thread-actions cl-empty-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
       </div>
@@ -60475,8 +62642,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     return html2`<div class="cl-section"><div class="cl-empty">
     <p>Nothing is waiting right now.</p>
-    <p class="cl-muted">Pipeline is still the control plane. Home is available if you want the lighter overview.</p>
-    <div class="cl-thread-actions">
+    <p class="cl-muted">Invoices is your control plane. Home is available if you want the lighter overview.</p>
+    <div class="cl-thread-actions cl-empty-actions">
       <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
       <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
     </div>
@@ -60485,13 +62652,39 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function SidebarApp({ queueManager }) {
     const s3 = useStore();
     const item = s3.getPrimaryItem();
-    const itemIndex = s3.getPrimaryItemIndex();
     const logoUrl = getAssetUrl(LOGO_PATH);
     const queueCount = s3.queueState.length;
+    const currentIndex = s3.getPrimaryItemIndex();
     const authRequired = s3.scanStatus?.state === "auth_required";
+    const hasQueueNavigation = Boolean(item && queueCount > 1 && currentIndex >= 0);
+    const pipelineScope = {
+      orgId: queueManager?.runtimeConfig?.organizationId || "default",
+      userEmail: queueManager?.runtimeConfig?.userEmail || ""
+    };
+    const openPipeline = q2(() => navigateInboxRoute("clearledgr/invoices", store_default.sdk, pipelineScope), [pipelineScope.orgId, pipelineScope.userEmail]);
     y2(() => {
       if (item?.id && queueManager?.fetchItemContext) {
         queueManager.fetchItemContext(item.id).catch(() => {});
+      }
+    }, [item?.id, queueManager]);
+    y2(() => {
+      if (item?.id && queueManager?.fetchItemTasks) {
+        queueManager.fetchItemTasks(item.id).catch(() => {});
+      }
+    }, [item?.id, queueManager]);
+    y2(() => {
+      if (item?.id && queueManager?.fetchItemNotes) {
+        queueManager.fetchItemNotes(item.id).catch(() => {});
+      }
+    }, [item?.id, queueManager]);
+    y2(() => {
+      if (item?.id && queueManager?.fetchItemComments) {
+        queueManager.fetchItemComments(item.id).catch(() => {});
+      }
+    }, [item?.id, queueManager]);
+    y2(() => {
+      if (item?.id && queueManager?.fetchItemFiles) {
+        queueManager.fetchItemFiles(item.id).catch(() => {});
       }
     }, [item?.id, queueManager]);
     y2(() => {
@@ -60522,7 +62715,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           Clearledgr AP
         </div>
         <div class="cl-header-right">
-          ${queueCount > 0 && html2`<span class="cl-header-badge">${queueCount} record${queueCount !== 1 ? "s" : ""}</span>`}
+          ${hasQueueNavigation ? html2`
+                <div class="cl-header-queue" aria-label="Queue navigation">
+                  <button
+                    class="cl-header-nav-btn"
+                    aria-label="Previous record"
+                    onClick=${() => store_default.selectItemByOffset(-1)}
+                    disabled=${currentIndex <= 0}
+                  >‹</button>
+                  <button
+                    class="cl-header-count"
+                    onClick=${openPipeline}
+                    title="Open invoices"
+                  >${currentIndex + 1} of ${queueCount}</button>
+                  <button
+                    class="cl-header-nav-btn"
+                    aria-label="Next record"
+                    onClick=${() => store_default.selectItemByOffset(1)}
+                    disabled=${currentIndex >= queueCount - 1}
+                  >›</button>
+                </div>
+              ` : queueCount > 0 && html2`
+                <button class="cl-header-count" onClick=${openPipeline} title="Open invoices">
+                  ${queueCount} record${queueCount !== 1 ? "s" : ""}
+                </button>
+              `}
         </div>
       </div>
 
@@ -60539,58 +62756,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       `}
 
       <${ErrorBoundary} fallback="Could not load record details">
-        ${item ? html2`<${WorkPanel} item=${item} queueManager=${queueManager} itemIndex=${itemIndex} totalItems=${queueCount} />` : html2`<${EmptyState} queueCount=${queueCount} />`}
+        ${item ? html2`<${WorkPanel} item=${item} queueManager=${queueManager} />` : html2`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
       <//>
     </div>
   `;
-  }
-
-  // src/utils/record-route.js
-  var ACTIVE_RECORD_ID_STORAGE_KEY = "clearledgr_active_ap_item_id";
-  function safeDecode2(value) {
-    const text = String(value || "").trim();
-    if (!text)
-      return "";
-    try {
-      return decodeURIComponent(text);
-    } catch {
-      return text;
-    }
-  }
-  function normalizeRecordRouteId(value) {
-    return safeDecode2(value).trim();
-  }
-  function rememberRecordRouteId(recordId) {
-    const normalized = normalizeRecordRouteId(recordId);
-    if (!normalized)
-      return "";
-    writeLocalStorage(ACTIVE_RECORD_ID_STORAGE_KEY, normalized);
-    return normalized;
-  }
-  function navigateToRecordDetail(navigate, recordId) {
-    const normalized = rememberRecordRouteId(recordId);
-    if (!normalized || typeof navigate !== "function")
-      return false;
-    navigate("clearledgr/invoice/:id", { id: normalized });
-    return true;
-  }
-  function resolveRecordRouteId(params = {}, hash = "") {
-    const paramId = normalizeRecordRouteId(params?.id);
-    if (paramId)
-      return paramId;
-    const hashText = String(hash || "");
-    const hashMatch = hashText.match(/clearledgr\/invoice\/([^?]+)/);
-    const hashId = normalizeRecordRouteId(hashMatch?.[1]);
-    if (hashId)
-      return hashId;
-    return normalizeRecordRouteId(readLocalStorage(ACTIVE_RECORD_ID_STORAGE_KEY));
   }
 
   // src/routes/route-registry.js
   var NAV_PREFS_STORAGE_KEY = "clearledgr_nav_preferences_v1";
   var ROUTES = [
     {
-      id: "clearledgr/pipeline",
+      id: "clearledgr/invoices",
       title: "Invoices",
       subtitle: "All invoices and finance documents across states.",
       icon: "pipeline",
@@ -60598,6 +62774,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       defaultPinned: true,
       canHide: false,
       menuGroup: "primary",
+      hideTopbar: true,
       viewCapability: "view_pipeline"
     },
     {
@@ -60627,7 +62804,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       id: "clearledgr/upcoming",
       title: "Upcoming",
       subtitle: "See what needs attention next.",
-      icon: "activity",
+      icon: "upcoming",
       navOrder: 25,
       defaultPinned: false,
       canHide: true,
@@ -60672,7 +62849,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       id: "clearledgr/templates",
       title: "Templates",
       subtitle: "Reusable email drafts.",
-      icon: "activity",
+      icon: "templates",
       navOrder: 55,
       defaultPinned: false,
       canHide: true,
@@ -60721,14 +62898,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       navOrder: 110,
       defaultPinned: false,
       canHide: true,
-      menuGroup: "secondary",
+      menuGroup: "hidden",
       viewCapability: "view_system_status"
     },
     {
       id: "clearledgr/reports",
       title: "Reports",
       subtitle: "A quick view of volume, spend, and risk.",
-      icon: "activity",
+      icon: "reports",
       navOrder: 115,
       defaultPinned: false,
       canHide: true,
@@ -60736,7 +62913,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       viewCapability: "view_reports"
     }
   ];
-  var DEFAULT_ROUTE = "clearledgr/pipeline";
+  var DEFAULT_ROUTE = "clearledgr/invoices";
   function resolveCapabilities(options = {}) {
     if (options?.capabilities && typeof options.capabilities === "object") {
       return options.capabilities;
@@ -60808,13 +62985,76 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function getMenuNavRoutes(preferences = {}, options = {}) {
     const groupWeight = { primary: 0, secondary: 1 };
-    return getNavEligibleRoutes(options).slice().sort((left, right) => {
+    return getNavEligibleRoutes(options).filter((route) => route.menuGroup !== "hidden").slice().sort((left, right) => {
       const leftWeight = groupWeight[left.menuGroup] ?? 9;
       const rightWeight = groupWeight[right.menuGroup] ?? 9;
       if (leftWeight !== rightWeight)
         return leftWeight - rightWeight;
       return Number(left.navOrder || 0) - Number(right.navOrder || 0);
     });
+  }
+
+  // src/utils/capabilities.js
+  function normalizeRole(role) {
+    return String(role || "").trim().toLowerCase();
+  }
+  function isCapabilityMap(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+  function getFallbackCapabilities(role) {
+    const normalizedRole = normalizeRole(role);
+    const isAdmin = ["owner", "admin", "api"].includes(normalizedRole);
+    const isOps = ["owner", "admin", "operator", "api"].includes(normalizedRole);
+    return {
+      view_home: true,
+      view_pipeline: true,
+      view_review: true,
+      view_upcoming: true,
+      view_activity: true,
+      view_vendors: true,
+      view_templates: true,
+      view_connections: true,
+      view_rules: true,
+      view_settings: true,
+      view_team: true,
+      view_company: true,
+      view_plan: true,
+      view_reconciliation: true,
+      view_system_status: true,
+      view_reports: true,
+      view_ops_workspace: isOps || !normalizedRole,
+      operate_records: isOps || !normalizedRole,
+      manage_connections: isAdmin,
+      manage_rules: isAdmin,
+      manage_settings: isAdmin,
+      manage_team: isAdmin,
+      manage_company: isAdmin,
+      manage_plan: isAdmin,
+      manage_admin_pages: isAdmin
+    };
+  }
+  function getCapabilities(bootstrap) {
+    const role = bootstrap?.current_user?.role;
+    const fallback = getFallbackCapabilities(role);
+    const explicit = isCapabilityMap(bootstrap?.capabilities) ? bootstrap.capabilities : isCapabilityMap(bootstrap?.current_user?.capabilities) ? bootstrap.current_user.capabilities : {};
+    return {
+      ...fallback,
+      ...explicit
+    };
+  }
+  function hasCapability(source, capability) {
+    if (!capability)
+      return false;
+    const capabilities = isCapabilityMap(source?.capabilities) || isCapabilityMap(source?.current_user) ? getCapabilities(source) : isCapabilityMap(source) ? source : {};
+    return Boolean(capabilities?.[capability]);
+  }
+  function hasOpsCapability(bootstrap) {
+    const capabilities = getCapabilities(bootstrap);
+    return Boolean(capabilities.operate_records || capabilities.view_ops_workspace);
+  }
+  function hasAdminCapability(bootstrap) {
+    const capabilities = getCapabilities(bootstrap);
+    return Boolean(capabilities.manage_admin_pages);
   }
 
   // src/routes/workspace-shell-api.js
@@ -60860,8 +63100,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const organization = bootstrapPayload.organization || {};
       const health = bootstrapPayload.health || {};
       const subscription = bootstrapPayload.subscription || {};
-      const currentUser = bootstrapPayload.current_user || {};
-      const capabilities = bootstrapPayload.capabilities || currentUser.capabilities || {};
+      const currentUserPayload = bootstrapPayload.current_user || {};
+      const fallbackRole = String(currentUserPayload.role || queueManager?.currentUserRole || "").trim().toLowerCase();
+      const currentUser = {
+        ...currentUserPayload,
+        role: currentUserPayload.role || fallbackRole || undefined,
+        email: currentUserPayload.email || queueManager?.runtimeConfig?.userEmail || ""
+      };
+      const explicitCapabilities = bootstrapPayload.capabilities || currentUser.capabilities || {};
+      const capabilities = Object.keys(explicitCapabilities).length > 0 ? explicitCapabilities : getFallbackCapabilities(fallbackRole);
       return {
         dashboard,
         integrations,
@@ -60949,21 +63196,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
     box-sizing: border-box;
     font-family: var(--font);
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.5;
     color: var(--ink);
-    padding: 28px 32px 40px;
+    padding: 14px 20px 28px;
     width: 100%;
-    max-width: 1240px;
+    max-width: none;
+    min-width: 0;
+    min-height: 100%;
     -webkit-font-smoothing: antialiased;
   }
 
   .cl-route *, .cl-route *::before, .cl-route *::after { box-sizing: border-box; }
 
   /* Topbar */
-  .cl-route .topbar { margin-bottom: 28px; }
-  .cl-route .topbar h2 { margin: 0; font-family: var(--font-display); font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
-  .cl-route .topbar p { margin: 6px 0 0; color: var(--ink-muted); font-size: 14px; }
+  .cl-route .topbar { margin-bottom: 14px; }
+  .cl-route .topbar h2 { margin: 0; font-family: var(--font-display); font-size: 23px; font-weight: 700; letter-spacing: -0.02em; }
+  .cl-route .topbar p { margin: 3px 0 0; color: var(--ink-secondary); font-size: 13px; max-width: 880px; }
 
   /* Form elements */
   .cl-route label { font-size: 13px; font-weight: 500; color: var(--ink-secondary); margin-bottom: -8px; }
@@ -60976,6 +63225,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
   }
   .cl-route input::placeholder { color: var(--ink-muted); }
+  .cl-route input[type="checkbox"],
+  .cl-route input[type="radio"] {
+    width: 16px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0;
+    margin: 0;
+    border: 1px solid var(--border-hover);
+    border-radius: 4px;
+    background: var(--surface);
+    box-shadow: none;
+    accent-color: var(--accent);
+    flex: 0 0 auto;
+  }
+  .cl-route input[type="radio"] {
+    border-radius: 999px;
+  }
+  .cl-route input[type="checkbox"]:focus,
+  .cl-route input[type="radio"]:focus {
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
   .cl-route textarea { min-height: 160px; resize: vertical; font-family: var(--font-mono); font-size: 13px; }
 
   /* Buttons */
@@ -60986,7 +63256,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     background: var(--accent); color: var(--navy, #0A1628);
     transition: background var(--transition), transform var(--transition), box-shadow var(--transition);
   }
-  .cl-route button:hover { background: var(--accent-hover); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+  .cl-route button:hover { background: var(--accent-hover); transform: none; box-shadow: none; }
   .cl-route button:active { transform: translateY(0); }
   .cl-route button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .cl-route button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
@@ -61055,12 +63325,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 16px;
+    gap: 14px;
     flex-wrap: wrap;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
   }
   .cl-route .panel-head.compact {
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
   .cl-route .segmented-actions {
     display: flex;
@@ -61096,19 +63366,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   /* Panels */
   .cl-route .panel {
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
-    padding: 24px; margin-bottom: 20px; box-shadow: var(--shadow-sm);
+    padding: 16px; margin-bottom: 14px; box-shadow: none;
   }
-  .cl-route .panel h3 { margin: 0 0 12px; font-family: var(--font-display); font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
-  .cl-route .muted { font-size: 13px; color: var(--ink-muted); line-height: 1.5; }
+  .cl-route .panel h3 { margin: 0 0 8px; font-family: var(--font-display); font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  .cl-route .muted { font-size: 13px; color: var(--ink-secondary); line-height: 1.5; }
 
   /* KPI cards */
-  .cl-route .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+  .cl-route .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
   .cl-route .kpi-card {
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
-    padding: 20px; box-shadow: var(--shadow-sm);
+    padding: 14px 16px; box-shadow: none;
   }
-  .cl-route .kpi-card strong { display: block; font-family: var(--font-mono); font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1.1; margin-bottom: 4px; }
-  .cl-route .kpi-card span { font-size: 13px; color: var(--ink-muted); font-weight: 500; }
+  .cl-route .kpi-card strong { display: block; font-family: var(--font-mono); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1.1; margin-bottom: 3px; }
+  .cl-route .kpi-card span { font-size: 12px; color: var(--ink-muted); font-weight: 500; }
   .cl-route .kpi-warning strong { color: var(--amber); }
   .cl-route .kpi-success strong { color: var(--green); }
   .cl-route .kpi-danger strong { color: var(--red); }
@@ -61172,8 +63442,95 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     text-align: left; padding: 10px 12px; font-family: var(--font-display); font-size: 11px; font-weight: 600;
     color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 2px solid var(--border);
   }
-  .cl-route .table td { text-align: left; padding: 12px; font-size: 14px; border-bottom: 1px solid var(--border); }
+  .cl-route .table td { text-align: left; padding: 10px 12px; font-size: 13px; border-bottom: 1px solid var(--border); vertical-align: top; }
   .cl-route .table tr:hover td { background: var(--bg); }
+  .cl-route .pipeline-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #FCFDFE;
+  }
+  .cl-route .pipeline-table-meta {
+    background: #FCFDFE;
+  }
+  .cl-route .pipeline-filter-grid {
+    width: 100%;
+  }
+  .cl-route .pipeline-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cl-route .pipeline-hero-panel,
+  .cl-route .pipeline-view-panel,
+  .cl-route .pipeline-filter-panel,
+  .cl-route .pipeline-table-panel {
+    margin-bottom: 0;
+  }
+  .cl-route .pipeline-hero-head,
+  .cl-route .pipeline-view-head,
+  .cl-route .pipeline-focus-row,
+  .cl-route .pipeline-filter-footer,
+  .cl-route .pipeline-table-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .cl-route .pipeline-hero-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cl-route .pipeline-metric-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .cl-route .pipeline-focus-row,
+  .cl-route .pipeline-saved-input-row,
+  .cl-route .pipeline-filter-footer {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .cl-route .pipeline-focus-actions,
+  .cl-route .pipeline-chip-strip,
+  .cl-route .pipeline-saved-input-row,
+  .cl-route .pipeline-filter-aux,
+  .cl-route .pipeline-filter-actions,
+  .cl-route .pipeline-table-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .cl-route .pipeline-view-band {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .cl-route .pipeline-view-label {
+    padding-top: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+  .cl-route .pipeline-chip-strip {
+    flex: 1 1 560px;
+  }
+  .cl-route .pipeline-record-cell strong {
+    line-height: 1.25;
+  }
+  .cl-route .pipeline-record-cell .muted,
+  .cl-route .pipeline-signals-cell .muted {
+    line-height: 1.42;
+  }
 
   /* Readiness */
   .cl-route .readiness-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px; }
@@ -61185,69 +63542,196 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   .cl-route .mt-0 { margin-top: 0; }
   .cl-route .mt-10 { margin-top: 12px; }
   .cl-route .home-hero {
-    display: flex;
-    justify-content: center;
-    margin: 8px 0 20px;
+    display: block;
+    margin: 0 0 14px;
   }
   .cl-route .home-hero-copy {
-    max-width: 720px;
-    text-align: center;
+    max-width: none;
+    text-align: left;
+  }
+  .cl-route .home-header-shell {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .cl-route .home-header-copy {
+    min-width: 0;
+    flex: 1 1 420px;
+  }
+  .cl-route .home-header-copy h2 {
+    margin: 0;
+    font-size: 28px;
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+  }
+  .cl-route .home-header-copy p {
+    margin: 8px 0 0;
+    max-width: 760px;
+    color: var(--ink-secondary);
   }
   .cl-route .home-eyebrow {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin: 0 0 12px;
+    margin: 0 0 10px;
     color: var(--ink-muted);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
   .cl-route .home-eyebrow::before {
     content: '';
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     border-radius: 999px;
     border: 1.5px solid var(--border-hover);
     background: var(--surface);
+  }
+  .cl-route .home-status-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .cl-route .home-status-pill {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 12px;
+    color: var(--ink-secondary);
+  }
+  .cl-route .home-status-pill strong {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: var(--ink);
+  }
+  .cl-route .home-status-pill span {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+  .cl-route .home-status-pill.success {
+    border-color: #A7F3D0;
+    background: #ECFDF5;
+  }
+  .cl-route .home-status-pill.success span { color: #166534; }
+  .cl-route .home-status-pill.info {
+    border-color: #BFDBFE;
+    background: #EFF6FF;
+  }
+  .cl-route .home-status-pill.info span { color: #1D4ED8; }
+  .cl-route .home-status-pill.warning {
+    border-color: #FCD34D;
+    background: #FFFBEB;
+  }
+  .cl-route .home-status-pill.warning span { color: #92400E; }
+  .cl-route .home-utility-rail {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+  .cl-route .home-utility-strip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+  }
+  .cl-route .home-utility-icon-button {
+    min-width: 32px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 999px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--ink-secondary);
+    box-shadow: none;
+  }
+  .cl-route .home-utility-icon-button:hover {
+    background: #F1F5F9;
+    border-color: transparent;
+  }
+  .cl-route .home-utility-icon {
+    width: 18px;
+    height: 18px;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 18px 18px;
+    opacity: 0.88;
+  }
+  .cl-route .home-utility-primary {
+    min-height: 36px;
+    padding: 0 14px;
+    border-radius: 999px;
+    border-color: #B7E9D0;
+    background: #DFF6EB;
+    color: #0F5132;
+    box-shadow: none;
+  }
+  .cl-route .home-utility-primary:hover {
+    background: #D6F2E5;
+    border-color: #A7DFC6;
   }
   .cl-route .home-banner {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: 14px;
     flex-wrap: wrap;
-    padding: 16px 18px;
-    margin-bottom: 28px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--surface);
-    box-shadow: var(--shadow-sm);
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    border: 1px solid #C7D2FE;
+    border-radius: 10px;
+    background: #F8FAFF;
+    box-shadow: none;
   }
   .cl-route .home-banner.warning {
     border-color: #FCD34D;
     background: #FFFBEB;
   }
+  .cl-route .home-mini-chip-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
   .cl-route .home-quick-row {
     display: grid;
     grid-auto-flow: column;
-    grid-auto-columns: minmax(148px, 172px);
+    grid-auto-columns: minmax(164px, 1fr);
     gap: 10px;
     overflow-x: auto;
-    padding-bottom: 6px;
-    margin-bottom: 22px;
-    scrollbar-color: rgba(148, 163, 184, 0.85) transparent;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
   }
   .cl-route .home-quick-card {
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    gap: 6px;
-    min-height: 72px;
+    gap: 8px;
+    min-height: 76px;
     padding: 11px 12px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: 10px;
     background: var(--surface);
     color: var(--ink);
     cursor: pointer;
@@ -61258,7 +63742,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     background: var(--surface);
     color: var(--ink);
     border-color: var(--border-hover);
-    box-shadow: var(--shadow-sm);
+    box-shadow: none;
     transform: translateY(-1px);
   }
   .cl-route .home-quick-card:focus-visible {
@@ -61267,16 +63751,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     outline: 2px solid rgba(15, 23, 42, 0.12);
     outline-offset: 2px;
     border-color: var(--border-hover);
-    box-shadow: var(--shadow-sm);
+    box-shadow: none;
   }
   .cl-route .home-quick-card:active {
     background: var(--surface);
     color: var(--ink);
   }
   .cl-route .home-quick-meta {
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--ink-muted);
   }
@@ -61284,33 +63768,98 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     display: block;
     font-size: 13px;
     line-height: 1.2;
-    margin-top: 6px;
+    margin-top: 2px;
   }
   .cl-route .home-quick-detail {
     display: -webkit-box;
     overflow: hidden;
-    margin-top: 3px;
-    font-size: 11px;
-    line-height: 1.35;
-    -webkit-line-clamp: 2;
+    margin-top: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
   }
   .cl-route .home-quick-card .muted {
     color: var(--ink-secondary);
   }
+  .cl-route .home-main-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.42fr) minmax(336px, 0.78fr);
+    gap: 16px;
+    align-items: start;
+    margin-bottom: 16px;
+  }
+  .cl-route .home-primary-panel {
+    min-height: 100%;
+  }
+  .cl-route .home-secondary-panel {
+    min-height: 100%;
+  }
+  .cl-route .home-list-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cl-route .home-event-row {
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
   .cl-route .home-panel-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 24px;
+    gap: 16px;
     align-items: start;
   }
   .cl-route .home-panel-span {
-    grid-column: 1 / -1;
+    grid-column: auto;
   }
-  .cl-route .home-tools-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 18px;
+  .cl-route .home-surface-panel {
+    border-radius: 10px;
+  }
+  .cl-route .home-surface-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .cl-route .home-section-label {
+    margin-bottom: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+  .cl-route .home-empty-state {
+    min-height: 136px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    text-align: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: linear-gradient(180deg, #FFFFFF 0%, #FBFCFE 100%);
+    color: var(--ink-secondary);
+    font-size: 13px;
+    padding: 20px;
+  }
+  .cl-route .home-empty-glyph {
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%);
+    border: 1px solid var(--border);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+  }
+  .cl-route .home-empty-copy {
+    max-width: 320px;
+    line-height: 1.55;
   }
   .cl-route .templates-toolbar {
     display: flex;
@@ -61329,20 +63878,29 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   .cl-route .templates-shell {
     display: grid;
     grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
-    gap: 20px;
+    gap: 14px;
     align-items: start;
   }
-  .cl-route .templates-sidebar,
-  .cl-route .templates-main {
+  .cl-route .templates-sidebar {
     display: flex;
     flex-direction: column;
     gap: 18px;
+  }
+  .cl-route .templates-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1.12fr) minmax(320px, 0.88fr);
+    gap: 14px;
+    align-items: start;
   }
   .cl-route .templates-library-card,
   .cl-route .templates-editor-card,
   .cl-route .templates-preview-card,
   .cl-route .templates-fields-card {
     padding: 22px;
+  }
+  .cl-route .templates-preview-card {
+    position: sticky;
+    top: 12px;
   }
   .cl-route .templates-section-head {
     display: flex;
@@ -61578,6 +64136,273 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     gap: 20px;
     align-items: start;
   }
+  .cl-route .billing-hero {
+    padding: 18px 20px;
+  }
+  .cl-route .billing-eyebrow {
+    margin: 0 0 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+  .cl-route .billing-hero-meta {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+  }
+  .cl-route .billing-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.38fr) minmax(340px, 0.72fr);
+    gap: 20px;
+    align-items: start;
+  }
+  .cl-route .billing-main-stack,
+  .cl-route .billing-side-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .cl-route .billing-side-stack {
+    position: sticky;
+    top: 12px;
+  }
+  .cl-route .billing-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .cl-route .billing-summary-card {
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: linear-gradient(180deg, #FFFFFF 0%, #FBFCFE 100%);
+  }
+  .cl-route .billing-summary-card strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+  .cl-route .billing-summary-card span {
+    display: block;
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+  .cl-route .billing-summary-card small {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--ink-secondary);
+    line-height: 1.5;
+  }
+  .cl-route .billing-usage-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .cl-route .billing-usage-row {
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+  .cl-route .billing-usage-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .cl-route .billing-usage-header strong {
+    font-size: 14px;
+  }
+  .cl-route .billing-usage-header span {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-secondary);
+  }
+  .cl-route .billing-usage-bar {
+    width: 100%;
+    height: 8px;
+    border-radius: 999px;
+    background: #EEF2F7;
+    overflow: hidden;
+  }
+  .cl-route .billing-usage-fill {
+    height: 100%;
+    min-width: 8px;
+    border-radius: inherit;
+    background: #93C5FD;
+  }
+  .cl-route .billing-usage-fill.success { background: #34D399; }
+  .cl-route .billing-usage-fill.warning { background: #FBBF24; }
+  .cl-route .billing-usage-fill.danger { background: #F87171; }
+  .cl-route .billing-usage-note {
+    margin-top: 8px;
+    font-size: 12px;
+  }
+  .cl-route .billing-feature-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .cl-route .billing-feature-card {
+    padding: 13px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  .cl-route .billing-feature-title {
+    margin-bottom: 10px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+  .cl-route .billing-chip-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .cl-route .billing-plan-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .cl-route .billing-plan-option {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  .cl-route .billing-plan-option.is-current {
+    border-color: #A7F3D0;
+    background: linear-gradient(180deg, #FFFFFF 0%, #F4FFF8 100%);
+  }
+  .cl-route .billing-plan-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .cl-route .billing-plan-copy {
+    min-width: 0;
+    flex: 1;
+  }
+  .cl-route .billing-plan-copy p {
+    margin: 6px 0 10px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--ink-secondary);
+  }
+  .cl-route .billing-plan-price {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: var(--ink);
+  }
+  .cl-route .rules-hero {
+    padding: 18px 20px;
+    margin-bottom: 14px;
+  }
+  .cl-route .rules-hero-meta {
+    margin-top: 12px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--ink-secondary);
+  }
+  .cl-route .rules-hero-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .cl-route .rules-hero-stat {
+    padding: 11px 12px;
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.78);
+  }
+  .cl-route .rules-hero-stat strong {
+    display: block;
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+  .cl-route .rules-hero-stat span {
+    display: block;
+    margin-top: 3px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+  .cl-route .rules-workspace-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(340px, 0.7fr);
+    gap: 18px;
+    align-items: start;
+  }
+  .cl-route .rules-main-stack,
+  .cl-route .rules-side-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .cl-route .rules-side-stack {
+    position: sticky;
+    top: 12px;
+  }
+  .cl-route .rules-main-stack .rules-stat-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .cl-route .rules-inline-summary {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .cl-route .rules-effective-list .secondary-row {
+    align-items: flex-start;
+    padding: 14px 15px;
+  }
+  .cl-route .rules-guardrail-note {
+    margin-top: 16px;
+  }
+  .cl-route .rules-main-stack .secondary-stat-card {
+    min-height: 88px;
+    padding: 16px;
+  }
+  .cl-route .rules-main-stack .secondary-stat-card strong {
+    margin-bottom: 6px;
+  }
+  .cl-route .rules-main-stack .secondary-stat-card span {
+    color: var(--ink-secondary);
+  }
+  .cl-route .rules-effective-list .secondary-row-copy strong {
+    margin-bottom: 3px;
+  }
+  .cl-route .rules-effective-list .secondary-row-copy p + p {
+    margin-top: 4px;
+  }
   .cl-route .secondary-main,
   .cl-route .secondary-side {
     display: flex;
@@ -61590,14 +64415,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     flex-direction: column;
     gap: 10px;
   }
+  .cl-route .secondary-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+  }
   .cl-route .secondary-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 12px;
     align-items: center;
-    padding: 12px 14px;
+    padding: 10px 12px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: 10px;
     background: var(--surface);
   }
   .cl-route .secondary-row-copy {
@@ -61623,18 +64454,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 5px 10px;
+    padding: 4px 9px;
     border-radius: 999px;
     border: 1px solid var(--border);
     background: var(--bg);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--ink-secondary);
   }
   .cl-route .secondary-note {
-    padding: 13px 14px;
+    padding: 11px 12px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: 10px;
     background: var(--bg);
     font-size: 13px;
     color: var(--ink-secondary);
@@ -61672,9 +64503,554 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     line-height: 1.6;
     color: var(--ink-secondary);
   }
+  .cl-route .secondary-form-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .cl-route .secondary-search-row {
+    position: relative;
+  }
+  .cl-route .secondary-search-row svg {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+  .cl-route .secondary-search-row input {
+    padding-left: 34px;
+  }
+  .cl-route .secondary-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cl-route .secondary-card {
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+  .cl-route .secondary-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .cl-route .secondary-card-copy {
+    min-width: 0;
+    flex: 1;
+  }
+  .cl-route .secondary-card-title {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .cl-route .secondary-card-meta {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--ink-secondary);
+    line-height: 1.5;
+  }
+  .cl-route .secondary-card-tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+  .cl-route .secondary-card-stat {
+    min-width: 140px;
+    text-align: right;
+  }
+  .cl-route .secondary-card-stat strong {
+    display: block;
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+  .cl-route .secondary-card-stat span {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--ink-secondary);
+    line-height: 1.45;
+  }
+  .cl-route .secondary-card-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .cl-route .secondary-inline-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .cl-route .secondary-callout {
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: linear-gradient(180deg, #FFFFFF 0%, #FBFCFE 100%);
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--ink-secondary);
+  }
+  .cl-route .secondary-callout.warning {
+    border-color: #FCD34D;
+    background: #FFFBEB;
+    color: #92400E;
+  }
+  .cl-route .record-detail-toolbar {
+    margin-bottom: 12px;
+  }
+  .cl-route.cl-route-record-detail {
+    padding: 10px 14px 24px 10px;
+  }
+  .cl-route.cl-route-record-detail .topbar {
+    margin-bottom: 10px;
+  }
+  .cl-route .record-detail-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.16fr) minmax(320px, 0.84fr);
+    gap: 20px;
+    align-items: start;
+  }
+  .cl-route.cl-route-record-detail .record-detail-shell {
+    grid-template-columns: minmax(0, 1.52fr) minmax(300px, 0.68fr);
+    gap: 16px;
+  }
+  .cl-route .record-detail-main,
+  .cl-route .record-detail-side {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+  }
+  .cl-route .record-detail-side {
+    position: sticky;
+    top: 12px;
+  }
+  .cl-route.cl-route-record-detail .record-detail-side {
+    max-width: 420px;
+    width: 100%;
+    justify-self: end;
+  }
+  .cl-route .record-detail-hero {
+    padding: 18px 18px 16px;
+  }
+  .cl-route.cl-route-record-detail .record-detail-hero {
+    padding: 16px 18px 14px;
+  }
+  .cl-route .record-detail-hero .panel-head {
+    margin-bottom: 0;
+  }
+  .cl-route .record-detail-eyebrow {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .cl-route .record-detail-amount {
+    font-family: var(--font-display);
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    color: var(--ink);
+  }
+  .cl-route .record-detail-meta {
+    margin-top: 8px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--ink-secondary);
+  }
+  .cl-route .record-detail-hero-note {
+    margin-top: 14px;
+  }
+  .cl-route .record-detail-summary {
+    margin-top: 14px;
+  }
+  .cl-route .record-detail-hero-actions {
+    margin-top: 14px;
+  }
+  .cl-route .route-operator-overrides {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  .cl-route .route-operator-overrides-summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink-secondary);
+  }
+  .cl-route .route-operator-overrides-summary::-webkit-details-marker {
+    display: none;
+  }
+  .cl-route .route-operator-overrides-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--ink-secondary);
+  }
+  .cl-route .route-operator-overrides-copy {
+    margin-top: 10px;
+    max-width: 720px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--ink-muted);
+  }
+  .cl-route .route-operator-overrides-actions {
+    margin-top: 12px;
+  }
+  .cl-route .detail-row-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .cl-route .detail-row {
+    display: grid;
+    grid-template-columns: minmax(96px, 0.8fr) minmax(0, 1.2fr);
+    gap: 14px;
+    align-items: start;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .cl-route .detail-row:first-child {
+    padding-top: 0;
+  }
+  .cl-route .detail-row:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+  .cl-route .detail-row-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-muted);
+  }
+  .cl-route .detail-row-value {
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    text-align: right;
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .cl-route .detail-row-value.subtle {
+    color: var(--ink-secondary);
+    font-weight: 500;
+  }
+  .cl-route .detail-detail-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cl-route .reports-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 1fr);
+    gap: 20px;
+    align-items: start;
+  }
+  .cl-route .reports-main-stack,
+  .cl-route .reports-side-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-width: 0;
+  }
+  .cl-route .reports-metric-card {
+    padding: 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+  .cl-route .reports-metric-value {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: var(--ink);
+    line-height: 1;
+  }
+  .cl-route .reports-metric-label {
+    margin-top: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .cl-route .reports-metric-detail {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--ink-secondary);
+    line-height: 1.5;
+  }
+  .cl-route .reports-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 16px;
+    align-items: start;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .cl-route .reports-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+  .cl-route .reports-row-copy strong {
+    display: block;
+    font-size: 13px;
+  }
+  .cl-route .reports-row-copy span {
+    display: block;
+    margin-top: 3px;
+    font-size: 12px;
+    color: var(--ink-secondary);
+    line-height: 1.5;
+  }
+  .cl-route .reports-row-value {
+    font-weight: 700;
+    text-align: right;
+    font-size: 13px;
+  }
+  .cl-route .reports-chip-wrap {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .cl-route .reports-export-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+  .cl-route .reports-inline-result {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--ink-secondary);
+  }
+  .cl-route .recon-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cl-route .recon-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .cl-route .recon-step-index {
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent);
+    color: var(--navy);
+    font-size: 12px;
+    font-weight: 700;
+    font-family: var(--font-display);
+  }
+  .cl-route .recon-step-copy {
+    font-size: 13px;
+    color: var(--ink-secondary);
+    line-height: 1.55;
+    padding-top: 2px;
+  }
+  .cl-route .review-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cl-route .review-overview-panel,
+  .cl-route .review-command-panel,
+  .cl-route .review-section-panel,
+  .cl-route .review-empty-panel,
+  .cl-route .review-disputes-panel {
+    padding: 12px 14px;
+    margin-bottom: 0;
+  }
+  .cl-route .review-overview-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .cl-route .review-overview-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cl-route .review-metric-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .cl-route .review-metric-pill {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 104px;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .cl-route .review-metric-pill[data-tone="warning"] {
+    border-color: #FCD34D;
+    background: #FFFBEB;
+    color: #92400E;
+  }
+  .cl-route .review-metric-pill[data-tone="success"] {
+    border-color: #A7F3D0;
+    background: #ECFDF5;
+    color: #166534;
+  }
+  .cl-route .review-metric-pill[data-tone="danger"] {
+    border-color: #FECACA;
+    background: #FEF2F2;
+    color: #B91C1C;
+  }
+  .cl-route .review-metric-value {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .cl-route .review-metric-label {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    opacity: 0.72;
+  }
+  .cl-route .review-search-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+  }
+  .cl-route .review-search-box {
+    position: relative;
+  }
+  .cl-route .review-search-box input {
+    width: 100%;
+    padding: 8px 8px 8px 34px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    background: var(--bg);
+  }
+  .cl-route .review-search-helper {
+    font-size: 12px;
+    text-align: right;
+  }
+  .cl-route .review-bulk-bar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .cl-route .review-bulk-actions {
+    justify-content: flex-end;
+  }
+  .cl-route .review-section-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cl-route .review-card {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  .cl-route .review-card-top {
+    margin-bottom: 2px;
+  }
+  .cl-route .review-badge-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+  .cl-route .review-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--ink-secondary);
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .cl-route .review-badge.info {
+    border-color: #BFDBFE;
+    background: #EFF6FF;
+    color: #1D4ED8;
+  }
+  .cl-route .review-card-meta {
+    color: var(--ink-secondary);
+  }
+  .cl-route .review-card-summary {
+    border-radius: 8px;
+  }
+  .cl-route .review-card-actions {
+    justify-content: flex-end;
+  }
+  .cl-route .review-count-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--ink-secondary);
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .cl-route .review-section-head h3 {
+    font-size: 16px;
+  }
   .cl-route .review-block-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1.35fr) minmax(240px, 0.85fr);
+    grid-template-columns: minmax(0, 1.5fr) minmax(268px, 0.7fr);
     gap: 14px;
     align-items: start;
     width: 100%;
@@ -61684,7 +65060,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     min-width: 0;
   }
   .cl-route .review-block-side {
-    padding: 12px;
+    padding: 10px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: #FCFDFE;
@@ -61764,29 +65140,159 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   /* Responsive */
   @media (max-width: 1080px) {
     .cl-route { padding: 24px 24px 32px; }
+    .cl-route.cl-route-record-detail { padding: 18px 18px 28px; }
+    .cl-route .home-header-shell { flex-direction: column; }
+    .cl-route .home-utility-rail { width: 100%; min-width: 0; justify-content: space-between; }
+    .cl-route .home-main-grid { grid-template-columns: 1fr; }
     .cl-route .home-panel-grid { grid-template-columns: 1fr; gap: 20px; }
-    .cl-route .templates-shell { grid-template-columns: 1fr; }
-    .cl-route .secondary-shell { grid-template-columns: 1fr; }
+    .cl-route .templates-shell,
+    .cl-route .templates-main { grid-template-columns: 1fr; }
+    .cl-route .secondary-shell,
+    .cl-route .billing-shell,
+    .cl-route .reports-shell,
+    .cl-route .record-detail-shell { grid-template-columns: 1fr; }
+    .cl-route .rules-workspace-grid { grid-template-columns: 1fr; }
+    .cl-route .rules-side-stack { position: static; }
+    .cl-route .billing-side-stack { position: static; }
+    .cl-route .record-detail-side { position: static; }
+    .cl-route .templates-preview-card { position: static; }
+    .cl-route .billing-summary-grid,
+    .cl-route .billing-feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cl-route .home-status-row,
+    .cl-route .rules-hero-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cl-route .rules-main-stack .rules-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cl-route .review-search-row { grid-template-columns: 1fr; }
+    .cl-route .review-search-helper { text-align: left; }
     .cl-route .review-block-layout { grid-template-columns: 1fr; }
+    .cl-route .pipeline-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
     .cl-route .settings-section-grid { grid-template-columns: 1fr; }
   }
   @media (max-width: 720px) {
     .cl-route { padding: 20px 16px 28px; }
+    .cl-route.cl-route-record-detail { padding: 16px 12px 24px; }
     .cl-route .kpi-row { grid-template-columns: repeat(2, 1fr); }
     .cl-route .connector-grid, .cl-route .connector-grid-3 { grid-template-columns: 1fr; }
     .cl-route .home-banner { padding: 14px 16px; }
-    .cl-route .home-quick-row { grid-auto-columns: minmax(156px, 188px); }
-    .cl-route .home-tools-grid { grid-template-columns: 1fr; }
+    .cl-route .home-header-copy h2 { font-size: 26px; }
+    .cl-route .home-utility-rail { align-items: stretch; flex-direction: column; }
+    .cl-route .home-utility-strip { justify-content: space-between; width: 100%; }
+    .cl-route .home-utility-primary { width: 100%; }
+    .cl-route .home-status-row,
+    .cl-route .rules-hero-summary { grid-template-columns: 1fr; }
+    .cl-route .home-quick-row { grid-auto-columns: minmax(220px, 1fr); }
+    .cl-route .pipeline-filter-grid { grid-template-columns: 1fr !important; }
     .cl-route .readiness-list { grid-template-columns: 1fr; }
+    .cl-route .rules-main-stack .rules-stat-grid { grid-template-columns: 1fr; }
     .cl-route .templates-form-grid { grid-template-columns: 1fr; }
     .cl-route .secondary-stat-grid,
+    .cl-route .billing-summary-grid,
+    .cl-route .billing-feature-grid,
     .cl-route .secondary-form-grid,
     .cl-route .settings-summary-grid { grid-template-columns: 1fr; }
+    .cl-route .secondary-row,
+    .cl-route .reports-export-row { grid-template-columns: 1fr; }
+    .cl-route .secondary-card-head { flex-direction: column; }
+    .cl-route .secondary-card-stat { min-width: 0; text-align: left; }
+    .cl-route .detail-row {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+    .cl-route .detail-row-value { text-align: left; }
     .cl-route .templates-library-card,
     .cl-route .templates-editor-card,
     .cl-route .templates-preview-card,
     .cl-route .templates-fields-card { padding: 18px; }
   }
+
+  @media (max-height: 860px) and (min-width: 721px) {
+    .cl-route {
+      padding-top: 10px;
+      padding-bottom: 20px;
+    }
+    .cl-route .pipeline-shell {
+      gap: 8px;
+    }
+    .cl-route .pipeline-hero-panel,
+    .cl-route .pipeline-view-panel,
+    .cl-route .pipeline-filter-panel {
+      padding: 10px 12px !important;
+    }
+    .cl-route .pipeline-hero-copy {
+      gap: 8px;
+    }
+    .cl-route .pipeline-hero-copy p {
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .cl-route .pipeline-metric-row {
+      gap: 6px;
+    }
+    .cl-route .pipeline-view-head,
+    .cl-route .pipeline-filter-footer,
+    .cl-route .pipeline-table-head {
+      gap: 10px;
+    }
+    .cl-route .pipeline-view-band + .pipeline-view-band {
+      margin-top: 6px !important;
+    }
+    .cl-route .pipeline-focus-row,
+    .cl-route .pipeline-saved-input-row,
+    .cl-route .pipeline-filter-footer {
+      margin-top: 8px;
+      padding-top: 8px;
+    }
+    .cl-route .pipeline-saved-input-row input {
+      max-width: 220px;
+      min-height: 34px;
+      padding-top: 8px;
+      padding-bottom: 8px;
+    }
+    .cl-route .pipeline-filter-grid {
+      gap: 8px !important;
+    }
+    .cl-route .pipeline-filter-grid label,
+    .cl-route .pipeline-filter-footer label {
+      gap: 4px !important;
+    }
+    .cl-route .pipeline-filter-grid .muted,
+    .cl-route .pipeline-filter-footer .muted,
+    .cl-route .pipeline-table-meta .muted {
+      font-size: 11px !important;
+    }
+    .cl-route .pipeline-table-head {
+      padding-top: 8px !important;
+      padding-bottom: 8px !important;
+    }
+    .cl-route .pipeline-table th {
+      padding-top: 8px;
+      padding-bottom: 8px;
+    }
+    .cl-route .pipeline-table td {
+      padding-top: 8px;
+      padding-bottom: 8px;
+    }
+  }
+
+  /* ==================== SPINNER ==================== */
+
+  .cl-route .loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 40px 0;
+    color: var(--ink-muted);
+    font-size: 13px;
+  }
+  .cl-route .spinner {
+    width: 24px;
+    height: 24px;
+    border: 2.5px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: route-spin 0.6s linear infinite;
+  }
+  @keyframes route-spin { to { transform: rotate(360deg); } }
 `;
 
   // src/routes/route-icons.js
@@ -61805,16 +65311,30 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     plan: '<rect x="3.75" y="5" width="12.5" height="10" rx="1.75"/><path d="M6.5 8.25h7"/><path d="M6.5 11.25h4.5"/>',
     recon: '<path d="M5 6.5h8.5"/><path d="m11.5 4.5 2 2-2 2"/><path d="M15 13.5H6.5"/><path d="m8.5 11.5-2 2 2 2"/>',
     health: '<path d="M3.75 10h3l1.5-3.25 3.25 6.5 1.75-3.25h3"/>',
-    view: '<rect x="3.75" y="4.25" width="5.25" height="5.25" rx="1"/><rect x="11" y="4.25" width="5.25" height="5.25" rx="1"/><rect x="3.75" y="11.5" width="5.25" height="5.25" rx="1"/><rect x="11" y="11.5" width="5.25" height="5.25" rx="1"/>'
+    view: '<rect x="3.75" y="4.25" width="5.25" height="5.25" rx="1"/><rect x="11" y="4.25" width="5.25" height="5.25" rx="1"/><rect x="3.75" y="11.5" width="5.25" height="5.25" rx="1"/><rect x="11" y="11.5" width="5.25" height="5.25" rx="1"/>',
+    upcoming: '<path d="M10 4.5v5.5l3.5 2"/><circle cx="10" cy="10" r="6.25"/>',
+    templates: '<path d="M5.5 4.25h9a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-9.5a1 1 0 0 1 1-1Z"/><path d="M7.25 8h5.5"/><path d="M7.25 11h3.5"/>',
+    reports: '<path d="M6 15.5V9.5"/><path d="M10 15.5V6"/><path d="M14 15.5v-4"/><path d="M4 15.5h12"/>'
+  };
+  var ROUTE_ICON_TREATMENT = {
+    connections: { scale: 1.16, strokeWidth: 1.82 },
+    rules: { scale: 1.11, strokeWidth: 1.74 },
+    settings: { scale: 1.18, strokeWidth: 1.84 },
+    templates: { scale: 1.13, strokeWidth: 1.74 }
   };
   var iconCache = new Map;
   function buildRouteIconUrl(iconKey) {
     const resolvedKey = ROUTE_ICON_MARKUP[iconKey] ? iconKey : "activity";
     if (iconCache.has(resolvedKey))
       return iconCache.get(resolvedKey);
+    const treatment = ROUTE_ICON_TREATMENT[resolvedKey] || {};
+    const scale = Number.isFinite(treatment.scale) ? treatment.scale : 1;
+    const strokeWidth = Number.isFinite(treatment.strokeWidth) ? treatment.strokeWidth : 1.6;
+    const translateOffset = scale === 1 ? 0 : Number((10 - 10 * scale).toFixed(3));
+    const transformedMarkup = scale === 1 ? ROUTE_ICON_MARKUP[resolvedKey] : `<g transform="translate(${translateOffset} ${translateOffset}) scale(${scale})">${ROUTE_ICON_MARKUP[resolvedKey]}</g>`;
     const svg = `
-    <svg xmlns="${SVG_NS}" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#64748B" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      ${ROUTE_ICON_MARKUP[resolvedKey]}
+    <svg xmlns="${SVG_NS}" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#64748B" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      ${transformedMarkup}
     </svg>
   `.trim().replace(/\s+/g, " ");
     const dataUrl = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
@@ -61827,69 +65347,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function getPipelineViewIconUrl() {
     return buildRouteIconUrl("view");
-  }
-
-  // src/utils/capabilities.js
-  function normalizeRole(role) {
-    return String(role || "").trim().toLowerCase();
-  }
-  function isCapabilityMap(value) {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-  }
-  function getFallbackCapabilities(role) {
-    const normalizedRole = normalizeRole(role);
-    const isAdmin = ["owner", "admin", "api"].includes(normalizedRole);
-    const isOps = ["owner", "admin", "operator", "api"].includes(normalizedRole);
-    return {
-      view_home: true,
-      view_pipeline: true,
-      view_review: true,
-      view_upcoming: true,
-      view_activity: true,
-      view_vendors: true,
-      view_templates: true,
-      view_connections: true,
-      view_rules: true,
-      view_settings: true,
-      view_team: true,
-      view_company: true,
-      view_plan: true,
-      view_reconciliation: true,
-      view_system_status: true,
-      view_reports: true,
-      view_ops_workspace: isOps || !normalizedRole,
-      operate_records: isOps || !normalizedRole,
-      manage_connections: isAdmin,
-      manage_rules: isAdmin,
-      manage_settings: isAdmin,
-      manage_team: isAdmin,
-      manage_company: isAdmin,
-      manage_plan: isAdmin,
-      manage_admin_pages: isAdmin
-    };
-  }
-  function getCapabilities(bootstrap) {
-    const role = bootstrap?.current_user?.role;
-    const fallback = getFallbackCapabilities(role);
-    const explicit = isCapabilityMap(bootstrap?.capabilities) ? bootstrap.capabilities : isCapabilityMap(bootstrap?.current_user?.capabilities) ? bootstrap.current_user.capabilities : {};
-    return {
-      ...fallback,
-      ...explicit
-    };
-  }
-  function hasCapability(source, capability) {
-    if (!capability)
-      return false;
-    const capabilities = isCapabilityMap(source?.capabilities) || isCapabilityMap(source?.current_user) ? getCapabilities(source) : isCapabilityMap(source) ? source : {};
-    return Boolean(capabilities?.[capability]);
-  }
-  function hasOpsCapability(bootstrap) {
-    const capabilities = getCapabilities(bootstrap);
-    return Boolean(capabilities.operate_records || capabilities.view_ops_workspace);
-  }
-  function hasAdminCapability(bootstrap) {
-    const capabilities = getCapabilities(bootstrap);
-    return Boolean(capabilities.manage_admin_pages);
   }
 
   // src/routes/route-helpers.js
@@ -61919,6 +65376,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     } catch {
       return d3.toLocaleDateString([], { month: "short", day: "numeric" });
     }
+  }
+  function fmtRate(v3) {
+    const n3 = Number(v3);
+    return isFinite(n3) ? `${n3.toFixed(1)}%` : "0.0%";
   }
   function fmtDollar(v3) {
     return "$" + Number(v3 || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -61959,12 +65420,28 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return { label: eventType.replace(/_/g, " ").toLowerCase(), cls: "" };
   }
   function humanizeStatus(raw) {
-    const map = { connected: "Connected", disconnected: "Not connected", unknown: "Unknown" };
-    return map[raw] || raw;
+    const token = String(raw || "").trim().toLowerCase();
+    const map = {
+      connected: "Connected",
+      disconnected: "Not connected",
+      reconnect_required: "Reconnect needed",
+      reauthorization_required: "Reconnect needed",
+      degraded: "Needs attention",
+      error: "Needs attention",
+      unknown: "Unknown"
+    };
+    return map[token] || String(raw || "").replace(/_/g, " ");
   }
   function humanizeMode(raw) {
-    const map = { oauth: "OAuth sign-in", shared: "Shared workspace", per_org: "Per-organization", "": "-", "-": "-" };
-    return map[raw] || raw;
+    const token = String(raw || "").trim().toLowerCase();
+    const map = {
+      oauth: "OAuth sign-in",
+      shared: "Shared workspace",
+      per_org: "Per workspace",
+      "": "Not set",
+      "-": "Not set"
+    };
+    return map[token] || String(raw || "").replace(/_/g, " ");
   }
   function useAction2(fn) {
     const [pending, setPending] = d2(false);
@@ -61989,6 +65466,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     "blocked_exception",
     "needs_info"
   ];
+  function UtilityIconAction({ label, detail, icon, onClick }) {
+    const title = detail ? `${label} — ${detail}` : label;
+    return html4`<button
+    class="home-utility-icon-button"
+    onClick=${onClick}
+    title=${title}
+    aria-label=${label}
+  >
+    <span class="home-utility-icon" style=${`background-image:url(${icon || getRouteIconUrl("activity")})`}></span>
+  </button>`;
+  }
+  function HomeStatusPill({ label, value, tone = "default" }) {
+    return html4`<span class=${`home-status-pill ${tone}`}>
+    <strong>${value}</strong>
+    <span>${label}</span>
+  </span>`;
+  }
   function QuickLinkRow({ label, detail, actionLabel = "Open", onClick }) {
     return html4`<button
     onClick=${onClick}
@@ -62005,47 +65499,77 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <span class="muted" style="font-size:12px;font-weight:700;white-space:nowrap">${actionLabel}</span>
   </button>`;
   }
-  function QuickAccessCard({ label, detail, meta, onClick }) {
+  function buildTaskLocator(task = {}) {
+    return {
+      id: task.ap_item_id,
+      thread_id: task.thread_id,
+      message_id: task.message_id,
+      state: task.state
+    };
+  }
+  function ToolbarAction({ label, detail, meta = "Open", onClick }) {
     return html4`<button class="home-quick-card" onClick=${onClick}>
-    <div>
-      <div class="home-quick-meta">${meta || "Quick access"}</div>
-      <strong class="home-quick-title">${label}</strong>
-      <div class="muted home-quick-detail">${detail}</div>
-    </div>
-    <div class="muted" style="font-size:10px;font-weight:700">Open</div>
+    <span class="home-quick-meta">${meta}</span>
+    <strong class="home-quick-title">${label}</strong>
+    <span class="home-quick-detail muted">${detail}</span>
   </button>`;
   }
-  function RecentActivity({ entries = [], navigate, canOpenActivity = false }) {
-    const rows = Array.isArray(entries) ? entries.slice(0, 5) : [];
-    return html4`<div class="panel">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px">
-      <div>
-        <h3 style="margin:0 0 4px">Recent updates</h3>
-        <p class="muted" style="margin:0">A quick look at what changed recently.</p>
+  function AuditEventRow({ entry, actionLabel = "Open record", onAction }) {
+    const amountLabel = Number.isFinite(Number(entry?.amount)) ? formatAmount(entry.amount, entry?.currency) : "";
+    const metaLine = [
+      entry?.vendor_name || entry?.vendor || "",
+      entry?.invoice_number || "",
+      amountLabel
+    ].filter(Boolean).join(" · ");
+    return html4`<div class="home-event-row">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div style="min-width:0;flex:1">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+          <strong style="font-size:13px">${entry?.title || entry?.operator_title || "Update"}</strong>
+          ${entry?.operator_severity ? html4`<span style="
+                font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;
+                background:${entry.operator_severity === "success" ? "#ECFDF5" : entry.operator_severity === "warning" ? "#FEF3C7" : entry.operator_severity === "error" ? "#FEF2F2" : "#EFF6FF"};
+                color:${entry.operator_severity === "success" ? "#166534" : entry.operator_severity === "warning" ? "#92400E" : entry.operator_severity === "error" ? "#B91C1C" : "#1D4ED8"};
+              ">${entry.operator_severity}</span>` : null}
+        </div>
+        ${metaLine ? html4`<div class="muted" style="font-size:12px;margin-bottom:4px">${metaLine}</div>` : null}
+        <div class="muted" style="font-size:12px;line-height:1.5">${entry?.detail || entry?.operator_message || entry?.summary || "Recent activity is available."}</div>
       </div>
-      ${canOpenActivity ? html4`<button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/activity")}>Open activity</button>` : null}
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+        <span class="muted" style="font-size:12px;white-space:nowrap">${fmtDateTime(entry?.ts || entry?.timestamp || entry?.created_at)}</span>
+        <button class="btn-ghost btn-sm" onClick=${onAction}>${actionLabel}</button>
+      </div>
     </div>
-    ${rows.length ? html4`<div style="display:grid;gap:8px">
-          ${rows.map((entry, index) => html4`<div key=${index} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px">
-              <strong style="font-size:13px">${entry?.title || entry?.action || "Update"}</strong>
-              ${entry?.timestamp || entry?.created_at ? html4`<span class="muted" style="font-size:12px">${fmtDateTime(entry.timestamp || entry.created_at)}</span>` : null}
-            </div>
-            <div class="muted" style="font-size:12px;line-height:1.45">${entry?.detail || entry?.summary || "Recent activity is available."}</div>
-          </div>`)}
-        </div>` : html4`<div class="muted" style="font-size:13px">No recent updates yet.</div>`}
   </div>`;
   }
-  function UpcomingTaskRow({ task, onClick }) {
-    const amount = Number(task?.amount);
-    const amountLabel = Number.isFinite(amount) ? `${task?.currency || "USD"} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Amount unavailable";
-    const statusLabel = String(task?.status || "").toLowerCase() === "overdue" ? "Overdue" : String(task?.status || "").toLowerCase() === "today" ? "Today" : "Open";
-    return html4`<${QuickLinkRow}
-    label=${task?.title || "Follow-up"}
-    detail=${`${task?.vendor_name || "Unknown vendor"} · ${task?.invoice_number || "No invoice #"} · ${amountLabel}${task?.detail ? ` · ${task.detail}` : ""}`}
-    actionLabel=${statusLabel}
-    onClick=${onClick}
-  />`;
+  function UpcomingTaskActionRow({ task, onOpenRecord, onOpenSlice, onOpenEmail }) {
+    const statusLabel = String(task?.status || "").toLowerCase() === "overdue" ? "Overdue" : String(task?.status || "").toLowerCase() === "today" ? "Today" : "Queued";
+    return html4`<div class="home-event-row">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div style="min-width:0;flex:1">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+          <strong style="font-size:13px">${task?.title || "Follow-up"}</strong>
+          <span style="
+            font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;
+            background:${statusLabel === "Overdue" ? "#FEF2F2" : statusLabel === "Today" ? "#FEF3C7" : "#EFF6FF"};
+            color:${statusLabel === "Overdue" ? "#B91C1C" : statusLabel === "Today" ? "#92400E" : "#1D4ED8"};
+          ">${statusLabel}</span>
+        </div>
+        <div class="muted" style="font-size:12px;margin-bottom:4px">
+          ${task?.vendor_name || "Unknown vendor"} · ${task?.invoice_number || "No invoice #"} · ${formatAmount(task?.amount, task?.currency)}
+        </div>
+        <div class="muted" style="font-size:12px;line-height:1.5">${task?.detail || "Follow-up needed."}</div>
+        <div class="muted" style="font-size:12px;margin-top:6px">
+          ${task?.due_at ? `Due ${fmtDateTime(task.due_at)}` : "No explicit follow-up time"}
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn-secondary btn-sm" onClick=${onOpenRecord}>Open record</button>
+        <button class="btn-ghost btn-sm" onClick=${onOpenSlice}>Open slice</button>
+        ${task?.thread_id || task?.message_id ? html4`<button class="btn-ghost btn-sm" onClick=${onOpenEmail}>Open email</button>` : null}
+      </div>
+    </div>
+  </div>`;
   }
   function SetupNotice({
     adminAccess,
@@ -62080,36 +65604,56 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   </div>`;
   }
   function EmptyPanelState({ text }) {
-    return html4`<div style="
-    min-height:220px;display:flex;align-items:center;justify-content:center;text-align:center;
-    border:1px solid var(--border);border-radius:var(--radius-md);background:linear-gradient(180deg,#FFFFFF 0%, #FAFAF8 100%);
-    color:var(--ink-secondary);font-size:14px;padding:24px;
-  ">
-    ${text}
+    return html4`<div class="home-empty-state">
+    <div class="home-empty-glyph"></div>
+    <div class="home-empty-copy">${text}</div>
   </div>`;
   }
   function QuickAccessStrip({ items = [] }) {
     if (!Array.isArray(items) || items.length === 0)
       return null;
     return html4`
-    <div class="home-eyebrow">Quick access</div>
-    <div class="home-quick-row">
-      ${items.map((item) => html4`
-        <${QuickAccessCard}
-          key=${item.key}
-          label=${item.label}
-          detail=${item.detail}
-          meta=${item.meta}
-          onClick=${item.onClick}
-        />
-      `)}
+    <div class="panel">
+      <div class="panel-head compact">
+        <div>
+          <div class="home-eyebrow">Quick access</div>
+          <p class="muted" style="margin:0">The work and tool shortcuts you should not have to hunt for in Gmail.</p>
+        </div>
+      </div>
+      <div class="home-quick-row">
+        ${items.map((item) => html4`
+          <${ToolbarAction}
+            key=${item.key}
+            label=${item.label}
+            detail=${item.detail}
+            meta=${item.meta || "Open"}
+            onClick=${item.onClick}
+          />
+        `)}
+      </div>
     </div>
   `;
   }
-  function SectionPanel({ title, detail, actionLabel = "", onAction, children, panelMinHeight = 0 }) {
-    return html4`<div class="panel">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px;flex-wrap:wrap">
+  function InsightList({ items = [] }) {
+    const rows = (Array.isArray(items) ? items : []).filter(Boolean);
+    if (!rows.length)
+      return null;
+    return html4`<div class="home-list-stack">
+    ${rows.map((item, index) => html4`
+      <div key=${index} class="home-event-row">
+        <div style="display:flex;align-items:flex-start;gap:10px">
+          <span style="width:7px;height:7px;border-radius:999px;background:var(--accent);margin-top:7px;flex:0 0 auto"></span>
+          <div class="muted" style="font-size:13px;line-height:1.55">${item}</div>
+        </div>
+      </div>
+    `)}
+  </div>`;
+  }
+  function SectionPanel({ title, detail, actionLabel = "", onAction, children, panelMinHeight = 0, className = "" }) {
+    return html4`<div class=${`panel home-surface-panel ${className}`.trim()}>
+    <div class="home-surface-head">
       <div>
+        <div class="home-section-label">${title}</div>
         <h3 style="margin:0 0 4px">${title}</h3>
         ${detail ? html4`<p class="muted" style="margin:0">${detail}</p>` : null}
       </div>
@@ -62132,7 +65676,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const teams = integrationByName(bootstrap, "teams");
     const erp = integrationByName(bootstrap, "erp");
     const dashboard = bootstrap?.dashboard || {};
-    const recentActivity = bootstrap?.recentActivity || dashboard?.recent_activity || [];
+    const planName = String(bootstrap?.subscription?.plan || "free").replace(/_/g, " ");
     const rawName = (userEmail || "").split("@")[0] || "";
     const firstName = rawName ? rawName.charAt(0).toUpperCase() + rawName.slice(1).split(/[._-]/)[0] : "";
     const hour = new Date().getHours();
@@ -62140,9 +65684,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const policyConfig = bootstrap?.policyPayload?.policy?.config_json || {};
     const adminAccess = hasAdminAccess(bootstrap);
     const opsAccess = hasOpsAccess(bootstrap);
+    const workAccess = opsAccess || adminAccess;
     const pipelineScope = { orgId, userEmail };
     const [pipelinePrefs, setPipelinePrefs] = d2(() => readPipelinePreferences(pipelineScope));
     const [upcomingPayload, setUpcomingPayload] = d2({ summary: {}, tasks: [] });
+    const [recentAudit, setRecentAudit] = d2([]);
     const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
     const pinnedPipelineViews = getPinnedPipelineViews(pipelinePrefs).slice(0, 3);
     const starterSavedViews = getStarterPipelineViews(pipelinePrefs).filter((view) => !pinnedPipelineViews.some((pinnedView) => pinnedView.id === view.id && pinnedView.scope === view.scope)).slice(0, 3);
@@ -62156,6 +65702,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const policyOk = Boolean(policyConfig && Object.keys(policyConfig).length > 0);
     const allReady = gmailOk && approvalSurfaceOk && erpOk && policyOk;
     const lastScanAt = dashboard?.last_scan_at || dashboard?.lastScanAt || bootstrap?.health?.last_scan_at || "";
+    const pilotSnapshot = dashboard?.pilot_snapshot || {};
+    const agenticSnapshot = dashboard?.agentic_snapshot || {};
     const missingSetup = [];
     if (!gmailOk)
       missingSetup.push(gmailReconnectRequired ? "Gmail reconnect" : "Gmail");
@@ -62190,7 +65738,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       setPipelinePrefs(local);
     }, [bootstrapPipelinePrefs, pipelineScope]);
     y2(() => {
-      if (!opsAccess) {
+      if (!workAccess) {
         setUpcomingPayload({ summary: {}, tasks: [] });
         return;
       }
@@ -62202,12 +65750,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }).catch(() => {
         setUpcomingPayload({ summary: {}, tasks: [] });
       });
-    }, [api, orgId, opsAccess]);
+    }, [api, orgId, workAccess]);
+    y2(() => {
+      if (!workAccess) {
+        setRecentAudit([]);
+        return;
+      }
+      api(`/api/ap/audit/recent?organization_id=${encodeURIComponent(orgId)}&limit=12`, { silent: true }).then((data) => {
+        setRecentAudit(Array.isArray(data?.events) ? data.events.slice(0, 12) : []);
+      }).catch(() => {
+        setRecentAudit([]);
+      });
+    }, [api, orgId, workAccess]);
     const openPipelineSlice = (sliceId) => {
       clearPipelineNavigation(pipelineScope);
       activatePipelineSlice(pipelineScope, sliceId);
       setPipelinePrefs(readPipelinePreferences(pipelineScope));
-      navigate("clearledgr/pipeline");
+      navigate("clearledgr/invoices");
     };
     const openSavedPipelineView = (view) => {
       if (!view?.snapshot)
@@ -62215,17 +65774,74 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       clearPipelineNavigation(pipelineScope);
       writePipelinePreferences(pipelineScope, view.snapshot);
       setPipelinePrefs(readPipelinePreferences(pipelineScope));
-      navigate("clearledgr/pipeline");
+      navigate("clearledgr/invoices");
+    };
+    const openUpcomingTaskSlice = (task) => {
+      const sliceId = task?.recommended_slice || "all_open";
+      clearPipelineNavigation(pipelineScope);
+      activatePipelineSlice(pipelineScope, sliceId);
+      if (task?.ap_item_id)
+        focusPipelineItem(pipelineScope, buildTaskLocator(task), "home");
+      navigate("clearledgr/invoices");
+    };
+    const openRecord = (recordId, context = null) => {
+      const normalizedId = String(recordId || "").trim();
+      if (!normalizedId)
+        return;
+      if (context)
+        focusPipelineItem(pipelineScope, context, "home");
+      navigateToRecordDetail(navigate, normalizedId);
+    };
+    const openUpcomingTaskRecord = (task) => {
+      openRecord(task?.ap_item_id, buildTaskLocator(task));
+    };
+    const openUpcomingTaskEmail = (task) => {
+      const ok = openSourceEmail({
+        thread_id: task?.thread_id,
+        message_id: task?.message_id,
+        subject: task?.title || task?.invoice_number || "Invoice follow-up"
+      });
+      if (!ok)
+        toast?.("Unable to open the source email thread.", "error");
     };
     const upcomingSummary = Number(upcomingPayload?.summary?.total || 0);
     const savedOrStarterViews = pinnedPipelineViews.length ? pinnedPipelineViews : starterSavedViews;
+    const recentWork = T2(() => Array.isArray(recentAudit) ? recentAudit.slice(0, 4) : [], [recentAudit]);
+    const recentWins = T2(() => Array.isArray(recentAudit) ? recentAudit.filter((event) => {
+      const code = String(event?.operator_code || "").toLowerCase();
+      const severity = String(event?.operator_severity || "").toLowerCase();
+      const nextState = String(event?.new_state || event?.state || "").toLowerCase();
+      return code === "erp_posted" || code === "retry_completed" || severity === "success" || nextState === "posted_to_erp" || nextState === "closed";
+    }).slice(0, 4) : [], [recentAudit]);
+    const homeInsights = T2(() => {
+      const items = [];
+      const pilotHighlights = Array.isArray(pilotSnapshot?.highlights) ? pilotSnapshot.highlights : [];
+      const topBlockers = Array.isArray(agenticSnapshot?.top_blockers) ? agenticSnapshot.top_blockers : [];
+      if (Number(pilotSnapshot?.touchless_rate_pct) > 0) {
+        items.push(`${fmtRate(pilotSnapshot.touchless_rate_pct)} touchless handling across the current pilot window.`);
+      }
+      if (Number(dashboard?.pending_approval) > 0) {
+        items.push(`${Number(dashboard.pending_approval).toLocaleString()} invoices are currently waiting on approval.`);
+      }
+      if (Number(dashboard?.posted_today) > 0) {
+        items.push(`${Number(dashboard.posted_today).toLocaleString()} invoices were posted or closed today.`);
+      }
+      pilotHighlights.forEach((entry) => items.push(String(entry || "").trim()));
+      if (topBlockers.length > 0) {
+        items.push(`Top blockers right now: ${topBlockers.join(", ")}.`);
+      }
+      if (Number(agenticSnapshot?.shadow_disagreement_count) > 0) {
+        items.push(`${Number(agenticSnapshot.shadow_disagreement_count).toLocaleString()} shadow-decision disagreements still need review before wider autonomy.`);
+      }
+      return items.filter(Boolean).slice(0, 6);
+    }, [agenticSnapshot, dashboard, pilotSnapshot]);
     const quickAccessItems = [
       {
         key: "pipeline",
-        label: "Pipeline",
+        label: "Invoices",
         detail: "Open the full invoice queue.",
         meta: "Queue",
-        onClick: () => navigate("clearledgr/pipeline")
+        onClick: () => navigate("clearledgr/invoices")
       },
       opsAccess ? {
         key: "review",
@@ -62237,9 +65853,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       opsAccess ? {
         key: "upcoming",
         label: "Upcoming",
-        detail: upcomingSummary > 0 ? `${upcomingSummary} item${upcomingSummary === 1 ? "" : "s"} need attention next.` : "Nothing is due right now.",
+        detail: upcomingSummary > 0 ? `${upcomingSummary} item${upcomingSummary === 1 ? "" : "s"} need attention next.` : "No upcoming follow-ups yet.",
         meta: "Follow-up",
         onClick: () => navigate("clearledgr/upcoming")
+      } : null,
+      workAccess ? {
+        key: "activity",
+        label: "Recent work",
+        detail: "Open the latest audit trail and operator movement.",
+        meta: "Activity",
+        onClick: () => navigate("clearledgr/activity")
       } : null,
       ...savedOrStarterViews.slice(0, 2).map((view) => ({
         key: `view:${view.scope || "starter"}:${view.id}`,
@@ -62256,21 +65879,94 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         onClick: () => openPipelineSlice(slice.id)
       }))
     ].filter(Boolean).slice(0, 7);
+    const utilityItems = [
+      adminAccess ? {
+        key: "connections-utility",
+        label: "Connections",
+        detail: allReady ? "Connections and routing are live." : `${missingSetup.length} setup item${missingSetup.length === 1 ? "" : "s"} still need attention.`,
+        icon: getRouteIconUrl("connections"),
+        onClick: () => navigate("clearledgr/connections")
+      } : null,
+      adminAccess ? {
+        key: "team-utility",
+        label: "Team",
+        detail: "Invites, roles, and operator access.",
+        icon: getRouteIconUrl("team"),
+        onClick: () => navigate("clearledgr/team")
+      } : null,
+      adminAccess ? {
+        key: "plan-utility",
+        label: "Billing",
+        detail: `${planName.charAt(0).toUpperCase()}${planName.slice(1)} plan and usage.`,
+        icon: getRouteIconUrl("plan"),
+        onClick: () => navigate("clearledgr/plan")
+      } : null,
+      adminAccess || workAccess ? {
+        key: "settings-utility",
+        label: "Settings",
+        detail: "Workspace controls and finance defaults.",
+        icon: getRouteIconUrl("settings"),
+        onClick: () => navigate("clearledgr/settings")
+      } : null,
+      adminAccess ? {
+        key: "reports-utility",
+        label: "Reports",
+        detail: "Lane health, risk, and pilot progress.",
+        icon: getRouteIconUrl("reports"),
+        onClick: () => navigate("clearledgr/reports")
+      } : workAccess ? {
+        key: "vendors-utility",
+        label: "Vendors",
+        detail: "History, recurring blockers, and context.",
+        icon: getRouteIconUrl("vendors"),
+        onClick: () => navigate("clearledgr/vendors")
+      } : null,
+      workAccess ? {
+        key: "primary-utility",
+        label: allReady ? "Open invoices" : "Finish setup",
+        detail: allReady ? "Jump back into the finance lane." : "Complete the remaining setup steps.",
+        icon: getRouteIconUrl(allReady ? "pipeline" : "connections"),
+        tone: "accent",
+        onClick: () => navigate(allReady ? "clearledgr/invoices" : "clearledgr/connections")
+      } : null
+    ].filter(Boolean).slice(0, 5);
+    const primaryUtility = utilityItems.find((item) => item.tone === "accent") || null;
+    const secondaryUtilities = utilityItems.filter((item) => item.tone !== "accent");
     return html4`
-    <div class="home-hero">
-      <div class="home-hero-copy">
-        <h2 style="font-family:var(--font-display);font-size:40px;font-weight:600;letter-spacing:-0.03em;line-height:1.05;margin:0 0 8px;color:var(--ink)">
-          Welcome to Clearledgr
-        </h2>
-        <p style="font-size:15px;color:var(--ink-secondary);margin:0 0 12px">
-          ${allReady ? "Invoices is your AP queue. Use Gmail for the active record when context matters." : gmailOk ? `${greeting}${firstName ? `, ${firstName}` : ""}. Clearledgr is processing invoices. Connect more integrations to unlock approvals and ERP posting.` : `${greeting}${firstName ? `, ${firstName}` : ""}. Connect Gmail to start processing invoices.`}
+    <div class="topbar home-header-shell">
+      <div class="home-header-copy">
+        <div class="home-eyebrow">Home</div>
+        <h2>Welcome to Clearledgr</h2>
+        <p>
+          ${allReady ? "Run the finance lane from Gmail: reopen work, clear blockers, watch follow-ups, and move invoices forward without hunting through the product." : gmailOk ? `${greeting}${firstName ? `, ${firstName}` : ""}. Gmail is active. Finish the remaining setup so approvals, posting, and automation can run from the same place.` : `${greeting}${firstName ? `, ${firstName}` : ""}. Connect Gmail to start processing invoices from inside the workspace.`}
         </p>
-        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-          <span style="font-size:12px;padding:4px 10px;border-radius:999px;background:${allReady ? "#ECFDF5" : gmailOk ? "#EFF6FF" : "#FEFCE8"};color:${allReady ? "#047857" : gmailOk ? "#1D4ED8" : "#A16207"}">
-            ${allReady ? "Fully configured" : gmailOk ? "Processing invoices" : "Setup needed"}
-          </span>
-          ${lastScanAt ? html4`<span style="font-size:12px;padding:4px 10px;border-radius:999px;background:var(--bg);color:var(--ink-secondary)">Last scan ${fmtDateTime(lastScanAt)}</span>` : null}
+        <div class="home-status-row">
+          <${HomeStatusPill}
+            label=${allReady ? "Lane" : gmailOk ? "Status" : "Setup"}
+            value=${allReady ? "Active" : gmailOk ? "Processing" : "Needed"}
+            tone=${allReady ? "success" : gmailOk ? "info" : "warning"}
+          />
+          <${HomeStatusPill} label="Pending approval" value=${Number(dashboard?.pending_approval || 0).toLocaleString()} />
+          <${HomeStatusPill} label="Posted today" value=${Number(dashboard?.posted_today || 0).toLocaleString()} />
+          ${Number(dashboard?.auto_approved_rate || 0) > 0 ? html4`<${HomeStatusPill} label="Touchless" value=${fmtRate(dashboard.auto_approved_rate)} tone="success" />` : null}
+          ${lastScanAt ? html4`<${HomeStatusPill} label="Last scan" value=${fmtDateTime(lastScanAt)} />` : null}
         </div>
+      </div>
+      <div class="home-utility-rail">
+        <div class="home-utility-strip">
+          ${secondaryUtilities.map((item) => html4`
+            <${UtilityIconAction}
+              key=${item.key}
+              label=${item.label}
+              detail=${item.detail}
+              icon=${item.icon}
+              onClick=${item.onClick}
+            />
+          `)}
+        </div>
+        ${primaryUtility ? html4`<button class="home-utility-primary" onClick=${primaryUtility.onClick}>
+              ${primaryUtility.label}
+            </button>` : null}
       </div>
     </div>
 
@@ -62284,35 +65980,98 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           showRulesAction=${!policyOk}
         />` : null}
 
+    ${allReady ? html4`<div class="home-banner">
+          <div style="min-width:0;flex:1">
+            <div class="home-eyebrow" style="margin-bottom:6px">Finance lane update</div>
+            <p class="muted" style="margin:0">
+              ${Number(dashboard?.pending_approval || 0).toLocaleString()} waiting on approval · ${Number(dashboard?.posted_today || 0).toLocaleString()} posted today
+              ${Number(agenticSnapshot?.shadow_disagreement_count || 0) > 0 ? ` · ${Number(agenticSnapshot.shadow_disagreement_count).toLocaleString()} shadow disagreements still under review` : ""}
+            </p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn-secondary btn-sm" onClick=${() => navigate(adminAccess ? "clearledgr/reports" : "clearledgr/activity")}>
+              ${adminAccess ? "Open reports" : "Open activity"}
+            </button>
+          </div>
+        </div>` : null}
+
     <${QuickAccessStrip} items=${quickAccessItems} />
 
-    <div class="home-panel-grid">
-      ${opsAccess ? html4`<${SectionPanel}
-            title="Upcoming"
-            detail=${upcomingSummary > 0 ? `${upcomingSummary} thing${upcomingSummary === 1 ? "" : "s"} need attention next.` : "Nothing is due right now."}
-            actionLabel="Open upcoming"
-            onAction=${() => navigate("clearledgr/upcoming")}
-            panelMinHeight=${220}
-          >
-            ${Array.isArray(upcomingPayload?.tasks) && upcomingPayload.tasks.length > 0 ? html4`<div style="display:grid;gap:10px">
-                  ${upcomingPayload.tasks.map((task) => html4`
-                    <${UpcomingTaskRow}
-                      key=${task.id}
-                      task=${task}
-                      onClick=${() => navigate("clearledgr/upcoming")}
-                    />
-                  `)}
-                </div>` : html4`<${EmptyPanelState} text="Clearledgr will show the next items that need attention here." />`}
-          </${SectionPanel}>` : null}
+    <div class="home-main-grid">
+      <${SectionPanel}
+        title="Recent work"
+        detail=${recentWork.length > 0 ? "Resume the records that moved most recently." : "Recent invoice movement will collect here as work happens."}
+        actionLabel=${workAccess ? "Open activity" : ""}
+        onAction=${() => navigate("clearledgr/activity")}
+        panelMinHeight=${240}
+        className="home-primary-panel"
+      >
+        ${recentWork.length > 0 ? html4`<div class="home-list-stack">
+              ${recentWork.map((entry, index) => {
+      const recordId = String(entry?.ap_item_id || "").trim();
+      const auditRow = buildAuditRow(entry);
+      return html4`<${AuditEventRow}
+                  key=${entry?.id || `${entry?.ts || "event"}:${index}`}
+                  entry=${{ ...entry, ...auditRow, operator_severity: auditRow.severity }}
+                  actionLabel=${recordId ? "Open record" : "Open activity"}
+                  onAction=${() => recordId ? openRecord(recordId, { id: recordId }) : navigate("clearledgr/activity")}
+                />`;
+    })}
+            </div>` : html4`<${EmptyPanelState} text="Recent AP activity will appear here once invoices start moving through the workflow." />`}
+      </${SectionPanel}>
 
       <${SectionPanel}
-        title=${savedOrStarterViews.length > 0 ? "Saved views" : "Queue slices"}
-        detail=${savedOrStarterViews.length > 0 ? "Open the views you come back to most." : "Jump straight to the part of the queue you need."}
-        actionLabel="Open invoices"
-        onAction=${() => navigate("clearledgr/pipeline")}
-        panelMinHeight=${220}
+        title="Recently posted"
+        detail=${Number(dashboard?.posted_today || 0) > 0 ? `${Number(dashboard.posted_today).toLocaleString()} record${Number(dashboard.posted_today) === 1 ? "" : "s"} posted or closed today.` : "Posted invoices and completed records will show up here."}
+        actionLabel=${adminAccess ? "Open reports" : "Open invoices"}
+        onAction=${() => navigate(adminAccess ? "clearledgr/reports" : "clearledgr/invoices")}
+        panelMinHeight=${240}
+        className="home-secondary-panel"
       >
-        <div style="display:grid;gap:10px">
+        ${recentWins.length > 0 ? html4`<div class="home-list-stack">
+              ${recentWins.map((entry, index) => {
+      const recordId = String(entry?.ap_item_id || "").trim();
+      const auditRow = buildAuditRow(entry);
+      return html4`<${AuditEventRow}
+                  key=${entry?.id || `${entry?.ts || "win"}:${index}`}
+                  entry=${{ ...entry, ...auditRow, operator_severity: auditRow.severity }}
+                  actionLabel=${recordId ? "Open record" : "Open reports"}
+                  onAction=${() => recordId ? openRecord(recordId, { id: recordId }) : navigate(adminAccess ? "clearledgr/reports" : "clearledgr/invoices")}
+                />`;
+    })}
+            </div>` : html4`<${EmptyPanelState} text="Posted invoices, recovered posts, and other finance wins will appear here." />`}
+      </${SectionPanel}>
+    </div>
+
+    <div class="home-panel-grid">
+      <${SectionPanel}
+        title="Upcoming tasks"
+        detail=${upcomingSummary > 0 ? `${upcomingSummary} thing${upcomingSummary === 1 ? "" : "s"} need attention next.` : "No upcoming follow-ups yet."}
+        actionLabel=${workAccess ? "Open upcoming" : ""}
+        onAction=${() => navigate("clearledgr/upcoming")}
+        panelMinHeight=${240}
+      >
+        ${Array.isArray(upcomingPayload?.tasks) && upcomingPayload.tasks.length > 0 ? html4`<div class="home-list-stack">
+              ${upcomingPayload.tasks.map((task) => html4`
+                <${UpcomingTaskActionRow}
+                  key=${task.id}
+                  task=${task}
+                  onOpenRecord=${() => openUpcomingTaskRecord(task)}
+                  onOpenSlice=${() => openUpcomingTaskSlice(task)}
+                  onOpenEmail=${() => openUpcomingTaskEmail(task)}
+                />
+              `)}
+            </div>` : html4`<${EmptyPanelState} text="Clearledgr will show the next approvals, vendor follow-ups, and posting retries here." />`}
+      </${SectionPanel}>
+
+      <${SectionPanel}
+        title=${savedOrStarterViews.length > 0 ? "Saved views and slices" : "Queue slices"}
+        detail=${savedOrStarterViews.length > 0 ? "The queue views operators come back to most." : "Jump straight to the queue segment you need."}
+        actionLabel="Open invoices"
+        onAction=${() => navigate("clearledgr/invoices")}
+        panelMinHeight=${240}
+      >
+        <div class="home-list-stack">
           ${(savedOrStarterViews.length > 0 ? savedOrStarterViews : starterPipelineSlices).map((entry) => html4`
             <${QuickLinkRow}
               key=${savedOrStarterViews.length > 0 ? `${entry.scope || "starter"}:${entry.id}` : entry.id}
@@ -62324,13 +66083,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       </${SectionPanel}>
 
-      <div class="home-panel-span">
-        <${RecentActivity}
-          entries=${recentActivity}
-          navigate=${navigate}
-          canOpenActivity=${opsAccess}
-        />
-      </div>
+      <${SectionPanel}
+        title="Highlights"
+        detail="The current finance lane signals, pilot highlights, and blockers worth paying attention to."
+        actionLabel=${adminAccess ? "Open reports" : workAccess ? "Open activity" : ""}
+        onAction=${() => navigate(adminAccess ? "clearledgr/reports" : "clearledgr/activity")}
+        className="home-panel-span"
+      >
+        <${InsightList} items=${homeInsights} />
+        ${homeInsights.length === 0 ? html4`<${EmptyPanelState} text="Clearledgr will surface pilot highlights, blocker trends, and finance guidance here as the lane matures." />` : null}
+      </${SectionPanel}>
     </div>
   `;
   }
@@ -62426,13 +66188,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       sliceId: "all_open"
     },
     needs_info: {
-      title: "Needs info",
-      detail: "Items waiting on vendor follow-up or missing finance data.",
+      title: "Vendor follow-up",
+      detail: "Items waiting on vendor replies or missing finance data. Clearledgr may already be following up.",
       sliceId: "needs_info"
     },
     failed_post: {
       title: "Posting retries",
-      detail: "Records that failed ERP posting and need operator attention.",
+      detail: "Records that failed ERP posting or still need connector setup before posting can continue.",
       sliceId: "failed_post"
     },
     policy_exception: {
@@ -62443,12 +66205,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   };
   function getPipelineScope(orgId, userEmail) {
     return { orgId, userEmail };
-  }
-  function isTypingTarget(target) {
-    if (!target || typeof target !== "object")
-      return false;
-    const tag = String(target.tagName || "").toUpperCase();
-    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || Boolean(target.isContentEditable);
   }
   function sortReviewItems(items = []) {
     return [...items].sort((left, right) => {
@@ -62528,14 +66284,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function buildReviewSummary(item) {
     const section = classifyReviewSection(item);
     const documentType = normalizeDocumentType(item?.document_type);
+    const workNotice = safeDisplayText(getWorkStateNotice(item?.state, documentType, item), "");
     if (section === "field_review") {
       return getWorkflowPauseReason(item) || "Check the blocked fields before continuing.";
     }
     if (section === "failed_post") {
-      return getIssueSummary2(item) || "ERP posting failed and needs operator follow-up.";
+      return workNotice || getIssueSummary2(item) || "ERP posting still needs review.";
     }
     if (section === "needs_info") {
-      return getIssueSummary2(item) || "Additional finance details are still required.";
+      return workNotice || "Clearledgr is waiting for the missing information before this record can continue.";
     }
     if (section === "non_invoice") {
       return getNonInvoiceWorkflowGuidance(documentType);
@@ -62584,20 +66341,54 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       })
     };
   }
-  function SummaryCard({ label, value, tone = "default" }) {
-    const accent = tone === "danger" ? "#B91C1C" : tone === "warning" ? "#92400E" : tone === "success" ? "#047857" : "var(--ink)";
-    return html5`<div style="padding:18px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-    <div style="font-size:28px;font-weight:700;letter-spacing:-0.02em;color:${accent}">${Number(value || 0).toLocaleString()}</div>
-    <div class="muted" style="font-size:12px;margin-top:4px">${label}</div>
-  </div>`;
+  function safeDisplayText(value, fallback = "") {
+    if (value === null || value === undefined)
+      return fallback;
+    if (typeof value === "string") {
+      const text = value.trim();
+      return text || fallback;
+    }
+    if (typeof value === "number" || typeof value === "boolean")
+      return String(value);
+    if (Array.isArray(value)) {
+      const text = value.map((entry) => safeDisplayText(entry, "")).filter(Boolean).join(", ").trim();
+      return text || fallback;
+    }
+    if (typeof value === "object") {
+      for (const key of ["display", "display_value", "value", "label", "name", "title", "text", "id"]) {
+        const text = safeDisplayText(value?.[key], "");
+        if (text)
+          return text;
+      }
+      return fallback;
+    }
+    try {
+      const text = String(value).trim();
+      return text || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  function buildEvidenceSummary(entries = []) {
+    return entries.filter((entry) => entry?.key === "email" || entry?.key === "attachment").map((entry) => {
+      const label = safeDisplayText(entry?.label, "");
+      const text = safeDisplayText(entry?.text, "").toLowerCase();
+      return [label, text].filter(Boolean).join(" ").trim();
+    }).filter(Boolean).join(" · ");
+  }
+  function ReviewMetricPill({ label, value, tone = "default" }) {
+    return html5`<span class="review-metric-pill" data-tone=${tone}>
+    <span class="review-metric-value">${value}</span>
+    <span class="review-metric-label">${label}</span>
+  </span>`;
   }
   function SectionHeader({ title, detail, count, onOpenSlice }) {
     return html5`
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+    <div class="review-section-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:10px">
       <div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
           <h3 style="margin:0">${title}</h3>
-          <span style="font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--ink-secondary)">
+          <span class="review-count-pill">
             ${Number(count || 0).toLocaleString()}
           </span>
         </div>
@@ -62608,50 +66399,51 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
   function FieldReviewCard({ item, blockers, onResolve, resolvingField }) {
-    const pauseReason = getWorkflowPauseReason(item);
-    return html5`
+    try {
+      const pauseReason = safeDisplayText(getWorkflowPauseReason(item), "This record is waiting for these fields to be checked.");
+      return html5`
     <div style="display:flex;flex-direction:column;gap:10px;width:100%">
       <div style="padding:10px 12px;border:1px solid #fcd34d;border-radius:var(--radius-sm);background:#FEFCE8;color:#78350f;font-size:13px;line-height:1.45">
-        ${pauseReason || "This record is waiting for these fields to be checked."}
+        ${pauseReason}
       </div>
       ${blockers.map((blocker) => html5`
         <div key=${`${item.id}-${blocker.field || "field"}`} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);width:100%">
           <div class="review-block-layout">
             <div class="review-block-main">
               <div style="font-weight:700;font-size:13px;margin-bottom:10px">
-                ${blocker.kind === "confidence" ? `Confirm ${(blocker.field_label || "field").toLowerCase()}` : `Choose the correct ${(blocker.field_label || "field").toLowerCase()}`}
+                ${blocker.kind === "confidence" ? `Confirm ${safeDisplayText(blocker.field_label, "field").toLowerCase()}` : `Choose the correct ${safeDisplayText(blocker.field_label, "field").toLowerCase()}`}
               </div>
               <div class="review-block-facts">
                 ${blocker.kind === "confidence" && html5`
                   <>
                     <span class="review-block-fact-label">Clearledgr read</span>
-                    <span class="review-block-fact-value">${blocker.current_value_display || "Not found"}</span>
+                    <span class="review-block-fact-value">${safeDisplayText(blocker.current_value_display, "Not found")}</span>
                   </>
                 `}
                 ${blocker.kind === "confidence" && blocker.current_source_label && html5`
                   <>
                     <span class="review-block-fact-label">Read from</span>
-                    <span class="review-block-fact-value">${blocker.current_source_label}</span>
+                    <span class="review-block-fact-value">${safeDisplayText(blocker.current_source_label, "Source")}</span>
                   </>
                 `}
                 ${blocker.email_value !== null && blocker.email_value !== undefined && html5`
                   <>
                     <span class="review-block-fact-label">Email says</span>
-                    <span class="review-block-fact-value">${blocker.email_value_display}</span>
+                    <span class="review-block-fact-value">${safeDisplayText(blocker.email_value_display, "Not found")}</span>
                   </>
                 `}
                 ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html5`
                   <>
                     <span class="review-block-fact-label">Attachment says</span>
-                    <span class="review-block-fact-value">${blocker.attachment_value_display}</span>
+                    <span class="review-block-fact-value">${safeDisplayText(blocker.attachment_value_display, "Not found")}</span>
                   </>
                 `}
                 ${blocker.kind === "source_conflict" && html5`
                   <>
                     <span class="review-block-fact-label">Current choice</span>
                     <span class="review-block-fact-value">
-                      ${blocker.winning_source_label || "Needs review"}
-                      ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ""}
+                      ${safeDisplayText(blocker.winning_source_label, "Needs review")}
+                      ${safeDisplayText(blocker.winning_value_display, "") ? ` (${safeDisplayText(blocker.winning_value_display, "")})` : ""}
                     </span>
                   </>
                 `}
@@ -62659,8 +66451,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
             <div class="review-block-side">
               <div class="review-block-heading">Why it stopped</div>
-              <div class="review-block-copy">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
-              ${blocker.auto_check_note && html5`<div class="review-block-note">${blocker.auto_check_note}</div>`}
+              <div class="review-block-copy">${safeDisplayText(blocker.winner_reason || blocker.reason_label || blocker.paused_reason, "A person needs to review this field before the workflow can continue.")}</div>
+              ${safeDisplayText(blocker.auto_check_note, "") && html5`<div class="review-block-note">${safeDisplayText(blocker.auto_check_note, "")}</div>`}
               <div class="review-block-actions">
                 ${blocker.email_value !== null && blocker.email_value !== undefined && html5`
                   <button
@@ -62694,6 +66486,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       `)}
     </div>
   `;
+    } catch (error) {
+      console.error("Clearledgr review field card render failed", error, item);
+      return html5`
+      <div style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
+        Clearledgr could not render the full field-review detail for this record, but the item is still available for operator review.
+      </div>
+    `;
+    }
   }
   function ReviewCard({
     item,
@@ -62710,30 +66510,36 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     resolvingField,
     resolvingNonInvoiceKey
   }) {
-    const blockers = getFieldReviewBlockers(item);
-    const documentType = normalizeDocumentType(item?.document_type);
-    const referenceLabel = getDocumentReferenceLabel(documentType);
-    const referenceValue = String(item?.invoice_number || "").trim() || "Not set";
-    const amountLabel = formatAmount(item?.amount, item?.currency);
-    const summary = buildReviewSummary(item);
-    const dueLabel = item?.due_date ? fmtDate(item.due_date) : "N/A";
-    const evidence = getEvidenceChecklistEntries(item, item?.state, {});
-    const evidenceSummary = evidence.filter((entry) => entry.key === "email" || entry.key === "attachment").map((entry) => `${entry.label} ${entry.text.toLowerCase()}`).join(" · ");
-    const referenceSummary = item?.invoice_number ? `${referenceLabel} ${referenceValue}` : getDocumentTypeLabel(documentType);
-    const lastUpdated = fmtDateTime(item?.updated_at || item?.created_at);
-    const nonInvoiceActions = sectionId === "non_invoice" ? getNonInvoiceActions(item) : [];
-    return html5`
+    try {
+      const blockers = getFieldReviewBlockers(item);
+      const documentType = normalizeDocumentType(item?.document_type);
+      const referenceLabel = safeDisplayText(getDocumentReferenceLabel(documentType), "Reference");
+      const referenceValue = safeDisplayText(item?.invoice_number, "Not set");
+      const amountLabel = safeDisplayText(formatAmount(item?.amount, item?.currency), "Amount unavailable");
+      const summary = safeDisplayText(buildReviewSummary(item), "This record needs a closer operator review.");
+      const dueLabel = safeDisplayText(item?.due_date ? fmtDate(item.due_date) : "N/A", "N/A");
+      const evidence = getEvidenceChecklistEntries(item, item?.state, {});
+      const evidenceSummary = buildEvidenceSummary(evidence);
+      const referenceSummary = safeDisplayText(item?.invoice_number ? `${referenceLabel} ${referenceValue}` : getDocumentTypeLabel(documentType), "Finance document");
+      const lastUpdated = safeDisplayText(fmtDateTime(item?.updated_at || item?.created_at), "");
+      const nonInvoiceActions = sectionId === "non_invoice" ? getNonInvoiceActions(item) : [];
+      const vendorLabel = safeDisplayText(item?.vendor_name, "Unknown vendor");
+      const stateLabel = safeDisplayText(getStateLabel(item?.state), "Received");
+      const documentTypeLabel = safeDisplayText(getDocumentTypeLabel(documentType), "Finance document");
+      const executionMode = isInvoiceDocumentType(documentType) ? getAgentExecutionMode(item?.state, item, documentType) : "manual";
+      const workflowStatus = executionMode === "agent_monitoring" ? "Waiting on approver" : executionMode === "agent_waiting" ? "Waiting on vendor" : executionMode === "agent_progressing" ? "Clearledgr progressing" : executionMode === "operator_attention" ? "Needs your review" : "";
+      return html5`
     <div
+      class="review-card"
       style="
-        padding:14px 16px;border:1px solid ${active ? "var(--accent)" : "var(--border)"};
-        border-radius:var(--radius-md);background:var(--surface);
+        border-color:${active ? "var(--accent)" : "var(--border)"};
         box-shadow:${active ? "0 0 0 1px var(--accent-soft)" : "none"};
       "
       onClick=${() => onSetActive(item.id)}
     >
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div class="review-card-top" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div style="min-width:0;flex:1">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+          <div class="review-badge-row">
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-secondary)">
               <input
                 type="checkbox"
@@ -62743,38 +66549,43 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               />
               Select
             </label>
-            <strong style="font-size:14px">${item.vendor_name || "Unknown vendor"}</strong>
-            <span style="font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--ink-secondary)">
-              ${String(item.state || "received").replace(/_/g, " ")}
+            <strong style="font-size:14px">${vendorLabel}</strong>
+            <span class="review-badge">
+              ${stateLabel}
             </span>
-            <span style="font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;background:#EFF6FF;color:#1D4ED8">
-              ${getDocumentTypeLabel(documentType)}
+            <span class="review-badge info">
+              ${documentTypeLabel}
             </span>
+            ${workflowStatus && html5`
+              <span class="review-badge ${executionMode === "agent_monitoring" || executionMode === "agent_waiting" ? "info" : ""}">
+                ${workflowStatus}
+              </span>
+            `}
           </div>
-          <div class="muted" style="font-size:12px;line-height:1.55">
+          <div class="muted review-card-meta" style="font-size:12px;line-height:1.55">
             ${amountLabel} · ${referenceSummary}
             ${isInvoiceDocumentType(documentType) ? ` · Due ${dueLabel}` : ""}
             ${lastUpdated ? ` · Updated ${lastUpdated}` : ""}
           </div>
         </div>
-        <div class="row-actions">
+        <div class="row-actions review-card-actions">
           <button class="btn-secondary btn-sm" onClick=${(event) => {
-      event.stopPropagation();
-      onOpenRecord(item);
-    }}>Open record</button>
+        event.stopPropagation();
+        onOpenRecord(item);
+      }}>Open record</button>
           <button class="btn-ghost btn-sm" onClick=${(event) => {
-      event.stopPropagation();
-      onOpenSlice(item);
-    }}>Open slice</button>
+        event.stopPropagation();
+        onOpenSlice(item);
+      }}>Open slice</button>
           ${(item.thread_id || item.message_id) && html5`
             <button class="btn-ghost btn-sm" onClick=${(event) => {
-      event.stopPropagation();
-      onOpenEmail(item);
-    }}>Open email</button>
+        event.stopPropagation();
+        onOpenEmail(item);
+      }}>Open email</button>
           `}
         </div>
       </div>
-      ${sectionId === "field_review" ? html5`<div style="margin-top:12px"><${FieldReviewCard} item=${item} blockers=${blockers} onResolve=${onResolve} resolvingField=${resolvingField} /></div>` : html5`<div style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
+      ${sectionId === "field_review" ? html5`<div style="margin-top:12px"><${FieldReviewCard} item=${item} blockers=${blockers} onResolve=${onResolve} resolvingField=${resolvingField} /></div>` : html5`<div class="review-card-summary" style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
             ${summary}
           </div>`}
       ${evidenceSummary && html5`
@@ -62789,9 +66600,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               key=${action.id}
               class="btn-secondary btn-sm"
               onClick=${(event) => {
-      event.stopPropagation();
-      onResolveNonInvoice(item, action);
-    }}
+        event.stopPropagation();
+        onResolveNonInvoice(item, action);
+      }}
               disabled=${Boolean(resolvingNonInvoiceKey === `${item.id}:${action.id}`)}
             >
               ${resolvingNonInvoiceKey === `${item.id}:${action.id}` ? "Saving..." : action.label}
@@ -62801,6 +66612,30 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       `}
     </div>
   `;
+    } catch (error) {
+      console.error("Clearledgr review card render failed", error, item);
+      return html5`
+      <div class="review-card">
+        <div class="review-badge-row" style="margin-bottom:6px">
+          <strong style="font-size:14px">${safeDisplayText(item?.vendor_name, "Unknown vendor")}</strong>
+          <span class="review-badge">${safeDisplayText(String(item?.state || "received").replace(/_/g, " "), "received")}</span>
+        </div>
+        <div class="muted review-card-meta" style="font-size:12px;line-height:1.55">
+          This record is still in the review queue, but Clearledgr could not render the full operator card from the current payload.
+        </div>
+        <div class="row-actions review-card-actions" style="margin-top:12px">
+          <button class="btn-secondary btn-sm" onClick=${(event) => {
+        event.stopPropagation();
+        onOpenRecord(item);
+      }}>Open record</button>
+          <button class="btn-ghost btn-sm" onClick=${(event) => {
+        event.stopPropagation();
+        onOpenSlice(item);
+      }}>Open slice</button>
+        </div>
+      </div>
+    `;
+    }
   }
   function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
     const pipelineScope = T2(() => getPipelineScope(orgId, userEmail), [orgId, userEmail]);
@@ -62904,14 +66739,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const selectedSet = T2(() => new Set(selectedIds.map((itemId) => String(itemId || ""))), [selectedIds]);
     const selectedItems = T2(() => filtered.filter((item) => selectedSet.has(String(item.id || ""))), [filtered, selectedSet]);
     const bulkFieldTarget = T2(() => getCommonFieldReviewTarget(selectedItems), [selectedItems]);
-    const activeItem = T2(() => filtered.find((item) => String(item.id || "") === String(activeItemId || "")) || null, [activeItemId, filtered]);
     const openSlice = q2((item, fallbackSliceId = "blocked_exception") => {
       clearPipelineNavigation(pipelineScope);
       activatePipelineSlice(pipelineScope, fallbackSliceId || "blocked_exception");
       if (item?.id) {
         focusPipelineItem(pipelineScope, item, "review");
       }
-      navigate("clearledgr/pipeline");
+      navigate("clearledgr/invoices");
     }, [navigate, pipelineScope]);
     const openRecord = q2((item) => {
       if (!item?.id)
@@ -63065,163 +66899,58 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         setResolvingNonInvoiceKey("");
       }
     });
-    y2(() => {
-      const handleKeyDown = (event) => {
-        if (dialog.visible || !filtered.length || isTypingTarget(event.target))
-          return;
-        const currentIndex = Math.max(0, filtered.findIndex((item) => String(item.id || "") === String(activeItemId || "")));
-        const currentItem = filtered[currentIndex] || filtered[0];
-        const lower = String(event.key || "").toLowerCase();
-        let handled = false;
-        if (lower === "j" || event.key === "ArrowDown") {
-          const nextIndex = Math.min(filtered.length - 1, currentIndex + 1);
-          setActiveItemId(String(filtered[nextIndex]?.id || ""));
-          handled = true;
-        } else if (lower === "k" || event.key === "ArrowUp") {
-          const nextIndex = Math.max(0, currentIndex - 1);
-          setActiveItemId(String(filtered[nextIndex]?.id || ""));
-          handled = true;
-        } else if (lower === "x" && currentItem?.id) {
-          toggleSelected(currentItem.id);
-          handled = true;
-        } else if (lower === "o" && currentItem) {
-          openRecord(currentItem);
-          handled = true;
-        } else if (lower === "e" && currentItem) {
-          openEmail(currentItem);
-          handled = true;
-        } else if (lower === "p" && currentItem) {
-          const sectionId = classifyReviewSection(currentItem);
-          openSlice(currentItem, SECTION_CONFIG[sectionId || "field_review"]?.sliceId || "blocked_exception");
-          handled = true;
-        } else if (["1", "2", "3"].includes(lower) && currentItem && classifyReviewSection(currentItem) === "field_review") {
-          const blocker = getFieldReviewBlockers(currentItem)[0];
-          if (blocker) {
-            if (lower === "1" && blocker.email_value !== null && blocker.email_value !== undefined) {
-              resolveField(currentItem, blocker, "email");
-              handled = true;
-            } else if (lower === "2" && blocker.attachment_value !== null && blocker.attachment_value !== undefined) {
-              resolveField(currentItem, blocker, "attachment");
-              handled = true;
-            } else if (lower === "3") {
-              resolveField(currentItem, blocker, "manual");
-              handled = true;
-            }
-          }
-        } else if (lower === "l" && currentItem && classifyReviewSection(currentItem) === "non_invoice") {
-          const action = getNonInvoiceActions(currentItem)[0];
-          if (action) {
-            resolveNonInvoice(currentItem, action);
-            handled = true;
-          }
-        } else if (lower === "b" && selectedItems.length > 0 && bulkFieldTarget && !bulkResolvingField) {
-          if (bulkFieldTarget.canUseAttachment) {
-            bulkResolveField("attachment");
-            handled = true;
-          } else if (bulkFieldTarget.canUseEmail) {
-            bulkResolveField("email");
-            handled = true;
-          }
-        }
-        if (handled) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      };
-      window.addEventListener("keydown", handleKeyDown, true);
-      return () => window.removeEventListener("keydown", handleKeyDown, true);
-    }, [
-      activeItemId,
-      bulkFieldTarget,
-      bulkResolveField,
-      bulkResolvingField,
-      dialog.visible,
-      filtered,
-      openEmail,
-      openRecord,
-      openSlice,
-      resolveField,
-      resolveNonInvoice,
-      selectedItems,
-      toggleSelected
-    ]);
     if (loading) {
       return html5`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading review queue...</p></div>`;
     }
     return html5`
-    <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
-        <div>
-          <h3 style="margin:0 0 6px">Review queue</h3>
-          <p class="muted" style="margin:0;max-width:680px">
-            Handle records that need a closer look, from blocked fields to posting retries and non-invoice documents.
-          </p>
-        </div>
-        <div class="toolbar-actions">
-          <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing..." : "Refresh"}</button>
-          <button class="btn-primary btn-sm" onClick=${() => navigate("clearledgr/pipeline")}>Open pipeline</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="kpi-row" style="grid-template-columns:repeat(5,1fr)">
-      <${SummaryCard} label="Open review items" value=${overallSummary.total} />
-      <${SummaryCard} label="Field checks" value=${overallSummary.fieldReview} tone="warning" />
-      <${SummaryCard} label="Non-invoice docs" value=${overallSummary.nonInvoice} tone="success" />
-      <${SummaryCard} label="Needs info" value=${overallSummary.needsInfo} />
-      <${SummaryCard} label="Posting retries" value=${overallSummary.failedPost} tone="danger" />
-    </div>
-
-    <div class="panel">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-        <div>
-          <h3 style="margin:0 0 4px">Search review work</h3>
-          <p class="muted" style="margin:0">Find a blocked record by vendor, reference, sender, or exception.</p>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${hasSearch && html5`
-            <span style="font-size:12px;font-weight:700;padding:5px 10px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--ink-secondary)">
-              Showing ${filteredCount} of ${overallSummary.total}
-            </span>
-          `}
-          ${overallSummary.policyException > 0 && html5`
-            <span style="font-size:12px;font-weight:700;padding:5px 10px;border-radius:999px;background:#FFF7ED;border:1px solid #FED7AA;color:#9A3412">
-              ${overallSummary.policyException} policy / exception blockers
-            </span>
-          `}
-        </div>
-      </div>
-      <div style="position:relative">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%)"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input
-          placeholder="Search review items..."
-          value=${search}
-          onInput=${(event) => setSearch(event.target.value)}
-          style="width:100%;padding:8px 8px 8px 34px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;background:var(--bg)"
-        />
-      </div>
-      ${hasSearch && html5`
-        <div style="display:flex;justify-content:flex-end;margin-top:10px">
-          <button class="btn-ghost btn-sm" onClick=${() => setSearch("")}>Clear search</button>
-        </div>
-      `}
-      <div class="muted" style="font-size:12px;margin-top:10px">
-        Keyboard: J/K move · X select · O open record · E open email · P open slice · 1/2/3 resolve current blocker · L apply primary non-invoice action · B bulk resolve selected blockers
-      </div>
-    </div>
-
-    ${selectedIds.length > 0 && html5`
-      <div class="panel">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-          <div>
-            <h3 style="margin:0 0 4px">${selectedIds.length} selected</h3>
-            <p class="muted" style="margin:0">
-              ${bulkFieldTarget ? `Bulk resolve ${bulkFieldTarget.label.toLowerCase()} across similar blocked items.` : "Current selection does not share a single blocked field."}
-            </p>
+    <div class="review-shell">
+      <div class="panel review-overview-panel">
+        <div class="review-overview-head">
+          <div class="review-overview-copy">
+            <div>
+              <div class="muted" style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px">Review</div>
+              <h3 style="margin:0 0 4px">Review queue</h3>
+              <p class="muted" style="margin:0">Records that still need review, treatment, or follow-up oversight live here. Some are paused for operator action; others are already waiting on a vendor or approver.</p>
+            </div>
+            <div class="review-metric-row">
+              <${ReviewMetricPill} label="Open" value=${overallSummary.total} />
+              <${ReviewMetricPill} label="Field checks" value=${overallSummary.fieldReview} tone="warning" />
+              <${ReviewMetricPill} label="Non-invoice" value=${overallSummary.nonInvoice} tone="success" />
+              <${ReviewMetricPill} label="Needs info" value=${overallSummary.needsInfo} />
+              <${ReviewMetricPill} label="Posting retries" value=${overallSummary.failedPost} tone="danger" />
+              ${overallSummary.policyException > 0 ? html5`<${ReviewMetricPill} label="Policy blockers" value=${overallSummary.policyException} tone="warning" />` : null}
+              ${hasSearch ? html5`<${ReviewMetricPill} label="Visible" value=${filteredCount} />` : null}
+            </div>
           </div>
           <div class="toolbar-actions">
+            <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing..." : "Refresh"}</button>
+            <button class="btn-primary btn-sm" onClick=${() => navigate("clearledgr/invoices")}>Open invoices</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel review-command-panel">
+      <div class="review-search-row">
+        <div class="review-search-box">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%)"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input
+            placeholder="Search review items..."
+            value=${search}
+            onInput=${(event) => setSearch(event.target.value)}
+          />
+        </div>
+          ${hasSearch ? html5`<button class="btn-ghost btn-sm" onClick=${() => setSearch("")}>Clear search</button>` : html5`<span class="muted review-search-helper">Find a record in this queue by vendor, reference, sender, or exception.</span>`}
+        </div>
+        <div class="review-bulk-bar">
+          <div>
+            <strong style="font-size:13px">${selectedIds.length > 0 ? `${selectedIds.length} selected` : "Bulk actions"}</strong>
+            <div class="muted" style="font-size:12px;margin-top:4px">
+              ${selectedIds.length > 0 ? bulkFieldTarget ? `Bulk resolve ${bulkFieldTarget.label.toLowerCase()} across similar blocked items.` : "Current selection does not share a single blocked field." : "Select similar field-review rows to resolve one canonical value across them."}
+            </div>
+          </div>
+          <div class="toolbar-actions review-bulk-actions">
             <button class="btn-secondary btn-sm" onClick=${selectVisible}>Select visible</button>
-            <button class="btn-ghost btn-sm" onClick=${clearSelection}>Clear selection</button>
+            <button class="btn-ghost btn-sm" onClick=${clearSelection} disabled=${selectedIds.length === 0}>Clear selection</button>
             ${bulkFieldTarget?.canUseEmail && html5`
               <button class="btn-secondary btn-sm" onClick=${() => bulkResolveField("email")} disabled=${bulkResolvingField}>
                 ${bulkResolvingField ? "Saving..." : "Bulk use email"}
@@ -63240,61 +66969,63 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         </div>
       </div>
-    `}
 
-    ${Object.entries(SECTION_CONFIG).map(([sectionId, config]) => {
+      <div class="review-section-stack">
+      ${Object.entries(SECTION_CONFIG).map(([sectionId, config]) => {
       const sectionItems = sections[sectionId] || [];
       if (sectionItems.length === 0)
         return null;
       return html5`
-        <div class="panel" key=${sectionId}>
-          <${SectionHeader}
-            title=${config.title}
-            detail=${config.detail}
-            count=${sectionItems.length}
-            onOpenSlice=${() => openSlice(null, config.sliceId)}
-          />
-          <div style="display:flex;flex-direction:column;gap:12px">
-            ${sectionItems.map((item) => html5`
-              <${ReviewCard}
-                key=${item.id}
-                item=${item}
-                sectionId=${sectionId}
-                active=${String(activeItemId || "") === String(item.id || "")}
-                selected=${selectedSet.has(String(item.id || ""))}
-                onOpenRecord=${openRecord}
-                onOpenEmail=${openEmail}
-                onOpenSlice=${(target) => openSlice(target, config.sliceId)}
-                onResolve=${resolveField}
-                onResolveNonInvoice=${resolveNonInvoice}
-                onToggleSelected=${toggleSelected}
-                onSetActive=${setActiveItemId}
-                resolvingField=${resolvingFieldKey}
-                resolvingNonInvoiceKey=${resolvingNonInvoiceKey}
-              />
-            `)}
+          <div class="panel review-section-panel" key=${sectionId}>
+            <${SectionHeader}
+              title=${config.title}
+              detail=${config.detail}
+              count=${sectionItems.length}
+              onOpenSlice=${() => openSlice(null, config.sliceId)}
+            />
+            <div style="display:flex;flex-direction:column;gap:12px">
+              ${sectionItems.map((item) => html5`
+                <${ReviewCard}
+                  key=${item.id}
+                  item=${item}
+                  sectionId=${sectionId}
+                  active=${String(activeItemId || "") === String(item.id || "")}
+                  selected=${selectedSet.has(String(item.id || ""))}
+                  onOpenRecord=${openRecord}
+                  onOpenEmail=${openEmail}
+                  onOpenSlice=${(target) => openSlice(target, config.sliceId)}
+                  onResolve=${resolveField}
+                  onResolveNonInvoice=${resolveNonInvoice}
+                  onToggleSelected=${toggleSelected}
+                  onSetActive=${setActiveItemId}
+                  resolvingField=${resolvingFieldKey}
+                  resolvingNonInvoiceKey=${resolvingNonInvoiceKey}
+                />
+              `)}
+            </div>
           </div>
-        </div>
-      `;
+        `;
     })}
-
-    ${overallSummary.total === 0 && html5`
-      <div class="panel">
-        <h3 style="margin:0 0 6px">Nothing blocked right now</h3>
-        <p class="muted" style="margin:0">Clearledgr will show anything that needs review here as it appears.</p>
       </div>
-    `}
 
-    ${overallSummary.total > 0 && filteredCount === 0 && html5`
-      <div class="panel">
-        <h3 style="margin:0 0 6px">No review items match this search</h3>
-        <p class="muted" style="margin:0">Try a vendor name, reference number, sender, or exception keyword.</p>
-      </div>
-    `}
+      ${overallSummary.total === 0 && html5`
+        <div class="panel review-empty-panel">
+          <h3 style="margin:0 0 6px">Nothing needs review right now</h3>
+          <p class="muted" style="margin:0">Clearledgr will show anything that needs review here as it appears.</p>
+        </div>
+      `}
 
-    <${DisputesPanel} api=${api} orgId=${orgId} navigate=${navigate} />
+      ${overallSummary.total > 0 && filteredCount === 0 && html5`
+        <div class="panel review-empty-panel">
+          <h3 style="margin:0 0 6px">No review items match this search</h3>
+          <p class="muted" style="margin:0">Try a vendor name, reference number, sender, or exception keyword.</p>
+        </div>
+      `}
 
-    <${ActionDialog} ...${dialog} />
+      <${DisputesPanel} api=${api} orgId=${orgId} navigate=${navigate} />
+
+      <${ActionDialog} ...${dialog} />
+    </div>
   `;
   }
   function DisputesPanel({ api, orgId, navigate }) {
@@ -63310,7 +67041,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (!summary || summary.total === 0)
       return null;
     return html5`
-    <div class="panel" style="margin-top:16px">
+    <div class="panel review-section-panel review-disputes-panel">
       <h3 style="margin-top:0">Active disputes (${summary.open_count || 0})</h3>
       <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
         ${Object.entries(summary.by_status || {}).map(([status, count]) => html5`
@@ -63349,13 +67080,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     post_invoice: "Posting",
     review_blocker: "Blocker review"
   };
-  function formatMoney(amount, currency = "USD") {
-    const value = Number(amount);
-    if (!Number.isFinite(value))
-      return "Amount unavailable";
-    return `${currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  }
-  function buildTaskLocator(task = {}) {
+  function buildTaskLocator2(task = {}) {
     return {
       id: task.ap_item_id,
       thread_id: task.thread_id,
@@ -63369,6 +67094,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;
     background:${tone.bg};color:${tone.text};font-size:11px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;
   ">${tone.label}</span>`;
+  }
+  function SummaryCard({ label, value, tone = "default" }) {
+    const accent = tone === "danger" ? "#B91C1C" : tone === "warning" ? "#92400E" : tone === "success" ? "#047857" : "var(--ink)";
+    return html6`<div class="reports-metric-card">
+    <div class="reports-metric-value" style=${`color:${accent}`}>${Number(value || 0).toLocaleString()}</div>
+    <div class="reports-metric-detail" style="margin-top:4px">${label}</div>
+  </div>`;
   }
   function UpcomingPage({ api, toast, orgId, userEmail, navigate }) {
     const pipelineScope = T2(() => ({ orgId, userEmail }), [orgId, userEmail]);
@@ -63402,14 +67134,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       clearPipelineNavigation(pipelineScope);
       activatePipelineSlice(pipelineScope, sliceId);
       if (task?.ap_item_id) {
-        focusPipelineItem(pipelineScope, buildTaskLocator(task), "upcoming");
+        focusPipelineItem(pipelineScope, buildTaskLocator2(task), "upcoming");
       }
-      navigate("clearledgr/pipeline");
+      navigate("clearledgr/invoices");
     };
     const openRecord = (task) => {
       if (!task?.ap_item_id)
         return;
-      focusPipelineItem(pipelineScope, buildTaskLocator(task), "upcoming");
+      focusPipelineItem(pipelineScope, buildTaskLocator2(task), "upcoming");
       navigateToRecordDetail(navigate, task.ap_item_id);
     };
     const openEmail = (task) => {
@@ -63436,27 +67168,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
       <div class="secondary-banner-actions">
         <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
-        <button class="btn-primary btn-sm" onClick=${() => navigate("clearledgr/pipeline")}>Open pipeline</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate("clearledgr/invoices")}>Open invoices</button>
       </div>
     </div>
 
-    <div class="secondary-chip-row" style="margin:0 0 18px">
-      <span class="secondary-chip">Total follow-ups ${summary.total || 0}</span>
-      <span class="secondary-chip">Overdue ${summary.overdue || 0}</span>
-      <span class="secondary-chip">Today ${summary.today || 0}</span>
-      <span class="secondary-chip">This week ${summary.this_week || 0}</span>
+    <div class="secondary-stat-grid" style="margin:0 0 18px">
+      <${SummaryCard} label="Total follow-ups" value=${summary.total || 0} />
+      <${SummaryCard} label="Overdue" value=${summary.overdue || 0} tone="danger" />
+      <${SummaryCard} label="Today" value=${summary.today || 0} tone="warning" />
+      <${SummaryCard} label="This week" value=${summary.this_week || 0} tone="success" />
     </div>
 
     <div class="panel">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+      <div class="panel-head compact">
         <div>
           <h3 style="margin:0 0 4px">What is due</h3>
           <p class="muted" style="margin:0">Only the follow-ups that can move work forward show up here.</p>
         </div>
         ${groupedCounts.length > 0 && html6`
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div class="reports-chip-wrap">
             ${groupedCounts.map(([kind, count]) => html6`
-              <span key=${kind} style="display:inline-flex;gap:6px;align-items:center;padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px;font-weight:600;color:var(--ink-secondary)">
+              <span key=${kind} class="secondary-chip" style="font-size:12px">
                 ${KIND_LABELS[kind] || kind.replace(/_/g, " ")}
                 <strong style="color:var(--ink)">${count}</strong>
               </span>
@@ -63465,27 +67197,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         `}
       </div>
 
-      ${tasks.length === 0 ? html6`<p class="muted" style="margin:0">Nothing is due right now.</p>` : html6`<div style="display:flex;flex-direction:column;gap:12px">
+      ${tasks.length === 0 ? html6`<p class="muted" style="margin:0">No upcoming follow-ups yet.</p>` : html6`<div class="secondary-card-list">
             ${tasks.map((task) => html6`
-              <div key=${task.id} style="padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                  <div style="min-width:0;flex:1">
-                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-                      <strong style="font-size:14px">${task.title || "Follow-up"}</strong>
+              <div key=${task.id} class="secondary-card">
+                <div class="secondary-card-head">
+                  <div class="secondary-card-copy">
+                    <div class="secondary-inline-actions" style="margin-bottom:4px">
+                      <strong class="secondary-card-title">${task.title || "Follow-up"}</strong>
                       <${StatusPill} status=${task.status} />
                       <span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.02em">
                         ${KIND_LABELS[task.kind] || task.kind?.replace(/_/g, " ") || "Follow-up"}
                       </span>
                     </div>
-                    <div style="font-size:13px;font-weight:600;color:var(--ink-secondary)">
-                      ${task.vendor_name || "Unknown vendor"} · ${task.invoice_number || "No invoice #"} · ${formatMoney(task.amount, task.currency || "USD")}
+                    <div class="secondary-card-meta" style="font-size:13px;font-weight:600;color:var(--ink-secondary)">
+                      ${task.vendor_name || "Unknown vendor"} · ${task.invoice_number || "No invoice #"} · ${formatAmount(task.amount, task.currency)}
                     </div>
-                    <div class="muted" style="font-size:12px;line-height:1.55;margin-top:6px">${task.detail}</div>
-                    <div class="muted" style="font-size:12px;margin-top:8px">
+                    <div class="secondary-card-meta" style="margin-top:6px">${task.detail}</div>
+                    <div class="secondary-card-meta" style="margin-top:8px">
                       ${task.due_at ? `Due ${fmtDateTime(task.due_at)}` : "No explicit follow-up time"}
                     </div>
                   </div>
-                  <div class="row-actions">
+                  <div class="secondary-card-actions" style="margin-top:0">
                     <button class="btn-secondary btn-sm" onClick=${() => openRecord(task)}>Open record</button>
                     <button class="btn-ghost btn-sm" onClick=${() => openPipelineTask(task)}>Open slice</button>
                     ${(task.thread_id || task.message_id) && html6`<button class="btn-ghost btn-sm" onClick=${() => openEmail(task)}>Open email</button>`}
@@ -63500,6 +67232,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
   // src/routes/pages/ActivityPage.js
   var html7 = htm_module_default.bind(_);
+  function SummaryCard2({ label, value }) {
+    return html7`<div class="secondary-stat-card">
+    <strong>${label}</strong>
+    <span style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--ink)">${Number(value || 0).toLocaleString()}</span>
+  </div>`;
+  }
   function ActivityPage({ bootstrap, onRefresh, navigate }) {
     const dash = bootstrap?.dashboard || {};
     const events = Array.isArray(bootstrap?.recentActivity) ? bootstrap.recentActivity.slice(0, 12) : [];
@@ -63512,34 +67250,38 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
       <div class="secondary-banner-actions">
         <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
-        <button class="btn-primary btn-sm" onClick=${() => navigate?.("clearledgr/pipeline")}>Open pipeline</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate?.("clearledgr/invoices")}>Open invoices</button>
       </div>
     </div>
 
-    <div class="secondary-chip-row" style="margin:0 0 18px">
-      <span class="secondary-chip">Awaiting approval ${Number(dash.pending_approval || 0).toLocaleString()}</span>
-      <span class="secondary-chip">Posted today ${Number(dash.posted_today || 0).toLocaleString()}</span>
-      <span class="secondary-chip">Rejected today ${Number(dash.rejected_today || 0).toLocaleString()}</span>
-      <span class="secondary-chip">Total processed ${Number(dash.total_invoices || 0).toLocaleString()}</span>
+    <div class="secondary-stat-grid" style="margin:0 0 18px">
+      <${SummaryCard2} label="Awaiting approval" value=${dash.pending_approval || 0} />
+      <${SummaryCard2} label="Posted today" value=${dash.posted_today || 0} />
+      <${SummaryCard2} label="Rejected today" value=${dash.rejected_today || 0} />
+      <${SummaryCard2} label="Total processed" value=${dash.total_invoices || 0} />
     </div>
 
     <div class="panel">
-      <h3 style="margin-top:0">Recent updates</h3>
-      <p class="muted" style="margin-top:0">Recent changes across approvals, posting, and exceptions.</p>
-      ${events.length === 0 ? html7`<p class="muted" style="margin:0">No recent activity yet.</p>` : html7`<div style="display:flex;flex-direction:column;gap:10px">
+      <div class="panel-head compact">
+        <div>
+          <h3 style="margin-top:0">Recent updates</h3>
+          <p class="muted" style="margin:0">Recent changes across approvals, posting, and exceptions.</p>
+        </div>
+      </div>
+      ${events.length === 0 ? html7`<p class="muted" style="margin:0">No recent activity yet.</p>` : html7`<div class="secondary-card-list">
             ${events.map((event, index) => {
       const badge = eventBadge(event.event_type || event.new_state || "activity");
       const title = String(event.title || event.summary || badge.label || "Activity recorded").trim() || "Activity recorded";
       const subtitle = String(event.detail || event.message || "").trim();
       return html7`
-                <div key=${event.id || index} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                    <div style="min-width:0">
-                      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <div key=${event.id || index} class="secondary-card">
+                  <div class="secondary-card-head">
+                    <div class="secondary-card-copy">
+                      <div class="secondary-inline-actions" style="margin-bottom:0">
                         <span class=${`status-badge ${badge.cls || ""}`}>${badge.label}</span>
-                        <strong style="font-size:13px">${title}</strong>
+                        <strong class="secondary-card-title" style="font-size:13px">${title}</strong>
                       </div>
-                      ${subtitle && html7`<div class="muted" style="margin-top:6px;font-size:12px;line-height:1.5">${subtitle}</div>`}
+                      ${subtitle && html7`<div class="secondary-card-meta" style="margin-top:6px">${subtitle}</div>`}
                     </div>
                     <span class="muted" style="font-size:12px;white-space:nowrap">${fmtDateTime(event.ts || event.timestamp || event.created_at)}</span>
                   </div>
@@ -63553,11 +67295,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
   // src/routes/pages/ConnectionsPage.js
   var html8 = htm_module_default.bind(_);
+  var ERP_OPTIONS = [
+    { value: "quickbooks", label: "QuickBooks" },
+    { value: "xero", label: "Xero" },
+    { value: "netsuite", label: "NetSuite" },
+    { value: "sap", label: "SAP" }
+  ];
+  function getErpOptionLabel(value) {
+    const token = String(value || "").trim().toLowerCase();
+    return ERP_OPTIONS.find((option) => option.value === token)?.label || "ERP";
+  }
   function ConnectionRow({ label, status, detail, actionLabel = "", onAction, pending = false, disabled = false }) {
     const connected = String(status || "").trim().toLowerCase() === "connected";
     return html8`<div class="secondary-row">
     <div class="secondary-row-copy">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+      <div class="secondary-chip-row" style="margin-bottom:4px">
         <strong style="font-size:14px">${label}</strong>
         <span class=${`status-badge ${connected ? "connected" : ""}`}>${humanizeStatus(status || "unknown")}</span>
       </div>
@@ -63568,7 +67320,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function ApprovalSurfaceCard({ title, status, detail, children }) {
     return html8`<div class="panel" style="margin-bottom:0">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+    <div class="panel-head compact">
       <div>
         <h3 style="margin:0 0 4px">${title}</h3>
         <p class="muted" style="margin:0">${detail}</p>
@@ -63578,15 +67330,78 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     ${children}
   </div>`;
   }
+  function getApprovalSummary(slack = {}, teams = {}) {
+    if (slack.connected && slack.requires_reauthorization)
+      return "Reconnect Slack";
+    if (slack.connected)
+      return "Slack ready";
+    if (teams.connected)
+      return "Teams ready";
+    return "Set up Slack or Teams";
+  }
+  function getRoutingModeSummary(slack = {}, teams = {}) {
+    if (slack.connected)
+      return humanizeMode(slack.mode || "-");
+    if (teams.connected)
+      return humanizeMode(teams.mode || "-");
+    return "Set after approval setup";
+  }
+  function getSetupSummary({ gmail, gmailReconnectRequired, approvalConnected, slack, erp }) {
+    const missing = [];
+    if (!gmail.connected || gmailReconnectRequired)
+      missing.push("Gmail");
+    if (!approvalConnected || slack.requires_reauthorization)
+      missing.push("Slack or Teams approvals");
+    if (!erp.connected)
+      missing.push("ERP");
+    if (missing.length === 0)
+      return "Gmail, approvals, and ERP are ready for this workspace.";
+    if (missing.length === 1)
+      return `Finish ${missing[0]} before Clearledgr can run the full AP flow.`;
+    return `Finish ${missing.slice(0, -1).join(", ")}, and ${missing[missing.length - 1]} before Clearledgr can run the full AP flow.`;
+  }
+  function getSlackConnectionDetail(slack = {}) {
+    if (slack.connected && slack.requires_reauthorization) {
+      return "Reconnect Slack to restore approval actions and approver email matching.";
+    }
+    if (slack.connected && slack.approval_channel) {
+      return `Approvals are ready in ${slack.approval_channel}.`;
+    }
+    if (slack.connected) {
+      return "Slack is connected. Pick the approval channel below.";
+    }
+    return "Install Slack to send approval requests there.";
+  }
   function ConnectionsPage({ bootstrap, api, toast, orgId, onRefresh, oauthBridge, navigate }) {
     const gmail = integrationByName(bootstrap, "gmail");
     const erp = integrationByName(bootstrap, "erp");
     const slack = integrationByName(bootstrap, "slack");
     const teams = integrationByName(bootstrap, "teams");
     const canManageConnections = hasCapability(bootstrap, "manage_connections");
+    const [adminProbeGranted, setAdminProbeGranted] = d2(false);
     const gmailReconnectRequired = Boolean(gmail.connected && (gmail.requires_reconnect || gmail.durable === false));
+    const canEditConnections = canManageConnections || adminProbeGranted;
+    y2(() => {
+      let cancelled = false;
+      if (canManageConnections) {
+        setAdminProbeGranted(false);
+        return () => {
+          cancelled = true;
+        };
+      }
+      api(`/api/workspace/team/invites?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).then(() => {
+        if (!cancelled)
+          setAdminProbeGranted(true);
+      }).catch(() => {
+        if (!cancelled)
+          setAdminProbeGranted(false);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [api, canManageConnections, orgId]);
     const [connectGmail, gmailPending] = useAction2(async () => {
-      if (!canManageConnections)
+      if (!canEditConnections)
         return;
       const payload = await api("/api/workspace/integrations/gmail/connect/start", {
         method: "POST",
@@ -63596,29 +67411,29 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         oauthBridge.startOAuth(payload.auth_url, "gmail");
         return;
       }
-      navigate?.("clearledgr/pipeline");
+      navigate?.("clearledgr/invoices");
     });
     const [connectSlack, slackPending] = useAction2(async () => {
-      if (!canManageConnections)
+      if (!canEditConnections)
         return;
       const p3 = await api("/api/workspace/integrations/slack/install/start", { method: "POST", body: JSON.stringify({ organization_id: orgId, mode: "per_org", redirect_path: "/workspace" }) });
       oauthBridge.startOAuth(p3.auth_url, "slack");
     });
     const [saveChannel, saveChannelPending] = useAction2(async () => {
-      if (!canManageConnections)
+      if (!canEditConnections)
         return;
       await api("/api/workspace/integrations/slack/channel", { method: "POST", body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById("cl-slack-channel")?.value?.trim() }) });
       toast("Channel saved.");
       onRefresh();
     });
     const [testSlackMsg, testSlackPending] = useAction2(async () => {
-      if (!canManageConnections)
+      if (!canEditConnections)
         return;
       await api("/api/workspace/integrations/slack/test", { method: "POST", body: JSON.stringify({ organization_id: orgId, channel_id: document.getElementById("cl-slack-channel")?.value?.trim() }) });
       toast("Slack connection verified.");
     });
     const [saveWebhook, saveWebhookPending] = useAction2(async () => {
-      if (!canManageConnections)
+      if (!canEditConnections)
         return;
       const wh = document.getElementById("cl-teams-webhook")?.value?.trim();
       if (!wh) {
@@ -63630,21 +67445,24 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       onRefresh();
     });
     const [testTeamsMsg, testTeamsPending] = useAction2(async () => {
-      if (!canManageConnections)
+      if (!canEditConnections)
         return;
       await api("/api/workspace/integrations/teams/test", { method: "POST", body: JSON.stringify({ organization_id: orgId }) });
       toast("Test sent to Teams.");
     });
     const approvalConnected = Boolean(slack.connected || teams.connected);
-    const setupMode = approvalConnected && erp.connected && gmail.connected && !gmailReconnectRequired ? "All core connections look ready." : "Finish any missing connection before invoices try to post.";
+    const setupMode = getSetupSummary({ gmail, gmailReconnectRequired, approvalConnected, slack, erp });
+    const [erpType, setErpType] = d2(String(erp.erp_type || "quickbooks").trim().toLowerCase() || "quickbooks");
+    const [erpFormSpec, setErpFormSpec2] = d2(null);
+    const [erpFormValues, setErpFormValues] = d2({});
     return html8`
-    <div class=${`secondary-banner ${canManageConnections ? "" : "warning"}`}>
+    <div class=${`secondary-banner ${canEditConnections ? "" : "warning"}`}>
       <div class="secondary-banner-copy">
-        <h3>${canManageConnections ? "Setup and reconnects live here" : "Connection status is visible here"}</h3>
-        <p class="muted">${canManageConnections ? setupMode : "Admins can change Gmail, approval routing, and ERP setup. Everyone else can still see what is connected."}</p>
+        <h3>${canEditConnections ? "Setup and reconnects live here" : "Connection status is visible here"}</h3>
+        <p class="muted">${canEditConnections ? setupMode : "Admins can change Gmail, approval routing, and ERP setup. Everyone else can still see what is connected."}</p>
       </div>
       <div class="secondary-banner-actions">
-        ${gmail.connected || gmailReconnectRequired ? html8`<button class="btn-primary btn-sm" onClick=${connectGmail} disabled=${gmailPending || !canManageConnections}>${gmailPending ? "Working…" : gmailReconnectRequired ? "Reconnect Gmail" : "Refresh Gmail auth"}</button>` : html8`<button class="btn-primary btn-sm" onClick=${connectGmail} disabled=${gmailPending || !canManageConnections}>${gmailPending ? "Working…" : "Connect Gmail"}</button>`}
+        ${gmail.connected || gmailReconnectRequired ? html8`<button class="btn-primary btn-sm" onClick=${connectGmail} disabled=${gmailPending || !canEditConnections}>${gmailPending ? "Working…" : gmailReconnectRequired ? "Reconnect Gmail" : "Refresh Gmail auth"}</button>` : html8`<button class="btn-primary btn-sm" onClick=${connectGmail} disabled=${gmailPending || !canEditConnections}>${gmailPending ? "Working…" : "Connect Gmail"}</button>`}
         <button class="btn-secondary btn-sm" onClick=${() => navigate?.("clearledgr/health")}>Open system status</button>
       </div>
     </div>
@@ -63662,16 +67480,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               actionLabel=${gmail.connected ? gmailReconnectRequired ? "Reconnect Gmail" : "" : "Connect Gmail"}
               onAction=${connectGmail}
               pending=${gmailPending}
-              disabled=${!canManageConnections}
+              disabled=${!canEditConnections}
             />
             <${ConnectionRow}
               label="Slack"
               status=${slack.status || (slack.connected ? "connected" : "disconnected")}
-              detail=${slack.connected ? `Approvals are ready${slack.approval_channel ? ` in ${slack.approval_channel}` : ""}.` : "Install Slack to send approval requests there."}
-              actionLabel=${slack.connected ? "" : "Install Slack"}
+              detail=${getSlackConnectionDetail(slack)}
+              actionLabel=${slack.connected ? slack.requires_reauthorization ? "Reconnect Slack" : "" : "Install Slack"}
               onAction=${connectSlack}
               pending=${slackPending}
-              disabled=${!canManageConnections}
+              disabled=${!canEditConnections}
             />
             <${ConnectionRow}
               label="Teams"
@@ -63681,25 +67499,44 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <${ConnectionRow}
               label="ERP"
               status=${erp.status || (erp.connected ? "connected" : "disconnected")}
-              detail=${erp.connected ? `${erp.erp_type || "ERP"} is connected.` : "Connect an ERP before posting approved invoices."}
-              actionLabel=${erp.connected ? "" : "Review status"}
-              onAction=${() => navigate?.("clearledgr/health")}
+              detail=${erp.connected ? `${erp.erp_type || "ERP"} is connected.` : `Choose ${getErpOptionLabel(erpType)} or another ERP below before posting approved invoices.`}
+              actionLabel=${erp.connected ? "" : "Connect ERP"}
+              onAction=${() => document.getElementById("cl-erp-connect-card")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              disabled=${!canEditConnections}
             />
           </div>
         </div>
+
+        <${ERPConnectionCard}
+          id="cl-erp-connect-card"
+          erp=${erp}
+          erpType=${erpType}
+          setErpType=${setErpType}
+          erpFormSpec=${erpFormSpec}
+          erpFormValues=${erpFormValues}
+          setErpFormValues=${setErpFormValues}
+          api=${api}
+          toast=${toast}
+          orgId=${orgId}
+          onRefresh=${onRefresh}
+          oauthBridge=${oauthBridge}
+          canManageConnections=${canEditConnections}
+        />
 
         <${ApprovalSurfaceCard}
           title="Slack approval routing"
           status=${slack.status || (slack.connected ? "connected" : "disconnected")}
           detail="Pick the Slack channel that should receive approval requests."
         >
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="btn-primary btn-sm" onClick=${connectSlack} disabled=${slackPending || !canManageConnections}>${slackPending ? "Working…" : "Install to Slack"}</button>
-            <input id="cl-slack-channel" placeholder="#finance-approvals" value=${slack.approval_channel || ""} disabled=${!canManageConnections} style="flex:1;min-width:160px" />
-            <button class="btn-secondary btn-sm" onClick=${saveChannel} disabled=${saveChannelPending || !canManageConnections}>${saveChannelPending ? "Saving…" : "Save channel"}</button>
-            <button class="btn-ghost btn-sm" onClick=${testSlackMsg} disabled=${testSlackPending || !slack.connected || !canManageConnections}>${testSlackPending ? "Verifying…" : "Verify Slack"}</button>
+          <div class="secondary-inline-actions">
+            <button class="btn-primary btn-sm" onClick=${connectSlack} disabled=${slackPending || !canEditConnections}>${slackPending ? "Working…" : slack.connected ? "Reconnect Slack" : "Install Slack"}</button>
+            <input id="cl-slack-channel" placeholder="#finance-approvals" value=${slack.approval_channel || ""} disabled=${!canEditConnections || !slack.connected} style="flex:1;min-width:180px" />
+            <button class="btn-secondary btn-sm" onClick=${saveChannel} disabled=${saveChannelPending || !canEditConnections || !slack.connected}>${saveChannelPending ? "Saving…" : "Save channel"}</button>
+            <button class="btn-ghost btn-sm" onClick=${testSlackMsg} disabled=${testSlackPending || !slack.connected || !canEditConnections}>${testSlackPending ? "Verifying…" : "Verify Slack"}</button>
           </div>
-          <div class="muted" style="margin-top:10px">Mode: ${humanizeMode(slack.mode || "-")} · Verification checks access without posting into the approval channel.</div>
+          <div class="secondary-note" style="margin-top:12px">
+            ${slack.connected ? `Mode: ${humanizeMode(slack.mode || "-")} · Verification sends a private test instead of posting a live approval request.` : "Install Slack first, then choose the approval channel and run a private verification test."}
+          </div>
         </${ApprovalSurfaceCard}>
 
         <${ApprovalSurfaceCard}
@@ -63707,12 +67544,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           status=${teams.status || (teams.connected ? "connected" : "disconnected")}
           detail="Use Teams instead when approval requests belong there."
         >
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <input id="cl-teams-webhook" placeholder="https://.../incomingwebhook/..." value=${teams.webhook_url || ""} disabled=${!canManageConnections} style="flex:1;min-width:220px" />
-            <button class="btn-primary btn-sm" onClick=${saveWebhook} disabled=${saveWebhookPending || !canManageConnections}>${saveWebhookPending ? "Saving…" : "Save webhook"}</button>
-            <button class="btn-ghost btn-sm" onClick=${testTeamsMsg} disabled=${testTeamsPending || !teams.connected || !canManageConnections}>${testTeamsPending ? "Sending…" : "Send test"}</button>
+          <div class="secondary-inline-actions">
+            <input id="cl-teams-webhook" placeholder="https://.../incomingwebhook/..." value=${teams.webhook_url || ""} disabled=${!canEditConnections} style="flex:1;min-width:240px" />
+            <button class="btn-primary btn-sm" onClick=${saveWebhook} disabled=${saveWebhookPending || !canEditConnections}>${saveWebhookPending ? "Saving…" : "Save webhook"}</button>
+            <button class="btn-ghost btn-sm" onClick=${testTeamsMsg} disabled=${testTeamsPending || !teams.connected || !canEditConnections}>${testTeamsPending ? "Sending…" : "Send test"}</button>
           </div>
-          <div class="muted" style="margin-top:10px">Mode: ${humanizeMode(teams.mode || "-")}</div>
+          <div class="secondary-note" style="margin-top:12px">Mode: ${humanizeMode(teams.mode || "-")}</div>
         </${ApprovalSurfaceCard}>
       </div>
 
@@ -63726,7 +67563,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
             <div class="secondary-stat-card">
               <strong>Approvals</strong>
-              <span>${approvalConnected ? "Ready" : "No approval surface yet"}</span>
+              <span>${getApprovalSummary(slack, teams)}</span>
             </div>
             <div class="secondary-stat-card">
               <strong>ERP</strong>
@@ -63734,7 +67571,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
             <div class="secondary-stat-card">
               <strong>Routing mode</strong>
-              <span>${slack.connected ? humanizeMode(slack.mode || "-") : teams.connected ? humanizeMode(teams.mode || "-") : "Not set"}</span>
+              <span>${getRoutingModeSummary(slack, teams)}</span>
             </div>
           </div>
         </div>
@@ -63742,29 +67579,132 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <div class="panel">
           <h3 style="margin-top:0">Who can edit this</h3>
           <div class="secondary-note">
-            ${canManageConnections ? "You can change connection setup from here." : "You can review status here, but only admins can reconnect Gmail, change approval routing, or update ERP setup."}
+            ${canEditConnections ? "You can change connection setup from here." : "You can review status here, but only admins can reconnect Gmail, change approval routing, or update ERP setup."}
           </div>
         </div>
 
-        <${WebhooksPanel} api=${api} canManage=${canManageConnections} />
+        <${WebhooksPanel} api=${api} canManage=${canEditConnections} />
       </div>
     </div>
   `;
   }
+  function ERPConnectionCard({
+    id = "",
+    erp,
+    erpType,
+    setErpType,
+    erpFormSpec,
+    erpFormValues,
+    setErpFormValues,
+    api,
+    toast,
+    orgId,
+    onRefresh,
+    oauthBridge,
+    canManageConnections
+  }) {
+    const [startErpConnect, erpConnectPending] = useAction2(async () => {
+      if (!canManageConnections)
+        return;
+      const payload = await api("/api/workspace/integrations/erp/connect/start", {
+        method: "POST",
+        body: JSON.stringify({ organization_id: orgId, erp_type: erpType })
+      });
+      if (payload?.method === "oauth" && payload?.auth_url) {
+        setErpFormValues({});
+        oauthBridge.startOAuth(payload.auth_url, erpType);
+        return;
+      }
+      if (payload?.method === "form" && Array.isArray(payload?.fields)) {
+        setErpFormValues(Object.fromEntries(payload.fields.map((field) => [field.name, ""])));
+        setErpFormSpec(payload);
+        toast?.(`Enter your ${getErpOptionLabel(erpType)} connection details below.`, "info");
+        return;
+      }
+      toast?.("Could not start the ERP connection flow.", "error");
+    });
+    const [submitErpForm, erpSubmitPending] = useAction2(async () => {
+      if (!canManageConnections || !erpFormSpec?.submit_url)
+        return;
+      const payload = await api(erpFormSpec.submit_url, {
+        method: "POST",
+        body: JSON.stringify({ organization_id: orgId, ...erpFormValues })
+      });
+      if (payload?.success) {
+        setErpFormSpec(null);
+        setErpFormValues({});
+        toast?.(`${getErpOptionLabel(payload?.erp_type || erpType)} connected.`, "success");
+        onRefresh?.();
+        return;
+      }
+      toast?.("Could not finish the ERP connection.", "error");
+    });
+    return html8`<div id=${id}>
+    <${ApprovalSurfaceCard}
+      title="ERP posting connection"
+      status=${erp.status || (erp.connected ? "connected" : "disconnected")}
+      detail="Choose the ERP Clearledgr should post into. OAuth ERPs open a connect flow; NetSuite and SAP finish here with credentials."
+    >
+      <div class="secondary-inline-actions">
+        <select value=${erpType} onChange=${(event) => setErpType(event.target.value)} disabled=${!canManageConnections || erpConnectPending || erpSubmitPending} style="min-width:170px">
+          ${ERP_OPTIONS.map((option) => html8`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
+        </select>
+        <button class="btn-primary btn-sm" onClick=${startErpConnect} disabled=${erpConnectPending || !canManageConnections}>
+          ${erpConnectPending ? "Working…" : `Connect ${getErpOptionLabel(erpType)}`}
+        </button>
+        ${erp.connected && html8`<span class="secondary-chip">${getErpOptionLabel(erp.erp_type || erpType)} connected</span>`}
+      </div>
+      ${erpFormSpec?.help_text && html8`<div class="secondary-note" style="margin-top:12px">${erpFormSpec.help_text}</div>`}
+      ${Array.isArray(erpFormSpec?.fields) && erpFormSpec.fields.length > 0 && html8`
+        <div class="secondary-card" style="margin-top:14px">
+          <div class="secondary-card-head">
+            <div class="secondary-card-copy">
+              <strong class="secondary-card-title">Finish ${getErpOptionLabel(erpType)} setup</strong>
+              <div class="secondary-card-meta">Clearledgr will test the connection before saving it for this workspace.</div>
+            </div>
+          </div>
+          <div class="secondary-card-body" style="display:grid;gap:12px">
+            ${erpFormSpec.fields.map((field) => html8`
+              <label key=${field.name} style="display:grid;gap:6px">
+                <span style="font-size:12px;font-weight:700;color:var(--ink)">${field.label}</span>
+                <input
+                  type=${field.type === "password" ? "password" : "text"}
+                  placeholder=${field.placeholder || ""}
+                  value=${erpFormValues?.[field.name] || ""}
+                  onInput=${(event) => setErpFormValues((current) => ({ ...current, [field.name]: event.target.value }))}
+                  disabled=${erpSubmitPending || !canManageConnections}
+                />
+              </label>
+            `)}
+            <div class="secondary-inline-actions">
+              <button class="btn-primary btn-sm" onClick=${submitErpForm} disabled=${erpSubmitPending || !canManageConnections}>
+                ${erpSubmitPending ? "Connecting…" : `Save ${getErpOptionLabel(erpType)} connection`}
+              </button>
+              <button class="btn-ghost btn-sm" onClick=${() => {
+      setErpFormSpec(null);
+      setErpFormValues({});
+    }} disabled=${erpSubmitPending}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      `}
+    </${ApprovalSurfaceCard}>
+  </div>`;
+  }
   function WebhooksPanel({ api, canManage }) {
-    const [webhooks, setWebhooks] = useState([]);
-    const [url, setUrl] = useState("");
-    const [events, setEvents] = useState("*");
-    const [adding, setAdding] = useState(false);
-    useEffect(() => {
-      api.fetch("/api/workspace/webhooks").then((d3) => setWebhooks(d3?.webhooks || [])).catch(() => {});
+    const [webhooks, setWebhooks] = d2([]);
+    const [url, setUrl] = d2("");
+    const [events, setEvents] = d2("*");
+    const [adding, setAdding] = d2(false);
+    y2(() => {
+      api("/api/workspace/webhooks").then((d3) => setWebhooks(d3?.webhooks || [])).catch(() => {});
     }, []);
     const addWebhook = async () => {
       if (!url.trim())
         return;
       setAdding(true);
       try {
-        const result = await api.fetch("/api/workspace/webhooks", {
+        const result = await api("/api/workspace/webhooks", {
           method: "POST",
           body: JSON.stringify({ url: url.trim(), event_types: events.split(",").map((e3) => e3.trim()).filter(Boolean) })
         });
@@ -63778,7 +67718,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     };
     const removeWebhook = async (id) => {
       try {
-        await api.fetch(`/api/workspace/webhooks/${id}`, { method: "DELETE" });
+        await api(`/api/workspace/webhooks/${id}`, { method: "DELETE" });
         setWebhooks((prev) => prev.filter((w3) => w3.id !== id));
       } catch (e3) {
         console.warn("Remove webhook failed:", e3);
@@ -63786,24 +67726,43 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     };
     return html8`
     <div class="panel">
-      <h3 style="margin-top:0">Outgoing webhooks</h3>
-      <p class="muted" style="margin:0 0 8px;font-size:12px">Notify external systems when AP events happen (invoice approved, posted, etc).</p>
-      ${webhooks.length === 0 && html8`<div class="muted" style="font-size:12px;padding:8px 0">No webhooks configured</div>`}
-      ${webhooks.map((wh) => html8`
-        <div key=${wh.id} style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
-          <div>
-            <div style="font-weight:600">${wh.url}</div>
-            <div class="muted">${Array.isArray(wh.event_types) ? wh.event_types.join(", ") : "*"}</div>
-          </div>
-          ${canManage && html8`<button class="btn-secondary btn-sm" onClick=${() => removeWebhook(wh.id)}>Remove</button>`}
+      <div class="panel-head compact">
+        <div>
+          <h3 style="margin:0">Outgoing webhooks</h3>
+          <p class="muted" style="margin:4px 0 0;font-size:12px">Notify external systems when AP events happen like approvals, retries, and posting outcomes.</p>
         </div>
-      `)}
+      </div>
+      ${webhooks.length === 0 && html8`<div class="secondary-empty" style="padding:8px 0">No webhooks configured</div>`}
+      ${webhooks.length > 0 && html8`
+        <div class="secondary-card-list">
+          ${webhooks.map((wh) => html8`
+            <div key=${wh.id} class="secondary-card">
+              <div class="secondary-card-head">
+                <div class="secondary-card-copy">
+                  <span class="secondary-card-title">${wh.url}</span>
+                  <div class="secondary-card-meta">${Array.isArray(wh.event_types) && wh.event_types.length ? wh.event_types.join(", ") : "*"}</div>
+                </div>
+                ${canManage && html8`<div class="secondary-inline-actions"><button class="btn-secondary btn-sm" onClick=${() => removeWebhook(wh.id)}>Remove</button></div>`}
+              </div>
+            </div>
+          `)}
+        </div>
+      `}
       ${canManage && html8`
-        <div style="display:flex;gap:6px;margin-top:10px">
-          <input type="text" placeholder="https://..." value=${url} onInput=${(e3) => setUrl(e3.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
-          <button class="btn-secondary btn-sm" onClick=${addWebhook} disabled=${adding || !url.trim()}>${adding ? "..." : "Add"}</button>
+        <div class="secondary-form-stack" style="margin-top:12px">
+          <label>
+            <span class="templates-field-label">Webhook URL</span>
+            <input type="text" placeholder="https://..." value=${url} onInput=${(e3) => setUrl(e3.target.value)} />
+          </label>
+          <label>
+            <span class="templates-field-label">Events</span>
+            <input type="text" placeholder="* or invoice.approved, invoice.posted_to_erp" value=${events} onInput=${(e3) => setEvents(e3.target.value)} />
+          </label>
+          <div class="secondary-inline-actions">
+            <button class="btn-secondary btn-sm" onClick=${addWebhook} disabled=${adding || !url.trim()}>${adding ? "Adding…" : "Add webhook"}</button>
+          </div>
         </div>
-        <div class="muted" style="font-size:11px;margin-top:4px">Events: * (all), or comma-separated: invoice.approved, invoice.posted_to_erp</div>
+        <div class="secondary-note" style="margin-top:10px">Events can be &quot;*&quot; for all AP events, or a comma-separated list like &quot;invoice.approved, invoice.posted_to_erp&quot;.</div>
       `}
     </div>
   `;
@@ -63821,6 +67780,96 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return fallback;
     return Math.max(minimum, Math.round(numeric));
   }
+  function buildDefaultDraftRule() {
+    return {
+      min_amount: 0,
+      max_amount: "",
+      approver_channel: "",
+      approval_type: "any",
+      approver_targets: [],
+      gl_codes: "",
+      departments: "",
+      vendors: ""
+    };
+  }
+  function normalizeDelimitedList(value) {
+    return String(value || "").split(",").map((entry) => entry.trim()).filter(Boolean);
+  }
+  function formatCurrencyAmount(value) {
+    const numeric = Number(value || 0);
+    return `$${numeric.toLocaleString()}`;
+  }
+  function formatThreshold(value) {
+    return `${Math.round(Number(value || 0) * 100)}%`;
+  }
+  function toTitleCase(value) {
+    return String(value || "").replace(/\b\w/g, (match) => match.toUpperCase());
+  }
+  function formatPolicyLabel(rawName) {
+    const value = String(rawName || "").trim();
+    if (!value)
+      return "Default AP approval policy";
+    if (value === "ap_business_v1")
+      return "Default AP approval policy";
+    const normalized = value.replace(/^ap[_-]/i, "accounts payable ").replace(/[_-]+/g, " ").replace(/\bv\d+\b/gi, "").replace(/\s+/g, " ").trim();
+    if (!normalized)
+      return "Default AP approval policy";
+    return toTitleCase(normalized).replace(/\bAp\b/g, "AP").replace(/\bPo\b/g, "PO").replace(/\bErp\b/g, "ERP").replace(/\bAi\b/g, "AI").replace(/\bAccounts Payable Business\b/g, "Accounts payable");
+  }
+  function formatPolicyActionLabel(action) {
+    const value = String(action || "").trim();
+    if (!value)
+      return "";
+    return toTitleCase(value.replace(/_/g, " "));
+  }
+  function formatApproverList(approvers = []) {
+    const values = Array.isArray(approvers) ? approvers.filter(Boolean) : [];
+    if (!values.length)
+      return "";
+    return values.join(", ");
+  }
+  function normalizeApproverTarget(target, directoryIndex = {}) {
+    if (!target)
+      return null;
+    const raw = typeof target === "string" ? { email: target } : target;
+    const email = String(raw.email || "").trim().toLowerCase();
+    const directoryMatch = email ? directoryIndex[email] : null;
+    const slackUserId = String(raw.slack_user_id || raw.slackUserId || directoryMatch && directoryMatch.slack_user_id || "").trim();
+    const slackResolution = String(raw.slack_resolution || raw.slackResolution || (slackUserId ? "resolved" : "") || directoryMatch && directoryMatch.slack_resolution || "not_found").trim();
+    const displayName = String(raw.display_name || raw.displayName || raw.name || directoryMatch && directoryMatch.display_name || directoryMatch && directoryMatch.name || email || slackUserId).trim();
+    if (!email && !slackUserId)
+      return null;
+    return {
+      email,
+      display_name: displayName || email || slackUserId,
+      slack_user_id: slackUserId,
+      slack_resolution: slackResolution || (slackUserId ? "resolved" : "not_found"),
+      approval_ready: Boolean(slackUserId)
+    };
+  }
+  function buildApproverDirectoryIndex(entries = []) {
+    return Object.fromEntries((Array.isArray(entries) ? entries : []).map((entry) => normalizeApproverTarget(entry, {})).filter(Boolean).map((entry) => [entry.email, entry]));
+  }
+  function mergeRuleApproverTargets(rule, directoryIndex = {}) {
+    const structured = Array.isArray(rule?.approver_targets) ? rule.approver_targets : [];
+    if (structured.length) {
+      return structured.map((entry) => normalizeApproverTarget(entry, directoryIndex)).filter(Boolean);
+    }
+    const rawApprovers = Array.isArray(rule?.approvers) ? rule.approvers : [];
+    return rawApprovers.map((entry) => normalizeApproverTarget(entry, directoryIndex)).filter(Boolean);
+  }
+  function formatApproverStatus(status) {
+    const normalized = String(status || "").trim().toLowerCase();
+    if (normalized === "resolved")
+      return "Slack ready";
+    if (normalized === "not_connected")
+      return "Slack not connected";
+    if (normalized === "not_found")
+      return "Not in Slack";
+    if (normalized === "lookup_failed")
+      return "Slack lookup failed";
+    return "Needs resolution";
+  }
   function getApprovalAutomationConfig(configJson = {}, approvalAutomation = null) {
     const nested = configJson?.approval_automation && typeof configJson.approval_automation === "object" ? configJson.approval_automation : {};
     const policy = approvalAutomation && typeof approvalAutomation === "object" ? approvalAutomation : {};
@@ -63833,35 +67882,338 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       escalationChannel
     };
   }
+  function DraftRuleForm({
+    draftRule,
+    approverDirectory,
+    selectedApproverEmail,
+    onChange,
+    onSelectedApproverChange,
+    onAddApprover,
+    onRemoveApprover,
+    onSave,
+    onCancel,
+    saving,
+    slackConnected
+  }) {
+    const draftApproverTargets = Array.isArray(draftRule.approver_targets) ? draftRule.approver_targets : [];
+    const selectedApprover = approverDirectory.find((entry) => entry.email === selectedApproverEmail) || null;
+    return html9`
+    <div style="padding:16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg)">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div>
+          <h3 style="margin:0 0 4px">Add routing rule</h3>
+          <p class="muted" style="margin:0">Route invoices to approvers based on amount, vendor, GL code, or department. First matching rule wins.</p>
+        </div>
+        <div class="row-actions">
+          <button class="btn-ghost btn-sm" onClick=${onCancel}>Cancel</button>
+          <button class="btn-primary btn-sm" onClick=${onSave} disabled=${saving}>${saving ? "Saving…" : "Save rule"}</button>
+        </div>
+      </div>
+
+      <div class="secondary-form-grid" style="gap:12px">
+        <div style="display:flex;gap:8px;align-items:flex-end">
+          <div style="flex:1">
+            <label>Min amount</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value=${String(draftRule.min_amount)}
+              onInput=${(event) => onChange("min_amount", event.target.value)}
+            />
+          </div>
+          <div style="flex:1">
+            <label>Max amount</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="No limit"
+              value=${String(draftRule.max_amount)}
+              onInput=${(event) => onChange("max_amount", event.target.value)}
+            />
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:flex-end">
+          <div style="flex:1">
+            <label>Slack channel</label>
+            <input
+              type="text"
+              placeholder="#finance-approvals"
+              value=${draftRule.approver_channel}
+              onInput=${(event) => onChange("approver_channel", event.target.value)}
+            />
+          </div>
+          <div style="flex:1">
+            <label>Approval type</label>
+            <select
+              value=${draftRule.approval_type}
+              onChange=${(event) => onChange("approval_type", event.target.value)}
+            >
+              <option value="any">Any approver</option>
+              <option value="all">All approvers</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label>Approvers</label>
+          <div style="display:flex;gap:8px;align-items:flex-end">
+            <div style="flex:1">
+              <select
+                value=${selectedApproverEmail}
+                onChange=${(event) => onSelectedApproverChange(event.target.value)}
+              >
+                <option value="">Select workspace approver</option>
+                ${approverDirectory.map((entry) => html9`
+                  <option key=${entry.email} value=${entry.email}>
+                    ${entry.display_name} · ${entry.email} · ${formatApproverStatus(entry.slack_resolution)}
+                  </option>
+                `)}
+              </select>
+            </div>
+            <button
+              class="btn-secondary btn-sm"
+              type="button"
+              onClick=${onAddApprover}
+              disabled=${!selectedApproverEmail || !selectedApprover?.approval_ready}
+            >
+              Add
+            </button>
+          </div>
+          <div class="muted" style="margin-top:6px">
+            ${slackConnected ? "Approvers come from your workspace team. Only Slack-resolved people can be used for named Slack approval rules." : "Slack is not connected yet, so named approvers cannot be resolved for reminders and direct mentions."}
+          </div>
+          ${draftApproverTargets.length ? html9`<div class="secondary-list" style="margin-top:10px">
+                ${draftApproverTargets.map((entry) => html9`
+                  <div key=${entry.email || entry.slack_user_id} class="secondary-row">
+                    <div class="secondary-row-copy">
+                      <strong>${entry.display_name || entry.email}</strong>
+                      <p>${entry.email || "No email available"}</p>
+                    </div>
+                    <div class="secondary-chip-row">
+                      <span class=${`status-badge ${entry.approval_ready ? "connected" : ""}`}>
+                        ${formatApproverStatus(entry.slack_resolution)}
+                      </span>
+                      <button class="btn-ghost btn-sm" type="button" onClick=${() => onRemoveApprover(entry.email || entry.slack_user_id)}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                `)}
+              </div>` : html9`<div class="secondary-empty" style="margin-top:10px">No approvers added yet.</div>`}
+        </div>
+        <div>
+          <label>GL codes</label>
+          <input
+            type="text"
+            placeholder="6000, 6100"
+            value=${draftRule.gl_codes}
+            onInput=${(event) => onChange("gl_codes", event.target.value)}
+          />
+        </div>
+        <div>
+          <label>Departments</label>
+          <input
+            type="text"
+            placeholder="operations, marketing"
+            value=${draftRule.departments}
+            onInput=${(event) => onChange("departments", event.target.value)}
+          />
+        </div>
+        <div>
+          <label>Vendors</label>
+          <input
+            type="text"
+            placeholder="Acme Corp, Widget Supply"
+            value=${draftRule.vendors}
+            onInput=${(event) => onChange("vendors", event.target.value)}
+          />
+        </div>
+      </div>
+    </div>
+  `;
+  }
+  function RoutingRuleRow({ rule, index, approverDirectoryIndex, canManageRules, onDelete, deleting }) {
+    const amountLabel = `${formatCurrencyAmount(rule.min_amount || 0)} – ${rule.max_amount ? formatCurrencyAmount(rule.max_amount) : "No limit"}`;
+    const approverTargets = mergeRuleApproverTargets(rule, approverDirectoryIndex);
+    const unresolvedTargets = approverTargets.filter((entry) => !entry.approval_ready);
+    return html9`
+    <div class="secondary-row">
+      <div class="secondary-row-copy">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+          <strong>Rule ${index + 1} · ${amountLabel}</strong>
+          <span class="status-badge">${rule.approver_channel || "Workspace default"}</span>
+          <span class="status-badge connected">${rule.approval_type === "all" ? "All must approve" : "Any can approve"}</span>
+        </div>
+        <p>Approvers: ${approverTargets.length ? approverTargets.map((entry) => entry.display_name || entry.email).join(", ") : "None set"}</p>
+        ${unresolvedTargets.length ? html9`<p>Needs Slack resolution: ${unresolvedTargets.map((entry) => entry.display_name || entry.email).join(", ")}</p>` : null}
+        ${(rule.gl_codes || []).length ? html9`<p>GL codes: ${(rule.gl_codes || []).join(", ")}</p>` : null}
+        ${(rule.departments || []).length ? html9`<p>Departments: ${(rule.departments || []).join(", ")}</p>` : null}
+        ${(rule.vendors || []).length ? html9`<p>Vendors: ${(rule.vendors || []).join(", ")}</p>` : null}
+      </div>
+      ${canManageRules ? html9`<button class="btn-danger btn-sm" onClick=${() => onDelete(index)} disabled=${deleting}>Delete</button>` : null}
+    </div>
+  `;
+  }
+  function DelegationPanel({ api, canManageRules, orgId }) {
+    const [rules, setRules] = d2([]);
+    const [delegator, setDelegator] = d2("");
+    const [delegate, setDelegate] = d2("");
+    const [reason, setReason] = d2("");
+    y2(() => {
+      if (!api)
+        return;
+      api(`/api/workspace/delegation-rules?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).then((data) => setRules(Array.isArray(data?.rules) ? data.rules : [])).catch(() => setRules([]));
+    }, [api, orgId]);
+    const [addRule, adding] = useAction2(async () => {
+      if (!canManageRules)
+        return;
+      const delegatorEmail = String(delegator || "").trim();
+      const delegateEmail = String(delegate || "").trim();
+      if (!delegatorEmail || !delegateEmail)
+        return;
+      const result = await api("/api/workspace/delegation-rules", {
+        method: "POST",
+        body: JSON.stringify({
+          organization_id: orgId,
+          delegator_email: delegatorEmail,
+          delegate_email: delegateEmail,
+          reason: String(reason || "").trim() || undefined
+        })
+      });
+      if (result?.id)
+        setRules((prev) => [...prev, result]);
+      setDelegator("");
+      setDelegate("");
+      setReason("");
+    });
+    const [deactivateRule, removing] = useAction2(async (id) => {
+      if (!canManageRules)
+        return;
+      await api(`/api/workspace/delegation-rules/${id}/deactivate?organization_id=${encodeURIComponent(orgId)}`, { method: "POST" });
+      setRules((prev) => prev.filter((entry) => entry.id !== id));
+    });
+    return html9`
+    <div>
+      <div class="panel-head compact">
+        <div>
+          <h3 style="margin-top:0">Approval delegation</h3>
+          <p class="muted" style="margin:0">When an approver is out, delegate their pending approvals without changing the policy itself.</p>
+        </div>
+      </div>
+
+      ${rules.length > 0 ? html9`<div class="secondary-list" style="margin-bottom:14px">
+            ${rules.map((rule) => html9`
+              <div key=${rule.id} class="secondary-row">
+                <div class="secondary-row-copy">
+                  <strong>${rule.delegator_email} → ${rule.delegate_email}</strong>
+                  ${rule.reason ? html9`<p>${rule.reason}</p>` : html9`<p>No reason added.</p>`}
+                </div>
+                ${canManageRules ? html9`<button class="btn-secondary btn-sm" onClick=${() => deactivateRule(rule.id)} disabled=${removing}>Remove</button>` : null}
+              </div>
+            `)}
+          </div>` : html9`<div class="secondary-empty" style="margin-bottom:14px">No active delegation rules.</div>`}
+
+      ${canManageRules ? html9`
+            <div class="secondary-form-grid" style="gap:10px">
+              <div>
+                <label>Approver</label>
+                <input type="email" placeholder="approver@company.com" value=${delegator} onInput=${(event) => setDelegator(event.target.value)} />
+              </div>
+              <div>
+                <label>Delegate</label>
+                <input type="email" placeholder="delegate@company.com" value=${delegate} onInput=${(event) => setDelegate(event.target.value)} />
+              </div>
+            </div>
+            <div style="margin-top:10px">
+              <label>Reason</label>
+              <input type="text" placeholder="OOO for week of close" value=${reason} onInput=${(event) => setReason(event.target.value)} />
+            </div>
+            <div class="row-actions" style="justify-content:flex-start;margin-top:12px">
+              <button class="btn-primary btn-sm" onClick=${addRule} disabled=${adding || !String(delegator || "").trim() || !String(delegate || "").trim()}>
+                ${adding ? "Saving…" : "Add delegation"}
+              </button>
+            </div>
+          ` : null}
+    </div>
+  `;
+  }
   function RulesPage({ bootstrap, api, toast, orgId, onRefresh }) {
     const policy = bootstrap?.policyPayload || {};
     const configJson = (policy.policy || {}).config_json || {};
-    const confidenceThreshold = Number(configJson.auto_approve_threshold ?? configJson.confidence_threshold ?? 0.95);
-    const maxAutoAmount = Number(configJson.max_auto_approve_amount ?? configJson.auto_approve_max_amount ?? 0);
-    const requirePO = configJson.require_po !== false;
     const approvalAutomation = getApprovalAutomationConfig(configJson, policy.approval_automation);
     const canManageRules = hasCapability(bootstrap, "manage_rules");
-    const [savePolicy, saving] = useAction2(async () => {
+    const policyLabel = formatPolicyLabel(policy.policy_display_name || policy.display_name || policy.policy_label || policy.policy_name);
+    const effectivePolicies = Array.isArray(policy.effective_policies) ? policy.effective_policies : [];
+    const [confidenceThreshold, setConfidenceThreshold] = d2(String(Number(configJson.auto_approve_threshold ?? configJson.confidence_threshold ?? 0.95)));
+    const [maxAutoAmount, setMaxAutoAmount] = d2(String(Number(configJson.max_auto_approve_amount ?? configJson.auto_approve_max_amount ?? 0)));
+    const [requirePO, setRequirePO] = d2(configJson.require_po !== false);
+    const [reminderHours, setReminderHours] = d2(String(approvalAutomation.reminderHours));
+    const [escalationHours, setEscalationHours] = d2(String(approvalAutomation.escalationHours));
+    const [escalationChannel, setEscalationChannel] = d2(approvalAutomation.escalationChannel);
+    const [approvalRules, setApprovalRules] = d2([]);
+    const [showAddRule, setShowAddRule] = d2(false);
+    const [draftRule, setDraftRule] = d2(buildDefaultDraftRule());
+    const [approverDirectory, setApproverDirectory] = d2([]);
+    const [slackConnected, setSlackConnected] = d2(false);
+    const [selectedApproverEmail, setSelectedApproverEmail] = d2("");
+    const approverDirectoryIndex = T2(() => buildApproverDirectoryIndex(approverDirectory), [approverDirectory]);
+    y2(() => {
+      if (!api || !orgId)
+        return;
+      api(`/settings/${encodeURIComponent(orgId)}`, { silent: true }).then((response) => {
+        setApprovalRules(Array.isArray(response?.approval_thresholds) ? response.approval_thresholds : []);
+      }).catch(() => setApprovalRules([]));
+    }, [api, orgId]);
+    y2(() => {
+      if (!api || !orgId || !canManageRules) {
+        setApproverDirectory([]);
+        setSlackConnected(false);
+        return;
+      }
+      api(`/api/workspace/team/approvers?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).then((response) => {
+        const nextApprovers = Array.isArray(response?.approvers) ? response.approvers.map((entry) => normalizeApproverTarget(entry, {})).filter(Boolean) : [];
+        setApproverDirectory(nextApprovers);
+        setSlackConnected(Boolean(response?.slack_connected));
+      }).catch(() => {
+        setApproverDirectory([]);
+        setSlackConnected(false);
+      });
+    }, [api, canManageRules, orgId]);
+    const summary = T2(() => {
+      const threshold = parseThreshold(confidenceThreshold, 0.95);
+      const amountCap = parseThreshold(maxAutoAmount, 0);
+      const nextReminder = parseWholeNumber(reminderHours, approvalAutomation.reminderHours);
+      const nextEscalation = Math.max(nextReminder, parseWholeNumber(escalationHours, approvalAutomation.escalationHours));
+      return {
+        threshold,
+        amountCap,
+        nextReminder,
+        nextEscalation,
+        ruleCount: approvalRules.length
+      };
+    }, [approvalRules.length, approvalAutomation.escalationHours, approvalAutomation.reminderHours, confidenceThreshold, escalationHours, maxAutoAmount, reminderHours]);
+    const [savePolicy, savingPolicy] = useAction2(async () => {
       if (!canManageRules)
         return;
-      const nextConfidence = parseThreshold(document.getElementById("cl-policy-confidence")?.value, confidenceThreshold);
-      const nextMaxAmount = parseThreshold(document.getElementById("cl-policy-max-amount")?.value, maxAutoAmount);
-      const nextRequirePO = Boolean(document.getElementById("cl-policy-require-po")?.checked);
-      const nextReminderHours = parseWholeNumber(document.getElementById("cl-policy-approval-reminder-hours")?.value, approvalAutomation.reminderHours);
-      const nextEscalationHours = Math.max(nextReminderHours, parseWholeNumber(document.getElementById("cl-policy-approval-escalation-hours")?.value, approvalAutomation.escalationHours));
-      const nextEscalationChannel = String(document.getElementById("cl-policy-approval-escalation-channel")?.value ?? approvalAutomation.escalationChannel ?? "").trim();
+      const nextConfidence = parseThreshold(confidenceThreshold, 0.95);
+      const nextMaxAmount = parseThreshold(maxAutoAmount, 0);
+      const nextReminder = parseWholeNumber(reminderHours, approvalAutomation.reminderHours);
+      const nextEscalation = Math.max(nextReminder, parseWholeNumber(escalationHours, approvalAutomation.escalationHours));
       const nextConfig = {
         ...configJson,
         auto_approve_threshold: nextConfidence,
         confidence_threshold: nextConfidence,
         max_auto_approve_amount: nextMaxAmount,
         auto_approve_max_amount: nextMaxAmount,
-        require_po: nextRequirePO,
+        require_po: Boolean(requirePO),
         approval_automation: {
           ...configJson.approval_automation && typeof configJson.approval_automation === "object" ? configJson.approval_automation : {},
-          reminder_hours: nextReminderHours,
-          escalation_hours: nextEscalationHours,
-          escalation_channel: nextEscalationChannel
+          reminder_hours: nextReminder,
+          escalation_hours: nextEscalation,
+          escalation_channel: String(escalationChannel || "").trim()
         }
       };
       await api("/api/workspace/policies/ap", {
@@ -63872,174 +68224,339 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           enabled: true
         })
       });
-      toast("Approval rules updated.");
-      onRefresh();
+      toast?.("Approval rules updated.", "success");
+      onRefresh?.();
     });
+    const [saveApprovalRules, savingRules] = useAction2(async (rules) => {
+      if (!canManageRules)
+        return;
+      await api(`/settings/${encodeURIComponent(orgId)}/approval-thresholds`, {
+        method: "PUT",
+        body: JSON.stringify({ approval_thresholds: rules })
+      });
+      setApprovalRules(rules);
+      toast?.("Routing rules updated.", "success");
+    });
+    const [addApprovalRule, addingRule] = useAction2(async () => {
+      if (!canManageRules)
+        return;
+      const approverTargets = mergeRuleApproverTargets(draftRule, approverDirectoryIndex);
+      const unresolvedTargets = approverTargets.filter((entry) => !entry.approval_ready);
+      if (!approverTargets.length) {
+        toast?.("Select at least one workspace approver before saving the rule.", "error");
+        return;
+      }
+      if (unresolvedTargets.length) {
+        toast?.(`Resolve Slack access for ${unresolvedTargets.map((entry) => entry.display_name || entry.email).join(", ")} before saving this rule.`, "error");
+        return;
+      }
+      const nextRule = {
+        min_amount: parseThreshold(draftRule.min_amount, 0),
+        max_amount: draftRule.max_amount === "" ? null : parseThreshold(draftRule.max_amount, 0),
+        approver_channel: String(draftRule.approver_channel || "").trim(),
+        approval_type: draftRule.approval_type,
+        approvers: approverTargets.map((entry) => entry.email).filter(Boolean),
+        approver_targets: approverTargets.map((entry) => ({
+          email: entry.email,
+          display_name: entry.display_name,
+          slack_user_id: entry.slack_user_id,
+          slack_resolution: entry.slack_resolution
+        })),
+        gl_codes: normalizeDelimitedList(draftRule.gl_codes),
+        departments: normalizeDelimitedList(draftRule.departments),
+        vendors: normalizeDelimitedList(draftRule.vendors)
+      };
+      const nextRules = [...approvalRules, nextRule];
+      await saveApprovalRules(nextRules);
+      setDraftRule(buildDefaultDraftRule());
+      setShowAddRule(false);
+      setSelectedApproverEmail("");
+    });
+    const [deleteApprovalRule, deletingRule] = useAction2(async (index) => {
+      if (!canManageRules)
+        return;
+      const nextRules = approvalRules.filter((_2, ruleIndex) => ruleIndex !== index);
+      await saveApprovalRules(nextRules);
+    });
+    const updateDraftRule = (field, value) => {
+      setDraftRule((prev) => ({ ...prev, [field]: value }));
+    };
+    const addDraftApprover = () => {
+      const selectedEntry = normalizeApproverTarget(approverDirectoryIndex[selectedApproverEmail], approverDirectoryIndex);
+      if (!selectedEntry) {
+        return;
+      }
+      if (!selectedEntry.approval_ready) {
+        toast?.(`${selectedEntry.display_name || selectedEntry.email} is not mapped to Slack yet.`, "error");
+        return;
+      }
+      setDraftRule((prev) => {
+        const currentTargets = mergeRuleApproverTargets(prev, approverDirectoryIndex);
+        const alreadyIncluded = currentTargets.some((entry) => entry.email === selectedEntry.email || entry.slack_user_id === selectedEntry.slack_user_id);
+        if (alreadyIncluded)
+          return prev;
+        return {
+          ...prev,
+          approver_targets: [...currentTargets, selectedEntry]
+        };
+      });
+      setSelectedApproverEmail("");
+    };
+    const removeDraftApprover = (targetKey) => {
+      setDraftRule((prev) => ({
+        ...prev,
+        approver_targets: mergeRuleApproverTargets(prev, approverDirectoryIndex).filter((entry) => entry.email !== targetKey && entry.slack_user_id !== targetKey)
+      }));
+    };
     return html9`
-    <div class=${`secondary-banner ${canManageRules ? "" : "warning"}`}>
+    <div class=${`secondary-banner rules-hero ${canManageRules ? "" : "warning"}`}>
       <div class="secondary-banner-copy">
-        <h3>${canManageRules ? "Control when invoices move automatically" : "Approval behavior is visible here"}</h3>
-        <p class="muted">${canManageRules ? "Set approval guardrails and decide when Clearledgr nudges or escalates pending approvals automatically." : "You can review the current approval rules here, but only admins can change them."}</p>
+        <h3>${canManageRules ? "Control invoice approvals end to end" : "Approval rules are visible here"}</h3>
+        <p class="muted">
+          ${canManageRules ? "Manage approval routing, auto-approval guardrails, reminder timing, escalation behavior, and delegation from one place." : "You can review the current approval policy here, but only admins can change how approvals route and escalate."}
+        </p>
+        <div class="rules-hero-summary">
+          <div class="rules-hero-stat">
+            <strong>${summary.ruleCount ? `${summary.ruleCount}` : "0"}</strong>
+            <span>Routing rules</span>
+          </div>
+          <div class="rules-hero-stat">
+            <strong>${formatThreshold(summary.threshold)}</strong>
+            <span>Confidence floor</span>
+          </div>
+          <div class="rules-hero-stat">
+            <strong>${summary.amountCap > 0 ? formatCurrencyAmount(summary.amountCap) : "No cap"}</strong>
+            <span>Auto-approve cap</span>
+          </div>
+          <div class="rules-hero-stat">
+            <strong>${summary.nextReminder}h</strong>
+            <span>Reminder SLA</span>
+          </div>
+          <div class="rules-hero-stat">
+            <strong>${summary.nextEscalation}h</strong>
+            <span>Escalation</span>
+          </div>
+          <div class="rules-hero-stat">
+            <strong>${requirePO ? "Required" : "Optional"}</strong>
+            <span>PO match</span>
+          </div>
+        </div>
       </div>
       <div class="secondary-banner-actions">
-        <button class="btn-primary" onClick=${savePolicy} disabled=${saving || !canManageRules}>${saving ? "Saving…" : "Save rules"}</button>
+        <button class="btn-primary" onClick=${savePolicy} disabled=${savingPolicy || !canManageRules}>
+          ${savingPolicy ? "Saving…" : "Save policy"}
+        </button>
       </div>
     </div>
 
-    <div class="secondary-shell">
-      <div class="secondary-main">
+    <div class="rules-workspace-grid">
+      <div class="rules-main-stack">
         <div class="panel">
-          <h3 style="margin-top:0">Approval rules</h3>
-          <p class="muted" style="margin:0 0 14px">These settings decide when an invoice keeps moving, waits for approval, pauses for a PO check, and when Clearledgr starts chasing overdue approvals.</p>
-          <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="panel-head compact">
+            <div>
+              <div class="home-section-label">Routing</div>
+              <h3 style="margin-top:0">Approval routing${!canManageRules ? html9`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+              <p class="muted" style="margin:0">Define who approves invoices by amount, GL code, department, or vendor. The first matching rule wins.</p>
+            </div>
+            ${canManageRules ? html9`<button class="btn-primary btn-sm" onClick=${() => setShowAddRule((current) => !current)} disabled=${savingRules || addingRule}>
+                  ${showAddRule ? "Cancel" : "Add rule"}
+                </button>` : null}
+          </div>
+
+          <div class="rules-inline-summary">
+            <span class="secondary-chip">${policyLabel}</span>
+            <span class="secondary-chip">${summary.ruleCount ? `${summary.ruleCount} custom rule${summary.ruleCount === 1 ? "" : "s"}` : "Workspace default routing"}</span>
+            <span class="secondary-chip">${String(escalationChannel || "").trim() || "Workspace default channel"}</span>
+          </div>
+
+          ${showAddRule && canManageRules ? html9`<${DraftRuleForm}
+                draftRule=${draftRule}
+                approverDirectory=${approverDirectory}
+                selectedApproverEmail=${selectedApproverEmail}
+                onChange=${updateDraftRule}
+                onSelectedApproverChange=${setSelectedApproverEmail}
+                onAddApprover=${addDraftApprover}
+                onRemoveApprover=${removeDraftApprover}
+                onSave=${addApprovalRule}
+                onCancel=${() => {
+      setDraftRule(buildDefaultDraftRule());
+      setShowAddRule(false);
+      setSelectedApproverEmail("");
+    }}
+                saving=${addingRule}
+                slackConnected=${slackConnected}
+              />` : null}
+
+          <div style=${showAddRule ? "margin-top:16px" : ""}>
+            ${approvalRules.length > 0 ? html9`<div class="secondary-list">
+                  ${approvalRules.map((rule, index) => html9`
+                    <${RoutingRuleRow}
+                      key=${`${rule.approver_channel || "channel"}:${index}`}
+                      rule=${rule}
+                      index=${index}
+                      approverDirectoryIndex=${approverDirectoryIndex}
+                      canManageRules=${canManageRules}
+                      onDelete=${deleteApprovalRule}
+                      deleting=${deletingRule || savingRules}
+                    />
+                  `)}
+                </div>` : html9`<div class="secondary-empty">No routing rules yet. Add one so invoices route to the right approver set instead of waiting on defaults.</div>`}
+          </div>
+
+          <div class="secondary-note" style="margin-top:14px">
+            Clearledgr evaluates routing rules in order. If no rule matches, the workspace default approval channel and policy thresholds still apply.
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head compact">
+            <div>
+              <div class="home-section-label">Automation</div>
+              <h3 style="margin-top:0">Automation and guardrails</h3>
+              <p class="muted" style="margin:0">Decide when invoices can move automatically and when Clearledgr starts nudging or escalating approvals.</p>
+            </div>
+          </div>
+
+          <div class="secondary-form-grid">
             <div>
               <label>Auto-approval confidence threshold</label>
-              <input id="cl-policy-confidence" type="number" min="0" max="1" step="0.01" value=${String(confidenceThreshold)} disabled=${!canManageRules} />
-              <div class="muted" style="margin-top:6px">Invoices below this confidence wait for a person to review them before approval or posting.</div>
+              <input
+                id="cl-policy-confidence"
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value=${confidenceThreshold}
+                disabled=${!canManageRules}
+                onInput=${(event) => setConfidenceThreshold(event.target.value)}
+              />
+              <div class="muted" style="margin-top:6px">Invoices below this confidence always wait for review.</div>
             </div>
             <div>
               <label>Maximum auto-approve amount</label>
-              <input id="cl-policy-max-amount" type="number" min="0" step="1" value=${String(maxAutoAmount)} disabled=${!canManageRules} />
-              <div class="muted" style="margin-top:6px">Invoices above this amount always wait for human approval.</div>
+              <input
+                id="cl-policy-max-amount"
+                type="number"
+                min="0"
+                step="1"
+                value=${maxAutoAmount}
+                disabled=${!canManageRules}
+                onInput=${(event) => setMaxAutoAmount(event.target.value)}
+              />
+              <div class="muted" style="margin-top:6px">Invoices above this amount always wait for a person.</div>
             </div>
-            <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500">
-              <input id="cl-policy-require-po" type="checkbox" checked=${requirePO} disabled=${!canManageRules} />
-              Require PO match before approval routing
-            </label>
             <div>
               <label>Approval reminder SLA (hours)</label>
-              <input id="cl-policy-approval-reminder-hours" type="number" min="1" step="1" value=${String(approvalAutomation.reminderHours)} disabled=${!canManageRules} />
-              <div class="muted" style="margin-top:6px">Once an approval waits this long, Clearledgr marks it as due for follow-up and nudges the pending approver.</div>
+              <input
+                id="cl-policy-approval-reminder-hours"
+                type="number"
+                min="1"
+                step="1"
+                value=${reminderHours}
+                disabled=${!canManageRules}
+                onInput=${(event) => setReminderHours(event.target.value)}
+              />
+              <div class="muted" style="margin-top:6px">Clearledgr nudges the approver after this many hours.</div>
             </div>
             <div>
               <label>Approval escalation after (hours)</label>
-              <input id="cl-policy-approval-escalation-hours" type="number" min="1" step="1" value=${String(approvalAutomation.escalationHours)} disabled=${!canManageRules} />
-              <div class="muted" style="margin-top:6px">Once this threshold is reached, Clearledgr escalates the approval instead of only nudging.</div>
+              <input
+                id="cl-policy-approval-escalation-hours"
+                type="number"
+                min="1"
+                step="1"
+                value=${escalationHours}
+                disabled=${!canManageRules}
+                onInput=${(event) => setEscalationHours(event.target.value)}
+              />
+              <div class="muted" style="margin-top:6px">After this, Clearledgr escalates instead of only nudging.</div>
             </div>
+          </div>
+
+          <div style="margin-top:14px">
+            <label>Escalation channel override</label>
+            <input
+              id="cl-policy-approval-escalation-channel"
+              type="text"
+              placeholder="#finance-approvals"
+              value=${escalationChannel}
+              disabled=${!canManageRules}
+              onInput=${(event) => setEscalationChannel(event.target.value)}
+            />
+            <div class="muted" style="margin-top:6px">Leave blank to keep using the workspace default approval destination.</div>
+          </div>
+
+          <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500;margin-top:16px">
+            <input
+              id="cl-policy-require-po"
+              type="checkbox"
+              checked=${requirePO}
+              disabled=${!canManageRules}
+              onChange=${(event) => setRequirePO(Boolean(event.target.checked))}
+            />
+            Require PO match before approval routing
+          </label>
+
+          <div class="secondary-note rules-guardrail-note">
+            These settings decide when invoices can move automatically and when Clearledgr pauses, nudges, or escalates after the approval path begins.
+          </div>
+          <div class="rules-inline-summary" style="margin-top:12px">
+            <span class="secondary-chip">${requirePO ? "PO match required" : "PO match optional"}</span>
+            <span class="secondary-chip">${String(escalationChannel || "").trim() || "Escalation uses workspace default"}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="rules-side-stack">
+        <div class="panel">
+          <div class="panel-head compact">
             <div>
-              <label>Escalation channel override</label>
-              <input id="cl-policy-approval-escalation-channel" type="text" value=${approvalAutomation.escalationChannel} placeholder="#finance-approvals" disabled=${!canManageRules} />
-              <div class="muted" style="margin-top:6px">Optional. Leave blank to use the workspace default approval channel.</div>
+              <div class="home-section-label">Default policy</div>
+              <h3 style="margin-top:0">What this policy includes</h3>
+              <p class="muted" style="margin:0">The built-in approval checks and approver requirements behind the current default policy.</p>
             </div>
           </div>
-        </div>
-      </div>
-
-      <div class="secondary-side">
-        <div class="panel">
-          <h3 style="margin-top:0">Current behavior</h3>
-          <div class="secondary-stat-grid" style="margin-top:12px">
-            <div class="secondary-stat-card">
-              <strong>Policy</strong>
-              <span>${policy.policy_name || "Default AP policy"}</span>
-            </div>
-            <div class="secondary-stat-card">
-              <strong>Confidence</strong>
-              <span>${confidenceThreshold}</span>
-            </div>
-            <div class="secondary-stat-card">
-              <strong>Auto-approve cap</strong>
-              <span>${maxAutoAmount > 0 ? `$${maxAutoAmount.toLocaleString()}` : "No limit set"}</span>
-            </div>
-            <div class="secondary-stat-card">
-              <strong>PO required</strong>
-              <span>${requirePO ? "Yes" : "No"}</span>
-            </div>
-            <div class="secondary-stat-card">
-              <strong>Reminder SLA</strong>
-              <span>${approvalAutomation.reminderHours}h</span>
-            </div>
-            <div class="secondary-stat-card">
-              <strong>Escalation</strong>
-              <span>${approvalAutomation.escalationHours}h</span>
-            </div>
-            <div class="secondary-stat-card">
-              <strong>Escalation channel</strong>
-              <span>${approvalAutomation.escalationChannel || "Workspace default"}</span>
-            </div>
-          </div>
+          ${effectivePolicies.length ? html9`<div class="secondary-list rules-effective-list" style="margin-top:12px">
+                ${effectivePolicies.slice(0, 6).map((entry, index) => html9`
+                  <div key=${entry.policy_id || `effective:${index}`} class="secondary-row">
+                    <div class="secondary-row-copy">
+                      <strong>${entry.name || `Rule ${index + 1}`}</strong>
+                      <p>${entry.description || "Approval rule is active for this workspace."}</p>
+                      ${formatApproverList(entry.required_approvers) ? html9`<p>Approvers: ${formatApproverList(entry.required_approvers)}</p>` : null}
+                    </div>
+                    <div class="secondary-chip-row" style="justify-content:flex-end">
+                      ${entry.action ? html9`<span class="secondary-chip">${formatPolicyActionLabel(entry.action)}</span>` : null}
+                    </div>
+                  </div>
+                `)}
+              </div>` : html9`<div class="secondary-note" style="margin-top:12px">No effective rules are configured yet. Add routing rules or policy thresholds to define the approval path.</div>`}
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Editing access</h3>
-          <div class="secondary-note">
-            ${canManageRules ? "You can change the rule thresholds from this page." : "This page stays readable for operators, but only admins can change the policy."}
+          <div class="panel-head compact">
+            <div>
+              <div class="home-section-label">Coverage</div>
+              <h3 style="margin-top:0">Delegation and cover</h3>
+              <p class="muted" style="margin:0">Keep approvals moving when an approver is out instead of editing the policy for temporary absence.</p>
+            </div>
           </div>
+          <${DelegationPanel} api=${api} canManageRules=${canManageRules} orgId=${orgId} />
         </div>
-
-        <${DelegationPanel} api=${api} canManage=${canManageRules} />
       </div>
-    </div>
-  `;
-  }
-  function DelegationPanel({ api, canManage }) {
-    const [rules, setRules] = useState([]);
-    const [delegator, setDelegator] = useState("");
-    const [delegate, setDelegate] = useState("");
-    const [reason, setReason] = useState("");
-    const [adding, setAdding] = useState(false);
-    useEffect(() => {
-      api.fetch("/api/workspace/delegation-rules").then((d3) => setRules(d3?.rules || [])).catch(() => {});
-    }, []);
-    const addRule = async () => {
-      if (!delegator.trim() || !delegate.trim())
-        return;
-      setAdding(true);
-      try {
-        const result = await api.fetch("/api/workspace/delegation-rules", {
-          method: "POST",
-          body: JSON.stringify({ delegator_email: delegator.trim(), delegate_email: delegate.trim(), reason: reason.trim() })
-        });
-        if (result?.id)
-          setRules((prev) => [...prev, result]);
-        setDelegator("");
-        setDelegate("");
-        setReason("");
-      } catch (e3) {
-        console.warn("Add delegation failed:", e3);
-      }
-      setAdding(false);
-    };
-    const deactivate = async (id) => {
-      try {
-        await api.fetch(`/api/workspace/delegation-rules/${id}/deactivate`, { method: "POST" });
-        setRules((prev) => prev.filter((r3) => r3.id !== id));
-      } catch (e3) {
-        console.warn("Deactivate failed:", e3);
-      }
-    };
-    return html9`
-    <div class="panel">
-      <h3 style="margin-top:0">Approval delegation</h3>
-      <p class="muted" style="margin:0 0 8px;font-size:12px">When an approver is OOO, their pending approvals route to their delegate.</p>
-      ${rules.length === 0 && html9`<div class="muted" style="font-size:12px;padding:8px 0">No active delegation rules</div>`}
-      ${rules.map((r3) => html9`
-        <div key=${r3.id} style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
-          <div>
-            <div><strong>${r3.delegator_email}</strong> → ${r3.delegate_email}</div>
-            ${r3.reason && html9`<div class="muted">${r3.reason}</div>`}
-          </div>
-          ${canManage && html9`<button class="btn-secondary btn-sm" onClick=${() => deactivate(r3.id)}>Remove</button>`}
-        </div>
-      `)}
-      ${canManage && html9`
-        <div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">
-          <div style="display:flex;gap:6px">
-            <input type="email" placeholder="Approver email" value=${delegator} onInput=${(e3) => setDelegator(e3.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
-            <input type="email" placeholder="Delegate email" value=${delegate} onInput=${(e3) => setDelegate(e3.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
-          </div>
-          <div style="display:flex;gap:6px">
-            <input type="text" placeholder="Reason (optional)" value=${reason} onInput=${(e3) => setReason(e3.target.value)} style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px" />
-            <button class="btn-secondary btn-sm" onClick=${addRule} disabled=${adding || !delegator.trim() || !delegate.trim()}>${adding ? "..." : "Add"}</button>
-          </div>
-        </div>
-      `}
     </div>
   `;
   }
 
   // src/routes/pages/SettingsPage.js
   var html10 = htm_module_default.bind(_);
+  function formatDisplayDate(value) {
+    if (!value)
+      return "Not set";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime()))
+      return "Not set";
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  }
   function InviteRow({ invite, onRevoke, canManage }) {
     return html10`<div class="secondary-row">
     <div class="secondary-row-copy">
@@ -64052,7 +68569,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     ${invite.status === "pending" ? html10`<button class="btn-danger btn-sm" onClick=${() => onRevoke(invite.id)} disabled=${!canManage}>Revoke</button>` : null}
   </div>`;
   }
-  function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, routeId }) {
+  function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, routeId, navigate }) {
     const invites = bootstrap?.teamInvites || [];
     const org = bootstrap?.organization || {};
     const sub = bootstrap?.subscription || {};
@@ -64066,6 +68583,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const teamRef = A2(null);
     const workspaceRef = A2(null);
     const billingRef = A2(null);
+    const approvalRef = A2(null);
     const scrollToSection = (ref) => {
       try {
         ref?.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
@@ -64113,17 +68631,87 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       toast?.("Workspace details saved.", "success");
       onRefresh?.();
     });
-    const [changePlan, changingPlan] = useAction2(async (plan) => {
-      if (!canManagePlan)
+    const [approvalRules, setApprovalRules] = d2([]);
+    const [showAddRule, setShowAddRule] = d2(false);
+    y2(() => {
+      if (!orgId)
         return;
-      await api("/api/workspace/subscription/plan", {
-        method: "PATCH",
-        body: JSON.stringify({ organization_id: orgId, plan })
+      let cancelled = false;
+      api(`/settings/${encodeURIComponent(orgId)}`).then((res) => {
+        if (!cancelled && Array.isArray(res?.approval_thresholds)) {
+          setApprovalRules(res.approval_thresholds);
+        }
+      }).catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }, [orgId]);
+    const [saveApprovalRules, savingApprovalRules] = useAction2(async (rules) => {
+      if (!canManageCompany)
+        return;
+      await api(`/settings/${encodeURIComponent(orgId)}/approval-thresholds`, {
+        method: "PUT",
+        body: JSON.stringify({ approval_thresholds: rules })
       });
-      toast?.(`Plan updated to ${plan}.`, "success");
-      onRefresh?.();
+      toast?.("Approval rules saved.", "success");
     });
+    const resetFieldBorder = (e3) => {
+      e3.target.style.borderColor = "";
+    };
+    const addApprovalRule = async () => {
+      const channel = document.getElementById("cl-rule-channel")?.value?.trim();
+      if (!channel) {
+        document.getElementById("cl-rule-channel")?.style?.setProperty("border-color", "#DC2626");
+        toast?.("Approver channel is required.", "error");
+        return;
+      }
+      const minAmt = parseFloat(document.getElementById("cl-rule-min")?.value || "0");
+      const maxRaw = document.getElementById("cl-rule-max")?.value?.trim();
+      if (maxRaw && parseFloat(maxRaw) <= minAmt) {
+        document.getElementById("cl-rule-max")?.style?.setProperty("border-color", "#DC2626");
+        toast?.("Max amount must be greater than min amount.", "error");
+        return;
+      }
+      const min = minAmt;
+      const max = parseFloat(maxRaw) || 0;
+      const approvers = (document.getElementById("cl-rule-approvers")?.value || "").split(",").map((s3) => s3.trim()).filter(Boolean);
+      const glCodes = (document.getElementById("cl-rule-gl")?.value || "").split(",").map((s3) => s3.trim()).filter(Boolean);
+      const departments = (document.getElementById("cl-rule-depts")?.value || "").split(",").map((s3) => s3.trim()).filter(Boolean);
+      const vendors = (document.getElementById("cl-rule-vendors")?.value || "").split(",").map((s3) => s3.trim()).filter(Boolean);
+      const approvalType = document.getElementById("cl-rule-type")?.value || "any";
+      if (!approvers.length) {
+        toast?.("Add at least one approver email.", "error");
+        return;
+      }
+      const newRule = { min_amount: min, max_amount: max, approver_channel: channel, approvers, gl_codes: glCodes, departments, vendors, approval_type: approvalType };
+      const updated = [...approvalRules, newRule];
+      setApprovalRules(updated);
+      setShowAddRule(false);
+      await saveApprovalRules(updated);
+    };
+    const deleteApprovalRule = async (index) => {
+      const updated = approvalRules.filter((_2, i3) => i3 !== index);
+      setApprovalRules(updated);
+      await saveApprovalRules(updated);
+    };
     const activeAlias = String(routeId || "").trim();
+    const billingPreview = [
+      { label: "Plan", value: planName },
+      { label: "Status", value: sub.status || "Active" },
+      {
+        label: "Billing cycle",
+        value: String(sub.billing_cycle || "monthly").toLowerCase() === "yearly" ? "Annual" : "Monthly"
+      },
+      {
+        label: sub.status === "trialing" ? "Trial ends" : "Current period",
+        value: formatDisplayDate(sub.status === "trialing" ? sub.trial_ends_at : sub.current_period_end)
+      }
+    ];
+    const billingUsagePreview = [
+      { label: "Invoices", value: Number(usage.invoices_this_month || 0).toLocaleString() },
+      { label: "AI credits", value: Number(usage.ai_credits_this_month || 0).toLocaleString() },
+      { label: "Users", value: Number(usage.users_count || 0).toLocaleString() }
+    ];
     return html10`
     <div class=${`secondary-banner ${canManageAny ? "" : "warning"}`}>
       <div class="secondary-banner-copy">
@@ -64146,6 +68734,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           class=${`segmented-button btn-sm ${activeAlias === "clearledgr/plan" ? "is-active" : ""}`}
           onClick=${() => scrollToSection(billingRef)}
         >Billing</button>
+        <button
+          class=${`segmented-button btn-sm ${activeAlias === "clearledgr/approvals" ? "is-active" : ""}`}
+          onClick=${() => scrollToSection(approvalRef)}
+        >Approvals</button>
       </div>
     </div>
 
@@ -64172,7 +68764,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="panel" ref=${teamRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">Team</h3>
+            <h3 style="margin-top:0">Team${!canManageTeam ? html10`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
             <p class="muted" style="margin:0">Invite the people who need to work or monitor finance operations.</p>
           </div>
         </div>
@@ -64206,7 +68798,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="panel" ref=${workspaceRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">Workspace</h3>
+            <h3 style="margin-top:0">Workspace${!canManageCompany ? html10`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
             <p class="muted" style="margin:0">Keep the company record and inbox setup current.</p>
           </div>
           <div class="row-actions">
@@ -64250,40 +68842,461 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="panel" ref=${billingRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">Billing</h3>
-            <p class="muted" style="margin:0">Review the current plan and workspace usage for this billing period.</p>
+            <h3 style="margin-top:0">Billing${!canManagePlan ? html10`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+            <p class="muted" style="margin:0">See the current billing state here, then open the dedicated billing page for plan comparison and usage detail.</p>
           </div>
+          ${navigate ? html10`<div class="row-actions">
+                <button class="btn-primary btn-sm" onClick=${() => navigate("clearledgr/plan")}>Open billing page</button>
+              </div>` : null}
         </div>
         <div class="settings-section-grid">
           <div>
-            <div style="display:flex;align-items:center;gap:12px;margin:4px 0 16px;flex-wrap:wrap">
-              <span style="font-size:28px;font-weight:700;letter-spacing:-0.02em">${planName}</span>
-              <span class="status-badge connected">${sub.status || "Active"}</span>
-            </div>
-            <div class="segmented-actions" style="margin-bottom:18px">
-              ${["free", "trial", "pro", "enterprise"].map((p3) => html10`
-                <button
-                  class=${`segmented-button btn-sm ${sub.plan === p3 ? "is-active" : ""}`}
-                  onClick=${() => changePlan(p3)}
-                  disabled=${sub.plan === p3 || !canManagePlan || changingPlan}
-                >
-                  ${p3.charAt(0).toUpperCase() + p3.slice(1)}
-                </button>
+            <div class="settings-summary-grid">
+              ${billingPreview.map((entry) => html10`
+                <div class="settings-summary-card" key=${entry.label}>
+                  <strong>${entry.label}</strong>
+                  <span>${entry.value}</span>
+                </div>
               `)}
             </div>
             <div class="secondary-note">
-              Use the plan controls here if pricing, limits, or support needs have changed. Billing is kept together with team and workspace because it is part of the same admin setup surface.
+              Billing changes now live on the dedicated page so subscription details, limits, and plan choices are not squeezed into the general settings view.
             </div>
           </div>
           <div>
             ${usageKeys.length ? html10`<div class="secondary-stat-grid">
-                  ${usageKeys.map((key) => html10`
-                    <div class="secondary-stat-card" key=${key}>
-                      <strong>${key.replace(/_/g, " ")}</strong>
-                      <span>${typeof usage[key] === "number" ? usage[key].toLocaleString() : usage[key]}</span>
+                  ${billingUsagePreview.map((entry) => html10`
+                    <div class="secondary-stat-card" key=${entry.label}>
+                      <strong>${entry.label}</strong>
+                      <span>${entry.value}</span>
                     </div>
                   `)}
                 </div>` : html10`<p class="secondary-empty">Usage data will appear here once invoices are processed.</p>`}
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" ref=${approvalRef}>
+        <div class="panel-head compact">
+          <div>
+            <h3 style="margin-top:0">Approval rules${!canManageCompany ? html10`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+            <p class="muted" style="margin:0">Define who approves invoices based on amount, GL code, department, or vendor.</p>
+          </div>
+          <div class="row-actions">
+            ${canManageCompany ? html10`
+              <button class="btn-primary" onClick=${() => setShowAddRule(!showAddRule)} disabled=${savingApprovalRules}>
+                ${showAddRule ? "Cancel" : "Add rule"}
+              </button>
+            ` : null}
+          </div>
+        </div>
+
+        ${showAddRule && canManageCompany ? html10`
+          <div style="padding:16px 0;border-bottom:1px solid var(--cl-border, #e2e8f0)">
+            <div class="secondary-form-stack">
+              <div class="secondary-form-grid" style="gap:12px">
+                <div><label>Min amount</label><input id="cl-rule-min" type="number" placeholder="0" step="0.01" onFocus=${resetFieldBorder} /></div>
+                <div><label>Max amount</label><input id="cl-rule-max" type="number" placeholder="10000" step="0.01" onFocus=${resetFieldBorder} /></div>
+              </div>
+              <div class="secondary-form-grid" style="gap:12px">
+                <div>
+                  <label>Channel</label>
+                  <select id="cl-rule-channel" onFocus=${resetFieldBorder}>
+                    <option value="slack">Slack</option>
+                    <option value="teams">Teams</option>
+                    <option value="email">Email</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Approval type</label>
+                  <select id="cl-rule-type">
+                    <option value="any">Any approver</option>
+                    <option value="all">All approvers</option>
+                  </select>
+                </div>
+              </div>
+              <div><label>Approvers</label><input id="cl-rule-approvers" placeholder="alice@co.com, bob@co.com" /></div>
+              <div><label>GL codes</label><input id="cl-rule-gl" placeholder="6000, 6100 (optional)" /></div>
+              <div><label>Departments</label><input id="cl-rule-depts" placeholder="engineering, marketing (optional)" /></div>
+              <div><label>Vendors</label><input id="cl-rule-vendors" placeholder="Acme Corp, Widgets Inc (optional)" /></div>
+            </div>
+            <div class="row-actions" style="justify-content:flex-start;margin-top:14px">
+              <button class="btn-primary" onClick=${addApprovalRule} disabled=${savingApprovalRules}>
+                ${savingApprovalRules ? "Saving..." : "Save rule"}
+              </button>
+            </div>
+          </div>
+        ` : null}
+
+        <div style="margin-top:18px">
+          ${approvalRules.length ? html10`<div class="secondary-list">
+                ${approvalRules.map((rule, idx) => html10`
+                  <div class="secondary-row" key=${idx}>
+                    <div class="secondary-row-copy">
+                      <div class="secondary-inline-actions" style="margin-bottom:4px">
+                        <strong style="font-size:14px;margin-right:2px">
+                          $${Number(rule.min_amount || 0).toLocaleString()} – $${rule.max_amount ? Number(rule.max_amount).toLocaleString() : "No limit"}
+                        </strong>
+                        <span class="status-badge">${rule.approver_channel || "slack"}</span>
+                        <span class="status-badge connected">${rule.approval_type === "all" ? "All must approve" : "Any can approve"}</span>
+                      </div>
+                      <div class="muted" style="font-size:12px">
+                        Approvers: ${(rule.approvers || []).join(", ") || "None"}
+                      </div>
+                      ${(rule.gl_codes || []).length ? html10`<div class="muted" style="font-size:12px">GL codes: ${rule.gl_codes.join(", ")}</div>` : null}
+                      ${(rule.departments || []).length ? html10`<div class="muted" style="font-size:12px">Departments: ${rule.departments.join(", ")}</div>` : null}
+                      ${(rule.vendors || []).length ? html10`<div class="muted" style="font-size:12px">Vendors: ${rule.vendors.join(", ")}</div>` : null}
+                    </div>
+                    ${canManageCompany ? html10`
+                      <button class="btn-danger btn-sm" onClick=${() => deleteApprovalRule(idx)} disabled=${savingApprovalRules}>Delete</button>
+                    ` : null}
+                  </div>
+                `)}
+              </div>` : html10`<div class="secondary-empty">No approval rules yet. Add one to route invoices for review based on amount or category.</div>`}
+        </div>
+
+        <div class="secondary-note" style="margin-top:14px">
+          Rules are evaluated in order. The first rule whose amount range, GL codes, departments, and vendors match the invoice will be used to route the approval request.
+        </div>
+      </div>
+    </div>
+  `;
+  }
+
+  // src/routes/pages/PlanPage.js
+  var html11 = htm_module_default.bind(_);
+  var PLAN_ORDER = ["free", "starter", "professional", "enterprise"];
+  var PLAN_META = {
+    free: {
+      label: "Free",
+      monthly: 0,
+      annual: 0,
+      summary: "Run the AP lane in one inbox and validate the workflow.",
+      highlights: ["Gmail sidebar", "Invoice extraction", "One user"]
+    },
+    starter: {
+      label: "Starter",
+      monthly: 79,
+      annual: 65,
+      summary: "Handle day-to-day approvals and posting for a lean finance team.",
+      highlights: ["Approval routing", "ERP posting", "Slack and Teams"]
+    },
+    professional: {
+      label: "Professional",
+      monthly: 149,
+      annual: 125,
+      summary: "Add stronger AI controls, analytics, and custom policy coverage.",
+      highlights: ["Custom policies", "Advanced analytics", "Priority support"]
+    },
+    enterprise: {
+      label: "Enterprise",
+      monthly: 299,
+      annual: 249,
+      summary: "Unlock procurement-grade controls and enterprise admin features.",
+      highlights: ["SSO", "Data residency", "Unlimited workspace scale"]
+    }
+  };
+  var USAGE_FIELDS = [
+    { key: "invoices_this_month", label: "Invoices this month", limitKey: "invoices_per_month", type: "count" },
+    { key: "users_count", label: "Users", limitKey: "users", type: "count" },
+    { key: "vendors_count", label: "Vendors", limitKey: "vendors", type: "count" },
+    { key: "erp_connections", label: "ERP connections", limitKey: "erp_connections", type: "count" },
+    { key: "ai_credits_this_month", label: "AI credits", limitKey: "ai_credits_per_month", type: "count" },
+    { key: "api_calls_today", label: "API calls today", limitKey: "api_calls_per_day", type: "count" },
+    { key: "storage_used_gb", label: "Storage used", limitKey: "storage_gb", type: "storage" }
+  ];
+  var FEATURE_GROUPS = [
+    {
+      title: "Workflow",
+      keys: ["gmail_sidebar", "invoice_extraction", "approval_routing", "erp_posting", "approval_chains", "custom_workflows"]
+    },
+    {
+      title: "Intelligence",
+      keys: ["ai_categorization", "gl_auto_coding", "vendor_intelligence", "recurring_detection", "three_way_matching", "advanced_analytics"]
+    },
+    {
+      title: "Admin and integrations",
+      keys: ["slack_integration", "teams_integration", "api_access", "audit_logs", "priority_support", "sso", "data_residency"]
+    }
+  ];
+  function toTitleCase2(value) {
+    return String(value || "").replace(/_/g, " ").replace(/\b\w/g, (match) => match.toUpperCase());
+  }
+  function formatPlanLabel(plan) {
+    return PLAN_META[plan]?.label || toTitleCase2(plan || "free");
+  }
+  function formatStatus(status) {
+    const normalized = String(status || "active").trim().toLowerCase();
+    if (normalized === "trialing")
+      return "Trialing";
+    if (normalized === "past_due")
+      return "Past due";
+    if (normalized === "cancelled")
+      return "Cancelled";
+    return "Active";
+  }
+  function statusTone(status) {
+    const normalized = String(status || "active").trim().toLowerCase();
+    if (normalized === "trialing")
+      return "warning";
+    if (normalized === "past_due" || normalized === "cancelled")
+      return "danger";
+    return "connected";
+  }
+  function formatPrice(plan, cycle = "monthly") {
+    const meta = PLAN_META[plan] || PLAN_META.free;
+    const normalizedCycle = String(cycle || "monthly").trim().toLowerCase();
+    const amount = normalizedCycle === "yearly" ? meta.annual : meta.monthly;
+    if (!amount)
+      return "Free";
+    if (normalizedCycle === "yearly")
+      return `$${amount}/seat/mo billed annually`;
+    return `$${amount}/seat/mo`;
+  }
+  function formatDateLabel(value) {
+    if (!value)
+      return "Not set";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime()))
+      return "Not set";
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  }
+  function formatUsageValue(value, type = "count") {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric))
+      return "0";
+    if (type === "storage") {
+      return `${numeric.toLocaleString(undefined, {
+        minimumFractionDigits: numeric < 10 ? 1 : 0,
+        maximumFractionDigits: 1
+      })} GB`;
+    }
+    return numeric.toLocaleString();
+  }
+  function formatLimitValue(value, type = "count") {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0)
+      return "Unlimited";
+    if (type === "storage") {
+      return `${numeric.toLocaleString(undefined, {
+        minimumFractionDigits: numeric < 10 ? 1 : 0,
+        maximumFractionDigits: 1
+      })} GB`;
+    }
+    return numeric.toLocaleString();
+  }
+  function calculateUsagePercent(usageValue, limitValue) {
+    const usage = Number(usageValue || 0);
+    const limit = Number(limitValue);
+    if (!Number.isFinite(usage) || !Number.isFinite(limit) || limit <= 0)
+      return 0;
+    return Math.max(0, Math.min(100, Math.round(usage / limit * 100)));
+  }
+  function usageTone(percent) {
+    if (percent >= 90)
+      return "danger";
+    if (percent >= 70)
+      return "warning";
+    return "success";
+  }
+  function featureLabel(key) {
+    const value = toTitleCase2(key).replace(/\bAi\b/g, "AI").replace(/\bApi\b/g, "API").replace(/\bErp\b/g, "ERP").replace(/\bSso\b/g, "SSO").replace(/\bGl\b/g, "GL");
+    return value;
+  }
+  function getPlanAction(planId, sub) {
+    const currentPlan = String(sub?.plan || "free").trim().toLowerCase();
+    const status = String(sub?.status || "active").trim().toLowerCase();
+    const hasTrialHistory = Boolean(sub?.trial_started_at);
+    if (currentPlan === planId && status !== "trialing") {
+      return { label: "Current plan", value: planId, disabled: true };
+    }
+    if (planId === "professional" && !hasTrialHistory && status !== "trialing") {
+      return { label: "Start 14-day trial", value: "trial", disabled: false };
+    }
+    return { label: `Switch to ${formatPlanLabel(planId)}`, value: planId, disabled: false };
+  }
+  function PlanFeatureGroup({ title, keys, features }) {
+    const enabledKeys = keys.filter((key) => Boolean(features?.[key]));
+    return html11`<div class="billing-feature-card">
+    <div class="billing-feature-title">${title}</div>
+    ${enabledKeys.length ? html11`<div class="billing-chip-row">
+          ${enabledKeys.map((key) => html11`<span key=${key} class="secondary-chip">${featureLabel(key)}</span>`)}
+        </div>` : html11`<div class="secondary-empty">No additional entitlements in this group on the current plan.</div>`}
+  </div>`;
+  }
+  function PlanPage({ bootstrap, api, toast, orgId, onRefresh, navigate }) {
+    const sub = bootstrap?.subscription || {};
+    const limits = sub.limits || {};
+    const usage = sub.usage || {};
+    const features = sub.features || {};
+    const canManagePlan = hasCapability(bootstrap, "manage_plan");
+    const plan = String(sub.plan || "free").trim().toLowerCase();
+    const status = String(sub.status || "active").trim().toLowerCase();
+    const planLabel = formatPlanLabel(plan);
+    const periodLabel = sub.current_period_end ? `Renews ${formatDateLabel(sub.current_period_end)}` : status === "trialing" && sub.trial_ends_at ? `Trial ends ${formatDateLabel(sub.trial_ends_at)}` : "Billing period not started";
+    const [changePlan, changingPlan] = useAction2(async (nextPlan) => {
+      if (!canManagePlan)
+        return;
+      await api("/api/workspace/subscription/plan", {
+        method: "PATCH",
+        body: JSON.stringify({ organization_id: orgId, plan: nextPlan })
+      });
+      toast?.(nextPlan === "trial" ? "Professional trial started." : `Plan updated to ${formatPlanLabel(nextPlan)}.`, "success");
+      onRefresh?.();
+    });
+    return html11`
+    <div class=${`secondary-banner billing-hero ${canManagePlan ? "" : "warning"}`}>
+      <div class="secondary-banner-copy">
+        <div class="billing-eyebrow">Subscription and billing</div>
+        <h3>${planLabel} plan</h3>
+        <p class="muted">
+          ${canManagePlan ? "Manage workspace entitlement, track usage against limits, and change the plan without leaving Gmail." : "Review workspace entitlement and usage here. Only admins can change the plan."}
+        </p>
+        <div class="billing-hero-meta">
+          <span class=${`status-badge ${statusTone(status)}`}>${formatStatus(status)}</span>
+          <span class="secondary-chip">${formatPrice(plan, sub.billing_cycle)}</span>
+          <span class="secondary-chip">${String(sub.billing_cycle || "monthly").toLowerCase() === "yearly" ? "Annual billing" : "Monthly billing"}</span>
+          ${status === "trialing" ? html11`<span class="secondary-chip">${sub.trial_days_remaining || 0} trial day${Number(sub.trial_days_remaining || 0) === 1 ? "" : "s"} left</span>` : null}
+        </div>
+      </div>
+      <div class="secondary-banner-actions">
+        ${navigate ? html11`<button class="btn-secondary" onClick=${() => navigate("clearledgr/settings")}>Open settings</button>` : null}
+        ${canManagePlan && !sub.trial_started_at && status !== "trialing" ? html11`<button class="btn-primary" onClick=${() => changePlan("trial")} disabled=${changingPlan}>
+              ${changingPlan ? "Working…" : "Start Pro trial"}
+            </button>` : null}
+      </div>
+    </div>
+
+    <div class="billing-shell">
+      <div class="billing-main-stack">
+        <div class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin-top:0">Billing snapshot</h3>
+              <p class="muted" style="margin:0">The current plan state, renewal window, and workspace limits in one place.</p>
+            </div>
+          </div>
+          <div class="billing-summary-grid">
+            <div class="billing-summary-card">
+              <strong>Current plan</strong>
+              <span>${planLabel}</span>
+              <small>${formatPrice(plan, sub.billing_cycle)}</small>
+            </div>
+            <div class="billing-summary-card">
+              <strong>Status</strong>
+              <span>${formatStatus(status)}</span>
+              <small>${periodLabel}</small>
+            </div>
+            <div class="billing-summary-card">
+              <strong>Billing cycle</strong>
+              <span>${String(sub.billing_cycle || "monthly").toLowerCase() === "yearly" ? "Annual" : "Monthly"}</span>
+              <small>${String(sub.billing_cycle || "monthly").toLowerCase() === "yearly" ? "Billed on a yearly term" : "Billed monthly"}</small>
+            </div>
+            <div class="billing-summary-card">
+              <strong>AI credits</strong>
+              <span>${formatUsageValue(usage.ai_credits_this_month)}</span>
+              <small>${formatLimitValue(limits.ai_credits_per_month)} available this month</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin-top:0">Usage against plan limits</h3>
+              <p class="muted" style="margin:0">How the workspace is tracking against the current month’s entitlement.</p>
+            </div>
+          </div>
+          <div class="billing-usage-list">
+            ${USAGE_FIELDS.map((field) => {
+      const usageValue = usage[field.key] ?? 0;
+      const limitValue = limits[field.limitKey];
+      const percent = calculateUsagePercent(usageValue, limitValue);
+      const unlimited = !Number.isFinite(Number(limitValue)) || Number(limitValue) < 0;
+      return html11`<div key=${field.key} class="billing-usage-row">
+                <div class="billing-usage-copy">
+                  <div class="billing-usage-header">
+                    <strong>${field.label}</strong>
+                    <span>${formatUsageValue(usageValue, field.type)} / ${formatLimitValue(limitValue, field.type)}</span>
+                  </div>
+                  <div class="billing-usage-bar">
+                    <div
+                      class=${`billing-usage-fill ${usageTone(percent)}`}
+                      style=${`width:${unlimited ? "24" : Math.max(percent, percent ? 8 : 0)}%`}
+                    ></div>
+                  </div>
+                  <div class="muted billing-usage-note">
+                    ${unlimited ? "This metric is unlimited on the current plan." : `${percent}% of this plan limit used.`}
+                  </div>
+                </div>
+              </div>`;
+    })}
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin-top:0">Included right now</h3>
+              <p class="muted" style="margin:0">The finance capabilities turned on for this workspace under the current plan.</p>
+            </div>
+          </div>
+          <div class="billing-feature-grid">
+            ${FEATURE_GROUPS.map((group) => html11`
+              <${PlanFeatureGroup}
+                key=${group.title}
+                title=${group.title}
+                keys=${group.keys}
+                features=${features}
+              />
+            `)}
+          </div>
+        </div>
+      </div>
+
+      <div class="billing-side-stack">
+        <div class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin-top:0">Choose a plan</h3>
+              <p class="muted" style="margin:0">Pick the workspace tier that matches invoice volume, controls, and support needs.</p>
+            </div>
+          </div>
+          <div class="billing-plan-list">
+            ${PLAN_ORDER.map((planId) => {
+      const meta = PLAN_META[planId];
+      const action = getPlanAction(planId, sub);
+      const isCurrent = planId === plan;
+      return html11`<div key=${planId} class=${`billing-plan-option ${isCurrent ? "is-current" : ""}`}>
+                <div class="billing-plan-row">
+                  <div class="billing-plan-copy">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+                      <strong>${meta.label}</strong>
+                      ${isCurrent ? html11`<span class="status-badge connected">Current</span>` : null}
+                    </div>
+                    <div class="billing-plan-price">${formatPrice(planId, sub.billing_cycle)}</div>
+                    <p>${meta.summary}</p>
+                    <div class="billing-chip-row">
+                      ${meta.highlights.map((highlight) => html11`<span key=${highlight} class="secondary-chip">${highlight}</span>`)}
+                    </div>
+                  </div>
+                  ${canManagePlan ? html11`<button
+                        class=${isCurrent ? "btn-secondary btn-sm" : "btn-primary btn-sm"}
+                        onClick=${() => changePlan(action.value)}
+                        disabled=${action.disabled || changingPlan}
+                      >
+                        ${changingPlan ? "Working…" : action.label}
+                      </button>` : null}
+                </div>
+              </div>`;
+    })}
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">What changes when you switch</h3>
+          <div class="secondary-note">
+            Plan changes update workspace entitlement immediately for Clearledgr features, limits, and approval tooling. Billing cadence stays ${String(sub.billing_cycle || "monthly").toLowerCase() === "yearly" ? "annual" : "monthly"} unless your team changes it outside this Gmail surface.
           </div>
         </div>
       </div>
@@ -64292,16 +69305,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/ReconciliationPage.js
-  var html11 = htm_module_default.bind(_);
+  var html12 = htm_module_default.bind(_);
   function Step({ number, text }) {
-    return html11`<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0">
-    <div style="
-      width:24px;height:24px;border-radius:50%;flex-shrink:0;
-      display:flex;align-items:center;justify-content:center;
-      background:var(--accent);color:var(--navy);font-size:12px;font-weight:700;
-      font-family:var(--font-display);
-    ">${number}</div>
-    <span style="font-size:13px;color:var(--ink-secondary);padding-top:2px">${text}</span>
+    return html12`<div class="recon-step">
+    <div class="recon-step-index">${number}</div>
+    <span class="recon-step-copy">${text}</span>
   </div>`;
   }
   function ReconciliationPage({ api, toast, orgId, onRefresh }) {
@@ -64333,7 +69341,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         setStarting(false);
       }
     }, [sheetUrl, range, orgId, api, toast, onRefresh]);
-    return html11`
+    return html12`
     <div class="secondary-banner">
       <div class="secondary-banner-copy">
         <h3>Reconciliation tools</h3>
@@ -64344,8 +69352,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <div class="secondary-shell">
       <div class="secondary-main">
         <div class="panel">
-          <h3 style="margin:0 0 10px">Start a reconciliation run</h3>
-          <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0 0 4px">Start a reconciliation run</h3>
+              <p class="muted" style="margin:0">Paste a Google Sheet and launch one bounded reconciliation run from Gmail.</p>
+            </div>
+          </div>
+          <div class="secondary-form-stack">
             <div>
               <label style="display:block;margin-bottom:4px">Google Sheet URL</label>
               <input placeholder="https://docs.google.com/spreadsheets/d/..." value=${sheetUrl} onInput=${(e3) => setSheetUrl(e3.target.value)} />
@@ -64354,13 +69367,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <label style="display:block;margin-bottom:4px">Sheet range</label>
               <input placeholder="Sheet1!A:F" value=${range} onInput=${(e3) => setRange(e3.target.value)} />
             </div>
-            <button onClick=${startRecon} disabled=${starting || !sheetUrl.trim()} style="padding:12px;font-size:14px;font-weight:600;font-family:var(--font-display)">
+            <button class="btn-primary" onClick=${startRecon} disabled=${starting || !sheetUrl.trim()} style="padding:12px;font-size:14px;font-weight:600;font-family:var(--font-display)">
               ${starting ? "Starting…" : "Start run"}
             </button>
           </div>
 
-          ${result && html11`
-            <div style="margin-top:16px;padding:14px;background:#ECFDF5;border:1px solid #A7F3D0;border-radius:var(--radius-sm)">
+          ${result && html12`
+            <div class="secondary-callout" style="margin-top:16px;background:#ECFDF5;border-color:#A7F3D0;color:#047857">
               <div style="font-weight:600;font-size:13px;color:#059669;margin-bottom:4px">Session started</div>
               <div style="font-family:var(--font-mono);font-size:12px;color:var(--ink-secondary)">${result.details?.session_id || "Created"}</div>
               <div class="muted" style="margin-top:4px">${result.details?.next_step || "Agent will import and match transactions."}</div>
@@ -64372,11 +69385,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="secondary-side">
         <div class="panel" style="background:var(--bg)">
           <h3 style="font-size:14px;margin-bottom:12px">What this run does</h3>
-          <${Step} number="1" text="Import transactions from your Google Sheet" />
-          <${Step} number="2" text="Match each transaction against posted invoices by amount, date, vendor, and reference" />
-          <${Step} number="3" text="Flag exceptions for human review" />
-          <${Step} number="4" text="Write reconciliation results back to your sheet" />
-          <div style="margin-top:16px;padding:12px;background:var(--surface);border-radius:var(--radius-sm);border:1px solid var(--border)">
+          <div class="recon-steps">
+            <${Step} number="1" text="Import transactions from your Google Sheet" />
+            <${Step} number="2" text="Match each transaction against posted invoices by amount, date, vendor, and reference" />
+            <${Step} number="3" text="Flag exceptions for human review" />
+            <${Step} number="4" text="Write reconciliation results back to your sheet" />
+          </div>
+          <div class="secondary-callout" style="margin-top:16px">
             <div style="font-size:12px;font-weight:500;color:var(--ink-secondary);margin-bottom:4px">Matching signals</div>
             <div style="font-size:11px;color:var(--ink-muted);line-height:1.6">
               Amount (35%) \u00B7 Date (25%) \u00B7 Vendor name (25%) \u00B7 Reference # (15%)
@@ -64389,12 +69404,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/HealthPage.js
-  var html12 = htm_module_default.bind(_);
+  var html13 = htm_module_default.bind(_);
   function HealthPage({ bootstrap, api }) {
     const health = bootstrap?.health || {};
     const integrations = health.integrations || {};
     const actions = health.required_actions || [];
-    return html12`
+    return html13`
     <div class=${`secondary-banner ${actions.length ? "warning" : ""}`}>
       <div class="secondary-banner-copy">
         <h3>${actions.length ? "Something needs attention" : "Everything looks healthy"}</h3>
@@ -64406,30 +69421,30 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="secondary-main">
         <div class="panel">
           <h3 style="margin-top:0">Required actions</h3>
-          ${actions.length > 0 ? html12`<div class="secondary-list" style="margin-top:12px">
-                ${actions.map((a3, i3) => html12`
+          ${actions.length > 0 ? html13`<div class="secondary-list" style="margin-top:12px">
+                ${actions.map((a3, i3) => html13`
                   <div key=${i3} class="secondary-note" style="border-left:3px solid var(--amber)">
                     ${a3.message}
                   </div>
                 `)}
-              </div>` : html12`<div class="secondary-empty">Nothing needs manual attention right now.</div>`}
+              </div>` : html13`<div class="secondary-empty">No issues found.</div>`}
         </div>
       </div>
 
       <div class="secondary-side">
         <div class="panel">
           <h3 style="margin-top:0">Connection status</h3>
-          ${Object.keys(integrations).length ? html12`<div class="secondary-list" style="margin-top:12px">
+          ${Object.keys(integrations).length ? html13`<div class="secondary-list" style="margin-top:12px">
                 ${Object.entries(integrations).map(([name, status]) => {
       const isOk = status === true || status === "connected" || status?.connected === true;
-      return html12`<div class="secondary-row">
+      return html13`<div class="secondary-row">
                     <div class="secondary-row-copy">
                       <strong>${name.charAt(0).toUpperCase() + name.slice(1)}</strong>
                     </div>
                     <span class="status-badge ${isOk ? "connected" : ""}">${isOk ? "Connected" : "Not connected"}</span>
                   </div>`;
     })}
-              </div>` : html12`<div class="secondary-empty">No integration data yet.</div>`}
+              </div>` : html13`<div class="secondary-empty">No integration data yet.</div>`}
         </div>
         <${MonitoringPanel} api=${api} />
       </div>
@@ -64441,18 +69456,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     y2(() => {
       if (!api)
         return;
-      api.fetch("/api/ops/monitoring-health").then(setData).catch(() => {});
+      api("/api/ops/monitoring-health").then(setData).catch(() => {});
     }, []);
     if (!data)
       return null;
-    return html12`
+    return html13`
     <div class="panel">
       <h3 style="margin-top:0">System monitoring</h3>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
         <span class="status-badge ${data.healthy ? "connected" : ""}">${data.healthy ? "Healthy" : `${data.alert_count} alert${data.alert_count !== 1 ? "s" : ""}`}</span>
         <span class="muted" style="font-size:11px">${data.check_count} checks run</span>
       </div>
-      ${(data.checks || []).map((check) => html12`
+      ${(data.checks || []).map((check) => html13`
         <div key=${check.check} style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
           <div>
             <div style="font-weight:${check.alert ? "700" : "400"};color:${check.alert ? check.severity === "critical" ? "#B91C1C" : "#A16207" : "inherit"}">
@@ -64462,12 +69477,43 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <div style="font-weight:600">${check.value}${typeof check.threshold === "number" ? ` / ${check.threshold}` : ""}</div>
         </div>
       `)}
+      ${(() => {
+      const approverCheck = (data.checks || []).find((c3) => c3.check === "approver_health");
+      const problems = approverCheck?.problems || [];
+      if (!problems.length)
+        return null;
+      const issueLabels = {
+        unknown_user: { label: "Not in workspace", explanation: "This email is not a registered user", blocking: false },
+        inactive_user: { label: "Deactivated", explanation: "This user account has been deactivated", blocking: false },
+        stale_login: { label: "Inactive", explanation: "Has not logged in recently", blocking: false },
+        pending_chain_unknown_approver: { label: "Blocking approval", explanation: "A pending invoice is waiting on this unknown approver", blocking: true },
+        pending_chain_inactive_approver: { label: "Blocking approval", explanation: "A pending invoice is waiting on this deactivated approver", blocking: true }
+      };
+      return html13`
+          <div style="margin-top:14px">
+            <div style="font-size:12px;font-weight:700;margin-bottom:8px">Approver issues</div>
+            ${problems.map((p3) => {
+        const info = issueLabels[p3.issue] || { label: p3.issue, explanation: "", blocking: false };
+        const color = info.blocking ? "#B91C1C" : "#A16207";
+        return html13`
+                <div key=${p3.email + p3.issue} style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span>${p3.email}</span>
+                    <span class="status-badge" style="color:${color};font-weight:${info.blocking ? "700" : "600"}">${info.label}</span>
+                  </div>
+                  <div class="muted" style="font-size:11px;margin-top:2px">${info.explanation}</div>
+                </div>
+              `;
+      })}
+          </div>
+        `;
+    })()}
     </div>
   `;
   }
 
   // src/routes/pages/PipelinePage.js
-  var html13 = htm_module_default.bind(_);
+  var html14 = htm_module_default.bind(_);
   var ACTIVE_AP_ITEM_STORAGE_KEY = "clearledgr_active_ap_item_id";
   var STATE_STYLES = {
     needs_approval: { bg: "#FEFCE8", text: "#A16207", label: "Needs approval" },
@@ -64483,13 +69529,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   };
   var BLOCKER_LABELS = {
     entity: "Entity review",
-    approval: "Approval waiting",
+    approval: "Waiting on approver",
     info: "Needs info",
-    erp: "ERP retry",
-    exception: "Policy block",
+    erp: "ERP issue",
+    exception: "Needs review",
     confidence: "Field review",
     budget: "Budget review",
-    po: "PO / GR issue",
+    po: "PO review",
     processing: "Processing issue"
   };
   var ERP_STATUS_LABELS = {
@@ -64499,12 +69545,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     posted: "Posted",
     not_connected: "Not connected"
   };
-  function isTypingTarget2(target) {
-    if (!target || typeof target !== "object")
-      return false;
-    const tag = String(target.tagName || "").toUpperCase();
-    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || Boolean(target.isContentEditable);
-  }
   function getPipelineScope2(orgId, userEmail) {
     return { orgId, userEmail };
   }
@@ -64521,33 +69561,50 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function StatePill2({ state }) {
     const normalized = normalizePipelineState(state);
     const tone = STATE_STYLES[normalized] || { bg: "#F1F5F9", text: "#64748B", label: normalized.replace(/_/g, " ") };
-    return html13`<span style="
+    return html14`<span style="
     font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;
     background:${tone.bg};color:${tone.text};letter-spacing:0.02em;text-transform:uppercase;
   ">${tone.label}</span>`;
   }
   function SliceChip({ slice, count, active, onClick }) {
-    return html13`<button
+    return html14`<button
     onClick=${onClick}
     style="
-      display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;
+      display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:10px;
       border:1px solid ${active ? "var(--accent)" : "var(--border)"};
       background:${active ? "var(--accent-soft)" : "var(--surface)"};
       color:${active ? "var(--accent-ink)" : "var(--ink)"};
-      cursor:pointer;font-family:inherit;text-align:left;min-width:182px;
+      cursor:pointer;font-family:inherit;text-align:left;min-width:128px;
     "
   >
-    <span style="font-size:13px;font-weight:700">${slice.label}</span>
-    <span style="margin-left:auto;font-size:12px;font-weight:700;color:inherit">${count}</span>
+    <span style="font-size:12px;font-weight:700">${slice.label}</span>
+    <span style="margin-left:auto;font-size:11px;font-weight:700;color:inherit">${count}</span>
   </button>`;
   }
   function BlockerChip({ blocker }) {
     const kind = String(blocker?.kind || "").trim().toLowerCase();
-    const label = blocker?.chip_label || BLOCKER_LABELS[kind] || kind;
-    return html13`<span style="
+    const label = blocker?.chip_label || blocker?.title || BLOCKER_LABELS[kind] || kind;
+    return html14`<span style="
     font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;
     background:#FFF7ED;border:1px solid #FED7AA;color:#9A3412;
   ">${label}</span>`;
+  }
+  function QueueMetricPill({ label, value, tone = "default" }) {
+    const tones = {
+      default: { bg: "var(--bg)", border: "var(--border)", text: "var(--ink)" },
+      warning: { bg: "#FFFBEB", border: "#FCD34D", text: "#92400E" },
+      success: { bg: "#ECFDF5", border: "#A7F3D0", text: "#166534" },
+      danger: { bg: "#FEF2F2", border: "#FECACA", text: "#B91C1C" }
+    };
+    const palette = tones[tone] || tones.default;
+    return html14`<span style="
+    display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 11px;border-radius:10px;
+    border:1px solid ${palette.border};background:${palette.bg};color:${palette.text};
+    font-size:11px;font-weight:700;min-width:88px;
+  ">
+    <span style="font-family:var(--font-display);font-variant-numeric:tabular-nums;font-size:15px;line-height:1">${value}</span>
+    <span style="opacity:0.72;text-transform:uppercase;letter-spacing:0.04em;font-size:10px">${label}</span>
+  </span>`;
   }
   function PipelineBlockerSummary({ item, compact = false }) {
     const blockers = getPipelineBlockers(item);
@@ -64557,7 +69614,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const primaryDetail = String(primary?.detail || "").trim();
     const extraCount = blockers.length - 1;
     const secondaryDetail = extraCount > 0 ? String(item?.workflow_paused_reason || "").trim() || `+${extraCount} more blocker${extraCount === 1 ? "" : "s"}.` : "";
-    return html13`
+    return html14`
     <div style="
       margin-top:${compact ? "6px" : "0"};
       padding:${compact ? "6px 0 0" : "10px 12px"};
@@ -64568,19 +69625,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       flex-direction:column;
       gap:4px;
     ">
-      ${primary.title && html13`<div style="font-size:12px;font-weight:700;color:#9A3412">
+      ${primary.title && html14`<div style="font-size:12px;font-weight:700;color:#9A3412">
         ${primary.title}
       </div>`}
-      ${primaryDetail && html13`<div class="muted" style="font-size:12px;line-height:1.45">
+      ${primaryDetail && html14`<div class="muted" style="font-size:12px;line-height:1.45">
         ${primaryDetail}
       </div>`}
-      ${secondaryDetail && secondaryDetail !== primaryDetail ? html13`<div class="muted" style="font-size:12px;line-height:1.45">${secondaryDetail}</div>` : null}
+      ${secondaryDetail && secondaryDetail !== primaryDetail ? html14`<div class="muted" style="font-size:12px;line-height:1.45">${secondaryDetail}</div>` : null}
     </div>
   `;
   }
   function SavedViewChip({ view, active, onOpen, onTogglePin, onDelete }) {
     const scopeLabel = view.scope === "starter" ? "Starter" : "Personal";
-    return html13`
+    return html14`
     <div style="
       display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:999px;
       border:1px solid ${active ? "var(--accent)" : "var(--border)"};
@@ -64594,7 +69651,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         onClick=${onTogglePin}
         style="color:${view.pinned ? "var(--accent-ink)" : "var(--ink-muted)"}"
       >${view.pinned ? "Pinned" : "Pin"}</button>
-      ${typeof onDelete === "function" ? html13`<button
+      ${typeof onDelete === "function" ? html14`<button
             class="btn-ghost btn-xs"
             aria-label="Delete saved view"
             onClick=${onDelete}
@@ -64628,31 +69685,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const amount = Number(item?.amount);
     if (!Number.isFinite(amount))
       return "—";
-    const currency = String(item?.currency || "USD");
-    return `${currency} ${amount.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    })}`;
+    return formatAmount(amount, item?.currency);
   }
   function getDocumentSummary(item) {
     const documentType = normalizeDocumentType(item?.document_type);
     const reference = String(item?.invoice_number || "").trim();
     return reference ? getDocumentReferenceText(documentType, reference) : getDocumentTypeLabel(documentType);
-  }
-  function getPipelineTimeline(item, erpStatus) {
-    const documentType = normalizeDocumentType(item?.document_type);
-    const parts = [];
-    if (isInvoiceDocumentType(documentType)) {
-      parts.push(`Due ${item.due_date ? fmtDate(item.due_date) : "—"}`);
-      if (item?.entity_code || item?.entity_name) {
-        parts.push(`Entity ${item.entity_code || item.entity_name}`);
-      }
-      parts.push(`ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus}`);
-    } else {
-      parts.push(`Type ${getDocumentTypeLabel(documentType)}`);
-    }
-    parts.push(`Updated ${fmtDateTime(item.updated_at || item.created_at)}`);
-    return parts.join(" · ");
   }
   function isRouteableInvoiceItem(item) {
     if (!item)
@@ -64694,7 +69732,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function buildResetFilters() {
     return {
-      state: "all",
       vendor: "",
       due: "all",
       blocker: "all",
@@ -64711,7 +69748,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [searchQuery, setSearchQuery] = d2("");
     const [selectedIds, setSelectedIds] = d2([]);
     const [activeItemId, setActiveItemId] = d2("");
-    const [viewPrefs, setViewPrefs] = d2(() => readPipelinePreferences(pipelineScope));
+    const [viewPrefs, setViewPrefs] = d2(() => normalizePipelinePreferences({
+      ...readPipelinePreferences(pipelineScope),
+      viewMode: "table"
+    }));
     const [navState, setNavState] = d2(() => readPipelineNavigation(pipelineScope));
     const [savedViewName, setSavedViewName] = d2("");
     const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
@@ -64719,11 +69759,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const syncTimerRef = A2(null);
     const lastSyncedPrefsRef = A2("");
     y2(() => {
-      setViewPrefs(readPipelinePreferences(pipelineScope));
+      setViewPrefs(normalizePipelinePreferences({
+        ...readPipelinePreferences(pipelineScope),
+        viewMode: "table"
+      }));
       setNavState(readPipelineNavigation(pipelineScope));
     }, [pipelineScope]);
     const syncServerPreferences = async (prefs, { silent = true } = {}) => {
-      const normalized = normalizePipelinePreferences(prefs);
+      const normalized = normalizePipelinePreferences({ ...prefs || {}, viewMode: "table" });
       await api("/api/workspace/user/preferences", {
         method: "PATCH",
         body: JSON.stringify({
@@ -64737,13 +69780,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     y2(() => {
       const local = readPipelinePreferences(pipelineScope);
       const remote = bootstrapPipelinePrefs ? normalizePipelinePreferences(bootstrapPipelinePrefs) : null;
-      let next = local;
+      let next = normalizePipelinePreferences({ ...local, viewMode: "table" });
       let syncedBaseline = "";
       if (remote && hasMeaningfulPipelinePreferences(remote)) {
         if (!pipelinePreferencesEqual(local, remote)) {
-          next = writePipelinePreferences(pipelineScope, remote);
+          next = writePipelinePreferences(pipelineScope, { ...remote, viewMode: "table" });
         } else {
-          next = remote;
+          next = normalizePipelinePreferences({ ...remote, viewMode: "table" });
         }
         syncedBaseline = JSON.stringify(normalizePipelinePreferences(next));
       } else if (!hasMeaningfulPipelinePreferences(local)) {
@@ -64774,10 +69817,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       api(`/extension/worklist?organization_id=${encodeURIComponent(orgId)}&limit=500`).then((data) => setItems(Array.isArray(data?.items) ? data.items : [])).catch(() => setItems([])).finally(() => setLoading(false));
     }, [api, orgId]);
     const persistPrefs = (nextValue) => {
-      const normalized = writePipelinePreferences(pipelineScope, nextValue);
+      const normalized = writePipelinePreferences(pipelineScope, { ...nextValue || {}, viewMode: "table" });
       setViewPrefs(normalized);
       return normalized;
     };
+    y2(() => {
+      if (viewPrefs.viewMode === "table")
+        return;
+      const normalized = writePipelinePreferences(pipelineScope, { ...viewPrefs, viewMode: "table" });
+      setViewPrefs(normalized);
+    }, [pipelineScope, viewPrefs.viewMode]);
     const resetFiltersAndSearch = () => {
       setSearchQuery("");
       setViewPrefs(persistPrefs({
@@ -64998,7 +70047,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       setSelectedIds((prev) => prev.filter((itemId) => !routeableItems.some((item) => String(item.id || "") === String(itemId || ""))));
       const firstFailure = failures.find(Boolean) || "";
       if (failedCount > 0) {
-        toast(successCount > 0 ? `${successCount} invoice(s) routed. ${failedCount} blocked. First issue: ${firstFailure || "This invoice is not ready for approval routing yet."}` : firstFailure || "No selected invoices are ready for approval routing.", "warning");
+        toast(successCount > 0 ? `${successCount} invoice(s) routed. ${failedCount} still need review. First issue: ${firstFailure || "This invoice is not ready for approval routing yet."}` : firstFailure || "No selected invoices are ready for approval routing.", "warning");
         return;
       }
       toast(`${successCount} invoice(s) routed for approval.`, "success");
@@ -65031,122 +70080,87 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         toast("Could not escalate approval.", "error");
       }
     });
-    y2(() => {
-      const handleKeyDown = (event) => {
-        if (!displayed.length || isTypingTarget2(event.target))
-          return;
-        const currentIndex = Math.max(0, displayed.findIndex((item) => String(item.id || "") === String(activeItemId || "")));
-        const currentItem = displayed[currentIndex] || displayed[0];
-        const lower = String(event.key || "").toLowerCase();
-        let handled = false;
-        if (lower === "j" || event.key === "ArrowDown") {
-          setActiveItemId(String(displayed[Math.min(displayed.length - 1, currentIndex + 1)]?.id || ""));
-          handled = true;
-        } else if (lower === "k" || event.key === "ArrowUp") {
-          setActiveItemId(String(displayed[Math.max(0, currentIndex - 1)]?.id || ""));
-          handled = true;
-        } else if (lower === "x" && currentItem?.id) {
-          toggleSelected(currentItem.id);
-          handled = true;
-        } else if (lower === "o" && currentItem) {
-          openItemDetail(navigate, pipelineScope, currentItem);
-          handled = true;
-        } else if (lower === "e" && currentItem) {
-          openItemEmail(pipelineScope, currentItem);
-          handled = true;
-        } else if (lower === "a") {
-          routeSelected();
-          handled = true;
-        }
-        if (handled) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      };
-      window.addEventListener("keydown", handleKeyDown, true);
-      return () => window.removeEventListener("keydown", handleKeyDown, true);
-    }, [activeItemId, displayed, navigate, pipelineScope, routeSelected, selectedItems.length]);
+    const currentSliceLabel = PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === viewPrefs.activeSliceId)?.label || "All open";
+    const currentViewLabel = activeSavedView ? getSavedViewLabel(activeSavedView) : currentSliceLabel;
     if (loading) {
-      return html13`<div class="panel" style="padding:48px;text-align:center"><p class="muted">Loading queue…</p></div>`;
+      return html14`<div class="panel" style="padding:48px;text-align:center"><p class="muted">Loading queue…</p></div>`;
     }
-    return html13`
-    <div class="kpi-row">
-      <div class="kpi-card">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.total}</strong>
-        <span>Total records</span>
-      </div>
-      <div class="kpi-card">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.open}</strong>
-        <span>Open records</span>
-      </div>
-      <div class="kpi-card kpi-warning">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.waitingApproval}</strong>
-        <span>Waiting approval</span>
-      </div>
-      <div class="kpi-card" style="border-color:#A7F3D0">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--brand-muted)">${stats.readyToPost}</strong>
-        <span>Ready to post</span>
-      </div>
-      <div class="kpi-card" style="border-color:#FCA5A5">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:#B91C1C">${stats.overdue}</strong>
-        <span>Overdue</span>
-      </div>
-    </div>
-
-    ${focusedItem ? html13`
-          <div class="panel" style="padding:14px 16px;border-color:${focusedItemVisible ? "#A7F3D0" : "#FCD34D"}">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
-              <div>
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-                  <strong>Current thread item</strong>
-                  <${StatePill2} state=${focusedItem.state} />
-                </div>
-                <div class="muted" style="font-size:13px">
-                  ${focusedItem.vendor_name || focusedItem.vendor || "Unknown vendor"} · ${getDocumentSummary(focusedItem)} · ${getAmountLabel(focusedItem)}
-                </div>
-                <div class="muted" style="font-size:12px;margin-top:4px">
-                  ${focusedItemVisible ? "The current item is visible in this pipeline view." : "The current item is outside the active slice or filters. Open its matching slice to keep queue context intact."}
-                </div>
-              </div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${!focusedItemVisible ? html13`<button class="btn-primary btn-sm" onClick=${revealFocusedItem}>Show in pipeline</button>` : null}
-                <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open record</button>
-                <button class="btn-ghost btn-sm" onClick=${clearFocus}>Clear focus</button>
-              </div>
+    return html14`
+    <div class="pipeline-shell">
+      <div class="panel pipeline-hero-panel" style="padding:12px 14px">
+        <div class="pipeline-hero-head">
+          <div class="pipeline-hero-copy">
+            <div>
+              <h3 style="margin:0 0 4px">Live AP queue</h3>
+              <p class="muted" style="margin:0">Filter, route, and reopen records without leaving Gmail.</p>
+            </div>
+            <div class="pipeline-metric-row">
+              <${QueueMetricPill} label="Open" value=${stats.open} />
+              <${QueueMetricPill} label="Waiting approval" value=${stats.waitingApproval} tone="warning" />
+              <${QueueMetricPill} label="Ready to post" value=${stats.readyToPost} tone="success" />
+              <${QueueMetricPill} label="Overdue" value=${stats.overdue} tone="danger" />
+              <${QueueMetricPill} label="Total" value=${stats.total} />
             </div>
           </div>
-        ` : null}
-
-    <div class="panel" style="padding:16px 18px">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px">
-        <div>
-          <h3 style="margin:0 0 4px">Saved views</h3>
-          <p class="muted" style="margin:0">Work invoices by state, then save and pin the views you reopen most.</p>
-        </div>
-        <div class="toolbar-actions">
-          <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/home")}>Open Home</button>
-          <button class="btn-secondary btn-sm" onClick=${doRefresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
-        </div>
-      </div>
-      <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:4px">
-        ${PIPELINE_BUILTIN_SLICES.map((slice) => html13`
-          <${SliceChip}
-            key=${slice.id}
-            slice=${slice}
-            count=${sliceCounts[slice.id] || 0}
-            active=${viewPrefs.activeSliceId === slice.id}
-            onClick=${() => applySlice(slice.id)}
-          />
-        `)}
-      </div>
-      <div style="display:flex;flex-direction:column;gap:14px;margin-top:14px">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-          <div>
-                  <strong style="font-size:13px">Starter views</strong>
-                  <div class="muted" style="font-size:12px">Default views you can pin for quick queue access.</div>
+          <div class="toolbar-actions">
+            <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/home")}>Home</button>
+            <button class="btn-secondary btn-sm" onClick=${doRefresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            ${starterViews.map((view) => html13`
+        </div>
+
+        ${focusedItem ? html14`
+              <div class="pipeline-focus-row">
+                <div>
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+                    <strong style="font-size:13px">Current thread record</strong>
+                    <${StatePill2} state=${focusedItem.state} />
+                  </div>
+                  <div class="muted" style="font-size:13px">
+                    ${focusedItem.vendor_name || focusedItem.vendor || "Unknown vendor"} · ${getDocumentSummary(focusedItem)} · ${getAmountLabel(focusedItem)}
+                  </div>
+                  <div class="muted" style="font-size:12px;margin-top:4px">
+                    ${focusedItemVisible ? "This record is already visible in the active invoices view." : "This record is outside the current slice or filters. Jump back to its matching queue to keep thread context intact."}
+                  </div>
+                </div>
+                <div class="pipeline-focus-actions">
+                  ${!focusedItemVisible ? html14`<button class="btn-primary btn-sm" onClick=${revealFocusedItem}>Show in invoices</button>` : null}
+                  <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open record</button>
+                  <button class="btn-ghost btn-sm" onClick=${clearFocus}>Clear focus</button>
+                </div>
+              </div>
+            ` : null}
+      </div>
+
+      <div class="panel pipeline-view-panel" style="padding:12px 14px">
+        <div class="pipeline-view-head" style="margin-bottom:10px">
+          <div>
+            <strong style="font-size:13px">Views</strong>
+            <div class="muted" style="font-size:12px">
+              ${activeSavedView ? `Current saved view: ${currentViewLabel}.` : `Current slice: ${currentSliceLabel}.`}
+            </div>
+          </div>
+          <div class="muted" style="font-size:12px">${pinnedViews.length} pinned · ${personalViews.length} personal · ${displayed.length} visible</div>
+        </div>
+
+        <div class="pipeline-view-band">
+          <span class="pipeline-view-label">Slices</span>
+          <div class="pipeline-chip-strip" style="overflow-x:auto;padding-bottom:2px">
+            ${PIPELINE_BUILTIN_SLICES.map((slice) => html14`
+              <${SliceChip}
+                key=${slice.id}
+                slice=${slice}
+                count=${sliceCounts[slice.id] || 0}
+                active=${viewPrefs.activeSliceId === slice.id}
+                onClick=${() => applySlice(slice.id)}
+              />
+            `)}
+          </div>
+        </div>
+
+        <div class="pipeline-view-band" style="margin-top:10px">
+          <span class="pipeline-view-label">Saved</span>
+          <div class="pipeline-chip-strip">
+            ${starterViews.map((view) => html14`
               <${SavedViewChip}
                 key=${view.id}
                 view=${view}
@@ -65155,278 +70169,178 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 onTogglePin=${() => toggleSavedViewPin(view)}
               />
             `)}
+            ${personalViews.map((view) => html14`
+              <${SavedViewChip}
+                key=${view.id}
+                view=${view}
+                active=${activeSavedView?.scope === view.scope && activeSavedView?.id === view.id}
+                onOpen=${() => applySavedView(view)}
+                onTogglePin=${() => toggleSavedViewPin(view)}
+                onDelete=${() => removeView(view.id)}
+              />
+            `)}
           </div>
         </div>
-        ${(personalViews.length || 0) > 0 ? html13`
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                <div>
-                  <strong style="font-size:13px">Personal views</strong>
-                  <div class="muted" style="font-size:12px">${pinnedViews.length} pinned for quick queue access.</div>
-                </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap">
-                  ${personalViews.map((view) => html13`
-                    <${SavedViewChip}
-                      key=${view.id}
-                      view=${view}
-                      active=${activeSavedView?.scope === view.scope && activeSavedView?.id === view.id}
-                      onOpen=${() => applySavedView(view)}
-                      onTogglePin=${() => toggleSavedViewPin(view)}
-                      onDelete=${() => removeView(view.id)}
-                    />
-                  `)}
-                </div>
-              </div>
-            ` : null}
-      </div>
-    </div>
 
-    <div class="panel" style="padding:16px 18px">
-      <div style="display:grid;grid-template-columns:2fr 1.25fr 1fr 1fr;gap:10px;align-items:end">
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Search</span>
+        <div class="pipeline-saved-input-row">
           <input
-            placeholder="Search vendors, references, PO, sender…"
-            value=${searchQuery}
-            onInput=${(event) => setSearchQuery(event.target.value)}
-            style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
+            value=${savedViewName}
+            onInput=${(event) => setSavedViewName(event.target.value)}
+            placeholder="Save current view…"
+            style="min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
           />
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Vendor</span>
-          <input
-            placeholder="Filter vendor…"
-            value=${viewPrefs.filters.vendor}
-            onInput=${(event) => updateFilters({ vendor: event.target.value })}
-            style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
-          />
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Due date</span>
-          <select value=${viewPrefs.filters.due} onChange=${(event) => updateFilters({ due: event.target.value })}>
-            <option value="all">All</option>
-            <option value="overdue">Overdue</option>
-            <option value="due_7d">Due in 7 days</option>
-            <option value="no_due">No due date</option>
-          </select>
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Amount band</span>
-          <select value=${viewPrefs.filters.amount} onChange=${(event) => updateFilters({ amount: event.target.value })}>
-            <option value="all">All</option>
-            <option value="under_1k">Under 1k</option>
-            <option value="1k_10k">1k - 10k</option>
-            <option value="over_10k">Over 10k</option>
-          </select>
-        </label>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:10px;align-items:end;margin-top:12px">
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Approval age</span>
-          <select value=${viewPrefs.filters.approvalAge} onChange=${(event) => updateFilters({ approvalAge: event.target.value })}>
-            <option value="all">All</option>
-            <option value="under_24h">Under 24h</option>
-            <option value="1d_3d">1-3 days</option>
-            <option value="over_3d">Over 3 days</option>
-          </select>
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Blocker type</span>
-          <select value=${viewPrefs.filters.blocker} onChange=${(event) => updateFilters({ blocker: event.target.value })}>
-            <option value="all">All</option>
-            <option value="entity">Entity</option>
-            <option value="approval">Approval</option>
-            <option value="info">Needs info</option>
-            <option value="erp">ERP</option>
-            <option value="exception">Policy</option>
-            <option value="confidence">Field review</option>
-            <option value="budget">Budget</option>
-            <option value="po">PO / GR</option>
-            <option value="processing">Processing</option>
-          </select>
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">ERP status</span>
-          <select value=${viewPrefs.filters.erpStatus} onChange=${(event) => updateFilters({ erpStatus: event.target.value })}>
-            <option value="all">All</option>
-            <option value="ready">Ready</option>
-            <option value="failed">Failed</option>
-            <option value="connected">Connected</option>
-            <option value="posted">Posted</option>
-            <option value="not_connected">Not connected</option>
-          </select>
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Sort</span>
-          <select value=${viewPrefs.sortCol} onChange=${(event) => updateSort(event.target.value)}>
-            <option value="queue_age">Queue age</option>
-            <option value="due_date">Due date</option>
-            <option value="amount">Amount</option>
-            <option value="updated_at">Last update</option>
-            <option value="approval_wait">Approval waiting time</option>
-          </select>
-        </label>
-        <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
-          <button
-            class="segmented-button btn-sm"
-            onClick=${() => persistPrefs({ ...viewPrefs, viewMode: viewPrefs.viewMode === "table" ? "cards" : "table" })}
-          >${viewPrefs.viewMode === "table" ? "Cards" : "Table"}</button>
+          <button class="btn-secondary btn-sm" onClick=${saveView} disabled=${savingView}>${savingView ? "Saving…" : "Save current view"}</button>
+          ${activeSavedView?.scope === "user" ? html14`<button class="btn-secondary btn-sm" onClick=${updateView} disabled=${updatingView}>${updatingView ? "Updating…" : "Update active view"}</button>` : null}
+          <button class="btn-ghost btn-sm" onClick=${resetFiltersAndSearch}>Reset filters</button>
+          <span class="muted" style="font-size:12px">Sorted ${viewPrefs.sortDir === "desc" ? "descending" : "ascending"} by ${viewPrefs.sortCol.replace(/_/g, " ")}.</span>
         </div>
       </div>
 
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
-        <input
-          value=${savedViewName}
-          onInput=${(event) => setSavedViewName(event.target.value)}
-          placeholder="Save current view as a personal view…"
-          style="min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
-        />
-        <button class="btn-secondary btn-sm" onClick=${saveView} disabled=${savingView}>${savingView ? "Saving…" : "Save personal view"}</button>
-        ${activeSavedView?.scope === "user" ? html13`<button class="btn-secondary btn-sm" onClick=${updateView} disabled=${updatingView}>${updatingView ? "Updating…" : "Update active view"}</button>` : null}
-        <button class="btn-ghost btn-sm" onClick=${resetFiltersAndSearch}>Reset filters</button>
-        <span class="muted" style="font-size:12px">
-          Sort ${viewPrefs.sortDir === "desc" ? "descending" : "ascending"} by ${viewPrefs.sortCol.replace(/_/g, " ")}.
-        </span>
-      </div>
-
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px">
-        <div class="muted" style="font-size:12px">
-          Keyboard: J/K move · X select · O open detail · E open thread · A route selected/current invoice
+      <div class="panel pipeline-filter-panel" style="padding:12px 14px">
+        <div class="pipeline-filter-grid" style="display:grid;grid-template-columns:minmax(0,1.8fr) minmax(0,1.2fr) repeat(4,minmax(0,1fr));gap:10px;align-items:end">
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">Search</span>
+            <input
+              placeholder="Search vendors, references, PO, sender…"
+              value=${searchQuery}
+              onInput=${(event) => setSearchQuery(event.target.value)}
+              style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
+            />
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">Vendor</span>
+            <input
+              placeholder="Filter vendor…"
+              value=${viewPrefs.filters.vendor}
+              onInput=${(event) => updateFilters({ vendor: event.target.value })}
+              style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
+            />
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">Due date</span>
+            <select value=${viewPrefs.filters.due} onChange=${(event) => updateFilters({ due: event.target.value })}>
+              <option value="all">All</option>
+              <option value="overdue">Overdue</option>
+              <option value="due_7d">Due in 7 days</option>
+              <option value="no_due">No due date</option>
+            </select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">Blocker type</span>
+            <select value=${viewPrefs.filters.blocker} onChange=${(event) => updateFilters({ blocker: event.target.value })}>
+              <option value="all">All</option>
+              <option value="entity">Entity</option>
+              <option value="approval">Approval</option>
+              <option value="info">Needs info</option>
+              <option value="erp">ERP</option>
+              <option value="exception">Policy</option>
+              <option value="confidence">Field review</option>
+              <option value="budget">Budget</option>
+              <option value="po">PO / GR</option>
+              <option value="processing">Processing</option>
+            </select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">ERP status</span>
+            <select value=${viewPrefs.filters.erpStatus} onChange=${(event) => updateFilters({ erpStatus: event.target.value })}>
+              <option value="all">All</option>
+              <option value="ready">Ready</option>
+              <option value="failed">Failed</option>
+              <option value="connected">Connected</option>
+              <option value="posted">Posted</option>
+              <option value="not_connected">Not connected</option>
+            </select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">Sort</span>
+            <select value=${viewPrefs.sortCol} onChange=${(event) => updateSort(event.target.value)}>
+              <option value="queue_age">Queue age</option>
+              <option value="due_date">Due date</option>
+              <option value="amount">Amount</option>
+              <option value="updated_at">Last update</option>
+              <option value="approval_wait">Approval waiting time</option>
+            </select>
+          </label>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn-secondary btn-sm" onClick=${selectVisible}>Select visible</button>
-          <button class="btn-ghost btn-sm" onClick=${clearSelection} disabled=${selectedIds.length === 0}>Clear selection</button>
-          <span class="muted" style="font-size:12px;align-self:center">
-            ${selectedItems.length ? `${selectedItems.length} selected` : "No selection"}
-            ${routeableSelectedItems.length ? ` · ${routeableSelectedItems.length} routeable` : ""}
-          </span>
-          <button
-            class="btn-primary btn-sm"
-            onClick=${() => routeSelected()}
-            disabled=${routingSelected || !routeableSelectedItems.length && !isRouteableInvoiceItem(activeItem)}
-          >
-            ${routingSelected ? "Routing…" : routeableSelectedItems.length > 0 ? "Route selected" : "Route current"}
-          </button>
-        </div>
-      </div>
-    </div>
 
-    ${viewPrefs.viewMode === "cards" ? html13`
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px">
-            ${displayed.length === 0 ? html13`<div class="panel" style="grid-column:1/-1;text-align:center;padding:32px"><p class="muted">No records match this view.</p></div>` : displayed.map((item) => {
-      const pipelineBlockers = getPipelineBlockers(item);
-      const blockerChips = pipelineBlockers.filter((blocker, index, collection) => collection.findIndex((candidate) => candidate.kind === blocker.kind) === index);
-      const focused = String(navState.focusItemId || "") === String(item.id || "");
-      const active = String(activeItemId || "") === String(item.id || "");
-      const approvalWait = getApprovalWaitMinutes(item);
-      const queueAge = getQueueAgeMinutes(item);
-      const erpStatus = getErpStatus(item);
-      const routeable = isRouteableInvoiceItem(item);
-      const entityNeedsReview = needsEntityRouting(item, item.state, item.document_type);
-      const escalateReady = canEscalateApproval(item, item.state, actorRole, item.document_type);
-      return html13`
-                    <div
-                      key=${item.id}
-                      class="panel"
-                      style="padding:16px;margin-bottom:0;border-color:${active || focused ? "var(--accent)" : "var(--border)"};box-shadow:${active || focused ? "0 0 0 1px var(--accent-soft)" : "none"}"
-                      onClick=${() => setActiveItemId(String(item.id || ""))}
-                    >
-                      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px">
-                        <div>
-                          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                            <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-secondary)">
-                              <input
-                                type="checkbox"
-                                checked=${selectedSet.has(String(item.id || ""))}
-                                onClick=${(event) => event.stopPropagation()}
-                                onChange=${() => toggleSelected(item.id)}
-                              />
-                              Select
-                            </label>
-                            <div style="font-size:15px;font-weight:700">${item.vendor_name || item.vendor || "Unknown vendor"}</div>
-                          </div>
-                          <div class="muted" style="font-size:12px;margin-top:2px">${getDocumentSummary(item)} · ${getAmountLabel(item)}</div>
-                        </div>
-                        <${StatePill2} state=${item.state} />
-                      </div>
-                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-                        <div style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg)">
-                          <div class="muted" style="font-size:11px">Queue age</div>
-                          <strong style="font-size:13px">${formatDurationMinutes(queueAge)}</strong>
-                        </div>
-                        <div style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg)">
-                          <div class="muted" style="font-size:11px">Approval wait</div>
-                          <strong style="font-size:13px">${approvalWait ? formatDurationMinutes(approvalWait) : "—"}</strong>
-                        </div>
-                      </div>
-                      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-                        ${blockerChips.length ? blockerChips.slice(0, 3).map((blocker) => html13`<${BlockerChip} key=${`${blocker.kind}:${blocker.type}:${blocker.field || ""}`} blocker=${blocker} />`) : html13`<span class="muted" style="font-size:12px">No blocking signals</span>`}
-                      </div>
-                      <${PipelineBlockerSummary} item=${item} />
-                      <div class="muted" style="font-size:12px;line-height:1.5;margin-bottom:12px">
-                        ${getPipelineTimeline(item, erpStatus)}
-                      </div>
-                      <div style="display:flex;gap:8px;flex-wrap:wrap">
-                        ${routeable ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
-        event.stopPropagation();
-        routeSelected([item]);
-      }} disabled=${routingSelected}>${routingSelected ? "Routing…" : "Route approval"}</button>` : entityNeedsReview ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
-        event.stopPropagation();
-        openItemDetail(navigate, pipelineScope, item);
-      }}>Resolve entity</button>` : escalateReady ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
-        event.stopPropagation();
-        escalateApprovalItem(item);
-      }} disabled=${escalatingApproval}>${escalatingApproval ? "Escalating…" : "Escalate"}</button>` : null}
-                        <button class="btn-secondary btn-sm" onClick=${(event) => {
-        event.stopPropagation();
-        openItemDetail(navigate, pipelineScope, item);
-      }}>Open record</button>
-                        ${(item.thread_id || item.message_id) && html13`
-                          <button class="btn-ghost btn-sm" onClick=${(event) => {
-        event.stopPropagation();
-        openItemEmail(pipelineScope, item);
-      }}>Open email</button>
-                        `}
-                      </div>
-                    </div>
-                  `;
-    })}
+        <div class="pipeline-filter-footer">
+          <div class="pipeline-filter-aux" style="align-items:flex-end">
+            <label style="display:flex;flex-direction:column;gap:6px;min-width:160px">
+              <span class="muted" style="font-size:12px">Amount band</span>
+              <select value=${viewPrefs.filters.amount} onChange=${(event) => updateFilters({ amount: event.target.value })}>
+                <option value="all">All</option>
+                <option value="under_1k">Under 1k</option>
+                <option value="1k_10k">1k - 10k</option>
+                <option value="over_10k">Over 10k</option>
+              </select>
+            </label>
+            <label style="display:flex;flex-direction:column;gap:6px;min-width:160px">
+              <span class="muted" style="font-size:12px">Approval age</span>
+              <select value=${viewPrefs.filters.approvalAge} onChange=${(event) => updateFilters({ approvalAge: event.target.value })}>
+                <option value="all">All</option>
+                <option value="under_24h">Under 24h</option>
+                <option value="1d_3d">1-3 days</option>
+                <option value="over_3d">Over 3 days</option>
+              </select>
+            </label>
           </div>
-        ` : html13`
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);overflow-x:auto">
-            <table class="table" style="min-width:1320px;table-layout:fixed">
-              <colgroup>
-                <col style="width:58px" />
-                <col style="width:136px" />
-                <col style="width:122px" />
-                <col style="width:86px" />
-                <col style="width:60px" />
-                <col style="width:102px" />
-                <col style="width:78px" />
-                <col style="width:94px" />
-                <col style="width:98px" />
-                <col style="width:318px" />
-                <col style="width:102px" />
-                <col style="width:96px" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Select</th>
-                  <th>Vendor</th>
-                  <th>Document</th>
-                  <th style="text-align:right">Amount</th>
-                  <th>Due</th>
-                  <th>Status</th>
-                  <th>Queue age</th>
-                  <th>Approval wait</th>
-                  <th>ERP</th>
-                  <th>Blockers</th>
-                  <th>Updated</th>
-                  <th style="text-align:right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${displayed.length === 0 ? html13`<tr><td colspan="12" class="muted" style="text-align:center;padding:32px">No records match this view.</td></tr>` : displayed.map((item) => {
+          <div class="pipeline-filter-actions" style="justify-content:flex-end">
+            <span class="muted" style="font-size:12px">
+              ${selectedItems.length ? `${selectedItems.length} selected` : "No selection"}
+              ${routeableSelectedItems.length ? ` · ${routeableSelectedItems.length} routeable` : ""}
+            </span>
+            <button class="btn-secondary btn-sm" onClick=${selectVisible}>Select visible</button>
+            <button class="btn-ghost btn-sm" onClick=${clearSelection} disabled=${selectedIds.length === 0}>Clear selection</button>
+            <button
+              class="btn-primary btn-sm"
+              onClick=${() => routeSelected()}
+              disabled=${routingSelected || !routeableSelectedItems.length && !isRouteableInvoiceItem(activeItem)}
+            >
+              ${routingSelected ? "Routing…" : routeableSelectedItems.length > 0 ? "Route selected" : "Route current"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel pipeline-table-panel" style="padding:0;overflow:hidden">
+        <div class="pipeline-table-meta pipeline-table-head" style="padding:10px 14px;border-bottom:1px solid var(--border)">
+          <div>
+            <strong style="font-size:13px">Invoice rows</strong>
+            <div class="muted" style="font-size:12px">${currentViewLabel} · ${displayed.length} visible of ${items.length} records</div>
+          </div>
+          <div class="muted pipeline-table-actions" style="font-size:12px">Click a row to keep it active, then open the record or thread from the same queue.</div>
+        </div>
+
+        <div style="overflow:auto">
+          <table class="table pipeline-table" style="min-width:1200px;table-layout:fixed">
+            <colgroup>
+              <col style="width:54px" />
+              <col style="width:318px" />
+              <col style="width:104px" />
+              <col style="width:88px" />
+              <col style="width:104px" />
+              <col style="width:82px" />
+              <col style="width:90px" />
+              <col style="width:248px" />
+              <col style="width:104px" />
+              <col style="width:178px" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Select</th>
+                <th>Record</th>
+                <th style="text-align:right">Amount</th>
+                <th>Due</th>
+                <th>Status</th>
+                <th>Queue</th>
+                <th>Approval</th>
+                <th>Signals</th>
+                <th>Updated</th>
+                <th style="text-align:right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${displayed.length === 0 ? html14`<tr><td colspan="10" class="muted" style="text-align:center;padding:32px">No records match this view.</td></tr>` : displayed.map((item) => {
       const pipelineBlockers = getPipelineBlockers(item);
       const blockerChips = pipelineBlockers.filter((blocker, index, collection) => collection.findIndex((candidate) => candidate.kind === blocker.kind) === index);
       const focused = String(navState.focusItemId || "") === String(item.id || "");
@@ -65438,72 +70352,84 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const routeable = isRouteableInvoiceItem(item);
       const entityNeedsReview = needsEntityRouting(item, item.state, item.document_type);
       const escalateReady = canEscalateApproval(item, item.state, actorRole, item.document_type);
-      return html13`
-                        <tr
-                          key=${item.id}
-                          style=${active || focused ? "background:rgba(14,165,233,0.07)" : ""}
-                          onClick=${() => setActiveItemId(String(item.id || ""))}
-                        >
-                          <td>
-                            <input
-                              type="checkbox"
-                              checked=${selectedSet.has(String(item.id || ""))}
-                              onClick=${(event) => event.stopPropagation()}
-                              onChange=${() => toggleSelected(item.id)}
-                            />
-                          </td>
-                          <td style="font-weight:600;cursor:pointer" onClick=${(event) => {
+      const timelineBits = [];
+      if (item?.entity_code || item?.entity_name)
+        timelineBits.push(`Entity ${item.entity_code || item.entity_name}`);
+      timelineBits.push(item.thread_id || item.message_id ? "Email linked" : "No email link");
+      return html14`
+                      <tr
+                        key=${item.id}
+                        style=${active || focused ? "background:rgba(14,165,233,0.07)" : ""}
+                        onClick=${() => setActiveItemId(String(item.id || ""))}
+                      >
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked=${selectedSet.has(String(item.id || ""))}
+                            onClick=${(event) => event.stopPropagation()}
+                            onChange=${() => toggleSelected(item.id)}
+                          />
+                        </td>
+                        <td class="pipeline-record-cell" style="cursor:pointer" onClick=${(event) => {
         event.stopPropagation();
         openItemDetail(navigate, pipelineScope, item);
-      }}>${item.vendor_name || item.vendor || "Unknown vendor"}</td>
-                          <td style="font-family:var(--font-mono);font-size:12px">${getDocumentSummary(item)}</td>
-                          <td style="text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums">${getAmountLabel(item)}</td>
-                          <td>${isInvoiceDocument && item.due_date ? fmtDate(item.due_date) : "—"}</td>
-                          <td><${StatePill2} state=${item.state} /></td>
-                          <td>${formatDurationMinutes(queueAge)}</td>
-                          <td>${isInvoiceDocument && approvalWait ? formatDurationMinutes(approvalWait) : "—"}</td>
-                          <td>${isInvoiceDocument ? ERP_STATUS_LABELS[erpStatus] || erpStatus : "N/A"}</td>
-                          <td>
-                            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-                              ${blockerChips.length ? blockerChips.slice(0, 2).map((blocker) => html13`<${BlockerChip} key=${`${blocker.kind}:${blocker.type}:${blocker.field || ""}`} blocker=${blocker} />`) : html13`<span class="muted" style="font-size:12px">Clear</span>`}
-                            </div>
-                            <${PipelineBlockerSummary} item=${item} compact=${true} />
-                          </td>
-                          <td class="muted" style="font-size:12px">${fmtDateTime(item.updated_at || item.created_at)}</td>
-                          <td style="text-align:right">
-                            <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
-                              ${routeable ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
+      }}>
+                          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                            <strong style="font-size:14px">${item.vendor_name || item.vendor || "Unknown vendor"}</strong>
+                            ${focused ? html14`<span style="font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink);text-transform:uppercase;letter-spacing:0.04em">Current thread</span>` : null}
+                          </div>
+                          <div class="muted" style="font-size:12px;margin-top:3px">${getDocumentSummary(item)} · ${timelineBits.join(" · ")}</div>
+                        </td>
+                        <td style="text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums">${getAmountLabel(item)}</td>
+                        <td>${isInvoiceDocument && item.due_date ? fmtDate(item.due_date) : "—"}</td>
+                        <td><${StatePill2} state=${item.state} /></td>
+                        <td>${formatDurationMinutes(queueAge)}</td>
+                        <td>${isInvoiceDocument && approvalWait ? formatDurationMinutes(approvalWait) : "—"}</td>
+                        <td class="pipeline-signals-cell">
+                          <div class="muted" style="font-size:12px;font-weight:700;margin-bottom:${blockerChips.length || pipelineBlockers.length ? "8px" : "4px"}">
+                            ${isInvoiceDocument ? `ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus}` : "Non-invoice record"}
+                          </div>
+                          <div class="pipeline-signal-stack" style="display:flex;gap:6px;flex-wrap:wrap">
+                            ${blockerChips.length ? blockerChips.slice(0, 2).map((blocker) => html14`<${BlockerChip} key=${`${blocker.kind}:${blocker.type}:${blocker.field || ""}`} blocker=${blocker} />`) : html14`<span class="muted" style="font-size:12px">No blocking signals</span>`}
+                          </div>
+                          <${PipelineBlockerSummary} item=${item} compact=${true} />
+                        </td>
+                        <td class="muted" style="font-size:12px">${fmtDateTime(item.updated_at || item.created_at)}</td>
+                        <td style="text-align:right">
+                          <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
+                            ${routeable ? html14`<button class="btn-primary btn-sm" onClick=${(event) => {
         event.stopPropagation();
         routeSelected([item]);
-      }} disabled=${routingSelected} style="min-width:72px">${routingSelected ? "Routing…" : "Route"}</button>` : entityNeedsReview ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
+      }} disabled=${routingSelected}>${routingSelected ? "Routing…" : "Route"}</button>` : entityNeedsReview ? html14`<button class="btn-primary btn-sm" onClick=${(event) => {
         event.stopPropagation();
         openItemDetail(navigate, pipelineScope, item);
-      }} style="min-width:72px">Resolve</button>` : escalateReady ? html13`<button class="btn-primary btn-sm" onClick=${(event) => {
+      }}>Resolve</button>` : escalateReady ? html14`<button class="btn-primary btn-sm" onClick=${(event) => {
         event.stopPropagation();
         escalateApprovalItem(item);
-      }} disabled=${escalatingApproval} style="min-width:72px">${escalatingApproval ? "Escalating…" : "Escalate"}</button>` : null}
-                              <button class="btn-secondary btn-sm" onClick=${(event) => {
+      }} disabled=${escalatingApproval}>${escalatingApproval ? "Escalating…" : "Escalate"}</button>` : null}
+                            <button class="btn-secondary btn-sm" onClick=${(event) => {
         event.stopPropagation();
         openItemDetail(navigate, pipelineScope, item);
-      }} style="min-width:72px">Open</button>
-                              ${(item.thread_id || item.message_id) && html13`
-                                <button class="btn-ghost btn-sm" onClick=${(event) => {
+      }}>Open</button>
+                            ${(item.thread_id || item.message_id) && html14`
+                              <button class="btn-ghost btn-sm" onClick=${(event) => {
         event.stopPropagation();
         openItemEmail(pipelineScope, item);
-      }} style="min-width:72px">Email</button>
-                              `}
-                            </div>
-                          </td>
-                        </tr>
-                      `;
+      }}>Email</button>
+                            `}
+                          </div>
+                        </td>
+                      </tr>
+                    `;
     })}
-              </tbody>
-            </table>
-          </div>
-        `}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-    <div class="muted" style="text-align:center;padding:12px 0;font-size:12px">
-      Showing ${displayed.length} of ${items.length} records in ${PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === viewPrefs.activeSliceId)?.label || "this view"}.
+      <div class="muted" style="text-align:center;padding:2px 0 0;font-size:12px">
+        Showing ${displayed.length} of ${items.length} records in ${currentSliceLabel}.
+      </div>
     </div>
   `;
   }
@@ -65776,7 +70702,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/InvoiceDetailPage.js
-  var html14 = htm_module_default.bind(_);
+  var html15 = htm_module_default.bind(_);
   var ACTIVE_AP_ITEM_STORAGE_KEY2 = "clearledgr_active_ap_item_id";
   var STATE_STYLES2 = {
     needs_approval: { bg: "#FEFCE8", text: "#A16207", label: "Needs approval" },
@@ -65807,7 +70733,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       text: "#64748B",
       label: String(state || "received").replace(/_/g, " ")
     };
-    return html14`<span style="
+    return html15`<span style="
     font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;
     background:${tone.bg};color:${tone.text};text-transform:uppercase;letter-spacing:0.02em;
   ">${tone.label}</span>`;
@@ -65896,16 +70822,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     if (state === "needs_approval") {
       const pendingAssignees = Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees : [];
-      push("approval", approvalFollowup?.escalation_due ? "Approval escalation due" : approvalFollowup?.sla_breached ? "Approval follow-up due" : "Waiting on approver", approvalFollowup?.escalation_due ? "Approval has been waiting past the escalation policy and should be escalated or reassigned." : approvalFollowup?.sla_breached ? "Approval has been waiting past the reminder SLA and should be nudged." : pendingAssignees.length ? `Waiting on ${pendingAssignees.slice(0, 3).join(", ")}.` : "The approval request is still pending.");
+      push("approval", approvalFollowup?.escalation_due ? "Approval needs escalation" : approvalFollowup?.sla_breached ? "Approval reminder is due" : "Waiting on approver", approvalFollowup?.escalation_due || approvalFollowup?.sla_breached || pendingAssignees.length ? getWorkStateNotice(state, documentType, item) : "The approval request is still pending.");
     }
     if (state === "needs_info") {
       const workflowPause = getWorkflowPauseReason(item);
       const disputeStatus = item?.dispute_status;
       const infoLabel = disputeStatus === "vendor_contacted" ? "Waiting on vendor response" : disputeStatus === "escalated" ? "Dispute escalated — vendor unresponsive" : isInvoiceDocument ? "Missing invoice details" : "Missing document details";
-      push("info", infoLabel, workflowPause || `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
+      push("info", infoLabel, getWorkStateNotice(state, documentType, item) || workflowPause || `Clearledgr still needs more information before this ${isInvoiceDocument ? "invoice" : "record"} can continue.`);
     }
-    if (state === "failed_post") {
-      push("erp", "ERP posting failed", "Retry the ERP post or review the connector result.");
+    if ((state === "approved" || state === "ready_to_post") && !exceptionReason && !hasErpPostingConnection(item)) {
+      push("erp_setup", "ERP is not connected", "Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.");
+    }
+    if (state === "failed_post" && !exceptionReason) {
+      push("erp", hasErpPostingConnection(item) ? "ERP posting failed" : "ERP is not connected", hasErpPostingConnection(item) ? "Retry the ERP post or review the connector result." : "Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.");
     }
     const gateReasons = Array.isArray(item?.validation_reasons) ? item.validation_reasons : [];
     for (const reason of gateReasons) {
@@ -65932,16 +70861,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function FieldReviewRows({ blockers, pauseReason, onResolve = null, resolvingField = "" }) {
     if ((!Array.isArray(blockers) || blockers.length === 0) && !pauseReason) {
-      return html14`<p class="muted">No field checks are waiting.</p>`;
+      return html15`<p class="muted">No field checks are waiting.</p>`;
     }
-    return html14`
+    return html15`
     <div style="display:flex;flex-direction:column;gap:10px">
-      ${pauseReason && html14`
+      ${pauseReason && html15`
         <div style="padding:10px 12px;border:1px solid #fcd34d;border-radius:var(--radius-sm);background:#FEFCE8;color:#78350f;font-size:13px;line-height:1.45">
           ${pauseReason}
         </div>
       `}
-      ${(blockers || []).map((blocker) => html14`
+      ${(blockers || []).map((blocker) => html15`
         <div key=${`${blocker.field || "field"}-${blocker.kind || "review"}`} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
           <div class="review-block-layout">
             <div class="review-block-main">
@@ -65949,31 +70878,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 ${blocker.kind === "confidence" ? `Confirm ${(blocker.field_label || "field").toLowerCase()}` : `Choose the correct ${(blocker.field_label || "field").toLowerCase()}`}
               </div>
               <div class="review-block-facts">
-                ${blocker.kind === "confidence" && html14`
+                ${blocker.kind === "confidence" && html15`
                   <>
                     <span class="review-block-fact-label">Clearledgr read</span>
                     <span class="review-block-fact-value">${blocker.current_value_display || "Not found"}</span>
                   </>
                 `}
-                ${blocker.kind === "confidence" && blocker.current_source_label && html14`
+                ${blocker.kind === "confidence" && blocker.current_source_label && html15`
                   <>
                     <span class="review-block-fact-label">Read from</span>
                     <span class="review-block-fact-value">${blocker.current_source_label}</span>
                   </>
                 `}
-                ${blocker.email_value !== null && blocker.email_value !== undefined && html14`
+                ${blocker.email_value !== null && blocker.email_value !== undefined && html15`
                   <>
                     <span class="review-block-fact-label">Email says</span>
                     <span class="review-block-fact-value">${blocker.email_value_display}</span>
                   </>
                 `}
-                ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html14`
+                ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html15`
                   <>
                     <span class="review-block-fact-label">Attachment says</span>
                     <span class="review-block-fact-value">${blocker.attachment_value_display}</span>
                   </>
                 `}
-                ${blocker.kind === "source_conflict" && html14`
+                ${blocker.kind === "source_conflict" && html15`
                   <>
                     <span class="review-block-fact-label">Current choice</span>
                     <span class="review-block-fact-value">
@@ -65987,10 +70916,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <div class="review-block-side">
               <div class="review-block-heading">Why it stopped</div>
               <div class="review-block-copy">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
-              ${blocker.auto_check_note && html14`<div class="review-block-note">${blocker.auto_check_note}</div>`}
-              ${typeof onResolve === "function" && html14`
+              ${blocker.auto_check_note && html15`<div class="review-block-note">${blocker.auto_check_note}</div>`}
+              ${typeof onResolve === "function" && html15`
                 <div class="review-block-actions">
-                  ${blocker.email_value !== null && blocker.email_value !== undefined && html14`
+                  ${blocker.email_value !== null && blocker.email_value !== undefined && html15`
                     <button
                       class="btn-secondary btn-sm"
                       onClick=${() => onResolve(blocker, "email")}
@@ -65999,7 +70928,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       ${resolvingField === `${blocker.field}:email` ? "Saving…" : "Use email"}
                     </button>
                   `}
-                  ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html14`
+                  ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html15`
                     <button
                       class="btn-secondary btn-sm"
                       onClick=${() => onResolve(blocker, "attachment")}
@@ -66047,43 +70976,42 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function AuditCard({ row }) {
     if (!row)
       return null;
-    return html14`
+    return html15`
     <div class="cl-audit-row" data-importance=${row.importance} data-severity=${row.severity}>
       <div class="cl-audit-main">
         <div class="cl-audit-main-copy">
           <div class="cl-audit-type">${row.title}</div>
           <div class="cl-audit-badges">
             <span class="cl-audit-badge" data-importance=${row.importance}>${row.importanceLabel}</span>
-            ${row.category && html14`<span class="cl-audit-badge" data-kind="category">${row.category.replace(/_/g, " ")}</span>`}
+            ${row.category && html15`<span class="cl-audit-badge" data-kind="category">${row.category.replace(/_/g, " ")}</span>`}
           </div>
         </div>
-        ${row.timestamp && html14`<div class="cl-audit-time">${row.timestamp}</div>`}
+        ${row.timestamp && html15`<div class="cl-audit-time">${row.timestamp}</div>`}
       </div>
       <div class="cl-audit-detail">${row.detail}</div>
-      ${(row.evidenceLabel || row.evidenceDetail) && html14`
+      ${(row.evidenceLabel || row.evidenceDetail) && html15`
         <div class="cl-audit-evidence">
-          ${row.evidenceLabel && html14`<span class="cl-audit-evidence-label">${row.evidenceLabel}</span>`}
+          ${row.evidenceLabel && html15`<span class="cl-audit-evidence-label">${row.evidenceLabel}</span>`}
           <span>${row.evidenceDetail || "Saved on the record."}</span>
         </div>
       `}
-      ${row.actionHint && !row.isBackground && html14`<div class="cl-audit-hint">Next: ${row.actionHint}</div>`}
+      ${row.actionHint && !row.isBackground && html15`<div class="cl-audit-hint">Next: ${row.actionHint}</div>`}
     </div>
   `;
   }
   function RelatedRecordRow({ label, item, onOpen }) {
     if (!item?.id)
       return null;
-    return html14`
-    <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <div>
-          <div class="muted" style="font-size:11px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase">${label}</div>
-          <div style="font-size:13px;font-weight:700;margin-top:4px">${item.vendor_name || "Unknown vendor"} · ${item.invoice_number || "No invoice #"}</div>
-          <div class="muted" style="font-size:12px;margin-top:4px">
-            ${formatAmount(item.amount, item.currency || "USD")} · ${String(item.state || "received").replace(/_/g, " ")}
-          </div>
+    return html15`
+    <div class="secondary-card">
+      <div class="secondary-card-head">
+        <div class="secondary-card-copy">
+          <span class="secondary-card-title">${item.vendor_name || "Unknown vendor"} · ${item.invoice_number || "No invoice #"}</span>
+          <div class="secondary-card-meta">${label} · ${formatAmount(item.amount, item.currency)} · ${String(item.state || "received").replace(/_/g, " ")}</div>
         </div>
-        <button class="btn-secondary btn-sm" onClick=${onOpen}>Open</button>
+        <div class="secondary-inline-actions">
+          <button class="btn-secondary btn-sm" onClick=${onOpen}>Open</button>
+        </div>
       </div>
     </div>
   `;
@@ -66091,29 +71019,91 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function SourceGroupRow({ group }) {
     if (!group)
       return null;
-    return html14`
-    <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px">
-        <strong style="font-size:13px">${String(group.source_type || "unknown").replace(/_/g, " ")}</strong>
-        <span class="muted" style="font-size:12px;font-weight:700">${Number(group.count || 0).toLocaleString()}</span>
+    const sourceType = String(group.source_type || "").trim().toLowerCase();
+    const sourceLabels = {
+      gmail_message: {
+        title: "Gmail message",
+        meta: "The specific email linked to this record."
+      },
+      gmail_thread: {
+        title: "Gmail thread",
+        meta: "The wider email thread linked to this record."
+      },
+      compose_draft: {
+        title: "Draft email",
+        meta: "Draft reply linked to this record."
+      },
+      attachment: {
+        title: "Attachment",
+        meta: "File evidence linked to this record."
+      },
+      portal: {
+        title: "Vendor portal",
+        meta: "Portal evidence linked to this record."
+      },
+      procurement: {
+        title: "Procurement system",
+        meta: "Procurement evidence linked to this record."
+      },
+      dms: {
+        title: "Document system",
+        meta: "Document-system evidence linked to this record."
+      },
+      spreadsheet: {
+        title: "Spreadsheet",
+        meta: "Spreadsheet evidence linked to this record."
+      },
+      sheets: {
+        title: "Spreadsheet",
+        meta: "Spreadsheet evidence linked to this record."
+      },
+      bank: {
+        title: "Bank record",
+        meta: "Bank evidence linked to this record."
+      }
+    };
+    const sourceLabel = sourceLabels[sourceType] || {
+      title: String(group.source_type || "linked evidence").replace(/_/g, " "),
+      meta: "Evidence linked to this record."
+    };
+    const itemCount = Number(group.count || 0);
+    return html15`
+    <div class="secondary-card">
+      <div class="secondary-card-head">
+        <div class="secondary-card-copy">
+          <span class="secondary-card-title">${sourceLabel.title}</span>
+          <div class="secondary-card-meta">${sourceLabel.meta}</div>
+        </div>
+        <div class="secondary-card-stat">
+          <strong>${itemCount.toLocaleString()}</strong>
+          <span>${itemCount === 1 ? "item" : "items"}</span>
+        </div>
       </div>
-      ${(group.items || []).slice(0, 2).map((entry, index) => html14`
-        <div key=${`${group.source_type}-${entry?.source_ref || index}`} class="muted" style="font-size:12px;line-height:1.5;padding-top:${index > 0 ? "8px" : "0"}">
-          <div>${entry?.subject || entry?.source_ref || "Linked evidence"}</div>
-          <div>${entry?.sender || "Unknown sender"}${entry?.detected_at ? ` · ${fmtDateTime(entry.detected_at)}` : ""}</div>
+      <div class="secondary-card-list" style="margin-top:10px">
+      ${(group.items || []).slice(0, 2).map((entry, index) => html15`
+        <div key=${`${group.source_type}-${entry?.source_ref || index}`} class="secondary-row">
+          <div class="secondary-row-copy">
+            <strong>${entry?.subject || entry?.source_ref || "Linked evidence"}</strong>
+            <p>${entry?.sender || "Linked source"}${entry?.detected_at ? ` · ${fmtDateTime(entry.detected_at)}` : ""}</p>
+          </div>
         </div>
       `)}
+      </div>
     </div>
   `;
   }
   function TemplateActionRow({ template, onDraft }) {
-    return html14`
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-      <div>
-        <strong style="display:block;font-size:13px">${template.name}</strong>
-        <span class="muted" style="font-size:12px">${template.description || "Reusable reply template."}</span>
+    return html15`
+    <div class="secondary-card">
+      <div class="secondary-card-head">
+        <div class="secondary-card-copy">
+          <span class="secondary-card-title">${template.name}</span>
+          <div class="secondary-card-meta">${template.description || "Reusable reply template."}</div>
+        </div>
+        <div class="secondary-inline-actions">
+          <button class="btn-secondary btn-sm" onClick=${onDraft}>Draft</button>
+        </div>
       </div>
-      <button class="btn-secondary btn-sm" onClick=${onDraft}>Draft</button>
     </div>
   `;
   }
@@ -66194,6 +71184,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const financeEffectBlockers = getFinanceEffectBlockers(item);
     const financeEffectNotice = getFinanceEffectNotice(item);
     const reconciliationReference = item?.reconciliation_reference && typeof item.reconciliation_reference === "object" ? item.reconciliation_reference : {};
+    const agentView = T2(() => getAgentMemoryView(item), [item]);
     const hasAccountingLinkage = Boolean(linkedRecord || linkedFinanceDocuments.length || Object.keys(financeEffectSummary).length || reconciliationReference?.session_id || item?.non_invoice_accounting_treatment || item?.non_invoice_downstream_queue);
     const sourceGroups = Array.isArray(context?.email?.source_groups?.groups) ? context.email.source_groups.groups : [];
     const replyTemplates = T2(() => getAllReplyTemplates(templatePrefs), [templatePrefs]);
@@ -66204,6 +71195,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return replyTemplates.slice(0, 4);
     }, [replyTemplates, templatePrefs]);
     const nonInvoiceActions = T2(() => !isInvoiceDocument ? getNonInvoiceActions2(item) : [], [isInvoiceDocument, item]);
+    const pendingApproverSummary = Array.isArray(approvalFollowup?.pending_assignees) && approvalFollowup.pending_assignees.length ? approvalFollowup.pending_assignees.slice(0, 3).join(", ") : "Not recorded";
+    const contextSummary = String(context?.reasoning_summary || "").trim();
+    const contextNextStep = String(context?.next_action || "").trim();
+    const contextRisks = String(context?.reasoning_risks || "").trim();
+    const showContextPanel = Boolean(contextSummary && contextSummary !== agentView.beliefReason || contextNextStep && contextNextStep !== agentView.nextActionLabel || contextRisks);
+    const heroMeta = [
+      item?.invoice_number ? getDocumentReferenceText(documentType, item.invoice_number) : documentLabel,
+      ...isInvoiceDocument ? [item?.due_date ? `Due ${item.due_date}` : "Due date pending", item?.po_number ? `PO ${item.po_number}` : "No PO linked"] : [],
+      item?.sender || null
+    ].filter(Boolean);
+    const heroNote = pauseReason || stateNotice;
     const [doRequestApproval, requestingApproval] = useAction2(async () => {
       const result = await executeIntent(api, orgId, "request_approval", {
         ap_item_id: item.id,
@@ -66326,7 +71328,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         message: "Review blockers are cleared. Clearledgr will continue the guarded posting step.",
         previewLines: [
           item?.vendor_name || item?.vendor || "Unknown vendor",
-          formatAmount(item?.amount, item?.currency || "USD"),
+          formatAmount(item?.amount, item?.currency),
           getDocumentReferenceText(documentType, item?.invoice_number || ""),
           isInvoiceDocument && item?.due_date ? `Due: ${item.due_date}` : null
         ].filter(Boolean),
@@ -66444,6 +71446,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
     });
     const [doPost, posting] = useAction2(async () => {
+      if (!hasErpPostingConnection(item)) {
+        toast("Connect an ERP before posting this invoice.", "error");
+        return;
+      }
       const confirmed = await openDialog({
         dialogMode: "confirm",
         actionType: "preview_erp_post",
@@ -66451,7 +71457,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         message: "Review this invoice before posting it to the ERP.",
         previewLines: [
           item?.vendor_name || item?.vendor || "Unknown vendor",
-          formatAmount(item?.amount, item?.currency || "USD"),
+          formatAmount(item?.amount, item?.currency),
           getDocumentReferenceText(documentType, item?.invoice_number || ""),
           isInvoiceDocument && item?.due_date ? `Due ${item.due_date}` : null
         ].filter(Boolean),
@@ -66503,7 +71509,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return;
       selectActiveItem(item.id);
       focusPipelineItem(pipelineScope, item, "detail");
-      navigate("clearledgr/pipeline");
+      navigate("clearledgr/invoices");
     }, [item, navigate, pipelineScope]);
     const openVendorRecord = q2(() => {
       const vendorName = String(item?.vendor_name || item?.vendor || "").trim();
@@ -66523,11 +71529,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         toast("Template unavailable for this record.", "warning");
         return;
       }
-      const issueSummary = getIssueSummary2(item) || context?.summary?.text || "additional information is required";
+      const issueSummary = getIssueSummary2(item) || agentView.beliefReason || context?.summary?.text || "additional information is required";
       const prefill = buildReplyTemplatePrefill(template, item, {
         issue_summary: issueSummary,
-        next_action: item?.next_action || context?.summary?.text || "Review in Clearledgr"
+        next_action: agentView.nextActionLabel || item?.next_action || context?.summary?.text || "Review in Clearledgr"
       });
+      prefill.recordContext = {
+        apItemId: item.id,
+        vendorName: item.vendor_name || item.vendor || item.sender || "",
+        invoiceNumber: item.invoice_number || "",
+        amountLabel: formatAmount(item.amount, item.currency)
+      };
       try {
         await store_default.composeWithPrefill(prefill);
         toast("Draft opened in Gmail compose.", "success");
@@ -66536,13 +71548,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
     });
     if (loading) {
-      return html14`<div class="panel"><p class="muted">Loading record…</p></div>`;
+      return html15`<div class="panel"><p class="muted">Loading record…</p></div>`;
     }
     if (!item) {
-      return html14`
+      return html15`
       <div class="panel">
         <p class="muted">Record not found.</p>
-        <button class="btn-secondary" onClick=${() => navigate("clearledgr/pipeline")}>Back to pipeline</button>
+        <button class="btn-secondary" onClick=${() => navigate("clearledgr/invoices")}>Back to invoices</button>
       </div>
     `;
     }
@@ -66573,40 +71585,69 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       primaryHandler = doResumeWorkflow;
       primaryPending = resumingWorkflow;
     }
-    return html14`
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+    const bestNextStepLabel = agentView.nextActionLabel || primaryAction?.label || getDefaultNextMoveLabel(state, item, actorRole, documentType);
+    const operatorOverrideCopy = getOperatorOverrideCopy(state, item, documentType);
+    const secondaryActionCount = [
+      canRejectWorkItem(state, actorRole, documentType),
+      canReassignApproval(item, state, actorRole, documentType),
+      canEscalateApproval(item, state, actorRole, documentType) && primaryAction?.id !== "escalate_approval",
+      entityNeedsReview && primaryAction?.id !== "resolve_entity_route",
+      canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== "nudge_approver"
+    ].filter(Boolean).length;
+    return html15`
+    <div class="record-detail-toolbar">
       <div class="toolbar-actions">
-        <button class="btn-secondary btn-sm" onClick=${openInPipeline}>Back to pipeline</button>
-        ${canOpenEmail && html14`<button class="btn-ghost btn-sm" onClick=${openEmail}>Open email</button>`}
-        ${(item?.vendor_name || item?.vendor) && html14`<button class="btn-ghost btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
+        <button class="btn-secondary btn-sm" onClick=${openInPipeline}>Back to invoices</button>
+        ${canOpenEmail && html15`<button class="btn-ghost btn-sm" onClick=${openEmail}>Open email</button>`}
+        ${(item?.vendor_name || item?.vendor) && html15`<button class="btn-ghost btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
       </div>
     </div>
 
-    <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+    <div class="panel record-detail-hero">
+      <div class="panel-head">
         <div>
-          <h3 style="margin:0 0 4px">${item.vendor_name || item.vendor || "Unknown vendor"}</h3>
-          <div style="font-size:28px;font-weight:700;letter-spacing:-0.02em">${formatAmount(item.amount, item.currency || "USD")}</div>
-          <div class="muted" style="margin-top:6px">
-            ${[
-      item?.invoice_number ? getDocumentReferenceText(documentType, item.invoice_number) : documentLabel,
-      ...isInvoiceDocument ? [`Due ${item.due_date || "N/A"}`, item.po_number ? `PO ${item.po_number}` : "No PO"] : []
-    ].join(" · ")}
+          <div class="record-detail-eyebrow">
+            <${StatePill3} state=${state} />
+            <span class="secondary-chip">${documentLabel}</span>
+            ${entityNeedsReview && html15`<span class="secondary-chip">Entity review</span>`}
+            ${item?.finance_effect_review_required && html15`<span class="secondary-chip">Finance review</span>`}
+          </div>
+          <h3 style="margin:0 0 6px">${item.vendor_name || item.vendor || "Unknown vendor"}</h3>
+          <div class="record-detail-amount">${formatAmount(item.amount, item.currency)}</div>
+          <div class="record-detail-meta">
+            ${heroMeta.join(" · ")}
           </div>
         </div>
-        <${StatePill3} state=${state} />
       </div>
 
-      ${pauseReason && html14`<div class="muted" style="margin-top:12px">${pauseReason}</div>`}
-      ${!pauseReason && stateNotice && html14`<div class="muted" style="margin-top:12px">${stateNotice}</div>`}
+      ${heroNote && html15`<div class="secondary-note record-detail-hero-note">${heroNote}</div>`}
 
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">
-        ${primaryAction?.label && primaryHandler && html14`
+      <div class="secondary-stat-grid record-detail-summary">
+        <div class="secondary-stat-card">
+          <strong>Best next step</strong>
+          <span>${bestNextStepLabel}</span>
+        </div>
+        <div class="secondary-stat-card">
+          <strong>Confidence</strong>
+          <span>${item.confidence ? `${Math.round(Number(item.confidence) * 100)}%` : "Awaiting confidence score"}</span>
+        </div>
+        <div class="secondary-stat-card">
+          <strong>${state === "needs_approval" ? "Approval owner" : "Step owner"}</strong>
+          <span>${state === "needs_approval" ? pendingApproverSummary : agentView.nextActionOwnerLabel || "Operator"}</span>
+        </div>
+        <div class="secondary-stat-card">
+          <strong>Last update</strong>
+          <span>${fmtDateTime(item.updated_at || item.created_at)}</span>
+        </div>
+      </div>
+
+      <div class="toolbar-actions record-detail-hero-actions">
+        ${primaryAction?.label && primaryHandler && html15`
           <button class="btn-primary" onClick=${primaryHandler} disabled=${primaryPending}>
             ${primaryPending ? "Processing…" : primaryAction.label}
           </button>
         `}
-        ${!readOnlyMode && !isInvoiceDocument && nonInvoiceActions.map((action) => html14`
+        ${!readOnlyMode && !isInvoiceDocument && nonInvoiceActions.map((action) => html15`
           <button
             key=${action.id}
             class="btn-secondary btn-sm"
@@ -66616,93 +71657,135 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             ${resolvingNonInvoice && resolvingNonInvoiceKey === `${item.id}:${action.id}` ? "Processing…" : action.label}
           </button>
         `)}
-        ${readOnlyMode && html14`
-        <div class="muted" style="width:100%">Read-only view. You can review this record here, but only operators can take action.</div>
-        `}
-        ${canRejectWorkItem(state, actorRole, documentType) && html14`
-          <button class="btn-danger btn-sm" onClick=${doReject} disabled=${rejecting}>Reject</button>
-        `}
-        ${canReassignApproval(item, state, actorRole, documentType) && html14`
-          <button class="btn-secondary btn-sm" onClick=${doReassignApproval} disabled=${reassigningApproval}>
-            ${reassigningApproval ? "Reassigning…" : "Reassign approver"}
-          </button>
-        `}
-        ${canEscalateApproval(item, state, actorRole, documentType) && primaryAction?.id !== "escalate_approval" && html14`
-          <button class="btn-secondary btn-sm" onClick=${doEscalateApproval} disabled=${escalatingApproval}>
-            ${escalatingApproval ? "Escalating…" : "Escalate approval"}
-          </button>
-        `}
-        ${entityNeedsReview && primaryAction?.id !== "resolve_entity_route" && html14`
-          <button class="btn-secondary btn-sm" onClick=${doResolveEntityRoute} disabled=${resolvingEntityRoute}>
-            ${resolvingEntityRoute ? "Resolving…" : "Resolve entity"}
-          </button>
-        `}
-        ${canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== "nudge_approver" && html14`
-          <button class="btn-secondary btn-sm" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
-        `}
       </div>
+      ${secondaryActionCount > 0 && html15`
+        <details class="route-operator-overrides">
+          <summary class="route-operator-overrides-summary">
+            <span>${operatorOverrideCopy.title}</span>
+            <span class="route-operator-overrides-count">${secondaryActionCount}</span>
+          </summary>
+          <div class="route-operator-overrides-copy">${operatorOverrideCopy.detail}</div>
+          <div class="toolbar-actions route-operator-overrides-actions">
+            ${canRejectWorkItem(state, actorRole, documentType) && html15`
+              <button class="btn-danger btn-sm" onClick=${doReject} disabled=${rejecting}>Reject</button>
+            `}
+            ${canReassignApproval(item, state, actorRole, documentType) && html15`
+              <button class="btn-secondary btn-sm" onClick=${doReassignApproval} disabled=${reassigningApproval}>
+                ${reassigningApproval ? "Reassigning…" : "Reassign approver"}
+              </button>
+            `}
+            ${canEscalateApproval(item, state, actorRole, documentType) && primaryAction?.id !== "escalate_approval" && html15`
+              <button class="btn-secondary btn-sm" onClick=${doEscalateApproval} disabled=${escalatingApproval}>
+                ${escalatingApproval ? "Escalating…" : "Escalate approval"}
+              </button>
+            `}
+            ${entityNeedsReview && primaryAction?.id !== "resolve_entity_route" && html15`
+              <button class="btn-secondary btn-sm" onClick=${doResolveEntityRoute} disabled=${resolvingEntityRoute}>
+                ${resolvingEntityRoute ? "Resolving…" : "Resolve entity"}
+              </button>
+            `}
+            ${canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== "nudge_approver" && html15`
+              <button class="btn-secondary btn-sm" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
+            `}
+          </div>
+        </details>
+      `}
+      ${readOnlyMode && html15`
+        <div class="secondary-note record-detail-hero-note">
+          Read-only view. You can review this record here, but only operators can take action.
+        </div>
+      `}
     </div>
 
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px">
-      <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="record-detail-shell">
+      <div class="record-detail-main">
         <div class="panel">
-          <h3 style="margin-top:0">Blocked because</h3>
-          ${blockers.length ? html14`<div style="display:flex;flex-direction:column;gap:10px">
-                ${blockers.map((blocker) => html14`
-                  <div key=${blocker.key} style="padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
-                    <div style="font-weight:700;font-size:13px">${blocker.label}</div>
-                    ${blocker.detail && html14`<div class="muted" style="margin-top:4px;font-size:13px">${blocker.detail}</div>`}
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Blocked because</h3>
+              <p class="muted" style="margin:4px 0 0">What is stopping the record from moving cleanly to the next step.</p>
+            </div>
+          </div>
+          ${blockers.length ? html15`<div class="secondary-card-list">
+                ${blockers.map((blocker) => html15`
+                  <div key=${blocker.key} class="secondary-card">
+                    <div class="secondary-card-copy">
+                      <span class="secondary-card-title">${blocker.label}</span>
+                      ${blocker.detail && html15`<div class="secondary-card-meta">${blocker.detail}</div>`}
+                    </div>
                   </div>
                 `)}
-              </div>` : html14`<p class="muted">No active blockers.</p>`}
+              </div>` : html15`<p class="secondary-empty">No active blockers.</p>`}
         </div>
 
-        ${Array.isArray(item?.line_items) && item.line_items.length > 0 && html14`
+        ${Array.isArray(item?.line_items) && item.line_items.length > 0 && html15`
           <div class="panel">
-            <h3 style="margin-top:0">Line items (${item.line_items.length})</h3>
-            <div style="display:flex;flex-direction:column;gap:6px">
-              ${item.line_items.slice(0, 15).map((li, i3) => html14`
-                <div key=${i3} style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
-                  <div>
-                    <div>${li.description || `Line ${i3 + 1}`}</div>
-                    ${li.gl_code && html14`<div class="muted" style="font-size:12px">GL: ${li.gl_code}</div>`}
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Line items</h3>
+                <p class="muted" style="margin:4px 0 0">${item.line_items.length} extracted lines with invoice roll-up totals.</p>
+              </div>
+            </div>
+            <div class="secondary-card-list">
+              ${item.line_items.slice(0, 15).map((li, i3) => html15`
+                <div key=${i3} class="secondary-row">
+                  <div class="secondary-row-copy">
+                    <strong>${li.description || `Line ${i3 + 1}`}</strong>
+                    <p>
+                      ${[
+      li.gl_code ? `GL ${li.gl_code}` : null,
+      li.quantity ? `Qty ${li.quantity}` : null
+    ].filter(Boolean).join(" · ") || "No additional line details"}
+                    </p>
                   </div>
-                  <div style="font-weight:600">${formatAmount(li.amount || 0, item.currency || "USD")}</div>
+                  <div class="secondary-inline-actions">
+                    <span class="secondary-chip">${formatAmount(li.amount || 0, item.currency)}</span>
+                  </div>
                 </div>
               `)}
             </div>
-            ${item.tax_amount && html14`<div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px;font-weight:600">
-              <div>Tax</div>
-              <div>${formatAmount(item.tax_amount, item.currency || "USD")}</div>
-            </div>`}
-            ${item.discount_amount && html14`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:var(--green)">
-              <div>Discount${item.discount_terms ? ` (${item.discount_terms})` : ""}</div>
-              <div>-${formatAmount(item.discount_amount, item.currency || "USD")}</div>
-            </div>`}
+            ${(item.tax_amount || item.discount_amount) && html15`
+              <div class="detail-row-list" style="margin-top:12px">
+                ${item.tax_amount ? detailRow("Tax", formatAmount(item.tax_amount, item.currency)) : null}
+                ${item.discount_amount ? detailRow(`Discount${item.discount_terms ? ` (${item.discount_terms})` : ""}`, `-${formatAmount(item.discount_amount, item.currency)}`) : null}
+              </div>
+            `}
           </div>
         `}
 
-        ${item?.payment_status && item.payment_status !== "none" && html14`
+        ${item?.payment_status && item.payment_status !== "none" && html15`
           <div class="panel">
-            <h3 style="margin-top:0">Payment</h3>
-            ${detailRow("Status", (item.payment_status || "").replace(/_/g, " "))}
-            ${item.payment_reference && detailRow("Reference", item.payment_reference)}
-            ${item.payment_method && detailRow("Method", item.payment_method)}
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Payment</h3>
+                <p class="muted" style="margin:4px 0 0">Settlement details currently tracked on the record.</p>
+              </div>
+            </div>
+            <div class="detail-row-list">
+              ${detailRow("Status", (item.payment_status || "").replace(/_/g, " "))}
+              ${item.payment_reference && detailRow("Reference", item.payment_reference)}
+              ${item.payment_method && detailRow("Method", item.payment_method)}
+            </div>
           </div>
         `}
 
-        ${(state === "needs_approval" || entityNeedsReview) && html14`
+        ${(state === "needs_approval" || entityNeedsReview) && html15`
           <div class="panel">
-            <h3 style="margin-top:0">Follow-up and routing</h3>
-            <div style="display:flex;flex-direction:column;gap:10px">
-              ${state === "needs_approval" && html14`
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Follow-up and routing</h3>
+                <p class="muted" style="margin:4px 0 0">Who owns the approval path and whether entity routing still needs a decision.</p>
+              </div>
+            </div>
+            <div class="detail-row-list">
+              ${state === "needs_approval" && html15`
                 ${detailRow("Approval wait", approvalFollowup?.wait_minutes ? `${approvalFollowup.wait_minutes} minutes` : "—")}
-                ${detailRow("Pending approvers", Array.isArray(approvalFollowup?.pending_assignees) && approvalFollowup.pending_assignees.length ? approvalFollowup.pending_assignees.join(", ") : "Not recorded")}
+                ${detailRow("Pending approvers", pendingApproverSummary)}
                 ${detailRow("Approval SLA", approvalFollowup?.escalation_due ? "Escalation due" : approvalFollowup?.sla_breached ? "Reminder due" : "Within SLA")}
                 ${detailRow("Escalations", String(approvalFollowup?.escalation_count || 0))}
                 ${detailRow("Reassignments", String(approvalFollowup?.reassignment_count || 0))}
               `}
-              ${isInvoiceDocument && html14`
+              ${isInvoiceDocument && html15`
                 ${detailRow("Entity route", entityNeedsReview ? "Needs review" : item?.entity_code || item?.entity_name || "Not set")}
                 ${entityCandidates.length ? detailRow("Entity candidates", entityCandidates.slice(0, 4).map((candidate) => candidate?.label || candidate?.entity_name || candidate?.entity_code).filter(Boolean).join(", ")) : null}
               `}
@@ -66711,7 +71794,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         `}
 
         <div class="panel">
-          <h3 style="margin-top:0">Check these fields</h3>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Check these fields</h3>
+              <p class="muted" style="margin:4px 0 0">Resolve extraction conflicts before the workflow keeps moving.</p>
+            </div>
+          </div>
           <${FieldReviewRows}
             blockers=${fieldReviewBlockers}
             pauseReason=${pauseReason}
@@ -66721,23 +71809,40 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Evidence checklist</h3>
-          <div style="display:flex;flex-direction:column;gap:10px">
-            ${evidence.map((entry) => html14`
-              <div key=${entry.key} style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-                <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
-                  <span>${entry.label}</span>
-                  ${entry.detail && html14`<span class="muted" style="font-size:12px;line-height:1.4">${entry.detail}</span>`}
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Evidence checklist</h3>
+              <p class="muted" style="margin:4px 0 0">Everything Clearledgr needs to approve, explain, and post this record with confidence.</p>
+            </div>
+          </div>
+          <div class="secondary-card-list">
+            ${evidence.map((entry) => html15`
+              <div key=${entry.key} class="secondary-row">
+                <div class="secondary-row-copy">
+                  <strong>${entry.label}</strong>
+                  ${entry.detail && html15`<p>${entry.detail}</p>`}
                 </div>
-                <span style="font-size:12px;font-weight:700;color:${entry.status === "ok" ? "var(--brand-muted)" : "var(--ink-muted)"}">${entry.text}</span>
+                <div class="secondary-inline-actions">
+                  <span
+                    class="secondary-chip"
+                    style=${entry.status === "ok" ? "border-color:#A7F3D0;background:#ECFDF5;color:#059669" : "border-color:#E2E8F0;background:#F8FAFC;color:#64748B"}
+                  >
+                    ${entry.text}
+                  </span>
+                </div>
               </div>
             `)}
           </div>
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">${documentLabel} details</h3>
-          <div style="display:flex;flex-direction:column;gap:10px">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">${documentLabel} details</h3>
+              <p class="muted" style="margin:4px 0 0">Core source fields and identifiers captured on this AP record.</p>
+            </div>
+          </div>
+          <div class="detail-row-list">
             ${detailRow(getDocumentReferenceLabel(documentType), item.invoice_number || "—")}
             ${detailRow("Document type", documentLabel)}
             ${isInvoiceDocument ? detailRow("Due date", item.due_date ? fmtDate(item.due_date) : "—") : null}
@@ -66749,32 +71854,41 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         </div>
 
-        ${hasAccountingLinkage && html14`
+        ${hasAccountingLinkage && html15`
           <div class="panel">
-            <h3 style="margin-top:0">Credits and payments</h3>
-            <div style="display:flex;flex-direction:column;gap:10px">
-              ${financeEffectNotice ? html14`<div class="muted" style="font-size:13px;line-height:1.45">${financeEffectNotice}</div>` : null}
-              ${Object.keys(financeEffectSummary).length ? html14`
-                    ${detailRow("Original amount", formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency || "USD"))}
-                    ${detailRow("Credits applied", formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency || "USD"))}
-                    ${detailRow("Cash out evidence", formatAmount(financeEffectSummary.gross_cash_out_total, financeEffectSummary.currency || item.currency || "USD"))}
-                    ${detailRow("Refunds linked", formatAmount(financeEffectSummary.refund_total, financeEffectSummary.currency || item.currency || "USD"))}
-                    ${detailRow("Net cash applied", formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency || "USD"))}
-                    ${detailRow("Remaining balance", formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency || "USD"))}
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Credits and payments</h3>
+                <p class="muted" style="margin:4px 0 0">How credits, refunds, reconciliation, and linked finance documents change the payable balance.</p>
+              </div>
+            </div>
+            <div class="detail-detail-stack">
+              ${financeEffectNotice ? html15`<div class="secondary-note">${financeEffectNotice}</div>` : null}
+              ${Object.keys(financeEffectSummary).length ? html15`
+                    <div class="detail-row-list">
+                    ${detailRow("Original amount", formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency))}
+                    ${detailRow("Credits applied", formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency))}
+                    ${detailRow("Cash out evidence", formatAmount(financeEffectSummary.gross_cash_out_total, financeEffectSummary.currency || item.currency))}
+                    ${detailRow("Refunds linked", formatAmount(financeEffectSummary.refund_total, financeEffectSummary.currency || item.currency))}
+                    ${detailRow("Net cash applied", formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency))}
+                    ${detailRow("Remaining balance", formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency))}
                     ${detailRow("Credit state", String(financeEffectSummary.credit_application_state || "none").replace(/_/g, " "))}
                     ${detailRow("Settlement state", String(financeEffectSummary.settlement_state || "open").replace(/_/g, " "))}
+                    </div>
                   ` : null}
-              ${financeEffectBlockers.length > 0 ? html14`
-                    <div style="display:flex;flex-direction:column;gap:8px">
-                      ${financeEffectBlockers.map((blocker) => html14`
-                        <div key=${blocker.code} style="padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
-                          <div style="font-weight:700;font-size:13px">${blocker.label}</div>
-                          ${blocker.detail && html14`<div class="muted" style="margin-top:4px;font-size:12px;line-height:1.45">${blocker.detail}</div>`}
+              ${financeEffectBlockers.length > 0 ? html15`
+                    <div class="secondary-card-list">
+                      ${financeEffectBlockers.map((blocker) => html15`
+                        <div key=${blocker.code} class="secondary-card">
+                          <div class="secondary-card-copy">
+                            <span class="secondary-card-title">${blocker.label}</span>
+                            ${blocker.detail && html15`<div class="secondary-card-meta">${blocker.detail}</div>`}
+                          </div>
                         </div>
                       `)}
                     </div>
                   ` : null}
-              ${linkedRecord ? html14`<${RelatedRecordRow}
+              ${linkedRecord ? html15`<${RelatedRecordRow}
                     label="Linked record"
                     item=${linkedRecord}
                     onOpen=${() => openRelatedRecord(linkedRecord)}
@@ -66782,7 +71896,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               ${item?.non_invoice_accounting_treatment ? detailRow("Treatment", String(item.non_invoice_accounting_treatment).replace(/_/g, " ")) : null}
               ${item?.non_invoice_downstream_queue ? detailRow("Downstream queue", String(item.non_invoice_downstream_queue).replace(/_/g, " ")) : null}
               ${reconciliationReference?.session_id ? detailRow("Reconciliation queue", `Session ${reconciliationReference.session_id}${reconciliationReference.item_id ? ` · Item ${reconciliationReference.item_id}` : ""}`) : null}
-              ${linkedFinanceDocuments.map((linkedDocument) => html14`
+              ${linkedFinanceDocuments.length > 0 && html15`
+                <div class="secondary-card-list">
+              ${linkedFinanceDocuments.map((linkedDocument) => html15`
                 <${RelatedRecordRow}
                   key=${linkedDocument.source_ap_item_id}
                   label=${`${getDocumentTypeLabel(linkedDocument.document_type || "other")} linked`}
@@ -66797,31 +71913,33 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }}
                   onOpen=${() => openRelatedRecord({ id: linkedDocument.source_ap_item_id })}
                 />`)}
+                </div>
+              `}
             </div>
           </div>
         `}
 
         <div class="panel">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+          <div class="panel-head compact">
             <div>
-              <h3 style="margin:0 0 4px">Linked records</h3>
+              <h3 style="margin:0">Linked records</h3>
               <p class="muted" style="margin:0">Related invoices and superseded records linked to this AP item.</p>
             </div>
-            ${(item?.vendor_name || item?.vendor) && html14`<button class="btn-secondary btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
+            ${(item?.vendor_name || item?.vendor) && html15`<button class="btn-secondary btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
           </div>
-          <div style="display:flex;flex-direction:column;gap:10px">
-            ${relatedRecords?.supersession?.previous_item || relatedRecords?.supersession?.next_item || (relatedRecords?.same_invoice_number_items || []).length || (relatedRecords?.vendor_recent_items || []).length ? html14`
-                  ${relatedRecords?.supersession?.previous_item ? html14`<${RelatedRecordRow}
+          <div class="secondary-card-list">
+            ${relatedRecords?.supersession?.previous_item || relatedRecords?.supersession?.next_item || (relatedRecords?.same_invoice_number_items || []).length || (relatedRecords?.vendor_recent_items || []).length ? html15`
+                  ${relatedRecords?.supersession?.previous_item ? html15`<${RelatedRecordRow}
                         label="Supersedes"
                         item=${relatedRecords.supersession.previous_item}
                         onOpen=${() => openRelatedRecord(relatedRecords.supersession.previous_item)}
                       />` : null}
-                  ${relatedRecords?.supersession?.next_item ? html14`<${RelatedRecordRow}
+                  ${relatedRecords?.supersession?.next_item ? html15`<${RelatedRecordRow}
                         label="Superseded by"
                         item=${relatedRecords.supersession.next_item}
                         onOpen=${() => openRelatedRecord(relatedRecords.supersession.next_item)}
                       />` : null}
-                  ${(relatedRecords?.same_invoice_number_items || []).slice(0, 2).map((relatedItem) => html14`
+                  ${(relatedRecords?.same_invoice_number_items || []).slice(0, 2).map((relatedItem) => html15`
                     <${RelatedRecordRow}
                       key=${relatedItem.id}
                       label="Same invoice number"
@@ -66829,7 +71947,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       onOpen=${() => openRelatedRecord(relatedItem)}
                     />
                   `)}
-                  ${(relatedRecords?.vendor_recent_items || []).slice(0, 2).map((relatedItem) => html14`
+                  ${(relatedRecords?.vendor_recent_items || []).slice(0, 2).map((relatedItem) => html15`
                     <${RelatedRecordRow}
                       key=${relatedItem.id}
                       label="Recent vendor item"
@@ -66837,17 +71955,82 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       onOpen=${() => openRelatedRecord(relatedItem)}
                     />
                   `)}
-                ` : html14`<p class="muted" style="margin:0">No linked records yet.</p>`}
+                ` : html15`<p class="secondary-empty" style="margin:0">No linked records yet.</p>`}
           </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Record history</h3>
+              <p class="muted" style="margin:4px 0 0">The key decisions, retries, and background events on this record.</p>
+            </div>
+          </div>
+          ${auditSections.rows.length === 0 ? html15`<p class="secondary-empty">No audit events yet.</p>` : html15`
+              <div style="display:flex;flex-direction:column;gap:14px">
+                ${auditSections.primaryRows.length > 0 && html15`
+                  <div style="display:flex;flex-direction:column;gap:10px">
+                    <div style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;color:var(--ink-muted)">Key history</div>
+                    <div class="cl-audit-list">
+                      ${auditSections.primaryRows.map((row, index) => html15`<${AuditCard} key=${row.event?.id || index} row=${row} />`)}
+                    </div>
+                  </div>
+                `}
+                ${auditSections.secondaryRows.length > 0 && html15`
+                  <div style="display:flex;flex-direction:column;gap:10px">
+                    <div style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;color:var(--ink-muted)">Background activity</div>
+                    <div class="cl-audit-list">
+                      ${auditSections.secondaryRows.map((row, index) => html15`<${AuditCard} key=${row.event?.id || `secondary-${index}`} row=${row} />`)}
+                    </div>
+                  </div>
+                `}
+              </div>
+            `}
         </div>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="record-detail-side">
         <div class="panel">
-          <h3 style="margin-top:0">Reply templates</h3>
-          <p class="muted" style="margin:0 0 12px">Draft consistent vendor or approver messages from this record without leaving Gmail.</p>
-          ${quickReplyTemplates.length === 0 ? html14`<p class="muted" style="margin:0">No reply templates are available yet.</p>` : html14`<div style="display:flex;flex-direction:column;gap:10px">
-                ${quickReplyTemplates.map((template) => html14`
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">What Clearledgr sees</h3>
+              <p class="muted" style="margin:4px 0 0;line-height:1.6">Current status, what happens next, and what still needs attention.</p>
+            </div>
+          </div>
+          <div class="detail-row-list">
+            ${detailRow("Current status", agentView.stateSummaryLabel || agentView.currentStateLabel || agentView.statusLabel || "Received")}
+            ${detailRow("Next step", agentView.nextActionLabel || "Review this record")}
+            ${detailRow("Waiting on", agentView.nextActionActorLabel || agentView.nextActionOwnerLabel || "Clearledgr")}
+          </div>
+          ${agentView.beliefReason && html15`
+            <div class="secondary-callout" style="margin-top:12px">
+              <strong style="display:block;margin-bottom:6px;color:var(--ink)">Why this record is waiting</strong>
+              ${agentView.beliefReason}
+            </div>
+          `}
+          ${agentView.highlights.length > 0 && html15`
+            <div class="secondary-card-list" style="margin-top:12px">
+              ${agentView.highlights.map((entry) => html15`
+                <div key=${entry} class="secondary-card">
+                  <div class="secondary-card-copy">
+                    <span class="secondary-card-title">Still needs attention</span>
+                    <div class="secondary-card-meta">${entry}</div>
+                  </div>
+                </div>
+              `)}
+            </div>
+          `}
+        </div>
+
+        <div class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Ready-to-send replies</h3>
+              <p class="muted" style="margin:4px 0 0">Draft vendor or approver messages from this record without leaving Gmail.</p>
+            </div>
+          </div>
+          ${quickReplyTemplates.length === 0 ? html15`<p class="secondary-empty" style="margin:0">No reply templates are available yet.</p>` : html15`<div class="secondary-card-list">
+                ${quickReplyTemplates.map((template) => html15`
                   <${TemplateActionRow}
                     key=${template.id}
                     template=${template}
@@ -66857,48 +72040,38 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               </div>`}
           <div class="toolbar-actions" style="margin-top:12px">
             <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/templates")}>Manage templates</button>
-            ${draftingReply && html14`<span class="muted" style="font-size:12px;align-self:center">Opening compose…</span>`}
+            ${draftingReply && html15`<span class="muted" style="font-size:12px;align-self:center">Opening compose…</span>`}
           </div>
         </div>
 
-        <div class="panel">
-          <h3 style="margin-top:0">Record history</h3>
-          ${auditSections.rows.length === 0 ? html14`<p class="muted">No audit events yet.</p>` : html14`
-              <div style="display:flex;flex-direction:column;gap:14px">
-                ${auditSections.primaryRows.length > 0 && html14`
-                  <div style="display:flex;flex-direction:column;gap:10px">
-                    <div style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;color:var(--ink-muted)">Key history</div>
-                    <div class="cl-audit-list">
-                      ${auditSections.primaryRows.map((row, index) => html14`<${AuditCard} key=${row.event?.id || index} row=${row} />`)}
-                    </div>
-                  </div>
-                `}
-                ${auditSections.secondaryRows.length > 0 && html14`
-                  <div style="display:flex;flex-direction:column;gap:10px">
-                    <div style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;color:var(--ink-muted)">Background activity</div>
-                    <div class="cl-audit-list">
-                      ${auditSections.secondaryRows.map((row, index) => html14`<${AuditCard} key=${row.event?.id || `secondary-${index}`} row=${row} />`)}
-                    </div>
-                  </div>
-                `}
+        ${showContextPanel && html15`
+          <div class="panel">
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Decision context</h3>
+                <p class="muted" style="margin:4px 0 0">Why Clearledgr paused here and what it will do once this is resolved.</p>
+              </div>
+            </div>
+            ${contextSummary && contextSummary !== agentView.beliefReason && html15`<div class="secondary-callout">${contextSummary}</div>`}
+            ${contextRisks && html15`<div class="secondary-callout warning" style="margin-top:10px">${contextRisks}</div>`}
+            ${contextNextStep && contextNextStep !== agentView.nextActionLabel && html15`
+              <div class="detail-row-list" style="margin-top:10px">
+                ${detailRow("After that", contextNextStep)}
               </div>
             `}
-        </div>
-
-        ${context && html14`
-          <div class="panel">
-            <h3 style="margin-top:0">Context</h3>
-            ${context.reasoning_summary && html14`<p style="font-size:13px;color:var(--ink-secondary);line-height:1.6">${context.reasoning_summary}</p>`}
-            ${context.reasoning_risks && html14`<p style="font-size:13px;color:var(--amber);line-height:1.6">${context.reasoning_risks}</p>`}
-            ${context.next_action && html14`<p class="muted" style="margin:0"><strong>Best next step:</strong> ${context.next_action}</p>`}
           </div>
         `}
 
-        ${context && html14`
+        ${context && html15`
           <div class="panel">
-            <h3 style="margin-top:0">Evidence sources</h3>
-            ${sourceGroups.length === 0 ? html14`<p class="muted" style="margin:0">No linked evidence sources yet.</p>` : html14`<div style="display:flex;flex-direction:column;gap:10px">
-                  ${sourceGroups.slice(0, 5).map((group) => html14`<${SourceGroupRow} key=${group.source_type} group=${group} />`)}
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Evidence attached</h3>
+                <p class="muted" style="margin:4px 0 0">Messages, files, and linked records Clearledgr is using for this record.</p>
+              </div>
+            </div>
+            ${sourceGroups.length === 0 ? html15`<p class="secondary-empty" style="margin:0">No linked evidence sources yet.</p>` : html15`<div class="secondary-card-list">
+                  ${sourceGroups.slice(0, 5).map((group) => html15`<${SourceGroupRow} key=${group.source_type} group=${group} />`)}
                 </div>`}
           </div>
         `}
@@ -66909,16 +72082,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
   function detailRow(label, value) {
-    return html14`
-    <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-      <span class="muted">${label}</span>
-      <span style="font-weight:500;text-align:right;max-width:65%">${value}</span>
+    return html15`
+    <div class="detail-row">
+      <span class="detail-row-label">${label}</span>
+      <span class="detail-row-value">${value}</span>
     </div>
   `;
   }
 
   // src/routes/pages/VendorsPage.js
-  var html15 = htm_module_default.bind(_);
+  var html16 = htm_module_default.bind(_);
   function VendorsPage({ api, orgId, userEmail, navigate, toast }) {
     const pipelineScope = T2(() => ({ orgId, userEmail }), [orgId, userEmail]);
     const [vendors, setVendors] = d2([]);
@@ -66972,7 +72145,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           vendor: vendorName
         }
       });
-      navigate("clearledgr/pipeline");
+      navigate("clearledgr/invoices");
     };
     const openVendorIssues = (vendor) => {
       const vendorName = String(vendor?.vendor_name || "").trim();
@@ -66982,9 +72155,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       navigate("clearledgr/review");
     };
     if (loading) {
-      return html15`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor directory…</p></div>`;
+      return html16`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor directory…</p></div>`;
     }
-    return html15`
+    return html16`
     <div class="secondary-banner">
       <div class="secondary-banner-copy">
         <h3>Vendor directory</h3>
@@ -66992,7 +72165,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
       <div class="secondary-banner-actions">
         <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
-        <button class="btn-primary btn-sm" onClick=${() => navigate("clearledgr/pipeline")}>Open pipeline</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate("clearledgr/invoices")}>Open invoices</button>
       </div>
     </div>
 
@@ -67006,53 +72179,51 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <${DedupBanner} api=${api} orgId=${orgId} toast=${toast} />
 
     <div class="panel">
-
-      <div style="position:relative">
+      <div class="secondary-search-row">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%)"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
         <input
           placeholder="Search vendors…"
           value=${search}
           onInput=${(event) => setSearch(event.target.value)}
-          style="width:100%;padding:8px 8px 8px 34px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;background:var(--bg)"
         />
       </div>
 
-      <div style="display:grid;gap:10px;margin-top:14px">
-        ${filtered.length === 0 ? html15`<div class="muted">${search ? "No vendors match your search." : "No vendors yet. Vendor records appear once invoices are processed."}</div>` : filtered.map((vendor) => html15`
-              <div key=${vendor.vendor_name} style="padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                  <div style="min-width:0;flex:1">
-                    <strong style="display:block;font-size:14px">${vendor.vendor_name}</strong>
-                    <div class="muted" style="font-size:12px;margin-top:4px">
+      <div class="secondary-card-list" style="margin-top:14px">
+        ${filtered.length === 0 ? html16`<div class="muted">${search ? "No vendors match your search." : "No vendors yet. Vendor records appear once invoices are processed."}</div>` : filtered.map((vendor) => html16`
+              <div key=${vendor.vendor_name} class="secondary-card">
+                <div class="secondary-card-head">
+                  <div class="secondary-card-copy">
+                    <strong class="secondary-card-title">${vendor.vendor_name}</strong>
+                    <div class="secondary-card-meta">
                       ${vendor.primary_email || "No primary sender"} · Last activity ${vendor.last_activity_at ? fmtDateTime(vendor.last_activity_at) : "—"}
                     </div>
-                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
-                      ${(vendor.top_states || []).map((row) => html15`
-                        <span key=${row.state} style="font-size:10px;font-weight:600;padding:3px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--ink-secondary)">
+                    <div class="secondary-card-tags">
+                      ${(vendor.top_states || []).map((row) => html16`
+                        <span key=${row.state} class="secondary-chip">
                           ${String(row.state || "").replace(/_/g, " ")} ${row.count}
                         </span>
                       `)}
-                      ${(vendor.top_exception_codes || []).slice(0, 2).map((row) => html15`
-                        <span key=${row.exception_code} style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FFF7ED;color:#9A3412">
+                      ${(vendor.top_exception_codes || []).slice(0, 2).map((row) => html16`
+                        <span key=${row.exception_code} class="secondary-chip" style="background:#FFF7ED;color:#9A3412;border-color:#FED7AA">
                           ${getExceptionLabel(row.exception_code)} ${row.count}
                         </span>
                       `)}
-                      ${vendor.profile?.requires_po ? html15`<span style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FEF3C7;color:#92400E">Requires PO</span>` : null}
-                      ${(vendor.profile?.anomaly_flags || []).slice(0, 2).map((flag) => html15`
-                        <span key=${flag} style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FEF2F2;color:#B91C1C">${String(flag).replace(/_/g, " ")}</span>
+                      ${vendor.profile?.requires_po ? html16`<span class="secondary-chip" style="background:#FEF3C7;color:#92400E;border-color:#FDE68A">Requires PO</span>` : null}
+                      ${(vendor.profile?.anomaly_flags || []).slice(0, 2).map((flag) => html16`
+                        <span key=${flag} class="secondary-chip" style="background:#FEF2F2;color:#B91C1C;border-color:#FECACA">${String(flag).replace(/_/g, " ")}</span>
                       `)}
                     </div>
                   </div>
-                  <div style="text-align:right;min-width:140px">
-                    <div style="font-weight:700">${fmtDollar(vendor.total_amount || 0)}</div>
-                    <div class="muted" style="font-size:12px;margin-top:2px">${Number(vendor.invoice_count || 0).toLocaleString()} invoices</div>
-                    <div class="muted" style="font-size:12px;margin-top:4px">${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.issue_count || 0).toLocaleString()} issues · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</div>
+                  <div class="secondary-card-stat">
+                    <strong>${fmtDollar(vendor.total_amount || 0)}</strong>
+                    <span>${Number(vendor.invoice_count || 0).toLocaleString()} invoices</span>
+                    <span>${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.issue_count || 0).toLocaleString()} issues · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</span>
                   </div>
                 </div>
-                <div class="row-actions" style="margin-top:12px">
+                <div class="secondary-card-actions">
                   <button class="btn-secondary btn-sm" onClick=${() => openVendorRecord(vendor)}>Open vendor record</button>
                   <button class="btn-secondary btn-sm" onClick=${() => openVendorIssues(vendor)}>Review issues</button>
-                  <button class="btn-ghost btn-sm" onClick=${() => openVendorPipeline(vendor)}>Open in pipeline</button>
+                  <button class="btn-ghost btn-sm" onClick=${() => openVendorPipeline(vendor)}>Open in invoices</button>
                 </div>
               </div>
             `)}
@@ -67084,13 +72255,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       setMerging("");
     };
-    return html15`
-    <div class="panel" style="border-left:3px solid var(--amber);margin-bottom:14px">
+    return html16`
+    <div class="panel" style="margin-bottom:14px">
       <h3 style="margin-top:0">Possible duplicate vendors (${clusters.length})</h3>
       <p class="muted" style="margin:0 0 8px;font-size:12px">These vendors have similar names and may be the same entity.</p>
-      ${clusters.slice(0, 5).map((c3) => html15`
-        <div key=${c3.canonical.vendor_name} style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
-          <div>
+      ${clusters.slice(0, 5).map((c3) => html16`
+        <div key=${c3.canonical.vendor_name} class="secondary-row">
+          <div class="secondary-row-copy">
             <strong>${c3.canonical.vendor_name}</strong> (${c3.canonical.invoice_count} invoices)
             <div class="muted">${c3.duplicates.map((d3) => `${d3.vendor_name} (${d3.similarity * 100 | 0}%)`).join(", ")}</div>
           </div>
@@ -67104,7 +72275,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/VendorDetailPage.js
-  var html16 = htm_module_default.bind(_);
+  var html17 = htm_module_default.bind(_);
   var STATE_STYLES3 = {
     needs_approval: { bg: "#FEFCE8", text: "#A16207", label: "Needs approval" },
     needs_info: { bg: "#FEFCE8", text: "#A16207", label: "Needs info" },
@@ -67123,23 +72294,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       text: "#475569",
       label: String(state || "Unknown").replace(/_/g, " ")
     };
-    return html16`<span style="
+    return html17`<span style="
     display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;
     background:${tone.bg};color:${tone.text};font-size:11px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;
   ">${tone.label}</span>`;
   }
   function MetricCard({ label, value, detail }) {
-    return html16`<div style="padding:18px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-    <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em">${value}</div>
-    <div style="font-size:13px;font-weight:600;margin-top:2px">${label}</div>
-    ${detail ? html16`<div class="muted" style="margin-top:6px;font-size:12px">${detail}</div>` : null}
+    return html17`<div class="secondary-stat-card">
+    <strong>${label}</strong>
+    <span style="font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-0.03em;color:var(--ink);display:block;margin-bottom:4px">${value}</span>
+    ${detail ? html17`<span>${detail}</span>` : null}
   </div>`;
-  }
-  function formatMoney2(amount, currency = "USD") {
-    const value = Number(amount);
-    if (!Number.isFinite(value))
-      return "—";
-    return `${currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
   function getRecordId(item) {
     return String(item?.ap_item_id || item?.id || "").trim();
@@ -67197,7 +72362,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           vendor: vendorName
         }
       });
-      navigate("clearledgr/pipeline");
+      navigate("clearledgr/invoices");
     };
     const openItemDetail2 = (item) => {
       const recordId = getRecordId(item);
@@ -67218,10 +72383,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         toast?.("Could not open the source email for this issue.", "error");
     };
     if (loading) {
-      return html16`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor record…</p></div>`;
+      return html17`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor record…</p></div>`;
     }
     if (!payload) {
-      return html16`
+      return html17`
       <div class="panel">
         <h3 style="margin-top:0">Vendor not found</h3>
         <p class="muted" style="margin:0 0 12px">This vendor does not have a shared AP record yet.</p>
@@ -67229,9 +72394,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
     `;
     }
-    return html16`
+    return html17`
     <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div class="panel-head">
         <div>
           <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Vendor record</div>
           <h3 style="margin:0 0 6px">${payload.vendor_name || vendorName}</h3>
@@ -67243,51 +72408,93 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/vendors")}>Back to vendors</button>
           <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
           <button class="btn-secondary btn-sm" onClick=${openVendorIssues}>Review issues</button>
-          <button class="btn-primary btn-sm" onClick=${openVendorInPipeline}>Open vendor in pipeline</button>
+          <button class="btn-primary btn-sm" onClick=${openVendorInPipeline}>Open vendor in invoices</button>
         </div>
       </div>
     </div>
 
-    <div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
+    <div class="secondary-stat-grid" style="margin-bottom:14px">
       <${MetricCard} label="Tracked invoices" value=${Number(summary.invoice_count || 0).toLocaleString()} />
       <${MetricCard} label="Open now" value=${Number(summary.open_count || 0).toLocaleString()} detail=${`${Number(summary.issue_count || 0)} with issues`} />
       <${MetricCard} label="Posted" value=${Number(summary.posted_count || 0).toLocaleString()} detail=${`${Number(summary.failed_count || 0)} failed post`} />
       <${MetricCard} label="Tracked spend" value=${fmtDollar(summary.total_amount || 0)} detail=${summary.last_activity_at ? `Last activity ${fmtDateTime(summary.last_activity_at)}` : "No recent activity"} />
     </div>
 
-    <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,0.8fr);gap:20px">
-      <div style="display:flex;flex-direction:column;gap:20px">
+    ${(profile.suggested_gl || profile.override_rate != null || anomalyFlags.length > 0 || profile.last_correction_at) && html17`
+      <div class="panel" style="margin-top:0">
+        <div class="panel-head compact">
+          <div>
+            <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Vendor intelligence</div>
+            <p class="muted" style="margin:0">AI-derived insights from this vendor's invoice history and GL correction patterns.</p>
+          </div>
+        </div>
+        <div class="secondary-stat-grid">
+          ${profile.suggested_gl ? html17`
+            <div class="secondary-stat-card">
+              <strong>Suggested GL</strong>
+              <span style="font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)">${profile.suggested_gl}</span>
+              <span>Most likely GL code based on posting history</span>
+            </div>
+          ` : null}
+          ${profile.override_rate != null ? html17`
+            <div class="secondary-stat-card">
+              <strong>Override rate</strong>
+              <span style="font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)">${(Number(profile.override_rate) * 100).toFixed(1)}%</span>
+              <span>How often operators override the AI recommendation</span>
+            </div>
+          ` : null}
+          ${profile.last_correction_at ? html17`
+            <div class="secondary-stat-card">
+              <strong>Last GL correction</strong>
+              <span style="font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)">${fmtDate(profile.last_correction_at)}</span>
+              <span>Most recent time a GL code was corrected for this vendor</span>
+            </div>
+          ` : null}
+        </div>
+        ${anomalyFlags.length > 0 ? html17`
+          <div style="margin-top:14px">
+            <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Risk indicators</div>
+            <div class="secondary-chip-row">
+              ${anomalyFlags.map((flag) => html17`<span key=${flag} class="secondary-chip" style="background:#FEF2F2;border-color:#FECACA;color:#B91C1C">${String(flag).replace(/_/g, " ")}</span>`)}
+            </div>
+          </div>
+        ` : null}
+      </div>
+    `}
+
+    <div class="secondary-shell">
+      <div class="secondary-stack">
         <div class="panel">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+          <div class="panel-head compact">
             <div>
               <h3 style="margin:0 0 6px">Open issues and follow-up</h3>
               <p class="muted" style="margin:0">Work the vendor-specific blockers that still need action before this supplier’s invoices can move cleanly.</p>
             </div>
             <button class="btn-secondary btn-sm" onClick=${openVendorIssues}>Open in review</button>
           </div>
-          ${openIssues.length === 0 ? html16`<p class="muted" style="margin:0">No open vendor issues right now.</p>` : html16`<div style="display:flex;flex-direction:column;gap:10px">
-                ${openIssues.map((item) => html16`
-                  <div key=${item.id} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                      <div>
-                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          ${openIssues.length === 0 ? html17`<p class="muted" style="margin:0">No open vendor issues right now.</p>` : html17`<div class="secondary-card-list">
+                ${openIssues.map((item) => html17`
+                  <div key=${item.id} class="secondary-card">
+                    <div class="secondary-card-head">
+                      <div class="secondary-card-copy">
+                        <div class="secondary-chip-row" style="margin-bottom:6px">
                           <strong style="font-size:14px">${item.invoice_number || "No invoice #"}</strong>
-                          <span style="font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;background:#FFF7ED;color:#9A3412">
+                          <span class="secondary-chip" style="background:#FFF7ED;border-color:#FED7AA;color:#9A3412">
                             ${item.issue_label || "Open issue"}
                           </span>
                           <${StatePill4} state=${item.state} />
                         </div>
-                        <div class="muted" style="font-size:12px;margin-top:4px">
-                          ${formatMoney2(item.amount, item.currency || "USD")} · Updated ${fmtDateTime(item.updated_at)}
+                        <div class="secondary-card-meta">
+                          ${formatAmount(item.amount, item.currency)} · Updated ${fmtDateTime(item.updated_at)}
                         </div>
-                        <div class="muted" style="font-size:12px;margin-top:6px;line-height:1.45">
+                        <div class="secondary-card-meta" style="margin-top:6px">
                           ${item.issue_summary || getIssueSummary(item)}
                         </div>
-                        ${item.exception_code ? html16`<div class="muted" style="font-size:12px;margin-top:4px">${getExceptionLabel(item.exception_code)}</div>` : null}
+                        ${item.exception_code ? html17`<div class="secondary-card-meta" style="margin-top:4px">${getExceptionLabel(item.exception_code)}</div>` : null}
                       </div>
-                      <div class="row-actions">
+                      <div class="secondary-inline-actions">
                         <button class="btn-secondary btn-sm" onClick=${() => openItemDetail2(item)}>Open record</button>
-                        ${(item.thread_id || item.message_id) && html16`
+                        ${(item.thread_id || item.message_id) && html17`
                           <button class="btn-ghost btn-sm" onClick=${() => openIssueEmail(item)}>Open email</button>
                         `}
                       </div>
@@ -67298,23 +72505,30 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Open and recent invoices</h3>
-          ${recentItems.length === 0 ? html16`<p class="muted" style="margin:0">No recent invoices for this vendor yet.</p>` : html16`<div style="display:flex;flex-direction:column;gap:10px">
-                ${recentItems.map((item) => html16`
-                  <div key=${item.id} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                      <div>
-                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Open and recent invoices</h3>
+              <p class="muted" style="margin:4px 0 0">The current invoice context for this vendor, including active blockers and recent outcomes.</p>
+            </div>
+          </div>
+          ${recentItems.length === 0 ? html17`<p class="muted" style="margin:0">No recent invoices for this vendor yet.</p>` : html17`<div class="secondary-card-list">
+                ${recentItems.map((item) => html17`
+                  <div key=${item.id} class="secondary-card">
+                    <div class="secondary-card-head">
+                      <div class="secondary-card-copy">
+                        <div class="secondary-chip-row" style="margin-bottom:6px">
                           <strong style="font-size:14px">${item.invoice_number || "No invoice #"}</strong>
                           <${StatePill4} state=${item.state} />
                         </div>
-                        <div class="muted" style="font-size:12px;margin-top:4px">
-                          ${formatMoney2(item.amount, item.currency || "USD")} · Due ${item.due_date ? fmtDate(item.due_date) : "—"} · Updated ${fmtDateTime(item.updated_at)}
+                        <div class="secondary-card-meta">
+                          ${formatAmount(item.amount, item.currency)} · Due ${item.due_date ? fmtDate(item.due_date) : "—"} · Updated ${fmtDateTime(item.updated_at)}
                         </div>
-                        ${item.erp_reference ? html16`<div class="muted" style="font-size:12px;margin-top:4px">ERP ${item.erp_reference}</div>` : null}
-                        ${item.exception_code ? html16`<div class="muted" style="font-size:12px;margin-top:4px">${getExceptionLabel(item.exception_code)}${getExceptionReason(item.exception_code) ? ` · ${getExceptionReason(item.exception_code)}` : ""}</div>` : null}
+                        ${item.erp_reference ? html17`<div class="secondary-card-meta" style="margin-top:4px">ERP ${item.erp_reference}</div>` : null}
+                        ${item.exception_code ? html17`<div class="secondary-card-meta" style="margin-top:4px">${getExceptionLabel(item.exception_code)}${getExceptionReason(item.exception_code) ? ` · ${getExceptionReason(item.exception_code)}` : ""}</div>` : null}
                       </div>
-                      <button class="btn-secondary btn-sm" onClick=${() => openItemDetail2(item)}>Open record</button>
+                      <div class="secondary-inline-actions">
+                        <button class="btn-secondary btn-sm" onClick=${() => openItemDetail2(item)}>Open record</button>
+                      </div>
                     </div>
                   </div>
                 `)}
@@ -67322,18 +72536,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Outcome history</h3>
-          ${history.length === 0 ? html16`<p class="muted" style="margin:0">No vendor outcome history yet.</p>` : html16`<div style="display:flex;flex-direction:column;gap:10px">
-                ${history.map((entry) => html16`
-                  <div key=${entry.id || `${entry.ap_item_id}-${entry.created_at}`} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                      <div>
-                        <strong style="font-size:13px">${entry.invoice_number || entry.ap_item_id || "Invoice outcome"}</strong>
-                        <div class="muted" style="font-size:12px;margin-top:4px">
-                          ${formatMoney2(entry.amount, entry.currency || "USD")} · ${getStateLabel(String(entry.final_state || "received").trim().toLowerCase())}
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Outcome history</h3>
+              <p class="muted" style="margin:4px 0 0">What recently happened to this vendor’s invoices after review and posting.</p>
+            </div>
+          </div>
+          ${history.length === 0 ? html17`<p class="muted" style="margin:0">No vendor outcome history yet.</p>` : html17`<div class="secondary-card-list">
+                ${history.map((entry) => html17`
+                  <div key=${entry.id || `${entry.ap_item_id}-${entry.created_at}`} class="secondary-card">
+                    <div class="secondary-card-head">
+                      <div class="secondary-card-copy">
+                        <span class="secondary-card-title">${entry.invoice_number || entry.ap_item_id || "Invoice outcome"}</span>
+                        <div class="secondary-card-meta">
+                          ${formatAmount(entry.amount, entry.currency)} · ${getStateLabel(String(entry.final_state || "received").trim().toLowerCase())}
                         </div>
                       </div>
-                      <span class="muted" style="font-size:12px">${fmtDateTime(entry.created_at)}</span>
+                      <div class="secondary-card-stat">
+                        <strong>${fmtDate(entry.created_at)}</strong>
+                        <span>${fmtDateTime(entry.created_at)}</span>
+                      </div>
                     </div>
                   </div>
                 `)}
@@ -67341,96 +72563,124 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:20px">
+      <div class="secondary-stack">
         <div class="panel">
-          <h3 style="margin-top:0">Vendor profile</h3>
-          <div style="display:flex;flex-direction:column;gap:10px">
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Primary email</span>
-              <span style="font-weight:600;text-align:right">${summary.primary_email || "—"}</span>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Vendor profile</h3>
+              <p class="muted" style="margin:4px 0 0">Persistent AP settings and contact assumptions Clearledgr is carrying for this supplier.</p>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Payment terms</span>
-              <span style="font-weight:600;text-align:right">${profile.payment_terms || "—"}</span>
+          </div>
+          <div class="detail-row-list">
+            <div class="detail-row">
+              <span class="detail-row-label">Primary email</span>
+              <span class="detail-row-value">${summary.primary_email || "—"}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Requires PO</span>
-              <span style="font-weight:600">${profile.requires_po ? "Yes" : "No"}</span>
+            <div class="detail-row">
+              <span class="detail-row-label">Payment terms</span>
+              <span class="detail-row-value">${profile.payment_terms || "—"}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Always approved</span>
-              <span style="font-weight:600">${profile.always_approved ? "Yes" : "No"}</span>
+            <div class="detail-row">
+              <span class="detail-row-label">Requires PO</span>
+              <span class="detail-row-value">${profile.requires_po ? "Yes" : "No"}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px">
-              <span class="muted">Approval override rate</span>
-              <span style="font-weight:600">${Number(profile.approval_override_rate || 0).toFixed(2)}</span>
+            <div class="detail-row">
+              <span class="detail-row-label">Always approved</span>
+              <span class="detail-row-value">${profile.always_approved ? "Yes" : "No"}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-row-label">Approval override rate</span>
+              <span class="detail-row-value">${Number(profile.approval_override_rate || 0).toFixed(2)}</span>
             </div>
           </div>
 
-          ${senderEmails.length > 0 && html16`
+          ${senderEmails.length > 0 && html17`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Known sender emails</div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${senderEmails.map((email) => html16`<span key=${email} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px">${email}</span>`)}
+              <div class="secondary-chip-row">
+                ${senderEmails.map((email) => html17`<span key=${email} class="secondary-chip">${email}</span>`)}
               </div>
             </div>
           `}
 
-          ${anomalyFlags.length > 0 && html16`
+          ${anomalyFlags.length > 0 && html17`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Anomaly flags</div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${anomalyFlags.map((flag) => html16`<span key=${flag} style="padding:5px 10px;border-radius:999px;background:#FEF2F2;color:#B91C1C;font-size:12px;font-weight:600">${String(flag).replace(/_/g, " ")}</span>`)}
+              <div class="secondary-chip-row">
+                ${anomalyFlags.map((flag) => html17`<span key=${flag} class="secondary-chip" style="background:#FEF2F2;border-color:#FECACA;color:#B91C1C">${String(flag).replace(/_/g, " ")}</span>`)}
               </div>
             </div>
           `}
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Issue summary</h3>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Open issues</span>
-              <strong>${Number(issueSummary.total || 0).toLocaleString()}</strong>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Issue summary</h3>
+              <p class="muted" style="margin:4px 0 0">The kinds of friction Clearledgr keeps seeing from this vendor.</p>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Field review</span>
-              <strong>${Number(issueSummary.field_review || 0).toLocaleString()}</strong>
+          </div>
+          <div class="detail-row-list">
+            <div class="detail-row">
+              <span class="detail-row-label">Open issues</span>
+              <span class="detail-row-value">${Number(issueSummary.total || 0).toLocaleString()}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Needs info</span>
-              <strong>${Number(issueSummary.needs_info || 0).toLocaleString()}</strong>
+            <div class="detail-row">
+              <span class="detail-row-label">Field review</span>
+              <span class="detail-row-value">${Number(issueSummary.field_review || 0).toLocaleString()}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Failed post</span>
-              <strong>${Number(issueSummary.failed_post || 0).toLocaleString()}</strong>
+            <div class="detail-row">
+              <span class="detail-row-label">Needs info</span>
+              <span class="detail-row-value">${Number(issueSummary.needs_info || 0).toLocaleString()}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px">
-              <span class="muted">Policy / entity</span>
-              <strong>${Number((issueSummary.policy_exception || 0) + (issueSummary.entity_route || 0)).toLocaleString()}</strong>
+            <div class="detail-row">
+              <span class="detail-row-label">Failed post</span>
+              <span class="detail-row-value">${Number(issueSummary.failed_post || 0).toLocaleString()}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-row-label">Policy / entity</span>
+              <span class="detail-row-value">${Number((issueSummary.policy_exception || 0) + (issueSummary.entity_route || 0)).toLocaleString()}</span>
             </div>
           </div>
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Common workflow states</h3>
-          ${topStates.length === 0 ? html16`<p class="muted" style="margin:0">No state history yet.</p>` : html16`<div style="display:flex;flex-direction:column;gap:8px">
-                ${topStates.map((row) => html16`
-                  <div key=${row.state} style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-                    <span>${getStateLabel(String(row.state || "received").trim().toLowerCase())}</span>
-                    <strong>${Number(row.count || 0).toLocaleString()}</strong>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Common workflow states</h3>
+              <p class="muted" style="margin:4px 0 0">Where this vendor’s records most often end up in the AP flow.</p>
+            </div>
+          </div>
+          ${topStates.length === 0 ? html17`<p class="muted" style="margin:0">No state history yet.</p>` : html17`<div class="secondary-card-list">
+                ${topStates.map((row) => html17`
+                  <div key=${row.state} class="secondary-row">
+                    <div class="secondary-row-copy">
+                      <strong>${getStateLabel(String(row.state || "received").trim().toLowerCase())}</strong>
+                    </div>
+                    <div class="secondary-inline-actions">
+                      <span class="secondary-chip">${Number(row.count || 0).toLocaleString()}</span>
+                    </div>
                   </div>
                 `)}
               </div>`}
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Recurring issues</h3>
-          ${topExceptionCodes.length === 0 ? html16`<p class="muted" style="margin:0">No recurring issue patterns yet.</p>` : html16`<div style="display:flex;flex-direction:column;gap:8px">
-                ${topExceptionCodes.map((row) => html16`
-                  <div key=${row.exception_code} style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-                    <span>${getExceptionLabel(row.exception_code)}</span>
-                    <strong>${Number(row.count || 0).toLocaleString()}</strong>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Recurring issues</h3>
+              <p class="muted" style="margin:4px 0 0">The exception patterns that repeat most often for this vendor.</p>
+            </div>
+          </div>
+          ${topExceptionCodes.length === 0 ? html17`<p class="muted" style="margin:0">No recurring issue patterns yet.</p>` : html17`<div class="secondary-card-list">
+                ${topExceptionCodes.map((row) => html17`
+                  <div key=${row.exception_code} class="secondary-row">
+                    <div class="secondary-row-copy">
+                      <strong>${getExceptionLabel(row.exception_code)}</strong>
+                    </div>
+                    <div class="secondary-inline-actions">
+                      <span class="secondary-chip">${Number(row.count || 0).toLocaleString()}</span>
+                    </div>
                   </div>
                 `)}
               </div>`}
@@ -67441,7 +72691,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/TemplatesPage.js
-  var html17 = htm_module_default.bind(_);
+  var html18 = htm_module_default.bind(_);
   var SAMPLE_ITEM = {
     vendor_name: "Northwind Office Supply",
     invoice_number: "INV-1042",
@@ -67486,7 +72736,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     };
   }
   function TemplateRow({ template, selected, onSelect }) {
-    return html17`<button class=${`templates-row ${selected ? "is-selected" : ""}`} onClick=${onSelect}>
+    return html18`<button class=${`templates-row ${selected ? "is-selected" : ""}`} onClick=${onSelect}>
     <div class="templates-row-top">
       <strong class="templates-row-title">${template.name}</strong>
       <div class="templates-row-tags">
@@ -67600,15 +72850,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         toast?.("Could not open Gmail compose preview.", "error");
       }
     });
-    return html17`
-    <div class="templates-toolbar">
-      <p class="muted" style="margin:0">Start from a shared starter, then save your own version for this Gmail workspace.</p>
-      <div class="templates-toolbar-actions">
+    return html18`
+    <div class="secondary-banner">
+      <div class="secondary-banner-copy">
+        <h3>Reply templates</h3>
+        <p class="muted">Start from a shared starter, save a personal version, and preview the exact Gmail draft before you use it.</p>
+      </div>
+      <div class="secondary-banner-actions">
         <button class="btn-secondary btn-sm" onClick=${() => {
       setSelectedRef("");
       setEditor(blankEditor());
     }}>New personal template</button>
-        <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/pipeline")}>Back to Pipeline</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate("clearledgr/invoices")}>Back to Invoices</button>
       </div>
     </div>
 
@@ -67628,7 +72881,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <span>${starterTemplates.length}</span>
             </div>
             <div class="templates-list">
-              ${starterTemplates.map((template) => html17`
+              ${starterTemplates.map((template) => html18`
                 <${TemplateRow}
                   key=${templateRef(template)}
                   template=${template}
@@ -67646,8 +72899,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <span>Personal</span>
               <span>${personalTemplates.length}</span>
             </div>
-            ${personalTemplates.length === 0 ? html17`<div class="templates-empty-copy">No personal templates yet. Save a starter or create one from scratch.</div>` : html17`<div class="templates-list">
-                  ${personalTemplates.map((template) => html17`
+            ${personalTemplates.length === 0 ? html18`<div class="templates-empty-copy">No personal templates yet. Save a starter or create one from scratch.</div>` : html18`<div class="templates-list">
+                  ${personalTemplates.map((template) => html18`
                     <${TemplateRow}
                       key=${templateRef(template)}
                       template=${template}
@@ -67667,7 +72920,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
           </div>
           <div class="templates-token-cloud">
-            ${["vendor_name", "invoice_number", "amount", "due_date", "po_number", "state_label", "next_action", "issue_summary", "subject"].map((token) => html17`
+            ${["vendor_name", "invoice_number", "amount", "due_date", "po_number", "state_label", "next_action", "issue_summary", "subject"].map((token) => html18`
               <span key=${token} class="templates-token">{{${token}}}</span>
             `)}
           </div>
@@ -67686,7 +72939,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 ${currentTemplate?.scope === "user" ? "Changes save to your personal template library for this Gmail workspace." : "Starter templates are read-only. Save a personal copy before editing."}
               </p>
             </div>
-            ${currentTemplate?.scope === "user" ? html17`<button class="btn-danger btn-sm" onClick=${deleteTemplate} disabled=${deletingTemplate}>${deletingTemplate ? "Deleting…" : "Delete"}</button>` : null}
+            ${currentTemplate?.scope === "user" ? html18`<button class="btn-danger btn-sm" onClick=${deleteTemplate} disabled=${deletingTemplate}>${deletingTemplate ? "Deleting…" : "Delete"}</button>` : null}
           </div>
 
           <div class="templates-meta-strip">
@@ -67757,21 +73010,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/ReportsPage.js
-  var html18 = htm_module_default.bind(_);
+  var html19 = htm_module_default.bind(_);
   function MetricCard2({ label, value, detail }) {
-    return html18`<div style="padding:18px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-    <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em">${value}</div>
-    <div style="font-size:13px;font-weight:600;margin-top:2px">${label}</div>
-    ${detail ? html18`<div class="muted" style="margin-top:6px;font-size:12px">${detail}</div>` : null}
+    return html19`<div class="reports-metric-card">
+    <div class="reports-metric-value">${value}</div>
+    <div class="reports-metric-label">${label}</div>
+    ${detail ? html19`<div class="reports-metric-detail">${detail}</div>` : null}
   </div>`;
   }
   function ReportRow({ label, value, detail }) {
-    return html18`<div style="display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid var(--border)">
-    <div>
-      <div style="font-weight:600">${label}</div>
-      ${detail ? html18`<div class="muted" style="font-size:12px;margin-top:3px">${detail}</div>` : null}
+    return html19`<div class="reports-row">
+    <div class="reports-row-copy">
+      <strong>${label}</strong>
+      ${detail ? html19`<span>${detail}</span>` : null}
     </div>
-    <div style="font-weight:700;text-align:right">${value}</div>
+    <div class="reports-row-value">${value}</div>
   </div>`;
   }
   function metricPercent(value) {
@@ -67836,6 +73089,32 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       activityWindowDays: safeNumber(operator?.activity_window_days, 30)
     };
   }
+  function getProofScorecardSummary(kpis = {}, dashboard = {}) {
+    const proof = kpis?.proof_scorecard || {};
+    const summary = proof?.summary || {};
+    const decisions = proof?.decisions || {};
+    const followup = proof?.approval_followup || {};
+    const posting = proof?.posting_reliability || {};
+    const recovery = proof?.recovery || {};
+    const bootstrap = dashboard?.proof_snapshot || {};
+    const highlights = Array.isArray(proof?.highlights) && proof.highlights.length ? proof.highlights : Array.isArray(bootstrap?.highlights) ? bootstrap.highlights : [];
+    return {
+      autoApprovedRatePct: safeNumber(summary?.auto_approved_rate_pct, safeNumber(bootstrap?.auto_approved_rate_pct)),
+      humanOverrideRatePct: safeNumber(summary?.human_override_rate_pct, safeNumber(bootstrap?.human_override_rate_pct)),
+      avgApprovalWaitHours: safeNumber(summary?.avg_approval_wait_hours, safeNumber(bootstrap?.avg_approval_wait_hours)),
+      escalationRatePct: safeNumber(summary?.escalation_rate_pct, safeNumber(bootstrap?.escalation_rate_pct)),
+      postingSuccessRatePct: safeNumber(summary?.posting_success_rate_pct, safeNumber(bootstrap?.posting_success_rate_pct)),
+      recoverySuccessRatePct: safeNumber(summary?.recovery_success_rate_pct, safeNumber(bootstrap?.recovery_success_rate_pct)),
+      humanOverrideCount: safeNumber(decisions?.human_override_count, safeNumber(bootstrap?.human_override_count)),
+      decisionCount: safeNumber(decisions?.decision_count, safeNumber(bootstrap?.decision_count)),
+      escalationEventCount30d: safeNumber(followup?.escalation_event_count_30d, safeNumber(bootstrap?.escalation_event_count_30d)),
+      postingAttemptCount: safeNumber(posting?.attempted_count, safeNumber(bootstrap?.posting_attempt_count)),
+      postingMismatchCount: safeNumber(posting?.mismatch_count, safeNumber(bootstrap?.posting_mismatch_count)),
+      recoveryAttemptCount: safeNumber(recovery?.attempted_count, safeNumber(bootstrap?.recovery_attempt_count)),
+      recoveredCount: safeNumber(recovery?.recovered_count, safeNumber(bootstrap?.recovered_count)),
+      highlights: highlights.map((entry) => String(entry || "").trim()).filter(Boolean).slice(0, 4)
+    };
+  }
   function ReportsPage({ api, bootstrap, orgId, userEmail, navigate, toast }) {
     const pipelineScope = T2(() => ({ orgId, userEmail }), [orgId, userEmail]);
     const [reportData, setReportData] = d2({ aggregation: null, kpis: null });
@@ -67874,7 +73153,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return;
       clearPipelineNavigation(pipelineScope);
       writePipelinePreferences(pipelineScope, view.snapshot);
-      navigate("clearledgr/pipeline");
+      navigate("clearledgr/invoices");
     };
     const dashboard = bootstrap?.dashboard || {};
     const agenticSnapshot = dashboard?.agentic_snapshot || {};
@@ -67885,10 +73164,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const sourceTypes = Object.entries(sources.link_count_by_type || {}).sort((left, right) => right[1] - left[1]).slice(0, 6);
     const pilotSummary = getPilotScorecardSummary(reportData?.kpis || {}, dashboard);
     const operatorSummary = getOperatorPressureSummary(reportData?.kpis || {});
+    const proofSummary = getProofScorecardSummary(reportData?.kpis || {}, dashboard);
     if (loading) {
-      return html18`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading reports…</p></div>`;
+      return html19`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading reports…</p></div>`;
     }
-    return html18`
+    return html19`
     <div class="secondary-banner">
       <div class="secondary-banner-copy">
         <h3>Reports</h3>
@@ -67896,7 +73176,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
       <div class="secondary-banner-actions">
         <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
-        <button class="btn-primary btn-sm" onClick=${() => navigate("clearledgr/pipeline")}>Open pipeline</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate("clearledgr/invoices")}>Open invoices</button>
       </div>
     </div>
 
@@ -67907,11 +73187,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <${MetricCard2} label="Duplicate clusters" value=${Number(duplicates.cluster_count || 0).toLocaleString()} detail=${`${Number(duplicates.duplicate_invoice_count || 0).toLocaleString()} duplicate invoices`} />
     </div>
 
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px">
-      <div style="display:flex;flex-direction:column;gap:20px">
+    <div class="reports-shell">
+      <div class="reports-main-stack">
         <div class="panel">
           <h3 style="margin-top:0">Top vendors by tracked spend</h3>
-          ${topVendors.length === 0 ? html18`<p class="muted" style="margin:0">No vendor spend data yet.</p>` : html18`${topVendors.map((row) => html18`
+          ${topVendors.length === 0 ? html19`<p class="muted" style="margin:0">No vendor spend data yet.</p>` : html19`${topVendors.map((row) => html19`
                 <${ReportRow}
                   key=${row.vendor_name}
                   label=${row.vendor_name || "Unknown vendor"}
@@ -67922,50 +73202,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Source coverage</h3>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <${ReportRow}
-              label="Total linked sources"
-              value=${Number(sources.total_links || 0).toLocaleString()}
-              detail=${`${Number(sources.items_with_sources || 0).toLocaleString()} invoices have linked evidence`}
-            />
-            <${ReportRow}
-              label="Average links per invoice"
-              value=${Number(sources.avg_links_per_item || 0).toFixed(2)}
-              detail="Across all tracked records"
-            />
-            <${ReportRow}
-              label="Average links per linked invoice"
-              value=${Number(sources.avg_links_per_linked_item || 0).toFixed(2)}
-              detail="Only invoices with at least one linked source"
-            />
-          </div>
-
-          ${sourceTypes.length > 0 && html18`
-            <div style="margin-top:14px">
-              <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Connected source types</div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${sourceTypes.map(([sourceType, count]) => html18`
-                  <span key=${sourceType} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px;font-weight:600">
-                    ${sourceType} ${count}
-                  </span>
-                `)}
-              </div>
-            </div>
-          `}
-        </div>
-      </div>
-
-      <div style="display:flex;flex-direction:column;gap:20px">
-        <div class="panel">
           <h3 style="margin-top:0">Pilot scorecard</h3>
           <p class="muted" style="margin:0 0 12px">
             Track whether Clearledgr is actually removing approval chasing and manual routing work.
           </p>
-          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+          <div class="secondary-stat-grid">
             <${MetricCard2}
               label="Touchless completed invoices"
-              value=${html18`<span style=${toneForPercent(pilotSummary.touchlessRatePct, { watchBelow: 70, dangerBelow: 50 })}>${metricPercent(pilotSummary.touchlessRatePct)}</span>`}
+              value=${html19`<span style=${toneForPercent(pilotSummary.touchlessRatePct, { watchBelow: 70, dangerBelow: 50 })}>${metricPercent(pilotSummary.touchlessRatePct)}</span>`}
             />
             <${MetricCard2}
               label="Average cycle time"
@@ -67973,7 +73217,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             />
             <${MetricCard2}
               label="On-time approvals"
-              value=${html18`<span style=${toneForPercent(pilotSummary.onTimeApprovalsPct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(pilotSummary.onTimeApprovalsPct)}</span>`}
+              value=${html19`<span style=${toneForPercent(pilotSummary.onTimeApprovalsPct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(pilotSummary.onTimeApprovalsPct)}</span>`}
             />
             <${MetricCard2}
               label="Average approval wait"
@@ -67981,11 +73225,78 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             />
           </div>
 
-          ${pilotSummary.highlights.length > 0 && html18`
+          ${pilotSummary.highlights.length > 0 && html19`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Current readout</div>
               <div class="secondary-list">
-                ${pilotSummary.highlights.map((line) => html18`
+                ${pilotSummary.highlights.map((line) => html19`
+                  <div key=${line} class="secondary-note">${line}</div>
+                `)}
+              </div>
+            </div>
+          `}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Proof scorecard</h3>
+          <p class="muted" style="margin:0 0 12px">
+            Show whether Clearledgr is becoming safer, faster, and more reliable under real AP work.
+          </p>
+          <div class="secondary-stat-grid">
+            <${MetricCard2}
+              label="Auto-approved rate"
+              value=${html19`<span style=${toneForPercent(proofSummary.autoApprovedRatePct, { watchBelow: 70, dangerBelow: 50 })}>${metricPercent(proofSummary.autoApprovedRatePct)}</span>`}
+            />
+            <${MetricCard2}
+              label="Human override rate"
+              value=${html19`<span style=${toneForPercent(100 - proofSummary.humanOverrideRatePct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(proofSummary.humanOverrideRatePct)}</span>`}
+            />
+            <${MetricCard2}
+              label="Approval latency"
+              value=${metricHours(proofSummary.avgApprovalWaitHours)}
+            />
+            <${MetricCard2}
+              label="Escalation rate"
+              value=${html19`<span style=${toneForPercent(100 - proofSummary.escalationRatePct, { watchBelow: 88, dangerBelow: 75 })}>${metricPercent(proofSummary.escalationRatePct)}</span>`}
+            />
+            <${MetricCard2}
+              label="Posting success rate"
+              value=${html19`<span style=${toneForPercent(proofSummary.postingSuccessRatePct, { watchBelow: 98, dangerBelow: 92 })}>${metricPercent(proofSummary.postingSuccessRatePct)}</span>`}
+            />
+            <${MetricCard2}
+              label="Recovery success rate"
+              value=${html19`<span style=${toneForPercent(proofSummary.recoverySuccessRatePct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(proofSummary.recoverySuccessRatePct)}</span>`}
+            />
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
+            <${ReportRow}
+              label="Override evidence"
+              value=${`${Number(proofSummary.humanOverrideCount || 0).toLocaleString()} / ${Number(proofSummary.decisionCount || 0).toLocaleString()}`}
+              detail="Human overrides divided by decision windows with a persisted Claude recommendation"
+            />
+            <${ReportRow}
+              label="Posting reliability"
+              value=${`${Number(proofSummary.postingAttemptCount || 0).toLocaleString()} attempts`}
+              detail=${`${Number(proofSummary.postingMismatchCount || 0).toLocaleString()} verification mismatches after posting`}
+            />
+            <${ReportRow}
+              label="Recovery evidence"
+              value=${`${Number(proofSummary.recoveredCount || 0).toLocaleString()} / ${Number(proofSummary.recoveryAttemptCount || 0).toLocaleString()}`}
+              detail="Recovered ERP posting failures over total recovery attempts"
+            />
+            <${ReportRow}
+              label="Escalation evidence"
+              value=${Number(proofSummary.escalationEventCount30d || 0).toLocaleString()}
+              detail="Approval escalation events in the last 30 days"
+            />
+          </div>
+
+          ${proofSummary.highlights.length > 0 && html19`
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Current proof readout</div>
+              <div class="secondary-list">
+                ${proofSummary.highlights.map((line) => html19`
                   <div key=${line} class="secondary-note">${line}</div>
                 `)}
               </div>
@@ -68028,46 +73339,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Autonomy quality</h3>
-          <p class="muted" style="margin:0 0 12px">
-            See how often the final outcome matched what Clearledgr suggested.
-          </p>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <${ReportRow}
-              label="Shadow action match"
-              value=${html18`<span style=${toneForPercent(agenticSnapshot.shadow_action_match_pct, { watchBelow: 95, dangerBelow: 90 })}>${metricPercent(agenticSnapshot.shadow_action_match_pct)}</span>`}
-              detail=${`${Number(agenticSnapshot.shadow_scored_items || 0).toLocaleString()} scored records · ${Number(agenticSnapshot.shadow_disagreement_count || 0).toLocaleString()} disagreements`}
-            />
-            <${ReportRow}
-              label="Critical field match"
-              value=${html18`<span style=${toneForPercent(agenticSnapshot.shadow_critical_field_match_pct, { watchBelow: 97, dangerBelow: 92 })}>${metricPercent(agenticSnapshot.shadow_critical_field_match_pct)}</span>`}
-              detail="Amount, currency, invoice #, vendor, and document type"
-            />
-            <${ReportRow}
-              label="Post verification rate"
-              value=${html18`<span style=${toneForPercent(agenticSnapshot.post_verification_rate_pct, { watchBelow: 100, dangerBelow: 95 })}>${metricPercent(agenticSnapshot.post_verification_rate_pct)}</span>`}
-              detail=${`${Number(agenticSnapshot.post_verification_attempted_count || 0).toLocaleString()} posted attempts · ${Number(agenticSnapshot.post_verification_mismatch_count || 0).toLocaleString()} mismatches`}
-            />
-          </div>
-        </div>
-
-        <div class="panel">
-          <h3 style="margin-top:0">Start from the right view</h3>
-          <p class="muted" style="margin:0 0 12px">Use reports to spot a problem, then jump into the matching queue view.</p>
-          <div style="display:flex;flex-direction:column;gap:10px">
-            ${starterViews.slice(0, 4).map((view) => html18`
-              <div key=${view.id} style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                <div>
-                  <strong style="display:block;font-size:13px">${view.name}</strong>
-                  <span class="muted" style="font-size:12px">${view.description}</span>
-                </div>
-                <button class="btn-secondary btn-sm" onClick=${() => openStarterView(view)}>Open view</button>
-              </div>
-            `)}
-          </div>
-        </div>
-
-        <div class="panel">
           <h3 style="margin-top:0">Export reports</h3>
           <p class="muted" style="margin:0 0 12px">Download AP data as CSV for month-end close, audits, or reconciliation.</p>
           <div style="display:flex;flex-direction:column;gap:12px">
@@ -68087,6 +73358,83 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
 
         <${SpendAnalysisPanel} api=${api} />
+      </div>
+
+      <div class="reports-side-stack">
+        <div class="panel">
+          <h3 style="margin-top:0">Source coverage</h3>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <${ReportRow}
+              label="Total linked sources"
+              value=${Number(sources.total_links || 0).toLocaleString()}
+              detail=${`${Number(sources.items_with_sources || 0).toLocaleString()} invoices have linked evidence`}
+            />
+            <${ReportRow}
+              label="Average links per invoice"
+              value=${Number(sources.avg_links_per_item || 0).toFixed(2)}
+              detail="Across all tracked records"
+            />
+            <${ReportRow}
+              label="Average links per linked invoice"
+              value=${Number(sources.avg_links_per_linked_item || 0).toFixed(2)}
+              detail="Only invoices with at least one linked source"
+            />
+          </div>
+
+          ${sourceTypes.length > 0 && html19`
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Connected source types</div>
+              <div class="reports-chip-wrap">
+                ${sourceTypes.map(([sourceType, count]) => html19`
+                  <span key=${sourceType} class="secondary-chip">
+                    ${sourceType} ${count}
+                  </span>
+                `)}
+              </div>
+            </div>
+          `}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Autonomy quality</h3>
+          <p class="muted" style="margin:0 0 12px">
+            See how often the final outcome matched what Clearledgr suggested.
+          </p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <${ReportRow}
+              label="Shadow action match"
+              value=${html19`<span style=${toneForPercent(agenticSnapshot.shadow_action_match_pct, { watchBelow: 95, dangerBelow: 90 })}>${metricPercent(agenticSnapshot.shadow_action_match_pct)}</span>`}
+              detail=${`${Number(agenticSnapshot.shadow_scored_items || 0).toLocaleString()} scored records · ${Number(agenticSnapshot.shadow_disagreement_count || 0).toLocaleString()} disagreements`}
+            />
+            <${ReportRow}
+              label="Critical field match"
+              value=${html19`<span style=${toneForPercent(agenticSnapshot.shadow_critical_field_match_pct, { watchBelow: 97, dangerBelow: 92 })}>${metricPercent(agenticSnapshot.shadow_critical_field_match_pct)}</span>`}
+              detail="Amount, currency, invoice #, vendor, and document type"
+            />
+            <${ReportRow}
+              label="Post verification rate"
+              value=${html19`<span style=${toneForPercent(agenticSnapshot.post_verification_rate_pct, { watchBelow: 100, dangerBelow: 95 })}>${metricPercent(agenticSnapshot.post_verification_rate_pct)}</span>`}
+              detail=${`${Number(agenticSnapshot.post_verification_attempted_count || 0).toLocaleString()} posted attempts · ${Number(agenticSnapshot.post_verification_mismatch_count || 0).toLocaleString()} mismatches`}
+            />
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Start from the right view</h3>
+          <p class="muted" style="margin:0 0 12px">Use reports to spot a problem, then jump into the matching queue view.</p>
+          <div class="secondary-card-list">
+            ${starterViews.slice(0, 4).map((view) => html19`
+              <div key=${view.id} class="reports-export-row">
+                <div>
+                  <strong style="display:block;font-size:13px">${view.name}</strong>
+                  <span class="muted" style="font-size:12px">${view.description}</span>
+                </div>
+                <button class="btn-secondary btn-sm" onClick=${() => openStarterView(view)}>Open view</button>
+              </div>
+            `)}
+          </div>
+        </div>
+
         <${AgingPanel} api=${api} />
         <${PeriodClosePanel} api=${api} />
         <${TaxCompliancePanel} api=${api} />
@@ -68104,7 +73452,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       setExporting(true);
       setResult(null);
       try {
-        const res = await api.fetch("/api/workspace/reports/export-to-sheets", {
+        const res = await api("/api/workspace/reports/export-to-sheets", {
           method: "POST",
           body: JSON.stringify({ spreadsheet_url: sheetUrl.trim(), report_type: reportType })
         });
@@ -68114,15 +73462,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       setExporting(false);
     };
-    return html18`
-    <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+    return html19`
+    <div class="secondary-inline-actions" style="margin-top:4px">
       <input type="text" placeholder="Paste Google Sheets URL..." value=${sheetUrl} onInput=${(e3) => setSheetUrl(e3.target.value)}
         style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:11px" />
       <button class="btn-secondary btn-sm" onClick=${doExport} disabled=${exporting || !sheetUrl.trim()}>
         ${exporting ? "..." : "Push to Sheets"}
       </button>
     </div>
-    ${result && html18`<div class="muted" style="font-size:11px;margin-top:2px">${result}</div>`}
+    ${result && html19`<div class="reports-inline-result">${result}</div>`}
   `;
   }
   function ExportButton({ api, reportType, label, description }) {
@@ -68130,7 +73478,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const doExport = async () => {
       setDownloading(true);
       try {
-        const resp = await api.fetch(`/api/workspace/reports/export?report_type=${reportType}&format=csv`);
+        const resp = await api(`/api/workspace/reports/export?report_type=${reportType}&format=csv`);
         if (resp && resp.ok !== false) {
           const blob = new Blob([typeof resp === "string" ? resp : JSON.stringify(resp)], { type: "text/csv" });
           const url = URL.createObjectURL(blob);
@@ -68145,8 +73493,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       setDownloading(false);
     };
-    return html18`
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+    return html19`
+    <div class="reports-export-row">
       <div>
         <strong style="display:block;font-size:13px">${label}</strong>
         <span class="muted" style="font-size:12px">${description}</span>
@@ -68158,21 +73506,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function SpendAnalysisPanel({ api }) {
     const [data, setData] = d2(null);
     y2(() => {
-      api.fetch("/api/workspace/spend-analysis?period_days=30").then(setData).catch(() => {});
+      api("/api/workspace/spend-analysis?period_days=30").then(setData).catch(() => {});
     }, []);
     if (!data || !data.top_vendors?.length)
       return null;
-    return html18`
+    return html19`
     <div class="panel">
       <h3 style="margin-top:0">Spend analysis (30 days)</h3>
-      <div style="display:flex;flex-direction:column;gap:2px">
-        ${data.top_vendors.slice(0, 6).map((v3) => html18`
+      <div>
+        ${data.top_vendors.slice(0, 6).map((v3) => html19`
           <${ReportRow} key=${v3.vendor_name} label=${v3.vendor_name} value=${fmtDollar(v3.total_spend)} detail=${`${v3.invoice_count} invoice${v3.invoice_count !== 1 ? "s" : ""}`} />
         `)}
       </div>
-      ${data.anomalies?.length > 0 && html18`
-        <div style="margin-top:12px;padding:8px 10px;background:#FEF3C7;border-radius:var(--radius-md);font-size:12px">
-          ${data.anomalies.slice(0, 3).map((a3) => html18`<div key=${a3.vendor}>${a3.message}</div>`)}
+      ${data.anomalies?.length > 0 && html19`
+        <div class="secondary-callout warning" style="margin-top:12px">
+          ${data.anomalies.slice(0, 3).map((a3) => html19`<div key=${a3.vendor}>${a3.message}</div>`)}
         </div>
       `}
     </div>
@@ -68181,19 +73529,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function AgingPanel({ api }) {
     const [data, setData] = d2(null);
     y2(() => {
-      api.fetch("/api/ap/items/aging").then(setData).catch(() => {});
+      api("/api/ap/items/aging").then(setData).catch(() => {});
     }, []);
     if (!data || !data.summary)
       return null;
     const s3 = data.summary;
-    return html18`
+    return html19`
     <div class="panel">
       <h3 style="margin-top:0">AP aging</h3>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <div class="secondary-stat-grid" style="margin-bottom:8px">
         <${MetricCard2} label="Open invoices" value=${s3.total_open_count || 0} />
         <${MetricCard2} label="Overdue" value=${s3.overdue_count || 0} detail=${s3.overdue_pct ? `${s3.overdue_pct}% of open` : ""} />
       </div>
-      ${s3.weighted_avg_days_past_due != null && html18`
+      ${s3.weighted_avg_days_past_due != null && html19`
         <div class="muted" style="font-size:12px;text-align:center">Weighted avg days past due: ${s3.weighted_avg_days_past_due}</div>
       `}
     </div>
@@ -68202,16 +73550,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function PeriodClosePanel({ api }) {
     const [data, setData] = d2(null);
     y2(() => {
-      api.fetch("/api/workspace/period-close/current").then(setData).catch(() => {});
+      api("/api/workspace/period-close/current").then(setData).catch(() => {});
     }, []);
     if (!data)
       return null;
-    return html18`
+    return html19`
     <div class="panel">
       <h3 style="margin-top:0">Period close</h3>
       <${ReportRow} label="Current period" value=${data.period} detail=${data.is_locked ? "LOCKED" : `Closes ${data.closes_on}`} />
-      ${data.in_closing_window && html18`
-        <div style="margin-top:6px;padding:8px 10px;background:#FEF3C7;border-radius:var(--radius-md);font-size:12px">
+      ${data.in_closing_window && html19`
+        <div class="secondary-callout warning" style="margin-top:6px">
           Closing window — ${data.days_until_close} day${data.days_until_close !== 1 ? "s" : ""} until cutoff
         </div>
       `}
@@ -68221,24 +73569,24 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function TaxCompliancePanel({ api }) {
     const [data, setData] = d2(null);
     y2(() => {
-      api.fetch("/api/workspace/tax-compliance/summary").then(setData).catch(() => {});
+      api("/api/workspace/tax-compliance/summary").then(setData).catch(() => {});
     }, []);
     if (!data || !data.vendor_count)
       return null;
-    return html18`
+    return html19`
     <div class="panel">
       <h3 style="margin-top:0">Tax compliance</h3>
       <${ReportRow} label="Vendors tracked" value=${data.vendor_count} />
-      ${data.missing_tax_id_count > 0 && html18`
+      ${data.missing_tax_id_count > 0 && html19`
         <${ReportRow} label="Missing tax ID" value=${data.missing_tax_id_count} detail="Vendors without a validated tax ID" />
       `}
-      ${data.invalid_tax_id_count > 0 && html18`
+      ${data.invalid_tax_id_count > 0 && html19`
         <${ReportRow} label="Invalid tax ID format" value=${data.invalid_tax_id_count} />
       `}
-      ${data.reverse_charge_applicable?.length > 0 && html18`
+      ${data.reverse_charge_applicable?.length > 0 && html19`
         <${ReportRow} label="Reverse charge applicable" value=${data.reverse_charge_applicable.length} detail="Intra-EU B2B transactions" />
       `}
-      ${data.wht_applicable?.length > 0 && html18`
+      ${data.wht_applicable?.length > 0 && html19`
         <${ReportRow} label="WHT applicable" value=${data.wht_applicable.length} detail="Withholding tax required" />
       `}
     </div>
@@ -68503,20 +73851,43 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/inboxsdk-layer.js
-  var html19 = htm_module_default.bind(_);
+  var html20 = htm_module_default.bind(_);
   var APP_ID = "sdk_Clearledgr2026_dc12c60472";
   var INIT_KEY = "__clearledgr_ap_v1_inboxsdk_initialized";
   var LOGO_PATH2 = "icons/icon48.png";
   var STORAGE_ACTIVE_AP_ITEM_ID = "clearledgr_active_ap_item_id";
+  var STORAGE_PENDING_DIRECT_ROUTE = "__clearledgr_pending_direct_route_v1";
+  var STORAGE_RELOAD_ROUTE = "__clearledgr_reload_route_v1";
+  var ATTR_PENDING_DIRECT_ROUTE = "data-clearledgr-pending-direct-route";
   var sdk = null;
   var queueManager = null;
   var _pendingComposePrefill = null;
   var sidebarContainer = null;
+  var sidebarPanelView = null;
+  var sidebarPanelViewPromise = null;
   var appMenuItemView = null;
   var appMenuPanelView = null;
   var appMenuPanelReady = null;
   var appMenuNavItemViews = [];
   var fallbackNavItemViews = [];
+  var APPMENU_WORKSPACE_ROUTE_IDS = new Set([
+    "clearledgr/invoices",
+    "clearledgr/home",
+    "clearledgr/review",
+    "clearledgr/upcoming",
+    "clearledgr/activity",
+    "clearledgr/vendors",
+    "clearledgr/reports",
+    "clearledgr/reconciliation"
+  ]);
+  var APPMENU_CONFIGURATION_ROUTE_IDS = new Set([
+    "clearledgr/connections",
+    "clearledgr/rules",
+    "clearledgr/settings"
+  ]);
+  var APPMENU_LIBRARY_ROUTE_IDS = new Set([
+    "clearledgr/templates"
+  ]);
   function injectFonts() {
     if (document.getElementById("cl-fonts-loaded"))
       return;
@@ -68547,7 +73918,42 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function mountSidebar() {
     if (!sidebarContainer)
       return;
-    J(html19`<${SidebarApp} queueManager=${queueManager} />`, sidebarContainer);
+    J(html20`<${SidebarApp} queueManager=${queueManager} />`, sidebarContainer);
+  }
+  async function ensureSidebarPanelView() {
+    if (sidebarPanelView && !sidebarPanelView.destroyed)
+      return sidebarPanelView;
+    if (sidebarPanelViewPromise)
+      return sidebarPanelViewPromise;
+    if (!sdk?.Global || !sidebarContainer)
+      return null;
+    const logoUrl = getAssetUrl(LOGO_PATH2);
+    sidebarPanelViewPromise = sdk.Global.addSidebarContentPanel({
+      title: "Clearledgr AP",
+      iconUrl: logoUrl || null,
+      el: sidebarContainer,
+      hideTitleBar: false
+    }).then((panelView) => {
+      sidebarPanelView = panelView || null;
+      sidebarPanelViewPromise = null;
+      return sidebarPanelView;
+    }).catch(() => {
+      sidebarPanelViewPromise = null;
+      return null;
+    });
+    return sidebarPanelViewPromise;
+  }
+  async function setSidebarPanelOpen(shouldOpen) {
+    const panelView = await ensureSidebarPanelView();
+    if (!panelView || panelView.destroyed)
+      return;
+    if (shouldOpen) {
+      if (!panelView.isActive())
+        panelView.open();
+      return;
+    }
+    if (panelView.isActive())
+      panelView.close();
   }
   async function openComposeWithPrefill(prefill = {}) {
     if (!sdk?.Compose || typeof sdk.Compose.openNewComposeView !== "function") {
@@ -68556,7 +73962,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     _pendingComposePrefill = {
       to: prefill?.to || "",
       subject: prefill?.subject || "",
-      body: prefill?.body || ""
+      body: prefill?.body || "",
+      recordContext: prefill?.recordContext || null
     };
     try {
       await sdk.Compose.openNewComposeView();
@@ -68565,18 +73972,306 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       throw error;
     }
   }
+  function buildComposeRecordContext(item = null) {
+    if (!item?.id)
+      return null;
+    return {
+      apItemId: String(item.id),
+      vendorName: String(item.vendor_name || item.vendor || item.sender || "Unknown vendor"),
+      invoiceNumber: String(item.invoice_number || "").trim(),
+      amountLabel: formatAmount(item.amount, item.currency)
+    };
+  }
+  function normalizeComposeRecipients(recipients = []) {
+    const source = Array.isArray(recipients) ? recipients : recipients == null ? [] : [recipients];
+    const normalized = [];
+    for (const recipient of source) {
+      const value = String(recipient?.emailAddress || recipient?.address || recipient?.email || recipient || "").trim();
+      if (!value || normalized.includes(value))
+        continue;
+      normalized.push(value);
+    }
+    return normalized.slice(0, 12);
+  }
+  async function collectComposeDraftPayload(composeView) {
+    let draftId = "";
+    let threadId = "";
+    let subject = "";
+    let bodyPreview = "";
+    let recipients = [];
+    try {
+      if (typeof composeView?.getCurrentDraftID === "function") {
+        draftId = await Promise.resolve(composeView.getCurrentDraftID());
+      }
+    } catch (_2) {}
+    if (!draftId) {
+      try {
+        if (typeof composeView?.getDraftID === "function") {
+          draftId = await Promise.resolve(composeView.getDraftID());
+        }
+      } catch (_2) {}
+    }
+    try {
+      threadId = String(composeView?.getThreadID?.() || "").trim();
+    } catch (_2) {}
+    try {
+      subject = String(composeView?.getSubject?.() || "").trim();
+    } catch (_2) {}
+    try {
+      bodyPreview = String(composeView?.getTextContent?.() || "").trim();
+    } catch (_2) {}
+    try {
+      recipients = normalizeComposeRecipients(composeView?.getToRecipients?.() || []);
+    } catch (_2) {}
+    return {
+      draft_id: draftId || undefined,
+      thread_id: threadId || undefined,
+      subject: subject || undefined,
+      recipients,
+      body_preview: bodyPreview ? bodyPreview.slice(0, 600) : undefined
+    };
+  }
+  function buildComposeSearchSeed(payload = {}) {
+    const recipients = Array.isArray(payload?.recipients) ? payload.recipients : [];
+    return String(payload?.subject || recipients[0] || "").trim();
+  }
+  function renderComposeRecordStatus(recordContext) {
+    if (!recordContext)
+      return null;
+    const bar = document.createElement("div");
+    bar.style.cssText = [
+      "display:flex",
+      "align-items:center",
+      "justify-content:space-between",
+      "gap:12px",
+      "padding:7px 14px",
+      "font-size:12px",
+      "background:#ecfdf5",
+      "color:#166534",
+      "border-bottom:1px solid #d1fae5",
+      "font-family:inherit"
+    ].join(";");
+    const copy = document.createElement("div");
+    const summary = [
+      recordContext.vendorName || "Finance record",
+      recordContext.invoiceNumber ? `Invoice ${recordContext.invoiceNumber}` : "",
+      recordContext.amountLabel || ""
+    ].filter(Boolean).join(" · ");
+    copy.textContent = `Clearledgr: linked finance record${summary ? ` — ${summary}` : ""}`;
+    bar.appendChild(copy);
+    if (recordContext.apItemId) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Open record";
+      button.style.cssText = [
+        "border:1px solid #86efac",
+        "background:#ffffff",
+        "color:#166534",
+        "border-radius:999px",
+        "padding:4px 10px",
+        "font:inherit",
+        "font-weight:600",
+        "cursor:pointer",
+        "flex-shrink:0"
+      ].join(";");
+      button.addEventListener("click", () => {
+        navigateInboxRoute("clearledgr/invoice/:id", sdk, { id: recordContext.apItemId });
+      });
+      bar.appendChild(button);
+    }
+    return bar;
+  }
+  function renderComposeRecordChooser({ composeView, queueManager: queueManager2, onLinked }) {
+    const bar = document.createElement("div");
+    bar.style.cssText = [
+      "display:flex",
+      "flex-direction:column",
+      "gap:8px",
+      "padding:8px 14px",
+      "font-size:12px",
+      "background:#f8fafc",
+      "color:#334155",
+      "border-bottom:1px solid #e2e8f0",
+      "font-family:inherit"
+    ].join(";");
+    const topRow = document.createElement("div");
+    topRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap";
+    const copy = document.createElement("div");
+    copy.textContent = "Clearledgr: no finance record linked to this draft yet.";
+    topRow.appendChild(copy);
+    const actions = document.createElement("div");
+    actions.style.cssText = "display:flex;align-items:center;gap:8px;flex-wrap:wrap";
+    const createButton = document.createElement("button");
+    createButton.type = "button";
+    createButton.textContent = "Create finance record";
+    createButton.style.cssText = [
+      "border:1px solid #cbd5e1",
+      "background:#ffffff",
+      "color:#0f172a",
+      "border-radius:999px",
+      "padding:4px 10px",
+      "font:inherit",
+      "font-weight:600",
+      "cursor:pointer"
+    ].join(";");
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.textContent = "Open invoices";
+    openButton.style.cssText = createButton.style.cssText;
+    openButton.addEventListener("click", () => {
+      navigateInboxRoute("clearledgr/invoices", sdk);
+    });
+    actions.appendChild(createButton);
+    actions.appendChild(openButton);
+    topRow.appendChild(actions);
+    bar.appendChild(topRow);
+    const searchRow = document.createElement("div");
+    searchRow.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px";
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.placeholder = "Search vendor, invoice, or email";
+    searchInput.style.cssText = [
+      "width:100%",
+      "padding:6px 10px",
+      "border:1px solid #cbd5e1",
+      "border-radius:8px",
+      "font:inherit",
+      "background:#ffffff",
+      "color:#0f172a"
+    ].join(";");
+    const searchButton = document.createElement("button");
+    searchButton.type = "button";
+    searchButton.textContent = "Find record";
+    searchButton.style.cssText = createButton.style.cssText;
+    searchRow.appendChild(searchInput);
+    searchRow.appendChild(searchButton);
+    bar.appendChild(searchRow);
+    const results = document.createElement("div");
+    results.style.cssText = "display:none;flex-direction:column;gap:6px";
+    bar.appendChild(results);
+    const setBusy = (busy, searchBusy = false) => {
+      createButton.disabled = busy;
+      searchButton.disabled = busy || searchBusy;
+      searchInput.disabled = busy || searchBusy;
+      createButton.style.opacity = busy ? "0.6" : "1";
+      searchButton.style.opacity = busy || searchBusy ? "0.6" : "1";
+    };
+    const renderResults = (items = []) => {
+      results.innerHTML = "";
+      if (!Array.isArray(items) || items.length === 0) {
+        results.style.display = "none";
+        return;
+      }
+      results.style.display = "flex";
+      items.slice(0, 4).forEach((item) => {
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#ffffff";
+        const text = document.createElement("div");
+        text.style.cssText = "min-width:0;flex:1";
+        const title = document.createElement("strong");
+        title.style.cssText = "display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+        title.textContent = item.vendor_name || "Unknown vendor";
+        const detail = document.createElement("span");
+        detail.style.cssText = "color:#64748b";
+        detail.textContent = `${item.invoice_number || "No invoice #"} · ${formatAmount(item.amount, item.currency)}`;
+        text.appendChild(title);
+        text.appendChild(detail);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "Link";
+        button.style.cssText = createButton.style.cssText;
+        button.addEventListener("click", async () => {
+          if (!queueManager2?.linkComposeDraftToItem) {
+            showToast("Compose record linking is still loading. Try again in a moment.", "warning");
+            return;
+          }
+          setBusy(true, false);
+          try {
+            const payload = await collectComposeDraftPayload(composeView);
+            const result = await queueManager2.linkComposeDraftToItem(item, payload);
+            if (result?.ap_item?.id) {
+              showToast(`Linked draft to ${result.ap_item.vendor_name || result.ap_item.invoice_number || "finance record"}.`, "success");
+              onLinked(buildComposeRecordContext(result.ap_item));
+              return;
+            }
+            showToast(result?.reason || "Could not link this draft to the selected record.", "error");
+          } catch (error) {
+            showToast(error?.message || "Could not link this draft right now.", "error");
+          } finally {
+            setBusy(false, false);
+          }
+        });
+        row.appendChild(text);
+        row.appendChild(button);
+        results.appendChild(row);
+      });
+    };
+    createButton.addEventListener("click", async () => {
+      if (!queueManager2?.createRecordFromComposeDraft) {
+        showToast("Compose record creation is still loading. Try again in a moment.", "warning");
+        return;
+      }
+      setBusy(true, false);
+      try {
+        const payload = await collectComposeDraftPayload(composeView);
+        if (!payload.subject && (!Array.isArray(payload.recipients) || payload.recipients.length === 0)) {
+          showToast("Add a recipient or subject before creating a finance record.", "warning");
+          return;
+        }
+        const result = await queueManager2.createRecordFromComposeDraft(payload);
+        if (result?.ap_item?.id) {
+          showToast(String(result?.status || "").toLowerCase() === "already_linked" ? "This draft is already linked to a finance record." : "Finance record created from this draft.", "success");
+          onLinked(buildComposeRecordContext(result.ap_item));
+          return;
+        }
+        showToast(result?.reason || "Could not create a finance record from this draft.", "error");
+      } catch (error) {
+        showToast(error?.message || "Could not create a finance record from this draft.", "error");
+      } finally {
+        setBusy(false, false);
+      }
+    });
+    searchButton.addEventListener("click", async () => {
+      if (!queueManager2?.searchRecordCandidates) {
+        showToast("Compose record search is still loading. Try again in a moment.", "warning");
+        return;
+      }
+      setBusy(false, true);
+      try {
+        const payload = await collectComposeDraftPayload(composeView);
+        const query = String(searchInput.value || buildComposeSearchSeed(payload)).trim();
+        searchInput.value = query;
+        if (!query) {
+          renderResults([]);
+          showToast("Add a subject or recipient before searching for a finance record.", "warning");
+          return;
+        }
+        const items = await queueManager2.searchRecordCandidates(query, { limit: 4 });
+        renderResults(items);
+        if (!items.length) {
+          showToast("No matching finance records found for this draft.", "info");
+        }
+      } catch (error) {
+        renderResults([]);
+        showToast(error?.message || "Could not search finance records right now.", "error");
+      } finally {
+        setBusy(false, false);
+      }
+    });
+    searchInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter")
+        return;
+      event.preventDefault();
+      searchButton.click();
+    });
+    return bar;
+  }
   function initializeSidebar() {
     const container = document.createElement("div");
-    container.className = "cl-sidebar";
+    container.className = "cl-sidebar-host";
     sidebarContainer = container;
     mountSidebar();
-    const logoUrl = getAssetUrl(LOGO_PATH2);
-    sdk.Global.addSidebarContentPanel({
-      title: "Clearledgr AP",
-      iconUrl: logoUrl || null,
-      el: container,
-      hideTitleBar: false
-    });
+    ensureSidebarPanelView();
     const restoredId = readLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID);
     if (restoredId) {
       store_default.update({ selectedItemId: restoredId });
@@ -68588,6 +74283,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const style = document.createElement("style");
     style.id = "cl-appmenu-panel-styles";
     style.textContent = `
+    .cl-appmenu-panel {
+      --cl-panel-accent: #cfe8ff;
+      --cl-panel-border: #dbe7f3;
+      --cl-panel-text: #17324d;
+      --cl-panel-muted: #73859b;
+    }
     .cl-appmenu-panel .aic {
       display: none;
     }
@@ -68598,10 +74299,164 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       margin-top: 0;
     }
     .cl-appmenu-panel .nM.inboxsdk__collapsiblePanel_navItems {
+      display: none;
       padding-top: 0;
+    }
+    .cl-appmenu-panel .inboxsdk__collapsiblePanel_navItems {
+      display: none;
+    }
+    .cl-appmenu-panel-shell {
+      padding: 12px 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .cl-appmenu-panel-cta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      border: 1px solid #b7dafd;
+      border-radius: 16px;
+      background: #cfe8ff;
+      color: #17324d;
+      font: 600 14px/1.2 "DM Sans", sans-serif;
+      padding: 14px 16px;
+      cursor: pointer;
+      box-sizing: border-box;
+      text-align: left;
+    }
+    .cl-appmenu-panel-cta:hover {
+      background: #c2e0ff;
+    }
+    .cl-appmenu-panel-cta-icon {
+      font-size: 22px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .cl-appmenu-panel-cta-copy {
+      display: block;
+      min-width: 0;
+    }
+    .cl-appmenu-panel-label {
+      margin: 0 8px 2px;
+      color: var(--cl-panel-muted);
+      font: 700 11px/1 "DM Sans", sans-serif;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .cl-appmenu-panel-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 4px 6px;
+    }
+    .cl-appmenu-panel-section-title {
+      color: #1b1b1b;
+      font: 700 14px/1.2 "DM Sans", sans-serif;
+    }
+    .cl-appmenu-panel-section-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #455a72;
+      font: 500 20px/1 "DM Sans", sans-serif;
+      cursor: pointer;
+    }
+    .cl-appmenu-panel-section-action:hover {
+      background: #eef4fa;
+    }
+    .cl-appmenu-panel-view-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .cl-appmenu-panel-view-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: #283746;
+      padding: 8px 10px;
+      cursor: pointer;
+      text-align: left;
+      font: 500 13px/1.25 "DM Sans", sans-serif;
+    }
+    .cl-appmenu-panel-view-item:hover {
+      background: #eef4fa;
+    }
+    .cl-appmenu-panel-view-item.is-active {
+      background: #d9eaff;
+      color: #17324d;
+    }
+    .cl-appmenu-panel-view-icon {
+      color: var(--cl-panel-muted);
+      font: 600 11px/1 "Geist Mono", monospace;
+      flex-shrink: 0;
+      width: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .cl-appmenu-panel-view-icon-image {
+      width: 16px;
+      height: 16px;
+      display: block;
+      object-fit: contain;
+      opacity: 0.88;
+    }
+    .cl-appmenu-panel-view-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    .cl-appmenu-panel-view-name {
+      color: #25384a;
+      font: 600 13px/1.2 "DM Sans", sans-serif;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cl-appmenu-panel-view-description {
+      color: var(--cl-panel-muted);
+      font: 500 11px/1.3 "DM Sans", sans-serif;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cl-appmenu-panel-section {
+      display: flex;
+      flex-direction: column;
     }
   `;
     document.head.appendChild(style);
+  }
+  function prepareRouteHost(customRouteView) {
+    const routeEl = customRouteView?.getElement?.();
+    if (!routeEl)
+      return null;
+    routeEl.style.width = "100%";
+    routeEl.style.maxWidth = "none";
+    routeEl.style.padding = "0";
+    routeEl.style.boxSizing = "border-box";
+    return routeEl;
+  }
+  function resolveAppMenuPanelRoot() {
+    const panelRoot = appMenuPanelView?.getElement?.();
+    if (panelRoot instanceof HTMLElement)
+      return panelRoot;
+    const fallbackRoot = document.querySelector(".cl-appmenu-panel");
+    return fallbackRoot instanceof HTMLElement ? fallbackRoot : null;
   }
   function registerThreadHandler() {
     sdk.Conversations.registerThreadViewHandler((threadView) => {
@@ -68612,6 +74467,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return null;
       };
       getId().then(async (threadId) => {
+        setSidebarPanelOpen(true);
         store_default.update({ currentThreadId: threadId });
         let item = store_default.findItemByThreadId(threadId);
         if (item?.id) {
@@ -68654,6 +74510,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }).catch(() => {});
     });
   }
+  function bindRouteSidebarBehavior(customRouteView) {
+    setSidebarPanelOpen(false);
+    customRouteView?.on?.("destroy", () => {
+      window.setTimeout(() => {
+        const hash = String(window.location.hash || "");
+        if (!hash.includes("clearledgr/")) {
+          setSidebarPanelOpen(true);
+        }
+      }, 0);
+    });
+  }
   function openItemInPipeline(item, source = "thread") {
     if (!item?.id)
       return;
@@ -68663,14 +74530,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     };
     store_default.setSelectedItem(String(item.id));
     focusPipelineItem(pipelineScope, item, source);
-    sdk?.Router?.goto?.("clearledgr/pipeline");
+    sdk?.Router?.goto?.("clearledgr/invoices");
   }
   function injectInvoiceBanner(threadView, item) {
     const state = String(item.state || "").toLowerCase();
     const vendor = item.vendor_name || item.vendor || "Unknown vendor";
-    const amount = Number(item.amount);
-    const amountStr = Number.isFinite(amount) ? "$" + amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "";
-    const currency = item.currency || "USD";
+    const amountLabel = formatAmount(item.amount, item.currency);
     const stateConfig = {
       needs_approval: { bg: "#fef9ee", border: "#d97706", text: "#92400e", label: "Needs approval" },
       pending_approval: { bg: "#fef9ee", border: "#d97706", text: "#92400e", label: "Pending approval" },
@@ -68690,7 +74555,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
     const summary = document.createElement("span");
     summary.style.cssText = "flex:1; font-weight:500;";
-    summary.textContent = `${vendor} — ${amountStr} ${currency}`;
+    summary.textContent = amountLabel === "Amount unavailable" ? vendor : `${vendor} — ${amountLabel}`;
     el.appendChild(summary);
     const pill = document.createElement("span");
     pill.style.cssText = `
@@ -68705,7 +74570,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       cursor:pointer; background:${bg}; color:${color}; font-family:inherit;
     `;
       const openBtn = document.createElement("button");
-      openBtn.textContent = "Open in pipeline";
+      openBtn.textContent = "Open in invoices";
       openBtn.style.cssText = btnStyle("transparent", cfg.text, `1px solid ${cfg.border}`);
       openBtn.addEventListener("click", () => {
         openItemInPipeline(item, "thread_banner");
@@ -68757,7 +74622,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             if (typeof threadRowView.addActionButton === "function") {
               threadRowView.addActionButton({
                 type: "ICON_ONLY",
-                title: "Open in pipeline",
+                title: "Open in invoices",
                 iconUrl: getAssetUrl(LOGO_PATH2) || undefined,
                 onClick: () => {
                   openItemInPipeline(item, "thread_row");
@@ -68806,12 +74671,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       headsUpEl.innerHTML = `
       <span style="width:8px;height:8px;border-radius:50%;background:#00D67E;flex-shrink:0"></span>
       <span><strong>Clearledgr</strong> · ${parts.join(" · ")}</span>
-      <span style="margin-left:auto;opacity:0.6;font-size:11px">Open pipeline ›</span>
+      <span style="margin-left:auto;opacity:0.6;font-size:11px">Open invoices ›</span>
     `;
     };
     headsUpEl.addEventListener("click", () => {
       if (sdk?.Router)
-        sdk.Router.goto("clearledgr/pipeline");
+        sdk.Router.goto("clearledgr/invoices");
     });
     try {
       const target = document.querySelector('[role="main"]') || document.body;
@@ -68869,7 +74734,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     try {
       const logoUrl = getAssetUrl(LOGO_PATH2);
       sdk.Toolbars.registerToolbarButtonForList({
-        title: "Clearledgr Pipeline",
+        title: "Clearledgr Invoices",
         iconUrl: logoUrl || undefined,
         section: "METADATA_STATE",
         onClick: () => {
@@ -68965,9 +74830,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return;
     }
     sdk.Compose.registerComposeViewHandler((composeView) => {
+      let composeRecordContext = null;
+      let composeStatusHandle = null;
       if (_pendingComposePrefill) {
         const prefill = _pendingComposePrefill;
         _pendingComposePrefill = null;
+        composeRecordContext = prefill.recordContext || null;
         try {
           if (prefill.to)
             composeView.setToRecipients([{ emailAddress: prefill.to }]);
@@ -68977,9 +74845,49 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             composeView.setBodyHTML(prefill.body.replace(/\n/g, "<br>"));
         } catch (_2) {}
       }
+      const mountComposeRecordStatus = (recordContext) => {
+        if (typeof composeView?.addStatusBar !== "function")
+          return;
+        try {
+          composeStatusHandle?.destroy?.();
+          composeStatusHandle?.remove?.();
+        } catch (_2) {}
+        try {
+          composeStatusHandle = composeView.addStatusBar({
+            height: recordContext ? 34 : 92,
+            addAboveStandardStatusBar: true,
+            el: recordContext ? renderComposeRecordStatus(recordContext) : renderComposeRecordChooser({
+              composeView,
+              queueManager,
+              onLinked(nextRecordContext) {
+                composeRecordContext = nextRecordContext || null;
+                mountComposeRecordStatus(composeRecordContext);
+              }
+            })
+          });
+        } catch (_2) {}
+      };
+      const resolveComposeRecordContext = async () => {
+        if (!composeRecordContext) {
+          composeRecordContext = buildComposeRecordContext(store_default.findItemByThreadId(store_default.currentThreadId));
+        }
+        if (!composeRecordContext && queueManager?.lookupComposeRecord) {
+          try {
+            const payload = await collectComposeDraftPayload(composeView);
+            if (payload.draft_id || payload.thread_id) {
+              const lookup = await queueManager.lookupComposeRecord(payload);
+              if (lookup?.ap_item?.id) {
+                composeRecordContext = buildComposeRecordContext(lookup.ap_item);
+              }
+            }
+          } catch (_2) {}
+        }
+        mountComposeRecordStatus(composeRecordContext);
+      };
+      resolveComposeRecordContext();
       try {
         composeView.on("recipientsChanged", (event) => {
-          const recipients = event?.to?.map((r3) => r3.emailAddress?.toLowerCase()) || [];
+          const recipients = normalizeComposeRecipients(event?.to ?? composeView?.getToRecipients?.() ?? []).map((recipient) => String(recipient || "").toLowerCase());
           const queue = store_default.queueState || [];
           for (const email of recipients) {
             if (!email)
@@ -69008,7 +74916,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     });
     queueManager = new ClearledgrQueueManager;
     await queueManager.init();
-    queueManager.onQueueUpdated((queue, status, agentSessions, tabs, agentInsights, sources, contexts) => {
+    queueManager.onQueueUpdated((queue, status, agentSessions, tabs, agentInsights, sources, contexts, tasks, notes, comments, files) => {
       const queueState = Array.isArray(queue) ? queue : [];
       let selectedItemId = store_default.selectedItemId;
       if (selectedItemId && !queueState.find((i3) => i3.id === selectedItemId || i3.invoice_key === selectedItemId)) {
@@ -69029,6 +74937,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         agentInsightsState: agentInsights instanceof Map ? agentInsights : new Map,
         sourcesState: sources instanceof Map ? sources : new Map,
         contextState: contexts instanceof Map ? contexts : new Map,
+        tasksState: tasks instanceof Map ? tasks : new Map,
+        notesState: notes instanceof Map ? notes : new Map,
+        commentsState: comments instanceof Map ? comments : new Map,
+        filesState: files instanceof Map ? files : new Map,
         selectedItemId
       });
       registerThreadRowLabels();
@@ -69049,7 +74961,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       "clearledgr/home": HomePage,
       "clearledgr/review": ReviewPage,
       "clearledgr/upcoming": UpcomingPage,
-      "clearledgr/pipeline": PipelinePage,
+      "clearledgr/invoices": PipelinePage,
       "clearledgr/activity": ActivityPage,
       "clearledgr/vendors": VendorsPage,
       "clearledgr/templates": TemplatesPage,
@@ -69064,8 +74976,290 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const LEGACY_PAGE_MAP = {
       "clearledgr/team": PAGE_MAP["clearledgr/settings"],
       "clearledgr/company": PAGE_MAP["clearledgr/settings"],
-      "clearledgr/plan": PAGE_MAP["clearledgr/settings"]
+      "clearledgr/plan": PlanPage
     };
+    let directHashSyncInFlight = false;
+    let lastDirectHashRoute = "";
+    let reloadRouteRestoreInFlight = false;
+    let hasRenderedClearledgrRouteThisBoot = false;
+    let lastActiveClearledgrRoute = "";
+    let lastKnownMailboxDocumentTitle = String(document.title || "").trim();
+    const routeBootStartedAt = Date.now();
+    const ROUTE_RESTORE_WINDOW_MS = 5000;
+    function normalizeClearledgrHash(hash = "") {
+      const normalized = String(hash || "").trim().replace(/^#/, "").split("?")[0];
+      return normalized.startsWith("clearledgr/") ? normalized : "";
+    }
+    function buildRouteDocumentTitle(pageTitle = "") {
+      const normalizedTitle = String(pageTitle || "").trim();
+      if (!normalizedTitle)
+        return "";
+      const mailboxEmail = String(sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "").trim();
+      return mailboxEmail ? `${normalizedTitle} - ${mailboxEmail} - Clearledgr Mail` : `${normalizedTitle} - Clearledgr Mail`;
+    }
+    function claimRouteDocumentTitle(pageTitle = "") {
+      const nextTitle = buildRouteDocumentTitle(pageTitle);
+      if (!nextTitle)
+        return () => {};
+      document.title = nextTitle;
+      return () => {
+        window.setTimeout(() => {
+          if (!normalizeClearledgrHash(window.location.hash) && lastKnownMailboxDocumentTitle) {
+            document.title = lastKnownMailboxDocumentTitle;
+          }
+        }, 0);
+      };
+    }
+    function buildClearledgrRouteHash(routeId, params = null) {
+      if (!routeId)
+        return "";
+      if (routeId === "clearledgr/invoice/:id") {
+        const id = encodeURIComponent(String(params?.id || ""));
+        return id ? `clearledgr/invoice/${id}` : "";
+      }
+      if (routeId === "clearledgr/vendor/:name") {
+        const name = encodeURIComponent(String(params?.name || ""));
+        return name ? `clearledgr/vendor/${name}` : "";
+      }
+      if (routeId === "clearledgr/invoices-view/:ref") {
+        const ref = encodeURIComponent(String(params?.ref || ""));
+        return ref ? `clearledgr/invoices-view/${ref}` : "";
+      }
+      if (routeId === "clearledgr/pipeline-view/:ref") {
+        const ref = encodeURIComponent(String(params?.ref || ""));
+        return ref ? `clearledgr/pipeline-view/${ref}` : "";
+      }
+      return normalizeClearledgrHash(routeId);
+    }
+    function rememberActiveClearledgrRoute(routeIdOrHash, params = null) {
+      const normalized = params ? buildClearledgrRouteHash(routeIdOrHash, params) : normalizeClearledgrHash(routeIdOrHash);
+      if (!normalized)
+        return;
+      lastActiveClearledgrRoute = normalized;
+      hasRenderedClearledgrRouteThisBoot = true;
+    }
+    function navigationWasReload() {
+      try {
+        const [navigationEntry] = globalThis.performance?.getEntriesByType?.("navigation") || [];
+        if (navigationEntry?.type)
+          return navigationEntry.type === "reload";
+      } catch (_2) {}
+      try {
+        return globalThis.performance?.navigation?.type === 1;
+      } catch (_2) {}
+      return false;
+    }
+    function persistReloadedClearledgrRoute() {
+      const activeHash = normalizeClearledgrHash(window.location.hash) || lastActiveClearledgrRoute;
+      if (!activeHash)
+        return;
+      try {
+        window.sessionStorage?.setItem?.(STORAGE_RELOAD_ROUTE, JSON.stringify({
+          hash: activeHash,
+          ts: Date.now(),
+          pathname: String(window.location.pathname || "")
+        }));
+      } catch (_2) {}
+    }
+    function readReloadedClearledgrRoute() {
+      try {
+        const raw = window.sessionStorage?.getItem?.(STORAGE_RELOAD_ROUTE);
+        if (!raw)
+          return null;
+        const parsed = JSON.parse(raw);
+        const hash = normalizeClearledgrHash(parsed?.hash || "");
+        const ts = Number(parsed?.ts || 0);
+        const pathname = String(parsed?.pathname || "").trim();
+        if (!hash)
+          return null;
+        if (!Number.isFinite(ts) || Date.now() - ts > ROUTE_RESTORE_WINDOW_MS)
+          return null;
+        if (pathname && pathname !== String(window.location.pathname || ""))
+          return null;
+        return hash;
+      } catch (_2) {
+        return null;
+      }
+    }
+    function clearReloadedClearledgrRoute() {
+      try {
+        window.sessionStorage?.removeItem?.(STORAGE_RELOAD_ROUTE);
+      } catch (_2) {}
+    }
+    function parseDirectHashRoute(hash = "") {
+      const normalized = String(hash || "").trim().replace(/^#/, "").split("?")[0];
+      if (!normalized.startsWith("clearledgr/"))
+        return null;
+      if (PAGE_MAP[normalized] || LEGACY_PAGE_MAP[normalized] || normalized === "clearledgr/pipeline") {
+        return { routeId: normalized, params: null };
+      }
+      if (normalized.startsWith("clearledgr/invoice/")) {
+        return {
+          routeId: "clearledgr/invoice/:id",
+          params: { id: decodeURIComponent(normalized.slice("clearledgr/invoice/".length)) }
+        };
+      }
+      if (normalized.startsWith("clearledgr/vendor/")) {
+        return {
+          routeId: "clearledgr/vendor/:name",
+          params: { name: decodeURIComponent(normalized.slice("clearledgr/vendor/".length)) }
+        };
+      }
+      if (normalized.startsWith("clearledgr/invoices-view/")) {
+        return {
+          routeId: "clearledgr/invoices-view/:ref",
+          params: { ref: decodeURIComponent(normalized.slice("clearledgr/invoices-view/".length)) }
+        };
+      }
+      if (normalized.startsWith("clearledgr/pipeline-view/")) {
+        return {
+          routeId: "clearledgr/pipeline-view/:ref",
+          params: { ref: decodeURIComponent(normalized.slice("clearledgr/pipeline-view/".length)) }
+        };
+      }
+      return null;
+    }
+    async function readPendingDirectHashRoute() {
+      try {
+        if (globalThis.chrome?.runtime?.sendMessage) {
+          const response = await globalThis.chrome.runtime.sendMessage({ action: "getPendingDirectRouteForTab" });
+          const pending = response?.pending || null;
+          const hash = String(pending?.hash || "").trim();
+          const ts = Number(pending?.ts || 0);
+          const pathname = String(pending?.pathname || "").trim();
+          if (hash.startsWith("clearledgr/") && Number.isFinite(ts) && Date.now() - ts <= 30000) {
+            if (!pathname || pathname === String(window.location.pathname || "")) {
+              return hash;
+            }
+          }
+        }
+      } catch (_2) {}
+      try {
+        const attrValue = document?.documentElement?.getAttribute?.(ATTR_PENDING_DIRECT_ROUTE);
+        const normalizedAttrValue = String(attrValue || "").trim();
+        if (normalizedAttrValue.startsWith("clearledgr/"))
+          return normalizedAttrValue;
+      } catch (_2) {}
+      try {
+        const raw = window.sessionStorage?.getItem?.(STORAGE_PENDING_DIRECT_ROUTE);
+        if (!raw)
+          return null;
+        const parsed = JSON.parse(raw);
+        const hash = String(parsed?.hash || "").trim();
+        const ts = Number(parsed?.ts || 0);
+        if (!hash.startsWith("clearledgr/"))
+          return null;
+        if (!Number.isFinite(ts) || Date.now() - ts > 20000)
+          return null;
+        return hash;
+      } catch (_2) {}
+      try {
+        if (globalThis.chrome?.storage?.session?.get) {
+          const payload = await globalThis.chrome.storage.session.get([STORAGE_PENDING_DIRECT_ROUTE]);
+          const pending = payload?.[STORAGE_PENDING_DIRECT_ROUTE];
+          const hash = String(pending?.hash || "").trim();
+          const ts = Number(pending?.ts || 0);
+          const pathname = String(pending?.pathname || "").trim();
+          if (!hash.startsWith("clearledgr/"))
+            return null;
+          if (!Number.isFinite(ts) || Date.now() - ts > 20000)
+            return null;
+          if (pathname && pathname !== String(window.location.pathname || ""))
+            return null;
+          return hash;
+        }
+      } catch (_2) {}
+      return null;
+    }
+    async function clearPendingDirectHashRoute() {
+      try {
+        if (globalThis.chrome?.runtime?.sendMessage) {
+          await globalThis.chrome.runtime.sendMessage({ action: "clearPendingDirectRouteForTab" });
+        }
+      } catch (_2) {}
+      try {
+        document?.documentElement?.removeAttribute?.(ATTR_PENDING_DIRECT_ROUTE);
+      } catch (_2) {}
+      try {
+        window.sessionStorage?.removeItem?.(STORAGE_PENDING_DIRECT_ROUTE);
+      } catch (_2) {}
+      try {
+        if (globalThis.chrome?.storage?.session?.remove) {
+          await globalThis.chrome.storage.session.remove(STORAGE_PENDING_DIRECT_ROUTE);
+        }
+      } catch (_2) {}
+    }
+    async function maybeRestoreReloadedClearledgrRoute({ force = false } = {}) {
+      if (!sdk?.Router || reloadRouteRestoreInFlight || hasRenderedClearledgrRouteThisBoot)
+        return false;
+      if (!navigationWasReload())
+        return false;
+      if (normalizeClearledgrHash(window.location.hash))
+        return false;
+      if (!force && Date.now() - routeBootStartedAt > ROUTE_RESTORE_WINDOW_MS)
+        return false;
+      const reloadHash = readReloadedClearledgrRoute();
+      const target = parseDirectHashRoute(reloadHash || "");
+      if (!target)
+        return false;
+      reloadRouteRestoreInFlight = true;
+      try {
+        sdk.Router.goto(target.routeId, target.params || undefined);
+        clearReloadedClearledgrRoute();
+        return true;
+      } catch (_2) {
+        return false;
+      } finally {
+        window.setTimeout(() => {
+          reloadRouteRestoreInFlight = false;
+        }, 0);
+      }
+    }
+    async function syncDirectHashRoute({ force = false } = {}) {
+      if (!sdk?.Router || directHashSyncInFlight)
+        return;
+      const hash = String(window.location.hash || "").trim();
+      const pendingHash = !hash.startsWith("#clearledgr/") ? await readPendingDirectHashRoute() : null;
+      const target = parseDirectHashRoute(hash) || parseDirectHashRoute(pendingHash || "");
+      if (!target) {
+        lastDirectHashRoute = "";
+        if (pendingHash && !parseDirectHashRoute(pendingHash)) {
+          await clearPendingDirectHashRoute();
+        }
+        return;
+      }
+      const expectedHash = buildClearledgrRouteHash(target.routeId, target.params || undefined) || normalizeClearledgrHash(pendingHash || target.routeId);
+      const routeSignature = `#${expectedHash || pendingHash || target.routeId}`;
+      if (!force && routeSignature === lastDirectHashRoute && normalizeClearledgrHash(window.location.hash) === expectedHash)
+        return;
+      directHashSyncInFlight = true;
+      try {
+        sdk.Router.goto(target.routeId, target.params || undefined);
+        const confirmRouteActivation = async () => {
+          const activeHash = normalizeClearledgrHash(window.location.hash);
+          if (activeHash === expectedHash) {
+            lastDirectHashRoute = routeSignature;
+            rememberActiveClearledgrRoute(activeHash);
+            await clearPendingDirectHashRoute();
+            return;
+          }
+          lastDirectHashRoute = "";
+        };
+        if (normalizeClearledgrHash(window.location.hash) === expectedHash) {
+          await confirmRouteActivation();
+        } else {
+          window.setTimeout(() => {
+            confirmRouteActivation();
+          }, 120);
+        }
+      } catch (_2) {
+        lastDirectHashRoute = "";
+      } finally {
+        window.setTimeout(() => {
+          directHashSyncInFlight = false;
+        }, 0);
+      }
+    }
     function clearNavItemViews(handles) {
       handles.forEach((handle) => {
         try {
@@ -69073,6 +75267,188 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         } catch (_2) {}
       });
       handles.length = 0;
+    }
+    function saveCurrentPipelineView() {
+      const pipelineScope = {
+        orgId: queueManager?.runtimeConfig?.organizationId || "default",
+        userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || ""
+      };
+      const currentPreferences = readPipelinePreferences(pipelineScope);
+      const suggestedName = String((currentPreferences?.activeSliceId || "view").replace(/_/g, " ").replace(/\b\w/g, (match) => match.toUpperCase())).trim() || "My view";
+      const name = String(window.prompt("Name this view", suggestedName) || "").trim();
+      if (!name)
+        return;
+      createSavedPipelineView(pipelineScope, {
+        name,
+        description: `Saved from ${currentPreferences?.activeSliceId ? currentPreferences.activeSliceId.replace(/_/g, " ") : "the current queue"}.`,
+        pinned: true,
+        snapshot: currentPreferences
+      });
+      rebuildMenuNavigation();
+      showToast(`Saved "${name}" to Views.`, "success");
+    }
+    async function handlePrimaryAppMenuAction() {
+      const currentItem = store_default.getCurrentItem?.() || null;
+      const threadId = String(store_default.currentThreadId || "").trim();
+      if (currentItem?.id) {
+        navigateInboxRoute("clearledgr/invoice/:id", sdk, { id: currentItem.id });
+        return;
+      }
+      if (threadId && queueManager?.recoverCurrentThread) {
+        store_default.setSelectedItem?.(null);
+        await setSidebarPanelOpen(true);
+        try {
+          const result = await queueManager.recoverCurrentThread(threadId);
+          const recoveredItem = result?.item || null;
+          if (recoveredItem?.id) {
+            queueManager.upsertQueueItem?.(recoveredItem);
+            queueManager.emitQueueUpdated?.();
+            store_default.update({ selectedItemId: recoveredItem.id });
+            writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, recoveredItem.id);
+            navigateInboxRoute("clearledgr/invoice/:id", sdk, { id: recoveredItem.id });
+            showToast("Finance record ready from this email.", "success");
+            return;
+          }
+        } catch (_2) {}
+        showToast("Use the right-hand Clearledgr panel to create a record from this email or link it to an existing record.", "info");
+        return;
+      }
+      navigateInboxRoute(DEFAULT_ROUTE, sdk);
+      showToast("Open an invoice email, then use New record again to create or link a finance record from that email.", "info");
+    }
+    function renderAppMenuPanelChrome({ workspaceRoutes = [], pinnedViews = [], configurationRoutes = [], libraryRoutes = [] } = {}) {
+      const panelRoot = resolveAppMenuPanelRoot();
+      if (!panelRoot)
+        return;
+      const navContainer = panelRoot.querySelector(".nM.inboxsdk__collapsiblePanel_navItems, .inboxsdk__collapsiblePanel_navItems");
+      const currentHash = normalizeClearledgrHash(window.location.hash) || lastActiveClearledgrRoute;
+      let shell = panelRoot.querySelector(".cl-appmenu-panel-shell");
+      if (!(shell instanceof HTMLElement)) {
+        shell = document.createElement("div");
+        shell.className = "cl-appmenu-panel-shell";
+        if (navContainer?.parentNode) {
+          navContainer.parentNode.insertBefore(shell, navContainer);
+        } else {
+          panelRoot.appendChild(shell);
+        }
+      }
+      shell.innerHTML = "";
+      const cta = document.createElement("button");
+      cta.type = "button";
+      cta.className = "cl-appmenu-panel-cta";
+      cta.innerHTML = `
+      <span class="cl-appmenu-panel-cta-icon">+</span>
+      <span class="cl-appmenu-panel-cta-copy">New record</span>
+    `;
+      cta.addEventListener("click", () => {
+        handlePrimaryAppMenuAction();
+      });
+      shell.appendChild(cta);
+      const renderSection = (title, rows = [], options = {}) => {
+        if (!Array.isArray(rows) || rows.length === 0)
+          return;
+        const section = document.createElement("div");
+        section.className = "cl-appmenu-panel-section";
+        if (title) {
+          if (options.trailingActionLabel) {
+            const header = document.createElement("div");
+            header.className = "cl-appmenu-panel-section-header";
+            header.innerHTML = `
+            <span class="cl-appmenu-panel-section-title">${title}</span>
+            <button type="button" class="cl-appmenu-panel-section-action" aria-label="${options.trailingActionAriaLabel || options.trailingActionLabel}">${options.trailingActionLabel}</button>
+          `;
+            header.querySelector(".cl-appmenu-panel-section-action")?.addEventListener("click", () => {
+              options.onTrailingAction?.();
+            });
+            section.appendChild(header);
+          } else {
+            const label = document.createElement("div");
+            label.className = "cl-appmenu-panel-label";
+            label.textContent = title;
+            section.appendChild(label);
+          }
+        }
+        const list = document.createElement("div");
+        list.className = "cl-appmenu-panel-view-list";
+        section.appendChild(list);
+        rows.forEach((row) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "cl-appmenu-panel-view-item";
+          if (row.active)
+            button.classList.add("is-active");
+          const icon = document.createElement("span");
+          icon.className = "cl-appmenu-panel-view-icon";
+          if (row.iconUrl) {
+            const iconImage = document.createElement("img");
+            iconImage.className = "cl-appmenu-panel-view-icon-image";
+            iconImage.alt = "";
+            iconImage.src = row.iconUrl;
+            icon.appendChild(iconImage);
+          } else {
+            icon.textContent = row.iconText || "•";
+          }
+          const meta = document.createElement("span");
+          meta.className = "cl-appmenu-panel-view-meta";
+          const name = document.createElement("span");
+          name.className = "cl-appmenu-panel-view-name";
+          name.textContent = String(row.name || "Route");
+          meta.appendChild(name);
+          if (row.description) {
+            const description = document.createElement("span");
+            description.className = "cl-appmenu-panel-view-description";
+            description.textContent = String(row.description || "");
+            meta.appendChild(description);
+          }
+          button.appendChild(icon);
+          button.appendChild(meta);
+          button.addEventListener("click", () => {
+            row.onClick?.();
+          });
+          list.appendChild(button);
+        });
+        shell.appendChild(section);
+      };
+      renderSection("Workspace", workspaceRoutes.map((route) => ({
+        name: route.title,
+        iconUrl: getRouteIconUrl(route),
+        active: currentHash === normalizeClearledgrHash(route.id),
+        onClick: () => navigateInboxRoute(route.id, sdk)
+      })));
+      const viewsToRender = Array.isArray(pinnedViews) ? pinnedViews.slice(0, 6) : [];
+      const viewRows = viewsToRender.length > 0 ? viewsToRender.map((view) => {
+        const viewHash = buildClearledgrRouteHash(view.id, view.routeParams || undefined);
+        return {
+          name: String(view?.name || view?.title || "Saved view"),
+          description: String(view?.description || "Open this AP queue view in Gmail."),
+          iconText: "▸",
+          active: Boolean(viewHash && currentHash === viewHash),
+          onClick: () => navigateInboxRoute(view.id, sdk, view.routeParams || undefined)
+        };
+      }) : [{
+        name: "Save your first view",
+        description: "Pin the queues your finance team comes back to every day.",
+        iconText: "+",
+        active: false,
+        onClick: saveCurrentPipelineView
+      }];
+      renderSection("Views", viewRows, {
+        trailingActionLabel: "+",
+        trailingActionAriaLabel: "Save current view",
+        onTrailingAction: saveCurrentPipelineView
+      });
+      renderSection("Configurations", configurationRoutes.map((route) => ({
+        name: route.title,
+        iconUrl: getRouteIconUrl(route),
+        active: currentHash === normalizeClearledgrHash(route.id),
+        onClick: () => navigateInboxRoute(route.id, sdk)
+      })));
+      renderSection("Templates", libraryRoutes.map((route) => ({
+        name: route.title,
+        iconUrl: getRouteIconUrl(route),
+        active: currentHash === normalizeClearledgrHash(route.id),
+        onClick: () => navigateInboxRoute(route.id, sdk)
+      })));
     }
     async function rebuildMenuNavigation() {
       if (!routeAccessResolved)
@@ -69085,35 +75461,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const routeOptions = currentRouteAccess;
       const routePreferences = readRoutePreferences(routeOptions);
       const menuRoutes = getMenuNavRoutes(routePreferences, routeOptions);
+      const workspaceRoutes = menuRoutes.filter((route) => APPMENU_WORKSPACE_ROUTE_IDS.has(route.id));
       const pipelineScope = {
         orgId: queueManager?.runtimeConfig?.organizationId || "default",
         userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || ""
       };
       const pinnedViewRoutes = getPinnedPipelineViews(readPipelinePreferences(pipelineScope)).slice(0, 3).map((view) => ({
-        title: `View: ${view.name}`,
-        id: "clearledgr/pipeline-view/:ref",
+        title: view.name,
+        name: view.name,
+        description: view.description || "Pinned AP queue view.",
+        id: "clearledgr/invoices-view/:ref",
         routeParams: { ref: getPipelineViewRef(view) },
         iconUrl: getPipelineViewIconUrl()
       }));
       clearNavItemViews(appMenuNavItemViews);
       clearNavItemViews(fallbackNavItemViews);
       if (appMenuPanelView && typeof appMenuPanelView.addNavItem === "function") {
-        menuRoutes.forEach((route) => {
-          const navHandle = appMenuPanelView.addNavItem({
-            name: route.title,
-            routeID: route.id,
-            iconUrl: getRouteIconUrl(route)
-          });
-          appMenuNavItemViews.push(navHandle);
-        });
-        pinnedViewRoutes.forEach((route) => {
-          const navHandle = appMenuPanelView.addNavItem({
-            name: route.title,
-            routeID: route.id,
-            routeParams: route.routeParams,
-            iconUrl: route.iconUrl
-          });
-          appMenuNavItemViews.push(navHandle);
+        renderAppMenuPanelChrome({
+          workspaceRoutes,
+          pinnedViews: pinnedViewRoutes,
+          configurationRoutes: menuRoutes.filter((route) => APPMENU_CONFIGURATION_ROUTE_IDS.has(route.id)),
+          libraryRoutes: menuRoutes.filter((route) => APPMENU_LIBRARY_ROUTE_IDS.has(route.id))
         });
         return;
       }
@@ -69208,9 +75576,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       bootstrapCache = null;
     }
     getBootstrap();
-    sdk.Router.handleCustomRoute("clearledgr/pipeline-view/:ref", async (customRouteView) => {
+    sdk.Router.handleCustomRoute("clearledgr/invoices-view/:ref", async (customRouteView) => {
+      bindRouteSidebarBehavior(customRouteView);
+      const releaseDocumentTitle = claimRouteDocumentTitle("Saved View");
+      customRouteView?.on?.("destroy", releaseDocumentTitle);
       const params = customRouteView.getParams?.() || {};
-      const rawRef = params.ref || window.location.hash.split("clearledgr/pipeline-view/")[1]?.split("?")[0] || "";
+      const rawRef = params.ref || window.location.hash.split("clearledgr/invoices-view/")[1]?.split("?")[0] || "";
       const pipelineScope = {
         orgId: queueManager?.runtimeConfig?.organizationId || "default",
         userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || ""
@@ -69231,14 +75602,24 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         clearPipelineNavigation(pipelineScope);
         writePipelinePreferences(pipelineScope, targetView.snapshot);
       }
-      sdk.Router.goto("clearledgr/pipeline");
+      sdk.Router.goto("clearledgr/invoices");
       try {
         customRouteView.destroy?.();
       } catch (_2) {}
     });
+    sdk.Router.handleCustomRoute("clearledgr/pipeline", () => {
+      sdk.Router.goto("clearledgr/invoices");
+    });
+    sdk.Router.handleCustomRoute("clearledgr/pipeline-view/:ref", (routeView) => {
+      const ref = routeView.getParams?.()?.ref || "";
+      sdk.Router.goto("clearledgr/invoices-view/" + ref);
+    });
     sdk.Router.handleCustomRoute("clearledgr/invoice/:id", async (customRouteView) => {
+      bindRouteSidebarBehavior(customRouteView);
+      const releaseDocumentTitle = claimRouteDocumentTitle("Record Detail");
+      customRouteView?.on?.("destroy", releaseDocumentTitle);
       const container = document.createElement("div");
-      container.className = "cl-route";
+      container.className = "cl-route cl-route-record-detail";
       const style = document.createElement("style");
       style.textContent = ROUTE_CSS;
       container.appendChild(style);
@@ -69248,15 +75629,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       container.appendChild(topbar);
       const pageMount = document.createElement("div");
       container.appendChild(pageMount);
-      const routeEl = customRouteView.getElement();
+      const routeEl = prepareRouteHost(customRouteView);
       routeEl.appendChild(container);
       const params = customRouteView.getParams?.() || {};
       const rawId = resolveRecordRouteId(params, window.location.hash);
+      rememberActiveClearledgrRoute("clearledgr/invoice/:id", { id: rawId });
+      rebuildMenuNavigation();
       const orgId = workspaceShellApi.orgId();
       const navigate = (routeId, params2) => sdk.Router.goto(routeId, params2);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
       const bootstrap2 = await getBootstrap();
-      J(html19`<${InvoiceDetailPage}
+      J(html20`<${InvoiceDetailPage}
       api=${workspaceShellApi.api}
       bootstrap=${bootstrap2}
       toast=${workspaceShellApi.toast}
@@ -69267,6 +75650,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     />`, pageMount);
     });
     sdk.Router.handleCustomRoute("clearledgr/vendor/:name", async (customRouteView) => {
+      bindRouteSidebarBehavior(customRouteView);
+      const releaseDocumentTitle = claimRouteDocumentTitle("Vendor Detail");
+      customRouteView?.on?.("destroy", releaseDocumentTitle);
       const container = document.createElement("div");
       container.className = "cl-route";
       const style = document.createElement("style");
@@ -69278,15 +75664,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       container.appendChild(topbar);
       const pageMount = document.createElement("div");
       container.appendChild(pageMount);
-      const routeEl = customRouteView.getElement();
+      const routeEl = prepareRouteHost(customRouteView);
       routeEl.appendChild(container);
       const params = customRouteView.getParams?.() || {};
       const rawName = resolveVendorRouteName(params, window.location.hash);
+      rememberActiveClearledgrRoute("clearledgr/vendor/:name", { name: rawName });
+      rebuildMenuNavigation();
       const orgId = workspaceShellApi.orgId();
       const navigate = (routeId, params2) => sdk.Router.goto(routeId, params2);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
       const bootstrap2 = await getBootstrap();
-      J(html19`<${VendorDetailPage}
+      J(html20`<${VendorDetailPage}
       api=${workspaceShellApi.api}
       bootstrap=${bootstrap2}
       toast=${workspaceShellApi.toast}
@@ -69301,6 +75689,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (!PageComponent)
         continue;
       sdk.Router.handleCustomRoute(route.id, async (customRouteView) => {
+        bindRouteSidebarBehavior(customRouteView);
+        rememberActiveClearledgrRoute(route.id);
+        rebuildMenuNavigation();
+        const releaseDocumentTitle = claimRouteDocumentTitle(route.title);
+        customRouteView?.on?.("destroy", releaseDocumentTitle);
         const container = document.createElement("div");
         container.className = "cl-route";
         const style = document.createElement("style");
@@ -69314,7 +75707,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         }
         const pageMount = document.createElement("div");
         container.appendChild(pageMount);
-        const routeEl = customRouteView.getElement();
+        const routeEl = prepareRouteHost(customRouteView);
         routeEl.appendChild(container);
         const orgId = workspaceShellApi.orgId();
         const navigate = (routeId, params) => sdk.Router.goto(routeId, params);
@@ -69332,17 +75725,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const bootstrap2 = await getBootstrap();
           const routeOptions = { capabilities: getCapabilities(bootstrap2) };
           if (!canViewRoute(route, routeOptions)) {
-            J(html19`
+            J(html20`
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
-              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Pipeline</button>
+              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Invoices</button>
             </div>
           `, pageMount);
             return;
           }
           const routePreferences = readRoutePreferences(routeOptions);
-          J(html19`<${PageComponent}
+          J(html20`<${PageComponent}
           bootstrap=${bootstrap2}
           api=${workspaceShellApi.api}
           toast=${workspaceShellApi.toast}
@@ -69365,6 +75758,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     for (const [routeId, PageComponent] of Object.entries(LEGACY_PAGE_MAP)) {
       sdk.Router.handleCustomRoute(routeId, async (customRouteView) => {
+        bindRouteSidebarBehavior(customRouteView);
+        rememberActiveClearledgrRoute(routeId);
+        rebuildMenuNavigation();
+        const releaseDocumentTitle = claimRouteDocumentTitle(routeId === "clearledgr/plan" ? "Billing" : "Settings");
+        customRouteView?.on?.("destroy", releaseDocumentTitle);
         const container = document.createElement("div");
         container.className = "cl-route";
         const style = document.createElement("style");
@@ -69372,11 +75770,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         container.appendChild(style);
         const topbar = document.createElement("div");
         topbar.className = "topbar";
-        topbar.innerHTML = "<h2>Settings</h2><p>Team, workspace, and billing.</p>";
+        if (routeId === "clearledgr/plan") {
+          topbar.innerHTML = "<h2>Billing</h2><p>Plan, usage, and workspace limits.</p>";
+        } else {
+          topbar.innerHTML = "<h2>Settings</h2><p>Team, workspace, and billing.</p>";
+        }
         container.appendChild(topbar);
         const pageMount = document.createElement("div");
         container.appendChild(pageMount);
-        customRouteView.getElement().appendChild(container);
+        prepareRouteHost(customRouteView)?.appendChild(container);
         const orgId = workspaceShellApi.orgId();
         const navigate = (nextRouteId, params) => sdk.Router.goto(nextRouteId, params);
         const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
@@ -69384,17 +75786,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const bootstrap2 = await getBootstrap();
           const routeOptions = { capabilities: getCapabilities(bootstrap2) };
           if (settingsRoute && !canViewRoute(settingsRoute, routeOptions)) {
-            J(html19`
+            J(html20`
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
-              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Pipeline</button>
+              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Invoices</button>
             </div>
           `, pageMount);
             return;
           }
           const routePreferences = readRoutePreferences(routeOptions);
-          J(html19`<${PageComponent}
+          J(html20`<${PageComponent}
           bootstrap=${bootstrap2}
           api=${workspaceShellApi.api}
           toast=${workspaceShellApi.toast}
@@ -69457,6 +75859,30 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         rebuildMenuNavigation();
       }
     }
+    window.addEventListener("pagehide", persistReloadedClearledgrRoute, true);
+    window.addEventListener("beforeunload", persistReloadedClearledgrRoute, true);
+    window.addEventListener("hashchange", () => {
+      const currentClearledgrHash = normalizeClearledgrHash(window.location.hash);
+      if (currentClearledgrHash) {
+        lastActiveClearledgrRoute = currentClearledgrHash;
+      } else {
+        lastKnownMailboxDocumentTitle = String(document.title || "").trim() || lastKnownMailboxDocumentTitle;
+      }
+      rebuildMenuNavigation();
+      window.setTimeout(async () => {
+        const restored = await maybeRestoreReloadedClearledgrRoute();
+        if (!restored) {
+          await syncDirectHashRoute();
+        }
+      }, 0);
+    });
+    window.setTimeout(async () => {
+      const restored = await maybeRestoreReloadedClearledgrRoute({ force: true });
+      if (!restored) {
+        await syncDirectHashRoute({ force: true });
+      }
+    }, 0);
+    window.setTimeout(() => clearReloadedClearledgrRoute(), ROUTE_RESTORE_WINDOW_MS);
   }
   bootstrap();
   console.log(`

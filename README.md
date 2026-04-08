@@ -31,6 +31,7 @@ AP v1 is already implemented as a real product surface in this codebase. The shi
 The main remaining gap to launch is not core product implementation. It is live-environment proof and operating discipline: staging/sandbox verification, deployment/config freeze, post-launch monitoring ownership, and continued product polish.
 
 Use this README plus `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_LAUNCH_READINESS_TRACKER.md` for current product and launch posture. Treat `/Users/mombalam/Desktop/Clearledgr.v1/TODOS.md` as deferred work only, not as an implementation-completeness ledger.
+For Railway deployment, use `/Users/mombalam/Desktop/Clearledgr.v1/docs/RAILWAY_DEPLOYMENT.md`.
 
 For pilot hardening and wedge-truth evaluation, use `/Users/mombalam/Desktop/Clearledgr.v1/docs/WEDGE_QUALITY_SCORECARD.md` as the operating scorecard for reliability, context-switch reduction, and elimination of approval chasing / ERP re-entry.
 
@@ -196,6 +197,17 @@ uvicorn main:app --host 0.0.0.0 --port 8010 --reload
 - API docs: `http://localhost:8010/docs`
 - ReDoc: `http://localhost:8010/redoc`
 - Optional workspace shell (if enabled): `http://localhost:8010/workspace`
+
+## Railway Deployment
+
+Clearledgr is now deployment-ready for a split Railway topology:
+
+- `api` service: `sh scripts/start-api.sh`
+- `worker` service: `sh scripts/start-worker.sh`
+- managed Postgres
+- Redis strongly recommended
+
+Use `/Users/mombalam/Desktop/Clearledgr.v1/docs/RAILWAY_DEPLOYMENT.md` for the exact env, Slack/Gmail callback URLs, and Gmail extension build command.
 
 ### 5. Run core regression slices
 

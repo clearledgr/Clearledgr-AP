@@ -756,8 +756,10 @@ def test_execute_route_low_risk_for_approval_success_and_idempotent_replay():
 
     assert first["status"] == "pending_approval"
     assert first["audit_event_id"]
+    assert first["agent_loop"]["owner"] == "finance_agent_loop"
     assert second["status"] == "pending_approval"
     assert second["idempotency_replayed"] is True
+    assert second["agent_loop"]["idempotency_replayed"] is True
     assert len(db.audit_rows) == 1
 
 
@@ -1711,11 +1713,55 @@ def test_refresh_invoice_record_from_extraction_clears_stale_runtime_failure():
     assert seeded is not None
     assert seeded["exception_code"] is None
     assert seeded["exception_severity"] is None
-    assert seeded["last_error"] is None
-    assert seeded["metadata"]["exception_code"] is None
-    assert seeded["metadata"]["exception_severity"] is None
-    assert seeded["metadata"]["planner_error"] is None
-    assert seeded["metadata"]["workflow_error"] is None
+
+
+def test_refresh_invoice_record_from_extraction_overwrites_stale_existing_fields_on_repair():
+    db = _FakeDB()
+    db.items["ap-stale-refresh-1"] = {
+        "id": "ap-stale-refresh-1",
+        "organization_id": "default",
+        "thread_id": "gmail-thread-stale-refresh-1",
+        "message_id": "gmail-message-stale-refresh-1",
+        "state": "received",
+        "vendor_name": "F mae ia",
+        "invoice_number": "000127",
+        "amount": 0.0,
+        "currency": "USD",
+        "due_date": None,
+        "subject": "Old subject",
+        "sender": "old@example.test",
+        "metadata": {},
+    }
+    runtime = _runtime(db)
+
+    result = runtime.refresh_invoice_record_from_extraction(
+        {
+            "organization_id": "default",
+            "thread_id": "gmail-thread-stale-refresh-1",
+            "message_id": "gmail-message-stale-refresh-1",
+            "sender": "Mo Mbalam <israelmbalam@gmail.com>",
+            "subject": "Re: Tuition fees from Little Learners Nursery and Preschool",
+            "vendor_name": "Little learners nursery and preschool",
+            "amount": 5000.0,
+            "currency": "GHS",
+            "invoice_number": "000127",
+            "due_date": "2026-04-16",
+            "primary_source": "attachment",
+            "intake_source": "gmail_replay_refresh",
+            "field_confidences": {"vendor": 0.94, "amount": 0.95, "invoice_number": 0.94, "due_date": 0.89},
+        },
+        attachments=[{"filename": "invoice.pdf"}],
+        correlation_id="corr-stale-refresh-1",
+        refresh_reason="historical_repair_pass",
+    )
+
+    assert result["status"] == "refreshed"
+    seeded = db.get_ap_item("ap-stale-refresh-1")
+    assert seeded is not None
+    assert seeded["vendor_name"] == "Little learners nursery and preschool"
+    assert seeded["amount"] == 5000.0
+    assert seeded["currency"] == "GHS"
+    assert seeded["due_date"] == "2026-04-16"
     assert seeded["metadata"]["processing_status"] == "extraction_refreshed"
 
 
@@ -1754,6 +1800,56 @@ def test_execute_ap_invoice_processing_invokes_invoice_workflow_directly():
     assert result["status"] == "processed"
     assert result["execution_mode"] == "finance_agent_runtime"
     assert result["agent_status"] == "completed"
+
+
+def test_execute_ap_invoice_processing_records_finance_learning_outcome():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    workflow = MagicMock()
+    workflow.process_new_invoice = AsyncMock(
+        return_value={
+            "status": "processed",
+            "ap_item_state": "validated",
+            "gl_code": "2000",
+            "gl_description": "Accounts Payable",
+        }
+    )
+    captured = {}
+
+    class _FakeFinanceLearning:
+        def record_runtime_outcome(self, **kwargs):
+            captured["record_kwargs"] = dict(kwargs or {})
+            return {"recorded": ["vendor_gl_approval"]}
+
+    invoice_payload = {
+        "gmail_id": "gmail-learning-1",
+        "thread_id": "gmail-thread-learning-1",
+        "message_id": "gmail-message-learning-1",
+        "organization_id": "default",
+        "sender": "billing@example.com",
+        "subject": "Invoice INV-LEARN-1",
+        "vendor_name": "Learning Co",
+        "amount": 42.0,
+        "currency": "USD",
+    }
+
+    with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
+        with patch(
+            "clearledgr.services.finance_learning.get_finance_learning_service",
+            return_value=_FakeFinanceLearning(),
+        ):
+            result = asyncio.run(
+                runtime.execute_ap_invoice_processing(
+                    invoice_payload=invoice_payload,
+                    idempotency_key="idem-learning-1",
+                    correlation_id="corr-learning-1",
+                )
+            )
+
+    assert result["status"] == "processed"
+    assert captured["record_kwargs"]["response"]["status"] == "processed"
+    assert captured["record_kwargs"]["shadow_decision"]["proposed_action"] == "route_for_approval"
+    assert captured["record_kwargs"]["ap_item"]["id"].startswith("ap-created-")
 
 
 def test_execute_ap_invoice_processing_downgrades_auto_post_when_autonomy_not_earned():
@@ -1916,28 +2012,14 @@ def test_record_field_correction_appends_runtime_audit():
     runtime = _runtime(db)
     captured = {}
 
-    class _FakeLearningService:
-        def __init__(self, organization_id):
-            captured["organization_id"] = organization_id
-
-        def record_correction(self, **kwargs):
+    class _FakeFinanceLearning:
+        def record_manual_field_correction(self, **kwargs):
             captured["record_kwargs"] = dict(kwargs or {})
-            return {"stored": True}
-
-    class _FakeAuditTrail:
-        def __init__(self):
-            self.events = []
-
-        def record_event(self, **kwargs):
-            self.events.append(dict(kwargs or {}))
-
-    fake_audit = _FakeAuditTrail()
-
-    fake_learning_instance = _FakeLearningService("default")
+            return {"correction_learning": {"stored": True}}
 
     with patch(
-        "clearledgr.services.correction_learning.get_correction_learning_service",
-        return_value=fake_learning_instance,
+        "clearledgr.services.finance_learning.get_finance_learning_service",
+        return_value=_FakeFinanceLearning(),
     ):
         result = runtime.record_field_correction(
             ap_item_id="ap-route-1",
@@ -1949,6 +2031,138 @@ def test_record_field_correction_appends_runtime_audit():
 
     assert result["status"] == "recorded"
     assert result["audit_event_id"]
-    assert captured["organization_id"] == "default"
-    assert captured["record_kwargs"]["correction_type"] == "invoice_number"
+    assert captured["record_kwargs"]["field"] == "invoice_number"
+    assert captured["record_kwargs"]["context"]["selected_source"] == "manual"
     assert db.audit_rows[-1]["event_type"] == "field_correction"
+
+
+def test_append_runtime_audit_syncs_agent_memory_when_service_available():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    captured = {}
+
+    class _FakeMemory:
+        def observe_event(self, **kwargs):
+            captured["event_kwargs"] = dict(kwargs or {})
+            return {"id": "mem-1"}
+
+        def capture_runtime_state(self, **kwargs):
+            captured["state_kwargs"] = dict(kwargs or {})
+            return {"belief_state": {"ap_item_id": kwargs.get("ap_item_id")}}
+
+    with patch(
+        "clearledgr.services.agent_memory.get_agent_memory_service",
+        return_value=_FakeMemory(),
+    ):
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id="ap-route-1",
+            event_type="ap_invoice_processing_completed",
+            reason="ap_invoice_processing_processed",
+            metadata={"response": {"status": "processed"}},
+            correlation_id="corr-memory-1",
+            skill_id="ap_v1",
+        )
+
+    assert audit_row is not None
+    assert captured["event_kwargs"]["ap_item_id"] == "ap-route-1"
+    assert captured["event_kwargs"]["summary"] == "ap_invoice_processing_processed"
+    assert captured["state_kwargs"]["response"]["status"] == "processed"
+
+
+def test_append_runtime_audit_syncs_finance_learning_when_service_available():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    captured = {}
+
+    class _FakeLearning:
+        def record_action_outcome(self, **kwargs):
+            captured["learning_kwargs"] = dict(kwargs or {})
+            return {"event": {"id": "learning-1"}}
+
+    with patch(
+        "clearledgr.services.finance_learning.get_finance_learning_service",
+        return_value=_FakeLearning(),
+    ):
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id="ap-route-1",
+            event_type="approval_request_routed",
+            reason="approval_request_sent",
+            metadata={"response": {"status": "pending_approval", "email_id": "gmail-thread-route-1"}},
+            correlation_id="corr-learning-sync-1",
+            skill_id="ap_v1",
+        )
+
+    assert audit_row is not None
+    assert captured["learning_kwargs"]["event_type"] == "approval_request_routed"
+    assert captured["learning_kwargs"]["response"]["audit_event_id"] == audit_row["id"]
+    assert captured["learning_kwargs"]["metadata"]["reason"] == "approval_request_sent"
+    assert captured["learning_kwargs"]["ap_item"]["id"] == "ap-route-1"
+
+
+def test_execute_skill_request_routes_through_agent_loop_owner():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    request = runtime._build_skill_request(
+        intent="route_low_risk_for_approval",
+        payload={"email_id": "gmail-thread-route-1"},
+    )
+    captured = {}
+
+    fake_skill_response = SimpleNamespace(
+        to_dict=lambda: {"status": "pending_approval", "next_step": "await_approval"}
+    )
+    fake_skill = SimpleNamespace(
+        skill_id="ap_v1",
+        execute_contract=AsyncMock(return_value=fake_skill_response),
+    )
+
+    class _FakeLoop:
+        async def run_skill_request(self, request_arg, action_arg, executor):
+            captured["request"] = request_arg
+            captured["action"] = action_arg
+            response = await executor()
+            response["agent_loop"] = {"owner": "fake_loop", "observed": True}
+            return response
+
+    with patch.object(runtime, "_skill_for_intent", return_value=fake_skill):
+        with patch.object(runtime, "_agent_loop_service", return_value=_FakeLoop()):
+            result = asyncio.run(runtime.execute_skill_request(request))
+
+    assert result["status"] == "pending_approval"
+    assert result["agent_loop"]["owner"] == "fake_loop"
+    assert captured["request"].task_type == "route_low_risk_for_approval"
+    assert captured["action"].action == "route_low_risk_for_approval"
+    fake_skill.execute_contract.assert_awaited_once()
+
+
+def test_finance_lead_summary_prefers_agent_memory_next_action_label():
+    db = _FakeDB()
+    runtime = _runtime(db)
+    ap_item = dict(db.items["ap-route-1"])
+
+    class _FakeMemory:
+        def build_surface(self, *, ap_item_id: str, skill_id: str = "ap_v1") -> dict:
+            assert ap_item_id == "ap-route-1"
+            assert skill_id == "ap_v1"
+            return {
+                "profile": {"name": "Clearledgr AP Agent"},
+                "belief": {"reason": "Approval is pending with the assigned approver."},
+                "current_state": "validated",
+                "status": "pending_approval",
+                "evidence": {},
+                "uncertainties": {},
+                "next_action": {"type": "await_approval", "label": "Wait for approval decision"},
+                "summary": {"reason": "Approval is pending with the assigned approver."},
+                "episode": {"status": "pending_approval"},
+            }
+
+    with patch(
+        "clearledgr.services.agent_memory.get_agent_memory_service",
+        return_value=_FakeMemory(),
+    ):
+        payload = runtime._build_finance_lead_summary_payload(ap_item)
+
+    assert payload["next_action"] == "await_approval"
+    assert payload["agent_next_action"]["label"] == "Wait for approval decision"
+    assert any("Wait for approval decision" in line for line in payload["lines"])
+    assert any("Agent belief: Approval is pending with the assigned approver." in line for line in payload["lines"])

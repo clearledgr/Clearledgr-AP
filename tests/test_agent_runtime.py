@@ -19,6 +19,7 @@ import clearledgr.core.database as db_module
 from clearledgr.core.agent_runtime import AgentPlanningEngine, MAX_PLANNING_STEPS
 from clearledgr.core.skills.base import AgentTask, AgentTool, FinanceSkill, SkillResult
 from clearledgr.core.skills.ap_skill import APSkill
+from clearledgr.services.agent_memory import AgentMemoryService
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +215,60 @@ def test_planning_loop_three_steps(tmp_path, monkeypatch):
 
     assert result.status == "completed"
     assert result.step_count == 2
+
+
+def test_planning_loop_syncs_task_runs_into_agent_memory(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "test.db"))
+    db_module._DB_INSTANCE = None
+
+    runtime = AgentPlanningEngine()
+    skill = _EchoSkill()
+    runtime.register_skill(skill)
+
+    from clearledgr.core.database import get_db
+
+    db = get_db()
+    db.create_ap_item(
+        {
+            "id": "ap-memory-1",
+            "organization_id": "test-org",
+            "thread_id": "thread-memory-1",
+            "state": "validated",
+            "vendor_name": "Acme Corp",
+            "invoice_number": "INV-MEM-1",
+            "amount": 42.0,
+            "currency": "USD",
+            "metadata": {"document_type": "invoice"},
+        }
+    )
+
+    responses = [
+        _tool_use_response("echo", {"message": "memory"}),
+        _text_response("Done."),
+    ]
+
+    async def fake_claude(system, messages, tools):
+        return responses.pop(0)
+
+    task = AgentTask(
+        task_type="echo_skill",
+        organization_id="test-org",
+        payload={"ap_item_id": "ap-memory-1", "message": "memory"},
+        idempotency_key="task-run-memory-sync",
+    )
+
+    with patch.object(runtime, "_call_claude_with_tools", side_effect=fake_claude):
+        result = asyncio.run(runtime.run_task(task))
+
+    assert result.status == "completed"
+    memory = AgentMemoryService("test-org", db=get_db())
+    events = memory.list_memory_events(ap_item_id="ap-memory-1")
+    event_types = [event["event_type"] for event in events]
+
+    assert "task_run_created" in event_types
+    assert "task_run_step_started" in event_types
+    assert "task_run_step_completed" in event_types
+    assert "task_run_completed" in event_types
 
 
 # ---------------------------------------------------------------------------

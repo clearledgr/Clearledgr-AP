@@ -179,7 +179,7 @@ Four ERPs fully integrated with posting, vendor management, and GL discovery:
 - Checkpointing before and after each step (crash-resumable)
 - Human-in-the-loop pause (awaiting_human status)
 - Idempotency support (same key = same result)
-- Model: claude-sonnet-4-6 (configurable via AGENT_RUNTIME_MODEL)
+- Model: claude-sonnet-4-20250514 (configurable via AGENT_RUNTIME_MODEL)
 
 ### Finance Skills
 - **AP Skill** — 5 tools: enrich_with_context (now includes cross-invoice analysis), run_validation_gate, get_ap_decision, execute_routing, request_vendor_info (creates Gmail draft for missing info)

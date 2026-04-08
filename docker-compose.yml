@@ -10,6 +10,7 @@ services:
     ports:
       - "8010:8010"
     environment:
+      - CLEARLEDGR_PROCESS_ROLE=web
       - DATABASE_URL=postgresql://clearledgr:clearledgr@db:5432/clearledgr
       - REDIS_URL=redis://redis:6379/0
       - CLEARLEDGR_SECRET_KEY=${CLEARLEDGR_SECRET_KEY:-change-this-in-production}
@@ -56,6 +57,46 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  worker:
+    build: .
+    command: ["sh", "scripts/start-worker.sh"]
+    environment:
+      - CLEARLEDGR_PROCESS_ROLE=worker
+      - DATABASE_URL=postgresql://clearledgr:clearledgr@db:5432/clearledgr
+      - REDIS_URL=redis://redis:6379/0
+      - CLEARLEDGR_SECRET_KEY=${CLEARLEDGR_SECRET_KEY:-change-this-in-production}
+      - LOG_LEVEL=info
+      - QUICKBOOKS_CLIENT_ID=${QUICKBOOKS_CLIENT_ID:-}
+      - QUICKBOOKS_CLIENT_SECRET=${QUICKBOOKS_CLIENT_SECRET:-}
+      - XERO_CLIENT_ID=${XERO_CLIENT_ID:-}
+      - XERO_CLIENT_SECRET=${XERO_CLIENT_SECRET:-}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY:-}
+      - FLUTTERWAVE_SECRET_KEY=${FLUTTERWAVE_SECRET_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+      - TEAMS_APP_ID=${TEAMS_APP_ID:-}
+      - TEAMS_APP_PASSWORD=${TEAMS_APP_PASSWORD:-}
+      - AP_TEMPORAL_ENABLED=${AP_TEMPORAL_ENABLED:-false}
+      - AP_TEMPORAL_REQUIRED=${AP_TEMPORAL_REQUIRED:-false}
+      - AP_V1_STRICT_SURFACES=${AP_V1_STRICT_SURFACES:-true}
+      - CLEARLEDGR_ENABLE_LEGACY_SURFACES=${CLEARLEDGR_ENABLE_LEGACY_SURFACES:-false}
+      - AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION=${AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION:-false}
+      - AP_AGENT_AUTONOMOUS_RETRY_ENABLED=${AP_AGENT_AUTONOMOUS_RETRY_ENABLED:-true}
+      - AP_AGENT_NON_DURABLE_RETRY_ALLOWED=${AP_AGENT_NON_DURABLE_RETRY_ALLOWED:-false}
+      - AP_BROWSER_RUNNER_TRUST_MODE=${AP_BROWSER_RUNNER_TRUST_MODE:-api_or_admin}
+      - GMAIL_PUSH_SHARED_SECRET=${GMAIL_PUSH_SHARED_SECRET:-}
+      - GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD=${GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD:-false}
+      - GMAIL_OAUTH_STATE_MAX_AGE_SECONDS=${GMAIL_OAUTH_STATE_MAX_AGE_SECONDS:-900}
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
 
   # PostgreSQL database
   db:
