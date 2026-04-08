@@ -368,6 +368,49 @@ def get_tasks_for_email(email_id: str) -> List[Dict[str, Any]]:
     """, (email_id,))
 
 
+def get_tasks_for_ap_item(
+    ap_item_id: str,
+    *,
+    thread_id: Optional[str] = None,
+    organization_id: Optional[str] = None,
+    include_completed: bool = True,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    """Return tasks associated with an AP item or its Gmail thread."""
+    query = """
+        SELECT * FROM email_tasks
+        WHERE (
+            related_entity_id = ?
+            OR (? != '' AND source_thread_id = ?)
+        )
+    """
+    params: List[Any] = [ap_item_id, str(thread_id or ""), str(thread_id or "")]
+
+    if organization_id:
+        query += " AND organization_id = ?"
+        params.append(organization_id)
+
+    if not include_completed:
+        query += " AND status NOT IN ('completed', 'cancelled')"
+
+    query += """
+        ORDER BY
+            CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+            due_date ASC,
+            created_at DESC
+        LIMIT ?
+    """
+    params.append(limit)
+
+    rows = db.fetchall_dict(query, tuple(params))
+    tasks: List[Dict[str, Any]] = []
+    for row in rows:
+        task = get_task(str(row.get("task_id") or ""))
+        if task:
+            tasks.append(task)
+    return tasks
+
+
 def get_overdue_tasks(organization_id: str = None) -> List[Dict[str, Any]]:
     """Get overdue tasks."""
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')

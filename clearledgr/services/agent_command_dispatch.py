@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
 from clearledgr.core.database import get_db
+
+logger = logging.getLogger(__name__)
 
 _ORG_ADMIN_ROLES = {"admin", "owner", "api"}
 
@@ -18,9 +21,15 @@ def resolve_org_id_for_user(
     admin_roles: set[str] | None = None,
 ) -> str:
     allowed_admin_roles = admin_roles or _ORG_ADMIN_ROLES
-    org_id = str(requested_org_id or getattr(user, "organization_id", None) or "default")
+    _raw_org = requested_org_id or getattr(user, "organization_id", None)
+    if not _raw_org:
+        logger.warning("resolve_org_id_for_user: no organization_id on user or request, falling back to 'default'")
+    org_id = str(_raw_org or "default")
     role = str(getattr(user, "role", "") or "").strip().lower()
-    user_org = str(getattr(user, "organization_id", None) or "default")
+    _raw_user_org = getattr(user, "organization_id", None)
+    if not _raw_user_org:
+        logger.warning("resolve_org_id_for_user: user has no organization_id, falling back to 'default'")
+    user_org = str(_raw_user_org or "default")
     if role not in allowed_admin_roles and org_id != user_org:
         raise HTTPException(status_code=403, detail="org_mismatch")
     return org_id
@@ -75,6 +84,8 @@ def build_channel_runtime(
 ) -> Any:
     from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
+    if not organization_id:
+        logger.warning("build_channel_runtime called without organization_id, falling back to 'default'")
     return FinanceAgentRuntime(
         organization_id=str(organization_id or "default"),
         actor_id=str(actor_id or fallback_actor),

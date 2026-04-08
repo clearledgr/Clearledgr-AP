@@ -10,6 +10,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from clearledgr.core.database import get_db
+from clearledgr.services.ap_agent_sync import (
+    build_agent_memory_projection,
+    sync_ap_execution_event,
+)
 
 
 TOOL_REGISTRY: Dict[str, Dict[str, str]] = {
@@ -474,7 +478,7 @@ class BrowserAgentService:
             raise ValueError("browser_agent_disabled")
         existing = self.db.get_agent_session_by_item(organization_id, ap_item_id)
         if existing and existing.get("state") in {"running", "blocked_for_approval"}:
-            return existing
+            return self._decorate_session(existing)
 
         session = self.db.create_agent_session(
             {
@@ -485,21 +489,17 @@ class BrowserAgentService:
                 "metadata": metadata or {},
             }
         )
-        self.db.append_ap_audit_event(
-            {
-                "ap_item_id": ap_item_id,
-                "event_type": "browser_session_created",
-                "from_state": None,
-                "to_state": None,
-                "actor_type": "agent",
-                "actor_id": created_by,
-                "reason": "browser_session_created",
-                "metadata": {"session_id": session.get("id")},
-                "idempotency_key": f"browser_session_created:{session.get('id')}",
-                "organization_id": organization_id,
-            }
+        self._append_session_audit(
+            ap_item_id=ap_item_id,
+            organization_id=organization_id,
+            event_type="browser_session_created",
+            actor_type="agent",
+            actor_id=created_by,
+            reason="browser_session_created",
+            metadata={"session_id": session.get("id")},
+            idempotency_key=f"browser_session_created:{session.get('id')}",
         )
-        return session
+        return self._decorate_session(session)
 
     def _build_macro_commands(
         self,
@@ -1045,26 +1045,26 @@ class BrowserAgentService:
         if correlation_id:
             session_metadata["correlation_id"] = correlation_id
         self.db.update_agent_session(session_id, metadata=session_metadata)
-        self.db.append_ap_audit_event(
-            {
-                "ap_item_id": ap_item_id,
-                "event_type": "browser_macro_dispatched",
-                "from_state": session.get("state"),
-                "to_state": session.get("state"),
-                "actor_type": "agent",
-                "actor_id": actor_id,
-                "reason": macro_name,
-                "metadata": {
-                    "session_id": session_id,
-                    "macro_name": macro_name,
-                    "queued": queued,
-                    "blocked": blocked,
-                    "denied": denied,
-                    "command_count": len(events),
-                },
-                "idempotency_key": f"browser_macro_dispatched:{session_id}:{macro_name}:{hashlib.sha1(_utcnow().encode('utf-8')).hexdigest()[:10]}",
-                "organization_id": organization_id,
-            }
+        self._append_session_audit(
+            ap_item_id=ap_item_id,
+            organization_id=organization_id,
+            event_type="browser_macro_dispatched",
+            actor_type="agent",
+            actor_id=actor_id,
+            reason=macro_name,
+            metadata={
+                "session_id": session_id,
+                "macro_name": macro_name,
+                "queued": queued,
+                "blocked": blocked,
+                "denied": denied,
+                "command_count": len(events),
+                "status": "dispatched",
+                "workflow_id": workflow_id,
+                "correlation_id": correlation_id,
+            },
+            idempotency_key=f"browser_macro_dispatched:{session_id}:{macro_name}:{hashlib.sha1(_utcnow().encode('utf-8')).hexdigest()[:10]}",
+            correlation_id=correlation_id,
         )
 
         return {
@@ -1115,22 +1115,19 @@ class BrowserAgentService:
                 }
             )
             self.db.update_agent_session(session_id, state="running")
-            self.db.append_ap_audit_event(
-                {
-                    "ap_item_id": ap_item_id,
-                    "event_type": "browser_command_confirmed",
-                    "from_state": session.get("state"),
-                    "to_state": "running",
-                    "actor_type": "human",
-                    "actor_id": confirmed_by or actor_id,
-                    "reason": "command_confirmed",
-                    "metadata": {
-                        "session_id": session_id,
-                        "command_id": command_id,
-                    },
-                    "idempotency_key": f"browser_command_confirmed:{session_id}:{command_id}",
-                    "organization_id": organization_id,
-                }
+            self._append_session_audit(
+                ap_item_id=ap_item_id,
+                organization_id=organization_id,
+                event_type="browser_command_confirmed",
+                actor_type="human",
+                actor_id=confirmed_by or actor_id,
+                reason="command_confirmed",
+                metadata={
+                    "session_id": session_id,
+                    "command_id": command_id,
+                    "status": "queued",
+                },
+                idempotency_key=f"browser_command_confirmed:{session_id}:{command_id}",
             )
             return updated
 
@@ -1190,28 +1187,26 @@ class BrowserAgentService:
             }
         )
 
-        self.db.append_ap_audit_event(
-            {
-                "ap_item_id": ap_item_id,
-                "event_type": "browser_command_enqueued",
-                "from_state": session.get("state"),
-                "to_state": session.get("state"),
-                "actor_type": "agent",
-                "actor_id": actor_id,
-                "reason": status,
-                "metadata": {
-                    "session_id": session_id,
-                    "command_id": command_id,
-                    "tool_name": tool_name,
-                    "requires_confirmation": decision.requires_confirmation,
-                    "policy_reason": policy_reason,
-                    "policy_scope": decision.scope,
-                    "tool_risk": decision.tool_risk,
-                    "tool_category": decision.tool_category,
-                },
-                "idempotency_key": f"browser_command_enqueued:{session_id}:{command_id}",
-                "organization_id": organization_id,
-            }
+        self._append_session_audit(
+            ap_item_id=ap_item_id,
+            organization_id=organization_id,
+            event_type="browser_command_enqueued",
+            actor_type="agent",
+            actor_id=actor_id,
+            reason=status,
+            metadata={
+                "session_id": session_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                "requires_confirmation": decision.requires_confirmation,
+                "policy_reason": policy_reason,
+                "policy_scope": decision.scope,
+                "tool_risk": decision.tool_risk,
+                "tool_category": decision.tool_category,
+                "status": status,
+            },
+            idempotency_key=f"browser_command_enqueued:{session_id}:{command_id}",
+            correlation_id=command.get("correlation_id"),
         )
 
         if status == "blocked_for_approval":
@@ -1249,24 +1244,22 @@ class BrowserAgentService:
         )
         ap_item_id = str(session.get("ap_item_id") or "")
         organization_id = str(session.get("organization_id") or "default")
-        self.db.append_ap_audit_event(
-            {
-                "ap_item_id": ap_item_id,
-                "event_type": "browser_command_result",
-                "from_state": session.get("state"),
-                "to_state": session.get("state"),
-                "actor_type": "system",
-                "actor_id": actor_id,
-                "reason": status,
-                "metadata": {
-                    "session_id": session_id,
-                    "command_id": command_id,
-                    "tool_name": updated.get("tool_name"),
-                    "result": result_payload,
-                },
-                "idempotency_key": f"browser_command_result:{session_id}:{command_id}:{status}",
-                "organization_id": organization_id,
-            }
+        self._append_session_audit(
+            ap_item_id=ap_item_id,
+            organization_id=organization_id,
+            event_type="browser_command_result",
+            actor_type="system",
+            actor_id=actor_id,
+            reason=status,
+            metadata={
+                "session_id": session_id,
+                "command_id": command_id,
+                "tool_name": updated.get("tool_name"),
+                "result": result_payload,
+                "status": status,
+            },
+            idempotency_key=f"browser_command_result:{session_id}:{command_id}:{status}",
+            correlation_id=updated.get("correlation_id"),
         )
 
         pending = self.db.list_browser_action_events(session_id, status="blocked_for_approval")
@@ -1283,12 +1276,85 @@ class BrowserAgentService:
         events = self.db.list_browser_action_events(session_id)
         pending = [event for event in events if event.get("status") == "blocked_for_approval"]
         queued = [event for event in events if event.get("status") == "queued"]
+        decorated_session = self._decorate_session(session)
         return {
-            "session": session,
+            "session": decorated_session,
             "events": events,
             "pending_approvals": pending,
             "queued_commands": queued,
+            "agent_memory": decorated_session.get("agent_memory") or {},
+            "agent_profile": decorated_session.get("agent_profile") or {},
+            "agent_belief_state": decorated_session.get("agent_belief_state") or {},
+            "agent_next_action": decorated_session.get("agent_next_action") or {},
+            "agent_summary": decorated_session.get("agent_summary") or {},
         }
+
+    def _decorate_session(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(session or {})
+        ap_item_id = str(payload.get("ap_item_id") or "").strip()
+        organization_id = str(payload.get("organization_id") or "default").strip() or "default"
+        agent_memory = build_agent_memory_projection(
+            db=self.db,
+            organization_id=organization_id,
+            ap_item_id=ap_item_id,
+            skill_id="ap_v1",
+        )
+        if agent_memory:
+            payload["agent_memory"] = agent_memory
+            payload["agent_profile"] = agent_memory.get("profile") if isinstance(agent_memory.get("profile"), dict) else {}
+            payload["agent_belief_state"] = agent_memory.get("belief") if isinstance(agent_memory.get("belief"), dict) else {}
+            payload["agent_next_action"] = agent_memory.get("next_action") if isinstance(agent_memory.get("next_action"), dict) else {}
+            payload["agent_summary"] = agent_memory.get("summary") if isinstance(agent_memory.get("summary"), dict) else {}
+        return payload
+
+    def _append_session_audit(
+        self,
+        *,
+        ap_item_id: str,
+        organization_id: str,
+        event_type: str,
+        actor_type: str,
+        actor_id: str,
+        reason: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        idempotency_key: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        audit_row = self.db.append_ap_audit_event(
+            {
+                "ap_item_id": ap_item_id,
+                "event_type": event_type,
+                "from_state": None,
+                "to_state": None,
+                "actor_type": actor_type,
+                "actor_id": actor_id,
+                "reason": reason,
+                "metadata": metadata or {},
+                "idempotency_key": idempotency_key,
+                "organization_id": organization_id,
+                "source": "browser_agent",
+                "correlation_id": correlation_id,
+            }
+        )
+        sync_ap_execution_event(
+            db=self.db,
+            organization_id=organization_id,
+            ap_item_id=ap_item_id,
+            event_type=event_type,
+            reason=reason,
+            response={
+                "status": str((metadata or {}).get("status") or "").strip() or None,
+                "audit_event_id": (audit_row or {}).get("id"),
+            },
+            metadata=metadata,
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            skill_id="ap_v1",
+            source="browser_agent",
+            update_belief=False,
+            record_learning=False,
+        )
+        return audit_row
 
 
 _SERVICE: Optional[BrowserAgentService] = None

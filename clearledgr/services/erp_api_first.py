@@ -34,6 +34,7 @@ from clearledgr.services.erp.contracts import (
     get_erp_finance_action_adapter,
 )
 from clearledgr.services.browser_agent import BrowserAgentService, get_browser_agent_service
+from clearledgr.services.ap_agent_sync import sync_ap_execution_event
 from clearledgr.services.erp_connector_strategy import get_erp_connector_strategy
 from clearledgr.services.erp_follow_on_result import _apply_erp_follow_on_result
 
@@ -91,7 +92,7 @@ def _audit(
 ) -> None:
     if not ap_item_id:
         return
-    db.append_ap_audit_event(
+    audit_row = db.append_ap_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": event_type,
@@ -106,6 +107,22 @@ def _audit(
             "correlation_id": correlation_id,
             "idempotency_key": idempotency_key,
         }
+    )
+    sync_ap_execution_event(
+        db=db,
+        organization_id=organization_id,
+        ap_item_id=ap_item_id,
+        event_type=event_type,
+        reason=reason,
+        response={
+            **dict(payload or {}),
+            "audit_event_id": (audit_row or {}).get("id"),
+        },
+        metadata=dict(payload or {}),
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+        skill_id="ap_v1",
+        source="erp_api_first",
     )
 
 
@@ -337,6 +354,8 @@ def _reconcile_finance_follow_on_completion(
     source_ap_item_id = str(session_metadata.get("source_ap_item_id") or "").strip()
     related_ap_item_id = str(session_metadata.get("related_ap_item_id") or session.get("ap_item_id") or "").strip()
     organization_id = str(session.get("organization_id") or "default")
+    if organization_id == "default":
+        logger.warning("organization_id resolved to 'default' from session in _reconcile_finance_follow_on_completion (session_id=%s)", session_id)
     if not source_ap_item_id or not related_ap_item_id:
         raise ValueError("fallback_ap_item_not_found")
 
@@ -500,6 +519,8 @@ def reconcile_browser_fallback_completion(
         raise ValueError("session_not_found")
 
     organization_id = str(session.get("organization_id") or "default")
+    if organization_id == "default":
+        logger.warning("organization_id resolved to 'default' from session in reconcile_browser_session_completion (session_id=%s)", session_id)
     ap_item_id = str(session.get("ap_item_id") or "").strip()
     if not ap_item_id:
         raise ValueError("fallback_ap_item_not_found")

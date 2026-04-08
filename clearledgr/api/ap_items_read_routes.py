@@ -83,6 +83,80 @@ def get_vendor_record(
     )
 
 
+@router.get("/search")
+def search_ap_items(
+    organization_id: str = Query(default="default"),
+    q: str = Query(default=""),
+    limit: int = Query(default=12, ge=1, le=50),
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    verify_org_access(organization_id, _user)
+    db = shared.get_db()
+    query = str(q or "").strip().lower()
+    items = db.list_ap_items(organization_id, limit=1000)
+    matches = []
+    for item in items:
+        if not query:
+            matches.append(item)
+            continue
+        haystack = " ".join([
+            str(item.get("vendor_name") or ""),
+            str(item.get("invoice_number") or ""),
+            str(item.get("subject") or ""),
+            str(item.get("sender") or ""),
+            str(item.get("thread_id") or ""),
+            str(item.get("message_id") or ""),
+        ]).lower()
+        if query in haystack:
+            matches.append(item)
+    matches = sorted(
+        matches,
+        key=lambda row: shared._safe_sort_timestamp(row.get("updated_at") or row.get("created_at")),
+        reverse=True,
+    )[:limit]
+    return {
+        "organization_id": organization_id,
+        "query": q,
+        "items": [shared.build_worklist_item(db, item) for item in matches],
+        "count": len(matches),
+    }
+
+
+@router.get("/compose/lookup")
+def lookup_compose_record(
+    organization_id: str = Query(default="default"),
+    draft_id: str = Query(default=""),
+    thread_id: str = Query(default=""),
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    verify_org_access(organization_id, _user)
+    db = shared.get_db()
+    normalized_draft_id = str(draft_id or "").strip()
+    normalized_thread_id = str(thread_id or "").strip()
+
+    def _build_found(item: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "status": "found",
+            "ap_item": shared.build_worklist_item(db, item),
+        }
+
+    if normalized_draft_id and hasattr(db, "list_ap_item_sources_by_ref"):
+        for row in db.list_ap_item_sources_by_ref("compose_draft", normalized_draft_id):
+            candidate_id = str(row.get("ap_item_id") or "").strip()
+            if not candidate_id:
+                continue
+            item = db.get_ap_item(candidate_id)
+            if item and str(item.get("organization_id") or organization_id or "default").strip() == organization_id:
+                return _build_found(item)
+
+    if normalized_thread_id and hasattr(db, "get_ap_item_by_thread"):
+        item = db.get_ap_item_by_thread(organization_id, normalized_thread_id)
+        if item:
+            return _build_found(item)
+
+    return {"status": "missing", "ap_item": None}
+
+
 @router.get("/metrics/aggregation")
 def get_ap_aggregation_metrics(
     organization_id: str = Query(default="default"),
@@ -240,6 +314,73 @@ def get_ap_item_sources(
     verify_org_access(item.get("organization_id") or "default", _user)
     sources = db.list_ap_item_sources(ap_item_id)
     return {"sources": sources, "source_count": len(sources)}
+
+
+@router.get("/{ap_item_id}/tasks")
+def get_ap_item_tasks(
+    ap_item_id: str,
+    include_completed: bool = Query(default=True),
+    limit: int = Query(default=50, ge=1, le=200),
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    from clearledgr.services.email_tasks import get_tasks_for_ap_item
+
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
+    tasks = get_tasks_for_ap_item(
+        ap_item_id,
+        thread_id=str(item.get("thread_id") or "").strip() or None,
+        organization_id=item.get("organization_id") or "default",
+        include_completed=include_completed,
+        limit=limit,
+    )
+    return {"tasks": tasks, "count": len(tasks)}
+
+
+@router.get("/{ap_item_id}/notes")
+def get_ap_item_notes(
+    ap_item_id: str,
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
+    metadata = shared._parse_json(item.get("metadata"))
+    notes = metadata.get("record_notes")
+    if not isinstance(notes, list):
+        notes = []
+    return {"notes": notes, "count": len(notes)}
+
+
+@router.get("/{ap_item_id}/comments")
+def get_ap_item_comments(
+    ap_item_id: str,
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
+    metadata = shared._parse_json(item.get("metadata"))
+    comments = metadata.get("record_comments")
+    if not isinstance(comments, list):
+        comments = []
+    return {"comments": comments, "count": len(comments)}
+
+
+@router.get("/{ap_item_id}/files")
+def get_ap_item_files(
+    ap_item_id: str,
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
+    metadata = shared._parse_json(item.get("metadata"))
+    files = metadata.get("record_file_links")
+    if not isinstance(files, list):
+        files = []
+    return {"files": files, "count": len(files)}
 
 
 @router.get("/{ap_item_id}/context")

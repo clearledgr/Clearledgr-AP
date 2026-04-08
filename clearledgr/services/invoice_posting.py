@@ -24,15 +24,60 @@ from clearledgr.integrations.erp_router import (
     Bill, Vendor, get_or_create_vendor,
 )
 from clearledgr.services.erp_api_first import post_bill_api_first
-from clearledgr.services.learning import get_learning_service
+from clearledgr.services.finance_learning import get_finance_learning_service
 from clearledgr.services.budget_awareness import get_budget_awareness
 from clearledgr.services.invoice_models import InvoiceData
 
 logger = logging.getLogger(__name__)
 
+# Backward-compatible import alias for older tests/monkeypatch targets.
+get_learning_service = get_finance_learning_service
+
 
 class InvoicePostingMixin:
     """Mixin providing posting/human-action methods for InvoiceWorkflowService."""
+
+    @staticmethod
+    def _normalize_human_actor(
+        actor_id: Optional[str],
+        *,
+        actor_display: Optional[str] = None,
+        actor_email: Optional[str] = None,
+        actor_platform_id: Optional[str] = None,
+        actor_identity: Optional[Dict[str, Any]] = None,
+        platform: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        raw_identity = actor_identity if isinstance(actor_identity, dict) else {}
+        normalized_email = str(raw_identity.get("email") or actor_email or "").strip() or None
+        normalized_display = str(raw_identity.get("display_name") or actor_display or "").strip() or None
+        normalized_platform_id = (
+            str(raw_identity.get("platform_user_id") or actor_platform_id or "").strip() or None
+        )
+        normalized_platform = str(raw_identity.get("platform") or platform or "").strip().lower() or None
+        raw_actor = str(actor_id or "").strip() or None
+
+        canonical_actor = normalized_email or raw_actor or normalized_platform_id or "unknown_actor"
+        if normalized_display and normalized_email and normalized_display.lower() != normalized_email.lower():
+            label = f"{normalized_display} ({normalized_email})"
+        elif normalized_display:
+            label = normalized_display
+        elif normalized_email:
+            label = normalized_email
+        elif normalized_platform_id:
+            label = normalized_platform_id
+        else:
+            label = canonical_actor
+
+        return {
+            "canonical_actor": canonical_actor,
+            "label": label,
+            "identity": {
+                "platform": normalized_platform,
+                "platform_user_id": normalized_platform_id,
+                "email": normalized_email,
+                "display_name": normalized_display,
+            },
+        }
 
     async def approve_invoice(
         self,
@@ -44,6 +89,9 @@ class InvoicePostingMixin:
         source_channel_id: Optional[str] = None,
         source_message_ref: Optional[str] = None,
         actor_display: Optional[str] = None,
+        actor_email: Optional[str] = None,
+        actor_platform_id: Optional[str] = None,
+        actor_identity: Optional[Dict[str, Any]] = None,
         action_run_id: Optional[str] = None,
         decision_request_ts: Optional[str] = None,
         decision_idempotency_key: Optional[str] = None,
@@ -75,6 +123,20 @@ class InvoicePostingMixin:
         resolved_source_channel = str(source_channel or "slack").strip().lower() or "slack"
         resolved_channel_id = source_channel_id or slack_channel
         resolved_message_ref = source_message_ref or slack_ts
+        approver = self._normalize_human_actor(
+            approved_by,
+            actor_display=actor_display,
+            actor_email=actor_email,
+            actor_platform_id=actor_platform_id,
+            actor_identity=actor_identity,
+            platform=resolved_source_channel,
+        )
+        approved_by = approver["canonical_actor"]
+        approved_by_label = approver["label"]
+        actor_identity = approver["identity"]
+        actor_display = actor_identity.get("display_name")
+        actor_email = actor_identity.get("email")
+        actor_platform_id = actor_identity.get("platform_user_id")
         ap_item_id = self._lookup_ap_item_id(
             gmail_id=gmail_id,
             vendor_name=invoice_data.get("vendor") or invoice_data.get("vendor_name"),
@@ -330,6 +392,10 @@ class InvoicePostingMixin:
                 "run_id": action_run_id,
                 "request_ts": decision_request_ts,
                 "actor_display": actor_display,
+                "actor_email": actor_email,
+                "actor_platform_id": actor_platform_id,
+                "actor_identity": actor_identity,
+                "actor_label": approved_by_label,
                 "source_channel": resolved_source_channel,
                 "source_message_ref": resolved_message_ref,
             },
@@ -367,8 +433,8 @@ class InvoicePostingMixin:
 
             # LEARNING: Record this approval to learn vendor->GL mappings
             try:
-                learning = get_learning_service(self.organization_id)
-                learning.record_approval(
+                learning = get_finance_learning_service(self.organization_id, db=self.db)
+                learning.record_vendor_gl_approval(
                     vendor=invoice.vendor_name,
                     gl_code=result.get("gl_code", ""),
                     gl_description=result.get("gl_description", "Accounts Payable"),
@@ -380,6 +446,7 @@ class InvoicePostingMixin:
                         and (invoice.vendor_intelligence or {}).get("suggested_gl")
                         and result.get("gl_code") != (invoice.vendor_intelligence or {}).get("suggested_gl")
                     ),
+                    metadata={"source": "invoice_posting.approve_invoice", "correlation_id": correlation_id},
                 )
                 logger.info(f"Recorded approval for learning: {invoice.vendor_name} → GL {result.get('gl_code')}")
             except Exception as e:
@@ -399,7 +466,7 @@ class InvoicePostingMixin:
             # Update Slack message
             if resolved_source_channel == "slack" and resolved_channel_id and resolved_message_ref:
                 await self._update_slack_approved(
-                    resolved_channel_id, resolved_message_ref, invoice, approved_by, result
+                    resolved_channel_id, resolved_message_ref, invoice, approved_by_label, result
                 )
             self._record_approval_snapshot(
                 ap_item_id=ap_item_id,
@@ -422,6 +489,10 @@ class InvoicePostingMixin:
                     "run_id": action_run_id,
                     "request_ts": decision_request_ts,
                     "actor_display": actor_display,
+                    "actor_email": actor_email,
+                    "actor_platform_id": actor_platform_id,
+                    "actor_identity": actor_identity,
+                    "actor_label": approved_by_label,
                     "decision_idempotency_key": decision_idempotency_key,
                 },
                 approved_by=approved_by,
@@ -552,6 +623,10 @@ class InvoicePostingMixin:
                     "run_id": action_run_id,
                     "request_ts": decision_request_ts,
                     "actor_display": actor_display,
+                    "actor_email": actor_email,
+                    "actor_platform_id": actor_platform_id,
+                    "actor_identity": actor_identity,
+                    "actor_label": approved_by_label,
                     "decision_idempotency_key": decision_idempotency_key,
                 },
                 decision_idempotency_key=decision_idempotency_key,
@@ -579,6 +654,8 @@ class InvoicePostingMixin:
             "status": "approved" if result.get("status") == "success" else "error",
             "invoice_id": gmail_id,
             "approved_by": approved_by,
+            "approved_by_label": approved_by_label,
+            "approver_identity": actor_identity,
             "decision_idempotency_key": decision_idempotency_key,
             "budget_override": budget_override_used,
             "confidence_override": False,
@@ -601,6 +678,9 @@ class InvoicePostingMixin:
         source_channel_id: Optional[str] = None,
         source_message_ref: Optional[str] = None,
         actor_display: Optional[str] = None,
+        actor_email: Optional[str] = None,
+        actor_platform_id: Optional[str] = None,
+        actor_identity: Optional[Dict[str, Any]] = None,
         action_run_id: Optional[str] = None,
         decision_request_ts: Optional[str] = None,
         decision_idempotency_key: Optional[str] = None,
@@ -624,6 +704,20 @@ class InvoicePostingMixin:
         resolved_source_channel = str(source_channel or "slack").strip().lower() or "slack"
         resolved_channel_id = source_channel_id or slack_channel
         resolved_message_ref = source_message_ref or slack_ts
+        rejector = self._normalize_human_actor(
+            rejected_by,
+            actor_display=actor_display,
+            actor_email=actor_email,
+            actor_platform_id=actor_platform_id,
+            actor_identity=actor_identity,
+            platform=resolved_source_channel,
+        )
+        rejected_by = rejector["canonical_actor"]
+        rejected_by_label = rejector["label"]
+        actor_identity = rejector["identity"]
+        actor_display = actor_identity.get("display_name")
+        actor_email = actor_identity.get("email")
+        actor_platform_id = actor_identity.get("platform_user_id")
         existing_decision_snapshot = self._approval_snapshot_by_decision_key(
             ap_item_id,
             decision_idempotency_key,
@@ -698,7 +792,7 @@ class InvoicePostingMixin:
         # Update Slack message
         if resolved_source_channel == "slack" and resolved_channel_id and resolved_message_ref:
             await self._update_slack_rejected(
-                resolved_channel_id, resolved_message_ref, invoice_data, rejected_by, reason
+                resolved_channel_id, resolved_message_ref, invoice_data, rejected_by_label, reason
             )
         self._maybe_record_ap_decision_override(
             ap_item_id, "rejected", rejected_by, correlation_id=correlation_id
@@ -717,6 +811,10 @@ class InvoicePostingMixin:
                 "run_id": action_run_id,
                 "request_ts": decision_request_ts,
                 "actor_display": actor_display,
+                "actor_email": actor_email,
+                "actor_platform_id": actor_platform_id,
+                "actor_identity": actor_identity,
+                "actor_label": rejected_by_label,
                 "decision_idempotency_key": decision_idempotency_key,
             },
             rejected_by=rejected_by,
@@ -761,6 +859,8 @@ class InvoicePostingMixin:
             "status": "rejected",
             "invoice_id": gmail_id,
             "rejected_by": rejected_by,
+            "rejected_by_label": rejected_by_label,
+            "approver_identity": actor_identity,
             "reason": reason,
             "decision_idempotency_key": decision_idempotency_key,
         }
@@ -1005,6 +1105,9 @@ class InvoicePostingMixin:
         source_channel_id: Optional[str] = None,
         source_message_ref: Optional[str] = None,
         actor_display: Optional[str] = None,
+        actor_email: Optional[str] = None,
+        actor_platform_id: Optional[str] = None,
+        actor_identity: Optional[Dict[str, Any]] = None,
         action_run_id: Optional[str] = None,
         decision_request_ts: Optional[str] = None,
         decision_idempotency_key: Optional[str] = None,
@@ -1030,6 +1133,20 @@ class InvoicePostingMixin:
         resolved_source_channel = str(source_channel or "slack").strip().lower() or "slack"
         resolved_channel_id = source_channel_id or slack_channel
         resolved_message_ref = source_message_ref or slack_ts
+        requester = self._normalize_human_actor(
+            requested_by,
+            actor_display=actor_display,
+            actor_email=actor_email,
+            actor_platform_id=actor_platform_id,
+            actor_identity=actor_identity,
+            platform=resolved_source_channel,
+        )
+        requested_by = requester["canonical_actor"]
+        requested_by_label = requester["label"]
+        actor_identity = requester["identity"]
+        actor_display = actor_identity.get("display_name")
+        actor_email = actor_identity.get("email")
+        actor_platform_id = actor_identity.get("platform_user_id")
         existing_decision_snapshot = self._approval_snapshot_by_decision_key(
             ap_item_id,
             decision_idempotency_key,
@@ -1093,7 +1210,7 @@ class InvoicePostingMixin:
                 resolved_channel_id,
                 resolved_message_ref,
                 invoice_data,
-                requested_by=requested_by,
+                requested_by=requested_by_label,
                 reason=reason_text,
             )
 
@@ -1111,6 +1228,10 @@ class InvoicePostingMixin:
                 "run_id": action_run_id,
                 "request_ts": decision_request_ts,
                 "actor_display": actor_display,
+                "actor_email": actor_email,
+                "actor_platform_id": actor_platform_id,
+                "actor_identity": actor_identity,
+                "actor_label": requested_by_label,
                 "decision_idempotency_key": decision_idempotency_key,
             },
             rejected_by=requested_by,
@@ -1162,6 +1283,8 @@ class InvoicePostingMixin:
             "status": "needs_info",
             "invoice_id": gmail_id,
             "requested_by": requested_by,
+            "requested_by_label": requested_by_label,
+            "approver_identity": actor_identity,
             "reason": reason_text,
             "decision_idempotency_key": decision_idempotency_key,
         }

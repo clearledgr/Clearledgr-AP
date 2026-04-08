@@ -7,7 +7,6 @@ expects the concrete class that inherits it to provide:
 * ``self._prepare_sql()``                  -- adapts ``?`` placeholders for the active engine
 * ``self.initialize()``                    -- ensures tables exist
 * ``self._decode_json()``                  -- safely parses a JSON string or returns ``{}``
-* ``self._safe_float()``                   -- safe float coercion
 * ``self._deserialize_audit_event()``      -- deserializes an audit event row
 * ``self._deserialize_browser_action_event()`` -- deserializes a browser action event row
 * ``self.list_ap_items()``                 -- lists AP items for an organization
@@ -26,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from clearledgr.core.ap_entity_routing import resolve_entity_routing
+from clearledgr.core.utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +236,7 @@ class MetricsStore:
                         "ap_item_id": str(item.get("id") or "").strip(),
                         "vendor_name": vendor,
                         "invoice_number": str(item.get("invoice_number") or "").strip() or None,
-                        "amount": round(self._safe_float(item.get("amount"), 0.0), 2)
+                        "amount": round(safe_float(item.get("amount"), 0.0), 2)
                         if item.get("amount") is not None
                         else None,
                         "currency": str(item.get("currency") or "USD").strip().upper(),
@@ -813,6 +813,10 @@ class MetricsStore:
             "verification_rate": 0.0,
             "success_event_count": 0,
             "failed_event_count": 0,
+            "success_rate": 0.0,
+            "recovery_attempt_count": 0,
+            "recovered_count": 0,
+            "recovery_rate": 0.0,
         }
         if not items:
             return {
@@ -864,6 +868,9 @@ class MetricsStore:
                 summary["success_event_count"] += 1
             if failed_event:
                 summary["failed_event_count"] += 1
+                summary["recovery_attempt_count"] += 1
+            if failed_event and success_event:
+                summary["recovered_count"] += 1
 
             state = str(item.get("state") or "").strip().lower()
             erp_reference = str(
@@ -921,6 +928,14 @@ class MetricsStore:
         summary["verification_rate"] = self._safe_rate(
             int(summary["verified_count"]),
             int(summary["attempted_count"]),
+        )
+        summary["success_rate"] = self._safe_rate(
+            int(summary["success_event_count"]),
+            int(summary["attempted_count"]),
+        )
+        summary["recovery_rate"] = self._safe_rate(
+            int(summary["recovered_count"]),
+            int(summary["recovery_attempt_count"]),
         )
 
         vendor_scorecards = [
@@ -1223,7 +1238,7 @@ class MetricsStore:
                 )
                 if missed:
                     missed_discount_count += 1
-                    missed_discount_value += max(0.0, self._safe_float(discount.get("amount"), 0.0))
+                    missed_discount_value += max(0.0, safe_float(discount.get("amount"), 0.0))
 
         approved_records = [record for record in approvals if str(record.get("status") or "") == "approved"]
         on_time_count = 0
@@ -1521,18 +1536,29 @@ class MetricsStore:
         )
         pilot_window_days = 30
         pilot_cutoff = now - timedelta(days=pilot_window_days)
+        human_override_decision_population = 0
+        for item in items:
+            metadata = self._decode_json_any(item.get("metadata"))
+            metadata_dict = metadata if isinstance(metadata, dict) else {}
+            created_at = self._parse_iso(item.get("created_at")) or self._parse_iso(item.get("updated_at"))
+            if created_at and created_at < pilot_cutoff:
+                continue
+            if str(metadata_dict.get("ap_decision_recommendation") or "").strip():
+                human_override_decision_population += 1
         operator_event_rows = self.list_audit_events(
             organization_id,
             event_types=[
                 "approval_escalation_sent",
                 "approval_reassigned",
                 "entity_route_resolved",
+                "ap_decision_override",
             ],
             limit=20000,
         )
         approval_escalation_event_count = 0
         approval_reassignment_event_count = 0
         entity_route_resolution_event_count = 0
+        human_override_event_count = 0
         for event in operator_event_rows:
             event_ts = self._parse_iso(event.get("ts"))
             if not event_ts or event_ts < pilot_cutoff:
@@ -1544,6 +1570,8 @@ class MetricsStore:
                 approval_reassignment_event_count += 1
             elif event_type == "entity_route_resolved":
                 entity_route_resolution_event_count += 1
+            elif event_type == "ap_decision_override":
+                human_override_event_count += 1
 
         approval_queue_count = 0
         approval_sla_breached_open_count = 0
@@ -1717,6 +1745,81 @@ class MetricsStore:
             "highlights": pilot_highlights[:4],
         }
 
+        post_verification_summary = (
+            post_action_verification_metrics.get("summary")
+            if isinstance(post_action_verification_metrics, dict)
+            else {}
+        )
+        post_verification_summary = post_verification_summary if isinstance(post_verification_summary, dict) else {}
+        escalation_rate = round(
+            (approval_escalation_event_count / approval_population) if approval_population else 0.0,
+            4,
+        )
+        human_override_rate = round(
+            (human_override_event_count / human_override_decision_population)
+            if human_override_decision_population
+            else 0.0,
+            4,
+        )
+        proof_highlights: List[str] = []
+        if post_verification_summary.get("attempted_count"):
+            proof_highlights.append(
+                f"{round(float(post_verification_summary.get('success_rate') or 0.0) * 100.0, 1):.1f}% of ERP posting attempts finished with a success event."
+            )
+        if post_verification_summary.get("recovery_attempt_count"):
+            proof_highlights.append(
+                f"{round(float(post_verification_summary.get('recovery_rate') or 0.0) * 100.0, 1):.1f}% of failed ERP posts recovered successfully."
+            )
+        if human_override_decision_population:
+            proof_highlights.append(
+                f"{round(human_override_rate * 100.0, 1):.1f}% of Claude recommendation windows ended in a human override."
+            )
+        if approval_population:
+            proof_highlights.append(
+                f"{round(escalation_rate * 100.0, 1):.1f}% of approval cases required escalation in the last {pilot_window_days} days."
+            )
+
+        proof_scorecard = {
+            "window_days": int(pilot_window_days),
+            "summary": {
+                "auto_approved_rate_pct": round(touchless_rate * 100.0, 2),
+                "human_override_rate_pct": round(human_override_rate * 100.0, 2),
+                "avg_approval_wait_hours": float(avg_approval_wait_hours),
+                "escalation_rate_pct": round(escalation_rate * 100.0, 2),
+                "posting_success_rate_pct": round(float(post_verification_summary.get("success_rate") or 0.0) * 100.0, 2),
+                "recovery_success_rate_pct": round(float(post_verification_summary.get("recovery_rate") or 0.0) * 100.0, 2),
+            },
+            "automation": {
+                "completed_item_count": int(touchless_eligible),
+                "touchless_count": int(touchless_count),
+                "touchless_rate": float(touchless_rate),
+            },
+            "decisions": {
+                "decision_count": int(human_override_decision_population),
+                "human_override_count": int(human_override_event_count),
+                "human_override_rate": float(human_override_rate),
+            },
+            "approval_followup": {
+                "population_count": int(approval_population),
+                "avg_wait_hours": float(avg_approval_wait_hours),
+                "escalation_event_count_30d": int(approval_escalation_event_count),
+                "escalation_rate": float(escalation_rate),
+            },
+            "posting_reliability": {
+                "attempted_count": int(post_verification_summary.get("attempted_count") or 0),
+                "success_count": int(post_verification_summary.get("success_event_count") or 0),
+                "success_rate": float(post_verification_summary.get("success_rate") or 0.0),
+                "verified_count": int(post_verification_summary.get("verified_count") or 0),
+                "mismatch_count": int(post_verification_summary.get("mismatch_count") or 0),
+            },
+            "recovery": {
+                "attempted_count": int(post_verification_summary.get("recovery_attempt_count") or 0),
+                "recovered_count": int(post_verification_summary.get("recovered_count") or 0),
+                "recovery_rate": float(post_verification_summary.get("recovery_rate") or 0.0),
+            },
+            "highlights": proof_highlights[:4],
+        }
+
         total_items = len(items)
         return {
             "organization_id": organization_id,
@@ -1834,6 +1937,7 @@ class MetricsStore:
             },
             "operator_metrics": operator_metrics,
             "pilot_scorecard": pilot_scorecard,
+            "proof_scorecard": proof_scorecard,
         }
 
     # ------------------------------------------------------------------
@@ -1879,7 +1983,7 @@ class MetricsStore:
             if state in open_states:
                 open_items += 1
 
-            amount = self._safe_float(item.get("amount"), 0.0)
+            amount = safe_float(item.get("amount"), 0.0)
             if amount <= 0:
                 amount_unavailable += 1
             else:

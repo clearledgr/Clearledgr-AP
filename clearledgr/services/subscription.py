@@ -271,6 +271,18 @@ class UsageStats:
     ai_credits_this_month: int = 0
     last_reset: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+    @classmethod
+    def from_dict(cls, payload: Optional[Dict[str, Any]]) -> "UsageStats":
+        normalized = dict(payload or {})
+        if (
+            "ai_credits_this_month" not in normalized
+            and "ai_extractions_this_month" in normalized
+        ):
+            normalized["ai_credits_this_month"] = normalized.get("ai_extractions_this_month")
+        allowed_keys = set(cls.__dataclass_fields__.keys())
+        filtered = {key: value for key, value in normalized.items() if key in allowed_keys}
+        return cls(**filtered)
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
@@ -364,7 +376,7 @@ class SubscriptionService:
             plan = PlanTier.FREE
 
         usage_raw = row.get("usage_json") or {}
-        usage = UsageStats(**usage_raw) if isinstance(usage_raw, dict) else UsageStats()
+        usage = UsageStats.from_dict(usage_raw if isinstance(usage_raw, dict) else {})
 
         limits_raw = row.get("limits_json") or {}
         if isinstance(limits_raw, dict) and limits_raw:

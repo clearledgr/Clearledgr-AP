@@ -289,19 +289,44 @@ class AuditTrailService:
             trail.amount = amount
         
         # Persist to database
-        self._persist_event(invoice_id, event)
+        self._persist_event(invoice_id, event, trail)
         
         logger.info(f"Audit: [{invoice_id}] {event_type.value}: {summary}")
         
         return event
     
-    def _persist_event(self, invoice_id: str, event: AuditEvent) -> None:
-        """Legacy trail events are presentation-only and do not own DB persistence."""
-        logger.debug(
-            "Skipping legacy audit_trail DB persistence for invoice_id=%s event_type=%s",
-            invoice_id,
-            event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type),
-        )
+    def _persist_event(self, invoice_id: str, event: AuditEvent, trail: Optional[AuditTrail] = None) -> None:
+        """Persist legacy trail events through the shared AP audit store."""
+        if not hasattr(self.db, "append_ap_audit_event"):
+            return
+        trail_payload = trail if isinstance(trail, AuditTrail) else None
+        try:
+            self.db.append_ap_audit_event(
+                {
+                    "id": f"audit-trail-{event.event_id}",
+                    "ap_item_id": invoice_id,
+                    "event_type": event.event_type.value,
+                    "actor_type": "agent" if event.actor == "agent" else "user",
+                    "actor_id": event.actor,
+                    "reason": event.summary,
+                    "metadata": {
+                        "summary": event.summary,
+                        "details": dict(event.details or {}),
+                        "vendor": trail_payload.vendor if trail_payload else None,
+                        "amount": trail_payload.amount if trail_payload else None,
+                        "reasoning": event.reasoning,
+                        "confidence": event.confidence,
+                        "duration_ms": event.duration_ms,
+                        "legacy_audit_trail": True,
+                    },
+                    "organization_id": self.organization_id,
+                    "source": "audit_trail",
+                    "correlation_id": invoice_id,
+                    "ts": event.timestamp,
+                }
+            )
+        except Exception as exc:
+            logger.warning("Could not persist audit trail event %s: %s", invoice_id, exc)
     
     def get_trail(self, invoice_id: str) -> Optional[AuditTrail]:
         """Get the complete audit trail for an invoice."""
@@ -324,30 +349,75 @@ class AuditTrailService:
     
     def _dict_to_trail(self, data: Dict[str, Any]) -> AuditTrail:
         """Convert dictionary to AuditTrail."""
-        events = [
-            AuditEvent(
-                event_id=e.get("event_id", ""),
-                event_type=AuditEventType(e.get("event_type", "received")),
-                timestamp=e.get("timestamp", ""),
-                actor=e.get("actor", "system"),
-                summary=e.get("summary", ""),
-                details=e.get("details", {}),
-                reasoning=e.get("reasoning"),
-                confidence=e.get("confidence"),
-                duration_ms=e.get("duration_ms"),
+        events: List[AuditEvent] = []
+        vendor = str(data.get("vendor") or "Unknown")
+        amount = data.get("amount", 0)
+        current_status = str(data.get("current_status") or "unknown")
+        created_at = str(data.get("created_at") or "")
+        last_updated = str(data.get("last_updated") or "")
+
+        for raw_event in data.get("events", []):
+            event_row = dict(raw_event or {})
+            payload = event_row.get("payload_json")
+            if not isinstance(payload, dict):
+                payload = {}
+            details = payload.get("details") if isinstance(payload.get("details"), dict) else payload
+            event_type_token = str(
+                event_row.get("event_type")
+                or payload.get("event_type")
+                or "received"
+            ).strip().lower() or "received"
+            try:
+                event_type = AuditEventType(event_type_token)
+            except ValueError:
+                event_type = AuditEventType.ERROR if "error" in event_type_token else AuditEventType.COMMENT_ADDED
+            summary = str(
+                payload.get("summary")
+                or event_row.get("decision_reason")
+                or payload.get("reason")
+                or event_type_token.replace("_", " ")
+            ).strip()
+            timestamp = str(event_row.get("ts") or event_row.get("timestamp") or "").strip()
+            actor = str(event_row.get("actor_id") or event_row.get("actor") or "system").strip() or "system"
+            reasoning = payload.get("reasoning")
+            confidence = payload.get("confidence")
+            duration_ms = payload.get("duration_ms")
+            events.append(
+                AuditEvent(
+                    event_id=str(event_row.get("id") or event_row.get("event_id") or ""),
+                    event_type=event_type,
+                    timestamp=timestamp,
+                    actor=actor,
+                    summary=summary,
+                    details=details if isinstance(details, dict) else {},
+                    reasoning=reasoning,
+                    confidence=confidence,
+                    duration_ms=duration_ms,
+                )
             )
-            for e in data.get("events", [])
-        ]
+            if vendor == "Unknown":
+                vendor = str(
+                    payload.get("vendor")
+                    or payload.get("details", {}).get("vendor")
+                    or vendor
+                ).strip() or vendor
+            if amount in {None, 0}:
+                amount = payload.get("amount") or payload.get("details", {}).get("amount") or amount
+            if not created_at:
+                created_at = timestamp
+            last_updated = timestamp or last_updated
+            if current_status in {"", "unknown", "new"}:
+                current_status = event_type.value
         
         return AuditTrail(
             invoice_id=data.get("invoice_id", ""),
             organization_id=data.get("organization_id", self.organization_id),
-            vendor=data.get("vendor", "Unknown"),
-            amount=data.get("amount", 0),
+            vendor=vendor,
+            amount=amount or 0,
             events=events,
-            current_status=data.get("current_status", "unknown"),
-            created_at=data.get("created_at", ""),
-            last_updated=data.get("last_updated", ""),
+            current_status=current_status or "unknown",
+            created_at=created_at,
+            last_updated=last_updated,
         )
     
     def log_classification(

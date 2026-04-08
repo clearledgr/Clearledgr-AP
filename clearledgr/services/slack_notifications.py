@@ -22,6 +22,7 @@ def _build_approval_followup_blocks(
     invoice_num: str,
     hours_pending: int,
     stage: str,
+    approver_display_targets: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     action_ref = str(ap_item.get("id") or invoice_num or "unknown").strip() or "unknown"
     currency = str(ap_item.get("currency") or "USD").strip() or "USD"
@@ -56,6 +57,19 @@ def _build_approval_followup_blocks(
                 for key, value in details.items()
             ],
         },
+    ]
+    display_targets = [str(value).strip() for value in (approver_display_targets or []) if str(value).strip()]
+    if display_targets:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Pending approvers:*\n" + ", ".join(display_targets),
+                },
+            }
+        )
+    blocks.append(
         {
             "type": "actions",
             "elements": [
@@ -80,8 +94,8 @@ def _build_approval_followup_blocks(
                     "value": action_ref,
                 },
             ],
-        },
-    ]
+        }
+    )
     return blocks
 
 
@@ -107,6 +121,19 @@ async def _post_slack_blocks(
         or "#finance-approvals"
     )
 
+    def _retry_candidates(primary: str) -> List[str]:
+        candidates: List[str] = []
+        for value in (
+            runtime.get("approval_channel"),
+            os.getenv("SLACK_APPROVAL_CHANNEL"),
+            os.getenv("SLACK_DEFAULT_CHANNEL"),
+        ):
+            token = str(value or "").strip()
+            if not token or token == primary or token in candidates:
+                continue
+            candidates.append(token)
+        return candidates
+
     if webhook_url:
         try:
             async with httpx.AsyncClient() as client:
@@ -123,26 +150,44 @@ async def _post_slack_blocks(
     if bot_token:
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    "https://slack.com/api/chat.postMessage",
-                    headers={
-                        "Authorization": f"Bearer {bot_token}",
-                        "Content-Type": "application/json; charset=utf-8",
-                    },
-                    json={
-                        "channel": channel,
-                        "text": text,
-                        "blocks": blocks,
-                        "unfurl_links": False,
-                        "unfurl_media": False,
-                    },
-                    timeout=15,
-                )
-            payload = response.json() if response.content else {}
-            if response.status_code >= 400 or not payload.get("ok", False):
+                headers = {
+                    "Authorization": f"Bearer {bot_token}",
+                    "Content-Type": "application/json; charset=utf-8",
+                }
+
+                async def _send_to(target_channel: str):
+                    return await client.post(
+                        "https://slack.com/api/chat.postMessage",
+                        headers=headers,
+                        json={
+                            "channel": target_channel,
+                            "text": text,
+                            "blocks": blocks,
+                            "unfurl_links": False,
+                            "unfurl_media": False,
+                        },
+                        timeout=15,
+                    )
+
+                response = await _send_to(channel)
+                payload = response.json() if response.content else {}
+                if response.status_code < 400 and payload.get("ok", False):
+                    return True
+
+                if payload.get("error") == "channel_not_found":
+                    for retry_channel in _retry_candidates(channel):
+                        retry_response = await _send_to(retry_channel)
+                        retry_payload = retry_response.json() if retry_response.content else {}
+                        if retry_response.status_code < 400 and retry_payload.get("ok", False):
+                            logger.warning(
+                                "Slack primary channel %s not found; delivered via fallback %s",
+                                channel,
+                                retry_channel,
+                            )
+                            return True
+
                 logger.error(f"Slack bot send failed: status={response.status_code} payload={payload}")
                 return False
-            return True
         except Exception as e:
             logger.error(f"Slack bot token send failed: {e}")
             return False
@@ -174,6 +219,8 @@ async def send_with_retry(
     try:
         from clearledgr.core.database import get_db
         db = get_db()
+        if not organization_id:
+            logger.warning("organization_id missing in send_with_retry enqueue (ap_item=%s), falling back to 'default'", ap_item_id)
         db.enqueue_notification(
             organization_id=organization_id or "default",
             channel="slack",
@@ -978,7 +1025,10 @@ async def send_approval_reminder(
     amount = ap_item.get("amount") or 0
     invoice_num = ap_item.get("invoice_number") or "N/A"
     org_id = organization_id or ap_item.get("organization_id") or os.getenv("DEFAULT_ORGANIZATION_ID", "default")
+    if org_id == "default":
+        logger.warning("organization_id resolved to 'default' in send_approval_followup_dm (ap_item=%s)", ap_item.get("id"))
     metadata = ap_item.get("metadata") if isinstance(ap_item.get("metadata"), dict) else {}
+    runtime = resolve_slack_runtime(org_id)
 
     is_escalation = str(stage or "").strip().lower() == "escalation"
     verb = "ESCALATION" if is_escalation else "Reminder"
@@ -994,19 +1044,36 @@ async def send_approval_reminder(
     except (TypeError, ValueError):
         amount_num = 0.0
 
-    reminder_blocks = _build_approval_followup_blocks(
-        ap_item=ap_item,
-        vendor=vendor,
-        amount=amount_num,
-        invoice_num=str(invoice_num),
-        hours_pending=h,
-        stage="escalation" if is_escalation else "reminder",
-    )
-
     reminder_sent = False
     try:
         client = get_slack_client(organization_id=org_id)
-        for uid in approver_ids:
+        resolved_targets = await client.resolve_user_targets(approver_ids or [])
+        delivery_ids = list(resolved_targets.get("delivery_ids") or [])
+        mention_targets = list(resolved_targets.get("mentions") or [])
+        display_targets = list(mention_targets or [])
+        unresolved_targets = [
+            str(value).strip()
+            for value in (resolved_targets.get("unresolved") or [])
+            if str(value).strip()
+        ]
+        for value in unresolved_targets:
+            if value not in display_targets:
+                display_targets.append(value)
+
+        reminder_blocks = _build_approval_followup_blocks(
+            ap_item=ap_item,
+            vendor=vendor,
+            amount=amount_num,
+            invoice_num=str(invoice_num),
+            hours_pending=h,
+            stage="escalation" if is_escalation else "reminder",
+            approver_display_targets=display_targets,
+        )
+        channel_text = dm_text
+        if display_targets:
+            channel_text = f"{dm_text} Pending approvers: {', '.join(display_targets)}"
+
+        for uid in delivery_ids:
             try:
                 await client.send_dm(uid, dm_text, blocks=reminder_blocks)
                 reminder_sent = True
@@ -1014,19 +1081,20 @@ async def send_approval_reminder(
                 logger.error("Approval reminder DM to %s failed: %s", uid, dm_err)
 
         fallback_channel = (
-            str(ap_item.get("slack_channel_id") or "").strip()
+            str(escalation_channel or "").strip()
+            or str(runtime.get("approval_channel") or "").strip()
             or str(metadata.get("approval_channel") or "").strip()
-            or str(escalation_channel or "").strip()
+            or str(ap_item.get("slack_channel_id") or "").strip()
             or os.getenv("SLACK_APPROVAL_CHANNEL")
             or os.getenv("SLACK_DEFAULT_CHANNEL")
             or "#finance"
         )
 
-        if not approver_ids and fallback_channel:
+        if (not delivery_ids) and fallback_channel:
             reminder_sent = reminder_sent or bool(
                 await _post_slack_blocks(
                     blocks=reminder_blocks,
-                    text=dm_text,
+                    text=channel_text,
                     preferred_channel=fallback_channel,
                     organization_id=org_id,
                 )
@@ -1035,7 +1103,7 @@ async def send_approval_reminder(
         if is_escalation:
             escalation_sent = await _post_slack_blocks(
                 blocks=reminder_blocks,
-                text=dm_text,
+                text=channel_text,
                 preferred_channel=fallback_channel,
                 organization_id=org_id,
             )

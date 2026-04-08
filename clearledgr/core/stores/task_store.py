@@ -190,6 +190,37 @@ class TaskStore:
             logger.warning("[TaskStore] list_pending_task_runs failed: %s", exc)
             return []
 
+    def list_task_runs(
+        self,
+        organization_id: Optional[str] = None,
+        *,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """List recent task runs for memory/audit projection."""
+        self.initialize()
+        if organization_id:
+            sql = self._prepare_sql(
+                "SELECT * FROM task_runs WHERE organization_id = ? ORDER BY created_at DESC LIMIT ?"
+            )
+            params = (organization_id, max(1, int(limit or 50)))
+        else:
+            sql = self._prepare_sql(
+                "SELECT * FROM task_runs ORDER BY created_at DESC LIMIT ?"
+            )
+            params = (max(1, int(limit or 50)),)
+        try:
+            with self.connect() as conn:
+                if not self.use_postgres:
+                    import sqlite3
+                    conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute(sql, params)
+                rows = cur.fetchall() or []
+                return [dict(r) for r in rows]
+        except Exception as exc:
+            logger.warning("[TaskStore] list_task_runs failed: %s", exc)
+            return []
+
     # ------------------------------------------------------------------
     # Update (step checkpoint)
     # ------------------------------------------------------------------

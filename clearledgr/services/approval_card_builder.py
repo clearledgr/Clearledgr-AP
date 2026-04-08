@@ -190,7 +190,7 @@ def build_approval_surface_copy(
     approval_context = approval_context if isinstance(approval_context, dict) else {}
     open_vendor_items = int(approval_context.get("vendor_open_invoices") or 0)
     if open_vendor_items > 1:
-        why_scored.append((60, f"Vendor has {open_vendor_items} open invoice(s), so this decision impacts current AP queue risk."))
+        why_scored.append((60, f"Vendor has {open_vendor_items} other open invoice(s), so this decision affects related payables already in flight."))
 
     if int(invoice.potential_duplicates or 0) > 0:
         why_scored.append(
@@ -198,7 +198,7 @@ def build_approval_surface_copy(
         )
 
     if not why_scored:
-        why_scored.append((50, "Approval is required before the AP workflow can post this invoice to ERP."))
+        why_scored.append((50, "This invoice needs approval before Clearledgr can post it."))
 
     why_candidates = [line for _score, line in sorted(why_scored, key=lambda entry: entry[0], reverse=True)]
     why_summary = " ".join(dedupe_reason_lines(why_candidates, limit=2)).strip()
@@ -209,49 +209,49 @@ def build_approval_surface_copy(
     has_validation_blockers = bool(validation_reasons) or bool(validation_gate.get("reason_codes"))
     has_duplicate_risk = int(invoice.potential_duplicates or 0) > 0
     recommended_action_text = (
-        "Request budget adjustment unless this invoice is business-critical and override is justified."
+        "Request budget adjustment unless this invoice is business-critical and an override is justified."
         if requires_budget_decision and hard_budget_block
-        else "Approve override with explicit justification, or request budget clarification."
+        else "Approve the override only if the business need is clear and documented."
         if requires_budget_decision
-        else "Request info first to resolve policy/evidence blockers before posting."
+        else "Request more information before posting if any detail still looks wrong."
         if has_validation_blockers or confidence_requires_review
-        else "Reject only if duplicate risk is confirmed; otherwise request clarification."
+        else "Only reject if the duplicate risk is confirmed; otherwise ask for clarification."
         if has_duplicate_risk
-        else "Approve / Post to ERP once checks look correct."
+        else "Approve and let Clearledgr post it if the details look correct."
     )
 
     if requires_budget_decision:
         approve_line = (
-            "Approve override: records hard-budget-block justification, then the AP workflow posts to ERP (API-first, browser fallback if needed)."
+            "Approve override: Clearledgr records the justification and then posts this invoice to ERP."
             if hard_budget_block
-            else "Approve override: records justification, then the AP workflow posts to ERP (API-first, browser fallback if needed)."
+            else "Approve override: Clearledgr records the justification and then posts this invoice to ERP."
         )
         request_info_line = (
-            "Request info: routes back for budget or policy clarification and preserves AP audit linkage."
+            "Request info: Clearledgr sends this back for budget or policy clarification."
             if has_validation_blockers
-            else "Request info: sends the invoice back for clarification and keeps the audit trail intact."
+            else "Request info: Clearledgr sends this back for clarification."
         )
-        reject_line = "Reject: marks the invoice rejected and records the decision in the AP audit trail."
+        reject_line = "Reject: Clearledgr records the rejection and stops any further posting."
         if has_duplicate_risk:
             reject_line = (
-                "Reject: use when duplicate risk is confirmed; invoice is marked rejected and linked in the AP audit trail."
+                "Reject: use this if the duplicate risk is confirmed. Clearledgr records the rejection and stops posting."
             )
         next_lines = [approve_line, request_info_line, reject_line]
     else:
         approve_line = (
-            "Approve / Post to ERP: captures confidence override context for flagged fields, then attempts ERP posting (API-first, browser fallback if needed)."
+            "Approve / Post to ERP: Clearledgr records the approval and posts this invoice automatically."
             if confidence_requires_review
-            else "Approve / Post to ERP: the AP workflow attempts ERP posting automatically (API-first, browser fallback if needed)."
+            else "Approve / Post to ERP: Clearledgr records the approval and posts this invoice automatically."
         )
         request_info_line = (
-            "Request info: returns the invoice to needs-info and asks for missing policy/evidence details before posting."
+            "Request info: Clearledgr sends this back for the missing policy or evidence details."
             if has_validation_blockers
-            else "Request info: returns the invoice to needs-info so the agent can collect missing details."
+            else "Request info: Clearledgr sends this back for the missing details."
         )
-        reject_line = "Reject: records the rejection and stops further posting for this invoice."
+        reject_line = "Reject: Clearledgr records the rejection and stops any further posting."
         if has_duplicate_risk:
             reject_line = (
-                "Reject: use when duplicate risk is confirmed; rejection is recorded and posting is stopped for this invoice."
+                "Reject: use this if the duplicate risk is confirmed. Clearledgr records the rejection and stops posting."
             )
         next_lines = [approve_line, request_info_line, reject_line]
 
@@ -259,8 +259,8 @@ def build_approval_surface_copy(
         "why_summary": why_summary,
         "what_happens_next": next_lines,
         "recommended_action_text": recommended_action_text,
-        "requested_by_text": "Requested by Clearledgr AP Agent on behalf of the AP workflow.",
-        "source_of_truth_text": "Source of truth: Gmail thread and Clearledgr AP context (Open in Gmail / View in Gmail).",
+        "requested_by_text": "Raised by Clearledgr from this Gmail thread.",
+        "source_of_truth_text": "Open in Gmail if you want to review the original email and attachment.",
         "gmail_url": gmail_url,
     }
 
@@ -315,7 +315,7 @@ def build_approval_blocks(
             pass
 
     # ========== PO MATCH STATUS ==========
-    po_text = "N/A"
+    po_text = "Not provided"
     po_match = getattr(invoice, "po_match_result", None)
     if not po_match and extra_context:
         po_match = (extra_context or {}).get("po_match_result")
@@ -330,22 +330,6 @@ def build_approval_blocks(
             po_text = "No match"
     elif invoice.po_number:
         po_text = f"#{invoice.po_number}"
-
-    # ========== ERP PRE-FLIGHT ==========
-    erp_preflight = (extra_context or {}).get("erp_preflight")
-    if isinstance(erp_preflight, dict) and erp_preflight.get("erp_available"):
-        pf_parts = []
-        if erp_preflight.get("vendor_exists") is False:
-            pf_parts.append("Vendor not in ERP")
-        if erp_preflight.get("bill_exists") is True:
-            pf_parts.append("DUPLICATE BILL in ERP")
-        if erp_preflight.get("gl_valid") is False:
-            pf_parts.append(f"Invalid GL: {', '.join(erp_preflight.get('invalid_gl_codes', []))}")
-        if pf_parts:
-            blocks.append({
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f"*ERP Pre-flight:* {' | '.join(pf_parts)}"},
-            })
 
     # ========== HEADER ==========
     priority_level = invoice.priority.get("priority", "") if invoice.priority else ""
@@ -363,26 +347,46 @@ def build_approval_blocks(
         {"type": "header", "text": {"type": "plain_text", "text": header_text}},
     ]
 
-    # ========== EXTRACTION SOURCE CONTEXT (Pillar 2) ==========
-    extracted_fields = []
+    # ========== EXTRACTION CONTEXT ==========
     missing_fields = []
+    field_labels = {
+        "vendor": "vendor",
+        "amount": "amount",
+        "invoice #": "invoice number",
+        "due date": "due date",
+        "PO #": "PO number",
+    }
     for field_name, value in [("vendor", invoice.vendor_name), ("amount", invoice.amount), ("invoice #", invoice.invoice_number), ("due date", invoice.due_date), ("PO #", invoice.po_number)]:
-        if value and str(value) not in ("N/A", "0", "0.0", "None", ""):
-            extracted_fields.append(field_name)
-        else:
-            missing_fields.append(field_name)
+        if not value or str(value) in ("N/A", "0", "0.0", "None", ""):
+            missing_fields.append(field_labels.get(field_name, field_name))
 
     source_parts = []
-    if extracted_fields:
-        source_parts.append(f"Extracted: {', '.join(extracted_fields)}")
     if missing_fields:
         source_parts.append(f"Missing: {', '.join(missing_fields)}")
+    if invoice.confidence < 0.95:
+        source_parts.append(f"Extraction confidence: {confidence_text}")
 
     if source_parts:
         blocks.append({
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": " | ".join(source_parts) + f" | Confidence: {confidence_text}"}]
+            "elements": [{"type": "mrkdwn", "text": " · ".join(source_parts)}]
         })
+
+    # ========== ERP PRE-FLIGHT ==========
+    erp_preflight = (extra_context or {}).get("erp_preflight")
+    if isinstance(erp_preflight, dict) and erp_preflight.get("erp_available"):
+        pf_parts = []
+        if erp_preflight.get("vendor_exists") is False:
+            pf_parts.append("Vendor not in ERP")
+        if erp_preflight.get("bill_exists") is True:
+            pf_parts.append("Duplicate bill found in ERP")
+        if erp_preflight.get("gl_valid") is False:
+            pf_parts.append(f"Invalid GL: {', '.join(erp_preflight.get('invalid_gl_codes', []))}")
+        if pf_parts:
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*ERP pre-check:*\n{' | '.join(pf_parts)}"},
+            })
 
     # ========== AGENT REASONING (only when populated) ==========
     if invoice.reasoning_summary:
@@ -422,7 +426,10 @@ def build_approval_blocks(
         "type": "section",
         "fields": [
             {"type": "mrkdwn", "text": f"*PO:*\n{po_text}"},
-            {"type": "mrkdwn", "text": f"*GL:*\n{(invoice.vendor_intelligence or {}).get('suggested_gl', 'Auto')}"},
+            {
+                "type": "mrkdwn",
+                "text": f"*GL:*\n{'Suggested automatically' if str((invoice.vendor_intelligence or {}).get('suggested_gl') or '').strip().lower() in {'', 'auto'} else (invoice.vendor_intelligence or {}).get('suggested_gl')}",
+            },
         ]
     })
 
@@ -526,7 +533,7 @@ def build_approval_blocks(
         blocks.append(
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": f"*Recommended now:*\n{recommended_action_text}"},
+                "text": {"type": "mrkdwn", "text": f"*Recommended decision:*\n{recommended_action_text}"},
             }
         )
 
@@ -540,6 +547,34 @@ def build_approval_blocks(
                     "text": {"type": "mrkdwn", "text": "*What happens next:*\n" + "\n".join(next_lines)},
                 }
             )
+
+    approval_mentions = [
+        str(value).strip()
+        for value in ((extra_context or {}).get("approval_mentions") or [])
+        if str(value).strip()
+    ]
+    approval_assignees = [
+        str(value).strip()
+        for value in ((extra_context or {}).get("approval_assignee_labels") or [])
+        if str(value).strip()
+    ]
+    approver_display: list[str] = []
+    seen_approvers = set()
+    for value in [*approval_mentions, *approval_assignees]:
+        if not value or value in seen_approvers:
+            continue
+        seen_approvers.add(value)
+        approver_display.append(value)
+    if approver_display:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Approvers for this request:*\n" + ", ".join(approver_display),
+                },
+            }
+        )
 
     # ========== ACTIONS ==========
     requires_budget_decision = bool(budget_summary.get("requires_decision"))
@@ -619,9 +654,9 @@ def build_approval_blocks(
     blocks.append({
         "type": "context",
         "elements": [
-            {"type": "mrkdwn", "text": f"From: {invoice.sender} | {invoice.gmail_id}"},
-            {"type": "mrkdwn", "text": str(approval_copy.get("requested_by_text") or "Requested by Clearledgr AP Agent on behalf of the AP workflow.")},
-            {"type": "mrkdwn", "text": str(approval_copy.get("source_of_truth_text") or "Source of truth: Gmail thread and Clearledgr AP context.")},
+            {"type": "mrkdwn", "text": f"From: {invoice.sender}"},
+            {"type": "mrkdwn", "text": str(approval_copy.get("requested_by_text") or "Raised by Clearledgr from this Gmail thread.")},
+            {"type": "mrkdwn", "text": str(approval_copy.get("source_of_truth_text") or "Open in Gmail if you want to review the original email and attachment.")},
         ]
     })
 

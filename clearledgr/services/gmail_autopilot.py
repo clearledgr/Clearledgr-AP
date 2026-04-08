@@ -44,6 +44,7 @@ class GmailAutopilot:
         self.watch_refresh_hours = int(os.getenv("GMAIL_WATCH_REFRESH_HOURS", "12"))
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self._tick_lock = asyncio.Lock()
         self._db = get_db()
         self._status: Dict[str, Any] = {"state": "idle"}
 
@@ -108,11 +109,19 @@ class GmailAutopilot:
     async def _run_loop(self) -> None:
         while self._running:
             try:
-                await self._tick()
+                await self.run_once()
             except Exception as exc:
                 logger.exception("Gmail autopilot loop error: %s", exc)
                 self._status = {"state": "error", "error": str(exc)}
             await asyncio.sleep(self.poll_interval)
+
+    async def run_once(self) -> Dict[str, Any]:
+        if not self.enabled:
+            self._status = {"state": "disabled"}
+            return self._status
+        async with self._tick_lock:
+            await self._tick()
+            return self._status
 
     async def _tick(self) -> None:
         tokens = token_store.list_all()
@@ -290,8 +299,65 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+_autopilot_singleton: Optional[GmailAutopilot] = None
+
+
+def _autopilot_scan_stale(autopilot: GmailAutopilot, user_id: str) -> bool:
+    state = autopilot._db.get_gmail_autopilot_state(user_id) or {}
+    if str(state.get("last_error") or "").strip():
+        return True
+    last_scan_at = _parse_iso(state.get("last_scan_at"))
+    if not last_scan_at:
+        return True
+    now = datetime.now(timezone.utc)
+    return (now - last_scan_at).total_seconds() > max(60, autopilot.poll_interval * 2)
+
+
+async def ensure_gmail_autopilot_progress(
+    app=None,
+    *,
+    user_id: Optional[str] = None,
+    force_scan: bool = False,
+) -> Dict[str, Any]:
+    global _autopilot_singleton
+
+    autopilot = getattr(getattr(app, "state", None), "gmail_autopilot", None) if app is not None else None
+    if autopilot is None:
+        autopilot = _autopilot_singleton
+    if autopilot is None:
+        autopilot = GmailAutopilot()
+        _autopilot_singleton = autopilot
+    if app is not None and getattr(app.state, "gmail_autopilot", None) is None:
+        app.state.gmail_autopilot = autopilot
+
+    if not autopilot.enabled:
+        return {"started": False, "nudged": False, "reason": "disabled"}
+
+    started = False
+    if not autopilot._running:
+        await autopilot.start()
+        started = True
+
+    if not user_id:
+        return {"started": started, "nudged": False, "reason": "no_user"}
+
+    if not force_scan and not _autopilot_scan_stale(autopilot, user_id):
+        return {"started": started, "nudged": False, "reason": "fresh"}
+
+    token = token_store.get(user_id)
+    if not token:
+        return {"started": started, "nudged": False, "reason": "no_token"}
+
+    await autopilot.run_once()
+    return {"started": started, "nudged": True, "reason": "stale_or_forced"}
+
+
 async def start_gmail_autopilot(app=None) -> Optional[GmailAutopilot]:
-    autopilot = GmailAutopilot()
+    global _autopilot_singleton
+    autopilot = getattr(getattr(app, "state", None), "gmail_autopilot", None) if app is not None else None
+    if autopilot is None:
+        autopilot = _autopilot_singleton or GmailAutopilot()
+    _autopilot_singleton = autopilot
     await autopilot.start()
     if app is not None:
         app.state.gmail_autopilot = autopilot
@@ -299,8 +365,12 @@ async def start_gmail_autopilot(app=None) -> Optional[GmailAutopilot]:
 
 
 async def stop_gmail_autopilot(app=None) -> None:
+    global _autopilot_singleton
     autopilot = None
     if app is not None and hasattr(app.state, "gmail_autopilot"):
         autopilot = app.state.gmail_autopilot
+    if autopilot is None:
+        autopilot = _autopilot_singleton
     if autopilot:
         await autopilot.stop()
+    _autopilot_singleton = None

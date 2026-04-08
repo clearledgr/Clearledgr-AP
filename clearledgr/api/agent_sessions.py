@@ -198,7 +198,7 @@ async def create_agent_session(
         if detail == "browser_agent_disabled":
             raise HTTPException(status_code=503, detail=detail)
         raise HTTPException(status_code=400, detail=detail)
-    return {"session": session}
+    return service.get_session(str(session.get("id")))
 
 
 @router.get("/sessions/{session_id}")
@@ -390,7 +390,8 @@ async def complete_browser_fallback_session(
         if detail == "fallback_failure_after_posted" or detail.startswith("invalid_state_for_fallback_"):
             raise HTTPException(status_code=409, detail=detail)
         raise HTTPException(status_code=400, detail=detail)
-    return {"completion": completion}
+    session_payload = get_browser_agent_service().get_session(session_id)
+    return {"completion": completion, **session_payload}
 
 
 @router.get("/policies/browser")

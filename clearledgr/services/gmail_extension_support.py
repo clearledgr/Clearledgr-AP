@@ -241,11 +241,9 @@ def build_verify_confidence_payload(
         vendor_name = extraction_payload.get("vendor") or ap_item.get("vendor_name")
         if organization_id and vendor_name:
             try:
-                from clearledgr.services.correction_learning import (
-                    get_correction_learning_service,
-                )
+                from clearledgr.services.finance_learning import get_finance_learning_service
 
-                learned_adjustments = get_correction_learning_service(str(organization_id)).get_extraction_confidence_adjustments(
+                learned_adjustments = get_finance_learning_service(str(organization_id)).get_extraction_confidence_adjustments(
                     vendor_name=vendor_name,
                     sender_domain=metadata_payload.get("source_sender_domain") or ap_item.get("sender"),
                     document_type=(
@@ -466,7 +464,7 @@ Return ONLY valid JSON:
                 "content-type": "application/json",
             },
             json={
-                "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+                "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
                 "max_tokens": 512,
                 "temperature": 0.2,
                 "messages": [{"role": "user", "content": prompt}],
@@ -551,10 +549,10 @@ def build_gl_suggestion_payload(
     vendor_name: str,
 ) -> Dict[str, Any]:
     """Build GL code suggestions from learning and vendor history."""
-    from clearledgr.services.learning import get_learning_service
+    from clearledgr.services.finance_learning import get_finance_learning_service
     from clearledgr.services.vendor_intelligence import get_vendor_intelligence
 
-    learning = get_learning_service(organization_id)
+    learning = get_finance_learning_service(organization_id)
     vendor_intel = get_vendor_intelligence()
 
     learned = learning.suggest_gl_code(vendor_name)
@@ -680,7 +678,7 @@ def build_form_prefill_payload(
     invoice: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Build all AI suggestions used to pre-fill Gmail form surfaces."""
-    from clearledgr.services.learning import get_learning_service
+    from clearledgr.services.finance_learning import get_finance_learning_service
     from clearledgr.services.vendor_intelligence import get_vendor_intelligence
 
     if not invoice:
@@ -694,7 +692,7 @@ def build_form_prefill_payload(
     if invoice_org != organization_id:
         raise PermissionError("org_mismatch")
 
-    learning = get_learning_service(organization_id)
+    learning = get_finance_learning_service(organization_id)
     vendor_intel = get_vendor_intelligence()
     vendor_name = invoice.get("vendor") or invoice.get("vendor_name", "")
     amount = invoice.get("amount", 0)

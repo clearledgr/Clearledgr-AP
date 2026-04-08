@@ -83,6 +83,10 @@ class PaymentStore:
                 return existing
 
         payment_id = payload.get("id") or f"PAY-{uuid.uuid4().hex[:12]}"
+        _pay_org_id = payload.get("organization_id")
+        if not _pay_org_id:
+            logger.warning("organization_id missing in create_payment payload (payment_id=%s), falling back to 'default'", payment_id)
+        _pay_org_id = str(_pay_org_id or "default")
 
         sql = self._prepare_sql("""
             INSERT INTO payments
@@ -94,7 +98,7 @@ class PaymentStore:
         values = (
             payment_id,
             payload.get("ap_item_id"),
-            payload.get("organization_id", "default"),
+            _pay_org_id,
             payload.get("vendor_name"),
             payload.get("amount"),
             payload.get("currency", "USD"),
@@ -116,7 +120,7 @@ class PaymentStore:
         return {
             "id": payment_id,
             "ap_item_id": payload.get("ap_item_id"),
-            "organization_id": payload.get("organization_id", "default"),
+            "organization_id": _pay_org_id,
             "vendor_name": payload.get("vendor_name"),
             "amount": payload.get("amount"),
             "currency": payload.get("currency", "USD"),

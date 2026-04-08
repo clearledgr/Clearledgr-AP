@@ -307,6 +307,8 @@ class IntegrationStore:
         bot_user_id: Optional[str],
         bot_token: Optional[str],
         scope_csv: Optional[str],
+        user_scope_csv: Optional[str] = None,
+        user_token: Optional[str] = None,
         mode: str = "per_org",
         is_active: bool = True,
         metadata: Optional[Dict[str, Any]] = None,
@@ -318,6 +320,11 @@ class IntegrationStore:
         existing = self.get_slack_installation(organization_id)
         row_id = (existing or {}).get("id") or f"SLK-{uuid.uuid4().hex}"
         token_encrypted = self._encrypt_secret(bot_token) if bot_token else None
+        metadata_payload = dict(metadata or {})
+        if user_scope_csv is not None:
+            metadata_payload["user_scope_csv"] = user_scope_csv
+        if user_token:
+            metadata_payload["user_token_encrypted"] = self._encrypt_secret(user_token)
 
         if self.use_postgres:
             sql = self._prepare_sql(
@@ -361,7 +368,7 @@ class IntegrationStore:
                     scope_csv,
                     mode or "per_org",
                     1 if is_active else 0,
-                    json.dumps(metadata or {}),
+                    json.dumps(metadata_payload),
                     (existing or {}).get("created_at") or now,
                     now,
                 ),
@@ -376,6 +383,7 @@ class IntegrationStore:
                 "team_id": team_id,
                 "team_name": team_name,
                 "scope_csv": scope_csv,
+                "user_scope_csv": user_scope_csv,
             },
             last_sync_at=now,
         )
@@ -399,10 +407,16 @@ class IntegrationStore:
         data = dict(row)
         data["is_active"] = bool(data.get("is_active"))
         data["metadata"] = self._decode_json_value(data.get("metadata_json"), {})
+        if isinstance(data["metadata"], dict):
+            encrypted_user_token = data["metadata"].pop("user_token_encrypted", None)
+        else:
+            encrypted_user_token = None
         if include_secrets:
             data["bot_token"] = self._decrypt_secret(data.get("bot_token_encrypted"))
+            data["user_token"] = self._decrypt_secret(encrypted_user_token) if encrypted_user_token else None
         else:
             data["bot_token"] = None
+            data["user_token"] = None
         return data
 
     def get_slack_installation_by_team(
@@ -423,10 +437,16 @@ class IntegrationStore:
         data = dict(row)
         data["is_active"] = bool(data.get("is_active"))
         data["metadata"] = self._decode_json_value(data.get("metadata_json"), {})
+        if isinstance(data["metadata"], dict):
+            encrypted_user_token = data["metadata"].pop("user_token_encrypted", None)
+        else:
+            encrypted_user_token = None
         if include_secrets:
             data["bot_token"] = self._decrypt_secret(data.get("bot_token_encrypted"))
+            data["user_token"] = self._decrypt_secret(encrypted_user_token) if encrypted_user_token else None
         else:
             data["bot_token"] = None
+            data["user_token"] = None
         return data
 
     # ------------------------------------------------------------------

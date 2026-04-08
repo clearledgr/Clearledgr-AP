@@ -18,7 +18,7 @@ from datetime import datetime
 import uuid
 
 from clearledgr.core.database import get_db
-from clearledgr.services.correction_learning import get_correction_learning, CorrectionType
+from clearledgr.services.finance_learning import get_finance_learning_service
 
 logger = logging.getLogger(__name__)
 
@@ -196,9 +196,9 @@ class GLCorrectionService:
         
         # Feed to learning service
         try:
-            learning = get_correction_learning(self.organization_id)
-            learning.record_correction(
-                correction_type=CorrectionType.GL_CODE.value,
+            learning = get_finance_learning_service(self.organization_id, db=self.db)
+            learning.record_manual_field_correction(
+                field="gl_code",
                 original_value=original_gl,
                 corrected_value=corrected_gl,
                 context={
@@ -208,7 +208,9 @@ class GLCorrectionService:
                     "original_description": original_desc,
                     "corrected_description": corrected_desc,
                 },
-                user_id=corrected_by,
+                actor_id=corrected_by,
+                invoice_id=invoice_id,
+                feedback=reason,
             )
             correction.learned = True
             logger.info(f"GL correction recorded and learned: {vendor} {original_gl} → {corrected_gl}")
@@ -300,8 +302,7 @@ class GLCorrectionService:
                 })
 
         try:
-            from clearledgr.services.learning import get_learning_service
-            learning = get_learning_service(self.organization_id)
+            learning = get_finance_learning_service(self.organization_id, db=self.db)
             suggestion = learning.suggest_gl_code(vendor=vendor, amount=amount)
             if suggestion and suggestion.get("confidence", 0) > 0.5:
                 candidates.append({

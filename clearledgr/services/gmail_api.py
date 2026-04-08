@@ -36,7 +36,16 @@ def get_google_oauth_config() -> Dict[str, str]:
     """Return current Google OAuth config from environment."""
     client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
-    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "").strip()
+    redirect_uri = (
+        os.getenv("GOOGLE_GMAIL_REDIRECT_URI", "").strip()
+        or os.getenv("GOOGLE_REDIRECT_URI", "").strip()
+    )
+    if redirect_uri.rstrip("/").endswith("/auth/google/callback"):
+        logger.warning(
+            "GOOGLE_REDIRECT_URI points at /auth/google/callback, which is the workspace auth callback. "
+            "Falling back to the Gmail callback path instead."
+        )
+        redirect_uri = ""
     if not redirect_uri:
         redirect_uri = _default_google_redirect_uri()
     return {
@@ -67,7 +76,7 @@ def validate_google_oauth_config(require_secret: bool = False) -> Dict[str, str]
     if _is_placeholder(config["client_id"]):
         missing.append("GOOGLE_CLIENT_ID")
     if _is_placeholder(config["redirect_uri"]):
-        missing.append("GOOGLE_REDIRECT_URI")
+        missing.append("GOOGLE_GMAIL_REDIRECT_URI or GOOGLE_REDIRECT_URI")
     if require_secret and _is_placeholder(config["client_secret"]):
         missing.append("GOOGLE_CLIENT_SECRET")
     if missing:

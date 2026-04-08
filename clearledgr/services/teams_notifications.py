@@ -376,6 +376,9 @@ def build_finance_summary_reply_activity(
     amount = item.get("amount", 0)
     currency = str(item.get("currency") or "USD")
     invoice_number = str(item.get("invoice_number") or "N/A")
+    agent_memory = item.get("agent_memory") if isinstance(item.get("agent_memory"), dict) else {}
+    agent_profile = item.get("agent_profile") if isinstance(item.get("agent_profile"), dict) else {}
+    agent_next_action = item.get("agent_next_action") if isinstance(item.get("agent_next_action"), dict) else {}
     try:
         amount_value = float(amount)
     except (TypeError, ValueError):
@@ -399,6 +402,8 @@ def build_finance_summary_reply_activity(
                 {"title": "Vendor", "value": vendor},
                 {"title": "Amount", "value": f"{currency} {amount_value:,.2f}"},
                 {"title": "Invoice #", "value": invoice_number},
+                {"title": "Next", "value": str(agent_next_action.get("label") or agent_next_action.get("type") or "Review current AP state")},
+                {"title": "Agent", "value": str(agent_profile.get("name") or "Clearledgr AP Agent")},
             ],
         },
         {
@@ -407,6 +412,18 @@ def build_finance_summary_reply_activity(
             "wrap": True,
         },
     ]
+
+    belief = agent_memory.get("belief") if isinstance(agent_memory.get("belief"), dict) else {}
+    belief_reason = str(belief.get("reason") or "").strip()
+    if belief_reason:
+        card_body.append(
+            {
+                "type": "TextBlock",
+                "text": f"Agent belief: {belief_reason[:220]}",
+                "wrap": True,
+                "isSubtle": True,
+            }
+        )
 
     activity = _make_adaptive_card_activity(
         card_body, summary=f"Finance summary for invoice {item_id}"

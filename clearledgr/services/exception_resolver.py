@@ -143,7 +143,7 @@ Respond in 2-3 sentences: the likely root cause, what to do, and who should hand
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": "claude-3-5-haiku-20241022",
                     "max_tokens": 200,
                     "messages": [{"role": "user", "content": prompt}],
                 },
@@ -333,7 +333,7 @@ Respond in ONE sentence with the most likely explanation and whether this needs 
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": "claude-3-5-haiku-20241022",
                     "max_tokens": 150,
                     "messages": [{"role": "user", "content": prompt}],
                 },

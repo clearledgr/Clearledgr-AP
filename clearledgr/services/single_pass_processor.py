@@ -192,7 +192,7 @@ async def _call_claude_text_single_pass(prompt: str, api_key: str) -> Optional[s
     try:
         response = await _async_post(
             api_key=api_key,
-            model="claude-haiku-4-5-20251001",
+            model="claude-3-5-haiku-20241022",
             prompt=prompt,
             max_tokens=1500,
         )
@@ -232,7 +232,7 @@ async def _call_claude_vision_single_pass(
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": "claude-sonnet-4-20250514",
                     "max_tokens": 2000,
                     "messages": [{"role": "user", "content": content}],
                 },

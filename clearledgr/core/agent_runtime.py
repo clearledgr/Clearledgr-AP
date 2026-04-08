@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 MAX_PLANNING_STEPS = 10
 MAX_TASK_SECONDS = int(os.getenv("AGENT_MAX_TASK_SECONDS", "600"))
-CLAUDE_MODEL = os.getenv("AGENT_RUNTIME_MODEL", "claude-sonnet-4-6")
+CLAUDE_MODEL = os.getenv("AGENT_RUNTIME_MODEL", "claude-sonnet-4-20250514")
 
 
 class AgentPlanningEngine:
@@ -56,6 +56,116 @@ class AgentPlanningEngine:
         """Register a skill.  Replaces any previous skill with the same name."""
         self._skills[skill.skill_name] = skill
         logger.info("[AgentRuntime] registered skill: %s", skill.skill_name)
+
+    @staticmethod
+    def _task_payload_ap_item(task_payload: Dict[str, Any]) -> Dict[str, Any]:
+        payload = task_payload if isinstance(task_payload, dict) else {}
+        ap_item = payload.get("ap_item")
+        return dict(ap_item) if isinstance(ap_item, dict) else {}
+
+    @classmethod
+    def _task_payload_ap_item_ref(cls, task_payload: Dict[str, Any]) -> Optional[str]:
+        payload = task_payload if isinstance(task_payload, dict) else {}
+        ap_item = cls._task_payload_ap_item(payload)
+        candidates = [
+            payload.get("ap_item_id"),
+            payload.get("entity_id"),
+            ap_item.get("id") if ap_item else None,
+            (payload.get("invoice") or {}).get("ap_item_id") if isinstance(payload.get("invoice"), dict) else None,
+            (payload.get("invoice") or {}).get("gmail_id") if isinstance(payload.get("invoice"), dict) else None,
+            (payload.get("invoice") or {}).get("thread_id") if isinstance(payload.get("invoice"), dict) else None,
+            (payload.get("invoice") or {}).get("message_id") if isinstance(payload.get("invoice"), dict) else None,
+        ]
+        for candidate in candidates:
+            token = str(candidate or "").strip()
+            if token:
+                return token
+        return None
+
+    def _resolve_task_ap_item(
+        self,
+        *,
+        organization_id: str,
+        payload: Dict[str, Any],
+        db: Any,
+    ) -> Dict[str, Any]:
+        ap_item = self._task_payload_ap_item(payload)
+        if ap_item:
+            return ap_item
+        ref = self._task_payload_ap_item_ref(payload)
+        if not ref:
+            return {}
+        lookups = [
+            getattr(db, "get_ap_item", None),
+            getattr(db, "get_ap_item_by_thread", None),
+            getattr(db, "get_ap_item_by_message_id", None),
+            getattr(db, "get_ap_item_by_workflow_id", None),
+        ]
+        for lookup in lookups:
+            if not callable(lookup):
+                continue
+            try:
+                if lookup.__name__ == "get_ap_item":
+                    item = lookup(ref)
+                else:
+                    item = lookup(organization_id, ref)
+            except Exception:
+                item = None
+            if isinstance(item, dict) and item:
+                return item
+        return {}
+
+    def _sync_task_run_memory(
+        self,
+        *,
+        task: AgentTask,
+        task_run: Dict[str, Any],
+        event_type: str,
+        db: Any,
+        step_index: Optional[int] = None,
+        tool_name: Optional[str] = None,
+        output: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        try:
+            from clearledgr.services.agent_memory import get_agent_memory_service
+
+            payload = task.payload if isinstance(task.payload, dict) else {}
+            ap_item = self._resolve_task_ap_item(
+                organization_id=task.organization_id,
+                payload=payload,
+                db=db,
+            )
+            ap_item_id = str(
+                ap_item.get("id")
+                or self._task_payload_ap_item_ref(payload)
+                or ""
+            ).strip() or None
+            memory = get_agent_memory_service(task.organization_id, db=db)
+            memory.observe(
+                skill_id=str(task.task_type or "planning_task").strip() or "planning_task",
+                ap_item_id=ap_item_id,
+                thread_id=str(ap_item.get("thread_id") or "").strip() or None,
+                event_type=event_type,
+                payload={
+                    "task_run_id": task_run.get("id"),
+                    "task_type": task_run.get("task_type") or task.task_type,
+                    "status": task_run.get("status"),
+                    "current_step": task_run.get("current_step"),
+                    "correlation_id": task_run.get("correlation_id") or task.correlation_id,
+                    "step_index": step_index,
+                    "tool_name": tool_name,
+                    "output": dict(output or {}),
+                    "error": error,
+                },
+                channel="agent_runtime",
+                actor_id="agent_runtime",
+                correlation_id=task_run.get("correlation_id") or task.correlation_id,
+                source="agent_runtime",
+                summary=f"{event_type}:{task.task_type}",
+            )
+        except Exception as exc:
+            logger.debug("[AgentRuntime] task-run memory sync skipped for %s: %s", event_type, exc)
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -84,6 +194,12 @@ class AgentPlanningEngine:
             input_payload=json.dumps(task.payload),
             idempotency_key=task.idempotency_key,
             correlation_id=task.correlation_id,
+        )
+        self._sync_task_run_memory(
+            task=task,
+            task_run=task_run,
+            event_type="task_run_created",
+            db=db,
         )
         return await self._planning_loop(task, skill, task_run)
 
@@ -133,6 +249,13 @@ class AgentPlanningEngine:
                     task_run_id, elapsed, MAX_TASK_SECONDS,
                 )
                 db.fail_task_run(task_run_id, "max_execution_time_exceeded")
+                self._sync_task_run_memory(
+                    task=task,
+                    task_run=db.get_task_run(task_run_id) or task_run,
+                    event_type="task_run_failed",
+                    db=db,
+                    error="max_execution_time_exceeded",
+                )
                 return SkillResult(
                     status="failed",
                     task_run_id=task_run_id,
@@ -145,6 +268,13 @@ class AgentPlanningEngine:
             except Exception as exc:
                 logger.warning("[AgentRuntime] Claude call failed at step %d: %s", step, exc)
                 db.fail_task_run(task_run_id, str(exc))
+                self._sync_task_run_memory(
+                    task=task,
+                    task_run=db.get_task_run(task_run_id) or task_run,
+                    event_type="task_run_failed",
+                    db=db,
+                    error=str(exc),
+                )
                 return SkillResult(
                     status="failed",
                     task_run_id=task_run_id,
@@ -173,6 +303,13 @@ class AgentPlanningEngine:
                 if step <= 0:
                     error = "planning_returned_no_tool_use"
                     db.fail_task_run(task_run_id, error)
+                    self._sync_task_run_memory(
+                        task=task,
+                        task_run=db.get_task_run(task_run_id) or task_run,
+                        event_type="task_run_failed",
+                        db=db,
+                        error=error,
+                    )
                     return SkillResult(
                         status="failed",
                         task_run_id=task_run_id,
@@ -182,6 +319,13 @@ class AgentPlanningEngine:
                     )
                 outcome = {"response": text, "steps": step}
                 db.complete_task_run(task_run_id, outcome, status="completed")
+                self._sync_task_run_memory(
+                    task=task,
+                    task_run=db.get_task_run(task_run_id) or task_run,
+                    event_type="task_run_completed",
+                    db=db,
+                    output=outcome,
+                )
                 return SkillResult(
                     status="completed",
                     task_run_id=task_run_id,
@@ -205,6 +349,14 @@ class AgentPlanningEngine:
                 )
             except Exception as exc:
                 logger.error("[AgentRuntime] Pre-exec checkpoint failed (step %d): %s", step, exc)
+            self._sync_task_run_memory(
+                task=task,
+                task_run=db.get_task_run(task_run_id) or task_run,
+                event_type="task_run_step_started",
+                db=db,
+                step_index=step,
+                tool_name=tool_name,
+            )
 
             # Execute tool (NEVER raises — returns {"ok": False, "error": "..."} on failure)
             tool = tool_map.get(tool_name)
@@ -230,6 +382,15 @@ class AgentPlanningEngine:
                 )
             except Exception as exc:
                 logger.error("[AgentRuntime] Post-exec checkpoint failed (step %d): %s", step, exc)
+            self._sync_task_run_memory(
+                task=task,
+                task_run=db.get_task_run(task_run_id) or task_run,
+                event_type="task_run_step_completed",
+                db=db,
+                step_index=step + 1,
+                tool_name=tool_name,
+                output=output,
+            )
 
             # Feed back into message history
             messages.append({"role": "assistant", "content": content})
@@ -247,6 +408,13 @@ class AgentPlanningEngine:
             if is_hitl:
                 hitl_ctx = output.get("hitl_context") or {}
                 db.complete_task_run(task_run_id, hitl_ctx, status="awaiting_human")
+                self._sync_task_run_memory(
+                    task=task,
+                    task_run=db.get_task_run(task_run_id) or task_run,
+                    event_type="task_run_awaiting_human",
+                    db=db,
+                    output=hitl_ctx,
+                )
                 return SkillResult(
                     status="awaiting_human",
                     task_run_id=task_run_id,
@@ -257,6 +425,12 @@ class AgentPlanningEngine:
 
         # Exhausted max steps
         db.complete_task_run(task_run_id, {}, status="max_steps_exceeded")
+        self._sync_task_run_memory(
+            task=task,
+            task_run=db.get_task_run(task_run_id) or task_run,
+            event_type="task_run_max_steps_exceeded",
+            db=db,
+        )
         return SkillResult(
             status="max_steps_exceeded",
             task_run_id=task_run_id,

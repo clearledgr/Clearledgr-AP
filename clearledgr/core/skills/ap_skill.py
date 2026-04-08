@@ -51,10 +51,14 @@ async def _handle_enrich_with_context(
     """Fetch vendor history, correction learning, reflection, and reasoning for the invoice."""
     try:
         from clearledgr.core.database import get_db
-        from clearledgr.services.correction_learning import get_correction_learning_service
+        from clearledgr.services.agent_memory import get_agent_memory_service
+        from clearledgr.services.finance_learning import get_finance_learning_service
 
         invoice = _build_invoice(invoice_payload)
         db = get_db()
+        learning = get_finance_learning_service(organization_id, db=db)
+        memory = get_agent_memory_service(organization_id, db=db)
+        agent_profile = memory.ensure_profile(skill_id="ap_v1")
 
         # --- Resolve vendor aliases (dedup integration) ---
         try:
@@ -98,8 +102,18 @@ async def _handle_enrich_with_context(
         vendor_history = db.get_vendor_invoice_history(organization_id, invoice.vendor_name, limit=6) or []
         decision_feedback = db.get_vendor_decision_feedback(organization_id, invoice.vendor_name) or []
 
-        correction_svc = get_correction_learning_service(organization_id)
-        correction_suggestions = correction_svc.suggest(invoice.vendor_name, invoice.amount)
+        correction_suggestions = learning.suggest_corrections(
+            vendor_name=invoice.vendor_name,
+            amount=invoice.amount,
+        )
+        recent_cases = memory.recall_similar_cases(
+            {
+                "vendor_name": invoice.vendor_name,
+                "document_type": "invoice",
+            },
+            skill_id="ap_v1",
+            limit=3,
+        )
 
         # --- Cross-invoice analysis (duplicate detection, anomalies, vendor stats) ---
         cross_invoice_data: Dict[str, Any] = {}
@@ -125,15 +139,25 @@ async def _handle_enrich_with_context(
             from clearledgr.services.agent_reasoning import get_reasoning_agent
 
             if invoice_text:
+                from clearledgr.services.agent_reasoning import get_reasoning_agent
+
                 agent = get_reasoning_agent(organization_id)
-                decision = agent.reason_about_invoice(invoice_text)
+                decision = agent.reason_about_invoice(
+                    invoice_text,
+                    context={"agent_profile": agent_profile},
+                )
                 reasoning_data = {
                     "reasoning_factors": [
-                        {"name": f.name, "score": f.score, "explanation": f.explanation}
+                        {"name": f.factor, "score": f.score, "explanation": f.detail}
                         for f in (decision.factors or [])
                     ],
                     "reasoning_risks": decision.risks or [],
                     "reasoning_confidence": decision.confidence,
+                    "agent_profile": {
+                        "doctrine_version": agent_profile.get("doctrine_version"),
+                        "risk_posture": agent_profile.get("risk_posture"),
+                        "autonomy_level": agent_profile.get("autonomy_level"),
+                    },
                 }
         except Exception as reason_exc:
             logger.debug("[APSkill] reasoning skipped: %s", reason_exc)
@@ -144,11 +168,13 @@ async def _handle_enrich_with_context(
             "vendor_history": vendor_history[:6],
             "decision_feedback": decision_feedback[:10],
             "correction_suggestions": correction_suggestions,
+            "recent_cases": recent_cases,
             "cross_invoice_analysis": cross_invoice_data,
             "vendor_name": invoice.vendor_name,
             "amount": invoice.amount,
             "reflection": reflection_data,
             "reasoning": reasoning_data,
+            "agent_profile": agent_profile,
         }
     except Exception as exc:
         logger.warning("[APSkill] enrich_with_context failed: %s", exc)

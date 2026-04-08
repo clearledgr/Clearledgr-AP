@@ -21,8 +21,8 @@ from datetime import datetime
 from functools import wraps
 
 from clearledgr.services.llm_multimodal import MultiModalLLMService
-from clearledgr.services.learning import get_learning_service
-from clearledgr.services.compounding_learning import get_learning_service as get_compounding_learning
+from clearledgr.services.agent_memory import get_agent_memory_service
+from clearledgr.services.finance_learning import get_finance_learning_service
 
 logger = logging.getLogger(__name__)
 
@@ -192,25 +192,35 @@ class AgentReasoningService:
         self.organization_id = organization_id
         self.llm = MultiModalLLMService()
         self._learning = None
-        self._compounding_learning = None
+        self._memory = None
+        self._profile = None
         self._used_patterns: List[str] = []  # Track patterns used for feedback
     
     @property
     def learning(self):
         """Lazy-load learning service."""
         if self._learning is None:
-            self._learning = get_learning_service(self.organization_id)
+            self._learning = get_finance_learning_service(self.organization_id)
         return self._learning
-    
+
+    @property
+    def memory(self):
+        """Lazy-load canonical memory service."""
+        if self._memory is None:
+            self._memory = get_agent_memory_service(self.organization_id)
+        return self._memory
+
+    @property
+    def profile(self) -> Dict[str, Any]:
+        """Load the persisted agent identity before reasoning."""
+        if self._profile is None:
+            self._profile = self.memory.ensure_profile(skill_id="ap_v1")
+        return self._profile
+
     @property
     def compounding_learning(self):
-        """Lazy-load compounding learning service."""
-        if self._compounding_learning is None:
-            try:
-                self._compounding_learning = get_compounding_learning()
-            except Exception as e:
-                logger.warning(f"Could not load compounding learning service: {e}")
-        return self._compounding_learning
+        """Legacy compatibility shim for existing pattern-learning call sites."""
+        return self.learning.compounding_learning
     
     def reason_about_invoice(
         self,
@@ -229,7 +239,9 @@ class AgentReasoningService:
         Returns:
             AgentDecision with extraction, reasoning, and decision
         """
-        context = context or {}
+        profile = self.profile
+        context = dict(context or {})
+        context.setdefault("agent_profile", profile)
         attachments = attachments or []
         
         # Step 1: Extract data with reasoning
@@ -237,7 +249,7 @@ class AgentReasoningService:
         
         # Step 2: Gather context about vendor
         vendor = extraction.get("vendor", "Unknown")
-        vendor_context = self._get_vendor_context(vendor)
+        vendor_context = self._get_vendor_context(vendor, extraction=extraction)
         
         # Step 3: Calculate confidence factors
         factors = self._calculate_factors(extraction, vendor_context, context)
@@ -247,10 +259,10 @@ class AgentReasoningService:
         
         # Step 5: Make decision
         confidence = self._calculate_confidence(factors)
-        decision, summary = self._make_decision(confidence, factors, risks)
-        
+        decision, summary = self._make_decision(confidence, factors, risks, profile=profile)
+
         # Step 6: Generate recommendations
-        recommendations = self._generate_recommendations(decision, factors, risks)
+        recommendations = self._generate_recommendations(decision, factors, risks, profile=profile)
         
         logger.info(
             f"Agent decision for {vendor}: {decision} "
@@ -394,21 +406,50 @@ Be precise. If uncertain about a field, say so in the reasoning."""
             "reasoning": {"error": str(e)},
             }
     
-    def _get_vendor_context(self, vendor: str) -> Dict[str, Any]:
+    def _get_vendor_context(
+        self,
+        vendor: str,
+        *,
+        extraction: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Get historical context about a vendor."""
         try:
             # Get GL suggestion (includes history)
             suggestion = self.learning.suggest_gl_code(vendor=vendor, amount=0)
             
             # Get vendor pattern
-            pattern = self.learning.get_vendor_pattern(vendor) if hasattr(self.learning, 'get_vendor_pattern') else None
+            pattern = self.learning.get_vendor_pattern(vendor)
+            recall = self.memory.recall_similar_cases(
+                {
+                    "vendor_name": vendor,
+                    "document_type": (extraction or {}).get("document_type"),
+                },
+                skill_id="ap_v1",
+                limit=3,
+            )
+            recent_case = recall[0] if recall else {}
+            if not pattern and isinstance(recent_case.get("belief"), dict):
+                belief = recent_case.get("belief") or {}
+                pattern = {
+                    "typical_amount": belief.get("amount"),
+                    "document_type": belief.get("document_type"),
+                    "next_action": recent_case.get("next_action"),
+                }
+            invoice_count = 0
+            if suggestion:
+                invoice_count = int(suggestion.get("invoice_count", 0) or 0)
+            invoice_count = max(invoice_count, len(recall))
             
             return {
-                "known_vendor": suggestion is not None and suggestion.get("confidence", 0) > 0.5,
+                "known_vendor": bool(
+                    (suggestion is not None and suggestion.get("confidence", 0) > 0.5)
+                    or recall
+                ),
                 "gl_suggestion": suggestion,
-                "invoice_count": suggestion.get("invoice_count", 0) if suggestion else 0,
+                "invoice_count": invoice_count,
                 "typical_amount": pattern.get("typical_amount") if pattern else None,
                 "pattern": pattern,
+                "recent_cases": recall,
             }
         except Exception as e:
             logger.warning(f"Failed to get vendor context: {e}")
@@ -530,7 +571,7 @@ Be precise. If uncertain about a field, say so in the reasoning."""
             
             try:
                 # Get categorization hint from past corrections
-                hint = self.compounding_learning.get_categorization_hint(vendor, description)
+                hint = self.learning.get_categorization_hint(vendor, description)
                 
                 if hint and hint.get("confidence", 0) > 0.3:
                     learned_score = min(0.95, 0.6 + hint["confidence"])
@@ -551,7 +592,7 @@ Be precise. If uncertain about a field, say so in the reasoning."""
                     }
                 else:
                     # Check for matching patterns (for transaction matching)
-                    patterns = self.compounding_learning.get_patterns_for_matching(
+                    patterns = self.learning.get_patterns_for_matching(
                         f"{vendor} {description}",
                         min_confidence=0.5
                     )
@@ -650,9 +691,25 @@ Be precise. If uncertain about a field, say so in the reasoning."""
         confidence: float,
         factors: List[ReasoningFactor],
         risks: List[str],
+        *,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> tuple[str, str]:
         """Make a decision based on confidence and risks."""
-        
+        agent_profile = dict(profile or {})
+        risk_posture = str(agent_profile.get("risk_posture") or "").strip().lower()
+        autonomy_level = str(agent_profile.get("autonomy_level") or "").strip().lower()
+        promotion_gate = agent_profile.get("promotion_gate_status")
+
+        auto_approve_threshold = self.AUTO_APPROVE_THRESHOLD
+        approval_threshold = self.APPROVAL_THRESHOLD
+        if risk_posture == "bounded_autonomy":
+            auto_approve_threshold = max(auto_approve_threshold, 0.97)
+            approval_threshold = max(approval_threshold, 0.80)
+        if autonomy_level in {"assisted", "bounded_auto"}:
+            auto_approve_threshold = max(auto_approve_threshold, 0.98)
+        if isinstance(promotion_gate, dict) and str(promotion_gate.get("status") or "").strip().lower() == "bounded_autonomy_only":
+            auto_approve_threshold = max(auto_approve_threshold, 0.985)
+
         # High-risk items always go for review
         high_risk_keywords = ["duplicate", "overdue", "Could not extract", "Could not identify"]
         has_high_risk = any(
@@ -665,7 +722,7 @@ Be precise. If uncertain about a field, say so in the reasoning."""
             return "flag_for_review", summary
         
         # Decision based on confidence
-        if confidence >= self.AUTO_APPROVE_THRESHOLD:
+        if confidence >= auto_approve_threshold:
             # Find the strongest factor for explanation
             strongest = max(factors, key=lambda f: f.score) if factors else None
             if strongest:
@@ -674,7 +731,7 @@ Be precise. If uncertain about a field, say so in the reasoning."""
                 summary = f"Auto-approved: High confidence ({confidence*100:.0f}%)"
             return "auto_approve", summary
         
-        elif confidence >= self.APPROVAL_THRESHOLD:
+        elif confidence >= approval_threshold:
             # Find the weakest factor
             weakest = min(factors, key=lambda f: f.score) if factors else None
             if weakest:
@@ -692,9 +749,12 @@ Be precise. If uncertain about a field, say so in the reasoning."""
         decision: str,
         factors: List[ReasoningFactor],
         risks: List[str],
+        *,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """Generate actionable recommendations."""
         recommendations = []
+        agent_profile = dict(profile or {})
         
         if decision == "flag_for_review":
             recommendations.append("Verify invoice details manually before processing")
@@ -717,6 +777,9 @@ Be precise. If uncertain about a field, say so in the reasoning."""
         learned_factor = next((f for f in factors if f.factor == "learned_patterns"), None)
         if learned_factor and learned_factor.score >= 0.7:
             recommendations.append("Using learned pattern from prior corrections - verify if appropriate")
+
+        if str(agent_profile.get("risk_posture") or "").strip().lower() == "bounded_autonomy":
+            recommendations.append("Stop and escalate when confidence or policy evidence is incomplete")
         
         return recommendations
     
@@ -737,19 +800,37 @@ Be precise. If uncertain about a field, say so in the reasoning."""
             was_correct: Whether the decision was correct
             correction: If incorrect, the corrected values
         """
-        # Record pattern usage feedback
-        for pattern_id in self._used_patterns:
+        pattern_ids = list(self._used_patterns)
+
+        self._used_patterns = []
+
+        try:
+            from clearledgr.services.finance_learning import get_finance_learning_service
+
+            get_finance_learning_service(self.organization_id).record_decision_feedback(
+                decision=decision.to_dict(),
+                was_correct=was_correct,
+                correction=correction,
+                actor_id="system",
+                context={
+                    "vendor_name": decision.extraction.get("vendor"),
+                    "amount": decision.extraction.get("total_amount"),
+                    "pattern_ids": pattern_ids,
+                },
+            )
+            return
+        except Exception as e:
+            logger.warning(f"Failed to record canonical decision feedback: {e}")
+
+        # Fallback to the legacy compounding hooks if the canonical path fails.
+        for pattern_id in pattern_ids:
             try:
                 if self.compounding_learning:
                     self.compounding_learning.record_pattern_usage(pattern_id, was_correct)
                     logger.info(f"Recorded pattern usage: {pattern_id} -> {'success' if was_correct else 'failure'}")
             except Exception as e:
                 logger.warning(f"Failed to record pattern usage: {e}")
-        
-        # Clear used patterns
-        self._used_patterns = []
-        
-        # If there was a correction, record it for future learning
+
         if correction and self.compounding_learning:
             try:
                 from uuid import uuid4
@@ -784,3 +865,8 @@ Be precise. If uncertain about a field, say so in the reasoning."""
 def get_agent(organization_id: str = "default") -> AgentReasoningService:
     """Get an agent reasoning service instance."""
     return AgentReasoningService(organization_id=organization_id)
+
+
+def get_reasoning_agent(organization_id: str = "default") -> AgentReasoningService:
+    """Backward-compatible alias used by older planning entry points."""
+    return get_agent(organization_id=organization_id)

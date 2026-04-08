@@ -2,20 +2,32 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from clearledgr.api.ap_item_contracts import (
+    AddApItemCommentRequest,
+    AddApItemFileRequest,
+    AddApItemNoteRequest,
+    AddApItemTaskCommentRequest,
+    AssignApItemTaskRequest,
     BulkResolveFieldReviewRequest,
+    CreateComposeRecordRequest,
+    CreateApItemTaskRequest,
     LinkSourceRequest,
+    LinkComposeDraftRequest,
+    LinkGmailThreadRequest,
     MergeItemsRequest,
     ResolveEntityRouteRequest,
     ResolveFieldReviewRequest,
     ResolveNonInvoiceReviewRequest,
     ResubmitRejectedItemRequest,
     SplitItemRequest,
+    UpdateApItemFieldsRequest,
+    UpdateApItemTaskStatusRequest,
 )
 from clearledgr.core.ap_states import APState
 from clearledgr.core.auth import require_ops_user
@@ -47,6 +59,58 @@ class _SharedProxy:
 
 
 shared = _SharedProxy()
+
+
+def _resolve_task_owner_item(db: Any, task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    related_id = str(task.get("related_entity_id") or "").strip()
+    if related_id:
+        try:
+            return shared._require_item(db, related_id)
+        except Exception:
+            return None
+    thread_id = str(task.get("source_thread_id") or "").strip()
+    organization_id = str(task.get("organization_id") or "default").strip() or "default"
+    if thread_id and hasattr(db, "get_ap_item_by_thread"):
+        try:
+            return db.get_ap_item_by_thread(organization_id, thread_id)
+        except Exception:
+            return None
+    return None
+
+
+def _normalize_compose_recipients(values: List[str] | None) -> List[str]:
+    recipients: List[str] = []
+    for raw in values or []:
+        normalized = str(raw or "").strip()
+        if not normalized or normalized in recipients:
+            continue
+        recipients.append(normalized)
+    return recipients[:12]
+
+
+def _derive_vendor_name_from_recipients(recipients: List[str]) -> str:
+    if not recipients:
+        return "Draft finance record"
+    first = recipients[0]
+    local_part = first.split("@", 1)[0] if "@" in first else first
+    normalized = " ".join(part for part in local_part.replace(".", " ").replace("_", " ").replace("-", " ").split() if part)
+    if not normalized:
+        return first
+    return " ".join(token.capitalize() for token in normalized.split())
+
+
+def _append_metadata_entry(
+    metadata: Dict[str, Any],
+    key: str,
+    entry: Dict[str, Any],
+    *,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    existing = metadata.get(key)
+    rows = list(existing) if isinstance(existing, list) else []
+    rows.insert(0, entry)
+    metadata[key] = rows[:limit]
+    return metadata[key]
 
 
 @router.post("/{ap_item_id}/field-review/resolve")
@@ -422,6 +486,639 @@ def link_ap_item_source(
         }
     )
     return {"source": source}
+
+
+@router.post("/{ap_item_id}/gmail-link")
+def link_ap_item_gmail_thread(
+    ap_item_id: str,
+    request: LinkGmailThreadRequest,
+    _user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
+    actor_id = shared._authenticated_actor(_user)
+    organization_id = str(item.get("organization_id") or "default").strip() or "default"
+    thread_id = str(request.thread_id or "").strip()
+    message_id = str(request.message_id or "").strip() or None
+
+    existing = db.get_ap_item_by_thread(organization_id, thread_id) if hasattr(db, "get_ap_item_by_thread") else None
+    if existing and str(existing.get("id") or "").strip() != str(ap_item_id):
+        raise HTTPException(status_code=409, detail="gmail_thread_already_linked")
+
+    db.link_ap_item_source(
+        {
+            "ap_item_id": ap_item_id,
+            "source_type": "gmail_thread",
+            "source_ref": thread_id,
+            "subject": request.subject or item.get("subject"),
+            "sender": request.sender or item.get("sender"),
+            "detected_at": request.detected_at,
+            "metadata": {"link_origin": "gmail_sidebar"},
+        }
+    )
+    if message_id:
+        db.link_ap_item_source(
+            {
+                "ap_item_id": ap_item_id,
+                "source_type": "gmail_message",
+                "source_ref": message_id,
+                "subject": request.subject or item.get("subject"),
+                "sender": request.sender or item.get("sender"),
+                "detected_at": request.detected_at,
+                "metadata": {"link_origin": "gmail_sidebar"},
+            }
+        )
+
+    db.update_ap_item(
+        ap_item_id,
+        thread_id=thread_id,
+        message_id=message_id or item.get("message_id"),
+        subject=request.subject or item.get("subject"),
+        sender=request.sender or item.get("sender"),
+        _actor_type="user",
+        _actor_id=actor_id,
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": ap_item_id,
+            "event_type": "gmail_thread_linked",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": organization_id,
+            "source": "ap_items_api",
+            "payload_json": {
+                "thread_id": thread_id,
+                "message_id": message_id,
+                "subject": request.subject,
+                "sender": request.sender,
+                "note": str(request.note or "").strip() or None,
+            },
+        }
+    )
+    updated = shared._require_item(db, ap_item_id)
+    return {
+        "status": "linked",
+        "ap_item": shared.build_worklist_item(db, updated),
+    }
+
+
+@router.post("/{ap_item_id}/compose-link")
+def link_ap_item_compose_draft(
+    ap_item_id: str,
+    request: LinkComposeDraftRequest,
+    _user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
+    actor_id = shared._authenticated_actor(_user)
+    organization_id = str(item.get("organization_id") or "default").strip() or "default"
+    draft_id = str(request.draft_id or "").strip() or None
+    thread_id = str(request.thread_id or "").strip() or None
+    subject = str(request.subject or "").strip() or None
+    recipients = _normalize_compose_recipients(request.recipients)
+    body_preview = str(request.body_preview or "").strip() or None
+
+    if draft_id and hasattr(db, "list_ap_item_sources_by_ref"):
+        for row in db.list_ap_item_sources_by_ref("compose_draft", draft_id):
+            linked_ap_item_id = str(row.get("ap_item_id") or "").strip()
+            if linked_ap_item_id and linked_ap_item_id != str(ap_item_id):
+                raise HTTPException(status_code=409, detail="compose_draft_already_linked")
+
+    if thread_id and hasattr(db, "get_ap_item_by_thread"):
+        existing = db.get_ap_item_by_thread(organization_id, thread_id)
+        if existing and str(existing.get("id") or "").strip() != str(ap_item_id):
+            raise HTTPException(status_code=409, detail="gmail_thread_already_linked")
+
+    if draft_id:
+        db.link_ap_item_source(
+            {
+                "ap_item_id": ap_item_id,
+                "source_type": "compose_draft",
+                "source_ref": draft_id,
+                "subject": subject or item.get("subject"),
+                "sender": getattr(_user, "email", None) or item.get("sender"),
+                "metadata": {
+                    "link_origin": "gmail_compose",
+                    "recipients": recipients,
+                    "body_preview": body_preview,
+                },
+            }
+        )
+    if thread_id:
+        db.link_ap_item_source(
+            {
+                "ap_item_id": ap_item_id,
+                "source_type": "gmail_thread",
+                "source_ref": thread_id,
+                "subject": subject or item.get("subject"),
+                "sender": item.get("sender"),
+                "metadata": {"link_origin": "gmail_compose"},
+            }
+        )
+
+    update_payload: Dict[str, Any] = {}
+    if thread_id and str(item.get("thread_id") or "").strip() != thread_id:
+        update_payload["thread_id"] = thread_id
+    if subject and str(item.get("subject") or "").strip() != subject:
+        update_payload["subject"] = subject
+    if update_payload:
+        db.update_ap_item(
+            ap_item_id,
+            **update_payload,
+            _actor_type="user",
+            _actor_id=actor_id,
+            _source="ap_items_api",
+            _decision_reason="compose_draft_linked",
+        )
+
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": ap_item_id,
+            "event_type": "compose_draft_linked",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": organization_id,
+            "source": "ap_items_api",
+            "payload_json": {
+                "draft_id": draft_id,
+                "thread_id": thread_id,
+                "subject": subject,
+                "recipients": recipients,
+                "body_preview": body_preview,
+                "note": str(request.note or "").strip() or None,
+            },
+        }
+    )
+    updated = shared._require_item(db, ap_item_id)
+    return {
+        "status": "linked",
+        "ap_item": shared.build_worklist_item(db, updated),
+    }
+
+
+@router.post("/compose/create")
+def create_compose_record(
+    request: CreateComposeRecordRequest,
+    _user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    db = shared.get_db()
+    actor_id = shared._authenticated_actor(_user)
+    organization_id = str(getattr(_user, "organization_id", None) or "default").strip() or "default"
+    draft_id = str(request.draft_id or "").strip() or None
+    thread_id = str(request.thread_id or "").strip() or None
+    subject = str(request.subject or "").strip() or None
+    recipients = _normalize_compose_recipients(request.recipients)
+    body_preview = str(request.body_preview or "").strip() or None
+    note = str(request.note or "").strip() or None
+
+    if draft_id and hasattr(db, "list_ap_item_sources_by_ref"):
+        for row in db.list_ap_item_sources_by_ref("compose_draft", draft_id):
+            candidate_id = str(row.get("ap_item_id") or "").strip()
+            if not candidate_id:
+                continue
+            existing = db.get_ap_item(candidate_id)
+            if existing and str(existing.get("organization_id") or organization_id or "default").strip() == organization_id:
+                return {
+                    "status": "already_linked",
+                    "ap_item": shared.build_worklist_item(db, existing),
+                }
+
+    if thread_id and hasattr(db, "get_ap_item_by_thread"):
+        existing = db.get_ap_item_by_thread(organization_id, thread_id)
+        if existing:
+            return {
+                "status": "already_linked",
+                "ap_item": shared.build_worklist_item(db, existing),
+            }
+
+    compose_summary = {
+        "draft_id": draft_id,
+        "thread_id": thread_id,
+        "recipients": recipients,
+        "body_preview": body_preview,
+        "created_from": "gmail_compose",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    metadata: Dict[str, Any] = {
+        "compose_origin": compose_summary,
+    }
+    if note:
+        _append_metadata_entry(
+            metadata,
+            "record_comments",
+            {
+                "id": f"comment_{uuid.uuid4().hex}",
+                "body": note,
+                "author": actor_id,
+                "created_at": compose_summary["created_at"],
+                "origin": "compose_create",
+            },
+        )
+
+    created = db.create_ap_item(
+        {
+            "thread_id": thread_id,
+            "subject": subject or f"Draft with {(_derive_vendor_name_from_recipients(recipients) or 'finance contact')}",
+            "sender": getattr(_user, "email", None),
+            "vendor_name": _derive_vendor_name_from_recipients(recipients),
+            "state": APState.NEEDS_INFO.value,
+            "approval_required": False,
+            "organization_id": organization_id,
+            "user_id": getattr(_user, "user_id", None),
+            "document_type": "other",
+            "metadata": metadata,
+        }
+    )
+    ap_item_id = str(created.get("id") or "").strip()
+
+    if draft_id:
+        db.link_ap_item_source(
+            {
+                "ap_item_id": ap_item_id,
+                "source_type": "compose_draft",
+                "source_ref": draft_id,
+                "subject": subject or created.get("subject"),
+                "sender": getattr(_user, "email", None),
+                "metadata": {
+                    "link_origin": "gmail_compose_create",
+                    "recipients": recipients,
+                    "body_preview": body_preview,
+                },
+            }
+        )
+    if thread_id:
+        db.link_ap_item_source(
+            {
+                "ap_item_id": ap_item_id,
+                "source_type": "gmail_thread",
+                "source_ref": thread_id,
+                "subject": subject or created.get("subject"),
+                "sender": getattr(_user, "email", None),
+                "metadata": {"link_origin": "gmail_compose_create"},
+            }
+        )
+
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": ap_item_id,
+            "event_type": "compose_record_created",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": organization_id,
+            "source": "ap_items_api",
+            "payload_json": {
+                "draft_id": draft_id,
+                "thread_id": thread_id,
+                "subject": subject or created.get("subject"),
+                "recipients": recipients,
+                "body_preview": body_preview,
+                "note": note,
+            },
+        }
+    )
+
+    refreshed = shared._require_item(db, ap_item_id)
+    return {
+        "status": "created",
+        "ap_item": shared.build_worklist_item(db, refreshed),
+    }
+
+
+@router.patch("/{ap_item_id}/fields")
+def update_ap_item_fields(
+    ap_item_id: str,
+    request: UpdateApItemFieldsRequest,
+    _user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
+    actor_id = shared._authenticated_actor(_user)
+
+    updates: Dict[str, Any] = {}
+    changes: List[Dict[str, Any]] = []
+    field_map = {
+        "vendor_name": "vendor_name",
+        "invoice_number": "invoice_number",
+        "invoice_date": "invoice_date",
+        "due_date": "due_date",
+        "po_number": "po_number",
+        "amount": "amount",
+        "currency": "currency",
+    }
+
+    for request_field, column_name in field_map.items():
+        value = getattr(request, request_field)
+        if value is None:
+            continue
+        normalized = value
+        if isinstance(value, str):
+            normalized = value.strip() or None
+        if request_field == "currency" and normalized:
+            normalized = str(normalized).upper()
+        current_value = item.get(column_name)
+        if normalized == current_value:
+            continue
+        updates[column_name] = normalized
+        changes.append(
+            {
+                "field": request_field,
+                "previous_value": current_value,
+                "new_value": normalized,
+            }
+        )
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="no_field_changes")
+
+    db.update_ap_item(
+        ap_item_id,
+        **updates,
+        _actor_type="user",
+        _actor_id=actor_id,
+        _source="ap_items_api",
+        _decision_reason="sidebar_record_edit",
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": ap_item_id,
+            "event_type": "record_fields_updated",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": item.get("organization_id") or "default",
+            "source": "ap_items_api",
+            "payload_json": {
+                "changes": changes,
+                "note": str(request.note or "").strip() or None,
+            },
+        }
+    )
+    updated = shared._require_item(db, ap_item_id)
+    return {
+        "status": "updated",
+        "changes": changes,
+        "ap_item": shared.build_worklist_item(db, updated),
+    }
+
+
+@router.post("/{ap_item_id}/tasks")
+def create_ap_item_task(
+    ap_item_id: str,
+    request: CreateApItemTaskRequest,
+    _user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    from clearledgr.services.email_tasks import create_task_from_email
+
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
+    actor_id = shared._authenticated_actor(_user)
+    task = create_task_from_email(
+        email_id=str(item.get("message_id") or item.get("thread_id") or ap_item_id),
+        email_subject=str(item.get("subject") or request.title),
+        email_sender=str(item.get("sender") or ""),
+        thread_id=str(item.get("thread_id") or ""),
+        created_by=actor_id,
+        task_type=request.task_type,
+        title=request.title,
+        description=request.description,
+        assignee_email=request.assignee_email,
+        due_date=request.due_date,
+        priority=request.priority,
+        related_entity_type="ap_item",
+        related_entity_id=ap_item_id,
+        related_amount=item.get("amount"),
+        related_vendor=item.get("vendor_name"),
+        tags=["gmail_sidebar", "ap_record"],
+        organization_id=item.get("organization_id") or "default",
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": ap_item_id,
+            "event_type": "task_created",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": item.get("organization_id") or "default",
+            "source": "ap_items_api",
+            "payload_json": {
+                "task_id": task.get("task_id"),
+                "title": task.get("title"),
+                "task_type": task.get("task_type"),
+                "assignee_email": task.get("assignee_email"),
+                "due_date": task.get("due_date"),
+                "note": str(request.note or "").strip() or None,
+            },
+        }
+    )
+    return {"status": "created", "task": task}
+
+
+@router.post("/tasks/{task_id}/status")
+def update_ap_item_task_status(
+    task_id: str,
+    request: UpdateApItemTaskStatusRequest,
+    _user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    from clearledgr.services.email_tasks import get_task, update_task_status
+
+    db = shared.get_db()
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task_not_found")
+    item = _resolve_task_owner_item(db, task)
+    if item:
+        verify_org_access(item.get("organization_id") or "default", _user)
+    updated = update_task_status(
+        task_id,
+        request.status,
+        changed_by=shared._authenticated_actor(_user),
+        notes=request.note,
+    )
+    return {"status": "updated", "task": updated}
+
+
+@router.post("/tasks/{task_id}/assign")
+def assign_ap_item_task(
+    task_id: str,
+    request: AssignApItemTaskRequest,
+    _user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    from clearledgr.services.email_tasks import assign_task, get_task
+
+    db = shared.get_db()
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task_not_found")
+    item = _resolve_task_owner_item(db, task)
+    if item:
+        verify_org_access(item.get("organization_id") or "default", _user)
+    updated = assign_task(task_id, request.assignee_email, shared._authenticated_actor(_user))
+    return {"status": "updated", "task": updated}
+
+
+@router.post("/tasks/{task_id}/comments")
+def add_ap_item_task_comment(
+    task_id: str,
+    request: AddApItemTaskCommentRequest,
+    _user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    from clearledgr.services.email_tasks import add_comment, get_task
+
+    db = shared.get_db()
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task_not_found")
+    item = _resolve_task_owner_item(db, task)
+    if item:
+        verify_org_access(item.get("organization_id") or "default", _user)
+    comment = add_comment(task_id, shared._authenticated_actor(_user), request.comment)
+    refreshed = get_task(task_id)
+    return {"status": "created", "comment": comment, "task": refreshed}
+
+
+@router.post("/{ap_item_id}/notes")
+def add_ap_item_note(
+    ap_item_id: str,
+    request: AddApItemNoteRequest,
+    _user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
+    actor_id = shared._authenticated_actor(_user)
+    metadata = shared._parse_json(item.get("metadata"))
+    existing_notes = metadata.get("record_notes")
+    notes = existing_notes if isinstance(existing_notes, list) else []
+    note = {
+        "id": f"note_{uuid.uuid4().hex}",
+        "body": str(request.body or "").strip(),
+        "author": actor_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    notes.insert(0, note)
+    metadata["record_notes"] = notes[:100]
+    db.update_ap_item(
+        ap_item_id,
+        metadata=metadata,
+        _actor_type="user",
+        _actor_id=actor_id,
+        _source="ap_items_api",
+        _decision_reason="record_note_added",
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": ap_item_id,
+            "event_type": "record_note_added",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": item.get("organization_id") or "default",
+            "source": "ap_items_api",
+            "payload_json": {
+                "note_id": note["id"],
+                "body": note["body"],
+            },
+        }
+    )
+    return {"status": "created", "note": note}
+
+
+@router.post("/{ap_item_id}/comments")
+def add_ap_item_comment(
+    ap_item_id: str,
+    request: AddApItemCommentRequest,
+    _user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
+    actor_id = shared._authenticated_actor(_user)
+    metadata = shared._parse_json(item.get("metadata"))
+    comment = {
+        "id": f"comment_{uuid.uuid4().hex}",
+        "body": str(request.body or "").strip(),
+        "author": actor_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _append_metadata_entry(metadata, "record_comments", comment)
+    db.update_ap_item(
+        ap_item_id,
+        metadata=metadata,
+        _actor_type="user",
+        _actor_id=actor_id,
+        _source="ap_items_api",
+        _decision_reason="record_comment_added",
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": ap_item_id,
+            "event_type": "record_comment_added",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": item.get("organization_id") or "default",
+            "source": "ap_items_api",
+            "payload_json": {
+                "comment_id": comment["id"],
+                "body": comment["body"],
+            },
+        }
+    )
+    return {"status": "created", "comment": comment}
+
+
+@router.post("/{ap_item_id}/files")
+def add_ap_item_file_link(
+    ap_item_id: str,
+    request: AddApItemFileRequest,
+    _user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or "default", _user)
+    actor_id = shared._authenticated_actor(_user)
+    metadata = shared._parse_json(item.get("metadata"))
+    file_entry = {
+        "id": f"file_{uuid.uuid4().hex}",
+        "label": str(request.label or "").strip(),
+        "url": str(request.url or "").strip() or None,
+        "file_name": str(request.file_name or "").strip() or None,
+        "file_type": str(request.file_type or "").strip() or None,
+        "source": str(request.source or "").strip() or "manual_link",
+        "note": str(request.note or "").strip() or None,
+        "author": actor_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if not file_entry["url"] and not file_entry["file_name"]:
+        file_entry["file_name"] = file_entry["label"]
+    _append_metadata_entry(metadata, "record_file_links", file_entry, limit=50)
+    db.update_ap_item(
+        ap_item_id,
+        metadata=metadata,
+        _actor_type="user",
+        _actor_id=actor_id,
+        _source="ap_items_api",
+        _decision_reason="record_file_linked",
+    )
+    db.append_ap_audit_event(
+        {
+            "ap_item_id": ap_item_id,
+            "event_type": "record_file_linked",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": item.get("organization_id") or "default",
+            "source": "ap_items_api",
+            "payload_json": {
+                "file_id": file_entry["id"],
+                "label": file_entry["label"],
+                "url": file_entry["url"],
+                "file_name": file_entry["file_name"],
+                "file_type": file_entry["file_type"],
+                "source": file_entry["source"],
+            },
+        }
+    )
+    return {"status": "created", "file": file_entry}
 
 
 @router.post("/{ap_item_id}/resubmit")

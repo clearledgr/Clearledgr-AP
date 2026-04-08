@@ -15,23 +15,57 @@ def build_finance_lead_summary_payload(
     *,
     audit_events: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    state = str(ap_item.get("state") or "received").strip().lower()
-    next_action = str(ap_item.get("next_action") or "").strip().replace("_", " ")
-    vendor = str(ap_item.get("vendor_name") or ap_item.get("vendor") or "Unknown vendor").strip()
-    invoice_number = str(ap_item.get("invoice_number") or "N/A").strip()
-    amount = ap_item.get("amount")
-    currency = str(ap_item.get("currency") or "USD").strip().upper()
-    due_date = str(ap_item.get("due_date") or "").strip()
-    exception_code = str(ap_item.get("exception_code") or "").strip()
-    exception_severity = str(ap_item.get("exception_severity") or "").strip()
-    requires_field_review = bool(ap_item.get("requires_field_review"))
+    item = dict(ap_item or {})
+    agent_memory = item.get("agent_memory") if isinstance(item.get("agent_memory"), dict) else {}
+    agent_next_action = item.get("agent_next_action") if isinstance(item.get("agent_next_action"), dict) else {}
+    agent_summary = item.get("agent_summary") if isinstance(item.get("agent_summary"), dict) else {}
+    if not agent_memory:
+        try:
+            from clearledgr.services.agent_memory import get_agent_memory_service
+
+            organization_id = str(item.get("organization_id") or runtime.organization_id or "default").strip() or "default"
+            ap_item_id = str(item.get("id") or "").strip()
+            if ap_item_id:
+                agent_memory = get_agent_memory_service(
+                    organization_id,
+                    db=getattr(runtime, "db", None),
+                ).build_surface(ap_item_id=ap_item_id, skill_id="ap_v1")
+                if not agent_next_action:
+                    candidate = agent_memory.get("next_action")
+                    agent_next_action = candidate if isinstance(candidate, dict) else {}
+                if not agent_summary:
+                    candidate = agent_memory.get("summary")
+                    agent_summary = candidate if isinstance(candidate, dict) else {}
+        except Exception:
+            agent_memory = {}
+            agent_next_action = {}
+            agent_summary = {}
+
+    state = str(item.get("state") or "received").strip().lower()
+    canonical_label = str(agent_next_action.get("label") or "").strip()
+    canonical_type = str(agent_next_action.get("type") or "").strip()
+    next_action = canonical_label or str(item.get("next_action") or "").strip().replace("_", " ")
+    vendor = str(item.get("vendor_name") or item.get("vendor") or "Unknown vendor").strip()
+    invoice_number = str(item.get("invoice_number") or "N/A").strip()
+    amount = item.get("amount")
+    currency = str(item.get("currency") or "USD").strip().upper()
+    due_date = str(item.get("due_date") or "").strip()
+    exception_code = str(item.get("exception_code") or "").strip()
+    exception_severity = str(item.get("exception_severity") or "").strip()
+    requires_field_review = bool(item.get("requires_field_review"))
     confidence_blockers = (
-        ap_item.get("confidence_blockers")
-        if isinstance(ap_item.get("confidence_blockers"), list)
+        item.get("confidence_blockers")
+        if isinstance(item.get("confidence_blockers"), list)
         else []
     )
-    metadata = runtime._parse_json_dict(ap_item.get("metadata"))
+    metadata = runtime._parse_json_dict(item.get("metadata"))
     context_summary = str(metadata.get("context_summary") or "").strip()
+    belief_state = agent_memory.get("belief") if isinstance(agent_memory.get("belief"), dict) else {}
+    belief_reason = str(
+        belief_state.get("reason")
+        or agent_summary.get("reason")
+        or ""
+    ).strip()
 
     amount_text = (
         f"{currency} {float(amount):,.2f}"
@@ -64,9 +98,11 @@ def build_finance_lead_summary_payload(
             if fields
             else "Field review blockers require review before posting."
         )
-    if bool(ap_item.get("budget_requires_decision")):
-        budget_status = str(ap_item.get("budget_status") or "review").replace("_", " ")
+    if bool(item.get("budget_requires_decision")):
+        budget_status = str(item.get("budget_status") or "review").replace("_", " ")
         lines.append(f"Budget decision required ({budget_status}).")
+    if belief_reason:
+        lines.append(f"Agent belief: {belief_reason[:180]}")
     if context_summary:
         lines.append(f"Context: {context_summary[:180]}")
 
@@ -94,7 +130,11 @@ def build_finance_lead_summary_payload(
         "title": "Finance lead exception summary",
         "lines": deduped[:8],
         "state": state,
-        "next_action": str(ap_item.get("next_action") or ""),
+        "next_action": canonical_type or str(item.get("next_action") or ""),
+        "agent_memory": agent_memory,
+        "agent_profile": agent_memory.get("profile") if isinstance(agent_memory.get("profile"), dict) else {},
+        "agent_next_action": agent_next_action,
+        "agent_summary": agent_summary,
     }
 
 
@@ -405,6 +445,9 @@ async def share_finance_summary(
             "amount": ap_item.get("amount") or 0,
             "currency": ap_item.get("currency") or "USD",
             "invoice_number": invoice_number,
+            "agent_memory": summary.get("agent_memory") if isinstance(summary.get("agent_memory"), dict) else {},
+            "agent_profile": summary.get("agent_profile") if isinstance(summary.get("agent_profile"), dict) else {},
+            "agent_next_action": summary.get("agent_next_action") if isinstance(summary.get("agent_next_action"), dict) else {},
         }
         ok = await send_finance_summary_reply(
             item_payload,
@@ -426,6 +469,7 @@ async def share_finance_summary(
         "email_id": gmail_ref,
         "ap_item_id": ap_item_id,
         "summary": summary,
+        "agent_memory": summary.get("agent_memory") if isinstance(summary.get("agent_memory"), dict) else {},
         "delivery": delivery,
     }
     audit_row = runtime._append_runtime_audit(
@@ -456,7 +500,7 @@ def record_field_correction(
     feedback: Optional[str] = None,
     actor_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    from clearledgr.services.correction_learning import get_correction_learning_service
+    from clearledgr.services.finance_learning import get_finance_learning_service
 
     ap_item = runtime._resolve_ap_item(ap_item_id)
     resolved_ap_item_id = str(ap_item.get("id") or ap_item_id).strip() or str(ap_item_id)
@@ -500,54 +544,37 @@ def record_field_correction(
         expected_fields["email_type"] = corrected_value
 
     confidence_gate = metadata.get("confidence_gate") if isinstance(metadata.get("confidence_gate"), dict) else {}
-    learning_svc = get_correction_learning_service(runtime.organization_id)
+    learning_context = {
+        "ap_item_id": resolved_ap_item_id,
+        "field": field,
+        "vendor": ap_item.get("vendor_name"),
+        "sender": ap_item.get("sender"),
+        "subject": ap_item.get("subject"),
+        "snippet": metadata.get("source_snippet") or primary_source_meta.get("snippet"),
+        "body_excerpt": metadata.get("source_body_excerpt") or primary_source_meta.get("body_excerpt"),
+        "attachment_names": attachment_names if isinstance(attachment_names, list) else [],
+        "document_type": metadata.get("document_type") or metadata.get("email_type"),
+        "source_channel": "gmail_extension",
+        "event_source": "runtime_record_field_correction",
+        "selected_source": "manual",
+        "confidence_profile_id": confidence_gate.get("profile_id") or confidence_gate.get("learned_profile_id"),
+        "expected_fields": expected_fields,
+    }
     try:
-        learning_result = learning_svc.record_correction(
-            correction_type=field,
+        learning_result = get_finance_learning_service(
+            runtime.organization_id,
+            db=getattr(runtime, "db", None),
+        ).record_manual_field_correction(
+            field=field,
             original_value=original_value,
             corrected_value=corrected_value,
-            context={
-                "ap_item_id": resolved_ap_item_id,
-                "field": field,
-                "vendor": ap_item.get("vendor_name"),
-                "sender": ap_item.get("sender"),
-                "subject": ap_item.get("subject"),
-                "snippet": metadata.get("source_snippet") or primary_source_meta.get("snippet"),
-                "body_excerpt": metadata.get("source_body_excerpt") or primary_source_meta.get("body_excerpt"),
-                "attachment_names": attachment_names if isinstance(attachment_names, list) else [],
-                "document_type": metadata.get("document_type") or metadata.get("email_type"),
-                "source_channel": "gmail_extension",
-                "event_source": "runtime_record_field_correction",
-                "selected_source": "manual",
-                "confidence_profile_id": confidence_gate.get("profile_id") or confidence_gate.get("learned_profile_id"),
-                "expected_fields": expected_fields,
-            },
-            user_id=resolved_actor,
+            context=learning_context,
+            actor_id=resolved_actor,
             invoice_id=ap_item.get("thread_id"),
             feedback=feedback,
         )
-        if hasattr(learning_svc, "record_review_outcome"):
-            learning_svc.record_review_outcome(
-                field_name=field,
-                outcome_type="corrected",
-                context={
-                    "ap_item_id": resolved_ap_item_id,
-                    "vendor": ap_item.get("vendor_name"),
-                    "sender": ap_item.get("sender"),
-                    "subject": ap_item.get("subject"),
-                    "attachment_names": attachment_names if isinstance(attachment_names, list) else [],
-                    "document_type": metadata.get("document_type") or metadata.get("email_type"),
-                    "selected_source": "manual",
-                    "source_channel": "gmail_extension",
-                    "event_source": "runtime_record_field_correction",
-                    "confidence_profile_id": confidence_gate.get("profile_id") or confidence_gate.get("learned_profile_id"),
-                },
-                user_id=resolved_actor,
-                selected_source="manual",
-                outcome_tags=["corrected", "manual_entry"],
-            )
     except Exception as exc:
-        logger.warning("correction_learning.record_correction failed: %s", exc)
+        logger.warning("finance_learning.record_manual_field_correction failed: %s", exc)
         learning_result = {}
 
     audit_meta = {

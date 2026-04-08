@@ -62,23 +62,26 @@ class SlackAPIClient:
         await client.send_message("#finance", "Invoice processed!")
     """
     
-    def __init__(self, bot_token: Optional[str] = None):
+    def __init__(self, bot_token: Optional[str] = None, user_lookup_token: Optional[str] = None):
         self.bot_token = bot_token or SLACK_BOT_TOKEN
+        self.user_lookup_token = user_lookup_token or None
     
     async def _request(
         self,
         method: str,
         endpoint: str,
         data: Optional[Dict] = None,
-        params: Optional[Dict] = None
+        params: Optional[Dict] = None,
+        token_override: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Make authenticated API request."""
-        if not self.bot_token:
+        token = token_override or self.bot_token
+        if not token:
             raise ValueError("Slack bot token not configured")
         
         url = f"{SLACK_API_BASE}/{endpoint}"
         headers = {
-            "Authorization": f"Bearer {self.bot_token}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json; charset=utf-8",
         }
         
@@ -318,20 +321,101 @@ class SlackAPIClient:
     
     # ==================== USERS ====================
     
-    async def get_user_info(self, user_id: str) -> Dict[str, Any]:
+    async def get_user_info(self, user_id: str, *, prefer_user_token: bool = False) -> Dict[str, Any]:
         """Get information about a user."""
-        result = await self._request("GET", "users.info", params={"user": user_id})
+        token_override = self.user_lookup_token if prefer_user_token and self.user_lookup_token else None
+        result = await self._request("GET", "users.info", params={"user": user_id}, token_override=token_override)
         return result.get("user", {})
     
     async def lookup_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """Find a user by email address."""
         try:
-            result = await self._request("GET", "users.lookupByEmail", params={"email": email})
+            result = await self._request(
+                "GET",
+                "users.lookupByEmail",
+                params={"email": email},
+                token_override=self.user_lookup_token or None,
+            )
             return result.get("user")
         except SlackAPIError as e:
             if e.error == "users_not_found":
                 return None
             raise
+
+    @staticmethod
+    def normalize_user_reference(reference: Any) -> str:
+        token = str(reference or "").strip()
+        if token.startswith("<@") and token.endswith(">"):
+            token = token[2:-1].strip()
+        return token
+
+    @staticmethod
+    def is_probable_user_id(reference: Any) -> bool:
+        token = SlackAPIClient.normalize_user_reference(reference)
+        return bool(token) and token[0] in {"U", "W"} and token[1:].isalnum()
+
+    @staticmethod
+    def format_user_mention(user_id: str) -> str:
+        token = SlackAPIClient.normalize_user_reference(user_id)
+        return f"<@{token}>" if token else ""
+
+    async def resolve_user_targets(self, references: List[Any]) -> Dict[str, List[str]]:
+        """Resolve mixed emails / Slack user IDs into delivery targets and mentions."""
+        from clearledgr.core.database import get_db
+
+        db = get_db()
+        delivery_ids: List[str] = []
+        mentions: List[str] = []
+        labels: List[str] = []
+        unresolved: List[str] = []
+        seen_ids = set()
+        seen_labels = set()
+
+        for raw in references or []:
+            token = self.normalize_user_reference(raw)
+            if not token:
+                continue
+
+            if token not in seen_labels:
+                labels.append(token)
+                seen_labels.add(token)
+
+            resolved_id = ""
+            if self.is_probable_user_id(token):
+                resolved_id = token
+            elif "@" in token:
+                cached_user = None
+                try:
+                    cached_user = db.get_user_by_email(token)
+                except Exception:
+                    cached_user = None
+                cached_id = str((cached_user or {}).get("slack_user_id") or "").strip()
+                if self.is_probable_user_id(cached_id):
+                    resolved_id = self.normalize_user_reference(cached_id)
+                else:
+                    slack_user = await self.lookup_user_by_email(token)
+                    slack_id = self.normalize_user_reference((slack_user or {}).get("id"))
+                    if self.is_probable_user_id(slack_id):
+                        resolved_id = slack_id
+                        if cached_user:
+                            try:
+                                db.update_user(cached_user["id"], slack_user_id=slack_id)
+                            except Exception:
+                                pass
+
+            if resolved_id and resolved_id not in seen_ids:
+                seen_ids.add(resolved_id)
+                delivery_ids.append(resolved_id)
+                mentions.append(self.format_user_mention(resolved_id))
+            elif not resolved_id:
+                unresolved.append(token)
+
+        return {
+            "delivery_ids": delivery_ids,
+            "mentions": mentions,
+            "labels": labels,
+            "unresolved": unresolved,
+        }
     
     # ==================== DIRECT MESSAGES ====================
     
@@ -651,6 +735,8 @@ def resolve_slack_runtime(organization_id: Optional[str] = None) -> Dict[str, An
         os.getenv("SLACK_ALLOW_SHARED_FALLBACK", "true")
     ).strip().lower() not in {"0", "false", "no", "off"}
 
+    if not organization_id:
+        logger.warning("resolve_slack_runtime called without organization_id, falling back to 'default'")
     runtime: Dict[str, Any] = {
         "organization_id": organization_id or "default",
         "mode": default_mode,
@@ -712,9 +798,22 @@ def resolve_slack_runtime(organization_id: Optional[str] = None) -> Dict[str, An
 def get_slack_client(
     bot_token: Optional[str] = None,
     organization_id: Optional[str] = None,
+    token_kind: str = "bot",
 ) -> SlackAPIClient:
     """Get a Slack API client instance, optionally org-scoped."""
     resolved_token = bot_token
+    user_lookup_token: Optional[str] = None
     if resolved_token is None:
-        resolved_token = resolve_slack_runtime(organization_id).get("bot_token")
-    return SlackAPIClient(resolved_token)
+        if organization_id:
+            try:
+                from clearledgr.core.database import get_db
+
+                install = get_db().get_slack_installation(organization_id, include_secrets=True) or {}
+                user_lookup_token = install.get("user_token")
+                if token_kind == "user":
+                    resolved_token = user_lookup_token or install.get("bot_token")
+            except Exception:
+                resolved_token = None
+        if resolved_token is None:
+            resolved_token = resolve_slack_runtime(organization_id).get("bot_token")
+    return SlackAPIClient(resolved_token, user_lookup_token=user_lookup_token)
