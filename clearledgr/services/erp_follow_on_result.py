@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from clearledgr.core.ap_states import APState
 from clearledgr.core.database import ClearledgrDB
+from clearledgr.core.utils import safe_float
 
 
 _ERP_FOLLOW_ON_APPLIED_STATUSES = {"applied", "success", "completed", "already_applied"}
@@ -43,13 +44,6 @@ def _parse_iso(raw: Any) -> Optional[datetime]:
         return dt.astimezone(timezone.utc)
     except ValueError:
         return None
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _normalize_document_type_token(raw: Any) -> str:
@@ -103,7 +97,7 @@ def _summarize_linked_finance_documents(entries: List[Dict[str, Any]]) -> Dict[s
     latest_value: Optional[str] = None
     for entry in entries:
         document_type = _normalize_document_type_token(entry.get("document_type"))
-        amount = abs(_safe_float(entry.get("amount")))
+        amount = abs(safe_float(entry.get("amount")))
         linked_at = str(entry.get("linked_at") or "").strip()
         parsed = _parse_iso(linked_at)
         if parsed and parsed.timestamp() >= latest_ts:
@@ -126,7 +120,7 @@ def _summarize_linked_finance_documents(entries: List[Dict[str, Any]]) -> Dict[s
 
 
 def _money_amount(value: Any) -> float:
-    return round(abs(_safe_float(value)), 2)
+    return round(abs(safe_float(value)), 2)
 
 
 def _related_item_document_type(item: Dict[str, Any]) -> str:
@@ -228,10 +222,10 @@ def _build_finance_effect_summary(
     related_state = str(related_item.get("state") or "").strip().lower()
     currency = str(related_item.get("currency") or "USD").strip().upper() or "USD"
     original_amount = _money_amount(related_item.get("amount"))
-    applied_credit_total = round(_safe_float(summary.get("credit_note_total")), 2)
-    payment_confirmation_total = round(_safe_float(summary.get("payment_total")), 2)
-    receipt_total = round(_safe_float(summary.get("receipt_total")), 2)
-    refund_total = round(_safe_float(summary.get("refund_total")), 2)
+    applied_credit_total = round(safe_float(summary.get("credit_note_total")), 2)
+    payment_confirmation_total = round(safe_float(summary.get("payment_total")), 2)
+    receipt_total = round(safe_float(summary.get("receipt_total")), 2)
+    refund_total = round(safe_float(summary.get("refund_total")), 2)
     gross_cash_out_total = round(payment_confirmation_total + receipt_total, 2)
     net_cash_applied_total = round(gross_cash_out_total - refund_total, 2)
     settled_cash_total = round(max(net_cash_applied_total, 0.0), 2)

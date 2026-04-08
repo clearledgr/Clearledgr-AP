@@ -28,6 +28,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.utils import safe_float
+
 try:
     import psycopg
     from psycopg.rows import dict_row
@@ -404,13 +406,6 @@ class _ClearledgrDBBase:
         if severity == "low":
             return 1
         return 0
-
-    @staticmethod
-    def _safe_float(value: Any, default: float = 0.0) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
 
     @staticmethod
     def _decode_json_value(value: Any, default: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -906,6 +901,103 @@ class _ClearledgrDBBase:
             """)
 
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS agent_profiles (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    profile_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(organization_id, skill_id)
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS agent_memory_events (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    ap_item_id TEXT,
+                    thread_id TEXT,
+                    event_type TEXT NOT NULL,
+                    channel TEXT,
+                    actor_id TEXT,
+                    correlation_id TEXT,
+                    source TEXT,
+                    summary TEXT,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS agent_belief_states (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    ap_item_id TEXT NOT NULL,
+                    thread_id TEXT,
+                    current_state TEXT,
+                    status TEXT,
+                    belief_json TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL,
+                    uncertainties_json TEXT NOT NULL,
+                    next_action_json TEXT NOT NULL,
+                    memory_summary_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(organization_id, skill_id, ap_item_id)
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS agent_episode_summaries (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    ap_item_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    summary TEXT,
+                    outcome_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(organization_id, skill_id, ap_item_id)
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS agent_patterns (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    pattern_type TEXT NOT NULL,
+                    pattern_key TEXT NOT NULL,
+                    pattern_json TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    usage_count INTEGER NOT NULL DEFAULT 0,
+                    last_seen_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(organization_id, skill_id, pattern_type, pattern_key)
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS finance_learning_events (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT NOT NULL,
+                    ap_item_id TEXT,
+                    event_type TEXT NOT NULL,
+                    actor_id TEXT,
+                    vendor_name TEXT,
+                    action_status TEXT,
+                    learning_summary TEXT,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS api_keys (
                     id TEXT PRIMARY KEY,
                     organization_id TEXT NOT NULL,
@@ -1030,6 +1122,14 @@ class _ClearledgrDBBase:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_browser_actions_status ON browser_action_events(session_id, status)")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_browser_actions_session_command ON browser_action_events(session_id, command_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_policies_org ON agent_policies(organization_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_profiles_org_skill ON agent_profiles(organization_id, skill_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_memory_events_org_item_created ON agent_memory_events(organization_id, ap_item_id, created_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_memory_events_org_event ON agent_memory_events(organization_id, event_type, created_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_belief_states_org_item ON agent_belief_states(organization_id, ap_item_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_episode_summaries_org_item ON agent_episode_summaries(organization_id, ap_item_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_patterns_org_type ON agent_patterns(organization_id, skill_id, pattern_type, updated_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_finance_learning_events_org_type ON finance_learning_events(organization_id, event_type, created_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_finance_learning_events_org_item ON finance_learning_events(organization_id, ap_item_id, created_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_policy_versions_org_name ON ap_policy_versions(organization_id, policy_name, version)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_policy_audit_org_name ON ap_policy_audit_events(organization_id, policy_name, created_at)")
             self._install_audit_append_only_guards(cur)

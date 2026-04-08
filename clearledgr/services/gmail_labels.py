@@ -16,6 +16,8 @@ import logging
 import re
 from typing import Any, Dict, Iterable, Mapping, Optional, Set
 
+from clearledgr.core.utils import safe_int
+
 logger = logging.getLogger(__name__)
 
 CLEARLEDGR_LABELS = {
@@ -212,13 +214,6 @@ def _forget_label(cache_scope: str, label_name: str) -> None:
     cached = _label_name_cache.get(cache_key)
     if cached is not None:
         cached.pop(label_name, None)
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _label_names_for_key(label_key: str) -> Set[str]:
@@ -465,7 +460,7 @@ async def cleanup_legacy_labels(
             continue
 
         label_id = str(label.get("id") or "").strip()
-        approx_messages_total = _safe_int(label.get("messagesTotal"), 0)
+        approx_messages_total = safe_int(label.get("messagesTotal"), 0)
         target_keys = {
             str(key).strip()
             for key in (target_keys or set())
@@ -499,7 +494,7 @@ async def cleanup_legacy_labels(
         page_token = None
 
         if label_id:
-            remaining_budget = max(1, min(_safe_int(max_messages_per_label, 1000), 5000))
+            remaining_budget = max(1, min(safe_int(max_messages_per_label, 1000), 5000))
             while remaining_budget > 0:
                 response = await client.list_messages(
                     max_results=min(100, remaining_budget),

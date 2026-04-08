@@ -28,11 +28,13 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from clearledgr.core.utils import safe_float_or_none
+
 from clearledgr.core.prompt_guard import sanitize_subject
 
 logger = logging.getLogger(__name__)
 
-_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 _API_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"
 _TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
@@ -52,13 +54,6 @@ class APDecision:
     vendor_context_used: Dict[str, Any]  # summary of vendor data consulted
     model: str                     # which Claude model (or "fallback")
     fallback: bool = False         # True when rule-based fallback was used
-
-
-def _safe_float(v: Any) -> Optional[float]:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
 
 
 def _days_since(iso: Optional[str]) -> Optional[int]:
@@ -343,7 +338,7 @@ def _build_reasoning_prompt(
         ("vendor", "Vendor"), ("amount", "Amount"),
         ("invoice_number", "Invoice #"), ("due_date", "Due date"),
     ):
-        val = _safe_float(fc.get(f_name))
+        val = safe_float_or_none(fc.get(f_name))
         if val is not None:
             fc_lines.append(f"  {label}: {val:.0%}")
 
@@ -351,9 +346,9 @@ def _build_reasoning_prompt(
     safe_subject = sanitize_subject(invoice.subject or "")
     safe_vendor = sanitize_subject(invoice.vendor_name or "")
     invoice_lines = [
-        f"Amount: ${invoice.amount} {invoice.currency}" + (f" — confidence {_safe_float(fc.get('amount')):.0%}" if fc.get('amount') else ""),
-        f"Vendor: {safe_vendor}" + (f" — confidence {_safe_float(fc.get('vendor')):.0%}" if fc.get('vendor') else ""),
-        f"Invoice #: {invoice.invoice_number or 'missing'}" + (f" — confidence {_safe_float(fc.get('invoice_number')):.0%}" if fc.get('invoice_number') else ""),
+        f"Amount: ${invoice.amount} {invoice.currency}" + (f" — confidence {safe_float_or_none(fc.get('amount')):.0%}" if fc.get('amount') else ""),
+        f"Vendor: {safe_vendor}" + (f" — confidence {safe_float_or_none(fc.get('vendor')):.0%}" if fc.get('vendor') else ""),
+        f"Invoice #: {invoice.invoice_number or 'missing'}" + (f" — confidence {safe_float_or_none(fc.get('invoice_number')):.0%}" if fc.get('invoice_number') else ""),
         f"Due: {invoice.due_date or 'missing'}",
         f"PO ref: {invoice.po_number or 'none'}",
         f"Subject: {safe_subject}",
@@ -577,7 +572,7 @@ class APDecisionService:
         if rec not in _VALID_RECOMMENDATIONS:
             rec = "escalate"
 
-        raw_confidence = _safe_float(parsed.get("confidence"))
+        raw_confidence = safe_float_or_none(parsed.get("confidence"))
         confidence = raw_confidence if (raw_confidence is not None and not math.isnan(raw_confidence)) else 0.0
 
         return APDecision(
@@ -605,7 +600,7 @@ class APDecisionService:
         """Rule-based decision using vendor context when Claude is unavailable."""
         gate_passed = validation_gate.get("passed", True)
         reason_codes = validation_gate.get("reason_codes") or []
-        confidence = _safe_float(getattr(invoice, "confidence", None)) or 0.0
+        confidence = safe_float_or_none(getattr(invoice, "confidence", None)) or 0.0
         decision_feedback = decision_feedback or {}
         vendor_profile = vendor_profile or {}
         cross_invoice_analysis = cross_invoice_analysis or {}
@@ -732,9 +727,9 @@ class APDecisionService:
             )
 
         # Step 7: Amount >2σ from vendor historical average → escalate
-        avg = _safe_float(vendor_profile.get("avg_invoice_amount"))
-        stddev = _safe_float(vendor_profile.get("amount_stddev"))
-        current_amount = _safe_float(getattr(invoice, "amount", None)) or 0.0
+        avg = safe_float_or_none(vendor_profile.get("avg_invoice_amount"))
+        stddev = safe_float_or_none(vendor_profile.get("amount_stddev"))
+        current_amount = safe_float_or_none(getattr(invoice, "amount", None)) or 0.0
         if avg is not None and stddev is not None and stddev > 0:
             if abs(current_amount - avg) > 2 * stddev:
                 return APDecision(

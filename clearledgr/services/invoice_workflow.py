@@ -36,7 +36,7 @@ from clearledgr.integrations.erp_router import (
     Bill, Vendor, get_or_create_vendor
 )
 from clearledgr.services.erp_api_first import post_bill_api_first
-from clearledgr.services.learning import get_learning_service
+from clearledgr.services.finance_learning import get_finance_learning_service
 from clearledgr.services.approval_card_builder import (
     budget_status_rank,
     normalize_budget_checks,
@@ -51,6 +51,9 @@ from clearledgr.services.invoice_validation import InvoiceValidationMixin
 from clearledgr.services.invoice_posting import InvoicePostingMixin
 
 logger = logging.getLogger(__name__)
+
+# Backward-compatible import alias for older tests/monkeypatch targets.
+get_learning_service = get_finance_learning_service
 
 
 class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
@@ -142,12 +145,17 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             return self._settings.get("auto_approve_threshold", self._auto_approve_threshold)
         return self._auto_approve_threshold
     
-    def get_approval_channel_for_amount(self, amount: float) -> str:
+    def get_approval_channel_for_amount(self, amount: float, invoice: Any = None) -> str:
         """Get appropriate Slack channel based on amount thresholds."""
-        return str(self.get_approval_target_for_amount(amount).get("channel") or self.slack_channel)
+        return str(self.get_approval_target_for_amount(amount, invoice=invoice).get("channel") or self.slack_channel)
 
-    def get_approval_target_for_amount(self, amount: float) -> Dict[str, Any]:
-        """Return the approval channel and any configured assignees for an amount."""
+    def get_approval_target_for_amount(self, amount: float, *, invoice: Any = None) -> Dict[str, Any]:
+        """Return the approval channel and any configured assignees for an amount.
+
+        When *invoice* is provided, GL code / department / vendor / entity
+        filters on the routing rules are evaluated.  Without it the function
+        falls back to amount-only matching (backward compatible).
+        """
         self._load_settings()
 
         routing: Dict[str, Any] = {
@@ -160,10 +168,17 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         thresholds = self._settings.get("approval_thresholds", [])
 
         # Build invoice context for rule matching
-        invoice_gl = str(getattr(invoice, "gl_code", "") or "").strip().lower() if hasattr(invoice, "gl_code") else ""
-        invoice_dept = str(getattr(invoice, "department", "") or "").strip().lower() if hasattr(invoice, "department") else ""
-        invoice_vendor = str(getattr(invoice, "vendor_name", "") or "").strip().lower() if hasattr(invoice, "vendor_name") else ""
-        invoice_entity = str(getattr(invoice, "entity_code", "") or "").strip().lower() if hasattr(invoice, "entity_code") else ""
+        if invoice is not None:
+            _gl = getattr(invoice, "gl_code", None) or (getattr(invoice, "vendor_intelligence", None) or {}).get("suggested_gl", "")
+            invoice_gl = str(_gl or "").strip().lower()
+            invoice_dept = str(getattr(invoice, "department", "") or "").strip().lower()
+            invoice_vendor = str(getattr(invoice, "vendor_name", "") or "").strip().lower()
+            invoice_entity = str(getattr(invoice, "entity_code", "") or "").strip().lower()
+        else:
+            invoice_gl = ""
+            invoice_dept = ""
+            invoice_vendor = ""
+            invoice_entity = ""
 
         for threshold in thresholds:
             min_amt = threshold.get("min_amount", 0)
@@ -199,8 +214,38 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 or threshold.get("required_approvers")
                 or []
             )
+            raw_targets = threshold.get("approver_targets") or []
             if not isinstance(raw_approvers, list):
                 raw_approvers = [raw_approvers] if raw_approvers else []
+            if not isinstance(raw_targets, list):
+                raw_targets = [raw_targets] if raw_targets else []
+            normalized_targets = []
+            for target in raw_targets:
+                if not isinstance(target, dict):
+                    continue
+                email = str(target.get("email") or "").strip()
+                slack_user_id = str(target.get("slack_user_id") or "").strip()
+                display_name = str(target.get("display_name") or target.get("name") or email or slack_user_id).strip()
+                if email or slack_user_id:
+                    normalized_targets.append(
+                        {
+                            "email": email,
+                            "slack_user_id": slack_user_id,
+                            "display_name": display_name,
+                            "slack_resolution": str(target.get("slack_resolution") or "").strip(),
+                        }
+                    )
+            if not normalized_targets:
+                normalized_targets = [
+                    {
+                        "email": str(value).strip(),
+                        "slack_user_id": "",
+                        "display_name": str(value).strip(),
+                        "slack_resolution": "",
+                    }
+                    for value in raw_approvers
+                    if str(value).strip()
+                ]
             routing["channel"] = (
                 str(
                     threshold.get("approver_channel")
@@ -210,10 +255,11 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 or self.slack_channel
             )
             routing["approvers"] = [
-                str(value).strip()
-                for value in raw_approvers
-                if str(value).strip()
+                str(target.get("email") or target.get("slack_user_id") or "").strip()
+                for target in normalized_targets
+                if str(target.get("email") or target.get("slack_user_id") or "").strip()
             ]
+            routing["approver_targets"] = normalized_targets
             routing["approval_type"] = threshold.get("approval_type", "any")
             routing["matched_rule"] = {
                 "gl_codes": rule_gl or None,
@@ -232,6 +278,97 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         if self._slack_client is None:
             self._slack_client = get_slack_client(organization_id=self.organization_id)
         return self._slack_client
+
+    async def _resolve_approval_assignees(self, assignees: List[Any]) -> Dict[str, List[str]]:
+        normalized_targets: List[Dict[str, str]] = []
+        for value in (assignees or []):
+            if isinstance(value, dict):
+                email = str(value.get("email") or "").strip()
+                display_name = str(value.get("display_name") or value.get("name") or email or "").strip()
+                slack_user_id = str(value.get("slack_user_id") or "").strip()
+                slack_resolution = str(value.get("slack_resolution") or "").strip()
+                if email or slack_user_id:
+                    normalized_targets.append(
+                        {
+                            "email": email,
+                            "display_name": display_name or email or slack_user_id,
+                            "slack_user_id": slack_user_id,
+                            "slack_resolution": slack_resolution,
+                        }
+                    )
+            else:
+                token = str(value).strip()
+                if token:
+                    normalized_targets.append(
+                        {
+                            "email": token if "@" in token else "",
+                            "display_name": token,
+                            "slack_user_id": token if SlackAPIClient.is_probable_user_id(token) else "",
+                            "slack_resolution": "resolved" if SlackAPIClient.is_probable_user_id(token) else "",
+                        }
+                    )
+
+        if not normalized_targets:
+            return {
+                "labels": [],
+                "delivery_ids": [],
+                "mentions": [],
+                "authorization_targets": [],
+            }
+
+        unresolved_inputs = [
+            target.get("slack_user_id") or target.get("email") or target.get("display_name") or ""
+            for target in normalized_targets
+            if not str(target.get("slack_user_id") or "").strip()
+        ]
+        try:
+            resolved = await self.slack_client.resolve_user_targets(unresolved_inputs)
+        except Exception as exc:
+            logger.debug("Slack approver resolution failed for %s: %s", normalized_targets, exc)
+            resolved = {
+                "delivery_ids": [],
+                "mentions": [],
+                "labels": unresolved_inputs,
+                "unresolved": unresolved_inputs,
+            }
+
+        resolved_ids_iter = iter(list(resolved.get("delivery_ids") or []))
+        labels: List[str] = []
+        delivery_ids: List[str] = []
+        mentions: List[str] = []
+        authorization_targets: List[str] = []
+        seen_delivery = set()
+        seen_auth = set()
+
+        for target in normalized_targets:
+            email = str(target.get("email") or "").strip()
+            display_name = str(target.get("display_name") or email or target.get("slack_user_id") or "").strip()
+            slack_user_id = str(target.get("slack_user_id") or "").strip()
+            if not slack_user_id:
+                slack_user_id = str(next(resolved_ids_iter, "")).strip()
+
+            label = display_name or email or slack_user_id
+            if label:
+                labels.append(label)
+
+            if slack_user_id and slack_user_id not in seen_delivery:
+                seen_delivery.add(slack_user_id)
+                delivery_ids.append(slack_user_id)
+                mentions.append(self.slack_client.format_user_mention(slack_user_id))
+
+            for candidate in (email, slack_user_id):
+                token = str(candidate or "").strip()
+                if not token or token in seen_auth:
+                    continue
+                seen_auth.add(token)
+                authorization_targets.append(token)
+
+        return {
+            "labels": labels,
+            "delivery_ids": delivery_ids,
+            "mentions": mentions,
+            "authorization_targets": authorization_targets,
+        }
 
     @property
     def teams_client(self) -> Optional[Any]:
@@ -278,9 +415,10 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             # Best-effort correction suggestions
             suggestions: Dict[str, Any] = {}
             try:
-                from clearledgr.services.correction_learning import CorrectionLearningService
-                svc = CorrectionLearningService(self.organization_id)
-                gl_sug = svc.suggest("gl_code", {"vendor": invoice.vendor_name})
+                gl_sug = get_finance_learning_service(self.organization_id, db=self.db).suggest_field_correction(
+                    "gl_code",
+                    {"vendor": invoice.vendor_name},
+                )
                 if gl_sug:
                     suggestions["gl_code"] = gl_sug
             except Exception as exc:
@@ -602,7 +740,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         # LEARNING: Check if we have a learned GL code for this vendor
         suggested_gl = None
         try:
-            learning = get_learning_service(self.organization_id)
+            learning = get_finance_learning_service(self.organization_id, db=self.db)
             suggestion = learning.suggest_gl_code(
                 vendor=invoice.vendor_name,
                 amount=invoice.amount,
@@ -818,8 +956,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             
             # LEARNING: Record auto-approval to learn vendor→GL mappings
             try:
-                learning = get_learning_service(self.organization_id)
-                learning.record_approval(
+                learning = get_finance_learning_service(self.organization_id, db=self.db)
+                learning.record_vendor_gl_approval(
                     vendor=invoice.vendor_name,
                     gl_code=result.get("gl_code", ""),
                     gl_description=result.get("gl_description", "Accounts Payable"),
@@ -827,6 +965,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     currency=invoice.currency,
                     was_auto_approved=True,
                     was_corrected=False,
+                    ap_item_id=ap_item_id,
+                    metadata={"source": "invoice_workflow._auto_approve_and_post"},
                 )
                 logger.info(f"Recorded auto-approval for learning: {invoice.vendor_name}")
             except Exception as e:
@@ -931,13 +1071,20 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             preferred=invoice.correlation_id,
         )
         invoice.correlation_id = correlation_id
-        approval_target = self.get_approval_target_for_amount(invoice.amount)
+        approval_target = self.get_approval_target_for_amount(invoice.amount, invoice=invoice)
         approval_channel = str(approval_target.get("channel") or self.slack_channel).strip() or self.slack_channel
-        approval_assignees = [
-            str(value).strip()
-            for value in (approval_target.get("approvers") or [])
-            if str(value).strip()
-        ]
+        approval_assignee_inputs = list(approval_target.get("approver_targets") or approval_target.get("approvers") or [])
+        approval_assignee_resolution = await self._resolve_approval_assignees(approval_assignee_inputs)
+        approval_delivery_targets = list(approval_assignee_resolution.get("delivery_ids") or [])
+        approval_mentions = list(approval_assignee_resolution.get("mentions") or [])
+        approval_labels = list(approval_assignee_resolution.get("labels") or [])
+        approval_authorization_targets = list(
+            approval_assignee_resolution.get("authorization_targets") or []
+        )
+        if approval_mentions:
+            context_payload["approval_mentions"] = approval_mentions
+        if approval_labels:
+            context_payload["approval_assignee_labels"] = approval_labels
         approval_requested_at = datetime.now(timezone.utc).isoformat()
 
         current_state = self._canonical_invoice_state(self.db.get_invoice_status(invoice.gmail_id))
@@ -1006,7 +1153,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 ap_item_id,
                 {
                     "approval_requested_at": approval_requested_at,
-                    "approval_sent_to": approval_assignees,
+                    "approval_sent_to": approval_labels,
+                    "approval_delivery_targets": approval_delivery_targets,
                     "approval_channel": str(existing_thread.get("channel_id") or approval_channel).strip() or approval_channel,
                     "approval_next_action": "wait_for_approval",
                 },
@@ -1050,8 +1198,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 steps=[SimpleNamespace(
                     step_id=f"step-{uuid.uuid4().hex[:12]}",
                     level="L1",
-                    approvers=approval_assignees,
-                    approval_type="any",
+                    approvers=approval_authorization_targets,
+                    approval_type=str(approval_target.get("approval_type") or "any"),
                     status="pending",
                     approved_by=None,
                     approved_at=None,
@@ -1065,7 +1213,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 {
                     "approval_chain_id": chain_id,
                     "approval_requested_at": approval_requested_at,
-                    "approval_sent_to": approval_assignees,
+                    "approval_sent_to": approval_labels,
+                    "approval_delivery_targets": approval_delivery_targets,
                     "approval_channel": approval_channel,
                     "approval_next_action": "wait_for_approval",
                 },
@@ -1078,10 +1227,11 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         blocks = self._build_approval_blocks(invoice, context_payload)
 
         try:
+            mention_suffix = f" · {' '.join(approval_mentions)}" if approval_mentions else ""
             # Send to Slack
             message = await self.slack_client.send_message(
                 channel=approval_channel,
-                text=f"Invoice approval needed: {invoice.vendor_name} - ${invoice.amount:,.2f}",
+                text=f"Invoice approval needed: {invoice.vendor_name} - ${invoice.amount:,.2f}{mention_suffix}",
                 blocks=blocks,
             )
             
@@ -1120,7 +1270,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 ap_item_id,
                 {
                     "approval_requested_at": approval_requested_at,
-                    "approval_sent_to": approval_assignees,
+                    "approval_sent_to": approval_labels,
+                    "approval_delivery_targets": approval_delivery_targets,
                     "approval_channel": message.channel,
                     "approval_next_action": "wait_for_approval",
                 },
@@ -1228,7 +1379,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 budget=budget_summary,
                 decision_reason_summary=approval_copy.get("why_summary"),
                 next_step_lines=(
-                    ([f"Recommended now: {approval_copy.get('recommended_action_text')}"] if approval_copy.get("recommended_action_text") else [])
+                    ([f"Recommended decision: {approval_copy.get('recommended_action_text')}"] if approval_copy.get("recommended_action_text") else [])
                     + (approval_copy.get("what_happens_next") or [])
                 ),
                 requested_by_text=approval_copy.get("requested_by_text"),

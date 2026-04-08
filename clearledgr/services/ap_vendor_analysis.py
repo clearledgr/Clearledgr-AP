@@ -23,23 +23,13 @@ from clearledgr.services.policy_compliance import get_approval_automation_policy
 # Lazy import helpers — these are imported at call-time from ap_item_service
 # to avoid circular imports.  The functions themselves are defined in
 # ap_field_review.py and re-exported through ap_item_service.
+from clearledgr.core.utils import safe_float, safe_int
 from clearledgr.services.ap_field_review import (
     _parse_json,
     _normalize_document_type_token,
 )
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Shared numeric helpers (duplicated here to avoid circular import)
-# ---------------------------------------------------------------------------
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _safe_sort_timestamp(value: Any) -> float:
@@ -57,13 +47,6 @@ def _parse_iso(raw: Any) -> Optional[datetime]:
         return dt.astimezone(timezone.utc)
     except ValueError:
         return None
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +79,7 @@ def _summarize_related_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "id": item.get("id"),
         "vendor_name": item.get("vendor_name"),
         "invoice_number": item.get("invoice_number"),
-        "amount": _safe_float(item.get("amount")),
+        "amount": safe_float(item.get("amount")),
         "currency": item.get("currency") or "USD",
         "state": state,
         "due_date": item.get("due_date"),
@@ -299,7 +282,7 @@ def _build_vendor_summary_rows(
             },
         )
         row["invoice_count"] += 1
-        row["total_amount"] += _safe_float(item.get("amount"))
+        row["total_amount"] += safe_float(item.get("amount"))
         state = str(item.get("state") or "").strip().lower()
         row["top_states"][state] += 1
         if _is_open_ap_state(state):
@@ -358,7 +341,7 @@ def _build_vendor_summary_rows(
                     "failed_post": int(Counter(row.get("issue_kinds") or {}).get("failed_post") or 0),
                     "policy_exception": int(Counter(row.get("issue_kinds") or {}).get("policy_exception") or 0),
                 },
-                "total_amount": round(_safe_float(row.get("total_amount")), 2),
+                "total_amount": round(safe_float(row.get("total_amount")), 2),
                 "last_activity_at": row.get("last_activity_at") or None,
                 "primary_email": sorted(row.get("sender_emails") or [""])[0] if row.get("sender_emails") else None,
                 "sender_emails": sorted(row.get("sender_emails") or [])[:5],
@@ -374,7 +357,7 @@ def _build_vendor_summary_rows(
                     "requires_po": bool((profile or {}).get("requires_po")),
                     "payment_terms": (profile or {}).get("payment_terms"),
                     "always_approved": bool((profile or {}).get("always_approved")),
-                    "approval_override_rate": _safe_float((profile or {}).get("approval_override_rate")),
+                    "approval_override_rate": safe_float((profile or {}).get("approval_override_rate")),
                     "anomaly_flags": list((profile or {}).get("anomaly_flags") or [])[:4],
                 },
             }
@@ -384,7 +367,7 @@ def _build_vendor_summary_rows(
         key=lambda row: (
             int(row.get("issue_count") or 0),
             int(row.get("open_count") or 0),
-            _safe_float(row.get("total_amount")),
+            safe_float(row.get("total_amount")),
             _safe_sort_timestamp(row.get("last_activity_at")),
         ),
         reverse=True,

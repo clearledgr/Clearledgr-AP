@@ -29,6 +29,7 @@ from clearledgr.services.approval_card_builder import (
     normalize_budget_checks,
     compute_budget_summary,
 )
+from clearledgr.core.utils import safe_int
 from clearledgr.services.invoice_models import InvoiceData
 
 logger = logging.getLogger(__name__)
@@ -104,9 +105,9 @@ class InvoiceValidationMixin:
 
         if invoice.organization_id and invoice.vendor_name:
             try:
-                from clearledgr.services.correction_learning import get_correction_learning_service
+                from clearledgr.services.finance_learning import get_finance_learning_service
 
-                learned_adjustments = get_correction_learning_service(str(invoice.organization_id)).get_extraction_confidence_adjustments(
+                learned_adjustments = get_finance_learning_service(str(invoice.organization_id)).get_extraction_confidence_adjustments(
                     vendor_name=invoice.vendor_name,
                     sender_domain=invoice.sender,
                     document_type="invoice",
@@ -163,9 +164,9 @@ class InvoiceValidationMixin:
         vendor_name = invoice_row.get("vendor") or invoice_row.get("vendor_name")
         if organization_id and vendor_name:
             try:
-                from clearledgr.services.correction_learning import get_correction_learning_service
+                from clearledgr.services.finance_learning import get_finance_learning_service
 
-                learned_adjustments = get_correction_learning_service(str(organization_id)).get_extraction_confidence_adjustments(
+                learned_adjustments = get_finance_learning_service(str(organization_id)).get_extraction_confidence_adjustments(
                     vendor_name=vendor_name,
                     sender_domain=metadata.get("source_sender_domain") or invoice_row.get("sender"),
                     document_type=invoice_row.get("document_type") or metadata.get("document_type") or metadata.get("email_type"),
@@ -904,10 +905,7 @@ class InvoiceValidationMixin:
 
     @staticmethod
     def _safe_int(value: Any, default: int = 0) -> int:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
+        return safe_int(value, default)
 
     @staticmethod
     def _vendor_followup_sla_hours() -> int:

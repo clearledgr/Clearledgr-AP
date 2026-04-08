@@ -13,6 +13,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.utils import safe_float_or_none
+
 logger = logging.getLogger(__name__)
 
 # AP states that represent a final approved outcome
@@ -112,7 +114,7 @@ def bootstrap_vendor_intelligence(
 
         was_approved = state in _APPROVED_STATES
         final_state = state if (state in _APPROVED_STATES or state in _REJECTED_STATES) else "unknown"
-        amount = _safe_float(item.get("amount"))
+        amount = safe_float_or_none(item.get("amount"))
         invoice_date = _first_date(item.get("invoice_date"), item.get("created_at"))
         exception_code = item.get("exception_code")
 
@@ -167,7 +169,7 @@ def bootstrap_vendor_intelligence(
                         ap_item_id=str(last.get("id") or ""),
                         final_state=_norm_state(last.get("state")),
                         was_approved=_norm_state(last.get("state")) in _APPROVED_STATES,
-                        amount=_safe_float(last.get("amount")),
+                        amount=safe_float_or_none(last.get("amount")),
                         invoice_date=_first_date(last.get("invoice_date"), last.get("created_at")),
                         exception_code=last.get("exception_code"),
                     )
@@ -199,13 +201,6 @@ def bootstrap_vendor_intelligence(
         result["items_skipped"], result["errors"],
     )
     return result
-
-
-def _safe_float(v: Any) -> Optional[float]:
-    try:
-        return float(v) if v is not None else None
-    except (TypeError, ValueError):
-        return None
 
 
 def _first_date(*candidates: Optional[str]) -> Optional[str]:

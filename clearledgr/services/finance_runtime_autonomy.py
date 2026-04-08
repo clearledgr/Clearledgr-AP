@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.utils import safe_float, safe_int
+
 
 logger = logging.getLogger(__name__)
 
@@ -271,16 +273,16 @@ def evaluate_action_autonomy_policy(
         reason_codes.append("vendor_unscored")
     else:
         drift_risk = str(scorecard.get("drift_risk") or "stable").strip().lower() or "stable"
-        recent_invoice_count = runtime._safe_int(scorecard.get("recent_invoice_count"))
-        sample_recommended_count = runtime._safe_int(scorecard.get("sample_recommended_count"))
+        recent_invoice_count = safe_int(scorecard.get("recent_invoice_count"))
+        sample_recommended_count = safe_int(scorecard.get("sample_recommended_count"))
         source_shift_fields = [
             str(value).strip()
             for value in (scorecard.get("source_shift_fields") or [])
             if str(value).strip()
         ]
-        verification_attempted_count = runtime._safe_int((verification_scorecard or {}).get("attempted_count"))
-        verification_rate = runtime._safe_float((verification_scorecard or {}).get("verification_rate"))
-        verification_mismatch_count = runtime._safe_int((verification_scorecard or {}).get("mismatch_count"))
+        verification_attempted_count = safe_int((verification_scorecard or {}).get("attempted_count"))
+        verification_rate = safe_float((verification_scorecard or {}).get("verification_rate"))
+        verification_mismatch_count = safe_int((verification_scorecard or {}).get("mismatch_count"))
 
         if verification_attempted_count >= 2 and (
             verification_rate < 0.90 or verification_mismatch_count > 0
@@ -294,40 +296,40 @@ def evaluate_action_autonomy_policy(
         }
         if allowed_drift_risks and drift_risk not in allowed_drift_risks:
             reason_codes.append(f"vendor_drift_{drift_risk}")
-        if recent_invoice_count < runtime._safe_int(thresholds.get("min_recent_invoice_count")):
+        if recent_invoice_count < safe_int(thresholds.get("min_recent_invoice_count")):
             reason_codes.append("vendor_observation_mode")
         if bool(thresholds.get("require_zero_sample_recommended_count")) and sample_recommended_count > 0:
             reason_codes.append("vendor_sample_review_required")
         if bool(thresholds.get("require_no_source_shift_fields")) and source_shift_fields:
             reason_codes.append("vendor_source_shift_detected")
 
-        min_shadow_scored = runtime._safe_int(thresholds.get("min_shadow_scored_item_count"))
+        min_shadow_scored = safe_int(thresholds.get("min_shadow_scored_item_count"))
         if min_shadow_scored > 0:
-            shadow_scored_count = runtime._safe_int((shadow_scorecard or {}).get("scored_item_count"))
+            shadow_scored_count = safe_int((shadow_scorecard or {}).get("scored_item_count"))
             if not shadow_scorecard or shadow_scored_count < min_shadow_scored:
                 reason_codes.append("vendor_shadow_observation_mode")
             else:
-                shadow_action_match_rate = runtime._safe_float((shadow_scorecard or {}).get("action_match_rate"))
-                shadow_critical_field_match_rate = runtime._safe_float((shadow_scorecard or {}).get("critical_field_match_rate"))
-                shadow_disagreement_count = runtime._safe_int((shadow_scorecard or {}).get("disagreement_count"))
-                if shadow_action_match_rate < runtime._safe_float(thresholds.get("min_shadow_action_match_rate")):
+                shadow_action_match_rate = safe_float((shadow_scorecard or {}).get("action_match_rate"))
+                shadow_critical_field_match_rate = safe_float((shadow_scorecard or {}).get("critical_field_match_rate"))
+                shadow_disagreement_count = safe_int((shadow_scorecard or {}).get("disagreement_count"))
+                if shadow_action_match_rate < safe_float(thresholds.get("min_shadow_action_match_rate")):
                     reason_codes.append("vendor_shadow_action_match_low")
-                if shadow_critical_field_match_rate < runtime._safe_float(
+                if shadow_critical_field_match_rate < safe_float(
                     thresholds.get("min_shadow_critical_field_match_rate")
                 ):
                     reason_codes.append("vendor_shadow_critical_field_match_low")
                 if bool(thresholds.get("require_zero_shadow_disagreements")) and shadow_disagreement_count > 0:
                     reason_codes.append("vendor_shadow_disagreement_present")
 
-        min_verification_attempts = runtime._safe_int(thresholds.get("min_post_verification_attempt_count"))
+        min_verification_attempts = safe_int(thresholds.get("min_post_verification_attempt_count"))
         if min_verification_attempts > 0:
-            attempted_count = runtime._safe_int((verification_scorecard or {}).get("attempted_count"))
+            attempted_count = safe_int((verification_scorecard or {}).get("attempted_count"))
             if not verification_scorecard or attempted_count < min_verification_attempts:
                 reason_codes.append("vendor_post_verification_observation_mode")
             else:
-                verification_rate = runtime._safe_float((verification_scorecard or {}).get("verification_rate"))
-                mismatch_count = runtime._safe_int((verification_scorecard or {}).get("mismatch_count"))
-                if verification_rate < runtime._safe_float(thresholds.get("min_post_verification_rate")):
+                verification_rate = safe_float((verification_scorecard or {}).get("verification_rate"))
+                mismatch_count = safe_int((verification_scorecard or {}).get("mismatch_count"))
+                if verification_rate < safe_float(thresholds.get("min_post_verification_rate")):
                     reason_codes.append("vendor_post_verification_low")
                 if bool(thresholds.get("require_zero_post_mismatches")) and mismatch_count > 0:
                     reason_codes.append("vendor_post_verification_mismatch_present")
@@ -407,16 +409,16 @@ def evaluate_ap_vendor_autonomy(
     drift_risk = str((scorecard or {}).get("drift_risk") or "unknown").strip().lower() or "unknown"
     if drift_risk == "high":
         hard_manual_reasons.append("vendor_drift_high")
-    shadow_scored_count = runtime._safe_int((shadow_scorecard or {}).get("scored_item_count"))
-    shadow_action_match_rate = runtime._safe_float((shadow_scorecard or {}).get("action_match_rate"))
-    shadow_critical_field_match_rate = runtime._safe_float((shadow_scorecard or {}).get("critical_field_match_rate"))
+    shadow_scored_count = safe_int((shadow_scorecard or {}).get("scored_item_count"))
+    shadow_action_match_rate = safe_float((shadow_scorecard or {}).get("action_match_rate"))
+    shadow_critical_field_match_rate = safe_float((shadow_scorecard or {}).get("critical_field_match_rate"))
     if shadow_scorecard and shadow_scored_count >= 2 and (
         shadow_action_match_rate < 0.75 or shadow_critical_field_match_rate < 0.85
     ):
         hard_manual_reasons.append("vendor_shadow_quality_low")
-    verification_attempted_count = runtime._safe_int((verification_scorecard or {}).get("attempted_count"))
-    verification_rate = runtime._safe_float((verification_scorecard or {}).get("verification_rate"))
-    verification_mismatch_count = runtime._safe_int((verification_scorecard or {}).get("mismatch_count"))
+    verification_attempted_count = safe_int((verification_scorecard or {}).get("attempted_count"))
+    verification_rate = safe_float((verification_scorecard or {}).get("verification_rate"))
+    verification_mismatch_count = safe_int((verification_scorecard or {}).get("mismatch_count"))
     if verification_scorecard and verification_attempted_count >= 2 and (
         verification_rate < 0.90 or verification_mismatch_count > 0
     ):
@@ -654,10 +656,10 @@ def ap_autonomy_policy(
         "vendor_sample_recommended_count": int(scorecard.get("sample_recommended_count") or 0),
         "vendor_source_shift_fields": list(scorecard.get("source_shift_fields") or []),
         "vendor_shadow_scored_item_count": int(shadow_scorecard.get("scored_item_count") or 0),
-        "vendor_shadow_action_match_rate": round(runtime._safe_float(shadow_scorecard.get("action_match_rate")), 4),
-        "vendor_shadow_critical_field_match_rate": round(runtime._safe_float(shadow_scorecard.get("critical_field_match_rate")), 4),
+        "vendor_shadow_action_match_rate": round(safe_float(shadow_scorecard.get("action_match_rate")), 4),
+        "vendor_shadow_critical_field_match_rate": round(safe_float(shadow_scorecard.get("critical_field_match_rate")), 4),
         "vendor_shadow_disagreement_count": int(shadow_scorecard.get("disagreement_count") or 0),
-        "vendor_post_verification_rate": round(runtime._safe_float(verification_scorecard.get("verification_rate")), 4),
+        "vendor_post_verification_rate": round(safe_float(verification_scorecard.get("verification_rate")), 4),
         "vendor_post_verification_attempt_count": int(verification_scorecard.get("attempted_count") or 0),
         "vendor_post_verification_mismatch_count": int(verification_scorecard.get("mismatch_count") or 0),
         "vendors_at_risk": int(evaluation.get("vendors_at_risk") or 0),
@@ -727,11 +729,11 @@ def ap_autonomy_summary(runtime: Any, *, window_hours: int = 168) -> Dict[str, A
                 "sample_recommended_count": int(scorecard.get("sample_recommended_count") or 0),
                 "source_shift_fields": list(scorecard.get("source_shift_fields") or []),
                 "shadow_scored_item_count": int(shadow_scorecard.get("scored_item_count") or 0),
-                "shadow_action_match_rate": round(runtime._safe_float(shadow_scorecard.get("action_match_rate")), 4),
-                "shadow_critical_field_match_rate": round(runtime._safe_float(shadow_scorecard.get("critical_field_match_rate")), 4),
+                "shadow_action_match_rate": round(safe_float(shadow_scorecard.get("action_match_rate")), 4),
+                "shadow_critical_field_match_rate": round(safe_float(shadow_scorecard.get("critical_field_match_rate")), 4),
                 "shadow_disagreement_count": int(shadow_scorecard.get("disagreement_count") or 0),
                 "post_verification_attempt_count": int(verification_scorecard.get("attempted_count") or 0),
-                "post_verification_rate": round(runtime._safe_float(verification_scorecard.get("verification_rate")), 4),
+                "post_verification_rate": round(safe_float(verification_scorecard.get("verification_rate")), 4),
                 "post_verification_mismatch_count": int(verification_scorecard.get("mismatch_count") or 0),
             }
         )
@@ -762,8 +764,8 @@ def ap_autonomy_summary(runtime: Any, *, window_hours: int = 168) -> Dict[str, A
         "recent_open_blocked_items": int(summary.get("recent_open_blocked_items") or 0),
         "shadow_scored_items": int(shadow_summary.get("scored_item_count") or 0),
         "shadow_disagreement_count": int(shadow_summary.get("disagreement_count") or 0),
-        "shadow_action_match_rate": round(runtime._safe_float(shadow_summary.get("action_match_rate")), 4),
-        "post_verification_rate": round(runtime._safe_float(verification_summary.get("verification_rate")), 4),
+        "shadow_action_match_rate": round(safe_float(shadow_summary.get("action_match_rate")), 4),
+        "post_verification_rate": round(safe_float(verification_summary.get("verification_rate")), 4),
         "post_verification_mismatch_count": int(verification_summary.get("mismatch_count") or 0),
         "action_thresholds": autonomy_action_thresholds(getattr(runtime, "organization_id", None)),
         "vendor_promotion_status": vendor_promotion_status[:20],

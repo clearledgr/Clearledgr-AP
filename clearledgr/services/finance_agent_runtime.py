@@ -16,13 +16,17 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from clearledgr.core.ap_item_resolution import resolve_ap_item_reference
+from clearledgr.core.utils import safe_float, safe_int
 from clearledgr.core.database import get_db
 from clearledgr.core.finance_contracts import (
     ActionExecution,
     AuditEvent,
     SkillRequest,
 )
+from clearledgr.services.agent_memory import get_agent_memory_service
+from clearledgr.services.finance_agent_governance import build_agent_quality_snapshot
 from clearledgr.services.policy_compliance import get_approval_automation_policy
+from clearledgr.services.finance_agent_loop import FinanceAgentLoopService
 from clearledgr.services.finance_runtime_invoice_processing import (
     execute_ap_invoice_processing as execute_runtime_invoice_processing,
 )
@@ -98,12 +102,15 @@ class FinanceAgentRuntime:
         actor_email: Optional[str] = None,
         db: Any = None,
     ) -> None:
+        if not organization_id:
+            logger.warning("FinanceAgentRuntime created without organization_id, falling back to 'default'")
         self.organization_id = str(organization_id or "default")
         self.actor_id = str(actor_id or "system")
         self.actor_email = str(actor_email or actor_id or "system")
         self.db = db or get_db()
         self._skills: Dict[str, FinanceSkill] = {}
         self._intent_skill_map: Dict[str, FinanceSkill] = {}
+        self._agent_loop: Optional[FinanceAgentLoopService] = None
         self._register_default_skills()
 
     def _register_default_skills(self) -> None:
@@ -162,6 +169,29 @@ class FinanceAgentRuntime:
             "has_runtime_metrics": token == "ap_v1",
         }
 
+    def _agent_loop_service(self) -> FinanceAgentLoopService:
+        if self._agent_loop is None:
+            self._agent_loop = FinanceAgentLoopService(self)
+        return self._agent_loop
+
+    def agent_profile(self, *, skill_id: str = "ap_v1") -> Dict[str, Any]:
+        return get_agent_memory_service(self.organization_id, db=self.db).ensure_profile(skill_id=skill_id)
+
+    def agent_quality_snapshot(
+        self,
+        *,
+        requested_action: Any,
+        ap_item: Optional[Dict[str, Any]] = None,
+        skill_id: str = "ap_v1",
+    ) -> Dict[str, Any]:
+        return build_agent_quality_snapshot(
+            self,
+            requested_action=requested_action,
+            profile=self.agent_profile(skill_id=skill_id),
+            ap_item=ap_item,
+            skill_id=skill_id,
+        )
+
     @staticmethod
     def _parse_json_dict(raw: Any) -> Dict[str, Any]:
         if isinstance(raw, dict):
@@ -180,21 +210,7 @@ class FinanceAgentRuntime:
 
     @staticmethod
     def _safe_int(value: Any, default: int = 0) -> int:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def safe_int(value: Any, default: int = 0) -> int:
-        return FinanceAgentRuntime._safe_int(value, default)
-
-    @staticmethod
-    def _safe_float(value: Any, default: float = 0.0) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
+        return safe_int(value, default)
 
     @staticmethod
     def _normalize_vendor_name(value: Any) -> str:
@@ -481,10 +497,10 @@ class FinanceAgentRuntime:
         if not isinstance(invoice, dict) or not hasattr(self.db, "create_ap_item"):
             return None
 
-        organization_id = (
-            str(invoice.get("organization_id") or self.organization_id or "default").strip()
-            or "default"
-        )
+        _raw_inv_org = invoice.get("organization_id") or self.organization_id
+        if not _raw_inv_org:
+            logger.warning("organization_id missing in _ensure_ap_item invoice payload, falling back to 'default'")
+        organization_id = str(_raw_inv_org or "default").strip() or "default"
         thread_id = self._invoice_thread_id(invoice)
         message_id = self._invoice_message_id(invoice)
         invoice_number = str(invoice.get("invoice_number") or "").strip() or None
@@ -503,6 +519,12 @@ class FinanceAgentRuntime:
         )
         has_attachment = bool(invoice.get("has_attachment")) or attachment_count > 0 or bool(attachment_url) or bool(attachment_names)
         user_id = str(invoice.get("user_id") or self.actor_id or "").strip() or None
+        refresh_replay = bool(str(invoice.get("refresh_reason") or "").strip()) or str(
+            invoice.get("intake_source") or ""
+        ).strip().lower() in {
+            "gmail_replay_refresh",
+            "gmail_thread_recovery",
+        }
 
         try:
             amount = float(invoice.get("amount", 0.0) or 0.0)
@@ -592,25 +614,53 @@ class FinanceAgentRuntime:
                 updates["metadata"] = merged_metadata
             if thread_id and str(existing.get("thread_id") or "").strip() != thread_id:
                 updates["thread_id"] = thread_id
-            if message_id and not str(existing.get("message_id") or "").strip():
+            if message_id and (
+                not str(existing.get("message_id") or "").strip()
+                or (refresh_replay and str(existing.get("message_id") or "").strip() != message_id)
+            ):
                 updates["message_id"] = message_id
-            if subject and not str(existing.get("subject") or "").strip():
+            if subject and (
+                not str(existing.get("subject") or "").strip()
+                or (refresh_replay and str(existing.get("subject") or "").strip() != subject)
+            ):
                 updates["subject"] = subject
-            if sender and not str(existing.get("sender") or "").strip():
+            if sender and (
+                not str(existing.get("sender") or "").strip()
+                or (refresh_replay and str(existing.get("sender") or "").strip() != sender)
+            ):
                 updates["sender"] = sender
-            if vendor_name and not self._normalize_vendor_name(existing.get("vendor_name") or existing.get("vendor")):
+            existing_vendor = self._normalize_vendor_name(existing.get("vendor_name") or existing.get("vendor"))
+            resolved_vendor = self._normalize_vendor_name(vendor_name)
+            if vendor_name and (
+                not existing_vendor
+                or (refresh_replay and resolved_vendor and resolved_vendor != existing_vendor)
+            ):
                 updates["vendor_name"] = vendor_name
-            if invoice_number and not str(existing.get("invoice_number") or "").strip():
+            if invoice_number and (
+                not str(existing.get("invoice_number") or "").strip()
+                or (refresh_replay and str(existing.get("invoice_number") or "").strip() != invoice_number)
+            ):
                 updates["invoice_number"] = invoice_number
-            if due_date and not str(existing.get("due_date") or "").strip():
+            if due_date and (
+                not str(existing.get("due_date") or "").strip()
+                or (refresh_replay and str(existing.get("due_date") or "").strip() != due_date)
+            ):
                 updates["due_date"] = due_date
             if attachment_url and not str(existing.get("attachment_url") or "").strip():
                 updates["attachment_url"] = attachment_url
-            if self._safe_float(existing.get("amount"), 0.0) <= 0.0 and amount > 0.0:
+            existing_amount = safe_float(existing.get("amount"), 0.0)
+            if amount > 0.0 and (
+                existing_amount <= 0.0
+                or (refresh_replay and round(existing_amount, 2) != round(amount, 2))
+            ):
                 updates["amount"] = amount
-            if not str(existing.get("currency") or "").strip() and currency:
+            existing_currency = str(existing.get("currency") or "").strip().upper()
+            if currency and (
+                not existing_currency
+                or (refresh_replay and existing_currency != str(currency).strip().upper())
+            ):
                 updates["currency"] = currency
-            if confidence > self._safe_float(existing.get("confidence"), 0.0):
+            if confidence > safe_float(existing.get("confidence"), 0.0):
                 updates["confidence"] = confidence
             if isinstance(invoice.get("field_confidences"), dict) and invoice.get("field_confidences"):
                 updates["field_confidences"] = invoice.get("field_confidences")
@@ -622,7 +672,11 @@ class FinanceAgentRuntime:
                 try:
                     self.db.update_ap_item(str(existing.get("id") or "").strip(), **updates)
                 except Exception as exc:
-                    logger.error("Failed to persist extraction updates for ap_item %s: %s", ap_item_id, exc)
+                    logger.error(
+                        "Failed to persist extraction updates for ap_item %s: %s",
+                        str(existing.get("id") or "").strip(),
+                        exc,
+                    )
             if hasattr(self.db, "get_ap_item"):
                 try:
                     item = self.db.get_ap_item(str(existing.get("id") or "").strip())
@@ -809,7 +863,7 @@ class FinanceAgentRuntime:
             evidence_refs=resolved_evidence_refs,
         )
         metadata_payload.setdefault("canonical_audit_event", canonical_event.to_dict())
-        return self.db.append_ap_audit_event(
+        audit_row = self.db.append_ap_audit_event(
             {
                 "ap_item_id": ap_item_id,
                 "event_type": event_type,
@@ -823,6 +877,159 @@ class FinanceAgentRuntime:
                 "idempotency_key": idempotency_key,
             }
         )
+        self._sync_agent_memory(
+            ap_item_id=ap_item_id,
+            event_type=event_type,
+            reason=reason,
+            metadata=metadata_payload,
+            correlation_id=correlation_id,
+            skill_id=resolved_skill_id,
+            audit_row=audit_row,
+        )
+        self._sync_learning_feedback(
+            ap_item_id=ap_item_id,
+            event_type=event_type,
+            reason=reason,
+            metadata=metadata_payload,
+            correlation_id=correlation_id,
+            skill_id=resolved_skill_id,
+            audit_row=audit_row,
+        )
+        return audit_row
+
+    def _sync_agent_memory(
+        self,
+        *,
+        ap_item_id: str,
+        event_type: str,
+        reason: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        correlation_id: Optional[str] = None,
+        skill_id: str = "ap_v1",
+        audit_row: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not ap_item_id:
+            return
+        try:
+            from clearledgr.services.agent_memory import get_agent_memory_service
+
+            memory = get_agent_memory_service(self.organization_id, db=self.db)
+            payload = dict(metadata or {})
+            response_payload = (
+                payload.get("response")
+                if isinstance(payload.get("response"), dict)
+                else {}
+            )
+            if audit_row and audit_row.get("id") and "audit_event_id" not in response_payload:
+                response_payload = {
+                    **response_payload,
+                    "audit_event_id": audit_row.get("id"),
+                }
+            ap_item = None
+            if hasattr(self.db, "get_ap_item"):
+                try:
+                    ap_item = self.db.get_ap_item(ap_item_id)
+                except Exception:
+                    ap_item = None
+            if not isinstance(ap_item, dict):
+                ap_item = {
+                    "id": ap_item_id,
+                    "thread_id": response_payload.get("email_id"),
+                    "metadata": payload,
+                }
+            memory.observe_event(
+                skill_id=skill_id,
+                ap_item_id=ap_item_id,
+                thread_id=str(
+                    ap_item.get("thread_id")
+                    or response_payload.get("email_id")
+                    or ""
+                ).strip()
+                or None,
+                event_type=event_type,
+                payload={
+                    **payload,
+                    "audit_event_id": (audit_row or {}).get("id"),
+                },
+                channel="finance_agent_runtime",
+                actor_id=self.actor_email or self.actor_id,
+                correlation_id=correlation_id,
+                source="finance_agent_runtime",
+                summary=reason,
+            )
+            memory.capture_runtime_state(
+                skill_id=skill_id,
+                ap_item=ap_item,
+                ap_item_id=ap_item_id,
+                event_type=event_type,
+                reason=reason,
+                response=response_payload,
+                actor_id=self.actor_email or self.actor_id,
+                source="finance_agent_runtime",
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            logger.warning("Agent memory sync failed for %s: %s", ap_item_id, exc)
+
+    def _sync_learning_feedback(
+        self,
+        *,
+        ap_item_id: str,
+        event_type: str,
+        reason: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        correlation_id: Optional[str] = None,
+        skill_id: str = "ap_v1",
+        audit_row: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not ap_item_id:
+            return
+        event_token = str(event_type or "").strip().lower()
+        if event_token == "field_correction":
+            return
+        try:
+            from clearledgr.services.finance_learning import get_finance_learning_service
+
+            learning = get_finance_learning_service(self.organization_id, db=self.db)
+            payload = dict(metadata or {})
+            response_payload = (
+                payload.get("response")
+                if isinstance(payload.get("response"), dict)
+                else {}
+            )
+            if audit_row and audit_row.get("id") and "audit_event_id" not in response_payload:
+                response_payload = {
+                    **response_payload,
+                    "audit_event_id": audit_row.get("id"),
+                }
+            ap_item = None
+            if hasattr(self.db, "get_ap_item"):
+                try:
+                    ap_item = self.db.get_ap_item(ap_item_id)
+                except Exception:
+                    ap_item = None
+            if not isinstance(ap_item, dict):
+                ap_item = {
+                    "id": ap_item_id,
+                    "thread_id": response_payload.get("email_id"),
+                    "metadata": payload,
+                }
+            learning.record_action_outcome(
+                event_type=event_token,
+                ap_item=ap_item,
+                response=response_payload,
+                actor_id=self.actor_email or self.actor_id,
+                metadata={
+                    **payload,
+                    "reason": reason,
+                    "correlation_id": correlation_id,
+                    "skill_id": skill_id,
+                    "audit_event_id": (audit_row or {}).get("id"),
+                    "ap_item_id": ap_item_id,
+                },
+            )
+        except Exception as exc:
+            logger.warning("Finance learning sync failed for %s: %s", ap_item_id, exc)
 
     def append_runtime_audit(
         self,
@@ -1236,6 +1443,7 @@ class FinanceAgentRuntime:
         response.setdefault("intent", request.task_type)
         response.setdefault("skill_id", skill.skill_id)
         response.setdefault("org_id", request.org_id)
+        response.setdefault("agent_profile", self.agent_profile(skill_id=skill.skill_id))
         return response
 
     async def execute_skill_request(
@@ -1252,6 +1460,7 @@ class FinanceAgentRuntime:
             reason=None,
             idempotency_key="",
         )
+        skill = self._skill_for_intent(request.task_type)
         replay = self._load_idempotent_response(resolved_action.idempotency_key)
         if replay:
             replay.setdefault("intent", request.task_type)
@@ -1260,13 +1469,34 @@ class FinanceAgentRuntime:
             replay.setdefault("blockers", replay.get("blockers") or [])
             replay.setdefault("confidence", float(replay.get("confidence") or 0.0))
             replay.setdefault("evidence_refs", replay.get("evidence_refs") or [])
+            replay.setdefault("agent_profile", self.agent_profile(skill_id=skill.skill_id))
+            replay.setdefault(
+                "agent_loop",
+                {
+                    "owner": "finance_agent_loop",
+                    "idempotency_replayed": True,
+                    "observed": False,
+                    "recall_count": 0,
+                    "belief_available": False,
+                    "preview_status": None,
+                },
+            )
             return replay
 
-        skill = self._skill_for_intent(request.task_type)
-        response = (await skill.execute_contract(self, request, resolved_action)).to_dict()
+        loop = self._agent_loop_service()
+
+        async def _execute_contract() -> Dict[str, Any]:
+            return (await skill.execute_contract(self, request, resolved_action)).to_dict()
+
+        response = await loop.run_skill_request(
+            request,
+            resolved_action,
+            _execute_contract,
+        )
         response.setdefault("intent", request.task_type)
         response.setdefault("skill_id", skill.skill_id)
         response.setdefault("org_id", request.org_id)
+        response.setdefault("agent_profile", self.agent_profile(skill_id=skill.skill_id))
         return response
 
     async def execute_intent(
@@ -1311,7 +1541,10 @@ class FinanceAgentRuntime:
             or str(invoice.get("correlation_id") or "").strip()
             or None
         )
-        invoice_org = str(invoice.get("organization_id") or self.organization_id or "default").strip() or "default"
+        _raw_org = invoice.get("organization_id") or self.organization_id
+        if not _raw_org:
+            logger.warning("organization_id missing in execute_ap_invoice_processing invoice payload, falling back to 'default'")
+        invoice_org = str(_raw_org or "default").strip() or "default"
         attachment_list = attachments if isinstance(attachments, list) else []
         attachment_url = ""
         attachment_names: List[str] = []
@@ -1334,8 +1567,8 @@ class FinanceAgentRuntime:
             invoice.get("vendor_name") or invoice.get("vendor"),
             invoice.get("sender"),
         )
-        confidence_value = self._safe_float(invoice.get("confidence"))
-        amount_value = self._safe_float(invoice.get("amount"))
+        confidence_value = safe_float(invoice.get("confidence"))
+        amount_value = safe_float(invoice.get("amount"))
         if attachment_list:
             first_attachment = attachment_list[0] if isinstance(attachment_list[0], dict) else {}
             attachment_url = str(
@@ -1353,6 +1586,7 @@ class FinanceAgentRuntime:
         seeded_item = self._seed_ap_item_for_invoice_processing(
             {
                 **invoice,
+                "refresh_reason": str(refresh_reason or "").strip() or None,
                 "organization_id": invoice_org,
                 "thread_id": gmail_thread_id or invoice.get("thread_id"),
                 "message_id": gmail_message_id or invoice.get("message_id"),
@@ -1474,7 +1708,7 @@ class FinanceAgentRuntime:
 
     def ap_auto_approve_threshold(self) -> float:
         settings = self._organization_settings()
-        threshold = self._safe_float(settings.get("auto_approve_threshold"), 0.95)
+        threshold = safe_float(settings.get("auto_approve_threshold"), 0.95)
         return max(0.0, min(threshold, 1.0))
 
     def _build_finance_lead_summary_payload(

@@ -23,12 +23,14 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 from clearledgr.api.deps import verify_org_access
+from clearledgr.core.utils import safe_int
 from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
 from clearledgr.core.ap_entity_routing import (
     resolve_entity_routing,
 )
 from clearledgr.core.database import ClearledgrDB, get_db
 from clearledgr.core.ap_states import APState
+from clearledgr.core.utils import safe_float
 from clearledgr.services.ap_context_connectors import build_multi_system_context
 from clearledgr.services.erp_api_first import (
     apply_credit_note_api_first,
@@ -117,6 +119,69 @@ def _load_org_settings_for_item(db: ClearledgrDB, organization_id: Any) -> Dict[
     return settings if isinstance(settings, dict) else {}
 
 
+def _resolve_runtime_erp_connection_state(
+    db: ClearledgrDB,
+    organization_id: Any,
+    *,
+    entity_id: Any = None,
+) -> Optional[Dict[str, Any]]:
+    org_id = str(organization_id or "").strip()
+    if not org_id:
+        return None
+    try:
+        from clearledgr.integrations.erp_router import get_erp_connection
+
+        normalized_entity_id = str(entity_id or "").strip() or None
+        connection = get_erp_connection(org_id, entity_id=normalized_entity_id)
+        if not connection:
+            return {"connected": False, "erp_type": None}
+        erp_type = str(getattr(connection, "type", "") or "").strip().lower() or None
+        return {"connected": True, "erp_type": erp_type}
+    except Exception as exc:
+        logger.debug("ERP connection state lookup failed for %s: %s", org_id, exc)
+        return None
+
+
+def _build_agent_memory_projection(
+    db: ClearledgrDB,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    ap_item_id = str(payload.get("id") or "").strip()
+    organization_id = str(payload.get("organization_id") or "default").strip() or "default"
+    if not ap_item_id:
+        return {
+            "profile": {},
+            "belief": {},
+            "current_state": None,
+            "status": None,
+            "evidence": {},
+            "uncertainties": {},
+            "next_action": {},
+            "summary": {},
+            "episode": {},
+        }
+    try:
+        from clearledgr.services.agent_memory import get_agent_memory_service
+
+        return get_agent_memory_service(organization_id, db=db).build_surface(
+            ap_item_id=ap_item_id,
+            skill_id="ap_v1",
+        )
+    except Exception as exc:
+        logger.debug("Agent memory projection failed for %s: %s", ap_item_id, exc)
+        return {
+            "profile": {},
+            "belief": {},
+            "current_state": None,
+            "status": None,
+            "evidence": {},
+            "uncertainties": {},
+            "next_action": {},
+            "summary": {},
+            "episode": {},
+        }
+
+
 def _finance_agent_runtime_cls():
     from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
@@ -167,11 +232,79 @@ def _parse_iso(raw: Any) -> Optional[datetime]:
         return None
 
 
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+def _format_approval_actor_label(
+    *,
+    display_name: Optional[str],
+    email: Optional[str],
+    platform_user_id: Optional[str],
+    fallback: Optional[str],
+) -> Optional[str]:
+    normalized_display = str(display_name or "").strip() or None
+    normalized_email = str(email or "").strip() or None
+    normalized_platform_user_id = str(platform_user_id or "").strip() or None
+    normalized_fallback = str(fallback or "").strip() or None
+    if normalized_display and normalized_email and normalized_display.lower() != normalized_email.lower():
+        return f"{normalized_display} ({normalized_email})"
+    if normalized_display:
+        return normalized_display
+    if normalized_email:
+        return normalized_email
+    if normalized_platform_user_id:
+        return normalized_platform_user_id
+    return normalized_fallback
+
+
+def _approval_actor_projection(approval: Dict[str, Any]) -> Dict[str, Any]:
+    payload = approval.get("decision_payload") if isinstance(approval.get("decision_payload"), dict) else _parse_json(approval.get("decision_payload"))
+    raw_identity = payload.get("actor_identity") if isinstance(payload.get("actor_identity"), dict) else {}
+    raw_actor = str(approval.get("approved_by") or approval.get("rejected_by") or "").strip() or None
+    email = str(raw_identity.get("email") or payload.get("actor_email") or "").strip() or None
+    if not email and raw_actor and "@" in raw_actor:
+        email = raw_actor
+    display_name = str(raw_identity.get("display_name") or payload.get("actor_display") or "").strip() or None
+    platform_user_id = (
+        str(raw_identity.get("platform_user_id") or payload.get("actor_platform_id") or "").strip() or None
+    )
+    platform = str(raw_identity.get("platform") or approval.get("source_channel") or "").strip().lower() or None
+    label = str(
+        payload.get("actor_label")
+        or payload.get("approved_by_label")
+        or payload.get("rejected_by_label")
+        or ""
+    ).strip() or _format_approval_actor_label(
+        display_name=display_name,
+        email=email,
+        platform_user_id=platform_user_id,
+        fallback=raw_actor,
+    )
+    identity = {
+        "platform": platform,
+        "platform_user_id": platform_user_id,
+        "email": email,
+        "display_name": display_name,
+    }
+    if not any(identity.values()):
+        identity = {}
+    return {
+        "label": label,
+        "identity": identity,
+        "email": email,
+        "display_name": display_name,
+        "platform_user_id": platform_user_id,
+        "payload": payload,
+    }
+
+
+def _enrich_approval_row(approval: Dict[str, Any]) -> Dict[str, Any]:
+    enriched = dict(approval or {})
+    actor = _approval_actor_projection(enriched)
+    enriched["decision_payload"] = actor["payload"]
+    enriched["actor_label"] = actor["label"]
+    enriched["actor_identity"] = actor["identity"]
+    enriched["actor_email"] = actor["email"]
+    enriched["actor_display"] = actor["display_name"]
+    enriched["actor_platform_id"] = actor["platform_user_id"]
+    return enriched
 
 
 def _vendor_followup_sla_hours() -> int:
@@ -221,7 +354,7 @@ def _derive_followup_next_action(
     if state != APState.NEEDS_INFO.value:
         return None
     normalized = str(metadata.get("followup_next_action") or "").strip().lower()
-    attempts = max(0, _safe_int(metadata.get("followup_attempt_count"), 0))
+    attempts = max(0, safe_int(metadata.get("followup_attempt_count"), 0))
     max_attempts = _vendor_followup_max_attempts()
     now_utc = now or datetime.now(timezone.utc)
 
@@ -270,7 +403,10 @@ def _build_approval_followup(
         return {}
 
     now_utc = now or datetime.now(timezone.utc)
-    organization_id = str(payload.get("organization_id") or "default").strip() or "default"
+    _raw_org = payload.get("organization_id")
+    if not _raw_org:
+        logger.warning("organization_id missing in _check_approval_followup payload (ap_item_id=%s), falling back to 'default'", payload.get("id"))
+    organization_id = str(_raw_org or "default").strip() or "default"
     policy = (
         approval_policy
         if isinstance(approval_policy, dict)
@@ -312,9 +448,9 @@ def _build_approval_followup(
         "sla_breached": sla_breached,
         "escalation_due": escalation_due,
         "pending_assignees": pending_assignees,
-        "nudge_count": max(0, _safe_int(metadata.get("approval_nudge_count"), 0)),
-        "escalation_count": max(0, _safe_int(metadata.get("approval_escalation_count"), 0)),
-        "reassignment_count": max(0, _safe_int(metadata.get("approval_reassignment_count"), 0)),
+        "nudge_count": max(0, safe_int(metadata.get("approval_nudge_count"), 0)),
+        "escalation_count": max(0, safe_int(metadata.get("approval_escalation_count"), 0)),
+        "reassignment_count": max(0, safe_int(metadata.get("approval_reassignment_count"), 0)),
         "last_nudged_at": str(metadata.get("approval_last_nudged_at") or "").strip() or None,
         "last_escalated_at": str(metadata.get("approval_last_escalated_at") or "").strip() or None,
         "last_reassigned_at": str(metadata.get("approval_last_reassigned_at") or "").strip() or None,
@@ -322,13 +458,6 @@ def _build_approval_followup(
         "escalation_channel": str(policy.get("escalation_channel") or "").strip() or None,
         "next_action": next_action,
     }
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _coerce_optional_float(value: Any) -> Optional[float]:
@@ -520,7 +649,7 @@ def _build_linked_finance_document_entry(
         "document_type": _normalize_document_type_token(document_type),
         "invoice_number": source_item.get("invoice_number"),
         "vendor_name": source_item.get("vendor_name") or source_item.get("vendor"),
-        "amount": _safe_float(source_item.get("amount")),
+        "amount": safe_float(source_item.get("amount")),
         "currency": source_item.get("currency") or "USD",
         "outcome": resolution.get("outcome"),
         "accounting_treatment": resolution.get("accounting_treatment"),
@@ -657,7 +786,7 @@ def _link_related_item_for_non_invoice_resolution(
                 "linked_ap_item_id": source_item.get("id"),
                 "linked_document_type": _normalize_document_type_token(source_document_type),
                 "linked_invoice_number": source_item.get("invoice_number"),
-                "linked_amount": _safe_float(source_item.get("amount")),
+                "linked_amount": safe_float(source_item.get("amount")),
                 "linked_currency": source_item.get("currency") or "USD",
                 "related_reference": resolution.get("related_reference"),
                 "accounting_treatment": resolution.get("accounting_treatment"),
@@ -786,8 +915,8 @@ def _derive_attachment_summary(
 ) -> Dict[str, Any]:
     attachment_url = str(payload.get("attachment_url") or metadata.get("attachment_url") or "").strip()
     attachment_count = max(
-        _safe_int(payload.get("attachment_count"), 0),
-        _safe_int(metadata.get("attachment_count"), 0),
+        safe_int(payload.get("attachment_count"), 0),
+        safe_int(metadata.get("attachment_count"), 0),
     )
     attachment_names: List[str] = []
     has_attachment = bool(payload.get("has_attachment") or metadata.get("has_attachment") or attachment_url)
@@ -802,7 +931,7 @@ def _derive_attachment_summary(
         source_meta = _parse_json(source.get("metadata"))
         if not source_meta:
             continue
-        attachment_count = max(attachment_count, _safe_int(source_meta.get("attachment_count"), 0))
+        attachment_count = max(attachment_count, safe_int(source_meta.get("attachment_count"), 0))
         source_attachment_url = str(source_meta.get("attachment_url") or "").strip()
         if source_attachment_url and not attachment_url:
             attachment_url = source_attachment_url
@@ -854,9 +983,9 @@ def _derive_confidence_gate(payload: Dict[str, Any], metadata: Dict[str, Any]) -
     vendor_name = payload.get("vendor_name") or payload.get("vendor")
     if organization_id and vendor_name:
         try:
-            from clearledgr.services.correction_learning import get_correction_learning_service
+            from clearledgr.services.finance_learning import get_finance_learning_service
 
-            learned_adjustments = get_correction_learning_service(str(organization_id)).get_extraction_confidence_adjustments(
+            learned_adjustments = get_finance_learning_service(str(organization_id)).get_extraction_confidence_adjustments(
                 vendor_name=vendor_name,
                 sender_domain=metadata.get("source_sender_domain") or payload.get("sender"),
                 document_type=payload.get("document_type") or metadata.get("document_type") or metadata.get("email_type"),
@@ -1177,9 +1306,9 @@ def _humanize_pipeline_token(value: Any, fallback: str) -> str:
 
 
 def _build_budget_blocker_detail(summary: Dict[str, Any]) -> str:
-    exceeded = _safe_int(summary.get("exceeded_count"), 0)
-    critical = _safe_int(summary.get("critical_count"), 0)
-    warning = _safe_int(summary.get("warning_count"), 0)
+    exceeded = safe_int(summary.get("exceeded_count"), 0)
+    critical = safe_int(summary.get("critical_count"), 0)
+    warning = safe_int(summary.get("warning_count"), 0)
     if exceeded > 0:
         return f"{exceeded} budget check{'s' if exceeded != 1 else ''} exceeded the approved threshold."
     if critical > 0:
@@ -1413,8 +1542,8 @@ def _summarize_budget_context(metadata: Dict[str, Any], approvals: Optional[List
         elif row_status == "warning":
             warning_count += 1
 
-        budget_amount = _safe_float(check.get("budget_amount"))
-        after_approval = _safe_float(check.get("after_approval"))
+        budget_amount = safe_float(check.get("budget_amount"))
+        after_approval = safe_float(check.get("after_approval"))
         remaining = check.get("remaining")
         if remaining is None:
             remaining = budget_amount - after_approval
@@ -1422,9 +1551,9 @@ def _summarize_budget_context(metadata: Dict[str, Any], approvals: Optional[List
             {
                 "name": check.get("budget_name") or "Budget",
                 "status": row_status,
-                "percent_after_approval": _safe_float(check.get("after_approval_percent") or check.get("percent_used")),
-                "invoice_amount": _safe_float(check.get("invoice_amount")),
-                "remaining": _safe_float(remaining),
+                "percent_after_approval": safe_float(check.get("after_approval_percent") or check.get("percent_used")),
+                "invoice_amount": safe_float(check.get("invoice_amount")),
+                "remaining": safe_float(remaining),
                 "warning_message": check.get("warning_message"),
             }
         )
@@ -1601,6 +1730,26 @@ def build_worklist_item(
         or metadata.get("entity_name")
         or None
     )
+    runtime_erp_state = _resolve_runtime_erp_connection_state(
+        db,
+        payload.get("organization_id"),
+        entity_id=payload.get("entity_id"),
+    )
+    if runtime_erp_state is not None:
+        payload["erp_connector_available"] = bool(runtime_erp_state.get("connected"))
+        if runtime_erp_state.get("erp_type"):
+            payload["erp_type"] = runtime_erp_state.get("erp_type")
+    else:
+        payload["erp_connector_available"] = bool(
+            payload.get("erp_connector_available")
+            or metadata.get("erp_connector_available")
+            or metadata.get("erp")
+        )
+        payload["erp_type"] = (
+            payload.get("erp_type")
+            or metadata.get("erp_type")
+            or metadata.get("erp")
+        )
     payload["conflict_actions"] = metadata.get("conflict_actions") if isinstance(metadata.get("conflict_actions"), list) else []
     payload.update(_build_field_review_surface(payload))
     if metadata.get("priority_score") is not None:
@@ -1631,7 +1780,7 @@ def build_worklist_item(
     payload["needs_info_draft_id"] = needs_info_draft_id if needs_info_draft_id else None
     followup_last_sent_at = metadata.get("followup_last_sent_at")
     payload["followup_last_sent_at"] = str(followup_last_sent_at).strip() if followup_last_sent_at else None
-    payload["followup_attempt_count"] = max(0, _safe_int(metadata.get("followup_attempt_count"), 0))
+    payload["followup_attempt_count"] = max(0, safe_int(metadata.get("followup_attempt_count"), 0))
     followup_sla_due_at = metadata.get("followup_sla_due_at")
     payload["followup_sla_due_at"] = str(followup_sla_due_at).strip() if followup_sla_due_at else None
     payload["followup_next_action"] = _derive_followup_next_action(
@@ -1712,32 +1861,38 @@ def build_worklist_item(
         approval_policy=approval_policy,
     )
     payload["approval_followup"] = approval_followup
-    payload["approval_wait_minutes"] = max(0, _safe_int(approval_followup.get("wait_minutes"), 0))
+    payload["approval_wait_minutes"] = max(0, safe_int(approval_followup.get("wait_minutes"), 0))
     payload["approval_pending_assignees"] = (
         approval_followup.get("pending_assignees")
         if isinstance(approval_followup.get("pending_assignees"), list)
         else []
     )
     erp_status = str(payload.get("erp_status") or "").strip().lower()
+    erp_connector_available = bool(payload.get("erp_connector_available"))
     if not erp_status:
         if state_token in {"posted", "posted_to_erp", "closed"} or payload.get("erp_reference") or payload.get("erp_bill_id"):
             erp_status = "posted"
         elif state_token == "failed_post":
             erp_status = "failed"
         elif state_token in {"approved", "ready_to_post"}:
-            erp_status = "ready"
-        elif metadata.get("erp_connector_available") or metadata.get("erp"):
+            erp_status = "ready" if erp_connector_available else "not_connected"
+        elif erp_connector_available:
             erp_status = "connected"
         else:
             erp_status = "not_connected"
     payload["erp_status"] = erp_status
-    payload["erp_connector_available"] = bool(
-        payload.get("erp_connector_available")
-        or metadata.get("erp_connector_available")
-        or metadata.get("erp")
-    )
+    payload["erp_connector_available"] = erp_connector_available
     if not str(payload.get("workflow_paused_reason") or "").strip():
         payload["workflow_paused_reason"] = _failed_post_pause_reason(payload)
+    if state_token in {"approved", "ready_to_post"} and not erp_connector_available:
+        payload["workflow_paused_reason"] = (
+            str(payload.get("workflow_paused_reason") or "").strip()
+            or "Connect an ERP before this invoice can be posted."
+        )
+        if not str(payload.get("exception_code") or "").strip():
+            payload["exception_code"] = "erp_not_connected"
+        if not str(payload.get("exception_severity") or "").strip():
+            payload["exception_severity"] = _default_severity_for_exception("erp_not_connected")
 
     # Payment tracking: surface payment status for posted invoices.
     if state_token in {"posted_to_erp", "closed"}:
@@ -1762,20 +1917,30 @@ def build_worklist_item(
     # Correction learning: surface GL suggestion + previously-corrected fields.
     # suggest() is in-memory after rule load — fast per call.
     try:
-        from clearledgr.services.correction_learning import CorrectionLearningService
+        from clearledgr.services.finance_learning import get_finance_learning_service
         _vendor = payload.get("vendor_name") or payload.get("vendor")
         _org = payload.get("organization_id") or "default"
+        if _org == "default":
+            logger.warning("organization_id is 'default' during GL suggestion lookup (ap_item_id=%s)", payload.get("id"))
+        learning = get_finance_learning_service(_org, db=db)
         if _vendor:
-            _cls = CorrectionLearningService(_org)
-            payload["gl_suggestion"] = _cls.suggest("gl_code", {"vendor": _vendor})
+            payload["gl_suggestion"] = learning.suggest_field_correction("gl_code", {"vendor": _vendor})
             # Surface vendor alias suggestions (catches normalisation corrections)
-            payload["vendor_suggestion"] = _cls.suggest("vendor", {"raw_vendor": _vendor})
+            payload["vendor_suggestion"] = learning.suggest_field_correction("vendor", {"raw_vendor": _vendor})
         else:
             payload["gl_suggestion"] = None
             payload["vendor_suggestion"] = None
     except Exception:
         payload["gl_suggestion"] = None
         payload["vendor_suggestion"] = None
+
+    agent_memory = _build_agent_memory_projection(db, payload)
+    payload["agent_memory"] = agent_memory
+    payload["agent_profile"] = agent_memory.get("profile") if isinstance(agent_memory.get("profile"), dict) else {}
+    payload["agent_belief_state"] = agent_memory.get("belief") if isinstance(agent_memory.get("belief"), dict) else {}
+    payload["agent_next_action"] = agent_memory.get("next_action") if isinstance(agent_memory.get("next_action"), dict) else {}
+    payload["agent_summary"] = agent_memory.get("summary") if isinstance(agent_memory.get("summary"), dict) else {}
+    payload["agent_episode"] = agent_memory.get("episode") if isinstance(agent_memory.get("episode"), dict) else {}
 
     payload["next_action"] = _derive_next_action(payload)
     payload["pipeline_blockers"] = _build_pipeline_blockers(payload, budget_summary)
@@ -2004,7 +2169,7 @@ def _build_upcoming_task(item: Dict[str, Any], now: datetime) -> Optional[Dict[s
         "ap_item_id": item.get("id"),
         "vendor_name": item.get("vendor_name") or item.get("vendor"),
         "invoice_number": item.get("invoice_number"),
-        "amount": _safe_float(item.get("amount")),
+        "amount": safe_float(item.get("amount")),
         "currency": item.get("currency") or "USD",
         "state": state,
         "thread_id": item.get("thread_id"),
@@ -2036,7 +2201,7 @@ def _build_upcoming_tasks_payload(db: ClearledgrDB, organization_id: str, *, lim
         key=lambda row: (
             {"overdue": 0, "today": 1, "this_week": 2, "later": 3, "queued": 4}.get(str(row.get("status") or ""), 5),
             _safe_sort_timestamp(row.get("due_at")),
-            -_safe_float(row.get("amount")),
+            -safe_float(row.get("amount")),
         )
     )
     limited = tasks[: max(1, min(limit, 200))]
@@ -2271,7 +2436,7 @@ def _preview_field_review_resolution(
 def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, Any]:
     metadata = _parse_json(item.get("metadata"))
     sources = db.list_ap_item_sources(item["id"])
-    approvals = db.list_approvals_by_item(item["id"], limit=20)
+    approvals = [_enrich_approval_row(row) for row in db.list_approvals_by_item(item["id"], limit=20)]
     audit_events = db.list_ap_audit_events(item["id"])
     now = datetime.now(timezone.utc)
 
@@ -2298,6 +2463,8 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
     distribution = ", ".join(f"{k}:{v}" for k, v in sorted(source_types.items()))
 
     organization_id = str(item.get("organization_id") or "default")
+    if organization_id == "default":
+        logger.warning("organization_id is 'default' in _enrich_item_context (ap_item_id=%s) — cross-tenant data risk", item.get("id"))
     all_items = db.list_ap_items(organization_id, limit=5000)
     vendor_name = str(item.get("vendor_name") or "").strip()
     vendor_key = vendor_name.lower()
@@ -2307,7 +2474,7 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
             candidate_vendor = str(candidate.get("vendor_name") or "").strip().lower()
             if candidate_vendor == vendor_key:
                 vendor_items.append(candidate)
-    vendor_total_spend = round(sum(_safe_float(entry.get("amount")) for entry in vendor_items), 2)
+    vendor_total_spend = round(sum(safe_float(entry.get("amount")) for entry in vendor_items), 2)
     vendor_open_count = sum(
         1
         for entry in vendor_items
@@ -2365,7 +2532,11 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
     ]
 
     latest_approval = approvals[0] if approvals else None
-    latest_approval_payload = _parse_json(latest_approval.get("decision_payload")) if latest_approval else {}
+    latest_approval_payload = (
+        latest_approval.get("decision_payload")
+        if latest_approval and isinstance(latest_approval.get("decision_payload"), dict)
+        else _parse_json(latest_approval.get("decision_payload")) if latest_approval else {}
+    )
     thread_preview = latest_approval_payload.get("thread_preview")
     if not isinstance(thread_preview, list):
         thread_preview = []
@@ -2377,17 +2548,20 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
             source_channel = str(approval.get("source_channel") or "").strip().lower()
             if source_channel not in {"teams", "microsoft_teams", "ms_teams"}:
                 continue
-            teams_payload = _parse_json(approval.get("decision_payload"))
+            teams_payload = approval.get("decision_payload") if isinstance(approval.get("decision_payload"), dict) else _parse_json(approval.get("decision_payload"))
             merged = dict(teams_context)
             merged.setdefault("channel", approval.get("channel_id"))
             merged.setdefault("message_id", approval.get("message_ts"))
             merged.setdefault("state", approval.get("status"))
             if teams_payload.get("decision"):
                 merged["last_action"] = teams_payload.get("decision")
-            if approval.get("approved_by"):
-                merged["updated_by"] = approval.get("approved_by")
-            elif approval.get("rejected_by"):
-                merged["updated_by"] = approval.get("rejected_by")
+            updated_by = (
+                approval.get("actor_label")
+                or approval.get("approved_by")
+                or approval.get("rejected_by")
+            )
+            if updated_by:
+                merged["updated_by"] = updated_by
             if approval.get("rejection_reason"):
                 merged["reason"] = approval.get("rejection_reason")
             teams_context = merged
@@ -2483,6 +2657,13 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
         "approvals": {
             "count": len(approvals),
             "latest": latest_approval,
+            "latest_actor_label": latest_approval.get("actor_label") if latest_approval else None,
+            "latest_actor": (
+                (latest_approval.get("approved_by") or latest_approval.get("rejected_by"))
+                if latest_approval
+                else None
+            ),
+            "latest_actor_identity": latest_approval.get("actor_identity") if latest_approval else {},
             "slack": {
                 "thread_preview": thread_preview[:5],
             },
@@ -2626,7 +2807,7 @@ async def _execute_field_review_resolution(
     )
 
     try:
-        from clearledgr.services.correction_learning import get_correction_learning_service
+        from clearledgr.services.finance_learning import get_finance_learning_service
 
         preview_metadata = _parse_json(preview["column_payload"].get("metadata"))
         expected_fields = {
@@ -2656,24 +2837,20 @@ async def _execute_field_review_resolution(
             expected_fields=expected_fields,
         )
         truth_context["confidence_profile_id"] = confidence_profile_id
-        learning_svc = get_correction_learning_service(str(item.get("organization_id") or organization_id or "default"))
-        learning_svc.record_correction(
-            correction_type=normalized_field,
+        learning_svc = get_finance_learning_service(str(item.get("organization_id") or organization_id or "default"), db=db)
+        learning_svc.record_manual_field_correction(
+            field=normalized_field,
             original_value=blocker.get("selected_value") if isinstance(blocker, dict) else item.get(normalized_field),
             corrected_value=resolved_value,
-            context=truth_context,
-            user_id=actor_id,
+            context={
+                **truth_context,
+                "selected_source": normalized_source,
+                "resolved_at": preview["resolved_at"],
+                "review_outcome": review_outcome,
+            },
+            actor_id=actor_id,
             invoice_id=item.get("thread_id") or item.get("message_id"),
             feedback=str(request.note or "").strip() or None,
-        )
-        learning_svc.record_review_outcome(
-            field_name=normalized_field,
-            outcome_type=review_outcome["outcome_type"],
-            context=truth_context,
-            user_id=actor_id,
-            selected_source=normalized_source,
-            outcome_tags=review_outcome["outcome_tags"],
-            created_at=preview["resolved_at"],
         )
     except Exception:
         logger.exception("field review correction learning capture failed for %s", ap_item_id)

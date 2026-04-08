@@ -13,6 +13,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 # ECB free exchange rate API (no API key needed)
@@ -118,7 +120,6 @@ def _get_rate_to_eur(currency: str) -> Optional[float]:
 
     # Try ECB API
     try:
-        import httpx
         url = ECB_API_URL.format(currency=currency)
         response = httpx.get(url, timeout=10)
         if response.status_code != 200:

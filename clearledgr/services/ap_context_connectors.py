@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from clearledgr.core.utils import safe_float
 from clearledgr.services.purchase_orders import get_purchase_order_service
 
 
@@ -27,13 +28,6 @@ def _as_dict(value: Any) -> Dict[str, Any]:
 
 def _as_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _normalize_text(value: Any) -> str:
@@ -75,7 +69,7 @@ def _bank_source_ref(match: Dict[str, Any], idx: int = 0) -> str:
     )
     if txn_id:
         return f"{provider}:{txn_id}"
-    amount = _safe_float(match.get("amount"))
+    amount = safe_float(match.get("amount"))
     tx_date = _normalize_text(match.get("date") or match.get("transaction_date"))
     return f"{provider}:{tx_date}:{amount:.2f}:{idx}"
 
@@ -91,7 +85,7 @@ def _card_source_ref(match: Dict[str, Any], idx: int = 0) -> str:
     if txn_id:
         return f"{provider}:{txn_id}"
     card_last4 = _normalize_text(match.get("card_last4") or match.get("last4") or "xxxx")
-    amount = _safe_float(match.get("amount"))
+    amount = safe_float(match.get("amount"))
     tx_date = _normalize_text(match.get("date") or match.get("transaction_date") or match.get("posted_at"))
     return f"{provider}:{card_last4}:{tx_date}:{amount:.2f}:{idx}"
 
@@ -161,7 +155,7 @@ def _collect_bank_context(
         if ref in seen_refs:
             continue
         seen_refs.add(ref)
-        amount = _safe_float(match.get("amount"))
+        amount = safe_float(match.get("amount"))
         normalized.append(
             {
                 "source_ref": ref,
@@ -176,7 +170,7 @@ def _collect_bank_context(
                 "description": _normalize_text(
                     match.get("description") or match.get("merchant_name") or match.get("counterparty_name")
                 ),
-                "confidence": _safe_float(match.get("confidence"), _safe_float(match.get("score"), 0.0)),
+                "confidence": safe_float(match.get("confidence"), safe_float(match.get("score"), 0.0)),
                 "status": _normalize_text(match.get("status") or "matched"),
             }
         )
@@ -278,7 +272,7 @@ def _collect_card_statement_context(
             continue
         seen_refs.add(ref)
         provider = _normalize_text(match.get("provider") or match.get("issuer") or "card")
-        amount = _safe_float(match.get("amount"))
+        amount = safe_float(match.get("amount"))
         normalized.append(
             {
                 "source_ref": ref,
@@ -298,7 +292,7 @@ def _collect_card_statement_context(
                     match.get("description") or match.get("merchant_name") or match.get("reference")
                 ),
                 "status": _normalize_text(match.get("status") or "matched"),
-                "confidence": _safe_float(match.get("confidence"), _safe_float(match.get("score"), 0.0)),
+                "confidence": safe_float(match.get("confidence"), safe_float(match.get("score"), 0.0)),
             }
         )
         discovered.append(
@@ -346,7 +340,7 @@ def _collect_procurement_context(
         or item.get("po_number")
     )
     vendor_name = _normalize_text(item.get("vendor_name") or metadata.get("vendor_name"))
-    amount = _safe_float(item.get("amount"))
+    amount = safe_float(item.get("amount"))
     invoice_id = _normalize_text(item.get("id"))
 
     try:

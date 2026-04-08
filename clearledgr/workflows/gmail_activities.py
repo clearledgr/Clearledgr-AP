@@ -16,6 +16,7 @@ from clearledgr.services.ap_classifier import classify_ap_email
 from clearledgr.services.email_parser import parse_email
 from clearledgr.services.fuzzy_matching import vendor_similarity
 from clearledgr.services.slack_api import SlackAPIClient, resolve_slack_runtime
+from clearledgr.core.utils import safe_float, safe_int
 from clearledgr.services.slack_notifications import send_with_retry
 
 logger = logging.getLogger(__name__)
@@ -47,25 +48,14 @@ def _compact_attachment_evidence(raw_attachments: Any) -> List[Dict[str, Any]]:
 
 
 def _org_id(payload: Dict[str, Any]) -> str:
-    return str(payload.get("organization_id") or "default")
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+    _raw = payload.get("organization_id")
+    if not _raw:
+        logger.warning("organization_id missing in gmail activity payload, falling back to 'default'")
+    return str(_raw or "default")
 
 
 def _normalize_confidence_pct(value: Any) -> float:
-    raw = _safe_float(value, 0.0)
+    raw = safe_float(value, 0.0)
     if 0.0 <= raw <= 1.0:
         return raw * 100.0
     return raw
@@ -94,7 +84,7 @@ def _parse_iso_datetime(value: Any) -> Optional[datetime]:
 
 
 def _amount_from_extraction(extraction: Dict[str, Any]) -> float:
-    return _safe_float(
+    return safe_float(
         extraction.get("amount")
         if extraction.get("amount") is not None
         else extraction.get("total_amount"),
@@ -149,7 +139,7 @@ def _score_bank_candidate(
     candidate: Dict[str, Any],
 ) -> float:
     amount_score = 0.0
-    candidate_amount = _safe_float(candidate.get("amount"), 0.0)
+    candidate_amount = safe_float(candidate.get("amount"), 0.0)
     if invoice_amount > 0 and candidate_amount > 0:
         diff_ratio = abs(candidate_amount - invoice_amount) / max(invoice_amount, 1.0)
         amount_score = max(0.0, 1.0 - diff_ratio)
@@ -200,7 +190,7 @@ async def classify_email_activity(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
     return {
         "type": _normalize_email_type(result.get("type") or ""),
-        "confidence": _safe_float(result.get("confidence"), 0.0),
+        "confidence": safe_float(result.get("confidence"), 0.0),
         "reason": result.get("reason") or "",
         "method": result.get("method") or "rules",
     }
@@ -219,18 +209,18 @@ async def extract_email_data_activity(payload: Dict[str, Any]) -> Dict[str, Any]
         body=body or snippet,
         sender=sender,
         attachments=attachments,
-        organization_id=str(payload.get("organization_id") or "default"),
+        organization_id=_org_id(payload),
         thread_id=payload.get("thread_id"),
     )
     parsed = parsed if isinstance(parsed, dict) else {}
 
     # parse_email may return primary_amount and amounts list.
-    amount = _safe_float(parsed.get("primary_amount"), 0.0)
+    amount = safe_float(parsed.get("primary_amount"), 0.0)
     if amount <= 0:
         amounts = parsed.get("amounts") or []
         if isinstance(amounts, list) and amounts:
             top = amounts[0] if isinstance(amounts[0], dict) else {"value": amounts[0]}
-            amount = _safe_float(top.get("value"), 0.0)
+            amount = safe_float(top.get("value"), 0.0)
 
     currency = str(parsed.get("currency") or "").strip().upper()
     if not currency:
@@ -249,7 +239,7 @@ async def extract_email_data_activity(payload: Dict[str, Any]) -> Dict[str, Any]
     if vendor.lower() in {"unknown", "unknown vendor", "n/a", "na", "none"}:
         vendor = ""
 
-    confidence = _safe_float(parsed.get("confidence"), 0.0)
+    confidence = safe_float(parsed.get("confidence"), 0.0)
     field_confidences = parsed.get("field_confidences")
     if not isinstance(field_confidences, dict):
         field_confidences = {}
@@ -342,7 +332,7 @@ async def match_bank_feed_activity(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "transaction": {
                     "id": candidate.get("id"),
                     "date": candidate.get("date"),
-                    "amount": _safe_float(candidate.get("amount"), 0.0),
+                    "amount": safe_float(candidate.get("amount"), 0.0),
                     "currency": candidate.get("currency") or "USD",
                     "vendor": candidate.get("vendor"),
                     "reference": candidate.get("reference"),
@@ -355,7 +345,7 @@ async def match_bank_feed_activity(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     scored.sort(key=lambda row: row["score"], reverse=True)
     best = scored[0] if scored else None
-    confidence = _safe_float((best or {}).get("score"), 0.0)
+    confidence = safe_float((best or {}).get("score"), 0.0)
     matched = bool(best and confidence >= 0.7)
 
     return {
@@ -411,7 +401,7 @@ async def match_erp_activity(payload: Dict[str, Any]) -> Dict[str, Any]:
     if vendor_name and vendor_profile:
         vendor_match_confidence = max(
             0.6,
-            min(0.98, 0.65 + (_safe_int(vendor_profile.get("invoice_count"), 0) / 100.0)),
+            min(0.98, 0.65 + (safe_int(vendor_profile.get("invoice_count"), 0) / 100.0)),
         )
 
     duplicate_signal = bool(duplicate or duplicate_open)
@@ -460,7 +450,7 @@ async def send_slack_notification_activity(payload: Dict[str, Any]) -> Dict[str,
         ap_item_id = ap_item_id or str(ap_item.get("id") or "") or None
 
     vendor = str(extraction.get("vendor") or "Unknown")
-    amount = _safe_float(extraction.get("amount"), 0.0)
+    amount = safe_float(extraction.get("amount"), 0.0)
     currency = str(extraction.get("currency") or "USD")
     confidence_pct = _normalize_confidence_pct(
         confidence_result.get("confidence_pct")
@@ -558,7 +548,7 @@ async def send_slack_notification_activity(payload: Dict[str, Any]) -> Dict[str,
     slack_thread = db.get_slack_thread(email_id) if email_id and hasattr(db, "get_slack_thread") else None
     thread_channel = str((slack_thread or {}).get("channel_id") or "").strip()
     thread_ts = str((slack_thread or {}).get("thread_ts") or (slack_thread or {}).get("thread_id") or "").strip()
-    cooldown_seconds = max(60, _safe_int(os.getenv("SLACK_ESCALATION_COOLDOWN_SECONDS"), 30 * 60))
+    cooldown_seconds = max(60, safe_int(os.getenv("SLACK_ESCALATION_COOLDOWN_SECONDS"), 30 * 60))
     last_escalated_at = (
         _parse_iso_datetime(metadata.get("approval_last_escalated_at"))
         or _parse_iso_datetime(metadata.get("approval_last_slack_escalation_at"))

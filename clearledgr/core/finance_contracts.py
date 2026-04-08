@@ -12,16 +12,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import uuid
 
+from clearledgr.core.utils import safe_float
+
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 @dataclass(frozen=True)
@@ -190,7 +185,7 @@ class SkillResponse:
             ),
             legal_actions=legal_actions,
             blockers=blockers,
-            confidence=_safe_float(data.get("confidence"), 0.0),
+            confidence=safe_float(data.get("confidence"), 0.0),
             evidence_refs=evidence_refs,
             details=data,
         )

@@ -8,6 +8,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from clearledgr.core.ap_entity_routing import resolve_entity_routing
+from clearledgr.core.utils import safe_int
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,29 @@ def _append_runtime_audit_best_effort(
     return audit_row
 
 
+def _resolve_actor_fields(runtime, payload: Optional[Dict[str, Any]], *, fallback: str = "approval_surface") -> Dict[str, Any]:
+    data = payload if isinstance(payload, dict) else {}
+    actor_email = str(data.get("actor_email") or runtime.actor_email or "").strip()
+    actor_platform_id = str(data.get("actor_id") or runtime.actor_id or "").strip()
+    actor_display = str(data.get("actor_display") or "").strip()
+    source_channel = str(data.get("source_channel") or "").strip().lower() or None
+    raw_identity = data.get("actor_identity") if isinstance(data.get("actor_identity"), dict) else {}
+    actor_identity = {
+        "platform": str(raw_identity.get("platform") or source_channel or "").strip() or None,
+        "platform_user_id": str(raw_identity.get("platform_user_id") or actor_platform_id or "").strip() or None,
+        "email": str(raw_identity.get("email") or actor_email or "").strip() or None,
+        "display_name": str(raw_identity.get("display_name") or actor_display or "").strip() or None,
+    }
+    canonical_actor = actor_identity["email"] or actor_identity["platform_user_id"] or fallback
+    return {
+        "actor_email": actor_identity["email"],
+        "actor_display": actor_identity["display_name"],
+        "actor_platform_id": actor_identity["platform_user_id"],
+        "actor_identity": actor_identity,
+        "canonical_actor": canonical_actor,
+    }
+
+
 class APIntentHandler:
     intent = ""
 
@@ -105,7 +129,7 @@ class PrepareVendorFollowupsHandler(APIntentHandler):
         precheck = context["policy_precheck"]
         correlation_id = runtime.correlation_id_for_item(ap_item)
         metadata = runtime.parse_json_dict(ap_item.get("metadata"))
-        attempts = max(0, runtime.safe_int(metadata.get("followup_attempt_count"), 0))
+        attempts = max(0, safe_int(metadata.get("followup_attempt_count"), 0))
 
         if not precheck.get("eligible"):
             reason_codes = set(precheck.get("reason_codes") or [])
@@ -553,6 +577,7 @@ class ApproveInvoiceHandler(APIntentHandler):
             str(payload.get("action_variant") or "").strip().lower() == "budget_override"
             or runtime.coerce_bool(payload.get("approve_override"))
         )
+        actor = _resolve_actor_fields(runtime, payload)
         justification = str(
             payload.get("reason")
             or payload.get("override_justification")
@@ -560,11 +585,14 @@ class ApproveInvoiceHandler(APIntentHandler):
         ).strip() or None
         result = await workflow.approve_invoice(
             gmail_id=email_id,
-            approved_by=str(payload.get("actor_id") or runtime.actor_email or runtime.actor_id or "approval_surface"),
+            approved_by=actor["canonical_actor"],
             source_channel=str(payload.get("source_channel") or "approval_surface").strip() or "approval_surface",
             source_channel_id=str(payload.get("source_channel_id") or "").strip() or None,
             source_message_ref=str(payload.get("source_message_ref") or email_id).strip() or email_id,
-            actor_display=str(payload.get("actor_display") or "").strip() or None,
+            actor_display=actor["actor_display"],
+            actor_email=actor["actor_email"],
+            actor_platform_id=actor["actor_platform_id"],
+            actor_identity=actor["actor_identity"],
             action_run_id=str(payload.get("action_run_id") or "").strip() or None,
             decision_request_ts=str(payload.get("decision_request_ts") or "").strip() or None,
             decision_idempotency_key=idempotency_key,
@@ -667,14 +695,18 @@ class RequestInfoHandler(APIntentHandler):
             response["audit_event_id"] = (audit_row or {}).get("id")
             return response
 
+        actor = _resolve_actor_fields(runtime, payload)
         result = await workflow.request_budget_adjustment(
             gmail_id=email_id,
-            requested_by=str(payload.get("actor_id") or runtime.actor_email or runtime.actor_id or "approval_surface"),
+            requested_by=actor["canonical_actor"],
             reason=str(payload.get("reason") or "request_info").strip() or "request_info",
             source_channel=str(payload.get("source_channel") or "approval_surface").strip() or "approval_surface",
             source_channel_id=str(payload.get("source_channel_id") or "").strip() or None,
             source_message_ref=str(payload.get("source_message_ref") or email_id).strip() or email_id,
-            actor_display=str(payload.get("actor_display") or "").strip() or None,
+            actor_display=actor["actor_display"],
+            actor_email=actor["actor_email"],
+            actor_platform_id=actor["actor_platform_id"],
+            actor_identity=actor["actor_identity"],
             action_run_id=str(payload.get("action_run_id") or "").strip() or None,
             decision_request_ts=str(payload.get("decision_request_ts") or "").strip() or None,
             decision_idempotency_key=idempotency_key,
@@ -978,7 +1010,7 @@ class EscalateApprovalHandler(APIntentHandler):
             runtime.merge_item_metadata(
                 ap_item,
                 {
-                    "approval_escalation_count": max(0, runtime.safe_int(metadata.get("approval_escalation_count"), 0)) + 1,
+                    "approval_escalation_count": max(0, safe_int(metadata.get("approval_escalation_count"), 0)) + 1,
                     "approval_last_escalated_at": datetime.now(timezone.utc).isoformat(),
                     "approval_last_escalation_message": message,
                     "approval_next_action": "wait_for_escalated_review",
@@ -1126,7 +1158,7 @@ class ReassignApprovalHandler(APIntentHandler):
             ap_item,
             {
                 "approval_sent_to": [assignee],
-                "approval_reassignment_count": max(0, runtime.safe_int(metadata.get("approval_reassignment_count"), 0)) + 1,
+                "approval_reassignment_count": max(0, safe_int(metadata.get("approval_reassignment_count"), 0)) + 1,
                 "approval_last_reassigned_at": reassigned_at,
                 "approval_last_reassigned_to": assignee,
                 "approval_last_reassignment_note": note or None,
@@ -1223,13 +1255,18 @@ class RejectInvoiceHandler(APIntentHandler):
             response["audit_event_id"] = (audit_row or {}).get("id")
             return response
 
+        actor = _resolve_actor_fields(runtime, payload, fallback="gmail_extension")
         result = await workflow.reject_invoice(
             gmail_id=email_id,
             reason=str(payload.get("reason") or "").strip(),
-            rejected_by=runtime.actor_email or "gmail_extension",
-            source_channel="gmail_extension",
-            source_channel_id="gmail_extension",
-            source_message_ref=email_id,
+            rejected_by=actor["canonical_actor"],
+            source_channel=str(payload.get("source_channel") or "gmail_extension").strip() or "gmail_extension",
+            source_channel_id=str(payload.get("source_channel_id") or "gmail_extension").strip() or "gmail_extension",
+            source_message_ref=str(payload.get("source_message_ref") or email_id).strip() or email_id,
+            actor_display=actor["actor_display"],
+            actor_email=actor["actor_email"],
+            actor_platform_id=actor["actor_platform_id"],
+            actor_identity=actor["actor_identity"],
             decision_idempotency_key=idempotency_key,
             correlation_id=correlation_id,
         )

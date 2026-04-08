@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from clearledgr.core.database import ClearledgrDB, get_db
+from clearledgr.core.utils import safe_float
 from clearledgr.services.correction_learning import CorrectionLearningService
 
 logger = logging.getLogger(__name__)
@@ -24,13 +25,6 @@ _THRESHOLD_CEILING = 0.99
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 class LearningCalibrationService:
@@ -192,7 +186,7 @@ class LearningCalibrationService:
 
         vendor_gaps.sort(
             key=lambda row: (
-                -_safe_float(row.get("disagreement_rate")),
+                -safe_float(row.get("disagreement_rate")),
                 -int(row.get("total_feedback") or 0),
                 str(row.get("vendor_name") or ""),
             )
@@ -277,7 +271,7 @@ class LearningCalibrationService:
                 if not isinstance(_cfg_dict, dict):
                     _cfg_dict = {}
 
-                current_threshold = _safe_float(
+                current_threshold = safe_float(
                     _cfg_dict.get("auto_approve_confidence_threshold", 0.95), 0.95
                 )
                 new_threshold = current_threshold

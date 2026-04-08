@@ -5,6 +5,8 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.utils import safe_float
+
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,10 @@ async def execute_ap_invoice_processing(
         or str(invoice.get("correlation_id") or "").strip()
         or None
     )
-    invoice_org = str(invoice.get("organization_id") or runtime.organization_id or "default").strip() or "default"
+    _raw_org = invoice.get("organization_id") or getattr(runtime, "organization_id", None)
+    if not _raw_org:
+        logger.warning("organization_id missing in execute_ap_invoice_processing, falling back to 'default'")
+    invoice_org = str(_raw_org or "default").strip() or "default"
     attachment_list = attachments if isinstance(attachments, list) else []
     attachment_url = ""
     attachment_names: List[str] = []
@@ -86,8 +91,8 @@ async def execute_ap_invoice_processing(
         except Exception as exc:
             logger.warning("Usage tracking failed: %s", exc)
 
-    amount_value = runtime._safe_float(invoice.get("amount"))
-    confidence_value = runtime._safe_float(invoice.get("confidence"))
+    amount_value = safe_float(invoice.get("amount"))
+    confidence_value = safe_float(invoice.get("confidence"))
 
     invoice_data = InvoiceData(
         gmail_id=runtime_reference or f"invoice-{uuid.uuid4().hex[:10]}",
@@ -195,6 +200,17 @@ async def execute_ap_invoice_processing(
             response.setdefault("idempotency_key", resolved_idempotency_key)
         if resolved_correlation_id:
             response.setdefault("correlation_id", resolved_correlation_id)
+        try:
+            from clearledgr.services.finance_learning import get_finance_learning_service
+
+            get_finance_learning_service(invoice_org, db=getattr(runtime, "db", None)).record_runtime_outcome(
+                ap_item=seeded_item,
+                response=response,
+                shadow_decision=shadow_decision,
+                actor_id=runtime.actor_email or runtime.actor_id,
+            )
+        except Exception as exc:
+            logger.warning("Could not record blocked invoice learning outcome: %s", exc)
         if ap_item_id:
             audit_row = runtime._append_runtime_audit(
                 ap_item_id=ap_item_id,
@@ -269,6 +285,23 @@ async def execute_ap_invoice_processing(
     if autonomy_downgraded_auto_post:
         response.setdefault("autonomy_auto_post_downgraded", True)
     ap_item_id = str(response.get("ap_item_id") or (seeded_item or {}).get("id") or "").strip()
+    try:
+        from clearledgr.services.finance_learning import get_finance_learning_service
+
+        learning_item = seeded_item
+        if ap_item_id and hasattr(runtime.db, "get_ap_item"):
+            try:
+                learning_item = runtime.db.get_ap_item(ap_item_id) or learning_item
+            except Exception:
+                learning_item = seeded_item
+        get_finance_learning_service(invoice_org, db=getattr(runtime, "db", None)).record_runtime_outcome(
+            ap_item=learning_item,
+            response=response,
+            shadow_decision=shadow_decision,
+            actor_id=runtime.actor_email or runtime.actor_id,
+        )
+    except Exception as exc:
+        logger.warning("Could not record runtime learning outcome: %s", exc)
     if ap_item_id:
         status_token = str(response.get("status") or "unknown").strip().lower()
         event_type = "ap_invoice_processing_completed"

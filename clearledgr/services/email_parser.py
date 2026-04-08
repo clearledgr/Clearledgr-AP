@@ -18,6 +18,8 @@ import base64
 import io
 import logging
 
+from clearledgr.core.utils import safe_float
+
 logger = logging.getLogger(__name__)
 
 # Optional imports for enhanced extraction
@@ -72,6 +74,24 @@ KNOWN_VENDORS = [
     "Bank of America", "Chase", "Wells Fargo", "Citi", "Capital One",
 ]
 
+GENERIC_MAILBOX_DOMAINS = {
+    "gmail.com",
+    "googlemail.com",
+    "yahoo.com",
+    "ymail.com",
+    "hotmail.com",
+    "outlook.com",
+    "live.com",
+    "icloud.com",
+    "me.com",
+    "mac.com",
+    "aol.com",
+    "protonmail.com",
+    "pm.me",
+    "gmx.com",
+    "zoho.com",
+}
+
 
 class EmailParser:
     """
@@ -85,6 +105,7 @@ class EmailParser:
         r'(?:\$|USD)\s*([\d\s.,]+)',  # USD format
         r'(?:£|GBP)\s*([\d\s.,]+)',  # GBP format
         r'(?:₦|NGN)\s*([\d\s.,]+)',  # Nigerian Naira
+        r'(?:GH₵|GHS|¢)\s*([\d\s.,]+)',  # Ghanaian Cedi
         r'(?:\bZAR\b|\bR(?=\s*\d))\s*([\d\s.,]+)',  # South African Rand
         r'(?:KES|KSh)\s*([\d\s.,]+)',  # Kenyan Shilling
         r'(?:¥|JPY|CNY)\s*([\d\s.,]+)',  # Japanese Yen / Chinese Yuan
@@ -109,6 +130,7 @@ class EmailParser:
         r'Subtotal[:\s]+(?:€|\$|£|₦|R|KES|¥|₹)?\s*([\d\s.,]+)',
         r'Invoice\s+Total[:\s]+(?:€|\$|£|₦|R|KES|¥|₹)?\s*([\d\s.,]+)',
         r'Pay\s+This\s+Amount[:\s]+(?:€|\$|£|₦|R|KES|¥|₹)?\s*([\d\s.,]+)',
+        r'(?:Total\s*(?:payment|amount|due|due\s+amount|payable)?|Grand\s+Total|Invoice\s+Total|Balance\s*(?:Due)?|Subtotal)[:\s()\-]*([\d\s.,]+)\s*(?:GHS|GH₵|USD|EUR|GBP|NGN|ZAR|KES|JPY|CNY|INR|CHF|AUD|CAD|SGD|AED|SAR|THB)\b',
     ]
     
     INVOICE_PATTERNS = [
@@ -191,7 +213,7 @@ class EmailParser:
     def __init__(self):
         self.supported_currencies = [
             'EUR', 'USD', 'GBP', 'NGN', 'ZAR', 'KES',
-            'JPY', 'CNY', 'INR', 'CHF', 'AUD', 'CAD',
+            'GHS', 'JPY', 'CNY', 'INR', 'CHF', 'AUD', 'CAD',
             'SEK', 'NOK', 'DKK', 'PLN', 'BRL', 'MXN',
             'AED', 'SAR', 'SGD', 'HKD', 'NZD', 'THB',
         ]
@@ -386,7 +408,7 @@ class EmailParser:
         if attachment_fields["amount"] is None:
             attachment_amount = preferred_extraction.get("amount")
             if isinstance(attachment_amount, dict):
-                attachment_fields["amount"] = self._safe_float(attachment_amount.get("value"))
+                attachment_fields["amount"] = safe_float(attachment_amount.get("value"))
                 attachment_fields["currency"] = attachment_fields["currency"] or attachment_amount.get("currency")
             elif attachment_amount is not None:
                 attachment_fields["amount"] = self._parse_amount_value(str(attachment_amount), source_fragment=str(attachment_amount))
@@ -495,17 +517,17 @@ class EmailParser:
             # Need at least one identifying field
             vendor = str(ext.get("vendor") or "").strip().lower()
             inv_num = str(ext.get("invoice_number") or "").strip().lower()
-            amount = self._safe_float(ext.get("amount"))
+            amount = safe_float(ext.get("amount"))
             if not vendor and not inv_num and amount == 0.0:
                 continue
             invoice_extractions.append({
                 "vendor": ext.get("vendor") or email_fields.get("vendor"),
-                "amount": self._safe_float(ext.get("amount")),
+                "amount": safe_float(ext.get("amount")),
                 "currency": ext.get("currency") or email_fields.get("currency"),
                 "invoice_number": ext.get("invoice_number"),
                 "invoice_date": ext.get("date") or ext.get("invoice_date"),
                 "due_date": ext.get("due_date"),
-                "confidence": self._safe_float(ext.get("confidence"), 0.5),
+                "confidence": safe_float(ext.get("confidence"), 0.5),
                 "attachment_index": idx,
                 "attachment_name": att.get("name"),
                 "_key": (vendor, inv_num, amount),
@@ -532,16 +554,10 @@ class EmailParser:
             return {
                 "value": primary.get("value"),
                 "currency": primary.get("currency"),
-                "score": self._safe_float(primary.get("score"), 0.0),
+                "score": safe_float(primary.get("score"), 0.0),
                 "raw": primary.get("raw"),
             }
         return {"value": primary, "currency": None, "score": 0.0, "raw": primary}
-
-    def _safe_float(self, value: Any, default: float = 0.0) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
 
     def _has_field_value(self, value: Any) -> bool:
         if value is None:
@@ -822,6 +838,14 @@ class EmailParser:
           - "Invoice from Acme Corp"                → "Acme Corp"
         """
         import re
+        lines = [re.sub(r"\s+", " ", str(line or "")).strip() for line in str(body or "").splitlines()]
+        label_candidates = self._extract_vendor_from_labeled_lines(
+            lines,
+            labels={"from", "issued by", "payee", "vendor", "supplier", "seller", "merchant"},
+        )
+        if label_candidates:
+            return label_candidates
+
         patterns = [
             # "receipt from X #123" / "payment confirmation from X" / "credit note from Acme Corp"
             r'(?:receipt|payment(?:\s+confirmation)?|refund|invoice|bill|statement|credit\s+note|credit\s+memo)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|\s+for\b|[,\.]|$)',
@@ -829,6 +853,8 @@ class EmailParser:
             r'^(?:your\s+)?(?:receipt|payment(?:\s+confirmation)?|refund|invoice|bill|statement|order|credit\s+note|credit\s+memo)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|[,\.]|$)',
             # "Acme invoice", "Acme receipt", "Acme payment confirmation"
             r'^([A-Z][A-Za-z0-9\s&\.\-]+?)\s+(?:invoice|receipt|payment(?:\s+confirmation)?|bill|refund|credit\s+note|credit\s+memo)\b',
+            # "Tuition fees from X", "Charges from X"
+            r'(?:fees|charges|tuition\s+fees|statement|invoice|bill)\s+from\s+([A-Z][A-Za-z0-9\s&\.\-]+?)(?:\s+#|\s+\d|\s+for\b|[,\.]|$)',
         ]
         for text in [subject, (body or '')[:300]]:
             for pattern in patterns:
@@ -848,13 +874,16 @@ class EmailParser:
         vendor is the merchant, not the processor.  Fall back to extracting
         the vendor name from the subject/body in those cases.
         """
-        if '@' in sender:
-            domain = sender.split('@')[1].lower()
+        sender_text = str(sender or "").strip()
+        email_match = re.search(r'<([^>]+@[^>]+)>', sender_text) or re.search(r'([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})', sender_text, re.IGNORECASE)
+        sender_email = email_match.group(1) if email_match else sender_text
+        if '@' in sender_email:
+            domain = sender_email.split('@')[1].lower().strip(" >")
             # Strip subdomains to get the base domain (e.g. "invoice.stripe.com" → "stripe.com")
             parts = domain.rsplit('.', 2)
             base_domain = '.'.join(parts[-2:]) if len(parts) >= 2 else domain
 
-            if base_domain in self.PAYMENT_PROCESSOR_DOMAINS:
+            if base_domain in self.PAYMENT_PROCESSOR_DOMAINS or base_domain in GENERIC_MAILBOX_DOMAINS:
                 extracted = self._extract_vendor_from_email_context(subject, body)
                 if extracted:
                     return extracted
@@ -875,6 +904,12 @@ class EmailParser:
             return candidate
 
         cleaned = str(candidate).strip()
+        cleaned = re.sub(
+            r"\s+(?:payer|bill\s+to|billed\s+to|recipient|customer)\b.*$",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip(" .,:;|-")
         if not cleaned:
             return cleaned
 
@@ -924,6 +959,14 @@ class EmailParser:
     
     def _extract_vendor_from_text(self, text: str) -> Optional[str]:
         """Extract vendor name from invoice text with fuzzy matching."""
+        lines = [re.sub(r"\s+", " ", str(line or "")).strip(" .,:;|-") for line in text.split('\n')]
+        labeled = self._extract_vendor_from_labeled_lines(
+            lines,
+            labels={"issued by", "payee", "vendor", "supplier", "seller", "merchant"},
+        )
+        if labeled:
+            return labeled
+
         candidates = []
         
         # Look for company name patterns at start of text
@@ -969,6 +1012,40 @@ class EmailParser:
         # Return first candidate if no fuzzy match
         return candidates[0] if candidates else None
 
+    def _extract_vendor_from_labeled_lines(
+        self,
+        lines: List[str],
+        *,
+        labels: set[str],
+    ) -> Optional[str]:
+        normalized_lines = [re.sub(r"\s+", " ", str(line or "")).strip(" .,:;|-") for line in lines or []]
+        for index, line in enumerate(normalized_lines[:120]):
+            lowered = line.lower().rstrip(":")
+            inline_match = re.match(
+                r"^(from|issued by|payee|vendor|supplier|seller|merchant)\s*:\s*(.+)$",
+                line,
+                re.IGNORECASE,
+            )
+            if inline_match:
+                label = inline_match.group(1).strip().lower()
+                if label == "from":
+                    value = re.sub(r"\s*<[^>]+>$", "", inline_match.group(2)).strip()
+                else:
+                    value = inline_match.group(2).strip()
+                candidate = self._normalize_vendor_candidate(value)
+                if label in labels and candidate and not self._is_vendor_noise_candidate(candidate):
+                    return candidate
+            if lowered not in labels:
+                continue
+            for next_line in normalized_lines[index + 1:index + 4]:
+                if not next_line:
+                    continue
+                candidate = re.sub(r"\s*<[^>]+>$", "", next_line).strip()
+                candidate = self._normalize_vendor_candidate(candidate)
+                if candidate and not self._is_vendor_noise_candidate(candidate):
+                    return candidate
+        return None
+
     def _is_vendor_noise_candidate(self, candidate: Optional[str]) -> bool:
         cleaned = re.sub(r"\s+", " ", str(candidate or "")).strip(" .,:;|-")
         if len(cleaned) < 3 or len(cleaned) > 80:
@@ -1013,6 +1090,9 @@ class EmailParser:
                 return True
         compact = re.sub(r"[^A-Za-z]", "", cleaned)
         if compact and len(compact) <= 4:
+            return True
+        tokens = [token for token in cleaned.split() if token]
+        if len(tokens) >= 3 and sum(len(token) <= 2 for token in tokens) >= 2:
             return True
         return False
     
@@ -1576,6 +1656,10 @@ class EmailParser:
             ('₦', 'NGN'),
             ('ngn', 'NGN'),
             ('naira', 'NGN'),
+            ('gh₵', 'GHS'),
+            ('ghs', 'GHS'),
+            ('ghana cedi', 'GHS'),
+            ('cedi', 'GHS'),
             ('zar', 'ZAR'),
             ('rand', 'ZAR'),
             ('kes', 'KES'),

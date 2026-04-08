@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.utils import safe_float
+
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ def collect_operator_acceptance(runtime: Any, ap_kpis: Dict[str, Any]) -> Dict[s
         }
     return {
         "status": "measured",
-        "rate": round(runtime._safe_float(rate), 4),
+        "rate": round(safe_float(rate), 4),
         "prompted_count": int(acceptance.get("prompted_count") or 0),
         "accepted_count": int(acceptance.get("accepted_count") or 0),
     }
@@ -171,31 +173,31 @@ def build_skill_readiness(runtime: Any, skill_id: str, *, window_hours: int = 16
     gates = [
         evaluate_gate(
             gate_key="legal_transition_correctness",
-            target=runtime._safe_float(legal_target) if legal_target is not None else None,
+            target=safe_float(legal_target) if legal_target is not None else None,
             measured=transition.get("legal_transition_correctness"),
             metric_name="transition_integrity.legal_transition_correctness",
         ),
         evaluate_gate(
             gate_key="idempotency_integrity",
-            target=runtime._safe_float(idempotency_target) if idempotency_target is not None else None,
+            target=safe_float(idempotency_target) if idempotency_target is not None else None,
             measured=idempotency.get("integrity_rate"),
             metric_name="idempotency_integrity.integrity_rate",
         ),
         evaluate_gate(
             gate_key="audit_coverage",
-            target=runtime._safe_float(audit_target) if audit_target is not None else None,
+            target=safe_float(audit_target) if audit_target is not None else None,
             measured=audit_coverage.get("coverage_rate"),
             metric_name="audit_coverage.coverage_rate",
         ),
         evaluate_gate(
             gate_key="operator_acceptance",
-            target=runtime._safe_float(operator_target) if operator_target is not None else None,
+            target=safe_float(operator_target) if operator_target is not None else None,
             measured=operator_acceptance.get("rate"),
             metric_name="operator_acceptance.rate",
         ),
         evaluate_gate(
             gate_key="enabled_connector_readiness",
-            target=runtime._safe_float(connector_target) if connector_target is not None else None,
+            target=safe_float(connector_target) if connector_target is not None else None,
             measured=connector_readiness.get("enabled_readiness_rate"),
             metric_name="connector_readiness.enabled_readiness_rate",
         ),

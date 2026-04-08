@@ -9,19 +9,14 @@ from typing import Any, Dict, List, Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from clearledgr.core.utils import safe_float
+
 logger = logging.getLogger(__name__)
 
 # Bot Framework OAuth token endpoint for client-credentials flow
 _BOT_FRAMEWORK_TOKEN_URL = "https://login.botframework.com/v1/.oauth/token"
 # Cache: {"token": str, "expires_at": float}
 _bot_token_cache: Dict[str, Any] = {}
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 class TeamsAPIClient:
@@ -95,8 +90,8 @@ class TeamsAPIClient:
                 continue
             name = str(check.get("name") or check.get("budget_name") or "Budget")
             status = str(check.get("status") or check.get("after_approval_status") or "unknown").lower()
-            remaining = _safe_float(check.get("remaining"))
-            pct = _safe_float(check.get("percent_after_approval") or check.get("after_approval_percent"))
+            remaining = safe_float(check.get("remaining"))
+            pct = safe_float(check.get("percent_after_approval") or check.get("after_approval_percent"))
             rows.append(
                 {
                     "type": "TextBlock",
@@ -127,8 +122,8 @@ class TeamsAPIClient:
         requires_decision = bool((budget or {}).get("requires_decision"))
         normalized_reason = str(decision_reason_summary or "").strip()
         next_step_lines = [str(line).strip() for line in (next_step_lines or []) if str(line).strip()]
-        requested_by = str(requested_by_text or "Requested by Clearledgr AP Agent on behalf of the AP workflow.").strip()
-        source_of_truth = str(source_of_truth_text or "Source of truth: Gmail thread and Clearledgr AP context.").strip()
+        requested_by = str(requested_by_text or "Raised by Clearledgr from this Gmail thread.").strip()
+        source_of_truth = str(source_of_truth_text or "Open in Gmail if you want to review the original email and attachment.").strip()
         gmail_url = str(source_url or f"https://mail.google.com/mail/u/0/#search/{email_id}").strip()
 
         body: List[Dict[str, Any]] = [
@@ -137,7 +132,7 @@ class TeamsAPIClient:
                 "type": "FactSet",
                 "facts": [
                     {"title": "Vendor", "value": vendor or "Unknown"},
-                    {"title": "Amount", "value": f"{currency} {_safe_float(amount):,.2f}"},
+                    {"title": "Amount", "value": f"{currency} {safe_float(amount):,.2f}"},
                     {"title": "Invoice #", "value": str(invoice_number or "N/A")},
                     {"title": "Budget", "value": status.replace("_", " ")},
                 ],
@@ -441,15 +436,15 @@ class TeamsAPIClient:
                 raw = metric.get("value", metric.get("rate"))
             else:
                 raw = metric
-            value = _safe_float(raw)
+            value = safe_float(raw)
             if 0 <= value <= 1:
                 return value * 100.0
             return value
 
         def _hours(metric: Any) -> float:
             if isinstance(metric, dict):
-                return _safe_float(metric.get("avg_hours", metric.get("avg")))
-            return _safe_float(metric)
+                return safe_float(metric.get("avg_hours", metric.get("avg")))
+            return safe_float(metric)
 
         touchless = _percent(kpis.get("touchless_rate"))
         exception_rate = _percent(kpis.get("exception_rate"))

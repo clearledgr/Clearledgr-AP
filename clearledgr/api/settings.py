@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from clearledgr.core.database import get_db
 from clearledgr.core.auth import get_current_user, TokenData
@@ -31,14 +31,29 @@ router = APIRouter(
 
 # ==================== DATA MODELS ====================
 
+class ApprovalTarget(BaseModel):
+    """Structured approver identity for Slack-routed rules."""
+    email: EmailStr
+    display_name: Optional[str] = None
+    slack_user_id: Optional[str] = None
+    slack_resolution: Optional[str] = None
+
+
 class ApprovalThreshold(BaseModel):
     """Approval threshold configuration."""
     min_amount: float = 0
     max_amount: Optional[float] = None  # None = unlimited
     approver_channel: str  # Slack channel
+    approvers: List[str] = Field(default_factory=list)  # Explicit approver emails
+    approver_targets: List[ApprovalTarget] = Field(default_factory=list)
     approver_role: Optional[str] = None  # e.g., "manager", "vp", "cfo"
     auto_approve: bool = False
     confidence_threshold: float = 0.95
+    gl_codes: List[str] = Field(default_factory=list)  # GL code filter
+    departments: List[str] = Field(default_factory=list)  # Department/cost center filter
+    vendors: List[str] = Field(default_factory=list)  # Vendor name filter
+    entities: List[str] = Field(default_factory=list)  # Legal entity filter
+    approval_type: str = "any"  # "any" = first approver wins, "all" = unanimous
 
 
 class SlackChannelConfig(BaseModel):

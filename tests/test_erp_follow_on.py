@@ -20,12 +20,12 @@ if str(ROOT) not in sys.path:
 
 from clearledgr.core import database as db_module
 from clearledgr.core.ap_states import APState
+from clearledgr.core.utils import safe_float as _safe_float
 from clearledgr.services.ap_item_service import (
     _execute_non_invoice_erp_follow_on,
     _normalize_document_type_token,
     _normalize_non_invoice_outcome,
     _parse_json,
-    _safe_float,
 )
 from clearledgr.services.browser_agent import BrowserAgentService, SUPPORTED_MACROS
 from clearledgr.services.erp_connector_strategy import (

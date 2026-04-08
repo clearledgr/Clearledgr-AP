@@ -15,6 +15,7 @@ from clearledgr.core.ap_entity_routing import (
     normalize_entity_candidate,
     normalize_entity_routing_settings,
 )
+from clearledgr.core.utils import safe_float_or_none
 from clearledgr.services.policy_compliance import parse_approval_automation_config
 
 
@@ -65,15 +66,6 @@ def _parse_json_list(raw: Any) -> List[Any]:
     return []
 
 
-def _safe_float(value: Any) -> Optional[float]:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _coerce_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -85,7 +77,7 @@ def _coerce_bool(value: Any) -> bool:
 
 
 def _normalize_confidence_threshold(value: Any) -> Optional[float]:
-    parsed = _safe_float(value)
+    parsed = safe_float_or_none(value)
     if parsed is None:
         return None
     if parsed > 1.0 and parsed <= 100.0:
@@ -120,14 +112,14 @@ def normalize_mailbox_approval_thresholds(raw: Any) -> List[Dict[str, Any]]:
     for value in values:
         if not isinstance(value, dict):
             continue
-        min_amount = _safe_float(
+        min_amount = safe_float_or_none(
             value.get("min_amount")
             if value.get("min_amount") not in (None, "")
             else value.get("threshold")
         )
         if min_amount is None:
             continue
-        max_amount = _safe_float(value.get("max_amount"))
+        max_amount = safe_float_or_none(value.get("max_amount"))
         if max_amount is not None and max_amount < min_amount:
             max_amount = min_amount
         approver_channel = str(value.get("approver_channel") or value.get("channel") or "").strip() or None
@@ -289,8 +281,8 @@ def resolve_mailbox_approval_target(
         amount_value = 0.0
 
     for threshold in thresholds:
-        min_amount = _safe_float(threshold.get("min_amount"))
-        max_amount = _safe_float(threshold.get("max_amount"))
+        min_amount = safe_float_or_none(threshold.get("min_amount"))
+        max_amount = safe_float_or_none(threshold.get("max_amount"))
         if min_amount is None:
             continue
         if amount_value < min_amount:

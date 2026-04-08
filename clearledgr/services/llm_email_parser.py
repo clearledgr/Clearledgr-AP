@@ -22,13 +22,14 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from clearledgr.core.prompt_guard import sanitize_attachment_text, sanitize_email_body, sanitize_subject
+from clearledgr.core.utils import safe_float_or_none
 
 logger = logging.getLogger(__name__)
 
 # Fast, cheap model for text-only extraction.  Override via env if needed.
-_HAIKU_MODEL = os.getenv("ANTHROPIC_EXTRACTION_MODEL", "claude-haiku-4-5-20251001")
+_HAIKU_MODEL = os.getenv("ANTHROPIC_EXTRACTION_MODEL", "claude-3-5-haiku-20241022")
 # Stronger model for vision/PDF.  Inherits the global ANTHROPIC_MODEL setting.
-_SONNET_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+_SONNET_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 _API_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"
 _TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "45"))
@@ -115,9 +116,12 @@ def _build_vendor_context(sender: str, subject: str, organization_id: str) -> st
 
         # Get recent corrections for this vendor
         try:
-            from clearledgr.services.correction_learning import get_correction_learning_service
-            learning = get_correction_learning_service(organization_id)
-            corrections = learning.get_recent_corrections(vendor_name, limit=5)
+            from clearledgr.services.finance_learning import get_finance_learning_service
+
+            corrections = get_finance_learning_service(organization_id).list_recent_corrections(
+                vendor_name,
+                limit=5,
+            )
             if corrections:
                 parts.append("Recent corrections applied to this vendor:")
                 for c in corrections[:3]:
@@ -390,15 +394,6 @@ def _parse_json_response(text: str) -> Dict[str, Any]:
         raise
 
 
-def _safe_float(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _parse_bank_details(raw: Any) -> Optional[Dict[str, Any]]:
     """Validate and clean bank_details dict from Claude's response."""
     if not isinstance(raw, dict):
@@ -445,7 +440,7 @@ def _llm_result_to_parse_email_dict(
         "\u20b9": "INR", "R$": "BRL", "CHF": "CHF",
     }
 
-    amount = _safe_float(llm.get("amount"))
+    amount = safe_float_or_none(llm.get("amount"))
     raw_currency = str(llm.get("currency") or "USD").strip()
     currency = _CURRENCY_ALIASES.get(raw_currency, raw_currency).upper() or "USD"
     invoice_number = llm.get("invoice_number")
@@ -463,11 +458,11 @@ def _llm_result_to_parse_email_dict(
     raw_fc = llm.get("field_confidences") or {}
     field_confidences: Dict[str, float] = {}
     for field in ("vendor", "amount", "invoice_number", "due_date"):
-        v = _safe_float(raw_fc.get(field))
+        v = safe_float_or_none(raw_fc.get(field))
         if v is not None:
             field_confidences[field] = v
 
-    overall_confidence = _safe_float(llm.get("confidence")) or 0.0
+    overall_confidence = safe_float_or_none(llm.get("confidence")) or 0.0
 
     # Normalise document_type → email_type (existing consumer key)
     doc_type = str(llm.get("document_type") or "invoice").lower().strip()
@@ -506,9 +501,9 @@ def _llm_result_to_parse_email_dict(
         "payment_processor": llm.get("payment_processor"),
         "po_number": llm.get("po_number"),
         "payment_terms": llm.get("payment_terms"),
-        "tax_amount": _safe_float(llm.get("tax_amount")),
-        "tax_rate": _safe_float(llm.get("tax_rate")),
-        "subtotal": _safe_float(llm.get("subtotal")),
+        "tax_amount": safe_float_or_none(llm.get("tax_amount")),
+        "tax_rate": safe_float_or_none(llm.get("tax_rate")),
+        "subtotal": safe_float_or_none(llm.get("subtotal")),
         "invoice_date": invoice_date,
         "due_date": due_date,
         "extraction_model": model,
@@ -516,7 +511,7 @@ def _llm_result_to_parse_email_dict(
         # Line items (structured extraction from invoice)
         "line_items": llm.get("line_items") if isinstance(llm.get("line_items"), list) else None,
         # Discount extraction
-        "discount_amount": _safe_float(llm.get("discount_amount")),
+        "discount_amount": safe_float_or_none(llm.get("discount_amount")),
         "discount_terms": str(llm.get("discount_terms")) if llm.get("discount_terms") else None,
         # Bank/payment details
         "bank_details": _parse_bank_details(llm.get("bank_details")),
@@ -560,8 +555,8 @@ def _merge_attachment_evidence(
     local_amount = local_result.get("primary_amount")
     llm_amount = merged.get("primary_amount")
     llm_amount_conf = float(field_confidences.get("amount") or 0.0)
-    llm_amount_value = _safe_float(llm_amount)
-    local_amount_value = _safe_float(local_amount)
+    llm_amount_value = safe_float_or_none(llm_amount)
+    local_amount_value = safe_float_or_none(local_amount)
     if local_amount is not None and (
         llm_amount is None
         or (llm_amount_value == 0.0 and (local_amount_value or 0.0) > 0.0)
@@ -648,11 +643,35 @@ def _result_field_value(result: Dict[str, Any], field: str) -> Any:
     return result.get(field)
 
 
+def _set_result_field_value(result: Dict[str, Any], field: str, value: Any) -> None:
+    if field == "amount":
+        result["primary_amount"] = value
+        return
+    if field == "invoice_number":
+        result["primary_invoice"] = value
+        return
+    if field == "invoice_date":
+        result["invoice_date"] = value
+        if value not in (None, "") and not result.get("primary_date"):
+            result["primary_date"] = value
+        return
+    if field == "due_date":
+        result["due_date"] = value
+        return
+    if field == "vendor":
+        result["vendor"] = value
+        return
+    if field == "currency":
+        result["currency"] = value
+        return
+    result[field] = value
+
+
 def _comparable_trace_value(field: str, value: Any) -> Any:
     if value is None:
         return None
     if field == "amount":
-        parsed = _safe_float(value)
+        parsed = safe_float_or_none(value)
         return round(parsed, 2) if parsed is not None else None
     token = str(value or "").strip()
     if not token:
@@ -700,6 +719,14 @@ def _merge_source_trace(
         if not isinstance(candidates, dict):
             candidates = {}
             entry["candidates"] = candidates
+
+        if final_value in (None, ""):
+            for source_name in ("attachment", "email"):
+                candidate_value = candidates.get(source_name)
+                if candidate_value not in (None, ""):
+                    final_value = candidate_value
+                    _set_result_field_value(merged, field, final_value)
+                    break
 
         llm_value = final_value
         if llm_value not in (None, ""):
@@ -790,7 +817,7 @@ def _attachment_authority_score(local_result: Dict[str, Any]) -> int:
     if invoice_number:
         score += 3
 
-    amount_value = _safe_float(local_result.get("primary_amount"))
+    amount_value = safe_float_or_none(local_result.get("primary_amount"))
     if local_result.get("primary_amount") is not None:
         score += 3 if (amount_value or 0.0) > 0.0 else 2
 
@@ -817,7 +844,7 @@ def _local_field_confidences(local_result: Dict[str, Any]) -> Dict[str, float]:
         existing["vendor"] = max(float(existing.get("vendor") or 0.0), 0.94 if authoritative else 0.82)
 
     if local_result.get("primary_amount") is not None:
-        amount_value = _safe_float(local_result.get("primary_amount"))
+        amount_value = safe_float_or_none(local_result.get("primary_amount"))
         amount_floor = 0.95 if authoritative and (amount_value or 0.0) > 0.0 else 0.91 if authoritative else 0.78
         existing["amount"] = max(float(existing.get("amount") or 0.0), amount_floor)
 
