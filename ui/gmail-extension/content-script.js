@@ -37,6 +37,81 @@ import { ClearledgrQueueManager } from './queue-manager.js';
     emit('clearledgr:toast', { message, type });
   }
 
+  function normalizeBackendUrl(raw) {
+    let url = String(raw || '').trim();
+    if (!url) return '';
+    if (!/^https?:\/\//i.test(url)) url = `http://${url}`;
+    if (url.endsWith('/v1')) url = url.slice(0, -3);
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname === '0.0.0.0' || parsed.hostname === 'localhost') {
+        parsed.hostname = '127.0.0.1';
+      }
+      return parsed.toString().replace(/\/+$/, '');
+    } catch (_) {
+      return url.replace(/\/+$/, '');
+    }
+  }
+
+  function selectBackendUrl(storedUrl, configuredUrl) {
+    const configured = normalizeBackendUrl(configuredUrl);
+    const stored = normalizeBackendUrl(storedUrl);
+    if (!configuredUrl) return stored;
+    if (!storedUrl) return configured;
+    try {
+      const configuredParsed = new URL(configured);
+      const storedParsed = new URL(stored);
+      const configuredHost = configuredParsed.hostname.toLowerCase();
+      const storedHost = storedParsed.hostname.toLowerCase();
+      const configuredSecure = configuredParsed.protocol === 'https:';
+      const looksEphemeralStoredHost =
+        storedHost === '127.0.0.1' ||
+        storedHost === 'localhost' ||
+        storedHost.endsWith('.trycloudflare.com') ||
+        storedHost.endsWith('.up.railway.app');
+      if (configuredSecure && configuredHost === 'api.clearledgr.com' && looksEphemeralStoredHost) {
+        return configured;
+      }
+    } catch (_) {
+      return configured || stored;
+    }
+    return stored;
+  }
+
+  function shouldClearStoredBackendOverride(storedUrl, configuredUrl) {
+    const configured = normalizeBackendUrl(configuredUrl);
+    const stored = normalizeBackendUrl(storedUrl);
+    if (!configuredUrl || !storedUrl) return false;
+    try {
+      const configuredParsed = new URL(configured);
+      const storedParsed = new URL(stored);
+      const configuredHost = configuredParsed.hostname.toLowerCase();
+      const storedHost = storedParsed.hostname.toLowerCase();
+      return configuredParsed.protocol === 'https:' && configuredHost === 'api.clearledgr.com' && (
+        storedHost === '127.0.0.1' ||
+        storedHost === 'localhost' ||
+        storedHost.endsWith('.trycloudflare.com') ||
+        storedHost.endsWith('.up.railway.app')
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function clearStoredBackendOverride(data, nested, configuredBackendUrl) {
+    const storedBackendUrl = data.backendUrl || nested.backendUrl || nested.apiEndpoint || null;
+    if (!shouldClearStoredBackendOverride(storedBackendUrl, configuredBackendUrl)) return;
+    const nextNested = { ...nested };
+    delete nextNested.backendUrl;
+    delete nextNested.apiEndpoint;
+    try {
+      await chrome.storage.sync.set({ settings: nextNested });
+      await chrome.storage.sync.remove(['backendUrl']);
+    } catch (_) {
+      // best effort
+    }
+  }
+
   async function getRuntimeSettings() {
     // Prefer queue manager's sync config (single source of truth).
     if (queueManager?.getSyncConfig) return await queueManager.getSyncConfig();
@@ -52,20 +127,11 @@ import { ClearledgrQueueManager } from './queue-manager.js';
     const configuredBackendUrl = String(
       extensionConfig.API_URL || extensionConfig.BACKEND_URL || ''
     ).trim();
-    let backendUrl = data.backendUrl || nested.backendUrl || nested.apiEndpoint || configuredBackendUrl || 'http://127.0.0.1:8010';
-    backendUrl = String(backendUrl).trim();
-    if (!/^https?:\/\//i.test(backendUrl)) backendUrl = `http://${backendUrl}`;
-    if (backendUrl.endsWith('/v1')) backendUrl = backendUrl.slice(0, -3);
-    try {
-      const parsed = new URL(backendUrl);
-      if (parsed.hostname === '0.0.0.0' || parsed.hostname === 'localhost') {
-        parsed.hostname = '127.0.0.1';
-      }
-      backendUrl = parsed.toString();
-    } catch (_) {
-      // keep original value
-    }
-    backendUrl = backendUrl.replace(/\/+$/, '');
+    await clearStoredBackendOverride(data, nested, configuredBackendUrl);
+    const backendUrl = selectBackendUrl(
+      data.backendUrl || nested.backendUrl || nested.apiEndpoint || null,
+      configuredBackendUrl || 'http://127.0.0.1:8010'
+    ) || 'http://127.0.0.1:8010';
 
     return {
       backendUrl,

@@ -12,6 +12,7 @@ import store from '../../utils/store.js';
 import { hasOpsAccessRole } from '../../utils/roles.js';
 import {
   formatAmount,
+  getAgentMemoryView,
   getFinanceEffectBlockers,
   getFinanceEffectNotice,
   getExceptionReason,
@@ -30,6 +31,9 @@ import {
   canReassignApproval,
   canNudgeApprover,
   canRejectWorkItem,
+  getDefaultNextMoveLabel,
+  hasErpPostingConnection,
+  getOperatorOverrideCopy,
   getPrimaryActionConfig,
   getWorkStateNotice,
   needsEntityRouting,
@@ -202,15 +206,11 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
     push(
       'approval',
       approvalFollowup?.escalation_due
-        ? 'Approval escalation due'
-        : (approvalFollowup?.sla_breached ? 'Approval follow-up due' : 'Waiting on approver'),
-      approvalFollowup?.escalation_due
-        ? 'Approval has been waiting past the escalation policy and should be escalated or reassigned.'
-        : (approvalFollowup?.sla_breached
-          ? 'Approval has been waiting past the reminder SLA and should be nudged.'
-        : (pendingAssignees.length
-          ? `Waiting on ${pendingAssignees.slice(0, 3).join(', ')}.`
-          : 'The approval request is still pending.')),
+        ? 'Approval needs escalation'
+        : (approvalFollowup?.sla_breached ? 'Approval reminder is due' : 'Waiting on approver'),
+      approvalFollowup?.escalation_due || approvalFollowup?.sla_breached || pendingAssignees.length
+        ? getWorkStateNotice(state, documentType, item)
+        : 'The approval request is still pending.',
     );
   }
   if (state === 'needs_info') {
@@ -224,12 +224,22 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
     push(
       'info',
       infoLabel,
-      workflowPause
+      getWorkStateNotice(state, documentType, item)
+        || workflowPause
         || `Clearledgr still needs more information before this ${isInvoiceDocument ? 'invoice' : 'record'} can continue.`,
     );
   }
-  if (state === 'failed_post') {
-    push('erp', 'ERP posting failed', 'Retry the ERP post or review the connector result.');
+  if ((state === 'approved' || state === 'ready_to_post') && !exceptionReason && !hasErpPostingConnection(item)) {
+    push('erp_setup', 'ERP is not connected', 'Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.');
+  }
+  if (state === 'failed_post' && !exceptionReason) {
+    push(
+      'erp',
+      hasErpPostingConnection(item) ? 'ERP posting failed' : 'ERP is not connected',
+      hasErpPostingConnection(item)
+        ? 'Retry the ERP post or review the connector result.'
+        : 'Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.',
+    );
   }
 
   // Validation gate warnings
@@ -425,16 +435,15 @@ function AuditCard({ row }) {
 function RelatedRecordRow({ label, item, onOpen }) {
   if (!item?.id) return null;
   return html`
-    <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <div>
-          <div class="muted" style="font-size:11px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase">${label}</div>
-          <div style="font-size:13px;font-weight:700;margin-top:4px">${item.vendor_name || 'Unknown vendor'} · ${item.invoice_number || 'No invoice #'}</div>
-          <div class="muted" style="font-size:12px;margin-top:4px">
-            ${formatAmount(item.amount, item.currency || 'USD')} · ${String(item.state || 'received').replace(/_/g, ' ')}
-          </div>
+    <div class="secondary-card">
+      <div class="secondary-card-head">
+        <div class="secondary-card-copy">
+          <span class="secondary-card-title">${item.vendor_name || 'Unknown vendor'} · ${item.invoice_number || 'No invoice #'}</span>
+          <div class="secondary-card-meta">${label} · ${formatAmount(item.amount, item.currency)} · ${String(item.state || 'received').replace(/_/g, ' ')}</div>
         </div>
-        <button class="btn-secondary btn-sm" onClick=${onOpen}>Open</button>
+        <div class="secondary-inline-actions">
+          <button class="btn-secondary btn-sm" onClick=${onOpen}>Open</button>
+        </div>
       </div>
     </div>
   `;
@@ -442,30 +451,92 @@ function RelatedRecordRow({ label, item, onOpen }) {
 
 function SourceGroupRow({ group }) {
   if (!group) return null;
+  const sourceType = String(group.source_type || '').trim().toLowerCase();
+  const sourceLabels = {
+    gmail_message: {
+      title: 'Gmail message',
+      meta: 'The specific email linked to this record.',
+    },
+    gmail_thread: {
+      title: 'Gmail thread',
+      meta: 'The wider email thread linked to this record.',
+    },
+    compose_draft: {
+      title: 'Draft email',
+      meta: 'Draft reply linked to this record.',
+    },
+    attachment: {
+      title: 'Attachment',
+      meta: 'File evidence linked to this record.',
+    },
+    portal: {
+      title: 'Vendor portal',
+      meta: 'Portal evidence linked to this record.',
+    },
+    procurement: {
+      title: 'Procurement system',
+      meta: 'Procurement evidence linked to this record.',
+    },
+    dms: {
+      title: 'Document system',
+      meta: 'Document-system evidence linked to this record.',
+    },
+    spreadsheet: {
+      title: 'Spreadsheet',
+      meta: 'Spreadsheet evidence linked to this record.',
+    },
+    sheets: {
+      title: 'Spreadsheet',
+      meta: 'Spreadsheet evidence linked to this record.',
+    },
+    bank: {
+      title: 'Bank record',
+      meta: 'Bank evidence linked to this record.',
+    },
+  };
+  const sourceLabel = sourceLabels[sourceType] || {
+    title: String(group.source_type || 'linked evidence').replace(/_/g, ' '),
+    meta: 'Evidence linked to this record.',
+  };
+  const itemCount = Number(group.count || 0);
   return html`
-    <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px">
-        <strong style="font-size:13px">${String(group.source_type || 'unknown').replace(/_/g, ' ')}</strong>
-        <span class="muted" style="font-size:12px;font-weight:700">${Number(group.count || 0).toLocaleString()}</span>
+    <div class="secondary-card">
+      <div class="secondary-card-head">
+        <div class="secondary-card-copy">
+          <span class="secondary-card-title">${sourceLabel.title}</span>
+          <div class="secondary-card-meta">${sourceLabel.meta}</div>
+        </div>
+        <div class="secondary-card-stat">
+          <strong>${itemCount.toLocaleString()}</strong>
+          <span>${itemCount === 1 ? 'item' : 'items'}</span>
+        </div>
       </div>
+      <div class="secondary-card-list" style="margin-top:10px">
       ${(group.items || []).slice(0, 2).map((entry, index) => html`
-        <div key=${`${group.source_type}-${entry?.source_ref || index}`} class="muted" style="font-size:12px;line-height:1.5;padding-top:${index > 0 ? '8px' : '0'}">
-          <div>${entry?.subject || entry?.source_ref || 'Linked evidence'}</div>
-          <div>${entry?.sender || 'Unknown sender'}${entry?.detected_at ? ` · ${fmtDateTime(entry.detected_at)}` : ''}</div>
+        <div key=${`${group.source_type}-${entry?.source_ref || index}`} class="secondary-row">
+          <div class="secondary-row-copy">
+            <strong>${entry?.subject || entry?.source_ref || 'Linked evidence'}</strong>
+            <p>${entry?.sender || 'Linked source'}${entry?.detected_at ? ` · ${fmtDateTime(entry.detected_at)}` : ''}</p>
+          </div>
         </div>
       `)}
+      </div>
     </div>
   `;
 }
 
 function TemplateActionRow({ template, onDraft }) {
   return html`
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-      <div>
-        <strong style="display:block;font-size:13px">${template.name}</strong>
-        <span class="muted" style="font-size:12px">${template.description || 'Reusable reply template.'}</span>
+    <div class="secondary-card">
+      <div class="secondary-card-head">
+        <div class="secondary-card-copy">
+          <span class="secondary-card-title">${template.name}</span>
+          <div class="secondary-card-meta">${template.description || 'Reusable reply template.'}</div>
+        </div>
+        <div class="secondary-inline-actions">
+          <button class="btn-secondary btn-sm" onClick=${onDraft}>Draft</button>
+        </div>
       </div>
-      <button class="btn-secondary btn-sm" onClick=${onDraft}>Draft</button>
     </div>
   `;
 }
@@ -568,6 +639,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
   const reconciliationReference = item?.reconciliation_reference && typeof item.reconciliation_reference === 'object'
     ? item.reconciliation_reference
     : {};
+  const agentView = useMemo(() => getAgentMemoryView(item), [item]);
   const hasAccountingLinkage = Boolean(
     linkedRecord
     || linkedFinanceDocuments.length
@@ -586,6 +658,23 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
     return replyTemplates.slice(0, 4);
   }, [replyTemplates, templatePrefs]);
   const nonInvoiceActions = useMemo(() => (!isInvoiceDocument ? getNonInvoiceActions(item) : []), [isInvoiceDocument, item]);
+  const pendingApproverSummary = Array.isArray(approvalFollowup?.pending_assignees) && approvalFollowup.pending_assignees.length
+    ? approvalFollowup.pending_assignees.slice(0, 3).join(', ')
+    : 'Not recorded';
+  const contextSummary = String(context?.reasoning_summary || '').trim();
+  const contextNextStep = String(context?.next_action || '').trim();
+  const contextRisks = String(context?.reasoning_risks || '').trim();
+  const showContextPanel = Boolean(
+    (contextSummary && contextSummary !== agentView.beliefReason)
+    || (contextNextStep && contextNextStep !== agentView.nextActionLabel)
+    || contextRisks
+  );
+  const heroMeta = [
+    item?.invoice_number ? getDocumentReferenceText(documentType, item.invoice_number) : documentLabel,
+    ...(isInvoiceDocument ? [item?.due_date ? `Due ${item.due_date}` : 'Due date pending', item?.po_number ? `PO ${item.po_number}` : 'No PO linked'] : []),
+    item?.sender || null,
+  ].filter(Boolean);
+  const heroNote = pauseReason || stateNotice;
 
   const [doRequestApproval, requestingApproval] = useAction(async () => {
     const result = await executeIntent(api, orgId, 'request_approval', {
@@ -725,7 +814,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
       message: 'Review blockers are cleared. Clearledgr will continue the guarded posting step.',
       previewLines: [
         item?.vendor_name || item?.vendor || 'Unknown vendor',
-        formatAmount(item?.amount, item?.currency || 'USD'),
+        formatAmount(item?.amount, item?.currency),
         getDocumentReferenceText(documentType, item?.invoice_number || ''),
         isInvoiceDocument && item?.due_date ? `Due: ${item.due_date}` : null,
       ].filter(Boolean),
@@ -859,6 +948,10 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
   });
 
   const [doPost, posting] = useAction(async () => {
+    if (!hasErpPostingConnection(item)) {
+      toast('Connect an ERP before posting this invoice.', 'error');
+      return;
+    }
     const confirmed = await openDialog({
       dialogMode: 'confirm',
       actionType: 'preview_erp_post',
@@ -866,7 +959,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
       message: 'Review this invoice before posting it to the ERP.',
       previewLines: [
         item?.vendor_name || item?.vendor || 'Unknown vendor',
-        formatAmount(item?.amount, item?.currency || 'USD'),
+        formatAmount(item?.amount, item?.currency),
         getDocumentReferenceText(documentType, item?.invoice_number || ''),
         isInvoiceDocument && item?.due_date ? `Due ${item.due_date}` : null,
       ].filter(Boolean),
@@ -918,7 +1011,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
     if (!item?.id) return;
     selectActiveItem(item.id);
     focusPipelineItem(pipelineScope, item, 'detail');
-    navigate('clearledgr/pipeline');
+    navigate('clearledgr/invoices');
   }, [item, navigate, pipelineScope]);
 
   const openVendorRecord = useCallback(() => {
@@ -939,11 +1032,17 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
       toast('Template unavailable for this record.', 'warning');
       return;
     }
-    const issueSummary = getIssueSummary(item) || context?.summary?.text || 'additional information is required';
+    const issueSummary = getIssueSummary(item) || agentView.beliefReason || context?.summary?.text || 'additional information is required';
     const prefill = buildReplyTemplatePrefill(template, item, {
       issue_summary: issueSummary,
-      next_action: item?.next_action || context?.summary?.text || 'Review in Clearledgr',
+      next_action: agentView.nextActionLabel || item?.next_action || context?.summary?.text || 'Review in Clearledgr',
     });
+    prefill.recordContext = {
+      apItemId: item.id,
+      vendorName: item.vendor_name || item.vendor || item.sender || '',
+      invoiceNumber: item.invoice_number || '',
+      amountLabel: formatAmount(item.amount, item.currency),
+    };
     try {
       await store.composeWithPrefill(prefill);
       toast('Draft opened in Gmail compose.', 'success');
@@ -960,7 +1059,7 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
     return html`
       <div class="panel">
         <p class="muted">Record not found.</p>
-        <button class="btn-secondary" onClick=${() => navigate('clearledgr/pipeline')}>Back to pipeline</button>
+        <button class="btn-secondary" onClick=${() => navigate('clearledgr/invoices')}>Back to invoices</button>
       </div>
     `;
   }
@@ -992,35 +1091,66 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
     primaryHandler = doResumeWorkflow;
     primaryPending = resumingWorkflow;
   }
+  const bestNextStepLabel = agentView.nextActionLabel
+    || primaryAction?.label
+    || getDefaultNextMoveLabel(state, item, actorRole, documentType);
+  const operatorOverrideCopy = getOperatorOverrideCopy(state, item, documentType);
+  const secondaryActionCount = [
+    canRejectWorkItem(state, actorRole, documentType),
+    canReassignApproval(item, state, actorRole, documentType),
+    canEscalateApproval(item, state, actorRole, documentType) && primaryAction?.id !== 'escalate_approval',
+    entityNeedsReview && primaryAction?.id !== 'resolve_entity_route',
+    canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== 'nudge_approver',
+  ].filter(Boolean).length;
 
   return html`
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+    <div class="record-detail-toolbar">
       <div class="toolbar-actions">
-        <button class="btn-secondary btn-sm" onClick=${openInPipeline}>Back to pipeline</button>
+        <button class="btn-secondary btn-sm" onClick=${openInPipeline}>Back to invoices</button>
         ${canOpenEmail && html`<button class="btn-ghost btn-sm" onClick=${openEmail}>Open email</button>`}
         ${(item?.vendor_name || item?.vendor) && html`<button class="btn-ghost btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
       </div>
     </div>
 
-    <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+    <div class="panel record-detail-hero">
+      <div class="panel-head">
         <div>
-          <h3 style="margin:0 0 4px">${item.vendor_name || item.vendor || 'Unknown vendor'}</h3>
-          <div style="font-size:28px;font-weight:700;letter-spacing:-0.02em">${formatAmount(item.amount, item.currency || 'USD')}</div>
-          <div class="muted" style="margin-top:6px">
-            ${[
-              item?.invoice_number ? getDocumentReferenceText(documentType, item.invoice_number) : documentLabel,
-              ...(isInvoiceDocument ? [`Due ${item.due_date || 'N/A'}`, item.po_number ? `PO ${item.po_number}` : 'No PO'] : []),
-            ].join(' · ')}
+          <div class="record-detail-eyebrow">
+            <${StatePill} state=${state} />
+            <span class="secondary-chip">${documentLabel}</span>
+            ${entityNeedsReview && html`<span class="secondary-chip">Entity review</span>`}
+            ${item?.finance_effect_review_required && html`<span class="secondary-chip">Finance review</span>`}
+          </div>
+          <h3 style="margin:0 0 6px">${item.vendor_name || item.vendor || 'Unknown vendor'}</h3>
+          <div class="record-detail-amount">${formatAmount(item.amount, item.currency)}</div>
+          <div class="record-detail-meta">
+            ${heroMeta.join(' · ')}
           </div>
         </div>
-        <${StatePill} state=${state} />
       </div>
 
-      ${pauseReason && html`<div class="muted" style="margin-top:12px">${pauseReason}</div>`}
-      ${!pauseReason && stateNotice && html`<div class="muted" style="margin-top:12px">${stateNotice}</div>`}
+      ${heroNote && html`<div class="secondary-note record-detail-hero-note">${heroNote}</div>`}
 
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">
+      <div class="secondary-stat-grid record-detail-summary">
+        <div class="secondary-stat-card">
+          <strong>Best next step</strong>
+          <span>${bestNextStepLabel}</span>
+        </div>
+        <div class="secondary-stat-card">
+          <strong>Confidence</strong>
+          <span>${item.confidence ? `${Math.round(Number(item.confidence) * 100)}%` : 'Awaiting confidence score'}</span>
+        </div>
+        <div class="secondary-stat-card">
+          <strong>${state === 'needs_approval' ? 'Approval owner' : 'Step owner'}</strong>
+          <span>${state === 'needs_approval' ? pendingApproverSummary : (agentView.nextActionOwnerLabel || 'Operator')}</span>
+        </div>
+        <div class="secondary-stat-card">
+          <strong>Last update</strong>
+          <span>${fmtDateTime(item.updated_at || item.created_at)}</span>
+        </div>
+      </div>
+
+      <div class="toolbar-actions record-detail-hero-actions">
         ${primaryAction?.label && primaryHandler && html`
           <button class="btn-primary" onClick=${primaryHandler} disabled=${primaryPending}>
             ${primaryPending ? 'Processing…' : primaryAction.label}
@@ -1036,90 +1166,132 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
             ${resolvingNonInvoice && resolvingNonInvoiceKey === `${item.id}:${action.id}` ? 'Processing…' : action.label}
           </button>
         `)}
-        ${readOnlyMode && html`
-        <div class="muted" style="width:100%">Read-only view. You can review this record here, but only operators can take action.</div>
-        `}
-        ${canRejectWorkItem(state, actorRole, documentType) && html`
-          <button class="btn-danger btn-sm" onClick=${doReject} disabled=${rejecting}>Reject</button>
-        `}
-        ${canReassignApproval(item, state, actorRole, documentType) && html`
-          <button class="btn-secondary btn-sm" onClick=${doReassignApproval} disabled=${reassigningApproval}>
-            ${reassigningApproval ? 'Reassigning…' : 'Reassign approver'}
-          </button>
-        `}
-        ${canEscalateApproval(item, state, actorRole, documentType) && primaryAction?.id !== 'escalate_approval' && html`
-          <button class="btn-secondary btn-sm" onClick=${doEscalateApproval} disabled=${escalatingApproval}>
-            ${escalatingApproval ? 'Escalating…' : 'Escalate approval'}
-          </button>
-        `}
-        ${entityNeedsReview && primaryAction?.id !== 'resolve_entity_route' && html`
-          <button class="btn-secondary btn-sm" onClick=${doResolveEntityRoute} disabled=${resolvingEntityRoute}>
-            ${resolvingEntityRoute ? 'Resolving…' : 'Resolve entity'}
-          </button>
-        `}
-        ${canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== 'nudge_approver' && html`
-          <button class="btn-secondary btn-sm" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
-        `}
       </div>
+      ${secondaryActionCount > 0 && html`
+        <details class="route-operator-overrides">
+          <summary class="route-operator-overrides-summary">
+            <span>${operatorOverrideCopy.title}</span>
+            <span class="route-operator-overrides-count">${secondaryActionCount}</span>
+          </summary>
+          <div class="route-operator-overrides-copy">${operatorOverrideCopy.detail}</div>
+          <div class="toolbar-actions route-operator-overrides-actions">
+            ${canRejectWorkItem(state, actorRole, documentType) && html`
+              <button class="btn-danger btn-sm" onClick=${doReject} disabled=${rejecting}>Reject</button>
+            `}
+            ${canReassignApproval(item, state, actorRole, documentType) && html`
+              <button class="btn-secondary btn-sm" onClick=${doReassignApproval} disabled=${reassigningApproval}>
+                ${reassigningApproval ? 'Reassigning…' : 'Reassign approver'}
+              </button>
+            `}
+            ${canEscalateApproval(item, state, actorRole, documentType) && primaryAction?.id !== 'escalate_approval' && html`
+              <button class="btn-secondary btn-sm" onClick=${doEscalateApproval} disabled=${escalatingApproval}>
+                ${escalatingApproval ? 'Escalating…' : 'Escalate approval'}
+              </button>
+            `}
+            ${entityNeedsReview && primaryAction?.id !== 'resolve_entity_route' && html`
+              <button class="btn-secondary btn-sm" onClick=${doResolveEntityRoute} disabled=${resolvingEntityRoute}>
+                ${resolvingEntityRoute ? 'Resolving…' : 'Resolve entity'}
+              </button>
+            `}
+            ${canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== 'nudge_approver' && html`
+              <button class="btn-secondary btn-sm" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
+            `}
+          </div>
+        </details>
+      `}
+      ${readOnlyMode && html`
+        <div class="secondary-note record-detail-hero-note">
+          Read-only view. You can review this record here, but only operators can take action.
+        </div>
+      `}
     </div>
 
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px">
-      <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="record-detail-shell">
+      <div class="record-detail-main">
         <div class="panel">
-          <h3 style="margin-top:0">Blocked because</h3>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Blocked because</h3>
+              <p class="muted" style="margin:4px 0 0">What is stopping the record from moving cleanly to the next step.</p>
+            </div>
+          </div>
           ${blockers.length
-            ? html`<div style="display:flex;flex-direction:column;gap:10px">
+            ? html`<div class="secondary-card-list">
                 ${blockers.map((blocker) => html`
-                  <div key=${blocker.key} style="padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
-                    <div style="font-weight:700;font-size:13px">${blocker.label}</div>
-                    ${blocker.detail && html`<div class="muted" style="margin-top:4px;font-size:13px">${blocker.detail}</div>`}
+                  <div key=${blocker.key} class="secondary-card">
+                    <div class="secondary-card-copy">
+                      <span class="secondary-card-title">${blocker.label}</span>
+                      ${blocker.detail && html`<div class="secondary-card-meta">${blocker.detail}</div>`}
+                    </div>
                   </div>
                 `)}
               </div>`
-            : html`<p class="muted">No active blockers.</p>`}
+            : html`<p class="secondary-empty">No active blockers.</p>`}
         </div>
 
         ${Array.isArray(item?.line_items) && item.line_items.length > 0 && html`
           <div class="panel">
-            <h3 style="margin-top:0">Line items (${item.line_items.length})</h3>
-            <div style="display:flex;flex-direction:column;gap:6px">
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Line items</h3>
+                <p class="muted" style="margin:4px 0 0">${item.line_items.length} extracted lines with invoice roll-up totals.</p>
+              </div>
+            </div>
+            <div class="secondary-card-list">
               ${item.line_items.slice(0, 15).map((li, i) => html`
-                <div key=${i} style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
-                  <div>
-                    <div>${li.description || `Line ${i + 1}`}</div>
-                    ${li.gl_code && html`<div class="muted" style="font-size:12px">GL: ${li.gl_code}</div>`}
+                <div key=${i} class="secondary-row">
+                  <div class="secondary-row-copy">
+                    <strong>${li.description || `Line ${i + 1}`}</strong>
+                    <p>
+                      ${[
+                        li.gl_code ? `GL ${li.gl_code}` : null,
+                        li.quantity ? `Qty ${li.quantity}` : null,
+                      ].filter(Boolean).join(' · ') || 'No additional line details'}
+                    </p>
                   </div>
-                  <div style="font-weight:600">${formatAmount(li.amount || 0, item.currency || 'USD')}</div>
+                  <div class="secondary-inline-actions">
+                    <span class="secondary-chip">${formatAmount(li.amount || 0, item.currency)}</span>
+                  </div>
                 </div>
               `)}
             </div>
-            ${item.tax_amount && html`<div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px;font-weight:600">
-              <div>Tax</div>
-              <div>${formatAmount(item.tax_amount, item.currency || 'USD')}</div>
-            </div>`}
-            ${item.discount_amount && html`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;color:var(--green)">
-              <div>Discount${item.discount_terms ? ` (${item.discount_terms})` : ''}</div>
-              <div>-${formatAmount(item.discount_amount, item.currency || 'USD')}</div>
-            </div>`}
+            ${(item.tax_amount || item.discount_amount) && html`
+              <div class="detail-row-list" style="margin-top:12px">
+                ${item.tax_amount ? detailRow('Tax', formatAmount(item.tax_amount, item.currency)) : null}
+                ${item.discount_amount ? detailRow(`Discount${item.discount_terms ? ` (${item.discount_terms})` : ''}`, `-${formatAmount(item.discount_amount, item.currency)}`) : null}
+              </div>
+            `}
           </div>
         `}
 
         ${item?.payment_status && item.payment_status !== 'none' && html`
           <div class="panel">
-            <h3 style="margin-top:0">Payment</h3>
-            ${detailRow('Status', (item.payment_status || '').replace(/_/g, ' '))}
-            ${item.payment_reference && detailRow('Reference', item.payment_reference)}
-            ${item.payment_method && detailRow('Method', item.payment_method)}
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Payment</h3>
+                <p class="muted" style="margin:4px 0 0">Settlement details currently tracked on the record.</p>
+              </div>
+            </div>
+            <div class="detail-row-list">
+              ${detailRow('Status', (item.payment_status || '').replace(/_/g, ' '))}
+              ${item.payment_reference && detailRow('Reference', item.payment_reference)}
+              ${item.payment_method && detailRow('Method', item.payment_method)}
+            </div>
           </div>
         `}
 
         ${(state === 'needs_approval' || entityNeedsReview) && html`
           <div class="panel">
-            <h3 style="margin-top:0">Follow-up and routing</h3>
-            <div style="display:flex;flex-direction:column;gap:10px">
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Follow-up and routing</h3>
+                <p class="muted" style="margin:4px 0 0">Who owns the approval path and whether entity routing still needs a decision.</p>
+              </div>
+            </div>
+            <div class="detail-row-list">
               ${state === 'needs_approval' && html`
                 ${detailRow('Approval wait', approvalFollowup?.wait_minutes ? `${approvalFollowup.wait_minutes} minutes` : '—')}
-                ${detailRow('Pending approvers', Array.isArray(approvalFollowup?.pending_assignees) && approvalFollowup.pending_assignees.length ? approvalFollowup.pending_assignees.join(', ') : 'Not recorded')}
+                ${detailRow('Pending approvers', pendingApproverSummary)}
                 ${detailRow(
                   'Approval SLA',
                   approvalFollowup?.escalation_due
@@ -1140,7 +1312,12 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
         `}
 
         <div class="panel">
-          <h3 style="margin-top:0">Check these fields</h3>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Check these fields</h3>
+              <p class="muted" style="margin:4px 0 0">Resolve extraction conflicts before the workflow keeps moving.</p>
+            </div>
+          </div>
           <${FieldReviewRows}
             blockers=${fieldReviewBlockers}
             pauseReason=${pauseReason}
@@ -1150,23 +1327,42 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Evidence checklist</h3>
-          <div style="display:flex;flex-direction:column;gap:10px">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Evidence checklist</h3>
+              <p class="muted" style="margin:4px 0 0">Everything Clearledgr needs to approve, explain, and post this record with confidence.</p>
+            </div>
+          </div>
+          <div class="secondary-card-list">
             ${evidence.map((entry) => html`
-              <div key=${entry.key} style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-                <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
-                  <span>${entry.label}</span>
-                  ${entry.detail && html`<span class="muted" style="font-size:12px;line-height:1.4">${entry.detail}</span>`}
+              <div key=${entry.key} class="secondary-row">
+                <div class="secondary-row-copy">
+                  <strong>${entry.label}</strong>
+                  ${entry.detail && html`<p>${entry.detail}</p>`}
                 </div>
-                <span style="font-size:12px;font-weight:700;color:${entry.status === 'ok' ? 'var(--brand-muted)' : 'var(--ink-muted)'}">${entry.text}</span>
+                <div class="secondary-inline-actions">
+                  <span
+                    class="secondary-chip"
+                    style=${entry.status === 'ok'
+                      ? 'border-color:#A7F3D0;background:#ECFDF5;color:#059669'
+                      : 'border-color:#E2E8F0;background:#F8FAFC;color:#64748B'}
+                  >
+                    ${entry.text}
+                  </span>
+                </div>
               </div>
             `)}
           </div>
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">${documentLabel} details</h3>
-          <div style="display:flex;flex-direction:column;gap:10px">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">${documentLabel} details</h3>
+              <p class="muted" style="margin:4px 0 0">Core source fields and identifiers captured on this AP record.</p>
+            </div>
+          </div>
+          <div class="detail-row-list">
             ${detailRow(getDocumentReferenceLabel(documentType), item.invoice_number || '—')}
             ${detailRow('Document type', documentLabel)}
             ${isInvoiceDocument ? detailRow('Due date', item.due_date ? fmtDate(item.due_date) : '—') : null}
@@ -1180,30 +1376,39 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
 
         ${hasAccountingLinkage && html`
           <div class="panel">
-            <h3 style="margin-top:0">Credits and payments</h3>
-            <div style="display:flex;flex-direction:column;gap:10px">
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Credits and payments</h3>
+                <p class="muted" style="margin:4px 0 0">How credits, refunds, reconciliation, and linked finance documents change the payable balance.</p>
+              </div>
+            </div>
+            <div class="detail-detail-stack">
               ${financeEffectNotice
-                ? html`<div class="muted" style="font-size:13px;line-height:1.45">${financeEffectNotice}</div>`
+                ? html`<div class="secondary-note">${financeEffectNotice}</div>`
                 : null}
               ${Object.keys(financeEffectSummary).length
                 ? html`
-                    ${detailRow('Original amount', formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency || 'USD'))}
-                    ${detailRow('Credits applied', formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency || 'USD'))}
-                    ${detailRow('Cash out evidence', formatAmount(financeEffectSummary.gross_cash_out_total, financeEffectSummary.currency || item.currency || 'USD'))}
-                    ${detailRow('Refunds linked', formatAmount(financeEffectSummary.refund_total, financeEffectSummary.currency || item.currency || 'USD'))}
-                    ${detailRow('Net cash applied', formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency || 'USD'))}
-                    ${detailRow('Remaining balance', formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency || 'USD'))}
+                    <div class="detail-row-list">
+                    ${detailRow('Original amount', formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency))}
+                    ${detailRow('Credits applied', formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency))}
+                    ${detailRow('Cash out evidence', formatAmount(financeEffectSummary.gross_cash_out_total, financeEffectSummary.currency || item.currency))}
+                    ${detailRow('Refunds linked', formatAmount(financeEffectSummary.refund_total, financeEffectSummary.currency || item.currency))}
+                    ${detailRow('Net cash applied', formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency))}
+                    ${detailRow('Remaining balance', formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency))}
                     ${detailRow('Credit state', String(financeEffectSummary.credit_application_state || 'none').replace(/_/g, ' '))}
                     ${detailRow('Settlement state', String(financeEffectSummary.settlement_state || 'open').replace(/_/g, ' '))}
+                    </div>
                   `
                 : null}
               ${financeEffectBlockers.length > 0
                 ? html`
-                    <div style="display:flex;flex-direction:column;gap:8px">
+                    <div class="secondary-card-list">
                       ${financeEffectBlockers.map((blocker) => html`
-                        <div key=${blocker.code} style="padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
-                          <div style="font-weight:700;font-size:13px">${blocker.label}</div>
-                          ${blocker.detail && html`<div class="muted" style="margin-top:4px;font-size:12px;line-height:1.45">${blocker.detail}</div>`}
+                        <div key=${blocker.code} class="secondary-card">
+                          <div class="secondary-card-copy">
+                            <span class="secondary-card-title">${blocker.label}</span>
+                            ${blocker.detail && html`<div class="secondary-card-meta">${blocker.detail}</div>`}
+                          </div>
                         </div>
                       `)}
                     </div>
@@ -1228,6 +1433,8 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
                     `Session ${reconciliationReference.session_id}${reconciliationReference.item_id ? ` · Item ${reconciliationReference.item_id}` : ''}`
                   )
                 : null}
+              ${linkedFinanceDocuments.length > 0 && html`
+                <div class="secondary-card-list">
               ${linkedFinanceDocuments.map((linkedDocument) => html`
                 <${RelatedRecordRow}
                   key=${linkedDocument.source_ap_item_id}
@@ -1244,19 +1451,21 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
                   onOpen=${() => openRelatedRecord({ id: linkedDocument.source_ap_item_id })}
                 />`
               )}
+                </div>
+              `}
             </div>
           </div>
         `}
 
         <div class="panel">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+          <div class="panel-head compact">
             <div>
-              <h3 style="margin:0 0 4px">Linked records</h3>
+              <h3 style="margin:0">Linked records</h3>
               <p class="muted" style="margin:0">Related invoices and superseded records linked to this AP item.</p>
             </div>
             ${(item?.vendor_name || item?.vendor) && html`<button class="btn-secondary btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
           </div>
-          <div style="display:flex;flex-direction:column;gap:10px">
+          <div class="secondary-card-list">
             ${(relatedRecords?.supersession?.previous_item || relatedRecords?.supersession?.next_item || (relatedRecords?.same_invoice_number_items || []).length || (relatedRecords?.vendor_recent_items || []).length)
               ? html`
                   ${relatedRecords?.supersession?.previous_item
@@ -1290,36 +1499,19 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
                     />
                   `)}
                 `
-              : html`<p class="muted" style="margin:0">No linked records yet.</p>`}
-          </div>
-        </div>
-      </div>
-
-      <div style="display:flex;flex-direction:column;gap:16px">
-        <div class="panel">
-          <h3 style="margin-top:0">Reply templates</h3>
-          <p class="muted" style="margin:0 0 12px">Draft consistent vendor or approver messages from this record without leaving Gmail.</p>
-          ${quickReplyTemplates.length === 0
-            ? html`<p class="muted" style="margin:0">No reply templates are available yet.</p>`
-            : html`<div style="display:flex;flex-direction:column;gap:10px">
-                ${quickReplyTemplates.map((template) => html`
-                  <${TemplateActionRow}
-                    key=${template.id}
-                    template=${template}
-                    onDraft=${() => draftReply(template.id)}
-                  />
-                `)}
-              </div>`}
-          <div class="toolbar-actions" style="margin-top:12px">
-            <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/templates')}>Manage templates</button>
-            ${draftingReply && html`<span class="muted" style="font-size:12px;align-self:center">Opening compose…</span>`}
+              : html`<p class="secondary-empty" style="margin:0">No linked records yet.</p>`}
           </div>
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Record history</h3>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Record history</h3>
+              <p class="muted" style="margin:4px 0 0">The key decisions, retries, and background events on this record.</p>
+            </div>
+          </div>
           ${auditSections.rows.length === 0
-            ? html`<p class="muted">No audit events yet.</p>`
+            ? html`<p class="secondary-empty">No audit events yet.</p>`
             : html`
               <div style="display:flex;flex-direction:column;gap:14px">
                 ${auditSections.primaryRows.length > 0 && html`
@@ -1341,22 +1533,94 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
               </div>
             `}
         </div>
+      </div>
 
-        ${context && html`
+      <div class="record-detail-side">
+        <div class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">What Clearledgr sees</h3>
+              <p class="muted" style="margin:4px 0 0;line-height:1.6">Current status, what happens next, and what still needs attention.</p>
+            </div>
+          </div>
+          <div class="detail-row-list">
+            ${detailRow('Current status', agentView.stateSummaryLabel || agentView.currentStateLabel || agentView.statusLabel || 'Received')}
+            ${detailRow('Next step', agentView.nextActionLabel || 'Review this record')}
+            ${detailRow('Waiting on', agentView.nextActionActorLabel || agentView.nextActionOwnerLabel || 'Clearledgr')}
+          </div>
+          ${agentView.beliefReason && html`
+            <div class="secondary-callout" style="margin-top:12px">
+              <strong style="display:block;margin-bottom:6px;color:var(--ink)">Why this record is waiting</strong>
+              ${agentView.beliefReason}
+            </div>
+          `}
+          ${agentView.highlights.length > 0 && html`
+            <div class="secondary-card-list" style="margin-top:12px">
+              ${agentView.highlights.map((entry) => html`
+                <div key=${entry} class="secondary-card">
+                  <div class="secondary-card-copy">
+                    <span class="secondary-card-title">Still needs attention</span>
+                    <div class="secondary-card-meta">${entry}</div>
+                  </div>
+                </div>
+              `)}
+            </div>
+          `}
+        </div>
+
+        <div class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Ready-to-send replies</h3>
+              <p class="muted" style="margin:4px 0 0">Draft vendor or approver messages from this record without leaving Gmail.</p>
+            </div>
+          </div>
+          ${quickReplyTemplates.length === 0
+            ? html`<p class="secondary-empty" style="margin:0">No reply templates are available yet.</p>`
+            : html`<div class="secondary-card-list">
+                ${quickReplyTemplates.map((template) => html`
+                  <${TemplateActionRow}
+                    key=${template.id}
+                    template=${template}
+                    onDraft=${() => draftReply(template.id)}
+                  />
+                `)}
+              </div>`}
+          <div class="toolbar-actions" style="margin-top:12px">
+            <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/templates')}>Manage templates</button>
+            ${draftingReply && html`<span class="muted" style="font-size:12px;align-self:center">Opening compose…</span>`}
+          </div>
+        </div>
+
+        ${showContextPanel && html`
           <div class="panel">
-            <h3 style="margin-top:0">Context</h3>
-            ${context.reasoning_summary && html`<p style="font-size:13px;color:var(--ink-secondary);line-height:1.6">${context.reasoning_summary}</p>`}
-            ${context.reasoning_risks && html`<p style="font-size:13px;color:var(--amber);line-height:1.6">${context.reasoning_risks}</p>`}
-            ${context.next_action && html`<p class="muted" style="margin:0"><strong>Best next step:</strong> ${context.next_action}</p>`}
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Decision context</h3>
+                <p class="muted" style="margin:4px 0 0">Why Clearledgr paused here and what it will do once this is resolved.</p>
+              </div>
+            </div>
+            ${contextSummary && contextSummary !== agentView.beliefReason && html`<div class="secondary-callout">${contextSummary}</div>`}
+            ${contextRisks && html`<div class="secondary-callout warning" style="margin-top:10px">${contextRisks}</div>`}
+            ${contextNextStep && contextNextStep !== agentView.nextActionLabel && html`
+              <div class="detail-row-list" style="margin-top:10px">
+                ${detailRow('After that', contextNextStep)}
+              </div>
+            `}
           </div>
         `}
 
         ${context && html`
           <div class="panel">
-            <h3 style="margin-top:0">Evidence sources</h3>
+            <div class="panel-head compact">
+              <div>
+                <h3 style="margin:0">Evidence attached</h3>
+                <p class="muted" style="margin:4px 0 0">Messages, files, and linked records Clearledgr is using for this record.</p>
+              </div>
+            </div>
             ${sourceGroups.length === 0
-              ? html`<p class="muted" style="margin:0">No linked evidence sources yet.</p>`
-              : html`<div style="display:flex;flex-direction:column;gap:10px">
+              ? html`<p class="secondary-empty" style="margin:0">No linked evidence sources yet.</p>`
+              : html`<div class="secondary-card-list">
                   ${sourceGroups.slice(0, 5).map((group) => html`<${SourceGroupRow} key=${group.source_type} group=${group} />`)}
                 </div>`}
           </div>
@@ -1370,9 +1634,9 @@ export default function InvoiceDetailPage({ api, bootstrap, toast, orgId, userEm
 
 function detailRow(label, value) {
   return html`
-    <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-      <span class="muted">${label}</span>
-      <span style="font-weight:500;text-align:right;max-width:65%">${value}</span>
+    <div class="detail-row">
+      <span class="detail-row-label">${label}</span>
+      <span class="detail-row-value">${value}</span>
     </div>
   `;
 }

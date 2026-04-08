@@ -19,12 +19,30 @@ test('interactive Gmail auth forces a fresh OAuth exchange', () => {
   );
   assert.match(
     backgroundSource,
-    /if \(forceFresh\)\s*\{\s*await clearCachedAuthToken\(\);/m,
-    'forceFresh auth should clear cached Gmail tokens before relaunching OAuth'
+    /const stored = forceFresh[\s\S]*await clearCachedAuthToken\(\);/m,
+    'forceFresh auth should bypass stored Gmail tokens and clear cached Gmail tokens before relaunching OAuth'
   );
   assert.match(
     backgroundSource,
     /getAuthToken\(wantsInteractive, \{ forceFresh: wantsInteractive \}\)/,
     'manual interactive auth should force a fresh code exchange'
+  );
+});
+
+test('background auth bridge forwards backend credentials from either payload shape', () => {
+  assert.match(
+    backgroundSource,
+    /backendAccessToken:\s*payload\?\.backend_access_token\s*\|\|\s*payload\?\.backendAccessToken\s*\|\|\s*null/,
+    'message bridge should forward backend tokens from snake_case or camelCase payloads'
+  );
+  assert.match(
+    backgroundSource,
+    /organizationId:\s*payload\?\.organization_id\s*\|\|\s*payload\?\.organizationId\s*\|\|\s*'default'/,
+    'message bridge should forward organization ids from snake_case or camelCase payloads'
+  );
+  assert.match(
+    backgroundSource,
+    /backendRegistration\?\.backend_access_token[\s\S]*backendRegistration\?\.backendAccessToken[\s\S]*\|\|\s*token/,
+    'auth flow should prefer backend-issued tokens and only fall back to the Google token'
   );
 });

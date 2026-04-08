@@ -6,7 +6,7 @@ import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDate, fmtDateTime, useAction } from '../route-helpers.js';
-import { openSourceEmail } from '../../utils/formatters.js';
+import { formatAmount, openSourceEmail } from '../../utils/formatters.js';
 import { navigateToRecordDetail } from '../../utils/record-route.js';
 import {
   getDocumentReferenceText,
@@ -20,7 +20,6 @@ import {
 } from '../../utils/work-actions.js';
 import {
   PIPELINE_BUILTIN_SLICES,
-  PIPELINE_STARTER_VIEWS,
   activatePipelineSlice,
   buildPipelinePreferencePatch,
   buildPipelineSliceCounts,
@@ -72,13 +71,13 @@ const STATE_STYLES = {
 
 const BLOCKER_LABELS = {
   entity: 'Entity review',
-  approval: 'Approval waiting',
+  approval: 'Waiting on approver',
   info: 'Needs info',
-  erp: 'ERP retry',
-  exception: 'Policy block',
+  erp: 'ERP issue',
+  exception: 'Needs review',
   confidence: 'Field review',
   budget: 'Budget review',
-  po: 'PO / GR issue',
+  po: 'PO review',
   processing: 'Processing issue',
 };
 
@@ -89,12 +88,6 @@ const ERP_STATUS_LABELS = {
   posted: 'Posted',
   not_connected: 'Not connected',
 };
-
-function isTypingTarget(target) {
-  if (!target || typeof target !== 'object') return false;
-  const tag = String(target.tagName || '').toUpperCase();
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(target.isContentEditable);
-}
 
 function getPipelineScope(orgId, userEmail) {
   return { orgId, userEmail };
@@ -121,25 +114,43 @@ function SliceChip({ slice, count, active, onClick }) {
   return html`<button
     onClick=${onClick}
     style="
-      display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;
+      display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:10px;
       border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};
       background:${active ? 'var(--accent-soft)' : 'var(--surface)'};
       color:${active ? 'var(--accent-ink)' : 'var(--ink)'};
-      cursor:pointer;font-family:inherit;text-align:left;min-width:182px;
+      cursor:pointer;font-family:inherit;text-align:left;min-width:128px;
     "
   >
-    <span style="font-size:13px;font-weight:700">${slice.label}</span>
-    <span style="margin-left:auto;font-size:12px;font-weight:700;color:inherit">${count}</span>
+    <span style="font-size:12px;font-weight:700">${slice.label}</span>
+    <span style="margin-left:auto;font-size:11px;font-weight:700;color:inherit">${count}</span>
   </button>`;
 }
 
 function BlockerChip({ blocker }) {
   const kind = String(blocker?.kind || '').trim().toLowerCase();
-  const label = blocker?.chip_label || BLOCKER_LABELS[kind] || kind;
+  const label = blocker?.chip_label || blocker?.title || BLOCKER_LABELS[kind] || kind;
   return html`<span style="
     font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;
     background:#FFF7ED;border:1px solid #FED7AA;color:#9A3412;
   ">${label}</span>`;
+}
+
+function QueueMetricPill({ label, value, tone = 'default' }) {
+  const tones = {
+    default: { bg: 'var(--bg)', border: 'var(--border)', text: 'var(--ink)' },
+    warning: { bg: '#FFFBEB', border: '#FCD34D', text: '#92400E' },
+    success: { bg: '#ECFDF5', border: '#A7F3D0', text: '#166534' },
+    danger: { bg: '#FEF2F2', border: '#FECACA', text: '#B91C1C' },
+  };
+  const palette = tones[tone] || tones.default;
+  return html`<span style="
+    display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 11px;border-radius:10px;
+    border:1px solid ${palette.border};background:${palette.bg};color:${palette.text};
+    font-size:11px;font-weight:700;min-width:88px;
+  ">
+    <span style="font-family:var(--font-display);font-variant-numeric:tabular-nums;font-size:15px;line-height:1">${value}</span>
+    <span style="opacity:0.72;text-transform:uppercase;letter-spacing:0.04em;font-size:10px">${label}</span>
+  </span>`;
 }
 
 function PipelineBlockerSummary({ item, compact = false }) {
@@ -230,33 +241,13 @@ function openItemEmail(pipelineScope, item) {
 function getAmountLabel(item) {
   const amount = Number(item?.amount);
   if (!Number.isFinite(amount)) return '—';
-  const currency = String(item?.currency || 'USD');
-  return `${currency} ${amount.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return formatAmount(amount, item?.currency);
 }
 
 function getDocumentSummary(item) {
   const documentType = normalizeDocumentType(item?.document_type);
   const reference = String(item?.invoice_number || '').trim();
   return reference ? getDocumentReferenceText(documentType, reference) : getDocumentTypeLabel(documentType);
-}
-
-function getPipelineTimeline(item, erpStatus) {
-  const documentType = normalizeDocumentType(item?.document_type);
-  const parts = [];
-  if (isInvoiceDocumentType(documentType)) {
-    parts.push(`Due ${item.due_date ? fmtDate(item.due_date) : '—'}`);
-    if (item?.entity_code || item?.entity_name) {
-      parts.push(`Entity ${item.entity_code || item.entity_name}`);
-    }
-    parts.push(`ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus}`);
-  } else {
-    parts.push(`Type ${getDocumentTypeLabel(documentType)}`);
-  }
-  parts.push(`Updated ${fmtDateTime(item.updated_at || item.created_at)}`);
-  return parts.join(' · ');
 }
 
 function isRouteableInvoiceItem(item) {
@@ -298,7 +289,6 @@ function getActiveSavedView(viewPrefs = {}) {
 
 function buildResetFilters() {
   return {
-    state: 'all',
     vendor: '',
     due: 'all',
     blocker: 'all',
@@ -316,7 +306,10 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   const [activeItemId, setActiveItemId] = useState('');
-  const [viewPrefs, setViewPrefs] = useState(() => readPipelinePreferences(pipelineScope));
+  const [viewPrefs, setViewPrefs] = useState(() => normalizePipelinePreferences({
+    ...readPipelinePreferences(pipelineScope),
+    viewMode: 'table',
+  }));
   const [navState, setNavState] = useState(() => readPipelineNavigation(pipelineScope));
   const [savedViewName, setSavedViewName] = useState('');
   const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
@@ -325,12 +318,15 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
   const lastSyncedPrefsRef = useRef('');
 
   useEffect(() => {
-    setViewPrefs(readPipelinePreferences(pipelineScope));
+    setViewPrefs(normalizePipelinePreferences({
+      ...readPipelinePreferences(pipelineScope),
+      viewMode: 'table',
+    }));
     setNavState(readPipelineNavigation(pipelineScope));
   }, [pipelineScope]);
 
   const syncServerPreferences = async (prefs, { silent = true } = {}) => {
-    const normalized = normalizePipelinePreferences(prefs);
+    const normalized = normalizePipelinePreferences({ ...(prefs || {}), viewMode: 'table' });
     await api('/api/workspace/user/preferences', {
       method: 'PATCH',
       body: JSON.stringify({
@@ -345,14 +341,14 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
   useEffect(() => {
     const local = readPipelinePreferences(pipelineScope);
     const remote = bootstrapPipelinePrefs ? normalizePipelinePreferences(bootstrapPipelinePrefs) : null;
-    let next = local;
+    let next = normalizePipelinePreferences({ ...local, viewMode: 'table' });
     let syncedBaseline = '';
 
     if (remote && hasMeaningfulPipelinePreferences(remote)) {
       if (!pipelinePreferencesEqual(local, remote)) {
-        next = writePipelinePreferences(pipelineScope, remote);
+        next = writePipelinePreferences(pipelineScope, { ...remote, viewMode: 'table' });
       } else {
-        next = remote;
+        next = normalizePipelinePreferences({ ...remote, viewMode: 'table' });
       }
       syncedBaseline = JSON.stringify(normalizePipelinePreferences(next));
     } else if (!hasMeaningfulPipelinePreferences(local)) {
@@ -386,10 +382,16 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
   }, [api, orgId]);
 
   const persistPrefs = (nextValue) => {
-    const normalized = writePipelinePreferences(pipelineScope, nextValue);
+    const normalized = writePipelinePreferences(pipelineScope, { ...(nextValue || {}), viewMode: 'table' });
     setViewPrefs(normalized);
     return normalized;
   };
+
+  useEffect(() => {
+    if (viewPrefs.viewMode === 'table') return;
+    const normalized = writePipelinePreferences(pipelineScope, { ...viewPrefs, viewMode: 'table' });
+    setViewPrefs(normalized);
+  }, [pipelineScope, viewPrefs.viewMode]);
 
   const resetFiltersAndSearch = () => {
     setSearchQuery('');
@@ -652,7 +654,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
     if (failedCount > 0) {
       toast(
         successCount > 0
-          ? `${successCount} invoice(s) routed. ${failedCount} blocked. First issue: ${firstFailure || 'This invoice is not ready for approval routing yet.'}`
+          ? `${successCount} invoice(s) routed. ${failedCount} still need review. First issue: ${firstFailure || 'This invoice is not ready for approval routing yet.'}`
           : (firstFailure || 'No selected invoices are ready for approval routing.'),
         'warning',
       );
@@ -689,131 +691,94 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
     }
   });
 
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (!displayed.length || isTypingTarget(event.target)) return;
-      const currentIndex = Math.max(0, displayed.findIndex((item) => String(item.id || '') === String(activeItemId || '')));
-      const currentItem = displayed[currentIndex] || displayed[0];
-      const lower = String(event.key || '').toLowerCase();
-      let handled = false;
-
-      if (lower === 'j' || event.key === 'ArrowDown') {
-        setActiveItemId(String(displayed[Math.min(displayed.length - 1, currentIndex + 1)]?.id || ''));
-        handled = true;
-      } else if (lower === 'k' || event.key === 'ArrowUp') {
-        setActiveItemId(String(displayed[Math.max(0, currentIndex - 1)]?.id || ''));
-        handled = true;
-      } else if (lower === 'x' && currentItem?.id) {
-        toggleSelected(currentItem.id);
-        handled = true;
-      } else if (lower === 'o' && currentItem) {
-        openItemDetail(navigate, pipelineScope, currentItem);
-        handled = true;
-      } else if (lower === 'e' && currentItem) {
-        openItemEmail(pipelineScope, currentItem);
-        handled = true;
-      } else if (lower === 'a') {
-        void routeSelected();
-        handled = true;
-      }
-
-      if (handled) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [activeItemId, displayed, navigate, pipelineScope, routeSelected, selectedItems.length]);
+  const currentSliceLabel = PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === viewPrefs.activeSliceId)?.label || 'All open';
+  const currentViewLabel = activeSavedView ? getSavedViewLabel(activeSavedView) : currentSliceLabel;
 
   if (loading) {
     return html`<div class="panel" style="padding:48px;text-align:center"><p class="muted">Loading queue…</p></div>`;
   }
 
   return html`
-    <div class="kpi-row">
-      <div class="kpi-card">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.total}</strong>
-        <span>Total records</span>
-      </div>
-      <div class="kpi-card">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.open}</strong>
-        <span>Open records</span>
-      </div>
-      <div class="kpi-card kpi-warning">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums">${stats.waitingApproval}</strong>
-        <span>Waiting approval</span>
-      </div>
-      <div class="kpi-card" style="border-color:#A7F3D0">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--brand-muted)">${stats.readyToPost}</strong>
-        <span>Ready to post</span>
-      </div>
-      <div class="kpi-card" style="border-color:#FCA5A5">
-        <strong style="font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:#B91C1C">${stats.overdue}</strong>
-        <span>Overdue</span>
-      </div>
-    </div>
-
-    ${focusedItem
-      ? html`
-          <div class="panel" style="padding:14px 16px;border-color:${focusedItemVisible ? '#A7F3D0' : '#FCD34D'}">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
-              <div>
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-                  <strong>Current thread item</strong>
-                  <${StatePill} state=${focusedItem.state} />
-                </div>
-                <div class="muted" style="font-size:13px">
-                  ${focusedItem.vendor_name || focusedItem.vendor || 'Unknown vendor'} · ${getDocumentSummary(focusedItem)} · ${getAmountLabel(focusedItem)}
-                </div>
-                <div class="muted" style="font-size:12px;margin-top:4px">
-                  ${focusedItemVisible
-                    ? 'The current item is visible in this pipeline view.'
-                    : 'The current item is outside the active slice or filters. Open its matching slice to keep queue context intact.'}
-                </div>
-              </div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${!focusedItemVisible
-                  ? html`<button class="btn-primary btn-sm" onClick=${revealFocusedItem}>Show in pipeline</button>`
-                  : null}
-                <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open record</button>
-                <button class="btn-ghost btn-sm" onClick=${clearFocus}>Clear focus</button>
-              </div>
+    <div class="pipeline-shell">
+      <div class="panel pipeline-hero-panel" style="padding:12px 14px">
+        <div class="pipeline-hero-head">
+          <div class="pipeline-hero-copy">
+            <div>
+              <h3 style="margin:0 0 4px">Live AP queue</h3>
+              <p class="muted" style="margin:0">Filter, route, and reopen records without leaving Gmail.</p>
+            </div>
+            <div class="pipeline-metric-row">
+              <${QueueMetricPill} label="Open" value=${stats.open} />
+              <${QueueMetricPill} label="Waiting approval" value=${stats.waitingApproval} tone="warning" />
+              <${QueueMetricPill} label="Ready to post" value=${stats.readyToPost} tone="success" />
+              <${QueueMetricPill} label="Overdue" value=${stats.overdue} tone="danger" />
+              <${QueueMetricPill} label="Total" value=${stats.total} />
             </div>
           </div>
-        `
-      : null}
-
-    <div class="panel" style="padding:16px 18px">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px">
-        <div>
-          <h3 style="margin:0 0 4px">Saved views</h3>
-          <p class="muted" style="margin:0">Work invoices by state, then save and pin the views you reopen most.</p>
-        </div>
-        <div class="toolbar-actions">
-          <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/home')}>Open Home</button>
-          <button class="btn-secondary btn-sm" onClick=${doRefresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
-        </div>
-      </div>
-      <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:4px">
-        ${PIPELINE_BUILTIN_SLICES.map((slice) => html`
-          <${SliceChip}
-            key=${slice.id}
-            slice=${slice}
-            count=${sliceCounts[slice.id] || 0}
-            active=${viewPrefs.activeSliceId === slice.id}
-            onClick=${() => applySlice(slice.id)}
-          />
-        `)}
-      </div>
-      <div style="display:flex;flex-direction:column;gap:14px;margin-top:14px">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-          <div>
-                  <strong style="font-size:13px">Starter views</strong>
-                  <div class="muted" style="font-size:12px">Default views you can pin for quick queue access.</div>
+          <div class="toolbar-actions">
+            <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/home')}>Home</button>
+            <button class="btn-secondary btn-sm" onClick=${doRefresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+        </div>
+
+        ${focusedItem
+          ? html`
+              <div class="pipeline-focus-row">
+                <div>
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+                    <strong style="font-size:13px">Current thread record</strong>
+                    <${StatePill} state=${focusedItem.state} />
+                  </div>
+                  <div class="muted" style="font-size:13px">
+                    ${focusedItem.vendor_name || focusedItem.vendor || 'Unknown vendor'} · ${getDocumentSummary(focusedItem)} · ${getAmountLabel(focusedItem)}
+                  </div>
+                  <div class="muted" style="font-size:12px;margin-top:4px">
+                    ${focusedItemVisible
+                      ? 'This record is already visible in the active invoices view.'
+                      : 'This record is outside the current slice or filters. Jump back to its matching queue to keep thread context intact.'}
+                  </div>
+                </div>
+                <div class="pipeline-focus-actions">
+                  ${!focusedItemVisible
+                    ? html`<button class="btn-primary btn-sm" onClick=${revealFocusedItem}>Show in invoices</button>`
+                    : null}
+                  <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open record</button>
+                  <button class="btn-ghost btn-sm" onClick=${clearFocus}>Clear focus</button>
+                </div>
+              </div>
+            `
+          : null}
+      </div>
+
+      <div class="panel pipeline-view-panel" style="padding:12px 14px">
+        <div class="pipeline-view-head" style="margin-bottom:10px">
+          <div>
+            <strong style="font-size:13px">Views</strong>
+            <div class="muted" style="font-size:12px">
+              ${activeSavedView ? `Current saved view: ${currentViewLabel}.` : `Current slice: ${currentSliceLabel}.`}
+            </div>
+          </div>
+          <div class="muted" style="font-size:12px">${pinnedViews.length} pinned · ${personalViews.length} personal · ${displayed.length} visible</div>
+        </div>
+
+        <div class="pipeline-view-band">
+          <span class="pipeline-view-label">Slices</span>
+          <div class="pipeline-chip-strip" style="overflow-x:auto;padding-bottom:2px">
+            ${PIPELINE_BUILTIN_SLICES.map((slice) => html`
+              <${SliceChip}
+                key=${slice.id}
+                slice=${slice}
+                count=${sliceCounts[slice.id] || 0}
+                active=${viewPrefs.activeSliceId === slice.id}
+                onClick=${() => applySlice(slice.id)}
+              />
+            `)}
+          </div>
+        </div>
+
+        <div class="pipeline-view-band" style="margin-top:10px">
+          <span class="pipeline-view-label">Saved</span>
+          <div class="pipeline-chip-strip">
             ${starterViews.map((view) => html`
               <${SavedViewChip}
                 key=${view.id}
@@ -823,354 +788,264 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                 onTogglePin=${() => toggleSavedViewPin(view)}
               />
             `)}
+            ${personalViews.map((view) => html`
+              <${SavedViewChip}
+                key=${view.id}
+                view=${view}
+                active=${activeSavedView?.scope === view.scope && activeSavedView?.id === view.id}
+                onOpen=${() => applySavedView(view)}
+                onTogglePin=${() => toggleSavedViewPin(view)}
+                onDelete=${() => removeView(view.id)}
+              />
+            `)}
           </div>
         </div>
-        ${(personalViews.length || 0) > 0
-          ? html`
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                <div>
-                  <strong style="font-size:13px">Personal views</strong>
-                  <div class="muted" style="font-size:12px">${pinnedViews.length} pinned for quick queue access.</div>
-                </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap">
-                  ${personalViews.map((view) => html`
-                    <${SavedViewChip}
-                      key=${view.id}
-                      view=${view}
-                      active=${activeSavedView?.scope === view.scope && activeSavedView?.id === view.id}
-                      onOpen=${() => applySavedView(view)}
-                      onTogglePin=${() => toggleSavedViewPin(view)}
-                      onDelete=${() => removeView(view.id)}
-                    />
-                  `)}
-                </div>
-              </div>
-            `
-          : null}
-      </div>
-    </div>
 
-    <div class="panel" style="padding:16px 18px">
-      <div style="display:grid;grid-template-columns:2fr 1.25fr 1fr 1fr;gap:10px;align-items:end">
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Search</span>
+        <div class="pipeline-saved-input-row">
           <input
-            placeholder="Search vendors, references, PO, sender…"
-            value=${searchQuery}
-            onInput=${(event) => setSearchQuery(event.target.value)}
-            style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
+            value=${savedViewName}
+            onInput=${(event) => setSavedViewName(event.target.value)}
+            placeholder="Save current view…"
+            style="min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
           />
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Vendor</span>
-          <input
-            placeholder="Filter vendor…"
-            value=${viewPrefs.filters.vendor}
-            onInput=${(event) => updateFilters({ vendor: event.target.value })}
-            style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
-          />
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Due date</span>
-          <select value=${viewPrefs.filters.due} onChange=${(event) => updateFilters({ due: event.target.value })}>
-            <option value="all">All</option>
-            <option value="overdue">Overdue</option>
-            <option value="due_7d">Due in 7 days</option>
-            <option value="no_due">No due date</option>
-          </select>
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Amount band</span>
-          <select value=${viewPrefs.filters.amount} onChange=${(event) => updateFilters({ amount: event.target.value })}>
-            <option value="all">All</option>
-            <option value="under_1k">Under 1k</option>
-            <option value="1k_10k">1k - 10k</option>
-            <option value="over_10k">Over 10k</option>
-          </select>
-        </label>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:10px;align-items:end;margin-top:12px">
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Approval age</span>
-          <select value=${viewPrefs.filters.approvalAge} onChange=${(event) => updateFilters({ approvalAge: event.target.value })}>
-            <option value="all">All</option>
-            <option value="under_24h">Under 24h</option>
-            <option value="1d_3d">1-3 days</option>
-            <option value="over_3d">Over 3 days</option>
-          </select>
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Blocker type</span>
-          <select value=${viewPrefs.filters.blocker} onChange=${(event) => updateFilters({ blocker: event.target.value })}>
-            <option value="all">All</option>
-            <option value="entity">Entity</option>
-            <option value="approval">Approval</option>
-            <option value="info">Needs info</option>
-            <option value="erp">ERP</option>
-            <option value="exception">Policy</option>
-            <option value="confidence">Field review</option>
-            <option value="budget">Budget</option>
-            <option value="po">PO / GR</option>
-            <option value="processing">Processing</option>
-          </select>
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">ERP status</span>
-          <select value=${viewPrefs.filters.erpStatus} onChange=${(event) => updateFilters({ erpStatus: event.target.value })}>
-            <option value="all">All</option>
-            <option value="ready">Ready</option>
-            <option value="failed">Failed</option>
-            <option value="connected">Connected</option>
-            <option value="posted">Posted</option>
-            <option value="not_connected">Not connected</option>
-          </select>
-        </label>
-        <label style="display:flex;flex-direction:column;gap:6px">
-          <span class="muted" style="font-size:12px">Sort</span>
-          <select value=${viewPrefs.sortCol} onChange=${(event) => updateSort(event.target.value)}>
-            <option value="queue_age">Queue age</option>
-            <option value="due_date">Due date</option>
-            <option value="amount">Amount</option>
-            <option value="updated_at">Last update</option>
-            <option value="approval_wait">Approval waiting time</option>
-          </select>
-        </label>
-        <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
-          <button
-            class="segmented-button btn-sm"
-            onClick=${() => persistPrefs({ ...viewPrefs, viewMode: viewPrefs.viewMode === 'table' ? 'cards' : 'table' })}
-          >${viewPrefs.viewMode === 'table' ? 'Cards' : 'Table'}</button>
+          <button class="btn-secondary btn-sm" onClick=${saveView} disabled=${savingView}>${savingView ? 'Saving…' : 'Save current view'}</button>
+          ${activeSavedView?.scope === 'user'
+            ? html`<button class="btn-secondary btn-sm" onClick=${updateView} disabled=${updatingView}>${updatingView ? 'Updating…' : 'Update active view'}</button>`
+            : null}
+          <button class="btn-ghost btn-sm" onClick=${resetFiltersAndSearch}>Reset filters</button>
+          <span class="muted" style="font-size:12px">Sorted ${viewPrefs.sortDir === 'desc' ? 'descending' : 'ascending'} by ${viewPrefs.sortCol.replace(/_/g, ' ')}.</span>
         </div>
       </div>
 
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
-        <input
-          value=${savedViewName}
-          onInput=${(event) => setSavedViewName(event.target.value)}
-          placeholder="Save current view as a personal view…"
-          style="min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
-        />
-        <button class="btn-secondary btn-sm" onClick=${saveView} disabled=${savingView}>${savingView ? 'Saving…' : 'Save personal view'}</button>
-        ${activeSavedView?.scope === 'user'
-          ? html`<button class="btn-secondary btn-sm" onClick=${updateView} disabled=${updatingView}>${updatingView ? 'Updating…' : 'Update active view'}</button>`
-          : null}
-        <button class="btn-ghost btn-sm" onClick=${resetFiltersAndSearch}>Reset filters</button>
-        <span class="muted" style="font-size:12px">
-          Sort ${viewPrefs.sortDir === 'desc' ? 'descending' : 'ascending'} by ${viewPrefs.sortCol.replace(/_/g, ' ')}.
-        </span>
+      <div class="panel pipeline-filter-panel" style="padding:12px 14px">
+        <div class="pipeline-filter-grid" style="display:grid;grid-template-columns:minmax(0,1.8fr) minmax(0,1.2fr) repeat(4,minmax(0,1fr));gap:10px;align-items:end">
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">Search</span>
+            <input
+              placeholder="Search vendors, references, PO, sender…"
+              value=${searchQuery}
+              onInput=${(event) => setSearchQuery(event.target.value)}
+              style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
+            />
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">Vendor</span>
+            <input
+              placeholder="Filter vendor…"
+              value=${viewPrefs.filters.vendor}
+              onInput=${(event) => updateFilters({ vendor: event.target.value })}
+              style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
+            />
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">Due date</span>
+            <select value=${viewPrefs.filters.due} onChange=${(event) => updateFilters({ due: event.target.value })}>
+              <option value="all">All</option>
+              <option value="overdue">Overdue</option>
+              <option value="due_7d">Due in 7 days</option>
+              <option value="no_due">No due date</option>
+            </select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">Blocker type</span>
+            <select value=${viewPrefs.filters.blocker} onChange=${(event) => updateFilters({ blocker: event.target.value })}>
+              <option value="all">All</option>
+              <option value="entity">Entity</option>
+              <option value="approval">Approval</option>
+              <option value="info">Needs info</option>
+              <option value="erp">ERP</option>
+              <option value="exception">Policy</option>
+              <option value="confidence">Field review</option>
+              <option value="budget">Budget</option>
+              <option value="po">PO / GR</option>
+              <option value="processing">Processing</option>
+            </select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">ERP status</span>
+            <select value=${viewPrefs.filters.erpStatus} onChange=${(event) => updateFilters({ erpStatus: event.target.value })}>
+              <option value="all">All</option>
+              <option value="ready">Ready</option>
+              <option value="failed">Failed</option>
+              <option value="connected">Connected</option>
+              <option value="posted">Posted</option>
+              <option value="not_connected">Not connected</option>
+            </select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted" style="font-size:12px">Sort</span>
+            <select value=${viewPrefs.sortCol} onChange=${(event) => updateSort(event.target.value)}>
+              <option value="queue_age">Queue age</option>
+              <option value="due_date">Due date</option>
+              <option value="amount">Amount</option>
+              <option value="updated_at">Last update</option>
+              <option value="approval_wait">Approval waiting time</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="pipeline-filter-footer">
+          <div class="pipeline-filter-aux" style="align-items:flex-end">
+            <label style="display:flex;flex-direction:column;gap:6px;min-width:160px">
+              <span class="muted" style="font-size:12px">Amount band</span>
+              <select value=${viewPrefs.filters.amount} onChange=${(event) => updateFilters({ amount: event.target.value })}>
+                <option value="all">All</option>
+                <option value="under_1k">Under 1k</option>
+                <option value="1k_10k">1k - 10k</option>
+                <option value="over_10k">Over 10k</option>
+              </select>
+            </label>
+            <label style="display:flex;flex-direction:column;gap:6px;min-width:160px">
+              <span class="muted" style="font-size:12px">Approval age</span>
+              <select value=${viewPrefs.filters.approvalAge} onChange=${(event) => updateFilters({ approvalAge: event.target.value })}>
+                <option value="all">All</option>
+                <option value="under_24h">Under 24h</option>
+                <option value="1d_3d">1-3 days</option>
+                <option value="over_3d">Over 3 days</option>
+              </select>
+            </label>
+          </div>
+          <div class="pipeline-filter-actions" style="justify-content:flex-end">
+            <span class="muted" style="font-size:12px">
+              ${selectedItems.length ? `${selectedItems.length} selected` : 'No selection'}
+              ${routeableSelectedItems.length ? ` · ${routeableSelectedItems.length} routeable` : ''}
+            </span>
+            <button class="btn-secondary btn-sm" onClick=${selectVisible}>Select visible</button>
+            <button class="btn-ghost btn-sm" onClick=${clearSelection} disabled=${selectedIds.length === 0}>Clear selection</button>
+            <button
+              class="btn-primary btn-sm"
+              onClick=${() => routeSelected()}
+              disabled=${routingSelected || (!routeableSelectedItems.length && !isRouteableInvoiceItem(activeItem))}
+            >
+              ${routingSelected
+                ? 'Routing…'
+                : (routeableSelectedItems.length > 0 ? 'Route selected' : 'Route current')}
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px">
-        <div class="muted" style="font-size:12px">
-          Keyboard: J/K move · X select · O open detail · E open thread · A route selected/current invoice
+      <div class="panel pipeline-table-panel" style="padding:0;overflow:hidden">
+        <div class="pipeline-table-meta pipeline-table-head" style="padding:10px 14px;border-bottom:1px solid var(--border)">
+          <div>
+            <strong style="font-size:13px">Invoice rows</strong>
+            <div class="muted" style="font-size:12px">${currentViewLabel} · ${displayed.length} visible of ${items.length} records</div>
+          </div>
+          <div class="muted pipeline-table-actions" style="font-size:12px">Click a row to keep it active, then open the record or thread from the same queue.</div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn-secondary btn-sm" onClick=${selectVisible}>Select visible</button>
-          <button class="btn-ghost btn-sm" onClick=${clearSelection} disabled=${selectedIds.length === 0}>Clear selection</button>
-          <span class="muted" style="font-size:12px;align-self:center">
-            ${selectedItems.length ? `${selectedItems.length} selected` : 'No selection'}
-            ${routeableSelectedItems.length ? ` · ${routeableSelectedItems.length} routeable` : ''}
-          </span>
-          <button
-            class="btn-primary btn-sm"
-            onClick=${() => routeSelected()}
-            disabled=${routingSelected || (!routeableSelectedItems.length && !isRouteableInvoiceItem(activeItem))}
-          >
-            ${routingSelected
-              ? 'Routing…'
-              : (routeableSelectedItems.length > 0 ? 'Route selected' : 'Route current')}
-          </button>
-        </div>
-      </div>
-    </div>
 
-    ${viewPrefs.viewMode === 'cards'
-      ? html`
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px">
-            ${displayed.length === 0
-              ? html`<div class="panel" style="grid-column:1/-1;text-align:center;padding:32px"><p class="muted">No records match this view.</p></div>`
-              : displayed.map((item) => {
-                  const pipelineBlockers = getPipelineBlockers(item);
-                  const blockerChips = pipelineBlockers.filter((blocker, index, collection) => (
-                    collection.findIndex((candidate) => candidate.kind === blocker.kind) === index
-                  ));
-                  const focused = String(navState.focusItemId || '') === String(item.id || '');
-                  const active = String(activeItemId || '') === String(item.id || '');
-                  const approvalWait = getApprovalWaitMinutes(item);
-                  const queueAge = getQueueAgeMinutes(item);
-                  const erpStatus = getErpStatus(item);
-                  const routeable = isRouteableInvoiceItem(item);
-                  const entityNeedsReview = needsEntityRouting(item, item.state, item.document_type);
-                  const escalateReady = canEscalateApproval(item, item.state, actorRole, item.document_type);
-                  return html`
-                    <div
-                      key=${item.id}
-                      class="panel"
-                      style="padding:16px;margin-bottom:0;border-color:${active || focused ? 'var(--accent)' : 'var(--border)'};box-shadow:${active || focused ? '0 0 0 1px var(--accent-soft)' : 'none'}"
-                      onClick=${() => setActiveItemId(String(item.id || ''))}
-                    >
-                      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px">
-                        <div>
+        <div style="overflow:auto">
+          <table class="table pipeline-table" style="min-width:1200px;table-layout:fixed">
+            <colgroup>
+              <col style="width:54px" />
+              <col style="width:318px" />
+              <col style="width:104px" />
+              <col style="width:88px" />
+              <col style="width:104px" />
+              <col style="width:82px" />
+              <col style="width:90px" />
+              <col style="width:248px" />
+              <col style="width:104px" />
+              <col style="width:178px" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Select</th>
+                <th>Record</th>
+                <th style="text-align:right">Amount</th>
+                <th>Due</th>
+                <th>Status</th>
+                <th>Queue</th>
+                <th>Approval</th>
+                <th>Signals</th>
+                <th>Updated</th>
+                <th style="text-align:right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${displayed.length === 0
+                ? html`<tr><td colspan="10" class="muted" style="text-align:center;padding:32px">No records match this view.</td></tr>`
+                : displayed.map((item) => {
+                    const pipelineBlockers = getPipelineBlockers(item);
+                    const blockerChips = pipelineBlockers.filter((blocker, index, collection) => (
+                      collection.findIndex((candidate) => candidate.kind === blocker.kind) === index
+                    ));
+                    const focused = String(navState.focusItemId || '') === String(item.id || '');
+                    const active = String(activeItemId || '') === String(item.id || '');
+                    const approvalWait = getApprovalWaitMinutes(item);
+                    const queueAge = getQueueAgeMinutes(item);
+                    const erpStatus = getErpStatus(item);
+                    const isInvoiceDocument = isInvoiceDocumentType(item?.document_type);
+                    const routeable = isRouteableInvoiceItem(item);
+                    const entityNeedsReview = needsEntityRouting(item, item.state, item.document_type);
+                    const escalateReady = canEscalateApproval(item, item.state, actorRole, item.document_type);
+                    const timelineBits = [];
+                    if (item?.entity_code || item?.entity_name) timelineBits.push(`Entity ${item.entity_code || item.entity_name}`);
+                    timelineBits.push(item.thread_id || item.message_id ? 'Email linked' : 'No email link');
+                    return html`
+                      <tr
+                        key=${item.id}
+                        style=${active || focused ? 'background:rgba(14,165,233,0.07)' : ''}
+                        onClick=${() => setActiveItemId(String(item.id || ''))}
+                      >
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked=${selectedSet.has(String(item.id || ''))}
+                            onClick=${(event) => event.stopPropagation()}
+                            onChange=${() => toggleSelected(item.id)}
+                          />
+                        </td>
+                        <td class="pipeline-record-cell" style="cursor:pointer" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>
                           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                            <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-secondary)">
-                              <input
-                                type="checkbox"
-                                checked=${selectedSet.has(String(item.id || ''))}
-                                onClick=${(event) => event.stopPropagation()}
-                                onChange=${() => toggleSelected(item.id)}
-                              />
-                              Select
-                            </label>
-                            <div style="font-size:15px;font-weight:700">${item.vendor_name || item.vendor || 'Unknown vendor'}</div>
+                            <strong style="font-size:14px">${item.vendor_name || item.vendor || 'Unknown vendor'}</strong>
+                            ${focused ? html`<span style="font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink);text-transform:uppercase;letter-spacing:0.04em">Current thread</span>` : null}
                           </div>
-                          <div class="muted" style="font-size:12px;margin-top:2px">${getDocumentSummary(item)} · ${getAmountLabel(item)}</div>
-                        </div>
-                        <${StatePill} state=${item.state} />
-                      </div>
-                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-                        <div style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg)">
-                          <div class="muted" style="font-size:11px">Queue age</div>
-                          <strong style="font-size:13px">${formatDurationMinutes(queueAge)}</strong>
-                        </div>
-                        <div style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg)">
-                          <div class="muted" style="font-size:11px">Approval wait</div>
-                          <strong style="font-size:13px">${approvalWait ? formatDurationMinutes(approvalWait) : '—'}</strong>
-                        </div>
-                      </div>
-                      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-                        ${blockerChips.length
-                          ? blockerChips.slice(0, 3).map((blocker) => html`<${BlockerChip} key=${`${blocker.kind}:${blocker.type}:${blocker.field || ''}`} blocker=${blocker} />`)
-                          : html`<span class="muted" style="font-size:12px">No blocking signals</span>`}
-                      </div>
-                      <${PipelineBlockerSummary} item=${item} />
-                      <div class="muted" style="font-size:12px;line-height:1.5;margin-bottom:12px">
-                        ${getPipelineTimeline(item, erpStatus)}
-                      </div>
-                      <div style="display:flex;gap:8px;flex-wrap:wrap">
-                        ${routeable
-                          ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected}>${routingSelected ? 'Routing…' : 'Route approval'}</button>`
-                          : entityNeedsReview
-                            ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Resolve entity</button>`
-                            : (escalateReady
-                              ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); escalateApprovalItem(item); }} disabled=${escalatingApproval}>${escalatingApproval ? 'Escalating…' : 'Escalate'}</button>`
-                              : null)}
-                        <button class="btn-secondary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Open record</button>
-                        ${(item.thread_id || item.message_id) && html`
-                          <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }}>Open email</button>
-                        `}
-                      </div>
-                    </div>
-                  `;
-                })}
-          </div>
-        `
-      : html`
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);overflow-x:auto">
-            <table class="table" style="min-width:1320px;table-layout:fixed">
-              <colgroup>
-                <col style="width:58px" />
-                <col style="width:136px" />
-                <col style="width:122px" />
-                <col style="width:86px" />
-                <col style="width:60px" />
-                <col style="width:102px" />
-                <col style="width:78px" />
-                <col style="width:94px" />
-                <col style="width:98px" />
-                <col style="width:318px" />
-                <col style="width:102px" />
-                <col style="width:96px" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Select</th>
-                  <th>Vendor</th>
-                  <th>Document</th>
-                  <th style="text-align:right">Amount</th>
-                  <th>Due</th>
-                  <th>Status</th>
-                  <th>Queue age</th>
-                  <th>Approval wait</th>
-                  <th>ERP</th>
-                  <th>Blockers</th>
-                  <th>Updated</th>
-                  <th style="text-align:right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${displayed.length === 0
-                  ? html`<tr><td colspan="12" class="muted" style="text-align:center;padding:32px">No records match this view.</td></tr>`
-                  : displayed.map((item) => {
-                      const pipelineBlockers = getPipelineBlockers(item);
-                      const blockerChips = pipelineBlockers.filter((blocker, index, collection) => (
-                        collection.findIndex((candidate) => candidate.kind === blocker.kind) === index
-                      ));
-                      const focused = String(navState.focusItemId || '') === String(item.id || '');
-                      const active = String(activeItemId || '') === String(item.id || '');
-                      const approvalWait = getApprovalWaitMinutes(item);
-                      const queueAge = getQueueAgeMinutes(item);
-                      const erpStatus = getErpStatus(item);
-                      const isInvoiceDocument = isInvoiceDocumentType(item?.document_type);
-                      const routeable = isRouteableInvoiceItem(item);
-                      const entityNeedsReview = needsEntityRouting(item, item.state, item.document_type);
-                      const escalateReady = canEscalateApproval(item, item.state, actorRole, item.document_type);
-                      return html`
-                        <tr
-                          key=${item.id}
-                          style=${active || focused ? 'background:rgba(14,165,233,0.07)' : ''}
-                          onClick=${() => setActiveItemId(String(item.id || ''))}
-                        >
-                          <td>
-                            <input
-                              type="checkbox"
-                              checked=${selectedSet.has(String(item.id || ''))}
-                              onClick=${(event) => event.stopPropagation()}
-                              onChange=${() => toggleSelected(item.id)}
-                            />
-                          </td>
-                          <td style="font-weight:600;cursor:pointer" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>${item.vendor_name || item.vendor || 'Unknown vendor'}</td>
-                          <td style="font-family:var(--font-mono);font-size:12px">${getDocumentSummary(item)}</td>
-                          <td style="text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums">${getAmountLabel(item)}</td>
-                          <td>${isInvoiceDocument && item.due_date ? fmtDate(item.due_date) : '—'}</td>
-                          <td><${StatePill} state=${item.state} /></td>
-                          <td>${formatDurationMinutes(queueAge)}</td>
-                          <td>${isInvoiceDocument && approvalWait ? formatDurationMinutes(approvalWait) : '—'}</td>
-                          <td>${isInvoiceDocument ? (ERP_STATUS_LABELS[erpStatus] || erpStatus) : 'N/A'}</td>
-                          <td>
-                            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-                              ${blockerChips.length
-                                ? blockerChips.slice(0, 2).map((blocker) => html`<${BlockerChip} key=${`${blocker.kind}:${blocker.type}:${blocker.field || ''}`} blocker=${blocker} />`)
-                                : html`<span class="muted" style="font-size:12px">Clear</span>`}
-                            </div>
-                            <${PipelineBlockerSummary} item=${item} compact=${true} />
-                          </td>
-                          <td class="muted" style="font-size:12px">${fmtDateTime(item.updated_at || item.created_at)}</td>
-                          <td style="text-align:right">
-                            <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
-                              ${routeable
-                                ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected} style="min-width:72px">${routingSelected ? 'Routing…' : 'Route'}</button>`
-                                : entityNeedsReview
-                                  ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }} style="min-width:72px">Resolve</button>`
-                                  : (escalateReady
-                                    ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); escalateApprovalItem(item); }} disabled=${escalatingApproval} style="min-width:72px">${escalatingApproval ? 'Escalating…' : 'Escalate'}</button>`
-                                    : null)}
-                              <button class="btn-secondary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }} style="min-width:72px">Open</button>
-                              ${(item.thread_id || item.message_id) && html`
-                                <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }} style="min-width:72px">Email</button>
-                              `}
-                            </div>
-                          </td>
-                        </tr>
-                      `;
-                    })}
-              </tbody>
-            </table>
-          </div>
-        `}
+                          <div class="muted" style="font-size:12px;margin-top:3px">${getDocumentSummary(item)} · ${timelineBits.join(' · ')}</div>
+                        </td>
+                        <td style="text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums">${getAmountLabel(item)}</td>
+                        <td>${isInvoiceDocument && item.due_date ? fmtDate(item.due_date) : '—'}</td>
+                        <td><${StatePill} state=${item.state} /></td>
+                        <td>${formatDurationMinutes(queueAge)}</td>
+                        <td>${isInvoiceDocument && approvalWait ? formatDurationMinutes(approvalWait) : '—'}</td>
+                        <td class="pipeline-signals-cell">
+                          <div class="muted" style="font-size:12px;font-weight:700;margin-bottom:${blockerChips.length || pipelineBlockers.length ? '8px' : '4px'}">
+                            ${isInvoiceDocument ? `ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus}` : 'Non-invoice record'}
+                          </div>
+                          <div class="pipeline-signal-stack" style="display:flex;gap:6px;flex-wrap:wrap">
+                            ${blockerChips.length
+                              ? blockerChips.slice(0, 2).map((blocker) => html`<${BlockerChip} key=${`${blocker.kind}:${blocker.type}:${blocker.field || ''}`} blocker=${blocker} />`)
+                              : html`<span class="muted" style="font-size:12px">No blocking signals</span>`}
+                          </div>
+                          <${PipelineBlockerSummary} item=${item} compact=${true} />
+                        </td>
+                        <td class="muted" style="font-size:12px">${fmtDateTime(item.updated_at || item.created_at)}</td>
+                        <td style="text-align:right">
+                          <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
+                            ${routeable
+                              ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected}>${routingSelected ? 'Routing…' : 'Route'}</button>`
+                              : entityNeedsReview
+                                ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Resolve</button>`
+                                : (escalateReady
+                                  ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); escalateApprovalItem(item); }} disabled=${escalatingApproval}>${escalatingApproval ? 'Escalating…' : 'Escalate'}</button>`
+                                  : null)}
+                            <button class="btn-secondary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Open</button>
+                            ${(item.thread_id || item.message_id) && html`
+                              <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }}>Email</button>
+                            `}
+                          </div>
+                        </td>
+                      </tr>
+                    `;
+                  })}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-    <div class="muted" style="text-align:center;padding:12px 0;font-size:12px">
-      Showing ${displayed.length} of ${items.length} records in ${PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === viewPrefs.activeSliceId)?.label || 'this view'}.
+      <div class="muted" style="text-align:center;padding:2px 0 0;font-size:12px">
+        Showing ${displayed.length} of ${items.length} records in ${currentSliceLabel}.
+      </div>
     </div>
   `;
 }

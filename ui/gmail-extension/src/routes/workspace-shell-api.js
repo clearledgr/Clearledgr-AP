@@ -5,6 +5,7 @@
  * Page components ported from static/workspace/app.js use props.api() for
  * all backend calls. This adapter provides Bearer token auth (no cookies/CSRF).
  */
+import { getFallbackCapabilities } from '../utils/capabilities.js';
 
 let _toastFn = null;
 
@@ -52,8 +53,17 @@ export function createWorkspaceShellApi(queueManager) {
     const organization = bootstrapPayload.organization || {};
     const health = bootstrapPayload.health || {};
     const subscription = bootstrapPayload.subscription || {};
-    const currentUser = bootstrapPayload.current_user || {};
-    const capabilities = bootstrapPayload.capabilities || currentUser.capabilities || {};
+    const currentUserPayload = bootstrapPayload.current_user || {};
+    const fallbackRole = String(currentUserPayload.role || queueManager?.currentUserRole || '').trim().toLowerCase();
+    const currentUser = {
+      ...currentUserPayload,
+      role: currentUserPayload.role || fallbackRole || undefined,
+      email: currentUserPayload.email || queueManager?.runtimeConfig?.userEmail || '',
+    };
+    const explicitCapabilities = bootstrapPayload.capabilities || currentUser.capabilities || {};
+    const capabilities = Object.keys(explicitCapabilities).length > 0
+      ? explicitCapabilities
+      : getFallbackCapabilities(fallbackRole);
 
     return {
       dashboard,

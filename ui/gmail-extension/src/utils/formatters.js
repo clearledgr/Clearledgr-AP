@@ -14,11 +14,20 @@ export const STATE_COLORS = {
 
 export function getStateLabel(state) { return STATE_LABELS[state] || 'Received'; }
 
-export function formatAmount(amount, currency = 'USD') {
+export function normalizeCurrencyCode(currency) {
+  return String(currency ?? '').trim().toUpperCase();
+}
+
+export function formatAmount(amount, currency = '') {
   if (amount === null || amount === undefined || amount === '') return 'Amount unavailable';
   const numeric = Number(amount);
   if (!Number.isFinite(numeric)) return 'Amount unavailable';
-  return `${currency} ${numeric.toFixed(2)}`;
+  const normalizedCurrency = normalizeCurrencyCode(currency);
+  const amountLabel = numeric.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return normalizedCurrency ? `${normalizedCurrency} ${amountLabel}` : amountLabel;
 }
 
 export function formatTimestamp(value) {
@@ -59,6 +68,27 @@ export function prettifyEventType(value) {
 
 export function humanizeSnakeText(value) {
   return String(value || '').replace(/_/g, ' ').trim().replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
+function normalizeAgentMemoryToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]+/g, '_');
+}
+
+function isInternalAgentMemoryReason(value) {
+  const token = normalizeAgentMemoryToken(value);
+  if (!token) return false;
+  return (
+    token.startsWith('ap_')
+    || token.startsWith('gate:')
+    || token.includes('field_review_required')
+    || token === 'ap_skill_not_ready'
+    || token === 'legal_transition_correctness'
+    || token === 'operator_acceptance'
+    || token === 'enabled_connector_readiness'
+  );
 }
 
 const FIELD_LABELS = {
@@ -102,11 +132,11 @@ function getSourceLabel(source) {
   return SOURCE_LABELS[token] || humanizeSnakeText(token);
 }
 
-function formatFieldReviewValue(field, value, currency = 'USD') {
+function formatFieldReviewValue(field, value, currency = '') {
   if (value === null || value === undefined || value === '') return 'Not found';
   if (String(field || '').trim().toLowerCase() === 'amount') {
     const numeric = Number(value);
-    if (Number.isFinite(numeric)) return `${currency} ${numeric.toFixed(2)}`;
+    if (Number.isFinite(numeric)) return formatAmount(numeric, currency);
   }
   return String(value);
 }
@@ -139,7 +169,7 @@ export function getFieldReviewBlockers(item = {}) {
   const conflicts = Array.isArray(item?.source_conflicts) ? item.source_conflicts : [];
   const blockers = [];
   const seen = new Set();
-  const currency = String(item?.currency || 'USD').trim().toUpperCase() || 'USD';
+  const currency = normalizeCurrencyCode(item?.currency);
 
   for (const conflict of conflicts) {
     if (!conflict || typeof conflict !== 'object' || !conflict.blocking) continue;
@@ -241,7 +271,7 @@ export function getFieldReviewBlockers(item = {}) {
 
 export function getWorkflowPauseReason(item = {}) {
   const explicit = String(item?.workflow_paused_reason || '').trim();
-  if (explicit) return explicit;
+  if (explicit && !isInternalAgentMemoryReason(explicit)) return explicit;
   const blockers = getFieldReviewBlockers(item);
   if (blockers.length === 0 && !item?.requires_field_review) return '';
   const fieldLabels = blockers.map((blocker) => String(blocker?.field_label || '').trim().toLowerCase()).filter(Boolean);
@@ -291,7 +321,7 @@ export function getFinanceEffectNotice(item = {}) {
   const remainingBalance = Number(summary.remaining_balance_amount || 0);
   if (!Number.isFinite(creditTotal) && !Number.isFinite(netCashTotal)) return '';
   if ((creditTotal > 0 || netCashTotal !== 0) && Number.isFinite(remainingBalance)) {
-    return `Remaining balance after credits and payments: ${formatAmount(remainingBalance, summary.currency || item?.currency || 'USD')}.`;
+    return `Remaining balance after credits and payments: ${formatAmount(remainingBalance, summary.currency || item?.currency)}.`;
   }
   return '';
 }
@@ -378,6 +408,280 @@ export function getEvidenceChecklistEntries(item = {}, state = '', contextPayloa
   ];
 }
 
+const AGENT_REASON_CODE_LABELS = {
+  vendor_unscored: 'Vendor details need review',
+  field_review_required: '',
+  confidence_field_review_required: '',
+  blocking_source_conflicts: 'Email and attachment do not match',
+  linked_finance_effect_review_required: 'Credits or payments still need review',
+  linked_credit_adjustment_present: 'Linked credit changes the payable amount',
+  linked_cash_application_present: 'Linked cash activity changes settlement',
+  linked_over_credit: 'Linked credits exceed the invoice amount',
+  linked_overpayment: 'Linked cash exceeds the remaining balance',
+  linked_refund_exceeds_cash_out: 'Linked refund exceeds recorded cash out',
+  ap_skill_not_ready: '',
+  legal_transition_correctness: '',
+  'gate:legal_transition_correctness': '',
+};
+
+function normalizeAgentMemorySection(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function formatAgentStateLabel(value) {
+  const token = String(value || '').trim().toLowerCase();
+  if (!token) return '';
+  return STATE_LABELS[token] ? getStateLabel(token) : humanizeSnakeText(token);
+}
+
+function formatAgentStateSummary(currentState = '', status = '') {
+  const labels = Array.from(new Set([
+    formatAgentStateLabel(currentState),
+    formatAgentStateLabel(status),
+  ].filter(Boolean)));
+  return labels.join(' · ');
+}
+
+export function formatAgentReasonCode(value) {
+  const token = normalizeAgentMemoryToken(value);
+  if (!token) return '';
+  if (Object.prototype.hasOwnProperty.call(AGENT_REASON_CODE_LABELS, token)) {
+    return AGENT_REASON_CODE_LABELS[token];
+  }
+  if (isInternalAgentMemoryReason(token)) return '';
+  return humanizeSnakeText(token);
+}
+
+function buildFieldReviewNextStep(item = {}) {
+  const blockers = getFieldReviewBlockers(item);
+  const fieldLabels = blockers
+    .map((blocker) => String(blocker?.field_label || '').trim().toLowerCase())
+    .filter(Boolean);
+  const uniqueLabels = Array.from(new Set(fieldLabels));
+
+  if (uniqueLabels.length === 0) return 'Check the invoice details';
+  if (uniqueLabels.length === 1) return `Confirm the ${uniqueLabels[0]}`;
+  if (uniqueLabels.length === 2) return `Confirm the ${uniqueLabels[0]} and ${uniqueLabels[1]}`;
+  return `Confirm ${uniqueLabels.length} invoice details`;
+}
+
+function formatAgentNextActionLabel(value, item = {}, nextActionType = '', currentState = '', status = '') {
+  const explicit = String(value || '').trim();
+  const typeToken = normalizeAgentMemoryToken(nextActionType);
+  const stateToken = normalizeAgentMemoryToken(currentState || status || item?.state || '');
+
+  if (item?.requires_field_review || typeToken === 'human_field_review' || isInternalAgentMemoryReason(explicit)) {
+    return buildFieldReviewNextStep(item);
+  }
+  if (typeToken === 'await_approval' || stateToken === 'needs_approval' || stateToken === 'pending_approval') {
+    return 'Waiting for approval';
+  }
+  if (typeToken === 'await_vendor_info' || stateToken === 'needs_info') {
+    return 'Waiting for vendor reply';
+  }
+  if (typeToken === 'operator_recovery') {
+    return 'Review the issue and decide what to do next';
+  }
+  if (typeToken === 'monitor_completion') {
+    return 'Clearledgr is finishing the workflow';
+  }
+  if (typeToken === 'reprocess_after_correction') {
+    return 'Clearledgr is rerunning this invoice with the corrected details';
+  }
+  if (typeToken === 'manual_review') {
+    return 'Review this record';
+  }
+  if (explicit && !isInternalAgentMemoryReason(explicit)) return explicit;
+  return 'Review this record';
+}
+
+function formatAgentBeliefReason(value, item = {}) {
+  const explicit = String(value || '').trim();
+  const token = normalizeAgentMemoryToken(explicit || item?.state || '');
+  if (item?.requires_field_review || isInternalAgentMemoryReason(explicit)) {
+    return getWorkflowPauseReason(item) || 'Check the invoice details before Clearledgr continues.';
+  }
+  if (!explicit) {
+    if (token === 'pending_approval' || token === 'needs_approval') {
+      return 'Approval has already been requested. Clearledgr is waiting for the approver response.';
+    }
+    if (token === 'needs_info') {
+      return 'Clearledgr is waiting for the missing information before this record can continue.';
+    }
+    if (token === 'failed_post') {
+      return 'Posting failed. Clearledgr needs a retry or connector review before it can continue.';
+    }
+    return '';
+  }
+  if (token === 'pending_approval' || token === 'needs_approval' || token === 'awaiting_approval_response') {
+    return 'Approval has already been requested. Clearledgr is waiting for the approver response.';
+  }
+  if (token === 'needs_info' || token === 'await_vendor_info') {
+    return 'Clearledgr is waiting for the missing information before this record can continue.';
+  }
+  if (token === 'failed_post' || token === 'erp_post_failed') {
+    return 'Posting failed. Clearledgr needs a retry or connector review before it can continue.';
+  }
+  return explicit;
+}
+
+function formatAgentActionActor(owner = '', item = {}, nextActionType = '', currentState = '', status = '') {
+  const ownerToken = normalizeAgentMemoryToken(owner);
+  const typeToken = normalizeAgentMemoryToken(nextActionType);
+  const stateToken = normalizeAgentMemoryToken(currentState || status || item?.state || '');
+
+  if (item?.requires_field_review || typeToken === 'human_field_review') return 'You';
+  if (ownerToken === 'agent' || typeToken === 'monitor_completion' || typeToken === 'reprocess_after_correction') return 'Clearledgr';
+  if (ownerToken === 'approver' || typeToken === 'await_approval' || stateToken === 'needs_approval' || stateToken === 'pending_approval') return 'Approver';
+  if (ownerToken === 'vendor' || typeToken === 'await_vendor_info' || stateToken === 'needs_info') return 'Vendor';
+  if (ownerToken === 'operator' || typeToken === 'operator_recovery' || typeToken === 'manual_review') return 'You';
+  return ownerToken ? humanizeSnakeText(ownerToken) : '';
+}
+
+function formatAgentResponsibility(owner = '', item = {}, nextActionType = '', currentState = '', status = '') {
+  const ownerToken = normalizeAgentMemoryToken(owner);
+  const typeToken = normalizeAgentMemoryToken(nextActionType);
+  const stateToken = normalizeAgentMemoryToken(currentState || status || item?.state || '');
+
+  if (item?.requires_field_review || typeToken === 'human_field_review') return 'Needs your review';
+  if (ownerToken === 'agent' || typeToken === 'monitor_completion') return 'Clearledgr is handling this';
+  if (ownerToken === 'approver' || typeToken === 'await_approval' || stateToken === 'needs_approval') return 'Waiting on approver';
+  if (ownerToken === 'vendor' || typeToken === 'await_vendor_info' || stateToken === 'needs_info') return 'Waiting on vendor';
+  if (ownerToken === 'operator' || typeToken === 'operator_recovery' || typeToken === 'manual_review') return 'Needs your review';
+  return '';
+}
+
+function summarizeAgentHighlights(item = {}, reasonCodes = [], confidenceBlockers = [], sourceConflicts = []) {
+  const highlights = [];
+  reasonCodes.filter(Boolean).forEach((entry) => {
+    if (!highlights.includes(entry)) highlights.push(entry);
+  });
+
+  const fieldReviewBlockers = getFieldReviewBlockers(item);
+  const fieldLabels = Array.from(new Set(
+    fieldReviewBlockers
+      .map((blocker) => String(blocker?.field_label || '').trim().toLowerCase())
+      .filter(Boolean)
+  ));
+  const sourceConflictCount = fieldReviewBlockers.filter((blocker) => blocker?.kind === 'source_conflict').length || sourceConflicts.length;
+
+  if (fieldLabels.length === 1) {
+    highlights.push(`${humanizeSnakeText(fieldLabels[0])} still needs confirmation`);
+  } else if (fieldLabels.length === 2) {
+    highlights.push(`${humanizeSnakeText(fieldLabels[0])} and ${humanizeSnakeText(fieldLabels[1])} still need confirmation`);
+  } else if (fieldLabels.length > 2) {
+    highlights.push(`${fieldLabels.length} invoice details still need confirmation`);
+  } else if (confidenceBlockers.length > 0) {
+    highlights.push(
+      `${confidenceBlockers.length} field check${confidenceBlockers.length === 1 ? '' : 's'} still ${confidenceBlockers.length === 1 ? 'needs' : 'need'} confirmation`
+    );
+  }
+
+  if (sourceConflictCount > 0) {
+    highlights.push(
+      sourceConflictCount === 1
+        ? 'Email and attachment still do not match'
+        : `${sourceConflictCount} email and attachment conflicts still need review`
+    );
+  }
+
+  return Array.from(new Set(highlights.filter(Boolean)));
+}
+
+export function getAgentMemoryView(item = {}) {
+  const memory = normalizeAgentMemorySection(item?.agent_memory);
+  const profile = Object.keys(normalizeAgentMemorySection(item?.agent_profile)).length > 0
+    ? normalizeAgentMemorySection(item?.agent_profile)
+    : normalizeAgentMemorySection(memory.profile);
+  const belief = Object.keys(normalizeAgentMemorySection(item?.agent_belief_state)).length > 0
+    ? normalizeAgentMemorySection(item?.agent_belief_state)
+    : normalizeAgentMemorySection(memory.belief);
+  const nextAction = Object.keys(normalizeAgentMemorySection(item?.agent_next_action)).length > 0
+    ? normalizeAgentMemorySection(item?.agent_next_action)
+    : normalizeAgentMemorySection(memory.next_action);
+  const summary = Object.keys(normalizeAgentMemorySection(item?.agent_summary)).length > 0
+    ? normalizeAgentMemorySection(item?.agent_summary)
+    : normalizeAgentMemorySection(memory.summary);
+  const episode = Object.keys(normalizeAgentMemorySection(item?.agent_episode)).length > 0
+    ? normalizeAgentMemorySection(item?.agent_episode)
+    : normalizeAgentMemorySection(memory.episode);
+  const uncertainties = normalizeAgentMemorySection(memory.uncertainties);
+  const evidence = normalizeAgentMemorySection(memory.evidence);
+  const reasonCodes = Array.isArray(uncertainties.reason_codes)
+    ? Array.from(new Set(uncertainties.reason_codes.map((code) => formatAgentReasonCode(code)).filter(Boolean)))
+    : [];
+  const confidenceBlockers = Array.isArray(uncertainties.confidence_blockers) ? uncertainties.confidence_blockers : [];
+  const sourceConflicts = Array.isArray(uncertainties.source_conflicts) ? uncertainties.source_conflicts : [];
+
+  const currentState = String(memory.current_state || belief.current_state || item?.state || '').trim();
+  const status = String(memory.status || belief.status || episode.status || '').trim();
+  const nextActionType = String(nextAction.type || '').trim();
+  const nextActionLabel = formatAgentNextActionLabel(
+    String(nextAction.label || item?.next_action || '').trim(),
+    item,
+    nextActionType,
+    currentState,
+    status,
+  );
+  const beliefReason = formatAgentBeliefReason(String(summary.reason || belief.reason || episode.summary || '').trim(), item);
+  const autonomyLevel = String(profile.autonomy_level || '').trim();
+  const nextActionOwner = String(nextAction.owner || '').trim();
+  const mission = String(profile.mission || '').trim();
+  const doctrineVersion = String(profile.doctrine_version || '').trim();
+  const riskPosture = String(profile.risk_posture || '').trim();
+  const highlights = summarizeAgentHighlights(item, reasonCodes, confidenceBlockers, sourceConflicts);
+  const stateSummaryLabel = formatAgentStateSummary(currentState, status);
+  const hasMemory = Boolean(
+    Object.keys(memory).length
+    || Object.keys(profile).length
+    || Object.keys(belief).length
+    || Object.keys(nextAction).length
+    || Object.keys(summary).length
+    || Object.keys(episode).length
+  );
+
+  return {
+    hasMemory,
+    hasContext: Boolean(
+      nextActionLabel
+      || beliefReason
+      || currentState
+      || status
+      || highlights.length
+    ),
+    profile,
+    belief,
+    nextAction,
+    summary,
+    episode,
+    uncertainties,
+    evidence,
+    name: String(profile.name || '').trim() || 'Clearledgr AP Agent',
+    mission,
+    doctrineVersion,
+    riskPosture,
+    autonomyLevel,
+    autonomyLabel: autonomyLevel ? humanizeSnakeText(autonomyLevel) : '',
+    currentState,
+    currentStateLabel: formatAgentStateLabel(currentState),
+    status,
+    statusLabel: formatAgentStateLabel(status),
+    stateSummaryLabel,
+    beliefReason,
+    nextActionLabel,
+    nextActionType,
+    nextActionTypeLabel: nextActionType ? humanizeSnakeText(nextActionType) : '',
+    nextActionOwner,
+    nextActionOwnerLabel: nextActionOwner ? humanizeSnakeText(nextActionOwner) : '',
+    nextActionActorLabel: formatAgentActionActor(nextActionOwner, item, nextActionType, currentState, status),
+    nextActionResponsibility: formatAgentResponsibility(nextActionOwner, item, nextActionType, currentState, status),
+    reasonCodes,
+    highlights,
+    confidenceBlockers,
+    sourceConflicts,
+  };
+}
+
 export function openSourceEmail(item) {
   const threadId = getSourceThreadId(item);
   if (threadId) { window.location.hash = `#inbox/${encodeURIComponent(threadId)}`; return true; }
@@ -411,13 +715,35 @@ export function getIssueSummary(item) {
   if (ec === 'budget_overrun') return 'Invoice exceeds available budget';
   if (ec === 'missing_budget_context') return 'Budget context is missing for this invoice';
   if (ec === 'policy_validation_failed') return 'Invoice violated AP policy checks';
+  if (ec === 'erp_not_connected') return 'ERP is not connected for posting';
+  if (ec === 'erp_not_configured') return 'ERP setup is incomplete for posting';
+  if (ec === 'erp_type_unsupported') return 'Connected ERP does not support this posting path';
+  if (ec === 'posting_blocked') return 'ERP posting is paused for this workspace';
   const state = String(item?.state || '');
-  if (state === 'needs_info') return 'Missing required invoice fields';
-  if (state === 'needs_approval' || state === 'pending_approval') return 'Pending human approval';
-  if (state === 'failed_post') return 'ERP posting failed and needs retry';
-  if (state === 'approved') return 'Approved and waiting for ERP posting';
-  if (state === 'ready_to_post') return 'Ready to post to ERP';
+  const erpUnavailable = String(item?.erp_status || '').trim().toLowerCase() === 'not_connected'
+    || item?.erp_connector_available === false
+    || item?.connector_available === false;
+  const erpConnected = item?.erp_connector_available === true
+    || Boolean(String(item?.erp_type || '').trim());
+  const followupNextAction = String(item?.followup_next_action || '').trim().toLowerCase();
+  const approvalFollowup = item?.approval_followup && typeof item.approval_followup === 'object'
+    ? item.approval_followup
+    : {};
+  if (state === 'needs_info') {
+    if (followupNextAction === 'await_vendor_response') return 'Waiting on vendor reply';
+    if (followupNextAction === 'manual_vendor_escalation') return 'Vendor follow-up needs escalation';
+    return 'Missing required invoice fields';
+  }
+  if (state === 'needs_approval' || state === 'pending_approval') {
+    if (approvalFollowup?.escalation_due) return 'Approval needs escalation';
+    if (approvalFollowup?.sla_breached) return 'Approval reminder is due';
+    return 'Waiting on approver decision';
+  }
+  if (state === 'failed_post') return erpUnavailable ? 'ERP is not connected for posting' : 'ERP posting failed and needs retry';
+  if (state === 'approved') return erpUnavailable ? 'ERP is not connected for posting' : (erpConnected ? 'Approved and waiting for ERP posting' : 'Approved and waiting for ERP posting');
+  if (state === 'ready_to_post') return erpUnavailable ? 'ERP is not connected for posting' : (erpConnected ? 'Ready to post to ERP' : 'Ready to post to ERP');
   if (state === 'posted_to_erp' || state === 'closed') return 'Posted successfully';
+  if (state === 'rejected') return 'Invoice has been rejected';
   return 'Under AP review';
 }
 
@@ -433,6 +759,10 @@ export function getExceptionReason(exceptionCode) {
   if (c === 'confidence_low') return 'Extraction confidence too low for auto-posting';
   if (c === 'planner_failed') return 'Automatic review could not continue for this invoice';
   if (c === 'erp_post_failed') return 'Posting to the ERP failed and needs retry';
+  if (c === 'erp_not_connected') return 'Connect an ERP before posting this invoice';
+  if (c === 'erp_not_configured') return 'Finish ERP configuration before posting this invoice';
+  if (c === 'erp_type_unsupported') return 'This ERP connection does not support invoice posting yet';
+  if (c === 'posting_blocked') return 'ERP posting is paused by rollout controls right now';
   return '';
 }
 
@@ -443,6 +773,10 @@ export function getExceptionLabel(exceptionCode) {
   if (c === 'receipt_missing') return 'Receipt missing';
   if (c === 'budget_overrun') return 'Budget overrun';
   if (c === 'missing_budget_context') return 'Missing budget context';
+  if (c === 'erp_not_connected') return 'ERP not connected';
+  if (c === 'erp_not_configured') return 'ERP not configured';
+  if (c === 'erp_type_unsupported') return 'ERP not supported';
+  if (c === 'posting_blocked') return 'ERP posting paused';
   if (c === 'policy_validation_failed') return 'Policy review';
   if (c === 'duplicate_invoice') return 'Duplicate invoice';
   if (c === 'confidence_low') return 'Low confidence';
@@ -464,13 +798,34 @@ export function getDueRiskLabel(dueDateValue) {
 
 export function getDecisionSummary(item, budgetContext) {
   const state = String(item?.state || 'received').toLowerCase();
+  const erpUnavailable = String(item?.erp_status || '').trim().toLowerCase() === 'not_connected'
+    || item?.erp_connector_available === false
+    || item?.connector_available === false;
+  const erpConnected = item?.erp_connector_available === true
+    || Boolean(String(item?.erp_type || '').trim());
   if (budgetContext?.requiresDecision) return { title: 'Budget review required', detail: 'Choose override, budget adjustment, or rejection.', tone: 'warning' };
-  if (state === 'needs_info' || String(item?.exception_code || '').trim()) return { title: 'Needs review', detail: getIssueSummary(item), tone: 'warning' };
-  if (state === 'needs_approval' || state === 'pending_approval') return { title: 'Approval required', detail: 'Route to approver with full context.', tone: 'neutral' };
+  if (state === 'needs_info') {
+    return {
+      title: String(item?.followup_next_action || '').trim().toLowerCase() === 'await_vendor_response' ? 'Waiting on vendor' : 'Needs review',
+      detail: getIssueSummary(item),
+      tone: 'warning',
+    };
+  }
+  if (String(item?.exception_code || '').trim()) return { title: 'Needs review', detail: getIssueSummary(item), tone: 'warning' };
+  if (state === 'needs_approval' || state === 'pending_approval') {
+    return { title: 'Waiting on approver', detail: getIssueSummary(item), tone: 'neutral' };
+  }
+  if ((state === 'approved' || state === 'ready_to_post' || state === 'failed_post') && erpUnavailable && !erpConnected) {
+    return {
+      title: 'ERP not connected',
+      detail: 'Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.',
+      tone: 'warning',
+    };
+  }
   if (state === 'approved' || state === 'ready_to_post') return { title: 'Ready for posting', detail: 'Required checks are complete.', tone: 'good' };
   if (state === 'posted_to_erp' || state === 'closed') return { title: 'Completed', detail: 'Invoice has already been posted.', tone: 'good' };
   if (state === 'failed_post') return { title: 'Posting failed', detail: 'Retry posting or escalate this invoice.', tone: 'warning' };
-  if (state === 'rejected') return { title: 'Rejected', detail: 'No further action required unless reopened.', tone: 'warning' };
+  if (state === 'rejected') return { title: 'Rejected', detail: 'This invoice is closed unless you reopen it.', tone: 'warning' };
   return { title: 'Under review', detail: getIssueSummary(item), tone: 'neutral' };
 }
 
@@ -510,7 +865,7 @@ export function buildAuditRow(event) {
   const eventType = normalizeAuditEventType(
     event?.event_type || event?.eventType || payload?.event_type || event?.action || 'action_recorded',
   );
-  const safeTitle = eventType === 'state_transition' ? 'Status updated' : 'Action recorded';
+  let safeTitle = eventType === 'state_transition' ? 'Status updated' : 'Action recorded';
   let safeDetail = 'Action recorded for this invoice.';
   if (eventType === 'state_transition') safeDetail = 'Invoice status changed.';
   else if (eventType === 'erp_post_completed') safeDetail = 'Invoice posting completed successfully.';
@@ -537,11 +892,30 @@ export function buildAuditRow(event) {
       || '',
   ).trim(), 160);
   const timestampRaw = getAuditEventTimestamp(event);
+  const rawTitle = trimText(String(event?.operator_title || '').trim(), 72);
+  const normalizedRawTitle = rawTitle.toLowerCase();
+  const normalizedPlainTitle = normalizedRawTitle
+    .replace(/[:\-–—]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const genericStateTitle = normalizedRawTitle.startsWith('status updated')
+    || normalizedRawTitle.startsWith('status changed')
+    || /^(status (updated|changed))( (updated|changed|update))?$/.test(normalizedPlainTitle)
+    || ['updated', 'update', 'changed'].includes(normalizedPlainTitle);
+  const genericActionTitle = ['updated', 'update', 'action recorded', 'event'].includes(normalizedPlainTitle);
+  if (genericStateTitle) {
+    safeTitle = 'Status updated';
+    safeDetail = 'Invoice status changed.';
+  }
+  const shouldUseSafeTitle = !rawTitle
+    || (eventType === 'state_transition' && genericStateTitle)
+    || genericStateTitle
+    || (eventType !== 'state_transition' && genericActionTitle);
 
   return {
     event,
     eventType,
-    title: trimText(String(event?.operator_title || safeTitle), 72),
+    title: shouldUseSafeTitle ? safeTitle : rawTitle,
     detail: trimText(String(event?.operator_message || safeDetail).trim(), 160),
     timestampRaw,
     timestamp: formatDateTime(event?.ts || event?.created_at || event?.createdAt || event?.updated_at || event?.updatedAt || event?.timestamp),

@@ -25,8 +25,12 @@ test('manifest content script is pinned to audited dist bundle', () => {
   const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
   const contentScripts = Array.isArray(manifest.content_scripts) ? manifest.content_scripts : [];
   assert.ok(contentScripts.length > 0, 'manifest.content_scripts should be present');
-  const jsFiles = Array.isArray(contentScripts[0]?.js) ? contentScripts[0].js : [];
-  assert.ok(jsFiles.includes('dist/inboxsdk-layer.js'));
+  const earlyJsFiles = Array.isArray(contentScripts[0]?.js) ? contentScripts[0].js : [];
+  const bundleJsFiles = Array.isArray(contentScripts[1]?.js) ? contentScripts[1].js : [];
+  assert.deepEqual(earlyJsFiles, ['route-capture.js']);
+  assert.deepEqual(bundleJsFiles, ['dist/inboxsdk-layer.js']);
+  assert.equal(contentScripts[0]?.run_at, 'document_start');
+  assert.equal(contentScripts[1]?.run_at, 'document_idle');
   assert.equal(Boolean(manifest.action?.default_popup), false, 'default popup must be removed from shipped UX');
   assert.equal(Boolean(manifest.options_ui), false, 'options_ui must be removed from shipped UX');
 });

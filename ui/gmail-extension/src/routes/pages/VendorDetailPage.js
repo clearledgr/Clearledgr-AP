@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDate, fmtDateTime, fmtDollar, useAction } from '../route-helpers.js';
 import { navigateToRecordDetail } from '../../utils/record-route.js';
-import { getExceptionLabel, getExceptionReason, getStateLabel, openSourceEmail } from '../../utils/formatters.js';
+import { formatAmount, getExceptionLabel, getExceptionReason, getStateLabel, openSourceEmail } from '../../utils/formatters.js';
 import {
   clearPipelineNavigation,
   focusPipelineItem,
@@ -43,17 +43,11 @@ function StatePill({ state }) {
 }
 
 function MetricCard({ label, value, detail }) {
-  return html`<div style="padding:18px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-    <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em">${value}</div>
-    <div style="font-size:13px;font-weight:600;margin-top:2px">${label}</div>
-    ${detail ? html`<div class="muted" style="margin-top:6px;font-size:12px">${detail}</div>` : null}
+  return html`<div class="secondary-stat-card">
+    <strong>${label}</strong>
+    <span style="font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-0.03em;color:var(--ink);display:block;margin-bottom:4px">${value}</span>
+    ${detail ? html`<span>${detail}</span>` : null}
   </div>`;
-}
-
-function formatMoney(amount, currency = 'USD') {
-  const value = Number(amount);
-  if (!Number.isFinite(value)) return '—';
-  return `${currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function getRecordId(item) {
@@ -117,7 +111,7 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
         vendor: vendorName,
       },
     });
-    navigate('clearledgr/pipeline');
+    navigate('clearledgr/invoices');
   };
 
   const openItemDetail = (item) => {
@@ -154,7 +148,7 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
 
   return html`
     <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div class="panel-head">
         <div>
           <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Vendor record</div>
           <h3 style="margin:0 0 6px">${payload.vendor_name || vendorName}</h3>
@@ -166,22 +160,64 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
           <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/vendors')}>Back to vendors</button>
           <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
           <button class="btn-secondary btn-sm" onClick=${openVendorIssues}>Review issues</button>
-          <button class="btn-primary btn-sm" onClick=${openVendorInPipeline}>Open vendor in pipeline</button>
+          <button class="btn-primary btn-sm" onClick=${openVendorInPipeline}>Open vendor in invoices</button>
         </div>
       </div>
     </div>
 
-    <div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
+    <div class="secondary-stat-grid" style="margin-bottom:14px">
       <${MetricCard} label="Tracked invoices" value=${Number(summary.invoice_count || 0).toLocaleString()} />
       <${MetricCard} label="Open now" value=${Number(summary.open_count || 0).toLocaleString()} detail=${`${Number(summary.issue_count || 0)} with issues`} />
       <${MetricCard} label="Posted" value=${Number(summary.posted_count || 0).toLocaleString()} detail=${`${Number(summary.failed_count || 0)} failed post`} />
       <${MetricCard} label="Tracked spend" value=${fmtDollar(summary.total_amount || 0)} detail=${summary.last_activity_at ? `Last activity ${fmtDateTime(summary.last_activity_at)}` : 'No recent activity'} />
     </div>
 
-    <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,0.8fr);gap:20px">
-      <div style="display:flex;flex-direction:column;gap:20px">
+    ${(profile.suggested_gl || profile.override_rate != null || anomalyFlags.length > 0 || profile.last_correction_at) && html`
+      <div class="panel" style="margin-top:0">
+        <div class="panel-head compact">
+          <div>
+            <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Vendor intelligence</div>
+            <p class="muted" style="margin:0">AI-derived insights from this vendor's invoice history and GL correction patterns.</p>
+          </div>
+        </div>
+        <div class="secondary-stat-grid">
+          ${profile.suggested_gl ? html`
+            <div class="secondary-stat-card">
+              <strong>Suggested GL</strong>
+              <span style="font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)">${profile.suggested_gl}</span>
+              <span>Most likely GL code based on posting history</span>
+            </div>
+          ` : null}
+          ${profile.override_rate != null ? html`
+            <div class="secondary-stat-card">
+              <strong>Override rate</strong>
+              <span style="font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)">${(Number(profile.override_rate) * 100).toFixed(1)}%</span>
+              <span>How often operators override the AI recommendation</span>
+            </div>
+          ` : null}
+          ${profile.last_correction_at ? html`
+            <div class="secondary-stat-card">
+              <strong>Last GL correction</strong>
+              <span style="font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)">${fmtDate(profile.last_correction_at)}</span>
+              <span>Most recent time a GL code was corrected for this vendor</span>
+            </div>
+          ` : null}
+        </div>
+        ${anomalyFlags.length > 0 ? html`
+          <div style="margin-top:14px">
+            <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Risk indicators</div>
+            <div class="secondary-chip-row">
+              ${anomalyFlags.map((flag) => html`<span key=${flag} class="secondary-chip" style="background:#FEF2F2;border-color:#FECACA;color:#B91C1C">${String(flag).replace(/_/g, ' ')}</span>`)}
+            </div>
+          </div>
+        ` : null}
+      </div>
+    `}
+
+    <div class="secondary-shell">
+      <div class="secondary-stack">
         <div class="panel">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+          <div class="panel-head compact">
             <div>
               <h3 style="margin:0 0 6px">Open issues and follow-up</h3>
               <p class="muted" style="margin:0">Work the vendor-specific blockers that still need action before this supplier’s invoices can move cleanly.</p>
@@ -190,29 +226,29 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
           </div>
           ${openIssues.length === 0
             ? html`<p class="muted" style="margin:0">No open vendor issues right now.</p>`
-            : html`<div style="display:flex;flex-direction:column;gap:10px">
+            : html`<div class="secondary-card-list">
                 ${openIssues.map((item) => html`
-                  <div key=${item.id} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                      <div>
-                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <div key=${item.id} class="secondary-card">
+                    <div class="secondary-card-head">
+                      <div class="secondary-card-copy">
+                        <div class="secondary-chip-row" style="margin-bottom:6px">
                           <strong style="font-size:14px">${item.invoice_number || 'No invoice #'}</strong>
-                          <span style="font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;background:#FFF7ED;color:#9A3412">
+                          <span class="secondary-chip" style="background:#FFF7ED;border-color:#FED7AA;color:#9A3412">
                             ${item.issue_label || 'Open issue'}
                           </span>
                           <${StatePill} state=${item.state} />
                         </div>
-                        <div class="muted" style="font-size:12px;margin-top:4px">
-                          ${formatMoney(item.amount, item.currency || 'USD')} · Updated ${fmtDateTime(item.updated_at)}
+                        <div class="secondary-card-meta">
+                          ${formatAmount(item.amount, item.currency)} · Updated ${fmtDateTime(item.updated_at)}
                         </div>
-                        <div class="muted" style="font-size:12px;margin-top:6px;line-height:1.45">
+                        <div class="secondary-card-meta" style="margin-top:6px">
                           ${item.issue_summary || getIssueSummary(item)}
                         </div>
                         ${item.exception_code
-                          ? html`<div class="muted" style="font-size:12px;margin-top:4px">${getExceptionLabel(item.exception_code)}</div>`
+                          ? html`<div class="secondary-card-meta" style="margin-top:4px">${getExceptionLabel(item.exception_code)}</div>`
                           : null}
                       </div>
-                      <div class="row-actions">
+                      <div class="secondary-inline-actions">
                         <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(item)}>Open record</button>
                         ${(item.thread_id || item.message_id) && html`
                           <button class="btn-ghost btn-sm" onClick=${() => openIssueEmail(item)}>Open email</button>
@@ -225,29 +261,36 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Open and recent invoices</h3>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Open and recent invoices</h3>
+              <p class="muted" style="margin:4px 0 0">The current invoice context for this vendor, including active blockers and recent outcomes.</p>
+            </div>
+          </div>
           ${recentItems.length === 0
             ? html`<p class="muted" style="margin:0">No recent invoices for this vendor yet.</p>`
-            : html`<div style="display:flex;flex-direction:column;gap:10px">
+            : html`<div class="secondary-card-list">
                 ${recentItems.map((item) => html`
-                  <div key=${item.id} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                      <div>
-                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <div key=${item.id} class="secondary-card">
+                    <div class="secondary-card-head">
+                      <div class="secondary-card-copy">
+                        <div class="secondary-chip-row" style="margin-bottom:6px">
                           <strong style="font-size:14px">${item.invoice_number || 'No invoice #'}</strong>
                           <${StatePill} state=${item.state} />
                         </div>
-                        <div class="muted" style="font-size:12px;margin-top:4px">
-                          ${formatMoney(item.amount, item.currency || 'USD')} · Due ${item.due_date ? fmtDate(item.due_date) : '—'} · Updated ${fmtDateTime(item.updated_at)}
+                        <div class="secondary-card-meta">
+                          ${formatAmount(item.amount, item.currency)} · Due ${item.due_date ? fmtDate(item.due_date) : '—'} · Updated ${fmtDateTime(item.updated_at)}
                         </div>
                         ${item.erp_reference
-                          ? html`<div class="muted" style="font-size:12px;margin-top:4px">ERP ${item.erp_reference}</div>`
+                          ? html`<div class="secondary-card-meta" style="margin-top:4px">ERP ${item.erp_reference}</div>`
                           : null}
                         ${item.exception_code
-                          ? html`<div class="muted" style="font-size:12px;margin-top:4px">${getExceptionLabel(item.exception_code)}${getExceptionReason(item.exception_code) ? ` · ${getExceptionReason(item.exception_code)}` : ''}</div>`
+                          ? html`<div class="secondary-card-meta" style="margin-top:4px">${getExceptionLabel(item.exception_code)}${getExceptionReason(item.exception_code) ? ` · ${getExceptionReason(item.exception_code)}` : ''}</div>`
                           : null}
                       </div>
-                      <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(item)}>Open record</button>
+                      <div class="secondary-inline-actions">
+                        <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(item)}>Open record</button>
+                      </div>
                     </div>
                   </div>
                 `)}
@@ -255,20 +298,28 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Outcome history</h3>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Outcome history</h3>
+              <p class="muted" style="margin:4px 0 0">What recently happened to this vendor’s invoices after review and posting.</p>
+            </div>
+          </div>
           ${history.length === 0
             ? html`<p class="muted" style="margin:0">No vendor outcome history yet.</p>`
-            : html`<div style="display:flex;flex-direction:column;gap:10px">
+            : html`<div class="secondary-card-list">
                 ${history.map((entry) => html`
-                  <div key=${entry.id || `${entry.ap_item_id}-${entry.created_at}`} style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                      <div>
-                        <strong style="font-size:13px">${entry.invoice_number || entry.ap_item_id || 'Invoice outcome'}</strong>
-                        <div class="muted" style="font-size:12px;margin-top:4px">
-                          ${formatMoney(entry.amount, entry.currency || 'USD')} · ${getStateLabel(String(entry.final_state || 'received').trim().toLowerCase())}
+                  <div key=${entry.id || `${entry.ap_item_id}-${entry.created_at}`} class="secondary-card">
+                    <div class="secondary-card-head">
+                      <div class="secondary-card-copy">
+                        <span class="secondary-card-title">${entry.invoice_number || entry.ap_item_id || 'Invoice outcome'}</span>
+                        <div class="secondary-card-meta">
+                          ${formatAmount(entry.amount, entry.currency)} · ${getStateLabel(String(entry.final_state || 'received').trim().toLowerCase())}
                         </div>
                       </div>
-                      <span class="muted" style="font-size:12px">${fmtDateTime(entry.created_at)}</span>
+                      <div class="secondary-card-stat">
+                        <strong>${fmtDate(entry.created_at)}</strong>
+                        <span>${fmtDateTime(entry.created_at)}</span>
+                      </div>
                     </div>
                   </div>
                 `)}
@@ -276,37 +327,42 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
         </div>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:20px">
+      <div class="secondary-stack">
         <div class="panel">
-          <h3 style="margin-top:0">Vendor profile</h3>
-          <div style="display:flex;flex-direction:column;gap:10px">
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Primary email</span>
-              <span style="font-weight:600;text-align:right">${summary.primary_email || '—'}</span>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Vendor profile</h3>
+              <p class="muted" style="margin:4px 0 0">Persistent AP settings and contact assumptions Clearledgr is carrying for this supplier.</p>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Payment terms</span>
-              <span style="font-weight:600;text-align:right">${profile.payment_terms || '—'}</span>
+          </div>
+          <div class="detail-row-list">
+            <div class="detail-row">
+              <span class="detail-row-label">Primary email</span>
+              <span class="detail-row-value">${summary.primary_email || '—'}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Requires PO</span>
-              <span style="font-weight:600">${profile.requires_po ? 'Yes' : 'No'}</span>
+            <div class="detail-row">
+              <span class="detail-row-label">Payment terms</span>
+              <span class="detail-row-value">${profile.payment_terms || '—'}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Always approved</span>
-              <span style="font-weight:600">${profile.always_approved ? 'Yes' : 'No'}</span>
+            <div class="detail-row">
+              <span class="detail-row-label">Requires PO</span>
+              <span class="detail-row-value">${profile.requires_po ? 'Yes' : 'No'}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px">
-              <span class="muted">Approval override rate</span>
-              <span style="font-weight:600">${Number(profile.approval_override_rate || 0).toFixed(2)}</span>
+            <div class="detail-row">
+              <span class="detail-row-label">Always approved</span>
+              <span class="detail-row-value">${profile.always_approved ? 'Yes' : 'No'}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-row-label">Approval override rate</span>
+              <span class="detail-row-value">${Number(profile.approval_override_rate || 0).toFixed(2)}</span>
             </div>
           </div>
 
           ${senderEmails.length > 0 && html`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Known sender emails</div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${senderEmails.map((email) => html`<span key=${email} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px">${email}</span>`)}
+              <div class="secondary-chip-row">
+                ${senderEmails.map((email) => html`<span key=${email} class="secondary-chip">${email}</span>`)}
               </div>
             </div>
           `}
@@ -314,62 +370,85 @@ export default function VendorDetailPage({ api, orgId, userEmail, navigate, rout
           ${anomalyFlags.length > 0 && html`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Anomaly flags</div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${anomalyFlags.map((flag) => html`<span key=${flag} style="padding:5px 10px;border-radius:999px;background:#FEF2F2;color:#B91C1C;font-size:12px;font-weight:600">${String(flag).replace(/_/g, ' ')}</span>`)}
+              <div class="secondary-chip-row">
+                ${anomalyFlags.map((flag) => html`<span key=${flag} class="secondary-chip" style="background:#FEF2F2;border-color:#FECACA;color:#B91C1C">${String(flag).replace(/_/g, ' ')}</span>`)}
               </div>
             </div>
           `}
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Issue summary</h3>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Open issues</span>
-              <strong>${Number(issueSummary.total || 0).toLocaleString()}</strong>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Issue summary</h3>
+              <p class="muted" style="margin:4px 0 0">The kinds of friction Clearledgr keeps seeing from this vendor.</p>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Field review</span>
-              <strong>${Number(issueSummary.field_review || 0).toLocaleString()}</strong>
+          </div>
+          <div class="detail-row-list">
+            <div class="detail-row">
+              <span class="detail-row-label">Open issues</span>
+              <span class="detail-row-value">${Number(issueSummary.total || 0).toLocaleString()}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Needs info</span>
-              <strong>${Number(issueSummary.needs_info || 0).toLocaleString()}</strong>
+            <div class="detail-row">
+              <span class="detail-row-label">Field review</span>
+              <span class="detail-row-value">${Number(issueSummary.field_review || 0).toLocaleString()}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-              <span class="muted">Failed post</span>
-              <strong>${Number(issueSummary.failed_post || 0).toLocaleString()}</strong>
+            <div class="detail-row">
+              <span class="detail-row-label">Needs info</span>
+              <span class="detail-row-value">${Number(issueSummary.needs_info || 0).toLocaleString()}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;gap:16px">
-              <span class="muted">Policy / entity</span>
-              <strong>${Number((issueSummary.policy_exception || 0) + (issueSummary.entity_route || 0)).toLocaleString()}</strong>
+            <div class="detail-row">
+              <span class="detail-row-label">Failed post</span>
+              <span class="detail-row-value">${Number(issueSummary.failed_post || 0).toLocaleString()}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-row-label">Policy / entity</span>
+              <span class="detail-row-value">${Number((issueSummary.policy_exception || 0) + (issueSummary.entity_route || 0)).toLocaleString()}</span>
             </div>
           </div>
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Common workflow states</h3>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Common workflow states</h3>
+              <p class="muted" style="margin:4px 0 0">Where this vendor’s records most often end up in the AP flow.</p>
+            </div>
+          </div>
           ${topStates.length === 0
             ? html`<p class="muted" style="margin:0">No state history yet.</p>`
-            : html`<div style="display:flex;flex-direction:column;gap:8px">
+            : html`<div class="secondary-card-list">
                 ${topStates.map((row) => html`
-                  <div key=${row.state} style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-                    <span>${getStateLabel(String(row.state || 'received').trim().toLowerCase())}</span>
-                    <strong>${Number(row.count || 0).toLocaleString()}</strong>
+                  <div key=${row.state} class="secondary-row">
+                    <div class="secondary-row-copy">
+                      <strong>${getStateLabel(String(row.state || 'received').trim().toLowerCase())}</strong>
+                    </div>
+                    <div class="secondary-inline-actions">
+                      <span class="secondary-chip">${Number(row.count || 0).toLocaleString()}</span>
+                    </div>
                   </div>
                 `)}
               </div>`}
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Recurring issues</h3>
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin:0">Recurring issues</h3>
+              <p class="muted" style="margin:4px 0 0">The exception patterns that repeat most often for this vendor.</p>
+            </div>
+          </div>
           ${topExceptionCodes.length === 0
             ? html`<p class="muted" style="margin:0">No recurring issue patterns yet.</p>`
-            : html`<div style="display:flex;flex-direction:column;gap:8px">
+            : html`<div class="secondary-card-list">
                 ${topExceptionCodes.map((row) => html`
-                  <div key=${row.exception_code} style="display:flex;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-                    <span>${getExceptionLabel(row.exception_code)}</span>
-                    <strong>${Number(row.count || 0).toLocaleString()}</strong>
+                  <div key=${row.exception_code} class="secondary-row">
+                    <div class="secondary-row-copy">
+                      <strong>${getExceptionLabel(row.exception_code)}</strong>
+                    </div>
+                    <div class="secondary-inline-actions">
+                      <span class="secondary-chip">${Number(row.count || 0).toLocaleString()}</span>
+                    </div>
                   </div>
                 `)}
               </div>`}

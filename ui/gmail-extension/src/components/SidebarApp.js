@@ -8,6 +8,7 @@ import ActionDialog, { useActionDialog } from './ActionDialog.js';
 import { hasAdminAccessRole, hasOpsAccessRole } from '../utils/roles.js';
 import {
   getStateLabel,
+  getAgentMemoryView,
   formatAmount,
   getAssetUrl,
   getFinanceEffectBlockers,
@@ -26,12 +27,15 @@ import {
 import {
   canEscalateApproval,
   canReassignApproval,
+  getDefaultNextMoveLabel,
+  getOperatorOverrideCopy,
   normalizeWorkState,
   getPrimaryActionConfig,
   getWorkStateNotice,
   shouldOfferResumeWorkflow,
   canRejectWorkItem,
   canNudgeApprover,
+  hasErpPostingConnection,
   needsEntityRouting,
 } from '../utils/work-actions.js';
 import {
@@ -41,6 +45,7 @@ import {
   normalizeDocumentType,
 } from '../utils/document-types.js';
 import { navigateInboxRoute } from '../utils/inbox-route.js';
+import { navigateToRecordDetail } from '../utils/record-route.js';
 import { navigateToVendorRecord } from '../utils/vendor-route.js';
 import { focusPipelineItem } from '../routes/pipeline-views.js';
 
@@ -115,9 +120,11 @@ export function showToast(message, tone = 'info') {
   _toastEl.dataset.tone = tone;
   _toastEl.style.display = 'block';
   clearTimeout(_toastTimer);
+  const duration = tone === 'error' ? 6000 : 3000;
   _toastTimer = setTimeout(() => {
     if (_toastEl) _toastEl.style.display = 'none';
-  }, 3000);
+  }, duration);
+  _toastTimer?.unref?.();
 }
 
 function humanizeActionFailure(reason) {
@@ -137,6 +144,8 @@ function humanizeActionFailure(reason) {
     waiting_for_sla_window: 'Follow-up already sent. Wait for the vendor response before nudging again.',
     followup_attempt_limit_reached: 'Clearledgr reached the vendor follow-up limit. This now needs manual escalation.',
     state_not_needs_info: 'This invoice is no longer waiting on vendor information.',
+    segregation_of_duties_violation: 'You cannot approve this invoice because you submitted or processed it. Another team member must approve.',
+    not_authorized_approver: 'You are not a designated approver for this invoice. Only named approvers in the routing rule can approve.',
   };
   return map[token] || token.replace(/_/g, ' ');
 }
@@ -154,10 +163,12 @@ function Toast() {
   useEffect(() => {
     _toastEl = ref.current;
     return () => {
+      clearTimeout(_toastTimer);
+      _toastTimer = null;
       _toastEl = null;
     };
   }, []);
-  return html`<div ref=${ref} class="cl-toast" style="display:none"></div>`;
+  return html`<div ref=${ref} class="cl-toast" style="display:none" onClick=${() => { if (_toastEl) _toastEl.style.display = 'none'; clearTimeout(_toastTimer); }}></div>`;
 }
 
 function ScanStatus() {
@@ -271,15 +282,11 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
     add(
       'approval',
       approvalFollowup?.escalation_due
-        ? 'Approval escalation due'
-        : (approvalFollowup?.sla_breached ? 'Approval follow-up due' : 'Waiting on approver'),
-      approvalFollowup?.escalation_due
-        ? 'Approval has been waiting past the escalation policy and should be escalated or reassigned.'
-        : (approvalFollowup?.sla_breached
-          ? 'Approval has been waiting past the reminder SLA and should be nudged.'
-        : (pendingAssignees.length
-          ? `Waiting on ${pendingAssignees.slice(0, 3).join(', ')}.`
-          : 'The approval request is still outstanding.')),
+        ? 'Approval needs escalation'
+        : (approvalFollowup?.sla_breached ? 'Approval reminder is due' : 'Waiting on approver'),
+      approvalFollowup?.escalation_due || approvalFollowup?.sla_breached || pendingAssignees.length
+        ? getWorkStateNotice(state, documentType, item)
+        : 'The approval request is still outstanding.',
     );
   }
 
@@ -293,12 +300,23 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
     add(
       'needs_info',
       disputeLabel,
-      `Clearledgr still needs more information before this ${isInvoiceDocument ? 'invoice' : 'record'} can continue.`,
+      getWorkStateNotice(state, documentType, item)
+        || `Clearledgr still needs more information before this ${isInvoiceDocument ? 'invoice' : 'record'} can continue.`,
     );
   }
 
-  if (state === 'failed_post') {
-    add('failed_post', 'ERP posting failed', 'Retry the ERP post or review the connector response.');
+  if ((state === 'approved' || state === 'ready_to_post') && !exceptionReason && !hasErpPostingConnection(item)) {
+    add('erp_setup', 'ERP is not connected', 'Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.');
+  }
+
+  if (state === 'failed_post' && !exceptionReason) {
+    add(
+      'failed_post',
+      hasErpPostingConnection(item) ? 'ERP posting failed' : 'ERP is not connected',
+      hasErpPostingConnection(item)
+        ? 'Retry the ERP post or review the connector response.'
+        : 'Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.',
+    );
   }
 
   // Validation gate warnings surfaced as blockers
@@ -358,7 +376,9 @@ function EvidenceChecklist({ entries }) {
               <span class="cl-evidence-label">${entry.label}</span>
               ${entry.detail && html`<span class="cl-evidence-detail">${entry.detail}</span>`}
             </div>
-            <span class="cl-evidence-status" data-status=${entry.status}>${entry.text}</span>
+            <span class="cl-evidence-status" data-status=${entry.status}>
+              <span class="cl-evidence-status-pill">${entry.text}</span>
+            </span>
           </div>
         `)}
       </div>
@@ -482,8 +502,8 @@ function AuditDisclosure({ events, loading }) {
     secondaryLimit: 2,
   });
   return html`
-    <details class="cl-details">
-      <summary>View audit${totalEvents ? ` (${totalEvents})` : ''}</summary>
+    <details class="cl-details cl-audit-disclosure">
+      <summary class="cl-audit-disclosure-summary">View audit${totalEvents ? ` (${totalEvents})` : ''}</summary>
       <div class="cl-audit-list">
         ${loading && html`<div class="cl-empty">Loading audit…</div>`}
         ${!loading && totalEvents === 0 && html`<div class="cl-empty">No audit events yet.</div>`}
@@ -558,21 +578,497 @@ function AuthPrompt({ queueManager }) {
   `;
 }
 
-function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
+function AgentViewSection({ view, item, fallbackNextMove = 'Review this record' }) {
+  if (!view?.hasContext) return null;
+  const needsReview = Boolean(item?.requires_field_review || view.nextActionType === 'human_field_review');
+  const uncertaintyLabel = view.highlights.slice(0, 2).join(' · ');
+  const nextMove = view.nextActionLabel || fallbackNextMove || view.currentStateLabel || view.statusLabel || 'Review this record';
+  const whyNow = view.beliefReason || (needsReview
+    ? 'Clearledgr paused because this invoice still needs a quick check before it can continue.'
+    : 'Clearledgr is holding the current workflow context on this record.');
+  const ownerLine = view.nextActionResponsibility || '';
+  const tone = uncertaintyLabel ? 'warning' : 'good';
+  const sectionTitle = needsReview ? 'Before Clearledgr continues' : 'What happens next';
+  const reasonLabel = needsReview ? 'Why it paused' : 'Why it is waiting';
+
+  return html`
+    <div class="cl-section" aria-label=${sectionTitle}>
+      <div class="cl-section-title">${sectionTitle}</div>
+      <div class="cl-operator-brief" data-tone=${tone}>
+        <div class="cl-operator-brief-row">
+          <div class="cl-operator-brief-label">Next step</div>
+          <div class="cl-operator-brief-text">${nextMove}</div>
+          ${ownerLine && html`<div class="cl-operator-brief-outcome">${ownerLine}</div>`}
+        </div>
+        <div class="cl-operator-brief-row">
+          <div class="cl-operator-brief-label">${reasonLabel}</div>
+          <div class="cl-operator-brief-text">${whyNow}</div>
+        </div>
+        ${uncertaintyLabel && html`
+          <div class="cl-operator-brief-row">
+            <div class="cl-operator-brief-label">Needs attention</div>
+            <div class="cl-operator-brief-text">${uncertaintyLabel}</div>
+            <div class="cl-operator-brief-outcome">${view.highlights.length} open item${view.highlights.length === 1 ? '' : 's'}</div>
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+function RelatedRecordMiniRow({ label, item, onOpen }) {
+  if (!item?.id) return null;
+  return html`
+    <div class="cl-mini-card">
+      <div class="cl-mini-card-main">
+        <div class="cl-mini-card-copy">
+          <div class="cl-mini-card-label">${label}</div>
+          <div class="cl-mini-card-title">${item.vendor_name || 'Unknown vendor'} · ${item.invoice_number || 'No invoice #'}</div>
+          <div class="cl-mini-card-meta">
+            ${formatAmount(item.amount, item.currency)} · ${String(item.state || 'received').replace(/_/g, ' ')}
+          </div>
+        </div>
+        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${onOpen}>Open</button>
+      </div>
+    </div>
+  `;
+}
+
+function RelatedRecordsSection({ item, contextPayload, onOpenRecord, onOpenVendor }) {
+  const relatedRecords = contextPayload?.related_records || {};
+  const linkedFinanceDocuments = Array.isArray(item?.linked_finance_documents) ? item.linked_finance_documents.slice(0, 4) : [];
+  const rows = [];
+  if (relatedRecords?.supersession?.previous_item) {
+    rows.push({ key: `prev-${relatedRecords.supersession.previous_item.id}`, label: 'Supersedes', item: relatedRecords.supersession.previous_item });
+  }
+  if (relatedRecords?.supersession?.next_item) {
+    rows.push({ key: `next-${relatedRecords.supersession.next_item.id}`, label: 'Superseded by', item: relatedRecords.supersession.next_item });
+  }
+  (relatedRecords?.same_invoice_number_items || []).slice(0, 2).forEach((relatedItem) => {
+    rows.push({ key: `same-${relatedItem.id}`, label: 'Same invoice number', item: relatedItem });
+  });
+  (relatedRecords?.vendor_recent_items || []).slice(0, 2).forEach((relatedItem) => {
+    rows.push({ key: `vendor-${relatedItem.id}`, label: 'Recent vendor item', item: relatedItem });
+  });
+  linkedFinanceDocuments.forEach((relatedItem, index) => {
+    rows.push({
+      key: `linked-${relatedItem.source_ap_item_id || index}`,
+      label: `${getDocumentTypeLabel(relatedItem.document_type || 'other')} linked`,
+      item: {
+        id: relatedItem.source_ap_item_id,
+        vendor_name: relatedItem.vendor_name,
+        invoice_number: relatedItem.invoice_number,
+        amount: relatedItem.amount,
+        currency: relatedItem.currency,
+        state: relatedItem.outcome,
+      },
+    });
+  });
+  if (rows.length === 0) return null;
+
+  return html`
+    <div class="cl-section" aria-label="Related records">
+      <div class="cl-section-head">
+        <div class="cl-section-title">Related records</div>
+        ${(item?.vendor_name || item?.vendor) && html`
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${onOpenVendor}>Vendor</button>
+        `}
+      </div>
+      <div class="cl-card-stack">
+        ${rows.slice(0, 6).map((entry) => html`
+          <${RelatedRecordMiniRow}
+            key=${entry.key}
+            label=${entry.label}
+            item=${entry.item}
+            onOpen=${() => onOpenRecord(entry.item)}
+          />
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function FilesSection({ item, contextPayload, files, queueManager, readOnlyMode }) {
+  const attachmentNames = Array.isArray(item?.attachment_names) ? item.attachment_names.filter(Boolean) : [];
+  const dmsDocuments = Array.isArray(contextPayload?.web?.dms_documents)
+    ? contextPayload.web.dms_documents
+    : (Array.isArray(contextPayload?.dms_documents?.documents) ? contextPayload.dms_documents.documents : []);
+  const procurementDocs = Array.isArray(contextPayload?.web?.procurement)
+    ? contextPayload.web.procurement
+    : [];
+  const linkedFiles = Array.isArray(files) ? files : [];
+  const [labelDraft, setLabelDraft] = useState('');
+  const [urlDraft, setUrlDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const fileCount = attachmentNames.length + dmsDocuments.length + procurementDocs.length + linkedFiles.length;
+  if (!fileCount && readOnlyMode) return null;
+
+  const addFileLink = async () => {
+    const label = String(labelDraft || '').trim();
+    const url = String(urlDraft || '').trim();
+    if (!label || !url) return;
+    setSaving(true);
+    try {
+      const result = await queueManager.addItemFileLink(item, { label, url, file_type: 'link', source: 'gmail_sidebar' });
+      const ok = String(result?.status || '').toLowerCase() === 'created';
+      showToast(ok ? 'File link added' : (result?.reason || 'Could not add file link'), ok ? 'success' : 'error');
+      if (ok) {
+        setLabelDraft('');
+        setUrlDraft('');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return html`
+    <div class="cl-section" aria-label="Files">
+      <div class="cl-section-title">Files and evidence</div>
+      ${!readOnlyMode && html`
+        <div class="cl-inline-form cl-inline-form-wide">
+          <input class="cl-input" value=${labelDraft} placeholder="Link label" onInput=${(event) => setLabelDraft(event.target.value)} />
+          <input class="cl-input" value=${urlDraft} placeholder="Paste Drive, DMS, or procurement URL" onInput=${(event) => setUrlDraft(event.target.value)} />
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${addFileLink} disabled=${saving}>${saving ? 'Saving…' : 'Add link'}</button>
+        </div>
+      `}
+      <div class="cl-card-stack">
+        ${linkedFiles.length === 0 && fileCount === 0 && html`<div class="cl-muted">No linked files on this record yet.</div>`}
+        ${linkedFiles.map((file) => html`
+          <div key=${file.id} class="cl-evidence-row">
+            <div class="cl-evidence-main">
+              <span class="cl-evidence-label">${file.label || file.file_name || 'Linked file'}</span>
+              <span class="cl-evidence-detail">
+                ${file.note || file.file_name || file.url || 'Linked on this finance record'}
+                ${file.url && html`
+                  <span>
+                    · 
+                    <a href=${file.url} target="_blank" rel="noreferrer noopener" style="color:var(--cl-accent);text-decoration:none">Open link</a>
+                  </span>
+                `}
+              </span>
+            </div>
+            <span class="cl-evidence-status" data-status="ok">${file.file_type || 'Linked'}</span>
+          </div>
+        `)}
+        ${attachmentNames.map((name, index) => html`
+          <div key=${`attachment-${index}`} class="cl-evidence-row">
+            <div class="cl-evidence-main">
+              <span class="cl-evidence-label">Email attachment</span>
+              <span class="cl-evidence-detail">${name}</span>
+            </div>
+            <span class="cl-evidence-status" data-status="ok">Attached</span>
+          </div>
+        `)}
+        ${dmsDocuments.slice(0, 3).map((doc, index) => html`
+          <div key=${`dms-${index}`} class="cl-evidence-row">
+            <div class="cl-evidence-main">
+              <span class="cl-evidence-label">DMS document</span>
+              <span class="cl-evidence-detail">${doc?.subject || doc?.source_ref || 'Linked document'}</span>
+            </div>
+            <span class="cl-evidence-status" data-status="ok">Linked</span>
+          </div>
+        `)}
+        ${procurementDocs.slice(0, 2).map((doc, index) => html`
+          <div key=${`proc-${index}`} class="cl-evidence-row">
+            <div class="cl-evidence-main">
+              <span class="cl-evidence-label">Procurement</span>
+              <span class="cl-evidence-detail">${doc?.subject || doc?.source_ref || 'Procurement evidence'}</span>
+            </div>
+            <span class="cl-evidence-status" data-status="ok">Linked</span>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function EditableFieldRow({ label, value, fieldKey, type = 'text', placeholder = '', onSave, savingField }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? '');
+
+  useEffect(() => {
+    setDraft(value ?? '');
+  }, [value]);
+
+  const save = async () => {
+    await onSave(fieldKey, draft);
+    setEditing(false);
+  };
+
+  return html`
+    <div class="cl-field-row">
+      <div class="cl-field-row-body">
+        <div class="cl-field-main">
+          <div class="cl-field-label">${label}</div>
+          ${editing
+            ? html`
+                <input
+                  class="cl-input cl-field-input"
+                  type=${type}
+                  value=${draft ?? ''}
+                  placeholder=${placeholder}
+                  onInput=${(event) => setDraft(event.target.value)}
+                />
+              `
+            : html`<div class="cl-field-value">${value || '—'}</div>`}
+        </div>
+        ${editing
+          ? html`
+              <div class="cl-mini-card-actions">
+                <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => { setDraft(value ?? ''); setEditing(false); }}>Cancel</button>
+                <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${save} disabled=${savingField === fieldKey}>
+                  ${savingField === fieldKey ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            `
+          : html`<button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => setEditing(true)}>Edit</button>`}
+      </div>
+    </div>
+  `;
+}
+
+function RecordEditorSection({ item, queueManager, readOnlyMode }) {
+  const [savingField, setSavingField] = useState('');
+
+  if (readOnlyMode) return null;
+
+  const saveField = async (fieldKey, fieldValue) => {
+    setSavingField(fieldKey);
+    try {
+      const payload = { [fieldKey]: fieldKey === 'amount' && fieldValue !== '' ? Number(fieldValue) : fieldValue };
+      const result = await queueManager.updateRecordFields(item, payload);
+      const ok = String(result?.status || '').toLowerCase() === 'updated';
+      showToast(ok ? `${fieldKey.replace(/_/g, ' ')} updated` : (result?.reason || 'Could not update record'), ok ? 'success' : 'error');
+    } finally {
+      setSavingField('');
+    }
+  };
+
+  return html`
+    <div class="cl-section" aria-label="Edit record">
+      <div class="cl-section-title">Edit record</div>
+      <div class="cl-field-list">
+        <${EditableFieldRow} label="Vendor" fieldKey="vendor_name" value=${item?.vendor_name || item?.vendor || ''} onSave=${saveField} savingField=${savingField} />
+        <${EditableFieldRow} label="Invoice #" fieldKey="invoice_number" value=${item?.invoice_number || ''} onSave=${saveField} savingField=${savingField} />
+        <${EditableFieldRow} label="Amount" fieldKey="amount" type="number" value=${item?.amount ?? ''} onSave=${saveField} savingField=${savingField} />
+        <${EditableFieldRow} label="Due date" fieldKey="due_date" type="date" value=${item?.due_date || ''} onSave=${saveField} savingField=${savingField} />
+        <${EditableFieldRow} label="PO number" fieldKey="po_number" value=${item?.po_number || ''} onSave=${saveField} savingField=${savingField} />
+      </div>
+    </div>
+  `;
+}
+
+function TaskSection({ item, tasks, queueManager, readOnlyMode = false }) {
+  const [title, setTitle] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [commentDrafts, setCommentDrafts] = useState({});
+  const myEmail = String(queueManager?.runtimeConfig?.userEmail || '').trim();
+
+  const createTask = async () => {
+    if (!title.trim()) return;
+    setCreating(true);
+    try {
+      const result = await queueManager.createTask(item, {
+        title: title.trim(),
+        due_date: dueDate || undefined,
+        task_type: 'follow_up',
+        priority: 'medium',
+      });
+      const ok = String(result?.status || '').toLowerCase() === 'created';
+      showToast(ok ? 'Task added' : (result?.reason || 'Could not add task'), ok ? 'success' : 'error');
+      if (ok) {
+        setTitle('');
+        setDueDate('');
+      }
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const updateStatus = async (task, status) => {
+    const result = await queueManager.updateTaskStatus(task.task_id, { status }, item.id);
+    const ok = String(result?.status || '').toLowerCase() === 'updated';
+    showToast(ok ? 'Task updated' : (result?.reason || 'Could not update task'), ok ? 'success' : 'error');
+  };
+
+  const assignToMe = async (task) => {
+    if (!myEmail) return;
+    const result = await queueManager.assignTask(task.task_id, { assignee_email: myEmail }, item.id);
+    const ok = String(result?.status || '').toLowerCase() === 'updated';
+    showToast(ok ? 'Task assigned' : (result?.reason || 'Could not assign task'), ok ? 'success' : 'error');
+  };
+
+  const addComment = async (task) => {
+    const comment = String(commentDrafts[task.task_id] || '').trim();
+    if (!comment) return;
+    const result = await queueManager.addTaskComment(task.task_id, { comment }, item.id);
+    const ok = String(result?.status || '').toLowerCase() === 'created';
+    showToast(ok ? 'Comment added' : (result?.reason || 'Could not add comment'), ok ? 'success' : 'error');
+    if (ok) {
+      setCommentDrafts((current) => ({ ...current, [task.task_id]: '' }));
+    }
+  };
+
+  return html`
+    <div class="cl-section" aria-label="Tasks">
+      <div class="cl-section-title">Tasks</div>
+      ${!readOnlyMode && html`
+        <div class="cl-inline-form cl-inline-form-task">
+          <input class="cl-input" value=${title} placeholder="Add follow-up task" onInput=${(event) => setTitle(event.target.value)} />
+          <input class="cl-input" type="date" value=${dueDate} onInput=${(event) => setDueDate(event.target.value)} />
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${createTask} disabled=${creating}>${creating ? 'Adding…' : 'Add'}</button>
+        </div>
+      `}
+      <div class="cl-card-stack">
+        ${(tasks || []).length === 0 && html`<div class="cl-muted">No tasks on this record yet.</div>`}
+        ${(tasks || []).slice(0, 6).map((task) => html`
+          <div key=${task.task_id} class="cl-mini-card">
+            <div class="cl-mini-card-main">
+              <div class="cl-mini-card-copy">
+                <div class="cl-mini-card-title">${task.title}</div>
+                <div class="cl-mini-card-meta">
+                  ${String(task.status || 'open').replace(/_/g, ' ')}
+                  ${task.due_date ? ` · Due ${task.due_date}` : ''}
+                  ${task.assignee_email ? ` · ${task.assignee_email}` : ''}
+                </div>
+                ${task.description && html`<div class="cl-mini-card-body">${task.description}</div>`}
+              </div>
+              ${!readOnlyMode && html`
+                <div class="cl-mini-card-actions">
+                  ${task.status !== 'in_progress' && task.status !== 'completed' && html`
+                    <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => updateStatus(task, 'in_progress')}>Start</button>
+                  `}
+                  ${task.status !== 'completed' && html`
+                    <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => updateStatus(task, 'completed')}>Done</button>
+                  `}
+                  ${myEmail && task.assignee_email !== myEmail && html`
+                    <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => assignToMe(task)}>Assign me</button>
+                  `}
+                </div>
+              `}
+            </div>
+            ${!readOnlyMode && html`
+              <div class="cl-inline-form cl-inline-form-comment">
+                <input
+                  class="cl-input"
+                  value=${commentDrafts[task.task_id] || ''}
+                  placeholder="Add task comment"
+                  onInput=${(event) => setCommentDrafts((current) => ({ ...current, [task.task_id]: event.target.value }))}
+                />
+                <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => addComment(task)}>Comment</button>
+              </div>
+            `}
+            ${Array.isArray(task.comments) && task.comments.length > 0 && html`
+              <div class="cl-mini-card-comments">
+                ${task.comments.slice(0, 2).map((comment) => html`
+                  <div key=${comment.comment_id} class="cl-mini-card-comment">
+                    <strong>${comment.user_email}</strong>: ${comment.comment}
+                  </div>
+                `)}
+              </div>
+            `}
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function NotesSection({ item, notes, queueManager, readOnlyMode }) {
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const addNote = async () => {
+    const body = String(draft || '').trim();
+    if (!body) return;
+    setSaving(true);
+    try {
+      const result = await queueManager.addItemNote(item, { body });
+      const ok = String(result?.status || '').toLowerCase() === 'created';
+      showToast(ok ? 'Note added' : (result?.reason || 'Could not add note'), ok ? 'success' : 'error');
+      if (ok) setDraft('');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return html`
+    <div class="cl-section" aria-label="Notes">
+      <div class="cl-section-title">Notes</div>
+      ${!readOnlyMode && html`
+        <div class="cl-inline-form cl-inline-form-comment">
+          <input class="cl-input" value=${draft} placeholder="Add note on this record" onInput=${(event) => setDraft(event.target.value)} />
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${addNote} disabled=${saving}>${saving ? 'Saving…' : 'Add note'}</button>
+        </div>
+      `}
+      <div class="cl-card-stack">
+        ${(notes || []).length === 0 && html`<div class="cl-muted">No notes on this record yet.</div>`}
+        ${(notes || []).slice(0, 5).map((note) => html`
+          <div key=${note.id} class="cl-mini-card">
+            <div class="cl-mini-card-meta">${note.author || 'Operator'}${note.created_at ? ` · ${new Date(note.created_at).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })}` : ''}</div>
+            <div class="cl-mini-card-body">${note.body}</div>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function CommentsSection({ item, comments, queueManager, readOnlyMode }) {
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const addComment = async () => {
+    const body = String(draft || '').trim();
+    if (!body) return;
+    setSaving(true);
+    try {
+      const result = await queueManager.addItemComment(item, { body });
+      const ok = String(result?.status || '').toLowerCase() === 'created';
+      showToast(ok ? 'Comment added' : (result?.reason || 'Could not add comment'), ok ? 'success' : 'error');
+      if (ok) setDraft('');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return html`
+    <div class="cl-section" aria-label="Comments">
+      <div class="cl-section-title">Comments</div>
+      ${!readOnlyMode && html`
+        <div class="cl-inline-form cl-inline-form-comment">
+          <input class="cl-input" value=${draft} placeholder="Add discussion on this record" onInput=${(event) => setDraft(event.target.value)} />
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${addComment} disabled=${saving}>${saving ? 'Saving…' : 'Add comment'}</button>
+        </div>
+      `}
+      <div class="cl-card-stack">
+        ${(comments || []).length === 0 && html`<div class="cl-muted">No comments on this record yet.</div>`}
+        ${(comments || []).slice(0, 5).map((comment) => html`
+          <div key=${comment.id} class="cl-mini-card">
+            <div class="cl-mini-card-meta">${comment.author || 'Operator'}${comment.created_at ? ` · ${new Date(comment.created_at).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })}` : ''}</div>
+            <div class="cl-mini-card-body">${comment.body}</div>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function WorkPanel({ item, queueManager }) {
   const s = useStore();
   const actorRole = s.currentUserRole || queueManager?.currentUserRole || 'operator';
-  const humanIndex = itemIndex >= 0 ? itemIndex + 1 : 1;
   const state = normalizeWorkState(item?.state || 'received');
   const documentType = normalizeDocumentType(item?.document_type);
   const documentLabel = getDocumentTypeLabel(documentType);
   const isInvoiceDocument = isInvoiceDocumentType(documentType);
   const vendor = item.vendor_name || item.vendor || item.sender || 'Unknown vendor';
-  const amountLabel = formatAmount(item.amount, item.currency || 'USD');
+  const amountLabel = formatAmount(item.amount, item.currency);
   const invoiceNumber = item.invoice_number || 'N/A';
   const dueDate = item.due_date || 'N/A';
   const referenceText = invoiceNumber !== 'N/A' ? `${documentLabel} #: ${invoiceNumber}` : documentLabel;
-  const taxAmount = item.tax_amount ? formatAmount(item.tax_amount, item.currency || 'USD') : '';
-  const discountAmount = item.discount_amount ? formatAmount(item.discount_amount, item.currency || 'USD') : '';
+  const taxAmount = item.tax_amount ? formatAmount(item.tax_amount, item.currency) : '';
+  const discountAmount = item.discount_amount ? formatAmount(item.discount_amount, item.currency) : '';
   const metaParts = [amountLabel];
   if (taxAmount) metaParts.push(`Tax: ${taxAmount}`);
   if (discountAmount) metaParts.push(`Disc: -${discountAmount}`);
@@ -611,6 +1107,11 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   const smartDefault = item?.exception_code ? getExceptionReason(item.exception_code) : '';
   const canOpenSource = Boolean(getSourceThreadId(item) || getSourceMessageId(item) || item.subject);
   const entityNeedsReview = needsEntityRouting(item, state, documentType);
+  const agentView = getAgentMemoryView(item);
+  const tasks = item?.id ? (s.tasksState.get(item.id) || []) : [];
+  const notes = item?.id ? (s.notesState.get(item.id) || []) : [];
+  const comments = item?.id ? (s.commentsState.get(item.id) || []) : [];
+  const files = item?.id ? (s.filesState.get(item.id) || []) : [];
 
   const [optimisticState, setOptimisticState] = useState(null);
   const displayState = normalizeWorkState(optimisticState || state);
@@ -730,6 +1231,10 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   });
 
   const [doPost, postPending] = useAction(async () => {
+    if (!hasErpPostingConnection(item)) {
+      showToast('Connect an ERP before posting this invoice.', 'error');
+      return;
+    }
     setOptimisticState('posted_to_erp');
     const result = await queueManager.approveAndPost(item, { override: false });
     const ok = ['posted', 'approved', 'posted_to_erp'].includes(String(result?.status || '').toLowerCase());
@@ -856,13 +1361,11 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     if (ok) await queueManager.refreshQueue();
   });
 
-  const goPrev = useCallback(() => store.selectItemByOffset(-1), []);
-  const goNext = useCallback(() => store.selectItemByOffset(1), []);
   const openPipeline = useCallback(() => {
     if (!item?.id) return;
     store.setSelectedItem(String(item.id));
     focusPipelineItem(pipelineScope, item, 'thread');
-    if (!gotoRoute('clearledgr/pipeline')) {
+    if (!gotoRoute('clearledgr/invoices')) {
       showToast('Unable to open invoices', 'error');
     }
   }, [gotoRoute, item, pipelineScope]);
@@ -876,6 +1379,13 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
       showToast('Unable to open vendor record', 'error');
     }
   }, [gotoRoute, item]);
+  const openRelatedRecord = useCallback((relatedItem) => {
+    if (!relatedItem?.id) return;
+    focusPipelineItem(pipelineScope, relatedItem, 'related_record');
+    if (!navigateToRecordDetail(gotoRoute, relatedItem.id)) {
+      showToast('Unable to open related record', 'error');
+    }
+  }, [gotoRoute, pipelineScope]);
 
   const basePrimaryAction = (pauseReason || item?.finance_effect_review_required)
     ? null
@@ -883,6 +1393,8 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   const primaryAction = resumeWorkflowEligible && ['preview_erp_post', 'retry_erp_post'].includes(basePrimaryAction?.id)
     ? { id: 'resume_workflow', label: 'Resume workflow' }
     : basePrimaryAction;
+  const fallbackNextMove = primaryAction?.label || getDefaultNextMoveLabel(displayState, item, actorRole, documentType);
+  const operatorOverrideCopy = getOperatorOverrideCopy(displayState, item, documentType);
   let primaryHandler = null;
   let primaryPending = false;
   let primaryClass = '';
@@ -914,18 +1426,15 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
     primaryClass = 'cl-btn-approve';
   }
 
+  const showReject = canRejectWorkItem(displayState, actorRole, documentType);
+  const showReassign = canReassignApproval(item, displayState, actorRole, documentType);
+  const showEscalate = canEscalateApproval(item, displayState, actorRole, documentType) && primaryAction?.id !== 'escalate_approval';
+  const showResolveEntity = entityNeedsReview && primaryAction?.id !== 'resolve_entity_route';
+  const showNudge = canNudgeApprover(displayState, actorRole, documentType) && primaryAction?.id !== 'nudge_approver';
+  const hasSecondaryActions = showReject || showReassign || showEscalate || showResolveEntity || showNudge;
+
   return html`
     <div id="cl-thread-context" class="cl-thread-card cl-work-surface">
-      ${totalItems > 1 && html`
-        <div class="cl-navigator">
-          <div class="cl-nav-label">Record ${humanIndex} of ${totalItems}</div>
-          <div class="cl-nav-buttons">
-            <button class="cl-nav-btn" onClick=${goPrev} disabled=${itemIndex <= 0} aria-label="Previous">‹</button>
-            <button class="cl-nav-btn" onClick=${goNext} disabled=${itemIndex >= totalItems - 1} aria-label="Next">›</button>
-          </div>
-        </div>
-      `}
-
       <div class="cl-thread-header">
         <div class="cl-thread-header-copy">
           <div class="cl-thread-title">${vendor}</div>
@@ -945,17 +1454,22 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
         </div>
       `}
 
+      <${AgentViewSection} view=${agentView} item=${item} fallbackNextMove=${fallbackNextMove} />
+
       ${Array.isArray(item?.line_items) && item.line_items.length > 0 && html`
         <details class="cl-section cl-disclosure">
-          <summary class="cl-section-title">Line items (${item.line_items.length})</summary>
-          <div class="cl-evidence-list">
+          <summary class="cl-disclosure-summary">
+            <span class="cl-section-title">Line items</span>
+            <span class="cl-disclosure-count">${item.line_items.length}</span>
+          </summary>
+          <div class="cl-card-stack">
             ${item.line_items.slice(0, 10).map((li, i) => html`
               <div key=${i} class="cl-evidence-row">
                 <div class="cl-evidence-copy">
                   <div>${li.description || `Line ${i + 1}`}</div>
                   ${li.gl_code && html`<div class="cl-evidence-detail">GL: ${li.gl_code}</div>`}
                 </div>
-                <div class="cl-evidence-status">${formatAmount(li.amount || 0, item.currency || 'USD')}</div>
+                <div class="cl-evidence-status">${formatAmount(li.amount || 0, item.currency)}</div>
               </div>
             `)}
           </div>
@@ -964,6 +1478,7 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
 
       ${item?.payment_status && item.payment_status !== 'none' && html`
         <div class="cl-section" aria-label="Payment status">
+          <div class="cl-section-title">Payment status</div>
           <div class="cl-evidence-row">
             <div class="cl-evidence-copy">
               <div>Payment</div>
@@ -992,58 +1507,64 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
         </button>
       `}
 
-      <div id="cl-agent-actions" class="cl-thread-actions">
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open in invoices</button>
-        ${canOpenSource && html`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openSource}>Open email</button>
-        `}
-        ${(item?.vendor_name || item?.vendor) && html`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openVendorRecord}>Open vendor record</button>
-        `}
-        ${canRejectWorkItem(displayState, actorRole, documentType) && html`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
-        `}
-        ${canReassignApproval(item, displayState, actorRole, documentType) && html`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReassignApproval} disabled=${reassignPending}>
-            ${reassignPending ? 'Reassigning…' : 'Reassign approver'}
-          </button>
-        `}
-        ${canEscalateApproval(item, displayState, actorRole, documentType) && primaryAction?.id !== 'escalate_approval' && html`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doEscalateApproval} disabled=${escalatePending}>
-            ${escalatePending ? 'Escalating…' : 'Escalate approval'}
-          </button>
-        `}
-        ${entityNeedsReview && primaryAction?.id !== 'resolve_entity_route' && html`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doResolveEntityRoute} disabled=${resolveEntityPending}>
-            ${resolveEntityPending ? 'Resolving…' : 'Resolve entity'}
-          </button>
-        `}
-        ${canNudgeApprover(displayState, actorRole, documentType) && primaryAction?.id !== 'nudge_approver' && html`
-          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Nudge approver</button>
-        `}
+      <div class="cl-thread-links" aria-label="Record links">
+        <button class="cl-thread-link-btn" onClick=${openPipeline}>Open in invoices</button>
+        ${canOpenSource && html`<button class="cl-thread-link-btn" onClick=${openSource}>Open email</button>`}
+        ${(item?.vendor_name || item?.vendor) && html`<button class="cl-thread-link-btn" onClick=${openVendorRecord}>Open vendor record</button>`}
       </div>
+
+      ${hasSecondaryActions && html`
+        <details id="cl-agent-actions" class="cl-details cl-operator-overrides">
+          <summary class="cl-operator-overrides-summary">
+            <span class="cl-operator-overrides-title">${operatorOverrideCopy.title}</span>
+            <span class="cl-operator-overrides-count">
+              ${[showReject, showReassign, showEscalate, showResolveEntity, showNudge].filter(Boolean).length}
+            </span>
+          </summary>
+          <div class="cl-operator-overrides-copy">${operatorOverrideCopy.detail}</div>
+          <div class="cl-thread-actions cl-thread-actions-secondary">
+            ${showReject && html`
+              <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReject} disabled=${rejectPending}>Reject</button>
+            `}
+            ${showReassign && html`
+              <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doReassignApproval} disabled=${reassignPending}>
+                ${reassignPending ? 'Reassigning…' : 'Reassign approver'}
+              </button>
+            `}
+            ${showEscalate && html`
+              <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doEscalateApproval} disabled=${escalatePending}>
+                ${escalatePending ? 'Escalating…' : 'Escalate approval'}
+              </button>
+            `}
+            ${showResolveEntity && html`
+              <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doResolveEntityRoute} disabled=${resolveEntityPending}>
+                ${resolveEntityPending ? 'Resolving…' : 'Resolve entity'}
+              </button>
+            `}
+            ${showNudge && html`
+              <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${doNudge} disabled=${nudgePending}>Nudge approver</button>
+            `}
+          </div>
+        </details>
+      `}
 
       ${(displayState === 'needs_approval' || entityNeedsReview) && html`
         <div class="cl-section" aria-label="Follow-up and routing">
           <div class="cl-section-title">Follow-up and routing</div>
-          <div class="cl-evidence-list">
+          <div class="cl-summary-grid">
             ${displayState === 'needs_approval' && html`
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Approval wait</div>
-                  <div class="cl-evidence-detail">
-                    ${approvalFollowup?.escalation_due
-                      ? 'Past escalation policy'
-                      : (approvalFollowup?.sla_breached ? 'Past reminder SLA' : 'Still within SLA')}
-                  </div>
+              <div class="cl-summary-card">
+                <div class="cl-summary-label">Approval wait</div>
+                <div class="cl-summary-value">${approvalFollowup?.wait_minutes ? `${approvalFollowup.wait_minutes}m` : '—'}</div>
+                <div class="cl-summary-detail">
+                  ${approvalFollowup?.escalation_due
+                    ? 'Past escalation policy'
+                    : (approvalFollowup?.sla_breached ? 'Past reminder SLA' : 'Still within SLA')}
                 </div>
-                <div class="cl-evidence-status">${approvalFollowup?.wait_minutes ? `${approvalFollowup.wait_minutes}m` : '—'}</div>
               </div>
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Pending approvers</div>
-                </div>
-                <div class="cl-evidence-status">
+              <div class="cl-summary-card">
+                <div class="cl-summary-label">Pending approvers</div>
+                <div class="cl-summary-value cl-summary-value-compact">
                   ${Array.isArray(approvalFollowup?.pending_assignees) && approvalFollowup.pending_assignees.length
                     ? approvalFollowup.pending_assignees.join(', ')
                     : 'Not recorded'}
@@ -1051,21 +1572,17 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
               </div>
             `}
             ${isInvoiceDocument && html`
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Entity route</div>
-                  ${item?.entity_route_reason && html`<div class="cl-evidence-detail">${item.entity_route_reason}</div>`}
-                </div>
-                <div class="cl-evidence-status">
+              <div class="cl-summary-card">
+                <div class="cl-summary-label">Entity route</div>
+                <div class="cl-summary-value cl-summary-value-compact">
                   ${entityNeedsReview ? 'Needs review' : (item?.entity_code || item?.entity_name || 'Not set')}
                 </div>
+                ${item?.entity_route_reason && html`<div class="cl-summary-detail">${item.entity_route_reason}</div>`}
               </div>
               ${entityCandidates.length > 0 && html`
-                <div class="cl-evidence-row">
-                  <div class="cl-evidence-copy">
-                    <div>Entity candidates</div>
-                  </div>
-                  <div class="cl-evidence-status">
+                <div class="cl-summary-card">
+                  <div class="cl-summary-label">Entity candidates</div>
+                  <div class="cl-summary-value cl-summary-value-compact">
                     ${entityCandidates.slice(0, 3).map((candidate) => candidate?.label || candidate?.entity_name || candidate?.entity_code).filter(Boolean).join(', ')}
                   </div>
                 </div>
@@ -1087,31 +1604,25 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
         <div class="cl-section" aria-label="Credits and payments">
           <div class="cl-section-title">Credits and payments</div>
           ${financeEffectNotice && html`<div class="cl-review-copy">${financeEffectNotice}</div>`}
-          <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="cl-card-stack">
             ${Object.keys(financeEffectSummary).length > 0 && html`
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Original amount</div>
+              <div class="cl-summary-grid">
+                <div class="cl-summary-card">
+                  <div class="cl-summary-label">Original amount</div>
+                  <div class="cl-summary-value">${formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency)}</div>
                 </div>
-                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency || 'USD')}</div>
-              </div>
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Credits applied</div>
+                <div class="cl-summary-card">
+                  <div class="cl-summary-label">Credits applied</div>
+                  <div class="cl-summary-value">${formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency)}</div>
                 </div>
-                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency || 'USD')}</div>
-              </div>
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Net cash applied</div>
+                <div class="cl-summary-card">
+                  <div class="cl-summary-label">Net cash applied</div>
+                  <div class="cl-summary-value">${formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency)}</div>
                 </div>
-                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.net_cash_applied_total, financeEffectSummary.currency || item.currency || 'USD')}</div>
-              </div>
-              <div class="cl-evidence-row">
-                <div class="cl-evidence-copy">
-                  <div>Remaining balance</div>
+                <div class="cl-summary-card">
+                  <div class="cl-summary-label">Remaining balance</div>
+                  <div class="cl-summary-value">${formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency)}</div>
                 </div>
-                <div class="cl-evidence-status">${formatAmount(financeEffectSummary.remaining_balance_amount, financeEffectSummary.currency || item.currency || 'USD')}</div>
               </div>
             `}
             ${financeEffectBlockers.map((blocker) => html`
@@ -1123,6 +1634,42 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
           </div>
         </div>
       `}
+      <${RelatedRecordsSection}
+        item=${item}
+        contextPayload=${contextPayload}
+        onOpenRecord=${openRelatedRecord}
+        onOpenVendor=${openVendorRecord}
+      />
+      <${TaskSection}
+        item=${item}
+        tasks=${tasks}
+        queueManager=${queueManager}
+        readOnlyMode=${readOnlyMode}
+      />
+      <${CommentsSection}
+        item=${item}
+        comments=${comments}
+        queueManager=${queueManager}
+        readOnlyMode=${readOnlyMode}
+      />
+      <${NotesSection}
+        item=${item}
+        notes=${notes}
+        queueManager=${queueManager}
+        readOnlyMode=${readOnlyMode}
+      />
+      <${FilesSection}
+        item=${item}
+        contextPayload=${contextPayload}
+        files=${files}
+        queueManager=${queueManager}
+        readOnlyMode=${readOnlyMode}
+      />
+      <${RecordEditorSection}
+        item=${item}
+        queueManager=${queueManager}
+        readOnlyMode=${readOnlyMode}
+      />
       <${EvidenceChecklist} entries=${evidence} />
       <${AuditDisclosure} events=${auditEvents} loading=${Boolean(s.auditState.loading && s.auditState.itemId === item.id)} />
       <${ActionDialog} ...${dialog} />
@@ -1130,9 +1677,17 @@ function WorkPanel({ item, queueManager, itemIndex, totalItems }) {
   `;
 }
 
-function EmptyState({ queueCount }) {
+function EmptyState({ queueCount, queueManager }) {
+  const actorRole = store.currentUserRole || queueManager?.currentUserRole || 'operator';
+  const canMutate = hasOpsAccessRole(actorRole);
+  const [search, setSearch] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [results, setResults] = useState([]);
+  const [recovering, setRecovering] = useState(false);
+  const [linkingId, setLinkingId] = useState('');
   const openPipeline = useCallback(() => {
-    if (!navigateInboxRoute('clearledgr/pipeline', store.sdk)) {
+    if (!navigateInboxRoute('clearledgr/invoices', store.sdk)) {
       showToast('Unable to open invoices', 'error');
     }
   }, []);
@@ -1142,22 +1697,140 @@ function EmptyState({ queueCount }) {
     }
   }, []);
   const threadSelected = Boolean(store.currentThreadId);
+  const threadId = String(store.currentThreadId || '').trim();
+
+  const searchCandidates = useCallback(async () => {
+    const query = String(search || '').trim();
+    if (!query || !queueManager?.searchRecordCandidates) {
+      setHasSearched(false);
+      setResults([]);
+      return;
+    }
+    setHasSearched(true);
+    setSearching(true);
+    try {
+      const items = await queueManager.searchRecordCandidates(query, { limit: 8 });
+      setResults(Array.isArray(items) ? items : []);
+    } finally {
+      setSearching(false);
+    }
+  }, [queueManager, search]);
+
+  const createFromThread = useCallback(async () => {
+    if (!threadId || !queueManager?.recoverCurrentThread) return;
+    setRecovering(true);
+    try {
+      const result = await queueManager.recoverCurrentThread(threadId);
+      if (result?.item?.id) {
+        store.setSelectedItem(result.item.id);
+        showToast('Finance record created from this email.', 'success');
+        return;
+      }
+      showToast('Clearledgr could not create a finance record from this email yet.', 'warning');
+    } finally {
+      setRecovering(false);
+    }
+  }, [queueManager, threadId]);
+
+  const linkThreadToItem = useCallback(async (candidate) => {
+    if (!threadId || !candidate?.id || !queueManager?.linkCurrentThreadToItem) return;
+    setLinkingId(String(candidate.id));
+    try {
+      const result = await queueManager.linkCurrentThreadToItem(candidate, { thread_id: threadId });
+      const linkedItem = result?.ap_item || candidate;
+      if (linkedItem?.id) {
+        store.setSelectedItem(linkedItem.id);
+        showToast(`Linked this thread to ${linkedItem.vendor_name || linkedItem.invoice_number || 'the selected record'}.`, 'success');
+        return;
+      }
+      showToast(result?.reason || 'Could not link this thread to the selected record.', 'error');
+    } finally {
+      setLinkingId('');
+    }
+  }, [queueManager, threadId]);
 
   if (threadSelected) {
-    return html`<div class="cl-section"><div class="cl-empty">
-      <p>No record is linked to this email yet.</p>
-      <p class="cl-muted">Open the queue to work records Clearledgr has already found.</p>
-      <div class="cl-thread-actions">
-        <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
+    if (!canMutate) {
+      return html`<div class="cl-section"><div class="cl-empty">
+        <p>No finance record is linked to this email yet.</p>
+        <p class="cl-muted">Open the queue to review records Clearledgr already found. Only operators can create or link records from Gmail.</p>
+        <div class="cl-thread-actions cl-empty-actions">
+          <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
+        </div>
+      </div></div>`;
+    }
+
+    return html`
+      <div class="cl-section">
+        <div class="cl-empty cl-empty-stretch">
+        <p>No finance record is linked to this email yet.</p>
+        <p class="cl-muted">Create one from this email or link this email to an existing record.</p>
+        <div class="cl-thread-actions cl-empty-actions">
+            <button class="cl-btn cl-primary-cta cl-empty-primary" onClick=${createFromThread} disabled=${recovering}>
+              ${recovering ? 'Creating…' : 'Create record from email'}
+            </button>
+            <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
+          </div>
+          <div class="cl-inline-form cl-inline-form-comment cl-empty-search">
+            <input
+              class="cl-input"
+              value=${search}
+              placeholder="Search existing records by vendor, invoice, or email"
+              onInput=${(event) => {
+                setSearch(event.target.value);
+                setHasSearched(false);
+              }}
+              onKeyDown=${(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  searchCandidates();
+                }
+              }}
+            />
+            <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${searchCandidates} disabled=${searching}>
+              ${searching ? 'Searching…' : 'Find record'}
+            </button>
+          </div>
+          ${searching && html`<div class="cl-muted">Looking for matching finance records…</div>`}
+          ${!searching && hasSearched && search.trim() && results.length === 0 && html`
+            <div class="cl-muted">No matching finance records found yet.</div>
+          `}
+          ${results.length > 0 && html`
+            <div class="cl-card-stack cl-empty-results">
+              ${results.map((candidate) => html`
+                <div key=${candidate.id} class="cl-mini-card">
+                  <div class="cl-mini-card-main">
+                    <div class="cl-mini-card-copy">
+                      <div class="cl-mini-card-title">${candidate.vendor_name || 'Unknown vendor'}</div>
+                      <div class="cl-mini-card-meta">
+                        ${candidate.invoice_number || 'No invoice #'} · ${formatAmount(candidate.amount, candidate.currency)}
+                      </div>
+                      <div class="cl-mini-card-meta">
+                        ${String(candidate.state || 'received').replace(/_/g, ' ')}
+                      </div>
+                    </div>
+                    <button
+                      class="cl-btn cl-btn-secondary cl-btn-small"
+                      onClick=${() => linkThreadToItem(candidate)}
+                      disabled=${linkingId === String(candidate.id)}
+                    >
+                      ${linkingId === String(candidate.id) ? 'Linking…' : 'Link email'}
+                    </button>
+                  </div>
+                </div>
+              `)}
+            </div>
+          `}
+        </div>
       </div>
-    </div></div>`;
+    `;
   }
 
   if (queueCount > 0) {
     return html`<div class="cl-section"><div class="cl-empty">
       <p>${queueCount} record${queueCount !== 1 ? 's are' : ' is'} ready in the queue.</p>
-      <p class="cl-muted">Open an email to work one record, or open Pipeline to see the full queue.</p>
-      <div class="cl-thread-actions">
+      <p class="cl-muted">Open an email to work one record, or open Invoices to see the full queue.</p>
+      <div class="cl-thread-actions cl-empty-actions">
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
       </div>
@@ -1166,8 +1839,8 @@ function EmptyState({ queueCount }) {
 
   return html`<div class="cl-section"><div class="cl-empty">
     <p>Nothing is waiting right now.</p>
-    <p class="cl-muted">Pipeline is still the control plane. Home is available if you want the lighter overview.</p>
-    <div class="cl-thread-actions">
+    <p class="cl-muted">Invoices is your control plane. Home is available if you want the lighter overview.</p>
+    <div class="cl-thread-actions cl-empty-actions">
       <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
       <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openHome}>Open Home</button>
     </div>
@@ -1177,14 +1850,44 @@ function EmptyState({ queueCount }) {
 export default function SidebarApp({ queueManager }) {
   const s = useStore();
   const item = s.getPrimaryItem();
-  const itemIndex = s.getPrimaryItemIndex();
   const logoUrl = getAssetUrl(LOGO_PATH);
   const queueCount = s.queueState.length;
+  const currentIndex = s.getPrimaryItemIndex();
   const authRequired = s.scanStatus?.state === 'auth_required';
+  const hasQueueNavigation = Boolean(item && queueCount > 1 && currentIndex >= 0);
+  const pipelineScope = {
+    orgId: queueManager?.runtimeConfig?.organizationId || 'default',
+    userEmail: queueManager?.runtimeConfig?.userEmail || '',
+  };
+  const openPipeline = useCallback(() => navigateInboxRoute('clearledgr/invoices', store.sdk, pipelineScope), [pipelineScope.orgId, pipelineScope.userEmail]);
 
   useEffect(() => {
     if (item?.id && queueManager?.fetchItemContext) {
       queueManager.fetchItemContext(item.id).catch(() => {});
+    }
+  }, [item?.id, queueManager]);
+
+  useEffect(() => {
+    if (item?.id && queueManager?.fetchItemTasks) {
+      queueManager.fetchItemTasks(item.id).catch(() => {});
+    }
+  }, [item?.id, queueManager]);
+
+  useEffect(() => {
+    if (item?.id && queueManager?.fetchItemNotes) {
+      queueManager.fetchItemNotes(item.id).catch(() => {});
+    }
+  }, [item?.id, queueManager]);
+
+  useEffect(() => {
+    if (item?.id && queueManager?.fetchItemComments) {
+      queueManager.fetchItemComments(item.id).catch(() => {});
+    }
+  }, [item?.id, queueManager]);
+
+  useEffect(() => {
+    if (item?.id && queueManager?.fetchItemFiles) {
+      queueManager.fetchItemFiles(item.id).catch(() => {});
     }
   }, [item?.id, queueManager]);
 
@@ -1216,7 +1919,33 @@ export default function SidebarApp({ queueManager }) {
           Clearledgr AP
         </div>
         <div class="cl-header-right">
-          ${queueCount > 0 && html`<span class="cl-header-badge">${queueCount} record${queueCount !== 1 ? 's' : ''}</span>`}
+          ${hasQueueNavigation
+            ? html`
+                <div class="cl-header-queue" aria-label="Queue navigation">
+                  <button
+                    class="cl-header-nav-btn"
+                    aria-label="Previous record"
+                    onClick=${() => store.selectItemByOffset(-1)}
+                    disabled=${currentIndex <= 0}
+                  >‹</button>
+                  <button
+                    class="cl-header-count"
+                    onClick=${openPipeline}
+                    title="Open invoices"
+                  >${currentIndex + 1} of ${queueCount}</button>
+                  <button
+                    class="cl-header-nav-btn"
+                    aria-label="Next record"
+                    onClick=${() => store.selectItemByOffset(1)}
+                    disabled=${currentIndex >= queueCount - 1}
+                  >›</button>
+                </div>
+              `
+            : queueCount > 0 && html`
+                <button class="cl-header-count" onClick=${openPipeline} title="Open invoices">
+                  ${queueCount} record${queueCount !== 1 ? 's' : ''}
+                </button>
+              `}
         </div>
       </div>
 
@@ -1234,8 +1963,8 @@ export default function SidebarApp({ queueManager }) {
 
       <${ErrorBoundary} fallback="Could not load record details">
         ${item
-          ? html`<${WorkPanel} item=${item} queueManager=${queueManager} itemIndex=${itemIndex} totalItems=${queueCount} />`
-          : html`<${EmptyState} queueCount=${queueCount} />`}
+          ? html`<${WorkPanel} item=${item} queueManager=${queueManager} />`
+          : html`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
       <//>
     </div>
   `;

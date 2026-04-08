@@ -226,10 +226,10 @@ function browserInitScript() {
     }
     findMergeCandidates() { return []; }
 
-    emitQueueUpdated(queue = [], status = { state: 'idle' }, agentSessions = new Map(), tabs = [], agentInsights = new Map(), sources = new Map(), contexts = new Map(), kpis = null) {
+    emitQueueUpdated(queue = [], status = { state: 'idle' }, agentSessions = new Map(), tabs = [], agentInsights = new Map(), sources = new Map(), contexts = new Map(), tasks = new Map(), notes = new Map(), comments = new Map(), files = new Map(), kpis = null) {
       this.queue = Array.isArray(queue) ? queue.map((item) => ({ ...item })) : [];
       if (typeof this._onQueueUpdated === 'function') {
-        this._onQueueUpdated(this.queue, status, agentSessions, tabs, agentInsights, sources, contexts, kpis);
+        this._onQueueUpdated(this.queue, status, agentSessions, tabs, agentInsights, sources, contexts, tasks, notes, comments, files, kpis);
       }
     }
   }

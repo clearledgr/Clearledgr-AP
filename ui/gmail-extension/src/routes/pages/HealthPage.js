@@ -29,7 +29,7 @@ export default function HealthPage({ bootstrap, api }) {
                   </div>
                 `)}
               </div>`
-            : html`<div class="secondary-empty">Nothing needs manual attention right now.</div>`}
+            : html`<div class="secondary-empty">No issues found.</div>`}
         </div>
       </div>
 
@@ -60,7 +60,7 @@ function MonitoringPanel({ api }) {
   const [data, setData] = useState(null);
   useEffect(() => {
     if (!api) return;
-    api.fetch('/api/ops/monitoring-health').then(setData).catch(() => {});
+    api('/api/ops/monitoring-health').then(setData).catch(() => {});
   }, []);
   if (!data) return null;
   return html`
@@ -80,6 +80,36 @@ function MonitoringPanel({ api }) {
           <div style="font-weight:600">${check.value}${typeof check.threshold === 'number' ? ` / ${check.threshold}` : ''}</div>
         </div>
       `)}
+      ${(() => {
+        const approverCheck = (data.checks || []).find(c => c.check === 'approver_health');
+        const problems = approverCheck?.problems || [];
+        if (!problems.length) return null;
+        const issueLabels = {
+          unknown_user: { label: 'Not in workspace', explanation: 'This email is not a registered user', blocking: false },
+          inactive_user: { label: 'Deactivated', explanation: 'This user account has been deactivated', blocking: false },
+          stale_login: { label: 'Inactive', explanation: 'Has not logged in recently', blocking: false },
+          pending_chain_unknown_approver: { label: 'Blocking approval', explanation: 'A pending invoice is waiting on this unknown approver', blocking: true },
+          pending_chain_inactive_approver: { label: 'Blocking approval', explanation: 'A pending invoice is waiting on this deactivated approver', blocking: true },
+        };
+        return html`
+          <div style="margin-top:14px">
+            <div style="font-size:12px;font-weight:700;margin-bottom:8px">Approver issues</div>
+            ${problems.map((p) => {
+              const info = issueLabels[p.issue] || { label: p.issue, explanation: '', blocking: false };
+              const color = info.blocking ? '#B91C1C' : '#A16207';
+              return html`
+                <div key=${p.email + p.issue} style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span>${p.email}</span>
+                    <span class="status-badge" style="color:${color};font-weight:${info.blocking ? '700' : '600'}">${info.label}</span>
+                  </div>
+                  <div class="muted" style="font-size:11px;margin-top:2px">${info.explanation}</div>
+                </div>
+              `;
+            })}
+          </div>
+        `;
+      })()}
     </div>
   `;
 }

@@ -21,7 +21,7 @@ test('non-invoice finance documents do not expose invoice-only actions', async (
   assert.equal(canNudgeApprover('needs_approval', 'operator', 'credit_note'), false);
   assert.match(
     getWorkStateNotice('received', 'credit_note'),
-    /non-invoice finance document/i,
+    /non-invoice record/i,
   );
   assert.match(
     getWorkStateNotice('received', 'payment'),
@@ -29,7 +29,7 @@ test('non-invoice finance documents do not expose invoice-only actions', async (
   );
   assert.match(
     getWorkStateNotice('received', 'statement'),
-    /reconciliation work/i,
+    /reconciliation/i,
   );
 });
 
@@ -88,6 +88,86 @@ test('resume workflow is only offered for invoice posting states with prior fiel
   );
 });
 
+test('approval waiting states default to agent monitoring instead of an operator nudge CTA', async () => {
+  const {
+    getAgentExecutionMode,
+    getDefaultNextMoveLabel,
+    getOperatorOverrideCopy,
+    getPrimaryActionConfig,
+    getWorkStateNotice,
+  } = await importModule('src/utils/work-actions.js');
+
+  assert.equal(
+    getPrimaryActionConfig('needs_approval', 'operator', 'invoice', {
+      approval_followup: { pending_assignees: ['ap@clearledgr.com'] },
+    }),
+    null,
+  );
+  assert.equal(
+    getDefaultNextMoveLabel('needs_approval', {
+      approval_followup: { pending_assignees: ['ap@clearledgr.com'] },
+    }),
+    'Wait for approval decision',
+  );
+  assert.equal(
+    getAgentExecutionMode('needs_approval', {
+      approval_followup: { pending_assignees: ['ap@clearledgr.com'] },
+    }),
+    'agent_monitoring',
+  );
+  assert.match(
+    getWorkStateNotice('needs_approval', 'invoice', {
+      approval_followup: { pending_assignees: ['ap@clearledgr.com'] },
+    }),
+    /monitoring this approval/i,
+  );
+  assert.match(
+    getOperatorOverrideCopy('needs_approval', {
+      approval_followup: { pending_assignees: ['ap@clearledgr.com'] },
+    }).detail,
+    /monitoring this approval/i,
+  );
+  assert.deepEqual(
+    getPrimaryActionConfig('needs_approval', 'operator', 'invoice', {
+      approval_followup: { sla_breached: true },
+    }),
+    {
+      id: 'nudge_approver',
+      label: 'Nudge approver',
+    },
+  );
+});
+
+test('approved or ready-to-post invoices without an ERP connection do not expose posting actions', async () => {
+  const {
+    getAgentExecutionMode,
+    getDefaultNextMoveLabel,
+    getPrimaryActionConfig,
+    getWorkStateNotice,
+    hasErpPostingConnection,
+  } = await importModule('src/utils/work-actions.js');
+
+  const disconnectedApproved = {
+    state: 'approved',
+    erp_connector_available: false,
+    erp_status: 'not_connected',
+  };
+  const disconnectedReady = {
+    state: 'ready_to_post',
+    erp_connector_available: false,
+    erp_status: 'not_connected',
+  };
+
+  assert.equal(hasErpPostingConnection(disconnectedApproved), false);
+  assert.equal(getPrimaryActionConfig('ready_to_post', 'operator', 'invoice', disconnectedReady), null);
+  assert.equal(getDefaultNextMoveLabel('approved', disconnectedApproved), 'Connect ERP');
+  assert.equal(getAgentExecutionMode('approved', disconnectedApproved), 'operator_attention');
+  assert.match(
+    getWorkStateNotice('approved', 'invoice', disconnectedApproved),
+    /connect quickbooks, xero, netsuite, or sap/i,
+  );
+});
+
 test('document type helpers normalize finance document labels', async () => {
   const {
     getDocumentReferenceLabel,
@@ -106,6 +186,6 @@ test('document type helpers normalize finance document labels', async () => {
   );
   assert.match(
     getNonInvoiceWorkflowGuidance('credit_note'),
-    /related invoice/i,
+    /original invoice/i,
   );
 });

@@ -86,13 +86,29 @@ export function eventBadge(eventType) {
 }
 
 export function humanizeStatus(raw) {
-  const map = { connected: 'Connected', disconnected: 'Not connected', unknown: 'Unknown' };
-  return map[raw] || raw;
+  const token = String(raw || '').trim().toLowerCase();
+  const map = {
+    connected: 'Connected',
+    disconnected: 'Not connected',
+    reconnect_required: 'Reconnect needed',
+    reauthorization_required: 'Reconnect needed',
+    degraded: 'Needs attention',
+    error: 'Needs attention',
+    unknown: 'Unknown',
+  };
+  return map[token] || String(raw || '').replace(/_/g, ' ');
 }
 
 export function humanizeMode(raw) {
-  const map = { oauth: 'OAuth sign-in', shared: 'Shared workspace', per_org: 'Per-organization', '': '-', '-': '-' };
-  return map[raw] || raw;
+  const token = String(raw || '').trim().toLowerCase();
+  const map = {
+    oauth: 'OAuth sign-in',
+    shared: 'Shared workspace',
+    per_org: 'Per workspace',
+    '': 'Not set',
+    '-': 'Not set',
+  };
+  return map[token] || String(raw || '').replace(/_/g, ' ');
 }
 
 export function resolveRef(item) { return String(item?.thread_id || item?.message_id || item?.id || '').trim(); }

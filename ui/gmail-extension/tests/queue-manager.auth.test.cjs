@@ -72,6 +72,28 @@ test('ensureGmailAuth retries runtime message failures', async () => {
   assert.equal(attempts, 2);
 });
 
+test('ensureBackendAuth stores backend credentials returned from Gmail auth bridge', async () => {
+  const ClearledgrQueueManager = await loadQueueManager();
+  const manager = new ClearledgrQueueManager();
+  manager.runtimeConfig = { valid: true, organizationId: 'default' };
+  manager.ensureGmailAuth = async () => ({
+    success: true,
+    backendAccessToken: 'backend-token-1',
+    backendExpiresIn: 900,
+    organizationId: 'org-123',
+  });
+  manager.persistBackendAuthToken = async () => {};
+  manager.syncQueueWithBackend = async () => true;
+  manager.applyRuntimeStatus = () => {};
+
+  const result = await manager.ensureBackendAuth({ force: true, interactive: true });
+
+  assert.equal(result.success, true);
+  assert.equal(manager.backendAuthToken, 'backend-token-1');
+  assert.equal(manager.backendAuthOrgId, 'org-123');
+  assert.ok(manager.backendAuthTokenExpiry > Date.now());
+});
+
 test('auth result mapper returns operator-safe copy', async () => {
   const ClearledgrQueueManager = await loadQueueManager();
   const manager = new ClearledgrQueueManager();

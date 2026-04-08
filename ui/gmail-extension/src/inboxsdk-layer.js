@@ -17,9 +17,10 @@ import htm from 'htm';
 import { ClearledgrQueueManager } from '../queue-manager.js';
 import store from './utils/store.js';
 import SidebarApp, { showToast } from './components/SidebarApp.js';
-import { STATE_LABELS, STATE_COLORS, getStateLabel, readLocalStorage, writeLocalStorage, getAssetUrl } from './utils/formatters.js';
+import { STATE_LABELS, STATE_COLORS, getStateLabel, readLocalStorage, writeLocalStorage, getAssetUrl, formatAmount } from './utils/formatters.js';
 import { resolveRecordRouteId } from './utils/record-route.js';
 import { resolveVendorRouteName } from './utils/vendor-route.js';
+import { navigateInboxRoute } from './utils/inbox-route.js';
 
 // Route imports (Gmail-native support pages — Streak pattern)
 import {
@@ -43,6 +44,7 @@ import ActivityPage from './routes/pages/ActivityPage.js';
 import ConnectionsPage from './routes/pages/ConnectionsPage.js';
 import RulesPage from './routes/pages/RulesPage.js';
 import SettingsPage from './routes/pages/SettingsPage.js';
+import PlanPage from './routes/pages/PlanPage.js';
 import ReconciliationPage from './routes/pages/ReconciliationPage.js';
 import HealthPage from './routes/pages/HealthPage.js';
 import PipelinePage from './routes/pages/PipelinePage.js';
@@ -54,6 +56,7 @@ import ReportsPage from './routes/pages/ReportsPage.js';
 import { getCapabilities } from './routes/route-helpers.js';
 import {
   clearPipelineNavigation,
+  createSavedPipelineView,
   focusPipelineItem,
   getBootstrappedPipelinePreferences,
   getPinnedPipelineViews,
@@ -71,16 +74,39 @@ const APP_ID = 'sdk_Clearledgr2026_dc12c60472';
 const INIT_KEY = '__clearledgr_ap_v1_inboxsdk_initialized';
 const LOGO_PATH = 'icons/icon48.png';
 const STORAGE_ACTIVE_AP_ITEM_ID = 'clearledgr_active_ap_item_id';
+const STORAGE_PENDING_DIRECT_ROUTE = '__clearledgr_pending_direct_route_v1';
+const STORAGE_RELOAD_ROUTE = '__clearledgr_reload_route_v1';
+const ATTR_PENDING_DIRECT_ROUTE = 'data-clearledgr-pending-direct-route';
 
 let sdk = null;
 let queueManager = null;
 let _pendingComposePrefill = null;
 let sidebarContainer = null;
+let sidebarPanelView = null;
+let sidebarPanelViewPromise = null;
 let appMenuItemView = null;
 let appMenuPanelView = null;
 let appMenuPanelReady = null; // Promise that resolves when panel is available
 let appMenuNavItemViews = [];
 let fallbackNavItemViews = [];
+const APPMENU_WORKSPACE_ROUTE_IDS = new Set([
+  'clearledgr/invoices',
+  'clearledgr/home',
+  'clearledgr/review',
+  'clearledgr/upcoming',
+  'clearledgr/activity',
+  'clearledgr/vendors',
+  'clearledgr/reports',
+  'clearledgr/reconciliation',
+]);
+const APPMENU_CONFIGURATION_ROUTE_IDS = new Set([
+  'clearledgr/connections',
+  'clearledgr/rules',
+  'clearledgr/settings',
+]);
+const APPMENU_LIBRARY_ROUTE_IDS = new Set([
+  'clearledgr/templates',
+]);
 
 // ==================== FONT LOADING ====================
 
@@ -124,6 +150,39 @@ function mountSidebar() {
   render(html`<${SidebarApp} queueManager=${queueManager} />`, sidebarContainer);
 }
 
+async function ensureSidebarPanelView() {
+  if (sidebarPanelView && !sidebarPanelView.destroyed) return sidebarPanelView;
+  if (sidebarPanelViewPromise) return sidebarPanelViewPromise;
+  if (!sdk?.Global || !sidebarContainer) return null;
+
+  const logoUrl = getAssetUrl(LOGO_PATH);
+  sidebarPanelViewPromise = sdk.Global.addSidebarContentPanel({
+    title: 'Clearledgr AP',
+    iconUrl: logoUrl || null,
+    el: sidebarContainer,
+    hideTitleBar: false,
+  }).then((panelView) => {
+    sidebarPanelView = panelView || null;
+    sidebarPanelViewPromise = null;
+    return sidebarPanelView;
+  }).catch(() => {
+    sidebarPanelViewPromise = null;
+    return null;
+  });
+
+  return sidebarPanelViewPromise;
+}
+
+async function setSidebarPanelOpen(shouldOpen) {
+  const panelView = await ensureSidebarPanelView();
+  if (!panelView || panelView.destroyed) return;
+  if (shouldOpen) {
+    if (!panelView.isActive()) panelView.open();
+    return;
+  }
+  if (panelView.isActive()) panelView.close();
+}
+
 async function openComposeWithPrefill(prefill = {}) {
   if (!sdk?.Compose || typeof sdk.Compose.openNewComposeView !== 'function') {
     throw new Error('compose_unavailable');
@@ -132,6 +191,7 @@ async function openComposeWithPrefill(prefill = {}) {
     to: prefill?.to || '',
     subject: prefill?.subject || '',
     body: prefill?.body || '',
+    recordContext: prefill?.recordContext || null,
   };
   try {
     await sdk.Compose.openNewComposeView();
@@ -141,24 +201,348 @@ async function openComposeWithPrefill(prefill = {}) {
   }
 }
 
+function buildComposeRecordContext(item = null) {
+  if (!item?.id) return null;
+  return {
+    apItemId: String(item.id),
+    vendorName: String(item.vendor_name || item.vendor || item.sender || 'Unknown vendor'),
+    invoiceNumber: String(item.invoice_number || '').trim(),
+    amountLabel: formatAmount(item.amount, item.currency),
+  };
+}
+
+function normalizeComposeRecipients(recipients = []) {
+  const source = Array.isArray(recipients)
+    ? recipients
+    : recipients == null
+      ? []
+      : [recipients];
+  const normalized = [];
+  for (const recipient of source) {
+    const value = String(
+      recipient?.emailAddress
+      || recipient?.address
+      || recipient?.email
+      || recipient
+      || ''
+    ).trim();
+    if (!value || normalized.includes(value)) continue;
+    normalized.push(value);
+  }
+  return normalized.slice(0, 12);
+}
+
+async function collectComposeDraftPayload(composeView) {
+  let draftId = '';
+  let threadId = '';
+  let subject = '';
+  let bodyPreview = '';
+  let recipients = [];
+
+  try {
+    if (typeof composeView?.getCurrentDraftID === 'function') {
+      draftId = await Promise.resolve(composeView.getCurrentDraftID());
+    }
+  } catch (_) { /* ignore */ }
+  if (!draftId) {
+    try {
+      if (typeof composeView?.getDraftID === 'function') {
+        draftId = await Promise.resolve(composeView.getDraftID());
+      }
+    } catch (_) { /* ignore */ }
+  }
+  try {
+    threadId = String(composeView?.getThreadID?.() || '').trim();
+  } catch (_) { /* ignore */ }
+  try {
+    subject = String(composeView?.getSubject?.() || '').trim();
+  } catch (_) { /* ignore */ }
+  try {
+    bodyPreview = String(composeView?.getTextContent?.() || '').trim();
+  } catch (_) { /* ignore */ }
+  try {
+    recipients = normalizeComposeRecipients(composeView?.getToRecipients?.() || []);
+  } catch (_) { /* ignore */ }
+
+  return {
+    draft_id: draftId || undefined,
+    thread_id: threadId || undefined,
+    subject: subject || undefined,
+    recipients,
+    body_preview: bodyPreview ? bodyPreview.slice(0, 600) : undefined,
+  };
+}
+
+function buildComposeSearchSeed(payload = {}) {
+  const recipients = Array.isArray(payload?.recipients) ? payload.recipients : [];
+  return String(
+    payload?.subject
+    || recipients[0]
+    || ''
+  ).trim();
+}
+
+function renderComposeRecordStatus(recordContext) {
+  if (!recordContext) return null;
+  const bar = document.createElement('div');
+  bar.style.cssText = [
+    'display:flex',
+    'align-items:center',
+    'justify-content:space-between',
+    'gap:12px',
+    'padding:7px 14px',
+    'font-size:12px',
+    'background:#ecfdf5',
+    'color:#166534',
+    'border-bottom:1px solid #d1fae5',
+    'font-family:inherit',
+  ].join(';');
+
+  const copy = document.createElement('div');
+  const summary = [
+    recordContext.vendorName || 'Finance record',
+    recordContext.invoiceNumber ? `Invoice ${recordContext.invoiceNumber}` : '',
+    recordContext.amountLabel || '',
+  ].filter(Boolean).join(' · ');
+  copy.textContent = `Clearledgr: linked finance record${summary ? ` — ${summary}` : ''}`;
+  bar.appendChild(copy);
+
+  if (recordContext.apItemId) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Open record';
+    button.style.cssText = [
+      'border:1px solid #86efac',
+      'background:#ffffff',
+      'color:#166534',
+      'border-radius:999px',
+      'padding:4px 10px',
+      'font:inherit',
+      'font-weight:600',
+      'cursor:pointer',
+      'flex-shrink:0',
+    ].join(';');
+    button.addEventListener('click', () => {
+      navigateInboxRoute('clearledgr/invoice/:id', sdk, { id: recordContext.apItemId });
+    });
+    bar.appendChild(button);
+  }
+
+  return bar;
+}
+
+function renderComposeRecordChooser({ composeView, queueManager, onLinked }) {
+  const bar = document.createElement('div');
+  bar.style.cssText = [
+    'display:flex',
+    'flex-direction:column',
+    'gap:8px',
+    'padding:8px 14px',
+    'font-size:12px',
+    'background:#f8fafc',
+    'color:#334155',
+    'border-bottom:1px solid #e2e8f0',
+    'font-family:inherit',
+  ].join(';');
+
+  const topRow = document.createElement('div');
+  topRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
+  const copy = document.createElement('div');
+  copy.textContent = 'Clearledgr: no finance record linked to this draft yet.';
+  topRow.appendChild(copy);
+
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+  const createButton = document.createElement('button');
+  createButton.type = 'button';
+  createButton.textContent = 'Create finance record';
+  createButton.style.cssText = [
+    'border:1px solid #cbd5e1',
+    'background:#ffffff',
+    'color:#0f172a',
+    'border-radius:999px',
+    'padding:4px 10px',
+    'font:inherit',
+    'font-weight:600',
+    'cursor:pointer',
+  ].join(';');
+  const openButton = document.createElement('button');
+  openButton.type = 'button';
+  openButton.textContent = 'Open invoices';
+  openButton.style.cssText = createButton.style.cssText;
+  openButton.addEventListener('click', () => {
+    navigateInboxRoute('clearledgr/invoices', sdk);
+  });
+  actions.appendChild(createButton);
+  actions.appendChild(openButton);
+  topRow.appendChild(actions);
+  bar.appendChild(topRow);
+
+  const searchRow = document.createElement('div');
+  searchRow.style.cssText = 'display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px';
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.placeholder = 'Search vendor, invoice, or email';
+  searchInput.style.cssText = [
+    'width:100%',
+    'padding:6px 10px',
+    'border:1px solid #cbd5e1',
+    'border-radius:8px',
+    'font:inherit',
+    'background:#ffffff',
+    'color:#0f172a',
+  ].join(';');
+  const searchButton = document.createElement('button');
+  searchButton.type = 'button';
+  searchButton.textContent = 'Find record';
+  searchButton.style.cssText = createButton.style.cssText;
+  searchRow.appendChild(searchInput);
+  searchRow.appendChild(searchButton);
+  bar.appendChild(searchRow);
+
+  const results = document.createElement('div');
+  results.style.cssText = 'display:none;flex-direction:column;gap:6px';
+  bar.appendChild(results);
+
+  const setBusy = (busy, searchBusy = false) => {
+    createButton.disabled = busy;
+    searchButton.disabled = busy || searchBusy;
+    searchInput.disabled = busy || searchBusy;
+    createButton.style.opacity = busy ? '0.6' : '1';
+    searchButton.style.opacity = (busy || searchBusy) ? '0.6' : '1';
+  };
+
+  const renderResults = (items = []) => {
+    results.innerHTML = '';
+    if (!Array.isArray(items) || items.length === 0) {
+      results.style.display = 'none';
+      return;
+    }
+    results.style.display = 'flex';
+    items.slice(0, 4).forEach((item) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#ffffff';
+      const text = document.createElement('div');
+      text.style.cssText = 'min-width:0;flex:1';
+      const title = document.createElement('strong');
+      title.style.cssText = 'display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+      title.textContent = item.vendor_name || 'Unknown vendor';
+      const detail = document.createElement('span');
+      detail.style.cssText = 'color:#64748b';
+      detail.textContent = `${item.invoice_number || 'No invoice #'} · ${formatAmount(item.amount, item.currency)}`;
+      text.appendChild(title);
+      text.appendChild(detail);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Link';
+      button.style.cssText = createButton.style.cssText;
+      button.addEventListener('click', async () => {
+        if (!queueManager?.linkComposeDraftToItem) {
+          showToast('Compose record linking is still loading. Try again in a moment.', 'warning');
+          return;
+        }
+        setBusy(true, false);
+        try {
+          const payload = await collectComposeDraftPayload(composeView);
+          const result = await queueManager.linkComposeDraftToItem(item, payload);
+          if (result?.ap_item?.id) {
+            showToast(`Linked draft to ${result.ap_item.vendor_name || result.ap_item.invoice_number || 'finance record'}.`, 'success');
+            onLinked(buildComposeRecordContext(result.ap_item));
+            return;
+          }
+          showToast(result?.reason || 'Could not link this draft to the selected record.', 'error');
+        } catch (error) {
+          showToast(error?.message || 'Could not link this draft right now.', 'error');
+        } finally {
+          setBusy(false, false);
+        }
+      });
+      row.appendChild(text);
+      row.appendChild(button);
+      results.appendChild(row);
+    });
+  };
+
+  createButton.addEventListener('click', async () => {
+    if (!queueManager?.createRecordFromComposeDraft) {
+      showToast('Compose record creation is still loading. Try again in a moment.', 'warning');
+      return;
+    }
+    setBusy(true, false);
+    try {
+      const payload = await collectComposeDraftPayload(composeView);
+      if (!payload.subject && (!Array.isArray(payload.recipients) || payload.recipients.length === 0)) {
+        showToast('Add a recipient or subject before creating a finance record.', 'warning');
+        return;
+      }
+      const result = await queueManager.createRecordFromComposeDraft(payload);
+      if (result?.ap_item?.id) {
+        showToast(
+          String(result?.status || '').toLowerCase() === 'already_linked'
+            ? 'This draft is already linked to a finance record.'
+            : 'Finance record created from this draft.',
+          'success',
+        );
+        onLinked(buildComposeRecordContext(result.ap_item));
+        return;
+      }
+      showToast(result?.reason || 'Could not create a finance record from this draft.', 'error');
+    } catch (error) {
+      showToast(error?.message || 'Could not create a finance record from this draft.', 'error');
+    } finally {
+      setBusy(false, false);
+    }
+  });
+
+  searchButton.addEventListener('click', async () => {
+    if (!queueManager?.searchRecordCandidates) {
+      showToast('Compose record search is still loading. Try again in a moment.', 'warning');
+      return;
+    }
+    setBusy(false, true);
+    try {
+      const payload = await collectComposeDraftPayload(composeView);
+      const query = String(searchInput.value || buildComposeSearchSeed(payload)).trim();
+      searchInput.value = query;
+      if (!query) {
+        renderResults([]);
+        showToast('Add a subject or recipient before searching for a finance record.', 'warning');
+        return;
+      }
+      const items = await queueManager.searchRecordCandidates(query, { limit: 4 });
+      renderResults(items);
+      if (!items.length) {
+        showToast('No matching finance records found for this draft.', 'info');
+      }
+    } catch (error) {
+      renderResults([]);
+      showToast(error?.message || 'Could not search finance records right now.', 'error');
+    } finally {
+      setBusy(false, false);
+    }
+  });
+
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    searchButton.click();
+  });
+
+  return bar;
+}
+
 // ==================== SIDEBAR INIT ====================
 
 function initializeSidebar() {
   const container = document.createElement('div');
-  container.className = 'cl-sidebar';
+  container.className = 'cl-sidebar-host';
   sidebarContainer = container;
 
   // Mount Preact into the container
   mountSidebar();
 
   // Register with InboxSDK
-  const logoUrl = getAssetUrl(LOGO_PATH);
-  sdk.Global.addSidebarContentPanel({
-    title: 'Clearledgr AP',
-    iconUrl: logoUrl || null,
-    el: container,
-    hideTitleBar: false,
-  });
+  void ensureSidebarPanelView();
 
   // Restore last active item
   const restoredId = readLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID);
@@ -172,6 +556,12 @@ function injectAppMenuPanelStyles() {
   const style = document.createElement('style');
   style.id = 'cl-appmenu-panel-styles';
   style.textContent = `
+    .cl-appmenu-panel {
+      --cl-panel-accent: #cfe8ff;
+      --cl-panel-border: #dbe7f3;
+      --cl-panel-text: #17324d;
+      --cl-panel-muted: #73859b;
+    }
     .cl-appmenu-panel .aic {
       display: none;
     }
@@ -182,10 +572,164 @@ function injectAppMenuPanelStyles() {
       margin-top: 0;
     }
     .cl-appmenu-panel .nM.inboxsdk__collapsiblePanel_navItems {
+      display: none;
       padding-top: 0;
+    }
+    .cl-appmenu-panel .inboxsdk__collapsiblePanel_navItems {
+      display: none;
+    }
+    .cl-appmenu-panel-shell {
+      padding: 12px 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .cl-appmenu-panel-cta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      border: 1px solid #b7dafd;
+      border-radius: 16px;
+      background: #cfe8ff;
+      color: #17324d;
+      font: 600 14px/1.2 "DM Sans", sans-serif;
+      padding: 14px 16px;
+      cursor: pointer;
+      box-sizing: border-box;
+      text-align: left;
+    }
+    .cl-appmenu-panel-cta:hover {
+      background: #c2e0ff;
+    }
+    .cl-appmenu-panel-cta-icon {
+      font-size: 22px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .cl-appmenu-panel-cta-copy {
+      display: block;
+      min-width: 0;
+    }
+    .cl-appmenu-panel-label {
+      margin: 0 8px 2px;
+      color: var(--cl-panel-muted);
+      font: 700 11px/1 "DM Sans", sans-serif;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .cl-appmenu-panel-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 4px 6px;
+    }
+    .cl-appmenu-panel-section-title {
+      color: #1b1b1b;
+      font: 700 14px/1.2 "DM Sans", sans-serif;
+    }
+    .cl-appmenu-panel-section-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #455a72;
+      font: 500 20px/1 "DM Sans", sans-serif;
+      cursor: pointer;
+    }
+    .cl-appmenu-panel-section-action:hover {
+      background: #eef4fa;
+    }
+    .cl-appmenu-panel-view-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .cl-appmenu-panel-view-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: #283746;
+      padding: 8px 10px;
+      cursor: pointer;
+      text-align: left;
+      font: 500 13px/1.25 "DM Sans", sans-serif;
+    }
+    .cl-appmenu-panel-view-item:hover {
+      background: #eef4fa;
+    }
+    .cl-appmenu-panel-view-item.is-active {
+      background: #d9eaff;
+      color: #17324d;
+    }
+    .cl-appmenu-panel-view-icon {
+      color: var(--cl-panel-muted);
+      font: 600 11px/1 "Geist Mono", monospace;
+      flex-shrink: 0;
+      width: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .cl-appmenu-panel-view-icon-image {
+      width: 16px;
+      height: 16px;
+      display: block;
+      object-fit: contain;
+      opacity: 0.88;
+    }
+    .cl-appmenu-panel-view-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    .cl-appmenu-panel-view-name {
+      color: #25384a;
+      font: 600 13px/1.2 "DM Sans", sans-serif;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cl-appmenu-panel-view-description {
+      color: var(--cl-panel-muted);
+      font: 500 11px/1.3 "DM Sans", sans-serif;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cl-appmenu-panel-section {
+      display: flex;
+      flex-direction: column;
     }
   `;
   document.head.appendChild(style);
+}
+
+function prepareRouteHost(customRouteView) {
+  const routeEl = customRouteView?.getElement?.();
+  if (!routeEl) return null;
+  routeEl.style.width = '100%';
+  routeEl.style.maxWidth = 'none';
+  routeEl.style.padding = '0';
+  routeEl.style.boxSizing = 'border-box';
+  return routeEl;
+}
+
+function resolveAppMenuPanelRoot() {
+  const panelRoot = appMenuPanelView?.getElement?.();
+  if (panelRoot instanceof HTMLElement) return panelRoot;
+  const fallbackRoot = document.querySelector('.cl-appmenu-panel');
+  return fallbackRoot instanceof HTMLElement ? fallbackRoot : null;
 }
 
 // ==================== THREAD HANDLERS ====================
@@ -201,6 +745,7 @@ function registerThreadHandler() {
 
     getId()
       .then(async (threadId) => {
+        void setSidebarPanelOpen(true);
         store.update({ currentThreadId: threadId });
         let item = store.findItemByThreadId(threadId);
         if (item?.id) {
@@ -258,6 +803,18 @@ function registerThreadHandler() {
   });
 }
 
+function bindRouteSidebarBehavior(customRouteView) {
+  void setSidebarPanelOpen(false);
+  customRouteView?.on?.('destroy', () => {
+    window.setTimeout(() => {
+      const hash = String(window.location.hash || '');
+      if (!hash.includes('clearledgr/')) {
+        void setSidebarPanelOpen(true);
+      }
+    }, 0);
+  });
+}
+
 function openItemInPipeline(item, source = 'thread') {
   if (!item?.id) return;
   const pipelineScope = {
@@ -266,17 +823,13 @@ function openItemInPipeline(item, source = 'thread') {
   };
   store.setSelectedItem(String(item.id));
   focusPipelineItem(pipelineScope, item, source);
-  sdk?.Router?.goto?.('clearledgr/pipeline');
+  sdk?.Router?.goto?.('clearledgr/invoices');
 }
 
 function injectInvoiceBanner(threadView, item) {
   const state = String(item.state || '').toLowerCase();
   const vendor = item.vendor_name || item.vendor || 'Unknown vendor';
-  const amount = Number(item.amount);
-  const amountStr = Number.isFinite(amount)
-    ? '$' + amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : '';
-  const currency = item.currency || 'USD';
+  const amountLabel = formatAmount(item.amount, item.currency);
 
   // Banner color based on state
   const stateConfig = {
@@ -301,7 +854,7 @@ function injectInvoiceBanner(threadView, item) {
   // Invoice summary
   const summary = document.createElement('span');
   summary.style.cssText = 'flex:1; font-weight:500;';
-  summary.textContent = `${vendor} \u2014 ${amountStr} ${currency}`;
+  summary.textContent = amountLabel === 'Amount unavailable' ? vendor : `${vendor} \u2014 ${amountLabel}`;
   el.appendChild(summary);
 
   // State pill
@@ -320,7 +873,7 @@ function injectInvoiceBanner(threadView, item) {
     `;
 
     const openBtn = document.createElement('button');
-    openBtn.textContent = 'Open in pipeline';
+    openBtn.textContent = 'Open in invoices';
     openBtn.style.cssText = btnStyle('transparent', cfg.text, `1px solid ${cfg.border}`);
     openBtn.addEventListener('click', () => {
       openItemInPipeline(item, 'thread_banner');
@@ -380,7 +933,7 @@ function registerThreadRowLabels() {
             if (typeof threadRowView.addActionButton === 'function') {
               threadRowView.addActionButton({
                 type: 'ICON_ONLY',
-                title: 'Open in pipeline',
+                title: 'Open in invoices',
                 iconUrl: getAssetUrl(LOGO_PATH) || undefined,
                 onClick: () => {
                   openItemInPipeline(item, 'thread_row');
@@ -428,12 +981,12 @@ function registerInboxHeadsUp() {
     headsUpEl.innerHTML = `
       <span style="width:8px;height:8px;border-radius:50%;background:#00D67E;flex-shrink:0"></span>
       <span><strong>Clearledgr</strong> \u00B7 ${parts.join(' \u00B7 ')}</span>
-      <span style="margin-left:auto;opacity:0.6;font-size:11px">Open pipeline \u203A</span>
+      <span style="margin-left:auto;opacity:0.6;font-size:11px">Open invoices \u203A</span>
     `;
   };
 
   headsUpEl.addEventListener('click', () => {
-    if (sdk?.Router) sdk.Router.goto('clearledgr/pipeline');
+    if (sdk?.Router) sdk.Router.goto('clearledgr/invoices');
   });
 
   // Insert at top of Gmail main area
@@ -496,7 +1049,7 @@ function registerToolbarIcon() {
   try {
     const logoUrl = getAssetUrl(LOGO_PATH);
     sdk.Toolbars.registerToolbarButtonForList({
-      title: 'Clearledgr Pipeline',
+      title: 'Clearledgr Invoices',
       iconUrl: logoUrl || undefined,
       section: 'METADATA_STATE',
       onClick: () => {
@@ -611,10 +1164,14 @@ async function bootstrap() {
 
   // Pre-fill compose views opened by "Draft vendor reply"
   sdk.Compose.registerComposeViewHandler((composeView) => {
+    let composeRecordContext = null;
+    let composeStatusHandle = null;
+
     // Prefill from "Draft vendor reply" action
     if (_pendingComposePrefill) {
       const prefill = _pendingComposePrefill;
       _pendingComposePrefill = null;
+      composeRecordContext = prefill.recordContext || null;
       try {
         if (prefill.to) composeView.setToRecipients([{ emailAddress: prefill.to }]);
         if (prefill.subject) composeView.setSubject(prefill.subject);
@@ -622,10 +1179,56 @@ async function bootstrap() {
       } catch (_) { /* ignore */ }
     }
 
+    const mountComposeRecordStatus = (recordContext) => {
+      if (typeof composeView?.addStatusBar !== 'function') return;
+      try {
+        composeStatusHandle?.destroy?.();
+        composeStatusHandle?.remove?.();
+      } catch (_) { /* ignore */ }
+      try {
+        composeStatusHandle = composeView.addStatusBar({
+          height: recordContext ? 34 : 92,
+          addAboveStandardStatusBar: true,
+          el: recordContext
+            ? renderComposeRecordStatus(recordContext)
+            : renderComposeRecordChooser({
+                composeView,
+                queueManager,
+                onLinked(nextRecordContext) {
+                  composeRecordContext = nextRecordContext || null;
+                  mountComposeRecordStatus(composeRecordContext);
+                },
+              }),
+        });
+      } catch (_) { /* ignore */ }
+    };
+
+    const resolveComposeRecordContext = async () => {
+      if (!composeRecordContext) {
+        composeRecordContext = buildComposeRecordContext(store.findItemByThreadId(store.currentThreadId));
+      }
+      if (!composeRecordContext && queueManager?.lookupComposeRecord) {
+        try {
+          const payload = await collectComposeDraftPayload(composeView);
+          if (payload.draft_id || payload.thread_id) {
+            const lookup = await queueManager.lookupComposeRecord(payload);
+            if (lookup?.ap_item?.id) {
+              composeRecordContext = buildComposeRecordContext(lookup.ap_item);
+            }
+          }
+        } catch (_) { /* ignore */ }
+      }
+      mountComposeRecordStatus(composeRecordContext);
+    };
+
+    void resolveComposeRecordContext();
+
     // Vendor duplicate detection — warn if composing to a known vendor
     try {
       composeView.on('recipientsChanged', (event) => {
-        const recipients = event?.to?.map(r => r.emailAddress?.toLowerCase()) || [];
+        const recipients = normalizeComposeRecipients(
+          event?.to ?? composeView?.getToRecipients?.() ?? []
+        ).map((recipient) => String(recipient || '').toLowerCase());
         const queue = store.queueState || [];
         for (const email of recipients) {
           if (!email) continue;
@@ -657,7 +1260,7 @@ async function bootstrap() {
   await queueManager.init();
 
   // Subscribe to queue updates → update reactive store → Preact re-renders
-  queueManager.onQueueUpdated((queue, status, agentSessions, tabs, agentInsights, sources, contexts) => {
+  queueManager.onQueueUpdated((queue, status, agentSessions, tabs, agentInsights, sources, contexts, tasks, notes, comments, files) => {
     const queueState = Array.isArray(queue) ? queue : [];
 
     // Clean up selected item if no longer in queue
@@ -683,6 +1286,10 @@ async function bootstrap() {
       agentInsightsState: agentInsights instanceof Map ? agentInsights : new Map(),
       sourcesState: sources instanceof Map ? sources : new Map(),
       contextState: contexts instanceof Map ? contexts : new Map(),
+      tasksState: tasks instanceof Map ? tasks : new Map(),
+      notesState: notes instanceof Map ? notes : new Map(),
+      commentsState: comments instanceof Map ? comments : new Map(),
+      filesState: files instanceof Map ? files : new Map(),
       selectedItemId,
     });
 
@@ -712,7 +1319,7 @@ function registerAppMenuAndRoutes() {
     'clearledgr/home': HomePage,
     'clearledgr/review': ReviewPage,
     'clearledgr/upcoming': UpcomingPage,
-    'clearledgr/pipeline': PipelinePage,
+    'clearledgr/invoices': PipelinePage,
     'clearledgr/activity': ActivityPage,
     'clearledgr/vendors': VendorsPage,
     'clearledgr/templates': TemplatesPage,
@@ -727,14 +1334,543 @@ function registerAppMenuAndRoutes() {
   const LEGACY_PAGE_MAP = {
     'clearledgr/team': PAGE_MAP['clearledgr/settings'],
     'clearledgr/company': PAGE_MAP['clearledgr/settings'],
-    'clearledgr/plan': PAGE_MAP['clearledgr/settings'],
+    'clearledgr/plan': PlanPage,
   };
+  let directHashSyncInFlight = false;
+  let lastDirectHashRoute = '';
+  let reloadRouteRestoreInFlight = false;
+  let hasRenderedClearledgrRouteThisBoot = false;
+  let lastActiveClearledgrRoute = '';
+  let lastKnownMailboxDocumentTitle = String(document.title || '').trim();
+  const routeBootStartedAt = Date.now();
+  const ROUTE_RESTORE_WINDOW_MS = 5000;
+
+  function normalizeClearledgrHash(hash = '') {
+    const normalized = String(hash || '').trim().replace(/^#/, '').split('?')[0];
+    return normalized.startsWith('clearledgr/') ? normalized : '';
+  }
+
+  function buildRouteDocumentTitle(pageTitle = '') {
+    const normalizedTitle = String(pageTitle || '').trim();
+    if (!normalizedTitle) return '';
+    const mailboxEmail = String(
+      sdk?.User?.getEmailAddress?.()
+      || queueManager?.runtimeConfig?.userEmail
+      || ''
+    ).trim();
+    return mailboxEmail
+      ? `${normalizedTitle} - ${mailboxEmail} - Clearledgr Mail`
+      : `${normalizedTitle} - Clearledgr Mail`;
+  }
+
+  function claimRouteDocumentTitle(pageTitle = '') {
+    const nextTitle = buildRouteDocumentTitle(pageTitle);
+    if (!nextTitle) return () => {};
+    document.title = nextTitle;
+    return () => {
+      window.setTimeout(() => {
+        if (!normalizeClearledgrHash(window.location.hash) && lastKnownMailboxDocumentTitle) {
+          document.title = lastKnownMailboxDocumentTitle;
+        }
+      }, 0);
+    };
+  }
+
+  function buildClearledgrRouteHash(routeId, params = null) {
+    if (!routeId) return '';
+    if (routeId === 'clearledgr/invoice/:id') {
+      const id = encodeURIComponent(String(params?.id || ''));
+      return id ? `clearledgr/invoice/${id}` : '';
+    }
+    if (routeId === 'clearledgr/vendor/:name') {
+      const name = encodeURIComponent(String(params?.name || ''));
+      return name ? `clearledgr/vendor/${name}` : '';
+    }
+    if (routeId === 'clearledgr/invoices-view/:ref') {
+      const ref = encodeURIComponent(String(params?.ref || ''));
+      return ref ? `clearledgr/invoices-view/${ref}` : '';
+    }
+    if (routeId === 'clearledgr/pipeline-view/:ref') {
+      const ref = encodeURIComponent(String(params?.ref || ''));
+      return ref ? `clearledgr/pipeline-view/${ref}` : '';
+    }
+    return normalizeClearledgrHash(routeId);
+  }
+
+  function rememberActiveClearledgrRoute(routeIdOrHash, params = null) {
+    const normalized = params
+      ? buildClearledgrRouteHash(routeIdOrHash, params)
+      : normalizeClearledgrHash(routeIdOrHash);
+    if (!normalized) return;
+    lastActiveClearledgrRoute = normalized;
+    hasRenderedClearledgrRouteThisBoot = true;
+  }
+
+  function navigationWasReload() {
+    try {
+      const [navigationEntry] = globalThis.performance?.getEntriesByType?.('navigation') || [];
+      if (navigationEntry?.type) return navigationEntry.type === 'reload';
+    } catch (_) {
+      /* best effort */
+    }
+    try {
+      return globalThis.performance?.navigation?.type === 1;
+    } catch (_) {
+      /* best effort */
+    }
+    return false;
+  }
+
+  function persistReloadedClearledgrRoute() {
+    const activeHash = normalizeClearledgrHash(window.location.hash) || lastActiveClearledgrRoute;
+    if (!activeHash) return;
+    try {
+      window.sessionStorage?.setItem?.(STORAGE_RELOAD_ROUTE, JSON.stringify({
+        hash: activeHash,
+        ts: Date.now(),
+        pathname: String(window.location.pathname || ''),
+      }));
+    } catch (_) {
+      /* best effort */
+    }
+  }
+
+  function readReloadedClearledgrRoute() {
+    try {
+      const raw = window.sessionStorage?.getItem?.(STORAGE_RELOAD_ROUTE);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const hash = normalizeClearledgrHash(parsed?.hash || '');
+      const ts = Number(parsed?.ts || 0);
+      const pathname = String(parsed?.pathname || '').trim();
+      if (!hash) return null;
+      if (!Number.isFinite(ts) || (Date.now() - ts) > ROUTE_RESTORE_WINDOW_MS) return null;
+      if (pathname && pathname !== String(window.location.pathname || '')) return null;
+      return hash;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function clearReloadedClearledgrRoute() {
+    try {
+      window.sessionStorage?.removeItem?.(STORAGE_RELOAD_ROUTE);
+    } catch (_) {
+      /* best effort */
+    }
+  }
+
+  function parseDirectHashRoute(hash = '') {
+    const normalized = String(hash || '').trim().replace(/^#/, '').split('?')[0];
+    if (!normalized.startsWith('clearledgr/')) return null;
+
+    if (PAGE_MAP[normalized] || LEGACY_PAGE_MAP[normalized] || normalized === 'clearledgr/pipeline') {
+      return { routeId: normalized, params: null };
+    }
+
+    if (normalized.startsWith('clearledgr/invoice/')) {
+      return {
+        routeId: 'clearledgr/invoice/:id',
+        params: { id: decodeURIComponent(normalized.slice('clearledgr/invoice/'.length)) },
+      };
+    }
+    if (normalized.startsWith('clearledgr/vendor/')) {
+      return {
+        routeId: 'clearledgr/vendor/:name',
+        params: { name: decodeURIComponent(normalized.slice('clearledgr/vendor/'.length)) },
+      };
+    }
+    if (normalized.startsWith('clearledgr/invoices-view/')) {
+      return {
+        routeId: 'clearledgr/invoices-view/:ref',
+        params: { ref: decodeURIComponent(normalized.slice('clearledgr/invoices-view/'.length)) },
+      };
+    }
+    if (normalized.startsWith('clearledgr/pipeline-view/')) {
+      return {
+        routeId: 'clearledgr/pipeline-view/:ref',
+        params: { ref: decodeURIComponent(normalized.slice('clearledgr/pipeline-view/'.length)) },
+      };
+    }
+
+    return null;
+  }
+
+  async function readPendingDirectHashRoute() {
+    try {
+      if (globalThis.chrome?.runtime?.sendMessage) {
+        const response = await globalThis.chrome.runtime.sendMessage({ action: 'getPendingDirectRouteForTab' });
+        const pending = response?.pending || null;
+        const hash = String(pending?.hash || '').trim();
+        const ts = Number(pending?.ts || 0);
+        const pathname = String(pending?.pathname || '').trim();
+        if (hash.startsWith('clearledgr/') && Number.isFinite(ts) && (Date.now() - ts) <= 30000) {
+          if (!pathname || pathname === String(window.location.pathname || '')) {
+            return hash;
+          }
+        }
+      }
+    } catch (_) {
+      /* best effort */
+    }
+    try {
+      const attrValue = document?.documentElement?.getAttribute?.(ATTR_PENDING_DIRECT_ROUTE);
+      const normalizedAttrValue = String(attrValue || '').trim();
+      if (normalizedAttrValue.startsWith('clearledgr/')) return normalizedAttrValue;
+    } catch (_) {
+      /* best effort */
+    }
+    try {
+      const raw = window.sessionStorage?.getItem?.(STORAGE_PENDING_DIRECT_ROUTE);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const hash = String(parsed?.hash || '').trim();
+      const ts = Number(parsed?.ts || 0);
+      if (!hash.startsWith('clearledgr/')) return null;
+      if (!Number.isFinite(ts) || (Date.now() - ts) > 20000) return null;
+      return hash;
+    } catch (_) {
+      /* best effort */
+    }
+    try {
+      if (globalThis.chrome?.storage?.session?.get) {
+        const payload = await globalThis.chrome.storage.session.get([STORAGE_PENDING_DIRECT_ROUTE]);
+        const pending = payload?.[STORAGE_PENDING_DIRECT_ROUTE];
+        const hash = String(pending?.hash || '').trim();
+        const ts = Number(pending?.ts || 0);
+        const pathname = String(pending?.pathname || '').trim();
+        if (!hash.startsWith('clearledgr/')) return null;
+        if (!Number.isFinite(ts) || (Date.now() - ts) > 20000) return null;
+        if (pathname && pathname !== String(window.location.pathname || '')) return null;
+        return hash;
+      }
+    } catch (_) {
+      /* best effort */
+    }
+    return null;
+  }
+
+  async function clearPendingDirectHashRoute() {
+    try {
+      if (globalThis.chrome?.runtime?.sendMessage) {
+        await globalThis.chrome.runtime.sendMessage({ action: 'clearPendingDirectRouteForTab' });
+      }
+    } catch (_) {
+      /* best effort */
+    }
+    try {
+      document?.documentElement?.removeAttribute?.(ATTR_PENDING_DIRECT_ROUTE);
+    } catch (_) {
+      /* best effort */
+    }
+    try {
+      window.sessionStorage?.removeItem?.(STORAGE_PENDING_DIRECT_ROUTE);
+    } catch (_) {
+      /* best effort */
+    }
+    try {
+      if (globalThis.chrome?.storage?.session?.remove) {
+        await globalThis.chrome.storage.session.remove(STORAGE_PENDING_DIRECT_ROUTE);
+      }
+    } catch (_) {
+      /* best effort */
+    }
+  }
+
+  async function maybeRestoreReloadedClearledgrRoute({ force = false } = {}) {
+    if (!sdk?.Router || reloadRouteRestoreInFlight || hasRenderedClearledgrRouteThisBoot) return false;
+    if (!navigationWasReload()) return false;
+    if (normalizeClearledgrHash(window.location.hash)) return false;
+    if (!force && (Date.now() - routeBootStartedAt) > ROUTE_RESTORE_WINDOW_MS) return false;
+
+    const reloadHash = readReloadedClearledgrRoute();
+    const target = parseDirectHashRoute(reloadHash || '');
+    if (!target) return false;
+
+    reloadRouteRestoreInFlight = true;
+    try {
+      sdk.Router.goto(target.routeId, target.params || undefined);
+      clearReloadedClearledgrRoute();
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      window.setTimeout(() => {
+        reloadRouteRestoreInFlight = false;
+      }, 0);
+    }
+  }
+
+  async function syncDirectHashRoute({ force = false } = {}) {
+    if (!sdk?.Router || directHashSyncInFlight) return;
+
+    const hash = String(window.location.hash || '').trim();
+    const pendingHash = !hash.startsWith('#clearledgr/')
+      ? await readPendingDirectHashRoute()
+      : null;
+    const target = parseDirectHashRoute(hash) || parseDirectHashRoute(pendingHash || '');
+    if (!target) {
+      lastDirectHashRoute = '';
+      if (pendingHash && !parseDirectHashRoute(pendingHash)) {
+        await clearPendingDirectHashRoute();
+      }
+      return;
+    }
+
+    const expectedHash = buildClearledgrRouteHash(target.routeId, target.params || undefined)
+      || normalizeClearledgrHash(pendingHash || target.routeId);
+    const routeSignature = `#${expectedHash || pendingHash || target.routeId}`;
+    if (
+      !force
+      && routeSignature === lastDirectHashRoute
+      && normalizeClearledgrHash(window.location.hash) === expectedHash
+    ) return;
+    directHashSyncInFlight = true;
+
+    try {
+      sdk.Router.goto(target.routeId, target.params || undefined);
+      const confirmRouteActivation = async () => {
+        const activeHash = normalizeClearledgrHash(window.location.hash);
+        if (activeHash === expectedHash) {
+          lastDirectHashRoute = routeSignature;
+          rememberActiveClearledgrRoute(activeHash);
+          await clearPendingDirectHashRoute();
+          return;
+        }
+        lastDirectHashRoute = '';
+      };
+
+      if (normalizeClearledgrHash(window.location.hash) === expectedHash) {
+        await confirmRouteActivation();
+      } else {
+        window.setTimeout(() => {
+          void confirmRouteActivation();
+        }, 120);
+      }
+    } catch (_) {
+      lastDirectHashRoute = '';
+      /* best effort */
+    } finally {
+      window.setTimeout(() => {
+        directHashSyncInFlight = false;
+      }, 0);
+    }
+  }
 
   function clearNavItemViews(handles) {
     handles.forEach((handle) => {
       try { handle?.remove?.(); } catch (_) { /* best-effort */ }
     });
     handles.length = 0;
+  }
+
+  function saveCurrentPipelineView() {
+    const pipelineScope = {
+      orgId: queueManager?.runtimeConfig?.organizationId || 'default',
+      userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
+    };
+    const currentPreferences = readPipelinePreferences(pipelineScope);
+    const suggestedName = String(
+      (currentPreferences?.activeSliceId || 'view')
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (match) => match.toUpperCase())
+    ).trim() || 'My view';
+    const name = String(window.prompt('Name this view', suggestedName) || '').trim();
+    if (!name) return;
+    createSavedPipelineView(pipelineScope, {
+      name,
+      description: `Saved from ${currentPreferences?.activeSliceId ? currentPreferences.activeSliceId.replace(/_/g, ' ') : 'the current queue'}.`,
+      pinned: true,
+      snapshot: currentPreferences,
+    });
+    rebuildMenuNavigation();
+    showToast(`Saved "${name}" to Views.`, 'success');
+  }
+
+  async function handlePrimaryAppMenuAction() {
+    const currentItem = store.getCurrentItem?.() || null;
+    const threadId = String(store.currentThreadId || '').trim();
+
+    if (currentItem?.id) {
+      navigateInboxRoute('clearledgr/invoice/:id', sdk, { id: currentItem.id });
+      return;
+    }
+
+    if (threadId && queueManager?.recoverCurrentThread) {
+      store.setSelectedItem?.(null);
+      await setSidebarPanelOpen(true);
+      try {
+        const result = await queueManager.recoverCurrentThread(threadId);
+        const recoveredItem = result?.item || null;
+        if (recoveredItem?.id) {
+          queueManager.upsertQueueItem?.(recoveredItem);
+          queueManager.emitQueueUpdated?.();
+          store.update({ selectedItemId: recoveredItem.id });
+          writeLocalStorage(STORAGE_ACTIVE_AP_ITEM_ID, recoveredItem.id);
+          navigateInboxRoute('clearledgr/invoice/:id', sdk, { id: recoveredItem.id });
+          showToast('Finance record ready from this email.', 'success');
+          return;
+        }
+      } catch (_) {
+        /* fall through to info guidance */
+      }
+      showToast('Use the right-hand Clearledgr panel to create a record from this email or link it to an existing record.', 'info');
+      return;
+    }
+
+    navigateInboxRoute(DEFAULT_ROUTE, sdk);
+    showToast('Open an invoice email, then use New record again to create or link a finance record from that email.', 'info');
+  }
+
+  function renderAppMenuPanelChrome({ workspaceRoutes = [], pinnedViews = [], configurationRoutes = [], libraryRoutes = [] } = {}) {
+    const panelRoot = resolveAppMenuPanelRoot();
+    if (!panelRoot) return;
+    const navContainer = panelRoot.querySelector('.nM.inboxsdk__collapsiblePanel_navItems, .inboxsdk__collapsiblePanel_navItems');
+    const currentHash = normalizeClearledgrHash(window.location.hash) || lastActiveClearledgrRoute;
+
+    let shell = panelRoot.querySelector('.cl-appmenu-panel-shell');
+    if (!(shell instanceof HTMLElement)) {
+      shell = document.createElement('div');
+      shell.className = 'cl-appmenu-panel-shell';
+      if (navContainer?.parentNode) {
+        navContainer.parentNode.insertBefore(shell, navContainer);
+      } else {
+        panelRoot.appendChild(shell);
+      }
+    }
+    shell.innerHTML = '';
+
+    const cta = document.createElement('button');
+    cta.type = 'button';
+    cta.className = 'cl-appmenu-panel-cta';
+    cta.innerHTML = `
+      <span class="cl-appmenu-panel-cta-icon">+</span>
+      <span class="cl-appmenu-panel-cta-copy">New record</span>
+    `;
+    cta.addEventListener('click', () => {
+      void handlePrimaryAppMenuAction();
+    });
+    shell.appendChild(cta);
+
+    const renderSection = (title, rows = [], options = {}) => {
+      if (!Array.isArray(rows) || rows.length === 0) return;
+      const section = document.createElement('div');
+      section.className = 'cl-appmenu-panel-section';
+
+      if (title) {
+        if (options.trailingActionLabel) {
+          const header = document.createElement('div');
+          header.className = 'cl-appmenu-panel-section-header';
+          header.innerHTML = `
+            <span class="cl-appmenu-panel-section-title">${title}</span>
+            <button type="button" class="cl-appmenu-panel-section-action" aria-label="${options.trailingActionAriaLabel || options.trailingActionLabel}">${options.trailingActionLabel}</button>
+          `;
+          header.querySelector('.cl-appmenu-panel-section-action')?.addEventListener('click', () => {
+            options.onTrailingAction?.();
+          });
+          section.appendChild(header);
+        } else {
+          const label = document.createElement('div');
+          label.className = 'cl-appmenu-panel-label';
+          label.textContent = title;
+          section.appendChild(label);
+        }
+      }
+
+      const list = document.createElement('div');
+      list.className = 'cl-appmenu-panel-view-list';
+      section.appendChild(list);
+
+      rows.forEach((row) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'cl-appmenu-panel-view-item';
+        if (row.active) button.classList.add('is-active');
+
+        const icon = document.createElement('span');
+        icon.className = 'cl-appmenu-panel-view-icon';
+        if (row.iconUrl) {
+          const iconImage = document.createElement('img');
+          iconImage.className = 'cl-appmenu-panel-view-icon-image';
+          iconImage.alt = '';
+          iconImage.src = row.iconUrl;
+          icon.appendChild(iconImage);
+        } else {
+          icon.textContent = row.iconText || '•';
+        }
+
+        const meta = document.createElement('span');
+        meta.className = 'cl-appmenu-panel-view-meta';
+
+        const name = document.createElement('span');
+        name.className = 'cl-appmenu-panel-view-name';
+        name.textContent = String(row.name || 'Route');
+        meta.appendChild(name);
+
+        if (row.description) {
+          const description = document.createElement('span');
+          description.className = 'cl-appmenu-panel-view-description';
+          description.textContent = String(row.description || '');
+          meta.appendChild(description);
+        }
+
+        button.appendChild(icon);
+        button.appendChild(meta);
+        button.addEventListener('click', () => {
+          row.onClick?.();
+        });
+        list.appendChild(button);
+      });
+
+      shell.appendChild(section);
+    };
+
+    renderSection('Workspace', workspaceRoutes.map((route) => ({
+      name: route.title,
+      iconUrl: getRouteIconUrl(route),
+      active: currentHash === normalizeClearledgrHash(route.id),
+      onClick: () => navigateInboxRoute(route.id, sdk),
+    })));
+
+    const viewsToRender = Array.isArray(pinnedViews) ? pinnedViews.slice(0, 6) : [];
+    const viewRows = viewsToRender.length > 0
+      ? viewsToRender.map((view) => {
+          const viewHash = buildClearledgrRouteHash(view.id, view.routeParams || undefined);
+          return {
+            name: String(view?.name || view?.title || 'Saved view'),
+            description: String(view?.description || 'Open this AP queue view in Gmail.'),
+            iconText: '▸',
+            active: Boolean(viewHash && currentHash === viewHash),
+            onClick: () => navigateInboxRoute(view.id, sdk, view.routeParams || undefined),
+          };
+        })
+      : [{
+          name: 'Save your first view',
+          description: 'Pin the queues your finance team comes back to every day.',
+          iconText: '+',
+          active: false,
+          onClick: saveCurrentPipelineView,
+        }];
+
+    renderSection('Views', viewRows, {
+      trailingActionLabel: '+',
+      trailingActionAriaLabel: 'Save current view',
+      onTrailingAction: saveCurrentPipelineView,
+    });
+
+    renderSection('Configurations', configurationRoutes.map((route) => ({
+      name: route.title,
+      iconUrl: getRouteIconUrl(route),
+      active: currentHash === normalizeClearledgrHash(route.id),
+      onClick: () => navigateInboxRoute(route.id, sdk),
+    })));
+
+    renderSection('Templates', libraryRoutes.map((route) => ({
+      name: route.title,
+      iconUrl: getRouteIconUrl(route),
+      active: currentHash === normalizeClearledgrHash(route.id),
+      onClick: () => navigateInboxRoute(route.id, sdk),
+    })));
   }
 
   async function rebuildMenuNavigation() {
@@ -748,6 +1884,7 @@ function registerAppMenuAndRoutes() {
     const routeOptions = currentRouteAccess;
     const routePreferences = readRoutePreferences(routeOptions);
     const menuRoutes = getMenuNavRoutes(routePreferences, routeOptions);
+    const workspaceRoutes = menuRoutes.filter((route) => APPMENU_WORKSPACE_ROUTE_IDS.has(route.id));
     const pipelineScope = {
       orgId: queueManager?.runtimeConfig?.organizationId || 'default',
       userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
@@ -755,8 +1892,10 @@ function registerAppMenuAndRoutes() {
     const pinnedViewRoutes = getPinnedPipelineViews(readPipelinePreferences(pipelineScope))
       .slice(0, 3)
       .map((view) => ({
-        title: `View: ${view.name}`,
-        id: 'clearledgr/pipeline-view/:ref',
+        title: view.name,
+        name: view.name,
+        description: view.description || 'Pinned AP queue view.',
+        id: 'clearledgr/invoices-view/:ref',
         routeParams: { ref: getPipelineViewRef(view) },
         iconUrl: getPipelineViewIconUrl(),
       }));
@@ -764,22 +1903,11 @@ function registerAppMenuAndRoutes() {
     clearNavItemViews(fallbackNavItemViews);
 
     if (appMenuPanelView && typeof appMenuPanelView.addNavItem === 'function') {
-      menuRoutes.forEach((route) => {
-        const navHandle = appMenuPanelView.addNavItem({
-          name: route.title,
-          routeID: route.id,
-          iconUrl: getRouteIconUrl(route),
-        });
-        appMenuNavItemViews.push(navHandle);
-      });
-      pinnedViewRoutes.forEach((route) => {
-        const navHandle = appMenuPanelView.addNavItem({
-          name: route.title,
-          routeID: route.id,
-          routeParams: route.routeParams,
-          iconUrl: route.iconUrl,
-        });
-        appMenuNavItemViews.push(navHandle);
+      renderAppMenuPanelChrome({
+        workspaceRoutes,
+        pinnedViews: pinnedViewRoutes,
+        configurationRoutes: menuRoutes.filter((route) => APPMENU_CONFIGURATION_ROUTE_IDS.has(route.id)),
+        libraryRoutes: menuRoutes.filter((route) => APPMENU_LIBRARY_ROUTE_IDS.has(route.id)),
       });
       return;
     }
@@ -891,9 +2019,12 @@ function registerAppMenuAndRoutes() {
 
   void getBootstrap();
 
-  sdk.Router.handleCustomRoute('clearledgr/pipeline-view/:ref', async (customRouteView) => {
+  sdk.Router.handleCustomRoute('clearledgr/invoices-view/:ref', async (customRouteView) => {
+    bindRouteSidebarBehavior(customRouteView);
+    const releaseDocumentTitle = claimRouteDocumentTitle('Saved View');
+    customRouteView?.on?.('destroy', releaseDocumentTitle);
     const params = customRouteView.getParams?.() || {};
-    const rawRef = params.ref || window.location.hash.split('clearledgr/pipeline-view/')[1]?.split('?')[0] || '';
+    const rawRef = params.ref || window.location.hash.split('clearledgr/invoices-view/')[1]?.split('?')[0] || '';
     const pipelineScope = {
       orgId: queueManager?.runtimeConfig?.organizationId || 'default',
       userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
@@ -914,16 +2045,28 @@ function registerAppMenuAndRoutes() {
       clearPipelineNavigation(pipelineScope);
       writePipelinePreferences(pipelineScope, targetView.snapshot);
     }
-    sdk.Router.goto('clearledgr/pipeline');
+    sdk.Router.goto('clearledgr/invoices');
     try {
       customRouteView.destroy?.();
     } catch (_) { /* best effort */ }
   });
 
+  // Legacy redirect: old pipeline URL → new invoices URL
+  sdk.Router.handleCustomRoute('clearledgr/pipeline', () => {
+    sdk.Router.goto('clearledgr/invoices');
+  });
+  sdk.Router.handleCustomRoute('clearledgr/pipeline-view/:ref', (routeView) => {
+    const ref = routeView.getParams?.()?.ref || '';
+    sdk.Router.goto('clearledgr/invoices-view/' + ref);
+  });
+
   // Dynamic route: invoice detail (clearledgr/invoice/:id)
   sdk.Router.handleCustomRoute('clearledgr/invoice/:id', async (customRouteView) => {
+    bindRouteSidebarBehavior(customRouteView);
+    const releaseDocumentTitle = claimRouteDocumentTitle('Record Detail');
+    customRouteView?.on?.('destroy', releaseDocumentTitle);
     const container = document.createElement('div');
-    container.className = 'cl-route';
+    container.className = 'cl-route cl-route-record-detail';
     const style = document.createElement('style');
     style.textContent = ROUTE_CSS;
     container.appendChild(style);
@@ -933,11 +2076,13 @@ function registerAppMenuAndRoutes() {
     container.appendChild(topbar);
     const pageMount = document.createElement('div');
     container.appendChild(pageMount);
-    const routeEl = customRouteView.getElement();
+    const routeEl = prepareRouteHost(customRouteView);
     routeEl.appendChild(container);
 
     const params = customRouteView.getParams?.() || {};
     const rawId = resolveRecordRouteId(params, window.location.hash);
+    rememberActiveClearledgrRoute('clearledgr/invoice/:id', { id: rawId });
+    rebuildMenuNavigation();
     const orgId = workspaceShellApi.orgId();
     const navigate = (routeId, params) => sdk.Router.goto(routeId, params);
     const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
@@ -955,6 +2100,9 @@ function registerAppMenuAndRoutes() {
   });
 
   sdk.Router.handleCustomRoute('clearledgr/vendor/:name', async (customRouteView) => {
+    bindRouteSidebarBehavior(customRouteView);
+    const releaseDocumentTitle = claimRouteDocumentTitle('Vendor Detail');
+    customRouteView?.on?.('destroy', releaseDocumentTitle);
     const container = document.createElement('div');
     container.className = 'cl-route';
     const style = document.createElement('style');
@@ -966,11 +2114,13 @@ function registerAppMenuAndRoutes() {
     container.appendChild(topbar);
     const pageMount = document.createElement('div');
     container.appendChild(pageMount);
-    const routeEl = customRouteView.getElement();
+    const routeEl = prepareRouteHost(customRouteView);
     routeEl.appendChild(container);
 
     const params = customRouteView.getParams?.() || {};
     const rawName = resolveVendorRouteName(params, window.location.hash);
+    rememberActiveClearledgrRoute('clearledgr/vendor/:name', { name: rawName });
+    rebuildMenuNavigation();
     const orgId = workspaceShellApi.orgId();
     const navigate = (routeId, params) => sdk.Router.goto(routeId, params);
     const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '';
@@ -992,6 +2142,11 @@ function registerAppMenuAndRoutes() {
     if (!PageComponent) continue;
 
     sdk.Router.handleCustomRoute(route.id, async (customRouteView) => {
+      bindRouteSidebarBehavior(customRouteView);
+      rememberActiveClearledgrRoute(route.id);
+      rebuildMenuNavigation();
+      const releaseDocumentTitle = claimRouteDocumentTitle(route.title);
+      customRouteView?.on?.('destroy', releaseDocumentTitle);
       const container = document.createElement('div');
       container.className = 'cl-route';
 
@@ -1008,7 +2163,7 @@ function registerAppMenuAndRoutes() {
 
       const pageMount = document.createElement('div');
       container.appendChild(pageMount);
-      const routeEl = customRouteView.getElement();
+      const routeEl = prepareRouteHost(customRouteView);
       routeEl.appendChild(container);
 
       const orgId = workspaceShellApi.orgId();
@@ -1033,7 +2188,7 @@ function registerAppMenuAndRoutes() {
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
-              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Pipeline</button>
+              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Invoices</button>
             </div>
           `, pageMount);
           return;
@@ -1061,6 +2216,11 @@ function registerAppMenuAndRoutes() {
 
   for (const [routeId, PageComponent] of Object.entries(LEGACY_PAGE_MAP)) {
     sdk.Router.handleCustomRoute(routeId, async (customRouteView) => {
+      bindRouteSidebarBehavior(customRouteView);
+      rememberActiveClearledgrRoute(routeId);
+      rebuildMenuNavigation();
+      const releaseDocumentTitle = claimRouteDocumentTitle(routeId === 'clearledgr/plan' ? 'Billing' : 'Settings');
+      customRouteView?.on?.('destroy', releaseDocumentTitle);
       const container = document.createElement('div');
       container.className = 'cl-route';
 
@@ -1070,12 +2230,16 @@ function registerAppMenuAndRoutes() {
 
       const topbar = document.createElement('div');
       topbar.className = 'topbar';
-      topbar.innerHTML = '<h2>Settings</h2><p>Team, workspace, and billing.</p>';
+      if (routeId === 'clearledgr/plan') {
+        topbar.innerHTML = '<h2>Billing</h2><p>Plan, usage, and workspace limits.</p>';
+      } else {
+        topbar.innerHTML = '<h2>Settings</h2><p>Team, workspace, and billing.</p>';
+      }
       container.appendChild(topbar);
 
       const pageMount = document.createElement('div');
       container.appendChild(pageMount);
-      customRouteView.getElement().appendChild(container);
+      prepareRouteHost(customRouteView)?.appendChild(container);
 
       const orgId = workspaceShellApi.orgId();
       const navigate = (nextRouteId, params) => sdk.Router.goto(nextRouteId, params);
@@ -1089,7 +2253,7 @@ function registerAppMenuAndRoutes() {
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
-              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Pipeline</button>
+              <button onClick=${() => navigate(DEFAULT_ROUTE)}>Back to Invoices</button>
             </div>
           `, pageMount);
           return;
@@ -1158,6 +2322,31 @@ function registerAppMenuAndRoutes() {
       rebuildMenuNavigation();
     }
   }
+
+  window.addEventListener('pagehide', persistReloadedClearledgrRoute, true);
+  window.addEventListener('beforeunload', persistReloadedClearledgrRoute, true);
+  window.addEventListener('hashchange', () => {
+    const currentClearledgrHash = normalizeClearledgrHash(window.location.hash);
+    if (currentClearledgrHash) {
+      lastActiveClearledgrRoute = currentClearledgrHash;
+    } else {
+      lastKnownMailboxDocumentTitle = String(document.title || '').trim() || lastKnownMailboxDocumentTitle;
+    }
+    rebuildMenuNavigation();
+    window.setTimeout(async () => {
+      const restored = await maybeRestoreReloadedClearledgrRoute();
+      if (!restored) {
+        await syncDirectHashRoute();
+      }
+    }, 0);
+  });
+  window.setTimeout(async () => {
+    const restored = await maybeRestoreReloadedClearledgrRoute({ force: true });
+    if (!restored) {
+      await syncDirectHashRoute({ force: true });
+    }
+  }, 0);
+  window.setTimeout(() => clearReloadedClearledgrRoute(), ROUTE_RESTORE_WINDOW_MS);
 }
 
 bootstrap();

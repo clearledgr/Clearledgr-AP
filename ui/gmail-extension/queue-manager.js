@@ -2,6 +2,81 @@
  * Clearledgr AP v1 Queue Manager
  * AP intake, queue sync, and action dispatch.
  */
+function normalizeBackendUrl(raw) {
+  let url = String(raw || '').trim();
+  if (!url) return '';
+  if (!/^https?:\/\//i.test(url)) url = `http://${url}`;
+  if (url.endsWith('/v1')) url = url.slice(0, -3);
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === '0.0.0.0' || parsed.hostname === 'localhost') {
+      parsed.hostname = '127.0.0.1';
+    }
+    return parsed.toString().replace(/\/+$/, '');
+  } catch (_) {
+    return url.replace(/\/+$/, '');
+  }
+}
+
+function selectBackendUrl(storedUrl, configuredUrl) {
+  const configured = normalizeBackendUrl(configuredUrl);
+  const stored = normalizeBackendUrl(storedUrl);
+  if (!configuredUrl) return stored;
+  if (!storedUrl) return configured;
+  try {
+    const configuredParsed = new URL(configured);
+    const storedParsed = new URL(stored);
+    const configuredHost = configuredParsed.hostname.toLowerCase();
+    const storedHost = storedParsed.hostname.toLowerCase();
+    const configuredSecure = configuredParsed.protocol === 'https:';
+    const looksEphemeralStoredHost =
+      storedHost === '127.0.0.1' ||
+      storedHost === 'localhost' ||
+      storedHost.endsWith('.trycloudflare.com') ||
+      storedHost.endsWith('.up.railway.app');
+    if (configuredSecure && configuredHost === 'api.clearledgr.com' && looksEphemeralStoredHost) {
+      return configured;
+    }
+  } catch (_) {
+    return configured || stored;
+  }
+  return stored;
+}
+
+function shouldClearStoredBackendOverride(storedUrl, configuredUrl) {
+  const configured = normalizeBackendUrl(configuredUrl);
+  const stored = normalizeBackendUrl(storedUrl);
+  if (!configuredUrl || !storedUrl) return false;
+  try {
+    const configuredParsed = new URL(configured);
+    const storedParsed = new URL(stored);
+    const configuredHost = configuredParsed.hostname.toLowerCase();
+    const storedHost = storedParsed.hostname.toLowerCase();
+    return configuredParsed.protocol === 'https:' && configuredHost === 'api.clearledgr.com' && (
+      storedHost === '127.0.0.1' ||
+      storedHost === 'localhost' ||
+      storedHost.endsWith('.trycloudflare.com') ||
+      storedHost.endsWith('.up.railway.app')
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+async function clearStoredBackendOverride(data, nested, configuredBackendUrl) {
+  const storedBackendUrl = data.backendUrl || nested.backendUrl || nested.apiEndpoint || null;
+  if (!shouldClearStoredBackendOverride(storedBackendUrl, configuredBackendUrl)) return;
+  const nextNested = { ...nested };
+  delete nextNested.backendUrl;
+  delete nextNested.apiEndpoint;
+  try {
+    await chrome.storage.sync.set({ settings: nextNested });
+    await chrome.storage.sync.remove(['backendUrl']);
+  } catch (_) {
+    /* best effort */
+  }
+}
+
 class ClearledgrQueueManager {
   constructor() {
     this.queue = [];
@@ -48,6 +123,14 @@ class ClearledgrQueueManager {
     this.contextByItem = new Map();
     this.sourceRequests = new Map();
     this.contextRequests = new Map();
+    this.tasksByItem = new Map();
+    this.taskRequests = new Map();
+    this.notesByItem = new Map();
+    this.noteRequests = new Map();
+    this.commentsByItem = new Map();
+    this.commentRequests = new Map();
+    this.filesByItem = new Map();
+    this.fileRequests = new Map();
     this.kpiSnapshot = null;
     this.kpiUpdatedAt = null;
     this.kpiRequest = null;
@@ -85,6 +168,10 @@ class ClearledgrQueueManager {
           this.agentInsightsByItem,
           this.sourcesByItem,
           this.contextByItem,
+          this.tasksByItem,
+          this.notesByItem,
+          this.commentsByItem,
+          this.filesByItem,
           this.kpiSnapshot
         );
       } catch (_) {
@@ -624,9 +711,11 @@ class ClearledgrQueueManager {
     const configuredAuthEntryMode = String(
       extensionConfig.AUTH_ENTRY_MODE || extensionConfig.SIDEBAR_AUTH_ENTRY_MODE || ''
     ).trim().toLowerCase();
-    const backendUrl = String(raw.backendUrl || configuredBackendUrl || 'http://127.0.0.1:8010')
-      .trim()
-      .replace(/\/+$/, '');
+    await clearStoredBackendOverride(data, nested, configuredBackendUrl);
+    const backendUrl = selectBackendUrl(
+      raw.backendUrl,
+      configuredBackendUrl || 'http://127.0.0.1:8010'
+    ) || 'http://127.0.0.1:8010';
     const authEntryMode = String(raw.authEntryMode || configuredAuthEntryMode || 'inline')
       .trim()
       .toLowerCase() === 'inline'
@@ -837,8 +926,11 @@ class ClearledgrQueueManager {
   normalizeWorklistItem(item) {
     const normalized = { ...(item || {}) };
     const primary = normalized.primary_source || {};
+    const metadata = this.parseMetadata(normalized.metadata);
     if (!normalized.thread_id && primary.thread_id) normalized.thread_id = primary.thread_id;
     if (!normalized.message_id && primary.message_id) normalized.message_id = primary.message_id;
+    if (!normalized.currency && metadata.currency) normalized.currency = metadata.currency;
+    normalized.currency = String(normalized.currency || '').trim().toUpperCase() || null;
     if (normalized.source_count === undefined || normalized.source_count === null) {
       normalized.source_count = 0;
     }
@@ -1183,6 +1275,14 @@ class ClearledgrQueueManager {
     this.contextRequests.delete(apItemId);
     this.sourcesByItem.delete(apItemId);
     this.sourceRequests.delete(apItemId);
+    this.tasksByItem.delete(apItemId);
+    this.taskRequests.delete(apItemId);
+    this.notesByItem.delete(apItemId);
+    this.noteRequests.delete(apItemId);
+    this.commentsByItem.delete(apItemId);
+    this.commentRequests.delete(apItemId);
+    this.filesByItem.delete(apItemId);
+    this.fileRequests.delete(apItemId);
   }
 
   async fetchAuditTrail(apItemId, { force = false } = {}) {
@@ -1213,6 +1313,357 @@ class ClearledgrQueueManager {
 
     this.auditRequests.set(apItemId, request);
     return request;
+  }
+
+  async fetchItemTasks(apItemId, { force = false, includeCompleted = true } = {}) {
+    if (!apItemId || !this.runtimeConfig?.backendUrl) return [];
+    if (!force && this.tasksByItem.has(apItemId)) {
+      return this.tasksByItem.get(apItemId) || [];
+    }
+    if (this.taskRequests.has(apItemId)) {
+      return this.taskRequests.get(apItemId);
+    }
+
+    const request = (async () => {
+      try {
+        const url = new URL(`${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/tasks`);
+        if (!includeCompleted) url.searchParams.set('include_completed', 'false');
+        const response = await this.backendFetch(url.toString(), { method: 'GET' });
+        if (!response.ok) return [];
+        const payload = await response.json();
+        const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
+        this.tasksByItem.set(apItemId, tasks);
+        this.emitQueueUpdated();
+        return tasks;
+      } catch (_) {
+        return [];
+      } finally {
+        this.taskRequests.delete(apItemId);
+      }
+    })();
+
+    this.taskRequests.set(apItemId, request);
+    return request;
+  }
+
+  async fetchItemNotes(apItemId, { force = false } = {}) {
+    if (!apItemId || !this.runtimeConfig?.backendUrl) return [];
+    if (!force && this.notesByItem.has(apItemId)) {
+      return this.notesByItem.get(apItemId) || [];
+    }
+    if (this.noteRequests.has(apItemId)) {
+      return this.noteRequests.get(apItemId);
+    }
+
+    const request = (async () => {
+      try {
+        const response = await this.backendFetch(
+          `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/notes`,
+          { method: 'GET' }
+        );
+        if (!response.ok) return [];
+        const payload = await response.json();
+        const notes = Array.isArray(payload?.notes) ? payload.notes : [];
+        this.notesByItem.set(apItemId, notes);
+        this.emitQueueUpdated();
+        return notes;
+      } catch (_) {
+        return [];
+      } finally {
+        this.noteRequests.delete(apItemId);
+      }
+    })();
+
+    this.noteRequests.set(apItemId, request);
+    return request;
+  }
+
+  async fetchItemComments(apItemId, { force = false } = {}) {
+    if (!apItemId || !this.runtimeConfig?.backendUrl) return [];
+    if (!force && this.commentsByItem.has(apItemId)) {
+      return this.commentsByItem.get(apItemId) || [];
+    }
+    if (this.commentRequests.has(apItemId)) {
+      return this.commentRequests.get(apItemId);
+    }
+
+    const request = (async () => {
+      try {
+        const response = await this.backendFetch(
+          `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/comments`,
+          { method: 'GET' }
+        );
+        if (!response.ok) return [];
+        const payload = await response.json();
+        const comments = Array.isArray(payload?.comments) ? payload.comments : [];
+        this.commentsByItem.set(apItemId, comments);
+        this.emitQueueUpdated();
+        return comments;
+      } catch (_) {
+        return [];
+      } finally {
+        this.commentRequests.delete(apItemId);
+      }
+    })();
+
+    this.commentRequests.set(apItemId, request);
+    return request;
+  }
+
+  async fetchItemFiles(apItemId, { force = false } = {}) {
+    if (!apItemId || !this.runtimeConfig?.backendUrl) return [];
+    if (!force && this.filesByItem.has(apItemId)) {
+      return this.filesByItem.get(apItemId) || [];
+    }
+    if (this.fileRequests.has(apItemId)) {
+      return this.fileRequests.get(apItemId);
+    }
+
+    const request = (async () => {
+      try {
+        const response = await this.backendFetch(
+          `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(apItemId)}/files`,
+          { method: 'GET' }
+        );
+        if (!response.ok) return [];
+        const payload = await response.json();
+        const files = Array.isArray(payload?.files) ? payload.files : [];
+        this.filesByItem.set(apItemId, files);
+        this.emitQueueUpdated();
+        return files;
+      } catch (_) {
+        return [];
+      } finally {
+        this.fileRequests.delete(apItemId);
+      }
+    })();
+
+    this.fileRequests.set(apItemId, request);
+    return request;
+  }
+
+  async createTask(item, payload = {}) {
+    if (!item?.id || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/tasks`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!response.ok) {
+      return { status: 'error', reason: `task_create_${response.status}` };
+    }
+    const result = await response.json();
+    await this.fetchItemTasks(item.id, { force: true });
+    await this.fetchAuditTrail(item.id, { force: true });
+    return result;
+  }
+
+  async updateTaskStatus(taskId, payload = {}, itemId = '') {
+    if (!taskId || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/api/ap/items/tasks/${encodeURIComponent(taskId)}/status`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!response.ok) return { status: 'error', reason: `task_status_${response.status}` };
+    const result = await response.json();
+    if (itemId) await this.fetchItemTasks(itemId, { force: true });
+    return result;
+  }
+
+  async assignTask(taskId, payload = {}, itemId = '') {
+    if (!taskId || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/api/ap/items/tasks/${encodeURIComponent(taskId)}/assign`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!response.ok) return { status: 'error', reason: `task_assign_${response.status}` };
+    const result = await response.json();
+    if (itemId) await this.fetchItemTasks(itemId, { force: true });
+    return result;
+  }
+
+  async addTaskComment(taskId, payload = {}, itemId = '') {
+    if (!taskId || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/api/ap/items/tasks/${encodeURIComponent(taskId)}/comments`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!response.ok) return { status: 'error', reason: `task_comment_${response.status}` };
+    const result = await response.json();
+    if (itemId) await this.fetchItemTasks(itemId, { force: true });
+    return result;
+  }
+
+  async addItemNote(item, payload = {}) {
+    if (!item?.id || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/notes`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!response.ok) return { status: 'error', reason: `note_create_${response.status}` };
+    const result = await response.json();
+    await this.fetchItemNotes(item.id, { force: true });
+    await this.fetchAuditTrail(item.id, { force: true });
+    return result;
+  }
+
+  async addItemComment(item, payload = {}) {
+    if (!item?.id || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/comments`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!response.ok) return { status: 'error', reason: `comment_create_${response.status}` };
+    const result = await response.json();
+    await this.fetchItemComments(item.id, { force: true });
+    await this.fetchAuditTrail(item.id, { force: true });
+    return result;
+  }
+
+  async addItemFileLink(item, payload = {}) {
+    if (!item?.id || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/files`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!response.ok) return { status: 'error', reason: `file_create_${response.status}` };
+    const result = await response.json();
+    await this.fetchItemFiles(item.id, { force: true });
+    await this.fetchAuditTrail(item.id, { force: true });
+    return result;
+  }
+
+  async updateRecordFields(item, payload = {}) {
+    if (!item?.id || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/fields`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!response.ok) return { status: 'error', reason: `field_update_${response.status}` };
+    const result = await response.json();
+    this.invalidateItemCaches(item.id);
+    await this.refreshQueue();
+    return result;
+  }
+
+  async searchRecordCandidates(query, { limit = 12 } = {}) {
+    if (!this.runtimeConfig?.backendUrl) return [];
+    const url = new URL(`${this.runtimeConfig.backendUrl}/api/ap/items/search`);
+    url.searchParams.set('organization_id', this.runtimeConfig.organizationId || 'default');
+    url.searchParams.set('q', String(query || ''));
+    url.searchParams.set('limit', String(limit));
+    const response = await this.backendFetch(url.toString(), { method: 'GET' });
+    if (!response.ok) return [];
+    const payload = await response.json();
+    return Array.isArray(payload?.items) ? payload.items : [];
+  }
+
+  async lookupComposeRecord(payload = {}) {
+    if (!this.runtimeConfig?.backendUrl) return { status: 'missing', ap_item: null };
+    const url = new URL(`${this.runtimeConfig.backendUrl}/api/ap/items/compose/lookup`);
+    url.searchParams.set('organization_id', this.runtimeConfig.organizationId || 'default');
+    if (payload?.draft_id) url.searchParams.set('draft_id', String(payload.draft_id));
+    if (payload?.thread_id) url.searchParams.set('thread_id', String(payload.thread_id));
+    const response = await this.backendFetch(url.toString(), { method: 'GET' });
+    if (!response.ok) return { status: 'missing', ap_item: null };
+    return response.json();
+  }
+
+  async createRecordFromComposeDraft(payload = {}) {
+    if (!this.runtimeConfig?.backendUrl) return { status: 'invalid', ap_item: null };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/api/ap/items/compose/create`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!response.ok) return { status: 'error', reason: `compose_create_${response.status}`, ap_item: null };
+    const result = await response.json();
+    this.invalidateItemCaches(result?.ap_item?.id || '');
+    await this.refreshQueue();
+    return result;
+  }
+
+  async recoverCurrentThread(threadId) {
+    if (!threadId || !this.runtimeConfig?.backendUrl) return { found: false, recovered: false, item: null };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/extension/by-thread/${encodeURIComponent(threadId)}/recover`,
+      { method: 'POST' }
+    );
+    if (!response.ok) return { found: false, recovered: false, item: null };
+    const payload = await response.json();
+    if (payload?.item) {
+      this.upsertQueueItem(payload.item);
+      this.emitQueueUpdated();
+    }
+    return payload || { found: false, recovered: false, item: null };
+  }
+
+  async linkCurrentThreadToItem(item, payload = {}) {
+    if (!item?.id || !this.runtimeConfig?.backendUrl) return { status: 'invalid' };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/gmail-link`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!response.ok) return { status: 'error', reason: `gmail_link_${response.status}` };
+    const result = await response.json();
+    this.invalidateItemCaches(item.id);
+    await this.refreshQueue();
+    return result;
+  }
+
+  async linkComposeDraftToItem(item, payload = {}) {
+    if (!item?.id || !this.runtimeConfig?.backendUrl) return { status: 'invalid', ap_item: null };
+    const response = await this.backendFetch(
+      `${this.runtimeConfig.backendUrl}/api/ap/items/${encodeURIComponent(item.id)}/compose-link`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!response.ok) return { status: 'error', reason: `compose_link_${response.status}`, ap_item: null };
+    const result = await response.json();
+    this.invalidateItemCaches(item.id);
+    await this.refreshQueue();
+    return result;
   }
 
   async ensureAgentSession(item) {
@@ -1566,10 +2017,11 @@ class ClearledgrQueueManager {
   async verifyConfidence(item) {
     if (!item || !this.runtimeConfig?.backendUrl) return null;
     const locator = this.buildItemLocator(item);
+    const metadata = this.parseMetadata(item?.metadata);
     const extraction = {
       vendor: item.vendor_name || item.vendor || '',
       amount: item.amount,
-      currency: item.currency || 'USD',
+      currency: item.currency || metadata.currency || null,
       invoice_number: item.invoice_number || '',
     };
     try {

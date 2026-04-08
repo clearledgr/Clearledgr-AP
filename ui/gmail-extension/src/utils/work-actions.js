@@ -35,6 +35,15 @@ function humanizeToken(value) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+export function hasErpPostingConnection(item = null) {
+  const status = String(item?.erp_status || '').trim().toLowerCase();
+  if (status === 'not_connected') return false;
+  if (item?.erp_connector_available === false) return false;
+  if (Boolean(item?.erp_connector_available)) return true;
+  if (String(item?.erp_type || '').trim()) return true;
+  return false;
+}
+
 function getAuditReasonTokens(event) {
   const payload = parseJsonObject(event?.payload_json || event?.payloadJson || event?.payload) || {};
   const response = payload?.response && typeof payload.response === 'object' ? payload.response : {};
@@ -112,6 +121,87 @@ export function canReassignApproval(item = null, state = '', actorRole = 'operat
   return normalizeWorkState(state || item?.state || '') === 'needs_approval';
 }
 
+export function getAgentExecutionMode(state, item = null, documentType = 'invoice') {
+  const normalized = normalizeWorkState(state || item?.state || '');
+  if (!isInvoiceDocumentType(documentType)) return 'manual';
+
+  const approvalFollowup = item?.approval_followup && typeof item.approval_followup === 'object'
+    ? item.approval_followup
+    : {};
+  const followupNextAction = String(item?.followup_next_action || '').trim().toLowerCase();
+
+  if (normalized === 'needs_approval') {
+    if (approvalFollowup?.escalation_due || approvalFollowup?.sla_breached) {
+      return 'operator_attention';
+    }
+    return 'agent_monitoring';
+  }
+
+  if (normalized === 'needs_info') {
+    if (followupNextAction === 'await_vendor_response') return 'agent_waiting';
+    if (followupNextAction === 'manual_vendor_escalation') return 'operator_attention';
+    return 'manual';
+  }
+
+  if (normalized === 'approved' || normalized === 'ready_to_post') {
+    if (!hasErpPostingConnection(item)) return 'operator_attention';
+    return 'agent_progressing';
+  }
+  if (normalized === 'posted_to_erp' || normalized === 'closed') return 'completed';
+  return 'manual';
+}
+
+export function getDefaultNextMoveLabel(state, item = null, actorRole = 'operator', documentType = 'invoice') {
+  const primaryAction = getPrimaryActionConfig(state, actorRole, documentType, item);
+  if (primaryAction?.label) return primaryAction.label;
+
+  const normalized = normalizeWorkState(state || item?.state || '');
+  if (!isInvoiceDocumentType(documentType)) {
+    return `Review ${getDocumentTypeLabel(documentType, { lowercase: true })}`;
+  }
+
+  if (normalized === 'needs_approval') return 'Wait for approval decision';
+  if (normalized === 'needs_info') {
+    const followupNextAction = String(item?.followup_next_action || '').trim().toLowerCase();
+    if (followupNextAction === 'await_vendor_response') return 'Wait for vendor response';
+    if (followupNextAction === 'manual_vendor_escalation') return 'Escalate vendor follow-up';
+    return 'Prepare info request';
+  }
+  if ((normalized === 'approved' || normalized === 'ready_to_post') && !hasErpPostingConnection(item)) {
+    return 'Connect ERP';
+  }
+  if (normalized === 'approved') return 'Prepare ERP post';
+  if (normalized === 'posted_to_erp' || normalized === 'closed') return 'Record is complete';
+  if (normalized === 'rejected') return 'Record rejected';
+  return 'Review current AP state';
+}
+
+export function getOperatorOverrideCopy(state, item = null, documentType = 'invoice') {
+  const mode = getAgentExecutionMode(state, item, documentType);
+  if (mode === 'agent_monitoring') {
+    return {
+      title: 'Operator overrides',
+      detail: 'Clearledgr is monitoring this approval. Use these only if you need to intervene before the reminder or escalation policy runs.',
+    };
+  }
+  if (mode === 'agent_waiting') {
+    return {
+      title: 'Operator overrides',
+      detail: 'Clearledgr already prepared the vendor follow-up and is waiting for a reply. Use these only if you need to intervene early.',
+    };
+  }
+  if (mode === 'agent_progressing') {
+    return {
+      title: 'Operator overrides',
+      detail: 'Clearledgr is already moving this record forward. Use these only if you need to step in manually.',
+    };
+  }
+  return {
+    title: 'Operator overrides',
+    detail: 'Use these actions only when you need to override the normal agent path.',
+  };
+}
+
 export function getPrimaryActionConfig(state, actorRole = 'operator', documentType = 'invoice', item = null) {
   if (!hasOpsAccessRole(actorRole)) return null;
   if (!isInvoiceDocumentType(documentType)) return null;
@@ -132,12 +222,15 @@ export function getPrimaryActionConfig(state, actorRole = 'operator', documentTy
     if (canEscalateApproval(item, normalized, actorRole, documentType)) {
       return { id: 'escalate_approval', label: 'Escalate approval' };
     }
+    if (!item?.approval_followup?.sla_breached) return null;
     return { id: 'nudge_approver', label: 'Nudge approver' };
   }
   if (normalized === 'ready_to_post') {
+    if (!hasErpPostingConnection(item)) return null;
     return { id: 'preview_erp_post', label: 'Preview ERP post' };
   }
   if (normalized === 'failed_post') {
+    if (!hasErpPostingConnection(item)) return null;
     return { id: 'retry_erp_post', label: 'Retry ERP post' };
   }
   return null;
@@ -202,8 +295,30 @@ export function getWorkStateNotice(state, documentType = 'invoice', item = null)
       return 'The vendor has not replied yet. Send the next follow-up when you are ready.';
     }
   }
+  if (normalized === 'needs_approval') {
+    const approvalFollowup = item?.approval_followup && typeof item.approval_followup === 'object'
+      ? item.approval_followup
+      : {};
+    const pendingAssignees = Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees : [];
+    if (approvalFollowup?.escalation_due) {
+      return 'Approval is past the escalation window. Clearledgr is waiting for an operator to escalate or reassign it.';
+    }
+    if (approvalFollowup?.sla_breached) {
+      return 'Approval is past the reminder SLA. Clearledgr can send another reminder now.';
+    }
+    if (pendingAssignees.length > 0) {
+      return `Waiting on ${pendingAssignees.slice(0, 3).join(', ')}. Clearledgr is monitoring this approval and will remind or escalate if it slips.`;
+    }
+    return 'Waiting on approval. Clearledgr is monitoring this request and will remind or escalate if it slips.';
+  }
+  if ((normalized === 'approved' || normalized === 'ready_to_post' || normalized === 'failed_post') && !hasErpPostingConnection(item)) {
+    return 'ERP is not connected. Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.';
+  }
   if (normalized === 'approved') {
     return 'Approval received. Clearledgr is preparing the posting step.';
+  }
+  if (normalized === 'ready_to_post') {
+    return 'Invoice is ready and Clearledgr can post it to the ERP.';
   }
   if (normalized === 'posted_to_erp' || normalized === 'closed') {
     return 'Invoice has already been posted to the ERP.';

@@ -7,7 +7,7 @@ import { h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDateTime, useAction } from '../route-helpers.js';
-import { openSourceEmail } from '../../utils/formatters.js';
+import { formatAmount, openSourceEmail } from '../../utils/formatters.js';
 import { navigateToRecordDetail } from '../../utils/record-route.js';
 import {
   activatePipelineSlice,
@@ -32,12 +32,6 @@ const KIND_LABELS = {
   post_invoice: 'Posting',
   review_blocker: 'Blocker review',
 };
-
-function formatMoney(amount, currency = 'USD') {
-  const value = Number(amount);
-  if (!Number.isFinite(value)) return 'Amount unavailable';
-  return `${currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 function buildTaskLocator(task = {}) {
   return {
@@ -64,9 +58,9 @@ function SummaryCard({ label, value, tone = 'default' }) {
       : tone === 'success'
         ? '#047857'
         : 'var(--ink)';
-  return html`<div style="padding:18px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-    <div style="font-size:28px;font-weight:700;letter-spacing:-0.02em;color:${accent}">${Number(value || 0).toLocaleString()}</div>
-    <div class="muted" style="font-size:12px;margin-top:4px">${label}</div>
+  return html`<div class="reports-metric-card">
+    <div class="reports-metric-value" style=${`color:${accent}`}>${Number(value || 0).toLocaleString()}</div>
+    <div class="reports-metric-detail" style="margin-top:4px">${label}</div>
   </div>`;
 }
 
@@ -107,7 +101,7 @@ export default function UpcomingPage({ api, toast, orgId, userEmail, navigate })
     if (task?.ap_item_id) {
       focusPipelineItem(pipelineScope, buildTaskLocator(task), 'upcoming');
     }
-    navigate('clearledgr/pipeline');
+    navigate('clearledgr/invoices');
   };
 
   const openRecord = (task) => {
@@ -143,27 +137,27 @@ export default function UpcomingPage({ api, toast, orgId, userEmail, navigate })
       </div>
       <div class="secondary-banner-actions">
         <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
-        <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/invoices')}>Open invoices</button>
       </div>
     </div>
 
-    <div class="secondary-chip-row" style="margin:0 0 18px">
-      <span class="secondary-chip">Total follow-ups ${summary.total || 0}</span>
-      <span class="secondary-chip">Overdue ${summary.overdue || 0}</span>
-      <span class="secondary-chip">Today ${summary.today || 0}</span>
-      <span class="secondary-chip">This week ${summary.this_week || 0}</span>
+    <div class="secondary-stat-grid" style="margin:0 0 18px">
+      <${SummaryCard} label="Total follow-ups" value=${summary.total || 0} />
+      <${SummaryCard} label="Overdue" value=${summary.overdue || 0} tone="danger" />
+      <${SummaryCard} label="Today" value=${summary.today || 0} tone="warning" />
+      <${SummaryCard} label="This week" value=${summary.this_week || 0} tone="success" />
     </div>
 
     <div class="panel">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+      <div class="panel-head compact">
         <div>
           <h3 style="margin:0 0 4px">What is due</h3>
           <p class="muted" style="margin:0">Only the follow-ups that can move work forward show up here.</p>
         </div>
         ${groupedCounts.length > 0 && html`
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div class="reports-chip-wrap">
             ${groupedCounts.map(([kind, count]) => html`
-              <span key=${kind} style="display:inline-flex;gap:6px;align-items:center;padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px;font-weight:600;color:var(--ink-secondary)">
+              <span key=${kind} class="secondary-chip" style="font-size:12px">
                 ${KIND_LABELS[kind] || kind.replace(/_/g, ' ')}
                 <strong style="color:var(--ink)">${count}</strong>
               </span>
@@ -173,28 +167,28 @@ export default function UpcomingPage({ api, toast, orgId, userEmail, navigate })
       </div>
 
       ${tasks.length === 0
-        ? html`<p class="muted" style="margin:0">Nothing is due right now.</p>`
-        : html`<div style="display:flex;flex-direction:column;gap:12px">
+        ? html`<p class="muted" style="margin:0">No upcoming follow-ups yet.</p>`
+        : html`<div class="secondary-card-list">
             ${tasks.map((task) => html`
-              <div key=${task.id} style="padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                  <div style="min-width:0;flex:1">
-                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-                      <strong style="font-size:14px">${task.title || 'Follow-up'}</strong>
+              <div key=${task.id} class="secondary-card">
+                <div class="secondary-card-head">
+                  <div class="secondary-card-copy">
+                    <div class="secondary-inline-actions" style="margin-bottom:4px">
+                      <strong class="secondary-card-title">${task.title || 'Follow-up'}</strong>
                       <${StatusPill} status=${task.status} />
                       <span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.02em">
                         ${KIND_LABELS[task.kind] || task.kind?.replace(/_/g, ' ') || 'Follow-up'}
                       </span>
                     </div>
-                    <div style="font-size:13px;font-weight:600;color:var(--ink-secondary)">
-                      ${task.vendor_name || 'Unknown vendor'} · ${task.invoice_number || 'No invoice #'} · ${formatMoney(task.amount, task.currency || 'USD')}
+                    <div class="secondary-card-meta" style="font-size:13px;font-weight:600;color:var(--ink-secondary)">
+                      ${task.vendor_name || 'Unknown vendor'} · ${task.invoice_number || 'No invoice #'} · ${formatAmount(task.amount, task.currency)}
                     </div>
-                    <div class="muted" style="font-size:12px;line-height:1.55;margin-top:6px">${task.detail}</div>
-                    <div class="muted" style="font-size:12px;margin-top:8px">
+                    <div class="secondary-card-meta" style="margin-top:6px">${task.detail}</div>
+                    <div class="secondary-card-meta" style="margin-top:8px">
                       ${task.due_at ? `Due ${fmtDateTime(task.due_at)}` : 'No explicit follow-up time'}
                     </div>
                   </div>
-                  <div class="row-actions">
+                  <div class="secondary-card-actions" style="margin-top:0">
                     <button class="btn-secondary btn-sm" onClick=${() => openRecord(task)}>Open record</button>
                     <button class="btn-ghost btn-sm" onClick=${() => openPipelineTask(task)}>Open slice</button>
                     ${(task.thread_id || task.message_id) && html`<button class="btn-ghost btn-sm" onClick=${() => openEmail(task)}>Open email</button>`}

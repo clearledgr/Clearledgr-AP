@@ -15,6 +15,16 @@ const ROUTE_ICON_MARKUP = {
   recon: '<path d="M5 6.5h8.5"/><path d="m11.5 4.5 2 2-2 2"/><path d="M15 13.5H6.5"/><path d="m8.5 11.5-2 2 2 2"/>',
   health: '<path d="M3.75 10h3l1.5-3.25 3.25 6.5 1.75-3.25h3"/>',
   view: '<rect x="3.75" y="4.25" width="5.25" height="5.25" rx="1"/><rect x="11" y="4.25" width="5.25" height="5.25" rx="1"/><rect x="3.75" y="11.5" width="5.25" height="5.25" rx="1"/><rect x="11" y="11.5" width="5.25" height="5.25" rx="1"/>',
+  upcoming: '<path d="M10 4.5v5.5l3.5 2"/><circle cx="10" cy="10" r="6.25"/>',
+  templates: '<path d="M5.5 4.25h9a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-9.5a1 1 0 0 1 1-1Z"/><path d="M7.25 8h5.5"/><path d="M7.25 11h3.5"/>',
+  reports: '<path d="M6 15.5V9.5"/><path d="M10 15.5V6"/><path d="M14 15.5v-4"/><path d="M4 15.5h12"/>',
+};
+
+const ROUTE_ICON_TREATMENT = {
+  connections: { scale: 1.16, strokeWidth: 1.82 },
+  rules: { scale: 1.11, strokeWidth: 1.74 },
+  settings: { scale: 1.18, strokeWidth: 1.84 },
+  templates: { scale: 1.13, strokeWidth: 1.74 },
 };
 
 const iconCache = new Map();
@@ -22,9 +32,16 @@ const iconCache = new Map();
 function buildRouteIconUrl(iconKey) {
   const resolvedKey = ROUTE_ICON_MARKUP[iconKey] ? iconKey : 'activity';
   if (iconCache.has(resolvedKey)) return iconCache.get(resolvedKey);
+  const treatment = ROUTE_ICON_TREATMENT[resolvedKey] || {};
+  const scale = Number.isFinite(treatment.scale) ? treatment.scale : 1;
+  const strokeWidth = Number.isFinite(treatment.strokeWidth) ? treatment.strokeWidth : 1.6;
+  const translateOffset = scale === 1 ? 0 : Number((10 - (10 * scale)).toFixed(3));
+  const transformedMarkup = scale === 1
+    ? ROUTE_ICON_MARKUP[resolvedKey]
+    : `<g transform="translate(${translateOffset} ${translateOffset}) scale(${scale})">${ROUTE_ICON_MARKUP[resolvedKey]}</g>`;
   const svg = `
-    <svg xmlns="${SVG_NS}" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#64748B" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      ${ROUTE_ICON_MARKUP[resolvedKey]}
+    <svg xmlns="${SVG_NS}" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#64748B" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      ${transformedMarkup}
     </svg>
   `.trim().replace(/\s+/g, ' ');
   const dataUrl = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;

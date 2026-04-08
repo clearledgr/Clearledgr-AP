@@ -12,7 +12,7 @@ export const NAV_PREFS_STORAGE_KEY = 'clearledgr_nav_preferences_v1';
 
 export const ROUTES = [
   {
-    id: 'clearledgr/pipeline',
+    id: 'clearledgr/invoices',
     title: 'Invoices',
     subtitle: 'All invoices and finance documents across states.',
     icon: 'pipeline',
@@ -20,6 +20,7 @@ export const ROUTES = [
     defaultPinned: true,
     canHide: false,
     menuGroup: 'primary',
+    hideTopbar: true,
     viewCapability: 'view_pipeline',
   },
   {
@@ -49,7 +50,7 @@ export const ROUTES = [
     id: 'clearledgr/upcoming',
     title: 'Upcoming',
     subtitle: 'See what needs attention next.',
-    icon: 'activity',
+    icon: 'upcoming',
     navOrder: 25,
     defaultPinned: false,
     canHide: true,
@@ -94,7 +95,7 @@ export const ROUTES = [
     id: 'clearledgr/templates',
     title: 'Templates',
     subtitle: 'Reusable email drafts.',
-    icon: 'activity',
+    icon: 'templates',
     navOrder: 55,
     defaultPinned: false,
     canHide: true,
@@ -143,14 +144,14 @@ export const ROUTES = [
     navOrder: 110,
     defaultPinned: false,
     canHide: true,
-    menuGroup: 'secondary',
+    menuGroup: 'hidden',
     viewCapability: 'view_system_status',
   },
   {
     id: 'clearledgr/reports',
     title: 'Reports',
     subtitle: 'A quick view of volume, spend, and risk.',
-    icon: 'activity',
+    icon: 'reports',
     navOrder: 115,
     defaultPinned: false,
     canHide: true,
@@ -163,10 +164,10 @@ export const ROUTES = [
 export const DYNAMIC_ROUTES = [
   { id: 'clearledgr/invoice/:id', title: 'Invoice Detail', subtitle: '' },
   { id: 'clearledgr/vendor/:name', title: 'Vendor Detail', subtitle: '' },
-  { id: 'clearledgr/pipeline-view/:ref', title: 'Pipeline View', subtitle: '' },
+  { id: 'clearledgr/invoices-view/:ref', title: 'Saved View', subtitle: '' },
 ];
 
-export const DEFAULT_ROUTE = 'clearledgr/pipeline';
+export const DEFAULT_ROUTE = 'clearledgr/invoices';
 
 export function getRouteById(id) {
   return ROUTES.find((route) => route.id === id) || null;
@@ -318,12 +319,14 @@ export function getVisibleNavRoutes(preferences = {}, options = {}) {
 
 export function getMenuNavRoutes(preferences = {}, options = {}) {
   const groupWeight = { primary: 0, secondary: 1 };
-  return getNavEligibleRoutes(options).slice().sort((left, right) => {
-    const leftWeight = groupWeight[left.menuGroup] ?? 9;
-    const rightWeight = groupWeight[right.menuGroup] ?? 9;
-    if (leftWeight !== rightWeight) return leftWeight - rightWeight;
-    return Number(left.navOrder || 0) - Number(right.navOrder || 0);
-  });
+  return getNavEligibleRoutes(options)
+    .filter((route) => route.menuGroup !== 'hidden')
+    .slice().sort((left, right) => {
+      const leftWeight = groupWeight[left.menuGroup] ?? 9;
+      const rightWeight = groupWeight[right.menuGroup] ?? 9;
+      if (leftWeight !== rightWeight) return leftWeight - rightWeight;
+      return Number(left.navOrder || 0) - Number(right.navOrder || 0);
+    });
 }
 
 export function pinRoute(routeId, preferences = {}, options = {}) {

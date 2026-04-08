@@ -59,13 +59,13 @@ export default function ActionDialog({ visible, config, onClose }) {
   const isConfirmOnly = dialogMode === 'confirm';
 
   useEffect(() => {
-    if (visible) {
-      setValue(defaultValue || '');
-      setTimeout(() => {
-        if (isConfirmOnly) confirmRef.current?.focus();
-        else inputRef.current?.focus();
-      }, 0);
-    }
+    if (!visible) return undefined;
+    setValue(defaultValue || '');
+    const focusTimer = setTimeout(() => {
+      if (isConfirmOnly) confirmRef.current?.focus();
+      else inputRef.current?.focus();
+    }, 0);
+    return () => clearTimeout(focusTimer);
   }, [visible, defaultValue, isConfirmOnly]);
 
   const handleConfirm = useCallback(() => {

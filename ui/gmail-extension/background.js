@@ -1,5 +1,10 @@
 // Clearledgr AP v1 Background Service Worker
 // config.js is injected by build.sh
+try {
+  importScripts('config.js');
+} catch (_) {
+  // Best effort. Built bundles may inject config directly.
+}
 
 const RetryConfig = {
   maxRetries: 2,
@@ -8,6 +13,82 @@ const RetryConfig = {
   backoffMultiplier: 2,
   retryableStatusCodes: [408, 429, 500, 502, 503, 504]
 };
+
+const TAB_PENDING_DIRECT_ROUTE_PREFIX = '__clearledgr_tab_pending_direct_route_v1__';
+const TAB_PENDING_DIRECT_ROUTE_TTL_MS = 30000;
+
+function normalizeClearledgrHashFromUrl(rawUrl = '') {
+  try {
+    const parsed = new URL(String(rawUrl || ''));
+    const hash = String(parsed.hash || '').trim().replace(/^#/, '').split('?')[0];
+    return hash.startsWith('clearledgr/') ? hash : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function getPendingDirectRouteStorageKey(tabId) {
+  return `${TAB_PENDING_DIRECT_ROUTE_PREFIX}${tabId}`;
+}
+
+async function storePendingDirectRouteForTab(tabId, rawUrl) {
+  const normalizedHash = normalizeClearledgrHashFromUrl(rawUrl);
+  if (!Number.isFinite(Number(tabId)) || !normalizedHash || !chrome.storage?.session?.set) return;
+  try {
+    await chrome.storage.session.set({
+      [getPendingDirectRouteStorageKey(tabId)]: {
+        hash: normalizedHash,
+        ts: Date.now(),
+        pathname: (() => {
+          try { return new URL(String(rawUrl || '')).pathname || ''; } catch (_) { return ''; }
+        })(),
+      },
+    });
+  } catch (_) {
+    /* best effort */
+  }
+}
+
+async function readPendingDirectRouteForTab(tabId) {
+  if (!Number.isFinite(Number(tabId)) || !chrome.storage?.session?.get) return null;
+  try {
+    const key = getPendingDirectRouteStorageKey(tabId);
+    const payload = await chrome.storage.session.get([key]);
+    const pending = payload?.[key];
+    const hash = String(pending?.hash || '').trim();
+    const ts = Number(pending?.ts || 0);
+    if (!hash.startsWith('clearledgr/')) return null;
+    if (!Number.isFinite(ts) || (Date.now() - ts) > TAB_PENDING_DIRECT_ROUTE_TTL_MS) return null;
+    return {
+      hash,
+      pathname: String(pending?.pathname || ''),
+      ts,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function clearPendingDirectRouteForTab(tabId) {
+  if (!Number.isFinite(Number(tabId)) || !chrome.storage?.session?.remove) return;
+  try {
+    await chrome.storage.session.remove(getPendingDirectRouteStorageKey(tabId));
+  } catch (_) {
+    /* best effort */
+  }
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const candidateUrl = String(changeInfo?.url || tab?.url || '').trim();
+  if (!candidateUrl) return;
+  const normalizedHash = normalizeClearledgrHashFromUrl(candidateUrl);
+  if (!normalizedHash) return;
+  void storePendingDirectRouteForTab(tabId, candidateUrl);
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void clearPendingDirectRouteForTab(tabId);
+});
 
 function calculateBackoff(attempt) {
   const delay = RetryConfig.baseDelay * Math.pow(RetryConfig.backoffMultiplier, attempt);
@@ -95,6 +176,65 @@ function normalizeBackendUrl(raw) {
   }
 }
 
+function selectBackendUrl(storedUrl, configuredUrl) {
+  const configured = normalizeBackendUrl(configuredUrl);
+  const stored = normalizeBackendUrl(storedUrl);
+  if (!configuredUrl) return stored;
+  if (!storedUrl) return configured;
+  try {
+    const configuredParsed = new URL(configured);
+    const storedParsed = new URL(stored);
+    const configuredHost = configuredParsed.hostname.toLowerCase();
+    const storedHost = storedParsed.hostname.toLowerCase();
+    const configuredSecure = configuredParsed.protocol === 'https:';
+    const looksEphemeralStoredHost =
+      storedHost === '127.0.0.1' ||
+      storedHost === 'localhost' ||
+      storedHost.endsWith('.trycloudflare.com') ||
+      storedHost.endsWith('.up.railway.app');
+    if (configuredSecure && configuredHost === 'api.clearledgr.com' && looksEphemeralStoredHost) {
+      return configured;
+    }
+  } catch (_) {
+    return configured || stored;
+  }
+  return stored;
+}
+
+function shouldClearStoredBackendOverride(storedUrl, configuredUrl) {
+  const configured = normalizeBackendUrl(configuredUrl);
+  const stored = normalizeBackendUrl(storedUrl);
+  if (!configuredUrl || !storedUrl) return false;
+  try {
+    const configuredParsed = new URL(configured);
+    const storedParsed = new URL(stored);
+    const configuredHost = configuredParsed.hostname.toLowerCase();
+    const storedHost = storedParsed.hostname.toLowerCase();
+    return configuredParsed.protocol === 'https:' && configuredHost === 'api.clearledgr.com' && (
+      storedHost === '127.0.0.1' ||
+      storedHost === 'localhost' ||
+      storedHost.endsWith('.trycloudflare.com') ||
+      storedHost.endsWith('.up.railway.app')
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+async function clearStoredBackendOverride(data, nested, configuredBackendUrl) {
+  const storedBackendUrl = data.backendUrl || nested.backendUrl || nested.apiEndpoint || null;
+  if (!shouldClearStoredBackendOverride(storedBackendUrl, configuredBackendUrl)) return;
+  const nextNested = { ...nested };
+  delete nextNested.backendUrl;
+  delete nextNested.apiEndpoint;
+  try {
+    await chrome.storage.sync.set({ settings: nextNested });
+    await chrome.storage.sync.remove(['backendUrl']);
+  } catch (_) {
+    /* best effort */
+  }
+}
+
 async function getMergedSyncSettings() {
   const data = await chrome.storage.sync.get([
     'settings',
@@ -104,9 +244,14 @@ async function getMergedSyncSettings() {
     'slackChannel'
   ]);
   const nested = data.settings || {};
+  const configuredBackendUrl = getConfiguredBackendUrl();
+  await clearStoredBackendOverride(data, nested, configuredBackendUrl);
   return {
     ...nested,
-    backendUrl: data.backendUrl || nested.backendUrl || nested.apiEndpoint || null,
+    backendUrl: selectBackendUrl(
+      data.backendUrl || nested.backendUrl || nested.apiEndpoint || null,
+      configuredBackendUrl
+    ),
     organizationId: data.organizationId || nested.organizationId || null,
     userEmail: data.userEmail || nested.userEmail || null,
     slackChannel: data.slackChannel || nested.slackChannel || null
@@ -168,10 +313,27 @@ async function getAuthToken(interactive = true, options = {}) {
     tokenExpiry = stored.gmail_token_expiry;
     return cachedToken;
   }
-  if (forceFresh) {
-    await clearCachedAuthToken();
+  // Clear stale token so the next attempt starts fresh
+  await clearCachedAuthToken();
+  if (!interactive) {
+    // Non-interactive: try silent token refresh via chrome.identity
+    // (works if user has an active Google session)
+    try {
+      const silentToken = await new Promise((resolve, reject) => {
+        chrome.identity.getAuthToken({ interactive: false }, (token) => {
+          if (chrome.runtime.lastError || !token) reject(new Error('silent_refresh_failed'));
+          else resolve(token);
+        });
+      });
+      if (silentToken) {
+        cachedToken = silentToken;
+        tokenExpiry = Date.now() + 3500 * 1000;
+        await chrome.storage.local.set({ gmail_token: silentToken, gmail_token_expiry: tokenExpiry });
+        return silentToken;
+      }
+    } catch (_) { /* silent refresh unavailable — need interactive */ }
+    throw new Error('No valid token');
   }
-  if (!interactive) throw new Error('No valid token');
   return launchWebAuthFlow();
 }
 
@@ -317,9 +479,6 @@ async function registerGmailTokenWithBackend(accessToken) {
 }
 
 async function ensureGmailAuthWithBackend(interactive = true) {
-  // Streak pattern: use the Google OAuth token directly as the Bearer token.
-  // The backend validates it against Google's tokeninfo endpoint.
-  // No separate JWT exchange — one token, one auth path.
   const wantsInteractive = Boolean(interactive);
   const now = Date.now();
   if (wantsInteractive) {
@@ -341,19 +500,48 @@ async function ensureGmailAuthWithBackend(interactive = true) {
       return { success: false, error: 'no_google_token' };
     }
 
-    // Also register with backend for autopilot (server-side Gmail access)
-    // but don't block auth on it — fire and forget
-    try {
-      registerGmailTokenWithBackend(token).catch(() => {});
-    } catch (_) { /* best effort */ }
+    let backendRegistration = null;
+    if (codeExchangeResult && typeof codeExchangeResult === 'object') {
+      backendRegistration = codeExchangeResult;
+      codeExchangeResult = null;
+    } else {
+      try {
+        backendRegistration = await registerGmailTokenWithBackend(token);
+      } catch (_) {
+        backendRegistration = null;
+      }
+    }
 
     const profile = await getProfileUserInfo();
+    const backendAccessToken = String(
+      backendRegistration?.backend_access_token
+      || backendRegistration?.backendAccessToken
+      || token
+      || ''
+    ).trim() || null;
+    const backendExpiresIn = Number(
+      backendRegistration?.backend_expires_in
+      || backendRegistration?.backendExpiresIn
+      || getTokenTtlSeconds()
+    ) || getTokenTtlSeconds();
+    const organizationId = String(
+      backendRegistration?.organization_id
+      || backendRegistration?.organizationId
+      || 'default'
+    ).trim() || 'default';
+    const userId = String(
+      backendRegistration?.user_id
+      || backendRegistration?.userId
+      || profile?.id
+      || ''
+    ).trim() || null;
     return {
       success: true,
-      backendAccessToken: token,  // Use Google token directly
-      backendExpiresIn: getTokenTtlSeconds(),
-      organizationId: 'default',
+      backendAccessToken,
+      backendExpiresIn,
+      organizationId,
       email: profile?.email || null,
+      userId,
     };
   };
 
@@ -903,11 +1091,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({
           success: true,
           email: payload?.email || null,
-          userId: payload?.user_id || null,
-          organizationId: payload?.organization_id || 'default',
-          backendAccessToken: payload?.backend_access_token || null,
-          backendTokenType: payload?.backend_token_type || 'bearer',
-          backendExpiresIn: Number(payload?.backend_expires_in || 0) || 0,
+          userId: payload?.user_id || payload?.userId || null,
+          organizationId: payload?.organization_id || payload?.organizationId || 'default',
+          backendAccessToken: payload?.backend_access_token || payload?.backendAccessToken || null,
+          backendTokenType: payload?.backend_token_type || payload?.backendTokenType || 'bearer',
+          backendExpiresIn: Number(payload?.backend_expires_in || payload?.backendExpiresIn || 0) || 0,
           retryAfterSeconds: Number(payload?.retry_after_seconds || 0) || 0,
         });
       })
@@ -937,6 +1125,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'listBrowserTabs') {
     listBrowserTabs()
       .then((tabs) => sendResponse({ success: true, tabs }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'getPendingDirectRouteForTab') {
+    const tabId = Number(sender?.tab?.id || request?.tabId);
+    readPendingDirectRouteForTab(tabId)
+      .then((pending) => sendResponse({ success: true, pending }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'clearPendingDirectRouteForTab') {
+    const tabId = Number(sender?.tab?.id || request?.tabId);
+    clearPendingDirectRouteForTab(tabId)
+      .then(() => sendResponse({ success: true }))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }

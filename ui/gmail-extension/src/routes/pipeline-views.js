@@ -1,3 +1,6 @@
+import { getExceptionLabel, getIssueSummary } from '../utils/formatters.js';
+import { getWorkStateNotice, hasErpPostingConnection } from '../utils/work-actions.js';
+
 const LEGACY_STORAGE_PREFIX = 'clearledgr_pipeline_view_preferences_v1';
 const STORAGE_PREFIX = 'clearledgr_pipeline_view_preferences_v2';
 const NAVIGATION_PREFIX = 'clearledgr_pipeline_navigation_v1';
@@ -26,15 +29,14 @@ export const PIPELINE_BUILTIN_SLICES = [
   { id: 'waiting_on_approval', label: 'Waiting on approval', description: 'Invoices routed to approvers and still waiting.' },
   { id: 'ready_to_post', label: 'Ready to post', description: 'Approved invoices ready for ERP posting.' },
   { id: 'needs_info', label: 'Needs info', description: 'Invoices blocked on vendor or field follow-up.' },
-  { id: 'failed_post', label: 'Failed post', description: 'Invoices that need ERP retry or posting recovery.' },
-  { id: 'blocked_exception', label: 'Blocked / exception', description: 'Entity, policy, budget, confidence, PO, or processing blockers.' },
+  { id: 'failed_post', label: 'Failed post', description: 'Invoices that need ERP recovery or connector setup before posting can continue.' },
+  { id: 'blocked_exception', label: 'Review / exception', description: 'Invoices paused by entity, policy, budget, field, PO, or setup issues.' },
   { id: 'due_soon', label: 'Due soon', description: 'Open invoices due within the next 7 days.' },
   { id: 'overdue', label: 'Overdue', description: 'Open invoices already past due.' },
 ];
 
 function buildDefaultFilters() {
   return {
-    state: 'all',
     vendor: '',
     due: 'all',
     blocker: 'all',
@@ -102,6 +104,99 @@ function normalizeText(value, fallback = '') {
   return String(value || '').trim() || fallback;
 }
 
+function buildFallbackBlockerCopy(kind, type, source = {}) {
+  const normalizedState = normalizePipelineState(source?.state);
+  if (kind === 'approval') {
+    return {
+      chip_label: 'Waiting on approver',
+      title: 'Waiting on approver',
+      detail: getWorkStateNotice(normalizedState, 'invoice', source) || 'Approval is still pending.',
+    };
+  }
+  if (kind === 'info') {
+    return {
+      chip_label: 'Waiting on vendor',
+      title: 'Waiting on vendor',
+      detail: getWorkStateNotice(normalizedState, 'invoice', source) || 'Vendor information is still missing.',
+    };
+  }
+  if (kind === 'erp') {
+    if (!hasErpPostingConnection(source)) {
+      return {
+        chip_label: 'ERP not connected',
+        title: 'ERP is not connected',
+        detail: 'Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.',
+      };
+    }
+    return {
+      chip_label: 'ERP retry',
+      title: 'ERP posting needs attention',
+      detail: getIssueSummary(source) || 'ERP posting needs review before this invoice can continue.',
+    };
+  }
+  if (kind === 'exception') {
+    const label = getExceptionLabel(type) || 'Needs review';
+    return {
+      chip_label: label,
+      title: label,
+      detail: getIssueSummary(source) || 'Clearledgr needs review before this invoice can continue.',
+    };
+  }
+  if (kind === 'confidence') {
+    return {
+      chip_label: 'Field review',
+      title: 'Needs a field check',
+      detail: normalizeText(source?.workflow_paused_reason) || 'Check the extracted fields before Clearledgr continues.',
+    };
+  }
+  if (kind === 'budget') {
+    return {
+      chip_label: 'Budget review',
+      title: 'Budget review required',
+      detail: 'A budget decision is still required before this invoice can continue.',
+    };
+  }
+  if (kind === 'entity') {
+    return {
+      chip_label: 'Entity review',
+      title: 'Entity route needs review',
+      detail: normalizeText(source?.entity_route_reason) || 'Choose the correct legal entity before this invoice can continue.',
+    };
+  }
+  if (kind === 'po') {
+    return {
+      chip_label: 'PO review',
+      title: 'PO review required',
+      detail: getIssueSummary(source) || 'PO matching still needs review before this invoice can continue.',
+    };
+  }
+  if (kind === 'processing') {
+    return {
+      chip_label: 'Processing issue',
+      title: 'Processing issue',
+      detail: 'Clearledgr needs another pass before this invoice can continue.',
+    };
+  }
+  return { chip_label: '', title: '', detail: '' };
+}
+
+function enrichPipelineBlocker(blocker = {}, source = {}) {
+  const kind = normalizeText(blocker?.kind).toLowerCase();
+  const type = normalizeText(blocker?.type).toLowerCase();
+  const fallback = buildFallbackBlockerCopy(kind, type, source);
+  return {
+    ...blocker,
+    kind,
+    type,
+    chip_label: normalizeText(blocker?.chip_label, fallback.chip_label),
+    title: normalizeText(blocker?.title, fallback.title),
+    detail: normalizeText(blocker?.detail, fallback.detail),
+    field: normalizeText(blocker?.field).toLowerCase(),
+    severity: normalizeText(blocker?.severity).toLowerCase(),
+    code: normalizeText(blocker?.code).toLowerCase(),
+  };
+}
+
 function normalizeUserEmail(value) {
   return normalizeText(value).toLowerCase();
 }
@@ -156,7 +251,6 @@ function normalizeSearchQuery(value) {
 
 function normalizeFilters(filters = {}) {
   return {
-    state: normalizeText(filters?.state, 'all'),
     vendor: normalizeVendorFilter(filters?.vendor),
     due: normalizeText(filters?.due, 'all'),
     blocker: normalizeText(filters?.blocker, 'all'),
@@ -647,10 +741,12 @@ export function getErpStatus(item = {}) {
   const state = normalizePipelineState(source.state);
   const normalizedStatus = normalizeText(source?.erp_status).toLowerCase();
   if (normalizedStatus) return normalizedStatus;
+  const hasConnection = hasErpPostingConnection(source);
   if (state === 'posted_to_erp' || state === 'closed' || source?.erp_reference || source?.erp_bill_id) return 'posted';
+  if (!hasConnection && ['approved', 'ready_to_post', 'failed_post'].includes(state)) return 'not_connected';
   if (state === 'failed_post') return 'failed';
   if (state === 'ready_to_post' || state === 'approved') return 'ready';
-  if (source?.erp_connector_available || source?.connector_available) return 'connected';
+  if (hasConnection) return 'connected';
   return 'not_connected';
 }
 
@@ -659,17 +755,7 @@ export function getPipelineBlockers(item = {}) {
   const existing = Array.isArray(source?.pipeline_blockers) ? source.pipeline_blockers : [];
   if (existing.length > 0) {
     return existing
-      .map((blocker) => ({
-        ...blocker,
-        kind: normalizeText(blocker?.kind).toLowerCase(),
-        type: normalizeText(blocker?.type).toLowerCase(),
-        chip_label: normalizeText(blocker?.chip_label),
-        title: normalizeText(blocker?.title),
-        detail: normalizeText(blocker?.detail),
-        field: normalizeText(blocker?.field).toLowerCase(),
-        severity: normalizeText(blocker?.severity).toLowerCase(),
-        code: normalizeText(blocker?.code).toLowerCase(),
-      }))
+      .map((blocker) => enrichPipelineBlocker(blocker, source))
       .filter((blocker) => blocker.kind && blocker.type);
   }
 
@@ -686,7 +772,10 @@ export function getPipelineBlockers(item = {}) {
     blockers.push({ kind: 'info', type: 'needs_info' });
   }
   if (state === 'failed_post') {
-    blockers.push({ kind: 'erp', type: 'posting_failed' });
+    blockers.push({
+      kind: 'erp',
+      type: hasErpPostingConnection(source) ? 'posting_failed' : 'erp_not_connected',
+    });
   }
   if (String(source?.entity_routing_status || source?.entity_routing?.status || '').trim().toLowerCase() === 'needs_review') {
     blockers.push({ kind: 'entity', type: 'entity_review' });
@@ -706,7 +795,7 @@ export function getPipelineBlockers(item = {}) {
     blockers.push({ kind: 'po', type: exceptionCode });
   }
 
-  return blockers;
+  return blockers.map((blocker) => enrichPipelineBlocker(blocker, source));
 }
 
 export function getPipelineBlockerKinds(item = {}) {
@@ -733,6 +822,7 @@ export function matchesPipelineSlice(item = {}, sliceId = 'all_open', now = new 
     case 'failed_post':
       return state === 'failed_post';
     case 'blocked_exception':
+      if (isClosedPipelineState(state)) return false;
       return blockers.some((kind) => ['entity', 'exception', 'confidence', 'budget', 'po', 'erp', 'processing'].includes(kind));
     case 'due_soon':
       if (!dueDate || isClosedPipelineState(state)) return false;
@@ -755,7 +845,6 @@ export function matchesPipelineFilters(item = {}, filters = {}, now = new Date()
   const erpStatus = getErpStatus(item);
   const normalizedFilters = normalizeFilters(filters);
 
-  if (normalizedFilters.state !== 'all' && state !== normalizePipelineState(normalizedFilters.state)) return false;
   if (normalizedFilters.vendor && !vendor.includes(normalizedFilters.vendor.toLowerCase())) return false;
 
   if (normalizedFilters.due === 'overdue') {

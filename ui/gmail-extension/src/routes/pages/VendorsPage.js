@@ -67,7 +67,7 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
         vendor: vendorName,
       },
     });
-    navigate('clearledgr/pipeline');
+    navigate('clearledgr/invoices');
   };
 
   const openVendorIssues = (vendor) => {
@@ -89,7 +89,7 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
       </div>
       <div class="secondary-banner-actions">
         <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
-        <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/invoices')}>Open invoices</button>
       </div>
     </div>
 
@@ -103,57 +103,55 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
     <${DedupBanner} api=${api} orgId=${orgId} toast=${toast} />
 
     <div class="panel">
-
-      <div style="position:relative">
+      <div class="secondary-search-row">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%)"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
         <input
           placeholder="Search vendors…"
           value=${search}
           onInput=${(event) => setSearch(event.target.value)}
-          style="width:100%;padding:8px 8px 8px 34px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;background:var(--bg)"
         />
       </div>
 
-      <div style="display:grid;gap:10px;margin-top:14px">
+      <div class="secondary-card-list" style="margin-top:14px">
         ${filtered.length === 0
           ? html`<div class="muted">${search ? 'No vendors match your search.' : 'No vendors yet. Vendor records appear once invoices are processed.'}</div>`
           : filtered.map((vendor) => html`
-              <div key=${vendor.vendor_name} style="padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                  <div style="min-width:0;flex:1">
-                    <strong style="display:block;font-size:14px">${vendor.vendor_name}</strong>
-                    <div class="muted" style="font-size:12px;margin-top:4px">
+              <div key=${vendor.vendor_name} class="secondary-card">
+                <div class="secondary-card-head">
+                  <div class="secondary-card-copy">
+                    <strong class="secondary-card-title">${vendor.vendor_name}</strong>
+                    <div class="secondary-card-meta">
                       ${vendor.primary_email || 'No primary sender'} · Last activity ${vendor.last_activity_at ? fmtDateTime(vendor.last_activity_at) : '—'}
                     </div>
-                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+                    <div class="secondary-card-tags">
                       ${(vendor.top_states || []).map((row) => html`
-                        <span key=${row.state} style="font-size:10px;font-weight:600;padding:3px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--ink-secondary)">
+                        <span key=${row.state} class="secondary-chip">
                           ${String(row.state || '').replace(/_/g, ' ')} ${row.count}
                         </span>
                       `)}
                       ${(vendor.top_exception_codes || []).slice(0, 2).map((row) => html`
-                        <span key=${row.exception_code} style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FFF7ED;color:#9A3412">
+                        <span key=${row.exception_code} class="secondary-chip" style="background:#FFF7ED;color:#9A3412;border-color:#FED7AA">
                           ${getExceptionLabel(row.exception_code)} ${row.count}
                         </span>
                       `)}
                       ${vendor.profile?.requires_po
-                        ? html`<span style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FEF3C7;color:#92400E">Requires PO</span>`
+                        ? html`<span class="secondary-chip" style="background:#FEF3C7;color:#92400E;border-color:#FDE68A">Requires PO</span>`
                         : null}
                       ${(vendor.profile?.anomaly_flags || []).slice(0, 2).map((flag) => html`
-                        <span key=${flag} style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#FEF2F2;color:#B91C1C">${String(flag).replace(/_/g, ' ')}</span>
+                        <span key=${flag} class="secondary-chip" style="background:#FEF2F2;color:#B91C1C;border-color:#FECACA">${String(flag).replace(/_/g, ' ')}</span>
                       `)}
                     </div>
                   </div>
-                  <div style="text-align:right;min-width:140px">
-                    <div style="font-weight:700">${fmtDollar(vendor.total_amount || 0)}</div>
-                    <div class="muted" style="font-size:12px;margin-top:2px">${Number(vendor.invoice_count || 0).toLocaleString()} invoices</div>
-                    <div class="muted" style="font-size:12px;margin-top:4px">${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.issue_count || 0).toLocaleString()} issues · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</div>
+                  <div class="secondary-card-stat">
+                    <strong>${fmtDollar(vendor.total_amount || 0)}</strong>
+                    <span>${Number(vendor.invoice_count || 0).toLocaleString()} invoices</span>
+                    <span>${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.issue_count || 0).toLocaleString()} issues · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</span>
                   </div>
                 </div>
-                <div class="row-actions" style="margin-top:12px">
+                <div class="secondary-card-actions">
                   <button class="btn-secondary btn-sm" onClick=${() => openVendorRecord(vendor)}>Open vendor record</button>
                   <button class="btn-secondary btn-sm" onClick=${() => openVendorIssues(vendor)}>Review issues</button>
-                  <button class="btn-ghost btn-sm" onClick=${() => openVendorPipeline(vendor)}>Open in pipeline</button>
+                  <button class="btn-ghost btn-sm" onClick=${() => openVendorPipeline(vendor)}>Open in invoices</button>
                 </div>
               </div>
             `)}
@@ -188,12 +186,12 @@ function DedupBanner({ api, orgId, toast }) {
     setMerging('');
   };
   return html`
-    <div class="panel" style="border-left:3px solid var(--amber);margin-bottom:14px">
+    <div class="panel" style="margin-bottom:14px">
       <h3 style="margin-top:0">Possible duplicate vendors (${clusters.length})</h3>
       <p class="muted" style="margin:0 0 8px;font-size:12px">These vendors have similar names and may be the same entity.</p>
       ${clusters.slice(0, 5).map((c) => html`
-        <div key=${c.canonical.vendor_name} style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
-          <div>
+        <div key=${c.canonical.vendor_name} class="secondary-row">
+          <div class="secondary-row-copy">
             <strong>${c.canonical.vendor_name}</strong> (${c.canonical.invoice_count} invoices)
             <div class="muted">${c.duplicates.map((d) => `${d.vendor_name} (${d.similarity * 100 | 0}%)`).join(', ')}</div>
           </div>

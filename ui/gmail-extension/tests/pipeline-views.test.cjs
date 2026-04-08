@@ -26,6 +26,7 @@ test('pipeline slices classify AP queue items into AP-first queue views', async 
     { id: 'entity-1', state: 'validated', entity_routing_status: 'needs_review' },
     { id: 'due-soon-1', state: 'validated', due_date: '2026-03-24T00:00:00Z' },
     { id: 'overdue-1', state: 'validated', due_date: '2026-03-18T00:00:00Z' },
+    { id: 'closed-exception-1', state: 'posted_to_erp', exception_code: 'po_missing_reference' },
     { id: 'posted-1', state: 'posted_to_erp', due_date: '2026-03-20T00:00:00Z' },
   ];
 
@@ -271,7 +272,6 @@ test('bootstrapped pipeline preferences normalize into the server persistence pa
         sortCol: 'approval_wait',
         sortDir: 'desc',
         filters: {
-          state: 'all',
           vendor: 'Acme',
           due: 'overdue',
           blocker: 'exception',
@@ -291,7 +291,6 @@ test('bootstrapped pipeline preferences normalize into the server persistence pa
               sortCol: 'approval_wait',
               sortDir: 'desc',
               filters: {
-                state: 'all',
                 vendor: '',
                 due: 'all',
                 blocker: 'all',
@@ -306,4 +305,64 @@ test('bootstrapped pipeline preferences normalize into the server persistence pa
       },
     },
   });
+});
+
+test('legacy hidden state filters are ignored so the live queue cannot silently zero itself out', async () => {
+  const {
+    filterPipelineItems,
+    normalizePipelinePreferences,
+    readPipelinePreferences,
+    writePipelinePreferences,
+  } = await importModule('src/routes/pipeline-views.js');
+
+  const storage = new Map();
+  global.window = {
+    localStorage: {
+      getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+      setItem(key, value) { storage.set(key, String(value)); },
+    },
+  };
+
+  const scope = { orgId: 'org-eu-1', userEmail: 'ops@clearledgr.com' };
+  const items = [
+    { id: 'inv-1', state: 'validated', vendor_name: 'Acme' },
+    { id: 'inv-2', state: 'needs_info', vendor_name: 'Bravo' },
+  ];
+
+  writePipelinePreferences(scope, {
+    activeSliceId: 'all_open',
+    filters: {
+      state: 'ready_to_post',
+      vendor: '',
+      due: 'all',
+      blocker: 'all',
+      amount: 'all',
+      approvalAge: 'all',
+      erpStatus: 'all',
+    },
+  });
+
+  const persisted = readPipelinePreferences(scope);
+  const normalized = normalizePipelinePreferences({
+    activeSliceId: 'all_open',
+    filters: {
+      state: 'ready_to_post',
+      vendor: '',
+      due: 'all',
+      blocker: 'all',
+      amount: 'all',
+      approvalAge: 'all',
+      erpStatus: 'all',
+    },
+  });
+  const visible = filterPipelineItems(items, {
+    activeSliceId: persisted.activeSliceId,
+    filters: persisted.filters,
+  });
+
+  assert.equal('state' in persisted.filters, false);
+  assert.equal('state' in normalized.filters, false);
+  assert.equal(visible.length, 2);
+
+  delete global.window;
 });

@@ -13,6 +13,7 @@ import {
   getExceptionReason,
   getFieldReviewBlockers,
   getIssueSummary,
+  getStateLabel,
   getWorkflowPauseReason,
   openSourceEmail,
 } from '../../utils/formatters.js';
@@ -23,6 +24,10 @@ import {
   isInvoiceDocumentType,
   normalizeDocumentType,
 } from '../../utils/document-types.js';
+import {
+  getAgentExecutionMode,
+  getWorkStateNotice,
+} from '../../utils/work-actions.js';
 import { fmtDate, fmtDateTime, useAction } from '../route-helpers.js';
 import {
   activatePipelineSlice,
@@ -50,13 +55,13 @@ const SECTION_CONFIG = {
     sliceId: 'all_open',
   },
   needs_info: {
-    title: 'Needs info',
-    detail: 'Items waiting on vendor follow-up or missing finance data.',
+    title: 'Vendor follow-up',
+    detail: 'Items waiting on vendor replies or missing finance data. Clearledgr may already be following up.',
     sliceId: 'needs_info',
   },
   failed_post: {
     title: 'Posting retries',
-    detail: 'Records that failed ERP posting and need operator attention.',
+    detail: 'Records that failed ERP posting or still need connector setup before posting can continue.',
     sliceId: 'failed_post',
   },
   policy_exception: {
@@ -68,12 +73,6 @@ const SECTION_CONFIG = {
 
 function getPipelineScope(orgId, userEmail) {
   return { orgId, userEmail };
-}
-
-function isTypingTarget(target) {
-  if (!target || typeof target !== 'object') return false;
-  const tag = String(target.tagName || '').toUpperCase();
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(target.isContentEditable);
 }
 
 function sortReviewItems(items = []) {
@@ -153,14 +152,15 @@ function classifyReviewSection(item) {
 function buildReviewSummary(item) {
   const section = classifyReviewSection(item);
   const documentType = normalizeDocumentType(item?.document_type);
+  const workNotice = safeDisplayText(getWorkStateNotice(item?.state, documentType, item), '');
   if (section === 'field_review') {
     return getWorkflowPauseReason(item) || 'Check the blocked fields before continuing.';
   }
   if (section === 'failed_post') {
-    return getIssueSummary(item) || 'ERP posting failed and needs operator follow-up.';
+    return workNotice || getIssueSummary(item) || 'ERP posting still needs review.';
   }
   if (section === 'needs_info') {
-    return getIssueSummary(item) || 'Additional finance details are still required.';
+    return workNotice || 'Clearledgr is waiting for the missing information before this record can continue.';
   }
   if (section === 'non_invoice') {
     return getNonInvoiceWorkflowGuidance(documentType);
@@ -217,27 +217,62 @@ function getCommonFieldReviewTarget(items = []) {
   };
 }
 
-function SummaryCard({ label, value, tone = 'default' }) {
-  const accent = tone === 'danger'
-    ? '#B91C1C'
-    : tone === 'warning'
-      ? '#92400E'
-      : tone === 'success'
-        ? '#047857'
-        : 'var(--ink)';
-  return html`<div style="padding:18px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-    <div style="font-size:28px;font-weight:700;letter-spacing:-0.02em;color:${accent}">${Number(value || 0).toLocaleString()}</div>
-    <div class="muted" style="font-size:12px;margin-top:4px">${label}</div>
-  </div>`;
+export function safeDisplayText(value, fallback = '') {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    return text || fallback;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    const text = value
+      .map((entry) => safeDisplayText(entry, ''))
+      .filter(Boolean)
+      .join(', ')
+      .trim();
+    return text || fallback;
+  }
+  if (typeof value === 'object') {
+    for (const key of ['display', 'display_value', 'value', 'label', 'name', 'title', 'text', 'id']) {
+      const text = safeDisplayText(value?.[key], '');
+      if (text) return text;
+    }
+    return fallback;
+  }
+  try {
+    const text = String(value).trim();
+    return text || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function buildEvidenceSummary(entries = []) {
+  return entries
+    .filter((entry) => entry?.key === 'email' || entry?.key === 'attachment')
+    .map((entry) => {
+      const label = safeDisplayText(entry?.label, '');
+      const text = safeDisplayText(entry?.text, '').toLowerCase();
+      return [label, text].filter(Boolean).join(' ').trim();
+    })
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function ReviewMetricPill({ label, value, tone = 'default' }) {
+  return html`<span class="review-metric-pill" data-tone=${tone}>
+    <span class="review-metric-value">${value}</span>
+    <span class="review-metric-label">${label}</span>
+  </span>`;
 }
 
 function SectionHeader({ title, detail, count, onOpenSlice }) {
   return html`
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+    <div class="review-section-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:10px">
       <div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
           <h3 style="margin:0">${title}</h3>
-          <span style="font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--ink-secondary)">
+          <span class="review-count-pill">
             ${Number(count || 0).toLocaleString()}
           </span>
         </div>
@@ -249,11 +284,12 @@ function SectionHeader({ title, detail, count, onOpenSlice }) {
 }
 
 function FieldReviewCard({ item, blockers, onResolve, resolvingField }) {
-  const pauseReason = getWorkflowPauseReason(item);
-  return html`
+  try {
+    const pauseReason = safeDisplayText(getWorkflowPauseReason(item), 'This record is waiting for these fields to be checked.');
+    return html`
     <div style="display:flex;flex-direction:column;gap:10px;width:100%">
       <div style="padding:10px 12px;border:1px solid #fcd34d;border-radius:var(--radius-sm);background:#FEFCE8;color:#78350f;font-size:13px;line-height:1.45">
-        ${pauseReason || 'This record is waiting for these fields to be checked.'}
+        ${pauseReason}
       </div>
       ${blockers.map((blocker) => html`
         <div key=${`${item.id}-${blocker.field || 'field'}`} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);width:100%">
@@ -261,40 +297,40 @@ function FieldReviewCard({ item, blockers, onResolve, resolvingField }) {
             <div class="review-block-main">
               <div style="font-weight:700;font-size:13px;margin-bottom:10px">
                 ${blocker.kind === 'confidence'
-                  ? `Confirm ${(blocker.field_label || 'field').toLowerCase()}`
-                  : `Choose the correct ${(blocker.field_label || 'field').toLowerCase()}`}
+                  ? `Confirm ${safeDisplayText(blocker.field_label, 'field').toLowerCase()}`
+                  : `Choose the correct ${safeDisplayText(blocker.field_label, 'field').toLowerCase()}`}
               </div>
               <div class="review-block-facts">
                 ${blocker.kind === 'confidence' && html`
                   <>
                     <span class="review-block-fact-label">Clearledgr read</span>
-                    <span class="review-block-fact-value">${blocker.current_value_display || 'Not found'}</span>
+                    <span class="review-block-fact-value">${safeDisplayText(blocker.current_value_display, 'Not found')}</span>
                   </>
                 `}
                 ${blocker.kind === 'confidence' && blocker.current_source_label && html`
                   <>
                     <span class="review-block-fact-label">Read from</span>
-                    <span class="review-block-fact-value">${blocker.current_source_label}</span>
+                    <span class="review-block-fact-value">${safeDisplayText(blocker.current_source_label, 'Source')}</span>
                   </>
                 `}
                 ${blocker.email_value !== null && blocker.email_value !== undefined && html`
                   <>
                     <span class="review-block-fact-label">Email says</span>
-                    <span class="review-block-fact-value">${blocker.email_value_display}</span>
+                    <span class="review-block-fact-value">${safeDisplayText(blocker.email_value_display, 'Not found')}</span>
                   </>
                 `}
                 ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html`
                   <>
                     <span class="review-block-fact-label">Attachment says</span>
-                    <span class="review-block-fact-value">${blocker.attachment_value_display}</span>
+                    <span class="review-block-fact-value">${safeDisplayText(blocker.attachment_value_display, 'Not found')}</span>
                   </>
                 `}
                 ${blocker.kind === 'source_conflict' && html`
                   <>
                     <span class="review-block-fact-label">Current choice</span>
                     <span class="review-block-fact-value">
-                      ${blocker.winning_source_label || 'Needs review'}
-                      ${blocker.winning_value_display ? ` (${blocker.winning_value_display})` : ''}
+                      ${safeDisplayText(blocker.winning_source_label, 'Needs review')}
+                      ${safeDisplayText(blocker.winning_value_display, '') ? ` (${safeDisplayText(blocker.winning_value_display, '')})` : ''}
                     </span>
                   </>
                 `}
@@ -302,8 +338,8 @@ function FieldReviewCard({ item, blockers, onResolve, resolvingField }) {
             </div>
             <div class="review-block-side">
               <div class="review-block-heading">Why it stopped</div>
-              <div class="review-block-copy">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
-              ${blocker.auto_check_note && html`<div class="review-block-note">${blocker.auto_check_note}</div>`}
+              <div class="review-block-copy">${safeDisplayText(blocker.winner_reason || blocker.reason_label || blocker.paused_reason, 'A person needs to review this field before the workflow can continue.')}</div>
+              ${safeDisplayText(blocker.auto_check_note, '') && html`<div class="review-block-note">${safeDisplayText(blocker.auto_check_note, '')}</div>`}
               <div class="review-block-actions">
                 ${blocker.email_value !== null && blocker.email_value !== undefined && html`
                   <button
@@ -337,6 +373,14 @@ function FieldReviewCard({ item, blockers, onResolve, resolvingField }) {
       `)}
     </div>
   `;
+  } catch (error) {
+    console.error('Clearledgr review field card render failed', error, item);
+    return html`
+      <div style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
+        Clearledgr could not render the full field-review detail for this record, but the item is still available for operator review.
+      </div>
+    `;
+  }
 }
 
 function ReviewCard({
@@ -354,36 +398,52 @@ function ReviewCard({
   resolvingField,
   resolvingNonInvoiceKey,
 }) {
-  const blockers = getFieldReviewBlockers(item);
-  const documentType = normalizeDocumentType(item?.document_type);
-  const referenceLabel = getDocumentReferenceLabel(documentType);
-  const referenceValue = String(item?.invoice_number || '').trim() || 'Not set';
-  const amountLabel = formatAmount(item?.amount, item?.currency);
-  const summary = buildReviewSummary(item);
-  const dueLabel = item?.due_date ? fmtDate(item.due_date) : 'N/A';
-  const evidence = getEvidenceChecklistEntries(item, item?.state, {});
-  const evidenceSummary = evidence
-    .filter((entry) => entry.key === 'email' || entry.key === 'attachment')
-    .map((entry) => `${entry.label} ${entry.text.toLowerCase()}`)
-    .join(' · ');
-  const referenceSummary = item?.invoice_number
-    ? `${referenceLabel} ${referenceValue}`
-    : getDocumentTypeLabel(documentType);
-  const lastUpdated = fmtDateTime(item?.updated_at || item?.created_at);
-  const nonInvoiceActions = sectionId === 'non_invoice' ? getNonInvoiceActions(item) : [];
+  try {
+    const blockers = getFieldReviewBlockers(item);
+    const documentType = normalizeDocumentType(item?.document_type);
+    const referenceLabel = safeDisplayText(getDocumentReferenceLabel(documentType), 'Reference');
+    const referenceValue = safeDisplayText(item?.invoice_number, 'Not set');
+    const amountLabel = safeDisplayText(formatAmount(item?.amount, item?.currency), 'Amount unavailable');
+    const summary = safeDisplayText(buildReviewSummary(item), 'This record needs a closer operator review.');
+    const dueLabel = safeDisplayText(item?.due_date ? fmtDate(item.due_date) : 'N/A', 'N/A');
+    const evidence = getEvidenceChecklistEntries(item, item?.state, {});
+    const evidenceSummary = buildEvidenceSummary(evidence);
+    const referenceSummary = safeDisplayText(
+      item?.invoice_number
+        ? `${referenceLabel} ${referenceValue}`
+        : getDocumentTypeLabel(documentType),
+      'Finance document'
+    );
+    const lastUpdated = safeDisplayText(fmtDateTime(item?.updated_at || item?.created_at), '');
+    const nonInvoiceActions = sectionId === 'non_invoice' ? getNonInvoiceActions(item) : [];
+    const vendorLabel = safeDisplayText(item?.vendor_name, 'Unknown vendor');
+    const stateLabel = safeDisplayText(getStateLabel(item?.state), 'Received');
+    const documentTypeLabel = safeDisplayText(getDocumentTypeLabel(documentType), 'Finance document');
+    const executionMode = isInvoiceDocumentType(documentType)
+      ? getAgentExecutionMode(item?.state, item, documentType)
+      : 'manual';
+    const workflowStatus = executionMode === 'agent_monitoring'
+      ? 'Waiting on approver'
+      : executionMode === 'agent_waiting'
+        ? 'Waiting on vendor'
+        : executionMode === 'agent_progressing'
+          ? 'Clearledgr progressing'
+          : executionMode === 'operator_attention'
+            ? 'Needs your review'
+            : '';
 
-  return html`
+    return html`
     <div
+      class="review-card"
       style="
-        padding:14px 16px;border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};
-        border-radius:var(--radius-md);background:var(--surface);
+        border-color:${active ? 'var(--accent)' : 'var(--border)'};
         box-shadow:${active ? '0 0 0 1px var(--accent-soft)' : 'none'};
       "
       onClick=${() => onSetActive(item.id)}
     >
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div class="review-card-top" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div style="min-width:0;flex:1">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+          <div class="review-badge-row">
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-secondary)">
               <input
                 type="checkbox"
@@ -393,21 +453,26 @@ function ReviewCard({
               />
               Select
             </label>
-            <strong style="font-size:14px">${item.vendor_name || 'Unknown vendor'}</strong>
-            <span style="font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--ink-secondary)">
-              ${String(item.state || 'received').replace(/_/g, ' ')}
+            <strong style="font-size:14px">${vendorLabel}</strong>
+            <span class="review-badge">
+              ${stateLabel}
             </span>
-            <span style="font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;background:#EFF6FF;color:#1D4ED8">
-              ${getDocumentTypeLabel(documentType)}
+            <span class="review-badge info">
+              ${documentTypeLabel}
             </span>
+            ${workflowStatus && html`
+              <span class="review-badge ${executionMode === 'agent_monitoring' || executionMode === 'agent_waiting' ? 'info' : ''}">
+                ${workflowStatus}
+              </span>
+            `}
           </div>
-          <div class="muted" style="font-size:12px;line-height:1.55">
+          <div class="muted review-card-meta" style="font-size:12px;line-height:1.55">
             ${amountLabel} · ${referenceSummary}
             ${isInvoiceDocumentType(documentType) ? ` · Due ${dueLabel}` : ''}
             ${lastUpdated ? ` · Updated ${lastUpdated}` : ''}
           </div>
         </div>
-        <div class="row-actions">
+        <div class="row-actions review-card-actions">
           <button class="btn-secondary btn-sm" onClick=${(event) => { event.stopPropagation(); onOpenRecord(item); }}>Open record</button>
           <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); onOpenSlice(item); }}>Open slice</button>
           ${(item.thread_id || item.message_id) && html`
@@ -417,7 +482,7 @@ function ReviewCard({
       </div>
       ${sectionId === 'field_review'
         ? html`<div style="margin-top:12px"><${FieldReviewCard} item=${item} blockers=${blockers} onResolve=${onResolve} resolvingField=${resolvingField} /></div>`
-        : html`<div style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
+        : html`<div class="review-card-summary" style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
             ${summary}
           </div>`}
       ${evidenceSummary && html`
@@ -444,6 +509,24 @@ function ReviewCard({
       `}
     </div>
   `;
+  } catch (error) {
+    console.error('Clearledgr review card render failed', error, item);
+    return html`
+      <div class="review-card">
+        <div class="review-badge-row" style="margin-bottom:6px">
+          <strong style="font-size:14px">${safeDisplayText(item?.vendor_name, 'Unknown vendor')}</strong>
+          <span class="review-badge">${safeDisplayText(String(item?.state || 'received').replace(/_/g, ' '), 'received')}</span>
+        </div>
+        <div class="muted review-card-meta" style="font-size:12px;line-height:1.55">
+          This record is still in the review queue, but Clearledgr could not render the full operator card from the current payload.
+        </div>
+        <div class="row-actions review-card-actions" style="margin-top:12px">
+          <button class="btn-secondary btn-sm" onClick=${(event) => { event.stopPropagation(); onOpenRecord(item); }}>Open record</button>
+          <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); onOpenSlice(item); }}>Open slice</button>
+        </div>
+      </div>
+    `;
+  }
 }
 
 export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
@@ -558,18 +641,13 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
     [filtered, selectedSet],
   );
   const bulkFieldTarget = useMemo(() => getCommonFieldReviewTarget(selectedItems), [selectedItems]);
-  const activeItem = useMemo(
-    () => filtered.find((item) => String(item.id || '') === String(activeItemId || '')) || null,
-    [activeItemId, filtered],
-  );
-
   const openSlice = useCallback((item, fallbackSliceId = 'blocked_exception') => {
     clearPipelineNavigation(pipelineScope);
     activatePipelineSlice(pipelineScope, fallbackSliceId || 'blocked_exception');
     if (item?.id) {
       focusPipelineItem(pipelineScope, item, 'review');
     }
-    navigate('clearledgr/pipeline');
+    navigate('clearledgr/invoices');
   }, [navigate, pipelineScope]);
 
   const openRecord = useCallback((item) => {
@@ -752,169 +830,69 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
     }
   });
 
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (dialog.visible || !filtered.length || isTypingTarget(event.target)) return;
-      const currentIndex = Math.max(0, filtered.findIndex((item) => String(item.id || '') === String(activeItemId || '')));
-      const currentItem = filtered[currentIndex] || filtered[0];
-      const lower = String(event.key || '').toLowerCase();
-      let handled = false;
-
-      if (lower === 'j' || event.key === 'ArrowDown') {
-        const nextIndex = Math.min(filtered.length - 1, currentIndex + 1);
-        setActiveItemId(String(filtered[nextIndex]?.id || ''));
-        handled = true;
-      } else if (lower === 'k' || event.key === 'ArrowUp') {
-        const nextIndex = Math.max(0, currentIndex - 1);
-        setActiveItemId(String(filtered[nextIndex]?.id || ''));
-        handled = true;
-      } else if (lower === 'x' && currentItem?.id) {
-        toggleSelected(currentItem.id);
-        handled = true;
-      } else if (lower === 'o' && currentItem) {
-        openRecord(currentItem);
-        handled = true;
-      } else if (lower === 'e' && currentItem) {
-        openEmail(currentItem);
-        handled = true;
-      } else if (lower === 'p' && currentItem) {
-        const sectionId = classifyReviewSection(currentItem);
-        openSlice(currentItem, SECTION_CONFIG[sectionId || 'field_review']?.sliceId || 'blocked_exception');
-        handled = true;
-      } else if (['1', '2', '3'].includes(lower) && currentItem && classifyReviewSection(currentItem) === 'field_review') {
-        const blocker = getFieldReviewBlockers(currentItem)[0];
-        if (blocker) {
-          if (lower === '1' && blocker.email_value !== null && blocker.email_value !== undefined) {
-            void resolveField(currentItem, blocker, 'email');
-            handled = true;
-          } else if (lower === '2' && blocker.attachment_value !== null && blocker.attachment_value !== undefined) {
-            void resolveField(currentItem, blocker, 'attachment');
-            handled = true;
-          } else if (lower === '3') {
-            void resolveField(currentItem, blocker, 'manual');
-            handled = true;
-          }
-        }
-      } else if (lower === 'l' && currentItem && classifyReviewSection(currentItem) === 'non_invoice') {
-        const action = getNonInvoiceActions(currentItem)[0];
-        if (action) {
-          void resolveNonInvoice(currentItem, action);
-          handled = true;
-        }
-      } else if (lower === 'b' && selectedItems.length > 0 && bulkFieldTarget && !bulkResolvingField) {
-        if (bulkFieldTarget.canUseAttachment) {
-          void bulkResolveField('attachment');
-          handled = true;
-        } else if (bulkFieldTarget.canUseEmail) {
-          void bulkResolveField('email');
-          handled = true;
-        }
-      }
-
-      if (handled) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [
-    activeItemId,
-    bulkFieldTarget,
-    bulkResolveField,
-    bulkResolvingField,
-    dialog.visible,
-    filtered,
-    openEmail,
-    openRecord,
-    openSlice,
-    resolveField,
-    resolveNonInvoice,
-    selectedItems,
-    toggleSelected,
-  ]);
-
   if (loading) {
     return html`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading review queue...</p></div>`;
   }
 
   return html`
-    <div class="panel">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
-        <div>
-          <h3 style="margin:0 0 6px">Review queue</h3>
-          <p class="muted" style="margin:0;max-width:680px">
-            Handle records that need a closer look, from blocked fields to posting retries and non-invoice documents.
-          </p>
-        </div>
-        <div class="toolbar-actions">
-          <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing...' : 'Refresh'}</button>
-          <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="kpi-row" style="grid-template-columns:repeat(5,1fr)">
-      <${SummaryCard} label="Open review items" value=${overallSummary.total} />
-      <${SummaryCard} label="Field checks" value=${overallSummary.fieldReview} tone="warning" />
-      <${SummaryCard} label="Non-invoice docs" value=${overallSummary.nonInvoice} tone="success" />
-      <${SummaryCard} label="Needs info" value=${overallSummary.needsInfo} />
-      <${SummaryCard} label="Posting retries" value=${overallSummary.failedPost} tone="danger" />
-    </div>
-
-    <div class="panel">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-        <div>
-          <h3 style="margin:0 0 4px">Search review work</h3>
-          <p class="muted" style="margin:0">Find a blocked record by vendor, reference, sender, or exception.</p>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${hasSearch && html`
-            <span style="font-size:12px;font-weight:700;padding:5px 10px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--ink-secondary)">
-              Showing ${filteredCount} of ${overallSummary.total}
-            </span>
-          `}
-          ${overallSummary.policyException > 0 && html`
-            <span style="font-size:12px;font-weight:700;padding:5px 10px;border-radius:999px;background:#FFF7ED;border:1px solid #FED7AA;color:#9A3412">
-              ${overallSummary.policyException} policy / exception blockers
-            </span>
-          `}
-        </div>
-      </div>
-      <div style="position:relative">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%)"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input
-          placeholder="Search review items..."
-          value=${search}
-          onInput=${(event) => setSearch(event.target.value)}
-          style="width:100%;padding:8px 8px 8px 34px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;background:var(--bg)"
-        />
-      </div>
-      ${hasSearch && html`
-        <div style="display:flex;justify-content:flex-end;margin-top:10px">
-          <button class="btn-ghost btn-sm" onClick=${() => setSearch('')}>Clear search</button>
-        </div>
-      `}
-      <div class="muted" style="font-size:12px;margin-top:10px">
-        Keyboard: J/K move · X select · O open record · E open email · P open slice · 1/2/3 resolve current blocker · L apply primary non-invoice action · B bulk resolve selected blockers
-      </div>
-    </div>
-
-    ${selectedIds.length > 0 && html`
-      <div class="panel">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-          <div>
-            <h3 style="margin:0 0 4px">${selectedIds.length} selected</h3>
-            <p class="muted" style="margin:0">
-              ${bulkFieldTarget
-                ? `Bulk resolve ${bulkFieldTarget.label.toLowerCase()} across similar blocked items.`
-                : 'Current selection does not share a single blocked field.'}
-            </p>
+    <div class="review-shell">
+      <div class="panel review-overview-panel">
+        <div class="review-overview-head">
+          <div class="review-overview-copy">
+            <div>
+              <div class="muted" style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px">Review</div>
+              <h3 style="margin:0 0 4px">Review queue</h3>
+              <p class="muted" style="margin:0">Records that still need review, treatment, or follow-up oversight live here. Some are paused for operator action; others are already waiting on a vendor or approver.</p>
+            </div>
+            <div class="review-metric-row">
+              <${ReviewMetricPill} label="Open" value=${overallSummary.total} />
+              <${ReviewMetricPill} label="Field checks" value=${overallSummary.fieldReview} tone="warning" />
+              <${ReviewMetricPill} label="Non-invoice" value=${overallSummary.nonInvoice} tone="success" />
+              <${ReviewMetricPill} label="Needs info" value=${overallSummary.needsInfo} />
+              <${ReviewMetricPill} label="Posting retries" value=${overallSummary.failedPost} tone="danger" />
+              ${overallSummary.policyException > 0
+                ? html`<${ReviewMetricPill} label="Policy blockers" value=${overallSummary.policyException} tone="warning" />`
+                : null}
+              ${hasSearch
+                ? html`<${ReviewMetricPill} label="Visible" value=${filteredCount} />`
+                : null}
+            </div>
           </div>
           <div class="toolbar-actions">
+            <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing...' : 'Refresh'}</button>
+            <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/invoices')}>Open invoices</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel review-command-panel">
+      <div class="review-search-row">
+        <div class="review-search-box">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%)"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input
+            placeholder="Search review items..."
+            value=${search}
+            onInput=${(event) => setSearch(event.target.value)}
+          />
+        </div>
+          ${hasSearch
+            ? html`<button class="btn-ghost btn-sm" onClick=${() => setSearch('')}>Clear search</button>`
+            : html`<span class="muted review-search-helper">Find a record in this queue by vendor, reference, sender, or exception.</span>`}
+        </div>
+        <div class="review-bulk-bar">
+          <div>
+            <strong style="font-size:13px">${selectedIds.length > 0 ? `${selectedIds.length} selected` : 'Bulk actions'}</strong>
+            <div class="muted" style="font-size:12px;margin-top:4px">
+              ${selectedIds.length > 0
+                ? (bulkFieldTarget
+                  ? `Bulk resolve ${bulkFieldTarget.label.toLowerCase()} across similar blocked items.`
+                  : 'Current selection does not share a single blocked field.')
+                : 'Select similar field-review rows to resolve one canonical value across them.'}
+            </div>
+          </div>
+          <div class="toolbar-actions review-bulk-actions">
             <button class="btn-secondary btn-sm" onClick=${selectVisible}>Select visible</button>
-            <button class="btn-ghost btn-sm" onClick=${clearSelection}>Clear selection</button>
+            <button class="btn-ghost btn-sm" onClick=${clearSelection} disabled=${selectedIds.length === 0}>Clear selection</button>
             ${bulkFieldTarget?.canUseEmail && html`
               <button class="btn-secondary btn-sm" onClick=${() => bulkResolveField('email')} disabled=${bulkResolvingField}>
                 ${bulkResolvingField ? 'Saving...' : 'Bulk use email'}
@@ -933,60 +911,62 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
           </div>
         </div>
       </div>
-    `}
 
-    ${Object.entries(SECTION_CONFIG).map(([sectionId, config]) => {
-      const sectionItems = sections[sectionId] || [];
-      if (sectionItems.length === 0) return null;
-      return html`
-        <div class="panel" key=${sectionId}>
-          <${SectionHeader}
-            title=${config.title}
-            detail=${config.detail}
-            count=${sectionItems.length}
-            onOpenSlice=${() => openSlice(null, config.sliceId)}
-          />
-          <div style="display:flex;flex-direction:column;gap:12px">
-            ${sectionItems.map((item) => html`
-              <${ReviewCard}
-                key=${item.id}
-                item=${item}
-                sectionId=${sectionId}
-                active=${String(activeItemId || '') === String(item.id || '')}
-                selected=${selectedSet.has(String(item.id || ''))}
-                onOpenRecord=${openRecord}
-                onOpenEmail=${openEmail}
-                onOpenSlice=${(target) => openSlice(target, config.sliceId)}
-                onResolve=${resolveField}
-                onResolveNonInvoice=${resolveNonInvoice}
-                onToggleSelected=${toggleSelected}
-                onSetActive=${setActiveItemId}
-                resolvingField=${resolvingFieldKey}
-                resolvingNonInvoiceKey=${resolvingNonInvoiceKey}
-              />
-            `)}
+      <div class="review-section-stack">
+      ${Object.entries(SECTION_CONFIG).map(([sectionId, config]) => {
+        const sectionItems = sections[sectionId] || [];
+        if (sectionItems.length === 0) return null;
+        return html`
+          <div class="panel review-section-panel" key=${sectionId}>
+            <${SectionHeader}
+              title=${config.title}
+              detail=${config.detail}
+              count=${sectionItems.length}
+              onOpenSlice=${() => openSlice(null, config.sliceId)}
+            />
+            <div style="display:flex;flex-direction:column;gap:12px">
+              ${sectionItems.map((item) => html`
+                <${ReviewCard}
+                  key=${item.id}
+                  item=${item}
+                  sectionId=${sectionId}
+                  active=${String(activeItemId || '') === String(item.id || '')}
+                  selected=${selectedSet.has(String(item.id || ''))}
+                  onOpenRecord=${openRecord}
+                  onOpenEmail=${openEmail}
+                  onOpenSlice=${(target) => openSlice(target, config.sliceId)}
+                  onResolve=${resolveField}
+                  onResolveNonInvoice=${resolveNonInvoice}
+                  onToggleSelected=${toggleSelected}
+                  onSetActive=${setActiveItemId}
+                  resolvingField=${resolvingFieldKey}
+                  resolvingNonInvoiceKey=${resolvingNonInvoiceKey}
+                />
+              `)}
+            </div>
           </div>
+        `;
+      })}
+      </div>
+
+      ${overallSummary.total === 0 && html`
+        <div class="panel review-empty-panel">
+          <h3 style="margin:0 0 6px">Nothing needs review right now</h3>
+          <p class="muted" style="margin:0">Clearledgr will show anything that needs review here as it appears.</p>
         </div>
-      `;
-    })}
+      `}
 
-    ${overallSummary.total === 0 && html`
-      <div class="panel">
-        <h3 style="margin:0 0 6px">Nothing blocked right now</h3>
-        <p class="muted" style="margin:0">Clearledgr will show anything that needs review here as it appears.</p>
-      </div>
-    `}
+      ${overallSummary.total > 0 && filteredCount === 0 && html`
+        <div class="panel review-empty-panel">
+          <h3 style="margin:0 0 6px">No review items match this search</h3>
+          <p class="muted" style="margin:0">Try a vendor name, reference number, sender, or exception keyword.</p>
+        </div>
+      `}
 
-    ${overallSummary.total > 0 && filteredCount === 0 && html`
-      <div class="panel">
-        <h3 style="margin:0 0 6px">No review items match this search</h3>
-        <p class="muted" style="margin:0">Try a vendor name, reference number, sender, or exception keyword.</p>
-      </div>
-    `}
+      <${DisputesPanel} api=${api} orgId=${orgId} navigate=${navigate} />
 
-    <${DisputesPanel} api=${api} orgId=${orgId} navigate=${navigate} />
-
-    <${ActionDialog} ...${dialog} />
+      <${ActionDialog} ...${dialog} />
+    </div>
   `;
 }
 
@@ -1003,7 +983,7 @@ function DisputesPanel({ api, orgId, navigate }) {
   const openDisputes = disputes.filter((d) => !['resolved', 'closed'].includes(d.status));
   if (!summary || summary.total === 0) return null;
   return html`
-    <div class="panel" style="margin-top:16px">
+    <div class="panel review-section-panel review-disputes-panel">
       <h3 style="margin-top:0">Active disputes (${summary.open_count || 0})</h3>
       <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
         ${Object.entries(summary.by_status || {}).map(([status, count]) => html`

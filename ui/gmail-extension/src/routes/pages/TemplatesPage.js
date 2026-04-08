@@ -197,11 +197,14 @@ export default function TemplatesPage({ api, bootstrap, toast, orgId, userEmail,
   });
 
   return html`
-    <div class="templates-toolbar">
-      <p class="muted" style="margin:0">Start from a shared starter, then save your own version for this Gmail workspace.</p>
-      <div class="templates-toolbar-actions">
+    <div class="secondary-banner">
+      <div class="secondary-banner-copy">
+        <h3>Reply templates</h3>
+        <p class="muted">Start from a shared starter, save a personal version, and preview the exact Gmail draft before you use it.</p>
+      </div>
+      <div class="secondary-banner-actions">
         <button class="btn-secondary btn-sm" onClick=${() => { setSelectedRef(''); setEditor(blankEditor()); }}>New personal template</button>
-        <button class="btn-secondary btn-sm" onClick=${() => navigate('clearledgr/pipeline')}>Back to Pipeline</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/invoices')}>Back to Invoices</button>
       </div>
     </div>
 

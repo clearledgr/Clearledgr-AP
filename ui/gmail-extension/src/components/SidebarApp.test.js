@@ -1,456 +1,527 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import assert from 'node:assert/strict';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { h } from 'preact';
-import { render, screen, cleanup, fireEvent } from '@testing-library/preact';
-import htm from 'htm';
+import SidebarApp from './SidebarApp.js';
 import store from '../utils/store.js';
+import {
+  click,
+  flushTicks,
+  getTextContent,
+  inputValue,
+  installDom,
+  mount,
+  uninstallDom,
+} from '../test-utils/happy-dom-env.js';
 
-const html = htm.bind(h);
-
-// Mock chrome API
-globalThis.chrome = { runtime: { getURL: (p) => `chrome-ext://abc/${p}` } };
-
-// Import after mock
-const { default: SidebarApp } = await import('./SidebarApp.js');
-
-const mockQueueManager = {
-  runtimeConfig: { backendUrl: 'http://localhost:8010', organizationId: 'test-org', authEntryMode: 'inline' },
-  backendFetch: vi.fn().mockResolvedValue({
-    ok: true,
-    json: async () => ({
-      erp_connected: true,
-      slack_connected: true,
-      approval_thresholds: [{ amount: 500 }],
-    }),
-  }),
-  authorizeGmailNow: vi.fn().mockResolvedValue({ success: true }),
-  refreshQueue: vi.fn().mockResolvedValue(undefined),
-  fetchItemContext: vi.fn().mockResolvedValue({}),
-  fetchAuditTrail: vi.fn().mockResolvedValue([]),
-  requestApproval: vi.fn().mockResolvedValue({ status: 'needs_approval' }),
-  nudgeApproval: vi.fn().mockResolvedValue({ status: 'nudged' }),
-  rejectInvoice: vi.fn().mockResolvedValue({ status: 'rejected' }),
-  prepareVendorFollowup: vi.fn().mockResolvedValue({ status: 'prepared' }),
-  retryFailedPost: vi.fn().mockResolvedValue({ status: 'ready_to_post' }),
-  approveAndPost: vi.fn().mockResolvedValue({ status: 'posted' }),
-  resolveFieldReview: vi.fn().mockResolvedValue({ status: 'resolved', ap_item: { id: 'inv-conflict-1' } }),
-};
-
-beforeEach(() => {
+function resetStore() {
   store.queueState = [];
+  store.scanStatus = {};
+  store.currentUserRole = null;
+  store.gmailIntegration = null;
   store.selectedItemId = null;
   store.currentThreadId = null;
-  store.currentUserRole = 'operator';
-  store.scanStatus = {};
-  store.auditState = { itemId: null, loading: false, events: [] };
-  store.contextUiState = { itemId: null, loading: false, error: '' };
-  store.contextState = new Map();
-  store.agentInsightsState = new Map();
   store.agentSessionsState = new Map();
+  store.browserTabContext = [];
+  store.agentInsightsState = new Map();
   store.sourcesState = new Map();
+  store.contextState = new Map();
+  store.tasksState = new Map();
+  store.notesState = new Map();
+  store.commentsState = new Map();
+  store.filesState = new Map();
+  store.activeContextTab = 'email';
+  store.contextUiState = { itemId: null, loading: false, error: '' };
+  store.agentSummaryState = { itemId: null, mode: null, loading: false, error: '', data: null };
+  store.agentPreviewState = { key: null, loading: false, error: '', data: null };
+  store.batchOpsState = { mode: null, loading: false, error: '', data: null };
+  store.batchOpsPolicyState = { maxItems: 5, amountThreshold: '', selectionPreset: 'queue_order' };
+  store.auditState = { itemId: null, loading: false, events: [] };
   store.rowDecorated = new Set();
-  vi.clearAllMocks();
-  cleanup();
+  store.openComposeWithPrefill = null;
+  store.sdk = null;
+}
+
+function createQueueManager(overrides = {}) {
+  return {
+    fetchItemContext: mock.fn(async () => ({})),
+    fetchItemTasks: mock.fn(async () => []),
+    fetchItemNotes: mock.fn(async () => []),
+    fetchItemComments: mock.fn(async () => []),
+    fetchItemFiles: mock.fn(async () => []),
+    fetchAuditTrail: mock.fn(async () => []),
+    refreshQueue: mock.fn(async () => {}),
+    authorizeGmailNow: mock.fn(async () => ({ success: true })),
+    describeAuthResult: mock.fn(() => ({ toast: 'Authorization failed', severity: 'error' })),
+    requestApproval: mock.fn(async () => ({ status: 'needs_approval' })),
+    nudgeApproval: mock.fn(async () => ({ status: 'nudged' })),
+    escalateApproval: mock.fn(async () => ({ status: 'escalated' })),
+    reassignApproval: mock.fn(async () => ({ status: 'reassigned' })),
+    prepareVendorFollowup: mock.fn(async () => ({ status: 'prepared' })),
+    retryFailedPost: mock.fn(async () => ({ status: 'ready_to_post' })),
+    retryRecoverableFailure: mock.fn(async () => ({ status: 'recovered' })),
+    approveAndPost: mock.fn(async () => ({ status: 'posted' })),
+    rejectInvoice: mock.fn(async () => ({ status: 'rejected' })),
+    resolveFieldReview: mock.fn(async () => ({ status: 'resolved', auto_resumed: true })),
+    resolveEntityRoute: mock.fn(async () => ({ status: 'resolved' })),
+    updateRecordFields: mock.fn(async () => ({ status: 'updated' })),
+    createTask: mock.fn(async () => ({ status: 'created' })),
+    updateTaskStatus: mock.fn(async () => ({ status: 'updated' })),
+    assignTask: mock.fn(async () => ({ status: 'updated' })),
+    addTaskComment: mock.fn(async () => ({ status: 'created' })),
+    addItemNote: mock.fn(async () => ({ status: 'created' })),
+    addItemComment: mock.fn(async () => ({ status: 'created' })),
+    addItemFileLink: mock.fn(async () => ({ status: 'created' })),
+    createRecordFromComposeDraft: mock.fn(async () => ({ status: 'created', ap_item: { id: 'compose-1' } })),
+    linkComposeDraftToItem: mock.fn(async () => ({ status: 'linked', ap_item: { id: 'compose-1' } })),
+    recoverCurrentThread: mock.fn(async () => ({ found: false, recovered: false, item: null })),
+    searchRecordCandidates: mock.fn(async () => []),
+    linkCurrentThreadToItem: mock.fn(async () => ({ status: 'linked' })),
+    runtimeConfig: { organizationId: 'org-123', userEmail: 'ops@clearledgr.com' },
+    currentUserRole: 'operator',
+    ...overrides,
+  };
+}
+
+function buildItem(overrides = {}) {
+  return {
+    id: 'item-1',
+    thread_id: 'thread-1',
+    state: 'needs_approval',
+    vendor_name: 'Acme Supplies',
+    amount: 1234.5,
+    currency: 'USD',
+    invoice_number: 'INV-100',
+    due_date: '2026-04-10',
+    subject: 'Invoice INV-100',
+    has_attachment: true,
+    attachment_count: 1,
+    attachment_names: ['invoice.pdf'],
+    entity_code: 'US-01',
+    approval_followup: {
+      pending_assignees: ['ap-approver@clearledgr.com'],
+      wait_minutes: 42,
+    },
+    ...overrides,
+  };
+}
+
+function findButton(container, label) {
+  return [...container.querySelectorAll('button')].find((button) => button.textContent.trim() === label) || null;
+}
+
+beforeEach(() => {
+  installDom();
+  resetStore();
+});
+
+afterEach(async () => {
+  await flushTicks(2);
+  await uninstallDom();
 });
 
 describe('SidebarApp', () => {
-  it('renders empty state when queue is empty', () => {
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Nothing is waiting right now.')).toBeTruthy();
-  });
-
-  it('renders header with logo and title', () => {
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Clearledgr')).toBeTruthy();
-  });
-
-  it('renders scan status when monitoring active', () => {
-    store.scanStatus = { state: 'idle' };
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText(/Monitoring active/)).toBeTruthy();
-  });
-
-  it('renders auth required state', () => {
-    store.scanStatus = { state: 'auth_required' };
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText(/Connect Gmail/)).toBeTruthy();
-    expect(screen.queryByText('Connections')).toBeNull();
-  });
-
-  it('shows Connections shortcut for admins in auth required state', () => {
-    store.currentUserRole = 'admin';
-    store.scanStatus = { state: 'auth_required' };
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Connections')).toBeTruthy();
-  });
-
-  it('renders scanning state', () => {
-    store.scanStatus = { state: 'scanning' };
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Scanning inbox for invoices.')).toBeTruthy();
-  });
-
-  it('renders error state', () => {
-    store.scanStatus = { state: 'error', error: 'backend_down' };
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText(/Backend unreachable/)).toBeTruthy();
-  });
-
-  it('renders invoice when queue has items', () => {
-    store.queueState = [{
-      id: 'inv-1',
-      vendor_name: 'Acme Corp',
-      amount: 1500,
-      currency: 'USD',
-      invoice_number: 'INV-001',
-      due_date: '2026-04-01',
-      state: 'needs_approval',
-    }];
-    store.selectedItemId = 'inv-1';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Acme Corp')).toBeTruthy();
-    expect(screen.getByText('1,500.00')).toBeTruthy();
-    expect(screen.getByText('USD')).toBeTruthy();
-    expect(screen.getByText(/INV-001/)).toBeTruthy();
-    expect(screen.getByText('Needs approval')).toBeTruthy();
-  });
-
-  it('renders primary action button for needs_approval state', () => {
-    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'needs_approval', amount: 100 }];
-    store.selectedItemId = 'inv-1';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Nudge approver')).toBeTruthy();
-  });
-
-  it('hides prepare info request when vendor response is already pending', () => {
-    store.queueState = [{
-      id: 'inv-needs-info-1',
-      vendor_name: 'Northwind',
-      state: 'needs_info',
-      amount: 100,
-      followup_next_action: 'await_vendor_response',
-    }];
-    store.selectedItemId = 'inv-needs-info-1';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.queryByText('Prepare info request')).toBeNull();
-  });
-
-  it('treats fallback reminder delivery as a successful nudge in the sidebar', async () => {
-    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'needs_approval', amount: 100 }];
-    store.selectedItemId = 'inv-1';
-    mockQueueManager.nudgeApproval.mockResolvedValueOnce({
-      status: 'error',
-      fallback: { status: 'sent', reason: null, channel: 'cl-finance-ap' },
-    });
-
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    fireEvent.click(screen.getByText('Nudge approver'));
-
-    await screen.findByText('Approval reminder sent');
-    expect(mockQueueManager.refreshQueue).toHaveBeenCalled();
-  });
-
-  it('treats vendor follow-up SLA waits as informational instead of a hard failure', async () => {
-    store.queueState = [{
-      id: 'inv-needs-info-2',
-      vendor_name: 'Northwind',
-      state: 'needs_info',
-      amount: 88,
-      followup_next_action: 'prepare_vendor_followup_draft',
-    }];
-    store.selectedItemId = 'inv-needs-info-2';
-    mockQueueManager.prepareVendorFollowup.mockResolvedValueOnce({
-      status: 'waiting_sla',
-      reason: 'waiting_for_sla_window',
-    });
-
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    fireEvent.click(screen.getByText('Prepare info request'));
-
-    await screen.findByText('Follow-up already sent. Wait for the vendor response before nudging again.');
-    expect(mockQueueManager.refreshQueue).toHaveBeenCalled();
-  });
-
-  it('hides mutation actions for read-only roles', () => {
-    store.currentUserRole = 'viewer';
-    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'needs_approval', amount: 100 }];
-    store.selectedItemId = 'inv-1';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.queryByText('Nudge approver')).toBeNull();
-    expect(screen.queryByText('Reject')).toBeNull();
-    expect(screen.getByText(/Read-only view/)).toBeTruthy();
-  });
-
-  it('does not render Approve & Post for approved state', () => {
-    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'approved', amount: 100 }];
-    store.selectedItemId = 'inv-1';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.queryByText('Approve & Post')).toBeNull();
-    expect(screen.getByText(/Approval received\. Clearledgr is preparing the posting step\./)).toBeTruthy();
-  });
-
-  it('renders Preview ERP post for ready_to_post state', () => {
-    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'ready_to_post', amount: 100 }];
-    store.selectedItemId = 'inv-1';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Preview ERP post')).toBeTruthy();
-  });
-
-  it('renders Retry ERP post for failed_post state', () => {
-    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'failed_post', amount: 100 }];
-    store.selectedItemId = 'inv-1';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Retry ERP post')).toBeTruthy();
-  });
-
-  it('renders navigator with prev/next for multi-item queue', () => {
-    store.queueState = [
-      { id: 'a', vendor_name: 'First', state: 'received', amount: 100 },
-      { id: 'b', vendor_name: 'Second', state: 'received', amount: 200 },
-    ];
-    store.selectedItemId = 'a';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('1 of 2')).toBeTruthy();
-    expect(screen.getByLabelText('Previous')).toBeTruthy();
-    expect(screen.getByLabelText('Next')).toBeTruthy();
-  });
-
-  it('disables Prev on first item', () => {
-    store.queueState = [
-      { id: 'a', vendor_name: 'First', state: 'received', amount: 100 },
-      { id: 'b', vendor_name: 'Second', state: 'received', amount: 200 },
-    ];
-    store.selectedItemId = 'a';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    const prevBtn = screen.getByLabelText('Previous');
-    expect(prevBtn.disabled).toBe(true);
-  });
-
-  it('renders evidence checklist instead of legacy context panels', () => {
-    store.queueState = [{
-      id: 'inv-1',
-      vendor_name: 'Test',
-      state: 'received',
-      amount: 100,
-      subject: 'Invoice from Test',
-      sender: 'test@example.com',
-      exception_code: 'po_missing_reference',
-      confidence: 0.87,
-      has_attachment: true,
-    }];
-    store.selectedItemId = 'inv-1';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('Evidence checklist')).toBeTruthy();
-    expect(screen.getByText('Attachment')).toBeTruthy();
-    expect(screen.queryByText('Context fields')).toBeNull();
-    expect(screen.queryByText(/Agent timeline/i)).toBeNull();
-  });
-
-  it('does not leak a raw zero between actions and evidence when finance effects are empty', () => {
-    store.queueState = [{
-      id: 'inv-1',
-      vendor_name: 'Test',
-      state: 'received',
-      amount: 100,
-      currency: 'USD',
-      invoice_number: 'INV-001',
-      due_date: '2026-04-01',
-      subject: 'Invoice from Test',
-      sender: 'billing@test.example',
-      has_attachment: true,
-      finance_effect_summary: {},
-    }];
-    store.selectedItemId = 'inv-1';
-
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-
-    expect(screen.queryByText(/^0$/)).toBeNull();
-    expect(screen.queryByText('Credits and payments')).toBeNull();
-    expect(screen.getByText('Evidence checklist')).toBeTruthy();
-  });
-
-  it('renders paused field review detail when extraction sources conflict', () => {
-    store.queueState = [{
-      id: 'inv-conflict-1',
-      vendor_name: 'Acme Corp',
-      amount: 440,
-      currency: 'USD',
-      invoice_number: 'INV-77',
-      due_date: '2026-04-01',
-      state: 'received',
-      requires_field_review: true,
-      workflow_paused_reason: 'Check amount because the email and attachment do not match.',
-      field_review_blockers: [
-        {
-          kind: 'source_conflict',
-          field: 'amount',
-          field_label: 'Amount',
-          email_value_display: 'USD 400.00',
-          attachment_value_display: 'USD 440.00',
-          winning_source_label: 'Attachment',
-          winning_value_display: 'USD 440.00',
-          winner_reason: 'Attachment is currently selected from invoice.pdf.',
+  it('renders the canonical agent-memory view on the mounted thread surface', async () => {
+    const item = buildItem({
+      agent_memory: {
+        profile: {
+          mission: 'Protect cash before it leaves the company.',
+          autonomy_level: 'human_supervised',
         },
-      ],
-    }];
-    store.selectedItemId = 'inv-conflict-1';
-
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-
-    expect(screen.getByText('Check these fields')).toBeTruthy();
-    expect(screen.getByText(/Check amount because the email and attachment do not match/)).toBeTruthy();
-    expect(screen.getByText('Email says')).toBeTruthy();
-    expect(screen.getByText('USD 400.00')).toBeTruthy();
-    expect(screen.getByText('Attachment says')).toBeTruthy();
-    expect(screen.getByText('USD 440.00')).toBeTruthy();
-    expect(screen.getByText(/Attachment is currently selected/)).toBeTruthy();
-    expect(screen.queryByText('Request approval')).toBeNull();
-    expect(screen.getByText('Use email')).toBeTruthy();
-    expect(screen.getByText('Use attachment')).toBeTruthy();
-    expect(screen.getByText('Enter manually')).toBeTruthy();
-  });
-
-  it('resolves a field-review blocker from the sidebar', async () => {
-    store.queueState = [{
-      id: 'inv-conflict-1',
-      vendor_name: 'Acme Corp',
-      amount: 440,
-      currency: 'USD',
-      invoice_number: 'INV-77',
-      due_date: '2026-04-01',
-      state: 'received',
-      requires_field_review: true,
-      workflow_paused_reason: 'Check amount because the email and attachment do not match.',
-      field_review_blockers: [
-        {
-          kind: 'source_conflict',
-          field: 'amount',
-          field_label: 'Amount',
-          email_value: 400,
-          email_value_display: 'USD 400.00',
-          attachment_value: 440,
-          attachment_value_display: 'USD 440.00',
-          winning_source_label: 'Attachment',
-          winning_value_display: 'USD 440.00',
-          winner_reason: 'Attachment is currently selected from invoice.pdf.',
+        next_action: {
+          label: 'Wait for approval decision',
+          owner: 'approver',
         },
-      ],
-    }];
-    store.selectedItemId = 'inv-conflict-1';
-
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    fireEvent.click(screen.getByText('Use attachment'));
-
-    await Promise.resolve();
-    expect(mockQueueManager.resolveFieldReview).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'inv-conflict-1' }),
-      expect.objectContaining({ field: 'amount', source: 'attachment', autoResume: true }),
-    );
-  });
-
-  it('renders credit notes as non-invoice finance documents', () => {
-    store.queueState = [{
-      id: 'doc-credit-1',
-      vendor_name: 'Attio',
-      amount: 36,
-      currency: 'USD',
-      invoice_number: 'AW63GKYA-0003',
-      state: 'received',
-      document_type: 'credit_note',
-    }];
-    store.selectedItemId = 'doc-credit-1';
-
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-
-    expect(screen.getByText(/Credit note/)).toBeTruthy();
-    expect(screen.getByText(/non-invoice finance document/i)).toBeTruthy();
-    expect(screen.queryByText('Request approval')).toBeNull();
-    expect(screen.queryByText('Reject')).toBeNull();
-  });
-
-  it('groups audit history into key history and background activity', () => {
-    store.queueState = [{
-      id: 'inv-1',
-      vendor_name: 'Test',
-      state: 'failed_post',
-      amount: 100,
-    }];
-    store.selectedItemId = 'inv-1';
-    store.auditState = {
-      itemId: 'inv-1',
-      loading: false,
-      events: [
+        summary: {
+          reason: 'Awaiting approval response.',
+        },
+        uncertainties: {
+          reason_codes: ['vendor_unscored'],
+        },
+        current_state: 'needs_approval',
+      },
+    });
+    const queueManager = createQueueManager({
+      fetchAuditTrail: mock.fn(async () => ([
         {
-          id: 'evt-high',
-          event_type: 'erp_post_failed',
-          operator_title: 'Posting failed',
-          operator_message: 'Posting did not complete.',
-          operator_severity: 'error',
+          id: 'audit-1',
+          event_type: 'state_transition',
+          operator_title: 'Approval requested',
+          operator_message: 'Invoice routed to the approver.',
           operator_importance: 'high',
-          operator_category: 'posting',
-          operator_evidence_label: 'ERP result',
-          operator_evidence_detail: 'Recorded from the ERP connector response (DOC-77).',
-          operator_action_hint: 'Retry ERP post or escalate for review.',
-          ts: '2026-03-01T10:00:00Z',
+          created_at: '2026-04-05T10:00:00Z',
         },
+      ])),
+    });
+
+    store.queueState = [item];
+    store.selectedItemId = item.id;
+    store.currentUserRole = 'operator';
+
+    const view = mount(h(SidebarApp, { queueManager }));
+    await flushTicks(3);
+
+    const text = getTextContent(view.container);
+    assert.match(text, /What happens next/);
+    assert.match(text, /Waiting for approval/);
+    assert.match(text, /Awaiting approval response\./);
+    assert.match(text, /Vendor details need review/);
+    assert.match(text, /Evidence checklist/);
+    assert.match(text, /View audit/);
+  });
+
+  it('replaces internal agent-memory copy with operator-facing language', async () => {
+    const item = buildItem({
+      state: 'received',
+      requires_field_review: true,
+      workflow_paused_reason: 'ap_invoice_processing_field_review_required',
+      confidence_blockers: [
         {
-          id: 'evt-low',
-          event_type: 'browser_session_created',
-          operator_title: 'ERP fallback prepared',
-          operator_message: 'Prepared secure ERP browser fallback session.',
-          operator_severity: 'info',
-          operator_importance: 'low',
-          operator_category: 'system',
-          operator_evidence_label: 'ERP result',
-          operator_evidence_detail: 'Recorded from the ERP connector response.',
-          ts: '2026-03-01T09:00:00Z',
+          field: 'due_date',
+          confidence: 0.62,
+          review_threshold: 0.95,
+          source: 'attachment',
+          values: { attachment: '2026-04-16', email: '2026-04-18' },
         },
       ],
-    };
+      agent_memory: {
+        current_state: 'received',
+        status: 'received',
+        next_action: {
+          type: 'human_field_review',
+          label: 'Resolve field blockers before workflow execution',
+          owner: 'operator',
+        },
+        summary: {
+          reason: 'ap_invoice_processing_field_review_required',
+        },
+        uncertainties: {
+          reason_codes: ['ap_skill_not_ready', 'gate:legal_transition_correctness'],
+        },
+      },
+    });
 
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    fireEvent.click(screen.getByText(/View audit \(2\)/));
+    store.queueState = [item];
+    store.selectedItemId = item.id;
+    store.currentUserRole = 'operator';
 
-    expect(screen.getByText('Key history')).toBeTruthy();
-    expect(screen.getByText('Background activity (1)')).toBeTruthy();
-    expect(screen.getByText('Posting failed')).toBeTruthy();
-    expect(screen.getByText(/Recorded from the ERP connector response \(DOC-77\)/)).toBeTruthy();
-    expect(screen.getByText(/Next: Retry ERP post or escalate for review\./)).toBeTruthy();
+    const view = mount(h(SidebarApp, { queueManager: createQueueManager() }));
+    await flushTicks(3);
+
+    const text = getTextContent(view.container);
+    assert.match(text, /Before Clearledgr continues/);
+    assert.match(text, /Next step/);
+    assert.match(text, /Confirm the due date/);
+    assert.match(text, /Needs your review/);
+    assert.match(text, /Why it paused/);
+    assert.match(text, /Review due date before this invoice moves forward\./);
+    assert.doesNotMatch(text, /ap_invoice_processing_field_review_required/i);
+    assert.doesNotMatch(text, /Resolve field blockers before workflow execution/i);
+    assert.doesNotMatch(text, /Legal Transition Correctness/i);
+    assert.doesNotMatch(text, /Ap Skill Not Ready/i);
   });
 
-  it('hides navigator for single-item queue', () => {
-    store.queueState = [{ id: 'a', vendor_name: 'Only', state: 'received', amount: 100 }];
-    store.selectedItemId = 'a';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.queryByLabelText('Previous')).toBeNull();
+  it('renders tasks, notes, related records, and files on the mounted thread surface', async () => {
+    const item = buildItem({
+      linked_finance_documents: [
+        {
+          source_ap_item_id: 'credit-1',
+          document_type: 'credit_note',
+          vendor_name: 'Acme Supplies',
+          invoice_number: 'CN-10',
+          amount: 120,
+          currency: 'USD',
+          outcome: 'applied',
+        },
+      ],
+    });
+    const queueManager = createQueueManager({
+      fetchItemContext: mock.fn(async () => ({})),
+    });
+
+    store.queueState = [item];
+    store.selectedItemId = item.id;
+    store.currentUserRole = 'operator';
+    store.contextState = new Map([
+      [item.id, {
+        related_records: {
+          same_invoice_number_items: [
+            {
+              id: 'item-duplicate',
+              vendor_name: 'Acme Supplies',
+              invoice_number: 'INV-100',
+              amount: 1234.5,
+              currency: 'USD',
+              state: 'needs_info',
+            },
+          ],
+        },
+        web: {
+          dms_documents: [{ subject: 'Invoice packet.pdf' }],
+        },
+      }],
+    ]);
+    store.tasksState = new Map([
+      [item.id, [
+        {
+          task_id: 'task-1',
+          title: 'Call vendor about missing PO',
+          status: 'open',
+          due_date: '2026-04-10',
+          comments: [{ comment_id: 'comment-1', user_email: 'ops@clearledgr.com', comment: 'Waiting on callback.' }],
+        },
+      ]],
+    ]);
+    store.notesState = new Map([
+      [item.id, [
+        {
+          id: 'note-1',
+          author: 'ops@clearledgr.com',
+          body: 'Vendor asked for Friday follow-up.',
+          created_at: '2026-04-06T08:30:00Z',
+        },
+      ]],
+    ]);
+    store.commentsState = new Map([
+      [item.id, [
+        {
+          id: 'comment-1',
+          author: 'controller@clearledgr.com',
+          body: 'Approved the response language.',
+          created_at: '2026-04-06T08:45:00Z',
+        },
+      ]],
+    ]);
+    store.filesState = new Map([
+      [item.id, [
+        {
+          id: 'file-1',
+          label: 'Shared quote',
+          url: 'https://docs.example.com/quote',
+          file_type: 'drive_link',
+          note: 'Latest vendor quote',
+        },
+      ]],
+    ]);
+
+    const view = mount(h(SidebarApp, { queueManager }));
+    await flushTicks(3);
+
+    const text = getTextContent(view.container);
+    assert.match(text, /Related records/);
+    assert.match(text, /Call vendor about missing PO/);
+    assert.match(text, /Approved the response language\./);
+    assert.match(text, /Vendor asked for Friday follow-up\./);
+    assert.match(text, /Files and evidence/);
+    assert.match(text, /Shared quote/);
+    assert.match(text, /Invoice packet\.pdf/);
   });
 
-  it('renders invoice count badge in header', () => {
-    store.queueState = [
-      { id: 'a', vendor_name: 'A', state: 'received', amount: 100 },
-      { id: 'b', vendor_name: 'B', state: 'received', amount: 200 },
-    ];
-    store.selectedItemId = 'a';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
-    expect(screen.getByText('2 invoices')).toBeTruthy();
+  it('lets operators move through the queue from the header navigator', async () => {
+    const first = buildItem({
+      id: 'item-1',
+      thread_id: 'thread-1',
+      vendor_name: 'Acme Supplies',
+      invoice_number: 'INV-100',
+    });
+    const second = buildItem({
+      id: 'item-2',
+      thread_id: 'thread-2',
+      vendor_name: 'Little Learners Nursery and Preschool',
+      invoice_number: '000127',
+    });
+
+    store.queueState = [first, second];
+    store.selectedItemId = first.id;
+    store.currentUserRole = 'operator';
+
+    const view = mount(h(SidebarApp, { queueManager: createQueueManager() }));
+    await flushTicks(3);
+
+    assert.match(getTextContent(view.container), /1 of 2/);
+    assert.match(getTextContent(view.container), /Acme Supplies/);
+
+    click(view.container.querySelector('[aria-label="Next record"]'));
+    await flushTicks(2);
+
+    assert.equal(store.selectedItemId, 'item-2');
+    assert.match(getTextContent(view.container), /2 of 2/);
+    assert.match(getTextContent(view.container), /Little Learners Nursery and Preschool/);
+
+    click(view.container.querySelector('[aria-label="Previous record"]'));
+    await flushTicks(2);
+
+    assert.equal(store.selectedItemId, 'item-1');
+    assert.match(getTextContent(view.container), /1 of 2/);
   });
 
-  it('uses the backend reject call instead of the legacy window event path', async () => {
-    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
-    store.queueState = [{ id: 'inv-1', vendor_name: 'Test', state: 'needs_approval', amount: 100 }];
-    store.selectedItemId = 'inv-1';
-    render(html`<${SidebarApp} queueManager=${mockQueueManager} />`);
+  it('shows the Gmail auth prompt and starts authorization from the mounted view', async () => {
+    const queueManager = createQueueManager();
+    store.scanStatus = { state: 'auth_required' };
+    store.gmailIntegration = { requires_reconnect: false };
+    store.currentUserRole = 'admin';
 
-    fireEvent.click(screen.getByText('Reject'));
-    fireEvent.input(screen.getByLabelText('Rejection reason'), { target: { value: 'Duplicate invoice' } });
-    const rejectButtons = screen.getAllByText('Reject', { selector: 'button' });
-    fireEvent.click(rejectButtons[rejectButtons.length - 1]);
+    const view = mount(h(SidebarApp, { queueManager }));
+    await flushTicks(2);
 
-    await Promise.resolve();
-    expect(mockQueueManager.rejectInvoice).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'inv-1' }),
-      { reason: 'Duplicate invoice' }
-    );
-    expect(dispatchSpy).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'clearledgr:reject-invoice' }));
-    dispatchSpy.mockRestore();
+    assert.ok(findButton(view.container, 'Connect Gmail'));
+    assert.ok(findButton(view.container, 'Connections'));
+
+    click(findButton(view.container, 'Connect Gmail'));
+    await flushTicks(3);
+
+    assert.equal(queueManager.authorizeGmailNow.mock.calls.length, 1);
+    assert.equal(queueManager.refreshQueue.mock.calls.length, 1);
+  });
+
+  it('keeps read-only viewers out of mutation actions while preserving context', async () => {
+    const item = buildItem({
+      agent_memory: {
+        next_action: { label: 'Wait for approval decision', owner: 'approver' },
+        summary: { reason: 'Awaiting approval response.' },
+        uncertainties: { reason_codes: ['vendor_unscored'] },
+      },
+    });
+    const queueManager = createQueueManager();
+
+    store.queueState = [item];
+    store.selectedItemId = item.id;
+    store.currentUserRole = 'viewer';
+
+    const view = mount(h(SidebarApp, { queueManager }));
+    await flushTicks(3);
+
+    const text = getTextContent(view.container);
+    assert.match(text, /Read-only view/);
+    assert.match(text, /Open in invoices/);
+    assert.doesNotMatch(text, /Record 1 of/);
+    assert.equal(findButton(view.container, 'Reject'), null);
+    assert.equal(findButton(view.container, 'Nudge approver'), null);
+    assert.equal(findButton(view.container, 'Reassign approver'), null);
+  });
+
+  it('treats routine pending approvals as agent-monitored states with overrides collapsed below the fold', async () => {
+    const item = buildItem({
+      approval_followup: {
+        pending_assignees: ['ap-approver@clearledgr.com'],
+        wait_minutes: 42,
+      },
+      agent_memory: {
+        summary: { reason: 'Clearledgr is monitoring the active approval request.' },
+      },
+    });
+    const queueManager = createQueueManager();
+
+    store.queueState = [item];
+    store.selectedItemId = item.id;
+    store.currentUserRole = 'operator';
+
+    const view = mount(h(SidebarApp, { queueManager }));
+    await flushTicks(3);
+
+    assert.equal(view.container.querySelector('.cl-primary-cta'), null);
+    const overrides = view.container.querySelector('.cl-operator-overrides');
+    assert.ok(overrides);
+    assert.match(getTextContent(overrides.querySelector('summary')), /Operator overrides/);
+    assert.match(getTextContent(view.container), /monitoring this approval/i);
+  });
+
+  it('routes field-review resolution through the queue manager from the mounted panel', async () => {
+    const item = buildItem({
+      state: 'validated',
+      requires_field_review: true,
+      field_provenance: {
+        amount: {
+          source: 'attachment',
+          value: 440,
+        },
+      },
+      field_evidence: {
+        amount: {
+          source: 'attachment',
+          selected_value: 440,
+          email_value: 400,
+          attachment_value: 440,
+          attachment_name: 'invoice.pdf',
+        },
+      },
+      source_conflicts: [
+        {
+          field: 'amount',
+          blocking: true,
+          reason: 'source_value_mismatch',
+          preferred_source: 'attachment',
+          values: { email: 400, attachment: 440 },
+        },
+      ],
+    });
+    const queueManager = createQueueManager();
+
+    store.queueState = [item];
+    store.selectedItemId = item.id;
+    store.currentUserRole = 'operator';
+
+    const view = mount(h(SidebarApp, { queueManager }));
+    await flushTicks(3);
+
+    const useEmailButton = findButton(view.container, 'Use email');
+    assert.ok(useEmailButton);
+
+    click(useEmailButton);
+    await flushTicks(3);
+
+    assert.equal(queueManager.resolveFieldReview.mock.calls.length, 1);
+    assert.deepEqual(queueManager.resolveFieldReview.mock.calls[0].arguments[1], {
+      field: 'amount',
+      source: 'email',
+      manualValue: undefined,
+      autoResume: true,
+    });
+    assert.equal(queueManager.refreshQueue.mock.calls.length, 1);
+  });
+
+  it('turns an unlinked thread into a create-or-link finance record flow', async () => {
+    const candidate = buildItem({
+      id: 'item-linked',
+      vendor_name: 'Northwind',
+      invoice_number: 'INV-404',
+      amount: 404,
+    });
+    const queueManager = createQueueManager({
+      recoverCurrentThread: mock.fn(async () => ({ found: true, recovered: true, item: { id: 'item-created', vendor_name: 'Recovered Co' } })),
+      searchRecordCandidates: mock.fn(async () => [candidate]),
+      linkCurrentThreadToItem: mock.fn(async () => ({ status: 'linked', ap_item: candidate })),
+    });
+
+    store.currentThreadId = 'thread-unlinked';
+    store.currentUserRole = 'operator';
+
+    const view = mount(h(SidebarApp, { queueManager }));
+    await flushTicks(3);
+
+    assert.match(getTextContent(view.container), /Create record from email/);
+
+    click(findButton(view.container, 'Create record from email'));
+    await flushTicks(3);
+    assert.equal(queueManager.recoverCurrentThread.mock.calls.length, 1);
+    assert.equal(queueManager.recoverCurrentThread.mock.calls[0].arguments[0], 'thread-unlinked');
+
+    const searchInput = view.container.querySelector('input[placeholder="Search existing records by vendor, invoice, or email"]');
+    assert.ok(searchInput);
+    inputValue(searchInput, 'northwind');
+    await flushTicks(1);
+    click(findButton(view.container, 'Find record'));
+    await flushTicks(3);
+
+    assert.equal(queueManager.searchRecordCandidates.mock.calls.length, 1);
+    assert.match(getTextContent(view.container), /Northwind/);
+
+    click(findButton(view.container, 'Link email'));
+    await flushTicks(3);
+
+    assert.equal(queueManager.linkCurrentThreadToItem.mock.calls.length, 1);
+    assert.equal(queueManager.linkCurrentThreadToItem.mock.calls[0].arguments[0].id, 'item-linked');
+    assert.deepEqual(queueManager.linkCurrentThreadToItem.mock.calls[0].arguments[1], {
+      thread_id: 'thread-unlinked',
+    });
   });
 });

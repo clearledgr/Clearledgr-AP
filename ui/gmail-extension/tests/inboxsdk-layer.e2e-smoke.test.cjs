@@ -19,7 +19,7 @@ const ACTION_SUCCESS_SELECTOR = String(process.env.GMAIL_E2E_ACTION_SUCCESS_SELE
 const ACTION_SUCCESS_TEXT = String(process.env.GMAIL_E2E_ACTION_SUCCESS_TEXT || '').trim();
 const ACTION_SETTLE_MS = Number(process.env.GMAIL_E2E_ACTION_SETTLE_MS || 12000);
 const UI_MARKERS = String(
-  process.env.GMAIL_E2E_UI_MARKERS || 'Clearledgr Pipeline,Process with Clearledgr',
+  process.env.GMAIL_E2E_UI_MARKERS || 'Clearledgr Invoices,Process with Clearledgr',
 )
   .split(',')
   .map((value) => String(value || '').trim())

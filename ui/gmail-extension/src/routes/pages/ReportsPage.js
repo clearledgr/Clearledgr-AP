@@ -14,20 +14,20 @@ import {
 const html = htm.bind(h);
 
 function MetricCard({ label, value, detail }) {
-  return html`<div style="padding:18px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
-    <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em">${value}</div>
-    <div style="font-size:13px;font-weight:600;margin-top:2px">${label}</div>
-    ${detail ? html`<div class="muted" style="margin-top:6px;font-size:12px">${detail}</div>` : null}
+  return html`<div class="reports-metric-card">
+    <div class="reports-metric-value">${value}</div>
+    <div class="reports-metric-label">${label}</div>
+    ${detail ? html`<div class="reports-metric-detail">${detail}</div>` : null}
   </div>`;
 }
 
 function ReportRow({ label, value, detail }) {
-  return html`<div style="display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid var(--border)">
-    <div>
-      <div style="font-weight:600">${label}</div>
-      ${detail ? html`<div class="muted" style="font-size:12px;margin-top:3px">${detail}</div>` : null}
+  return html`<div class="reports-row">
+    <div class="reports-row-copy">
+      <strong>${label}</strong>
+      ${detail ? html`<span>${detail}</span>` : null}
     </div>
-    <div style="font-weight:700;text-align:right">${value}</div>
+    <div class="reports-row-value">${value}</div>
   </div>`;
 }
 
@@ -99,6 +99,36 @@ export function getOperatorPressureSummary(kpis = {}) {
   };
 }
 
+export function getProofScorecardSummary(kpis = {}, dashboard = {}) {
+  const proof = kpis?.proof_scorecard || {};
+  const summary = proof?.summary || {};
+  const decisions = proof?.decisions || {};
+  const followup = proof?.approval_followup || {};
+  const posting = proof?.posting_reliability || {};
+  const recovery = proof?.recovery || {};
+  const bootstrap = dashboard?.proof_snapshot || {};
+  const highlights = Array.isArray(proof?.highlights) && proof.highlights.length
+    ? proof.highlights
+    : (Array.isArray(bootstrap?.highlights) ? bootstrap.highlights : []);
+
+  return {
+    autoApprovedRatePct: safeNumber(summary?.auto_approved_rate_pct, safeNumber(bootstrap?.auto_approved_rate_pct)),
+    humanOverrideRatePct: safeNumber(summary?.human_override_rate_pct, safeNumber(bootstrap?.human_override_rate_pct)),
+    avgApprovalWaitHours: safeNumber(summary?.avg_approval_wait_hours, safeNumber(bootstrap?.avg_approval_wait_hours)),
+    escalationRatePct: safeNumber(summary?.escalation_rate_pct, safeNumber(bootstrap?.escalation_rate_pct)),
+    postingSuccessRatePct: safeNumber(summary?.posting_success_rate_pct, safeNumber(bootstrap?.posting_success_rate_pct)),
+    recoverySuccessRatePct: safeNumber(summary?.recovery_success_rate_pct, safeNumber(bootstrap?.recovery_success_rate_pct)),
+    humanOverrideCount: safeNumber(decisions?.human_override_count, safeNumber(bootstrap?.human_override_count)),
+    decisionCount: safeNumber(decisions?.decision_count, safeNumber(bootstrap?.decision_count)),
+    escalationEventCount30d: safeNumber(followup?.escalation_event_count_30d, safeNumber(bootstrap?.escalation_event_count_30d)),
+    postingAttemptCount: safeNumber(posting?.attempted_count, safeNumber(bootstrap?.posting_attempt_count)),
+    postingMismatchCount: safeNumber(posting?.mismatch_count, safeNumber(bootstrap?.posting_mismatch_count)),
+    recoveryAttemptCount: safeNumber(recovery?.attempted_count, safeNumber(bootstrap?.recovery_attempt_count)),
+    recoveredCount: safeNumber(recovery?.recovered_count, safeNumber(bootstrap?.recovered_count)),
+    highlights: highlights.map((entry) => String(entry || '').trim()).filter(Boolean).slice(0, 4),
+  };
+}
+
 export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate, toast }) {
   const pipelineScope = useMemo(() => ({ orgId, userEmail }), [orgId, userEmail]);
   const [reportData, setReportData] = useState({ aggregation: null, kpis: null });
@@ -145,7 +175,7 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
     if (!view?.snapshot) return;
     clearPipelineNavigation(pipelineScope);
     writePipelinePreferences(pipelineScope, view.snapshot);
-    navigate('clearledgr/pipeline');
+    navigate('clearledgr/invoices');
   };
 
   const dashboard = bootstrap?.dashboard || {};
@@ -157,6 +187,7 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
   const sourceTypes = Object.entries(sources.link_count_by_type || {}).sort((left, right) => right[1] - left[1]).slice(0, 6);
   const pilotSummary = getPilotScorecardSummary(reportData?.kpis || {}, dashboard);
   const operatorSummary = getOperatorPressureSummary(reportData?.kpis || {});
+  const proofSummary = getProofScorecardSummary(reportData?.kpis || {}, dashboard);
 
   if (loading) {
     return html`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading reports…</p></div>`;
@@ -170,7 +201,7 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
       </div>
       <div class="secondary-banner-actions">
         <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
-        <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/pipeline')}>Open pipeline</button>
+        <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/invoices')}>Open invoices</button>
       </div>
     </div>
 
@@ -181,8 +212,8 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
       <${MetricCard} label="Duplicate clusters" value=${Number(duplicates.cluster_count || 0).toLocaleString()} detail=${`${Number(duplicates.duplicate_invoice_count || 0).toLocaleString()} duplicate invoices`} />
     </div>
 
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px">
-      <div style="display:flex;flex-direction:column;gap:20px">
+    <div class="reports-shell">
+      <div class="reports-main-stack">
         <div class="panel">
           <h3 style="margin-top:0">Top vendors by tracked spend</h3>
           ${topVendors.length === 0
@@ -198,47 +229,11 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
         </div>
 
         <div class="panel">
-          <h3 style="margin-top:0">Source coverage</h3>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <${ReportRow}
-              label="Total linked sources"
-              value=${Number(sources.total_links || 0).toLocaleString()}
-              detail=${`${Number(sources.items_with_sources || 0).toLocaleString()} invoices have linked evidence`}
-            />
-            <${ReportRow}
-              label="Average links per invoice"
-              value=${Number(sources.avg_links_per_item || 0).toFixed(2)}
-              detail="Across all tracked records"
-            />
-            <${ReportRow}
-              label="Average links per linked invoice"
-              value=${Number(sources.avg_links_per_linked_item || 0).toFixed(2)}
-              detail="Only invoices with at least one linked source"
-            />
-          </div>
-
-          ${sourceTypes.length > 0 && html`
-            <div style="margin-top:14px">
-              <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Connected source types</div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${sourceTypes.map(([sourceType, count]) => html`
-                  <span key=${sourceType} style="padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-size:12px;font-weight:600">
-                    ${sourceType} ${count}
-                  </span>
-                `)}
-              </div>
-            </div>
-          `}
-        </div>
-      </div>
-
-      <div style="display:flex;flex-direction:column;gap:20px">
-        <div class="panel">
           <h3 style="margin-top:0">Pilot scorecard</h3>
           <p class="muted" style="margin:0 0 12px">
             Track whether Clearledgr is actually removing approval chasing and manual routing work.
           </p>
-          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+          <div class="secondary-stat-grid">
             <${MetricCard}
               label="Touchless completed invoices"
               value=${html`<span style=${toneForPercent(pilotSummary.touchlessRatePct, { watchBelow: 70, dangerBelow: 50 })}>${metricPercent(pilotSummary.touchlessRatePct)}</span>`}
@@ -262,6 +257,73 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Current readout</div>
               <div class="secondary-list">
                 ${pilotSummary.highlights.map((line) => html`
+                  <div key=${line} class="secondary-note">${line}</div>
+                `)}
+              </div>
+            </div>
+          `}
+        </div>
+
+        <div class="panel">
+          <h3 style="margin-top:0">Proof scorecard</h3>
+          <p class="muted" style="margin:0 0 12px">
+            Show whether Clearledgr is becoming safer, faster, and more reliable under real AP work.
+          </p>
+          <div class="secondary-stat-grid">
+            <${MetricCard}
+              label="Auto-approved rate"
+              value=${html`<span style=${toneForPercent(proofSummary.autoApprovedRatePct, { watchBelow: 70, dangerBelow: 50 })}>${metricPercent(proofSummary.autoApprovedRatePct)}</span>`}
+            />
+            <${MetricCard}
+              label="Human override rate"
+              value=${html`<span style=${toneForPercent(100 - proofSummary.humanOverrideRatePct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(proofSummary.humanOverrideRatePct)}</span>`}
+            />
+            <${MetricCard}
+              label="Approval latency"
+              value=${metricHours(proofSummary.avgApprovalWaitHours)}
+            />
+            <${MetricCard}
+              label="Escalation rate"
+              value=${html`<span style=${toneForPercent(100 - proofSummary.escalationRatePct, { watchBelow: 88, dangerBelow: 75 })}>${metricPercent(proofSummary.escalationRatePct)}</span>`}
+            />
+            <${MetricCard}
+              label="Posting success rate"
+              value=${html`<span style=${toneForPercent(proofSummary.postingSuccessRatePct, { watchBelow: 98, dangerBelow: 92 })}>${metricPercent(proofSummary.postingSuccessRatePct)}</span>`}
+            />
+            <${MetricCard}
+              label="Recovery success rate"
+              value=${html`<span style=${toneForPercent(proofSummary.recoverySuccessRatePct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(proofSummary.recoverySuccessRatePct)}</span>`}
+            />
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
+            <${ReportRow}
+              label="Override evidence"
+              value=${`${Number(proofSummary.humanOverrideCount || 0).toLocaleString()} / ${Number(proofSummary.decisionCount || 0).toLocaleString()}`}
+              detail="Human overrides divided by decision windows with a persisted Claude recommendation"
+            />
+            <${ReportRow}
+              label="Posting reliability"
+              value=${`${Number(proofSummary.postingAttemptCount || 0).toLocaleString()} attempts`}
+              detail=${`${Number(proofSummary.postingMismatchCount || 0).toLocaleString()} verification mismatches after posting`}
+            />
+            <${ReportRow}
+              label="Recovery evidence"
+              value=${`${Number(proofSummary.recoveredCount || 0).toLocaleString()} / ${Number(proofSummary.recoveryAttemptCount || 0).toLocaleString()}`}
+              detail="Recovered ERP posting failures over total recovery attempts"
+            />
+            <${ReportRow}
+              label="Escalation evidence"
+              value=${Number(proofSummary.escalationEventCount30d || 0).toLocaleString()}
+              detail="Approval escalation events in the last 30 days"
+            />
+          </div>
+
+          ${proofSummary.highlights.length > 0 && html`
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Current proof readout</div>
+              <div class="secondary-list">
+                ${proofSummary.highlights.map((line) => html`
                   <div key=${line} class="secondary-note">${line}</div>
                 `)}
               </div>
@@ -304,6 +366,63 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
         </div>
 
         <div class="panel">
+          <h3 style="margin-top:0">Export reports</h3>
+          <p class="muted" style="margin:0 0 12px">Download AP data as CSV for month-end close, audits, or reconciliation.</p>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div>
+              <${ExportButton} api=${api} reportType="ap_aging" label="AP Aging Report" description="Open payables by aging bucket (current, 30, 60, 90+ days)" />
+              <${SheetsExportButton} api=${api} reportType="ap_aging" label="AP Aging" />
+            </div>
+            <div>
+              <${ExportButton} api=${api} reportType="vendor_spend" label="Vendor Spend Report" description="Top vendors, GL categories, and monthly trends" />
+              <${SheetsExportButton} api=${api} reportType="vendor_spend" label="Vendor Spend" />
+            </div>
+            <div>
+              <${ExportButton} api=${api} reportType="posting_status" label="Posting Status Report" description="AP items with posting timing and ERP references" />
+              <${SheetsExportButton} api=${api} reportType="posting_status" label="Posting Status" />
+            </div>
+          </div>
+        </div>
+
+        <${SpendAnalysisPanel} api=${api} />
+      </div>
+
+      <div class="reports-side-stack">
+        <div class="panel">
+          <h3 style="margin-top:0">Source coverage</h3>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <${ReportRow}
+              label="Total linked sources"
+              value=${Number(sources.total_links || 0).toLocaleString()}
+              detail=${`${Number(sources.items_with_sources || 0).toLocaleString()} invoices have linked evidence`}
+            />
+            <${ReportRow}
+              label="Average links per invoice"
+              value=${Number(sources.avg_links_per_item || 0).toFixed(2)}
+              detail="Across all tracked records"
+            />
+            <${ReportRow}
+              label="Average links per linked invoice"
+              value=${Number(sources.avg_links_per_linked_item || 0).toFixed(2)}
+              detail="Only invoices with at least one linked source"
+            />
+          </div>
+
+          ${sourceTypes.length > 0 && html`
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Connected source types</div>
+              <div class="reports-chip-wrap">
+                ${sourceTypes.map(([sourceType, count]) => html`
+                  <span key=${sourceType} class="secondary-chip">
+                    ${sourceType} ${count}
+                  </span>
+                `)}
+              </div>
+            </div>
+          `}
+        </div>
+
+        <div class="panel">
           <h3 style="margin-top:0">Autonomy quality</h3>
           <p class="muted" style="margin:0 0 12px">
             See how often the final outcome matched what Clearledgr suggested.
@@ -330,9 +449,9 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
         <div class="panel">
           <h3 style="margin-top:0">Start from the right view</h3>
           <p class="muted" style="margin:0 0 12px">Use reports to spot a problem, then jump into the matching queue view.</p>
-          <div style="display:flex;flex-direction:column;gap:10px">
+          <div class="secondary-card-list">
             ${starterViews.slice(0, 4).map((view) => html`
-              <div key=${view.id} style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+              <div key=${view.id} class="reports-export-row">
                 <div>
                   <strong style="display:block;font-size:13px">${view.name}</strong>
                   <span class="muted" style="font-size:12px">${view.description}</span>
@@ -343,26 +462,6 @@ export default function ReportsPage({ api, bootstrap, orgId, userEmail, navigate
           </div>
         </div>
 
-        <div class="panel">
-          <h3 style="margin-top:0">Export reports</h3>
-          <p class="muted" style="margin:0 0 12px">Download AP data as CSV for month-end close, audits, or reconciliation.</p>
-          <div style="display:flex;flex-direction:column;gap:12px">
-            <div>
-              <${ExportButton} api=${api} reportType="ap_aging" label="AP Aging Report" description="Open payables by aging bucket (current, 30, 60, 90+ days)" />
-              <${SheetsExportButton} api=${api} reportType="ap_aging" label="AP Aging" />
-            </div>
-            <div>
-              <${ExportButton} api=${api} reportType="vendor_spend" label="Vendor Spend Report" description="Top vendors, GL categories, and monthly trends" />
-              <${SheetsExportButton} api=${api} reportType="vendor_spend" label="Vendor Spend" />
-            </div>
-            <div>
-              <${ExportButton} api=${api} reportType="posting_status" label="Posting Status Report" description="AP items with posting timing and ERP references" />
-              <${SheetsExportButton} api=${api} reportType="posting_status" label="Posting Status" />
-            </div>
-          </div>
-        </div>
-
-        <${SpendAnalysisPanel} api=${api} />
         <${AgingPanel} api=${api} />
         <${PeriodClosePanel} api=${api} />
         <${TaxCompliancePanel} api=${api} />
@@ -380,7 +479,7 @@ function SheetsExportButton({ api, reportType, label }) {
     setExporting(true);
     setResult(null);
     try {
-      const res = await api.fetch('/api/workspace/reports/export-to-sheets', {
+      const res = await api('/api/workspace/reports/export-to-sheets', {
         method: 'POST',
         body: JSON.stringify({ spreadsheet_url: sheetUrl.trim(), report_type: reportType }),
       });
@@ -389,14 +488,14 @@ function SheetsExportButton({ api, reportType, label }) {
     setExporting(false);
   };
   return html`
-    <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+    <div class="secondary-inline-actions" style="margin-top:4px">
       <input type="text" placeholder="Paste Google Sheets URL..." value=${sheetUrl} onInput=${(e) => setSheetUrl(e.target.value)}
         style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:11px" />
       <button class="btn-secondary btn-sm" onClick=${doExport} disabled=${exporting || !sheetUrl.trim()}>
         ${exporting ? '...' : 'Push to Sheets'}
       </button>
     </div>
-    ${result && html`<div class="muted" style="font-size:11px;margin-top:2px">${result}</div>`}
+    ${result && html`<div class="reports-inline-result">${result}</div>`}
   `;
 }
 
@@ -405,7 +504,7 @@ function ExportButton({ api, reportType, label, description }) {
   const doExport = async () => {
     setDownloading(true);
     try {
-      const resp = await api.fetch(`/api/workspace/reports/export?report_type=${reportType}&format=csv`);
+      const resp = await api(`/api/workspace/reports/export?report_type=${reportType}&format=csv`);
       if (resp && resp.ok !== false) {
         const blob = new Blob([typeof resp === 'string' ? resp : JSON.stringify(resp)], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
@@ -419,7 +518,7 @@ function ExportButton({ api, reportType, label, description }) {
     setDownloading(false);
   };
   return html`
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)">
+    <div class="reports-export-row">
       <div>
         <strong style="display:block;font-size:13px">${label}</strong>
         <span class="muted" style="font-size:12px">${description}</span>
@@ -432,19 +531,19 @@ function ExportButton({ api, reportType, label, description }) {
 function SpendAnalysisPanel({ api }) {
   const [data, setData] = useState(null);
   useEffect(() => {
-    api.fetch('/api/workspace/spend-analysis?period_days=30').then(setData).catch(() => {});
+    api('/api/workspace/spend-analysis?period_days=30').then(setData).catch(() => {});
   }, []);
   if (!data || !data.top_vendors?.length) return null;
   return html`
     <div class="panel">
       <h3 style="margin-top:0">Spend analysis (30 days)</h3>
-      <div style="display:flex;flex-direction:column;gap:2px">
+      <div>
         ${data.top_vendors.slice(0, 6).map((v) => html`
           <${ReportRow} key=${v.vendor_name} label=${v.vendor_name} value=${fmtDollar(v.total_spend)} detail=${`${v.invoice_count} invoice${v.invoice_count !== 1 ? 's' : ''}`} />
         `)}
       </div>
       ${data.anomalies?.length > 0 && html`
-        <div style="margin-top:12px;padding:8px 10px;background:#FEF3C7;border-radius:var(--radius-md);font-size:12px">
+        <div class="secondary-callout warning" style="margin-top:12px">
           ${data.anomalies.slice(0, 3).map((a) => html`<div key=${a.vendor}>${a.message}</div>`)}
         </div>
       `}
@@ -455,14 +554,14 @@ function SpendAnalysisPanel({ api }) {
 function AgingPanel({ api }) {
   const [data, setData] = useState(null);
   useEffect(() => {
-    api.fetch('/api/ap/items/aging').then(setData).catch(() => {});
+    api('/api/ap/items/aging').then(setData).catch(() => {});
   }, []);
   if (!data || !data.summary) return null;
   const s = data.summary;
   return html`
     <div class="panel">
       <h3 style="margin-top:0">AP aging</h3>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <div class="secondary-stat-grid" style="margin-bottom:8px">
         <${MetricCard} label="Open invoices" value=${s.total_open_count || 0} />
         <${MetricCard} label="Overdue" value=${s.overdue_count || 0} detail=${s.overdue_pct ? `${s.overdue_pct}% of open` : ''} />
       </div>
@@ -476,7 +575,7 @@ function AgingPanel({ api }) {
 function PeriodClosePanel({ api }) {
   const [data, setData] = useState(null);
   useEffect(() => {
-    api.fetch('/api/workspace/period-close/current').then(setData).catch(() => {});
+    api('/api/workspace/period-close/current').then(setData).catch(() => {});
   }, []);
   if (!data) return null;
   return html`
@@ -484,7 +583,7 @@ function PeriodClosePanel({ api }) {
       <h3 style="margin-top:0">Period close</h3>
       <${ReportRow} label="Current period" value=${data.period} detail=${data.is_locked ? 'LOCKED' : `Closes ${data.closes_on}`} />
       ${data.in_closing_window && html`
-        <div style="margin-top:6px;padding:8px 10px;background:#FEF3C7;border-radius:var(--radius-md);font-size:12px">
+        <div class="secondary-callout warning" style="margin-top:6px">
           Closing window — ${data.days_until_close} day${data.days_until_close !== 1 ? 's' : ''} until cutoff
         </div>
       `}
@@ -495,7 +594,7 @@ function PeriodClosePanel({ api }) {
 function TaxCompliancePanel({ api }) {
   const [data, setData] = useState(null);
   useEffect(() => {
-    api.fetch('/api/workspace/tax-compliance/summary').then(setData).catch(() => {});
+    api('/api/workspace/tax-compliance/summary').then(setData).catch(() => {});
   }, []);
   if (!data || !data.vendor_count) return null;
   return html`
