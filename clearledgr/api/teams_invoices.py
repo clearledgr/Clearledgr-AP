@@ -348,10 +348,26 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
         except Exception as exc:
             logger.debug("AP item pre-fetch failed: %s", exc)
 
+    # Teams actor_id is often the email — set actor_email for authorization
+    _teams_email = str(
+        payload.get("user_email") or payload.get("actor") or normalized.actor_id or ""
+    ).strip()
+    if "@" in _teams_email:
+        normalized.actor_email = _teams_email
+
+    # Load pending step approvers from approval chain
+    pending_step_approvers = None
+    try:
+        from clearledgr.api.slack_invoices import _get_pending_step_approvers
+        pending_step_approvers = _get_pending_step_approvers(db, normalized.gmail_id, normalized.organization_id)
+    except Exception as exc:
+        logger.debug("Pending step approvers lookup failed: %s", exc)
+
     precedence = _resolve_action_precedence(
         normalized,
         ap_item_row,
         already_processed=bool(db.get_ap_audit_event_by_key(processed_key)),
+        pending_step_approvers=pending_step_approvers,
     )
     if precedence.status == "duplicate":
         _audit_callback_event(

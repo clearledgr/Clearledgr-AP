@@ -157,6 +157,8 @@ class AuthStore:
         )
         encrypted_access = self._encrypt_secret(access_token)
         encrypted_refresh = self._encrypt_secret(refresh_token or "")
+        if not organization_id:
+            logger.warning("organization_id missing in save_google_auth_code, falling back to 'default'")
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -243,6 +245,22 @@ class AuthStore:
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (organization_id,))
+            row = cur.fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        settings = self._decode_json_value(data.get("settings_json"), {})
+        data["settings"] = settings
+        data["settings_json"] = settings
+        return data
+
+    def get_organization_by_domain(self, domain: str) -> Optional[Dict[str, Any]]:
+        """Look up an organization by its email domain."""
+        self.initialize()
+        sql = self._prepare_sql("SELECT * FROM organizations WHERE domain = ? LIMIT 1")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (domain,))
             row = cur.fetchone()
         if not row:
             return None
@@ -409,6 +427,22 @@ class AuthStore:
         data["preferences_json"] = preferences
         return data
 
+    def get_user_by_slack_id(self, slack_user_id: str) -> Optional[Dict[str, Any]]:
+        self.initialize()
+        sql = self._prepare_sql("SELECT * FROM users WHERE slack_user_id = ? LIMIT 1")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (slack_user_id,))
+            row = cur.fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["is_active"] = bool(data.get("is_active"))
+        preferences = self._decode_json_value(data.get("preferences_json"), {})
+        data["preferences"] = preferences
+        data["preferences_json"] = preferences
+        return data
+
     def validate_api_key(self, raw_key: str) -> Optional[Dict[str, Any]]:
         """Look up an API key by its SHA-256 hash.
 
@@ -501,7 +535,8 @@ class AuthStore:
 
     _USER_ALLOWED_COLUMNS = frozenset({
         "name", "email", "password_hash", "role", "is_active",
-        "organization_id", "google_id", "preferences_json", "preferences", "updated_at",
+        "organization_id", "google_id", "preferences_json", "preferences",
+        "updated_at", "last_seen_at", "slack_user_id",
     })
 
     def update_user(self, user_id: str, **kwargs) -> bool:

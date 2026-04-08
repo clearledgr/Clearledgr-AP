@@ -39,6 +39,7 @@ class NormalizedApprovalAction:
     action_variant: Optional[str] = None
     raw_action: Optional[str] = None
     raw_payload: Optional[Dict[str, Any]] = None
+    actor_email: Optional[str] = None  # Resolved email for approver authorization
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -47,6 +48,7 @@ class NormalizedApprovalAction:
             "action": self.action,
             "actor_id": self.actor_id,
             "actor_display": self.actor_display,
+            "actor_email": self.actor_email,
             "reason": self.reason,
             "source_channel": self.source_channel,
             "source_channel_id": self.source_channel_id,
@@ -108,12 +110,91 @@ def validate_action_state_preflight(
     return None
 
 
+def check_segregation_of_duties(
+    action: NormalizedApprovalAction,
+    ap_item: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Return a block reason if the actor submitted/processed this invoice.
+
+    Segregation of duties: the person who created or processed an AP item
+    must not be the same person who approves it.  Rejection and request_info
+    are allowed (they don't release funds).
+    """
+    if action.action != "approve":
+        return None
+    if not ap_item:
+        return None
+
+    actor = action.actor_id.strip().lower() if action.actor_id else ""
+    if not actor:
+        return None
+
+    # Check against user_id (submitter) and processed_by / created_by
+    submitter_fields = ("user_id", "processed_by", "created_by", "actor_id")
+    for field in submitter_fields:
+        submitter = str(ap_item.get(field) or "").strip().lower()
+        if submitter and submitter == actor:
+            return "segregation_of_duties_violation"
+
+    # Also check actor email if available
+    actor_email = str(
+        (action.raw_payload or {}).get("actor_email")
+        or (action.raw_payload or {}).get("user_email")
+        or ""
+    ).strip().lower()
+    if actor_email:
+        for field in submitter_fields:
+            submitter = str(ap_item.get(field) or "").strip().lower()
+            if submitter and submitter == actor_email:
+                return "segregation_of_duties_violation"
+
+    return None
+
+
+def check_approver_authorization(
+    action: NormalizedApprovalAction,
+    pending_step_approvers: Optional[list],
+) -> Optional[str]:
+    """Return a block reason if the actor is not an authorized approver.
+
+    When the approval step has named approvers, only those people may
+    approve.  An empty or None approvers list means anyone can approve
+    (backward compatible with channel-based routing).
+
+    Rejection and request_info are always allowed regardless of
+    authorization — they don't release funds.
+    """
+    if action.action != "approve":
+        return None
+
+    # No named approvers → open approval (anyone in channel)
+    if not pending_step_approvers:
+        return None
+
+    allowed = {str(e).strip().lower() for e in pending_step_approvers if str(e).strip()}
+    if not allowed:
+        return None
+
+    # Check actor_email (resolved from Slack user ID or Teams payload)
+    actor_email = str(action.actor_email or "").strip().lower()
+    if actor_email and actor_email in allowed:
+        return None
+
+    # Fallback: check actor_id directly (covers Teams where actor_id IS the email)
+    actor_id = str(action.actor_id or "").strip().lower()
+    if actor_id and actor_id in allowed:
+        return None
+
+    return "not_authorized_approver"
+
+
 def resolve_action_precedence(
     action: NormalizedApprovalAction,
     ap_item: Optional[Dict[str, Any]],
     *,
     already_processed: bool = False,
     now_ts: Optional[int] = None,
+    pending_step_approvers: Optional[list] = None,
 ) -> ApprovalActionPrecedenceResult:
     """Resolve the canonical callback precedence before dispatch.
 
@@ -125,7 +206,9 @@ def resolve_action_precedence(
     2. Expired callback window -> stale
     3. Workflow already moved beyond the approval window -> stale
     4. Illegal state for the action -> blocked
-    5. Otherwise -> dispatch
+    5. Segregation of duties violation -> blocked
+    6. Approver not authorized (when named approvers configured) -> blocked
+    7. Otherwise -> dispatch
     """
 
     if already_processed:
@@ -140,6 +223,14 @@ def resolve_action_precedence(
     current_state = str(ap_item.get("state") or "").strip().lower()
     preflight_block = validate_action_state_preflight(action, ap_item)
     if not preflight_block:
+        # State is valid — check segregation of duties before allowing dispatch
+        sod_block = check_segregation_of_duties(action, ap_item)
+        if sod_block:
+            return ApprovalActionPrecedenceResult("blocked", sod_block)
+        # Check approver is authorized (when named approvers are configured)
+        auth_block = check_approver_authorization(action, pending_step_approvers)
+        if auth_block:
+            return ApprovalActionPrecedenceResult("blocked", auth_block)
         return ApprovalActionPrecedenceResult("dispatch")
 
     if current_state in _SUPERSEDED_STATES:

@@ -70,14 +70,8 @@ NETSUITE_CONSUMER_SECRET = os.getenv("NETSUITE_CONSUMER_SECRET", "")
 NETSUITE_TOKEN_ID = os.getenv("NETSUITE_TOKEN_ID", "")
 NETSUITE_TOKEN_SECRET = os.getenv("NETSUITE_TOKEN_SECRET", "")
 
-# State storage for OAuth (in production, use Redis)
-_oauth_states: Dict[str, Dict[str, Any]] = {}
-_env_name = str(os.getenv("ENV", "dev")).strip().lower()
-if _env_name in ("prod", "production", "staging", "stage"):
-    logger.warning(
-        "ERP OAuth state stored in-memory — not shared across workers. "
-        "Configure Redis-backed state storage for multi-instance deployments."
-    )
+# OAuth state is stored in the DB (erp_oauth_states table, migration v10)
+# so it works across multiple workers / processes.
 
 # Frontend URL for redirects after OAuth
 FRONTEND_URL = os.getenv("FRONTEND_URL", "/")
@@ -101,6 +95,56 @@ def _validate_return_url(url: Optional[str]) -> str:
         return url
     except Exception:
         return default
+
+
+def _save_oauth_state(state: str, data: Dict[str, Any]) -> None:
+    """Persist an OAuth state token to the database."""
+    db = get_db()
+    with db.connect() as conn:
+        cur = conn.cursor()
+        sql = db._prepare_sql(
+            "INSERT INTO erp_oauth_states (state, organization_id, return_url, erp_type, created_at) "
+            "VALUES (?, ?, ?, ?, ?)"
+        )
+        cur.execute(sql, (
+            state,
+            data["organization_id"],
+            data.get("return_url"),
+            data.get("erp_type"),
+            data["created_at"],
+        ))
+        conn.commit()
+
+
+def _pop_oauth_state(state: str) -> Optional[Dict[str, Any]]:
+    """Look up and atomically delete an OAuth state token from the database.
+
+    Returns the state data dict, or ``None`` if not found.
+    """
+    db = get_db()
+    with db.connect() as conn:
+        cur = conn.cursor()
+        sql = db._prepare_sql(
+            "SELECT organization_id, return_url, erp_type, created_at "
+            "FROM erp_oauth_states WHERE state = ?"
+        )
+        cur.execute(sql, (state,))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        # Delete atomically so a replay attempt fails
+        del_sql = db._prepare_sql("DELETE FROM erp_oauth_states WHERE state = ?")
+        cur.execute(del_sql, (state,))
+        conn.commit()
+        # Normalise to plain dict (handles both sqlite3.Row and psycopg dict_row)
+        if isinstance(row, dict):
+            return dict(row)
+        return {
+            "organization_id": row[0],
+            "return_url": row[1],
+            "erp_type": row[2],
+            "created_at": row[3],
+        }
 
 
 # ==================== REQUEST MODELS ====================
@@ -178,12 +222,13 @@ async def quickbooks_connect(
     org_id = _resolve_org_id(user, request.organization_id)
     # Generate state token
     state = secrets.token_urlsafe(32)
-    _oauth_states[state] = {
+    _save_oauth_state(state, {
         "organization_id": org_id,
         "return_url": _validate_return_url(request.return_url),
+        "erp_type": "quickbooks",
         "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    
+    })
+
     # Build auth URL
     params = {
         "client_id": QUICKBOOKS_CLIENT_ID,
@@ -217,10 +262,12 @@ async def quickbooks_callback(
         logger.error(f"QuickBooks OAuth error: {error}")
         return RedirectResponse(f"{FRONTEND_URL}?erp_error={error}")
     
-    if not state or state not in _oauth_states:
+    if not state:
         raise HTTPException(status_code=400, detail="Invalid state")
 
-    state_data = _oauth_states.pop(state)
+    state_data = _pop_oauth_state(state)
+    if state_data is None:
+        raise HTTPException(status_code=400, detail="Invalid state")
     # Enforce 15-minute TTL on OAuth state tokens
     created = state_data.get("created_at", "")
     if created:
@@ -228,7 +275,7 @@ async def quickbooks_callback(
         if age > 900:
             raise HTTPException(status_code=400, detail="State token expired")
     organization_id = state_data["organization_id"]
-    return_url = state_data["return_url"]
+    return_url = state_data.get("return_url", f"{FRONTEND_URL}/settings/erp")
 
     if not code or not realmId:
         return RedirectResponse(f"{FRONTEND_URL}?erp_error=missing_params")
@@ -300,12 +347,13 @@ async def xero_connect(
     
     org_id = _resolve_org_id(user, request.organization_id)
     state = secrets.token_urlsafe(32)
-    _oauth_states[state] = {
+    _save_oauth_state(state, {
         "organization_id": org_id,
         "return_url": _validate_return_url(request.return_url),
+        "erp_type": "xero",
         "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    
+    })
+
     params = {
         "client_id": XERO_CLIENT_ID,
         "redirect_uri": XERO_REDIRECT_URI,
@@ -335,10 +383,12 @@ async def xero_callback(
         logger.error(f"Xero OAuth error: {error}")
         return RedirectResponse(f"{FRONTEND_URL}?erp_error={error}")
     
-    if not state or state not in _oauth_states:
+    if not state:
         raise HTTPException(status_code=400, detail="Invalid state")
 
-    state_data = _oauth_states.pop(state)
+    state_data = _pop_oauth_state(state)
+    if state_data is None:
+        raise HTTPException(status_code=400, detail="Invalid state")
     # Enforce 15-minute TTL on OAuth state tokens
     created = state_data.get("created_at", "")
     if created:
@@ -346,7 +396,7 @@ async def xero_callback(
         if age > 900:
             raise HTTPException(status_code=400, detail="State token expired")
     organization_id = state_data["organization_id"]
-    return_url = state_data["return_url"]
+    return_url = state_data.get("return_url", f"{FRONTEND_URL}/settings/erp")
 
     if not code:
         return RedirectResponse(f"{FRONTEND_URL}?erp_error=missing_code")

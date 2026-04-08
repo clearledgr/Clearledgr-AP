@@ -8,7 +8,6 @@ expects the concrete class that inherits it to provide:
 * ``self.initialize()``   -- ensures tables exist
 * ``self._decode_json()`` -- safely parses a JSON string or returns ``{}``
 * ``self._parse_iso()``   -- parses an ISO-8601 string into a datetime
-* ``self._safe_float()``  -- safe float coercion
 * ``self._exception_severity_rank()`` -- maps severity label to int rank
 * ``self.use_postgres``   -- bool flag for Postgres vs SQLite dialect
 
@@ -30,6 +29,8 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+
+from clearledgr.core.utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +204,8 @@ class APStore:
         kwargs["updated_at"] = now
         if "metadata" in kwargs and isinstance(kwargs["metadata"], dict):
             kwargs["metadata"] = json.dumps(kwargs["metadata"])  # type: ignore
+        if "field_confidences" in kwargs and isinstance(kwargs["field_confidences"], dict):
+            kwargs["field_confidences"] = json.dumps(kwargs["field_confidences"])  # type: ignore
 
         # --- State machine enforcement ---
         prev_state: Optional[str] = None
@@ -301,19 +304,33 @@ class APStore:
                 org_id = kwargs.get("organization_id") or (
                     current.get("organization_id") if current else None
                 ) or ""
-                coro = emit_state_change_webhook(
-                    organization_id=org_id,
-                    ap_item_id=ap_item_id,
-                    new_state=kwargs["state"],
-                    prev_state=str(prev_state),
-                    item_data=current,
-                )
                 # Fire-and-forget: schedule on the running loop if available
                 try:
                     loop = asyncio.get_running_loop()
-                    loop.create_task(coro)
+                    loop.create_task(
+                        emit_state_change_webhook(
+                            organization_id=org_id,
+                            ap_item_id=ap_item_id,
+                            new_state=kwargs["state"],
+                            prev_state=str(prev_state),
+                            item_data=current,
+                        )
+                    )
                 except RuntimeError:
-                    pass  # No event loop running — skip (sync context)
+                    # No event loop — enqueue for the background loop to pick up
+                    try:
+                        self.enqueue_notification(
+                            org_id,
+                            "webhook",
+                            {
+                                "event_type": "ap_item.state_changed",
+                                "ap_item_id": ap_item_id,
+                                "new_state": kwargs["state"],
+                                "prev_state": str(prev_state),
+                            },
+                        )
+                    except Exception as enq_exc:
+                        logger.debug("Webhook enqueue fallback failed: %s", enq_exc)
             except Exception as wh_exc:
                 logger.warning("[APStore] Webhook emission failed for %s (will retry via queue): %s", ap_item_id, wh_exc)
 
@@ -847,7 +864,7 @@ class APStore:
         metadata = self._decode_json(item.get("metadata"))
         explicit = metadata.get("priority_score")
         if explicit is not None:
-            return self._safe_float(explicit, 0.0)
+            return safe_float(explicit, 0.0)
 
         severity_rank = self._exception_severity_rank(
             metadata.get("exception_severity") or item.get("exception_severity")
@@ -994,8 +1011,9 @@ class APStore:
     def get_pending_approver_ids(self, ap_item_id: str) -> List[str]:
         """Return Slack user IDs of pending approvers for an AP item.
 
-        Prefer ``approval_sent_to`` from the item's JSON metadata, then fall
-        back to any pending approval-chain step approvers stored in
+        Prefer ``approval_delivery_targets`` from the item's JSON metadata,
+        then Slack-style IDs from ``approval_sent_to``, then fall back to any
+        pending approval-chain step approvers stored in
         ``approval_steps``.
         """
         self.initialize()
@@ -1009,13 +1027,25 @@ class APStore:
         meta: Dict[str, Any] = {}
         try:
             meta = json.loads(row[0] or "{}")
-            sent_to = meta.get("approval_sent_to", [])
-            if isinstance(sent_to, list):
-                direct = [str(uid) for uid in sent_to if uid]
+            direct_targets = meta.get("approval_delivery_targets", [])
+            if isinstance(direct_targets, list):
+                direct = [str(uid).strip() for uid in direct_targets if str(uid).strip()]
                 if direct:
                     return direct
-            if isinstance(sent_to, str) and sent_to:
-                return [sent_to]
+            if isinstance(direct_targets, str) and str(direct_targets).strip():
+                return [str(direct_targets).strip()]
+
+            sent_to = meta.get("approval_sent_to", [])
+            if isinstance(sent_to, list):
+                direct = [
+                    str(uid).strip()
+                    for uid in sent_to
+                    if str(uid).strip() and str(uid).strip()[0] in {"U", "W"}
+                ]
+                if direct:
+                    return direct
+            if isinstance(sent_to, str) and str(sent_to).strip() and str(sent_to).strip()[0] in {"U", "W"}:
+                return [str(sent_to).strip()]
         except Exception:
             meta = {}
         chain_id = str(meta.get("approval_chain_id") or "").strip()
@@ -1541,6 +1571,10 @@ class APStore:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
         run_id = str(payload.get("id") or f"WFR-{uuid.uuid4().hex}")
+        _wf_org_id = payload.get("organization_id")
+        if not _wf_org_id:
+            logger.warning("organization_id missing in create_workflow_run payload (run_id=%s), falling back to 'default'", run_id)
+        _wf_org_id = str(_wf_org_id or "default")
         sql = self._prepare_sql("""
             INSERT INTO workflow_runs
             (id, workflow_name, workflow_type, organization_id, ap_item_id, status,
@@ -1556,7 +1590,7 @@ class APStore:
                     run_id,
                     str(payload.get("workflow_name") or ""),
                     payload.get("workflow_type"),
-                    str(payload.get("organization_id") or "default"),
+                    _wf_org_id,
                     payload.get("ap_item_id"),
                     str(payload.get("status") or "queued"),
                     payload.get("runtime_backend") or "local_db",
@@ -1651,6 +1685,10 @@ class APStore:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
         job_id = str(payload.get("id") or f"ARJ-{uuid.uuid4().hex}")
+        _arj_org_id = payload.get("organization_id")
+        if not _arj_org_id:
+            logger.warning("organization_id missing in create_agent_retry_job payload (job_id=%s), falling back to 'default'", job_id)
+        _arj_org_id = str(_arj_org_id or "default")
         idem_key = payload.get("idempotency_key")
         if idem_key:
             existing = self.get_agent_retry_job_by_key(str(idem_key))
@@ -1671,7 +1709,7 @@ class APStore:
                 sql,
                 (
                     job_id,
-                    str(payload.get("organization_id") or "default"),
+                    _arj_org_id,
                     str(payload.get("ap_item_id") or ""),
                     payload.get("gmail_id"),
                     str(payload.get("job_type") or "erp_post_retry"),

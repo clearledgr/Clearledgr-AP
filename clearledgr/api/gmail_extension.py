@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Body, Query
+from fastapi import APIRouter, Depends, HTTPException, Body, Query, Request
 from pydantic import BaseModel, Field
 
 from clearledgr.api.gmail_extension_models import (  # noqa: F401 — re-exported for back-compat
@@ -48,6 +48,7 @@ from clearledgr.api.gmail_extension_common import (
 from clearledgr.api.gmail_extension_support_routes import router as support_routes_router
 from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email
 from clearledgr.core.database import get_db
+from clearledgr.core.utils import safe_int
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +248,30 @@ async def _recover_ap_item_for_thread(
 
         finance_email = db.get_finance_email_by_gmail_id(message.id)
         if not finance_email:
-            continue
+            try:
+                from clearledgr.api.gmail_webhooks import process_single_email
+
+                await process_single_email(
+                    client=gmail_client,
+                    message=message,
+                    user_id=user_id,
+                    organization_id=organization_id,
+                    confidence=0.0,
+                    create_draft=False,
+                )
+            except Exception:
+                continue
+
+            try:
+                existing = db.get_ap_item_by_message_id(organization_id, message.id)
+            except Exception:
+                existing = None
+            if existing:
+                return existing
+
+            finance_email = db.get_finance_email_by_gmail_id(message.id)
+            if not finance_email:
+                continue
 
         seeded = runtime.seed_ap_item_for_invoice_processing(
             {
@@ -655,7 +679,8 @@ def get_invoice_pipeline(
 
 
 @router.get("/worklist")
-def get_extension_worklist(
+async def get_extension_worklist(
+    request: Request,
     organization_id: Optional[str] = None,
     limit: int = Query(default=200, ge=1, le=1000),
     user=Depends(get_current_user),
@@ -666,8 +691,13 @@ def get_extension_worklist(
     organisation; admin/owner roles may request any org.
     """
     from fastapi import HTTPException
+    from clearledgr.services.gmail_autopilot import ensure_gmail_autopilot_progress
 
     org_id = _resolve_org_id_for_user(user, organization_id)
+    try:
+        await ensure_gmail_autopilot_progress(request.app, user_id=str(getattr(user, "user_id", "") or "").strip())
+    except Exception:
+        pass
 
     db = get_db()
     items = db.list_ap_items(org_id, limit=limit, prioritized=True)
@@ -696,7 +726,7 @@ async def repair_historical_invoices(
         organization_id=org_id,
     )
     db = get_db()
-    limit = max(1, min(_safe_int(request.limit, 100), 500))
+    limit = max(1, min(safe_int(request.limit, 100), 500))
     candidates = _load_historical_invoice_repair_candidates(
         db,
         organization_id=org_id,
@@ -934,7 +964,12 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
     if user is None:
         # Auto-provision: create user from Google identity on first extension login
         from clearledgr.core.auth import create_user_from_google
-        org_id = str(request.organization_id or "default").strip() or "default"
+        email_domain = profile_email.split("@")[1].lower() if "@" in profile_email else ""
+        _bootstrap_db = get_db()
+        _domain_org = _bootstrap_db.get_organization_by_domain(email_domain) if email_domain else None
+        org_id = str((_domain_org or {}).get("id") or "default").strip() or "default"
+        if not _domain_org:
+            logger.warning("No org found for domain %s during extension bootstrap — using default", email_domain)
         user = create_user_from_google(
             email=profile_email.lower(),
             google_id=profile_email.lower(),
@@ -1030,7 +1065,12 @@ async def exchange_gmail_code(request: ExchangeCodeRequest):
     # Provision user if needed
     user = get_user_by_email(profile_email.lower())
     if user is None:
-        org_id = str(request.organization_id or "default").strip() or "default"
+        email_domain = profile_email.split("@")[1].lower() if "@" in profile_email else ""
+        _bootstrap_db = get_db()
+        _domain_org = _bootstrap_db.get_organization_by_domain(email_domain) if email_domain else None
+        org_id = str((_domain_org or {}).get("id") or "default").strip() or "default"
+        if not _domain_org:
+            logger.warning("No org found for domain %s during extension bootstrap — using default", email_domain)
         user = create_user_from_google(
             email=profile_email.lower(),
             google_id=profile_email.lower(),
@@ -1258,13 +1298,6 @@ def _parse_json_dict(raw: Any) -> Dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return {}
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _parse_iso_utc(raw: Any) -> Optional[datetime]:

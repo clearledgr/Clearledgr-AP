@@ -163,6 +163,110 @@ class TestPostingFailureCheck:
         assert result["alert"] is False
 
 
+class TestApproverHealthCheck:
+    def test_no_approvers_configured_is_healthy(self, db):
+        svc = MonitoringService("default")
+        result = svc._check_approver_health()
+        assert result["alert"] is False
+        assert "No approver emails" in result["message"]
+
+    def test_known_active_approver_is_healthy(self, db):
+        db.ensure_organization("default", organization_name="Default")
+        db.create_user(email="approver@company.com", name="Approver", organization_id="default", role="operator")
+        db.update_organization("default", settings={
+            "approval_thresholds": [
+                {"min_amount": 0, "max_amount": None, "approver_channel": "#approvals", "approvers": ["approver@company.com"]},
+            ]
+        })
+
+        svc = MonitoringService("default")
+        result = svc._check_approver_health()
+        assert result["alert"] is False
+        assert result["value"] == 0
+
+    def test_unknown_approver_triggers_alert(self, db):
+        db.ensure_organization("default", organization_name="Default")
+        db.update_organization("default", settings={
+            "approval_thresholds": [
+                {"min_amount": 0, "max_amount": None, "approver_channel": "#approvals", "approvers": ["departed@company.com"]},
+            ]
+        })
+
+        svc = MonitoringService("default")
+        result = svc._check_approver_health()
+        assert result["alert"] is True
+        assert result["value"] == 1
+        assert result["problems"][0]["email"] == "departed@company.com"
+        assert result["problems"][0]["issue"] == "unknown_user"
+
+    def test_inactive_approver_triggers_alert(self, db):
+        db.ensure_organization("default", organization_name="Default")
+        user = db.create_user(email="inactive@company.com", name="Gone", organization_id="default", role="operator")
+        db.update_user(user["id"], is_active=False)
+        db.update_organization("default", settings={
+            "approval_thresholds": [
+                {"min_amount": 0, "max_amount": None, "approver_channel": "#approvals", "approvers": ["inactive@company.com"]},
+            ]
+        })
+
+        svc = MonitoringService("default")
+        result = svc._check_approver_health()
+        assert result["alert"] is True
+        assert result["problems"][0]["issue"] == "inactive_user"
+
+    def test_stale_login_approver_triggers_alert(self, db, monkeypatch):
+        monkeypatch.setenv("MONITOR_THRESHOLD_APPROVER_STALE_DAYS", "7")
+        db.ensure_organization("default", organization_name="Default")
+        user = db.create_user(email="stale@company.com", name="Stale", organization_id="default", role="operator")
+        old_login = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        db.update_user(user["id"], last_seen_at=old_login)
+        db.update_organization("default", settings={
+            "approval_thresholds": [
+                {"min_amount": 0, "max_amount": None, "approver_channel": "#approvals", "approvers": ["stale@company.com"]},
+            ]
+        })
+
+        svc = MonitoringService("default")
+        result = svc._check_approver_health()
+        assert result["alert"] is True
+        assert result["problems"][0]["issue"] == "stale_login"
+
+    def test_recently_active_approver_is_healthy(self, db, monkeypatch):
+        monkeypatch.setenv("MONITOR_THRESHOLD_APPROVER_STALE_DAYS", "7")
+        db.ensure_organization("default", organization_name="Default")
+        user = db.create_user(email="active@company.com", name="Active", organization_id="default", role="operator")
+        recent_login = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        db.update_user(user["id"], last_seen_at=recent_login)
+        db.update_organization("default", settings={
+            "approval_thresholds": [
+                {"min_amount": 0, "max_amount": None, "approver_channel": "#approvals", "approvers": ["active@company.com"]},
+            ]
+        })
+
+        svc = MonitoringService("default")
+        result = svc._check_approver_health()
+        assert result["alert"] is False
+
+    def test_multiple_problems_reported(self, db):
+        db.ensure_organization("default", organization_name="Default")
+        user = db.create_user(email="deactivated@company.com", name="Gone", organization_id="default", role="operator")
+        db.update_user(user["id"], is_active=False)
+        db.update_organization("default", settings={
+            "approval_thresholds": [
+                {"min_amount": 0, "max_amount": None, "approver_channel": "#approvals",
+                 "approvers": ["unknown@company.com", "deactivated@company.com"]},
+            ]
+        })
+
+        svc = MonitoringService("default")
+        result = svc._check_approver_health()
+        assert result["alert"] is True
+        assert result["value"] == 2
+        issues = {p["issue"] for p in result["problems"]}
+        assert "unknown_user" in issues
+        assert "inactive_user" in issues
+
+
 # ---------------------------------------------------------------------------
 # Full run tests
 # ---------------------------------------------------------------------------
@@ -173,7 +277,7 @@ class TestRunAllChecks:
         result = svc.run_all_checks()
         assert result["healthy"] is True
         assert result["alert_count"] == 0
-        assert result["check_count"] == 5
+        assert result["check_count"] == 6
 
     def test_unhealthy_system(self, db):
         # Create auth failures
@@ -253,7 +357,7 @@ class TestMonitoringEndpoint:
         assert "healthy" in data
         assert "checks" in data
         assert "alerts" in data
-        assert data["check_count"] == 5
+        assert data["check_count"] == 6
 
 
 # ---------------------------------------------------------------------------

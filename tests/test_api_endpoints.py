@@ -138,18 +138,15 @@ class TestAuthEndpoints:
         # May fail if user exists, but should be 200 or 400
         assert response.status_code in [200, 400]
     
-    def test_google_identity_auth(self):
-        """Test Google Identity authentication."""
+    def test_google_identity_endpoint_removed(self):
+        """The /google-identity endpoint was a security backdoor — it minted
+        JWTs from self-reported email without validating a Google token.
+        Verify it no longer exists."""
         response = client.post("/auth/google-identity", json={
             "email": "user@company.com",
             "google_id": "google-123456",
         })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert "access_token" in data
-        assert "user_id" in data
-        assert "organization_id" in data
+        assert response.status_code in (404, 405)
 
     def test_google_callback_uses_one_time_auth_code_exchange(self, monkeypatch):
         monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-google-client")
@@ -1428,6 +1425,145 @@ class TestGmailWebhooks:
         assert payload["item"]["primary_source"]["thread_id"] == "thread-1"
         assert payload["item"]["primary_source"]["message_id"] == "msg-thread-1"
 
+    def test_recover_thread_processes_raw_gmail_message_when_finance_email_is_missing(self):
+        class _FakeDB:
+            def __init__(self):
+                self.items = {}
+                self.sources = []
+
+            def get_ap_item_by_thread(self, organization_id, thread_id):
+                for item in self.items.values():
+                    if item.get("organization_id") == organization_id and item.get("thread_id") == thread_id:
+                        return item
+                return None
+
+            def get_ap_item_by_message_id(self, organization_id, message_id):
+                for item in self.items.values():
+                    if item.get("organization_id") != organization_id:
+                        continue
+                    if item.get("message_id") == message_id:
+                        return item
+                    for source in self.sources:
+                        if (
+                            source.get("ap_item_id") == item.get("id")
+                            and source.get("source_type") == "gmail_message"
+                            and source.get("source_ref") == message_id
+                        ):
+                            return item
+                return None
+
+            def get_finance_email_by_gmail_id(self, gmail_id):
+                return None
+
+            def create_ap_item(self, payload):
+                item = {
+                    "id": "ap-thread-raw-1",
+                    "organization_id": payload.get("organization_id"),
+                    "thread_id": payload.get("thread_id"),
+                    "message_id": payload.get("message_id"),
+                    "state": payload.get("state"),
+                    "vendor_name": payload.get("vendor_name"),
+                    "invoice_number": payload.get("invoice_number"),
+                    "amount": payload.get("amount"),
+                    "currency": payload.get("currency"),
+                    "subject": payload.get("subject"),
+                    "sender": payload.get("sender"),
+                    "confidence": payload.get("confidence"),
+                    "metadata": payload.get("metadata") or {},
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.items[item["id"]] = item
+                return item
+
+            def get_ap_item(self, ap_item_id):
+                return self.items.get(ap_item_id)
+
+            def update_ap_item(self, ap_item_id, **kwargs):
+                if ap_item_id not in self.items:
+                    return False
+                self.items[ap_item_id].update(kwargs)
+                return True
+
+            def link_ap_item_source(self, payload):
+                self.sources.append(dict(payload or {}))
+                return payload
+
+            def list_ap_item_sources(self, ap_item_id):
+                return [row for row in self.sources if row.get("ap_item_id") == ap_item_id]
+
+        class _FakeGmailAPIClient:
+            def __init__(self, _user_id):
+                pass
+
+            async def ensure_authenticated(self):
+                return True
+
+            async def get_thread(self, thread_id):
+                assert thread_id == "thread-school-1"
+                return [
+                    SimpleNamespace(
+                        id="msg-school-1",
+                        thread_id="thread-school-1",
+                        subject="Fwd: School fee invoice",
+                        sender="mo@clearledgr.com",
+                    )
+                ]
+
+        async def _fake_process_single_email(*, message, organization_id, **_kwargs):
+            created = fake_db.create_ap_item({
+                "organization_id": organization_id,
+                "thread_id": "thread-school-1",
+                "message_id": message.id,
+                "state": "needs_approval",
+                "vendor_name": "My Son's School",
+                "invoice_number": "SCH-2026-04",
+                "amount": 250.0,
+                "currency": "USD",
+                "subject": message.subject,
+                "sender": message.sender,
+                "confidence": 0.91,
+                "metadata": {
+                    "primary_source": {
+                        "thread_id": "thread-school-1",
+                        "message_id": message.id,
+                    },
+                },
+            })
+            fake_db.link_ap_item_source({
+                "ap_item_id": created["id"],
+                "source_type": "gmail_message",
+                "source_ref": message.id,
+                "source_label": "Source email",
+                "metadata_json": {},
+            })
+            return {"status": "processed"}
+
+        fake_db = _FakeDB()
+        app.dependency_overrides[gmail_extension_module.get_current_user] = lambda: TokenData(
+            user_id="extension-user-1",
+            email="extension@example.com",
+            organization_id="default",
+            role="user",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
+                with patch.object(gmail_extension_module, "_gmail_api_client", _FakeGmailAPIClient):
+                    with patch("clearledgr.api.gmail_webhooks.process_single_email", AsyncMock(side_effect=_fake_process_single_email)) as process_mock:
+                        recover_response = client.post("/extension/by-thread/thread-school-1/recover", params={"organization_id": "default"})
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+
+        assert recover_response.status_code == 200
+        payload = recover_response.json()
+        assert payload["found"] is True
+        assert payload["recovered"] is True
+        assert payload["item"]["thread_id"] == "thread-school-1"
+        assert payload["item"]["message_id"] == "msg-school-1"
+        assert payload["item"]["vendor_name"] == "My Son's School"
+        assert process_mock.await_count == 1
+
     def test_exchange_gmail_code_preserves_existing_refresh_token_when_google_omits_one(self):
         fake_user = SimpleNamespace(
             id="gmail-user-1",
@@ -1537,10 +1673,21 @@ class TestAdminConsoleIntegrations:
         monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
         monkeypatch.setenv("API_BASE_URL", "http://127.0.0.1:8010")
         monkeypatch.delenv("GOOGLE_REDIRECT_URI", raising=False)
+        monkeypatch.delenv("GOOGLE_GMAIL_REDIRECT_URI", raising=False)
 
         auth_url = workspace_shell_module._generate_auth_url(state="signed-state")
 
         assert "redirect_uri=http%3A%2F%2F127.0.0.1%3A8010%2Fgmail%2Fcallback" in auth_url
+
+    def test_generate_gmail_auth_url_ignores_workspace_auth_callback_redirect(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
+        monkeypatch.setenv("API_BASE_URL", "https://api.clearledgr.com")
+        monkeypatch.setenv("GOOGLE_REDIRECT_URI", "https://api.clearledgr.com/auth/google/callback")
+        monkeypatch.delenv("GOOGLE_GMAIL_REDIRECT_URI", raising=False)
+
+        auth_url = workspace_shell_module._generate_auth_url(state="signed-state")
+
+        assert "redirect_uri=https%3A%2F%2Fapi.clearledgr.com%2Fgmail%2Fcallback" in auth_url
 
     def test_gmail_status_requires_reconnect_without_refresh_token(self):
         fake_db = MagicMock()
@@ -1682,6 +1829,91 @@ class TestAdminConsoleIntegrations:
         assert payload["channel_verified"] is True
         assert payload["channel"] == "#cl-finance-ap"
         assert payload["channel_id"] == "C123"
+
+    def test_slack_install_start_requests_email_lookup_scope(self, monkeypatch):
+        from urllib.parse import parse_qs, urlparse
+
+        app.dependency_overrides[workspace_shell_module.get_current_user] = lambda: self._fake_user("admin")
+        monkeypatch.setenv("SLACK_CLIENT_ID", "client-123")
+        monkeypatch.setenv("SLACK_CLIENT_SECRET", "secret-123")
+        monkeypatch.delenv("SLACK_OAUTH_SCOPES", raising=False)
+        monkeypatch.setenv("APP_BASE_URL", "https://public.clearledgr.test")
+        monkeypatch.delenv("SLACK_REDIRECT_URI", raising=False)
+        try:
+            response = client.post(
+                "/api/workspace/integrations/slack/install/start",
+                json={"organization_id": "default", "mode": "per_org", "redirect_path": "/"},
+            )
+        finally:
+            app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
+
+        assert response.status_code == 200
+        auth_url = response.json()["auth_url"]
+        parsed = parse_qs(urlparse(auth_url).query)
+        scopes = set((parsed.get("scope") or [""])[0].split(","))
+        user_scopes = set((parsed.get("user_scope") or [""])[0].split(","))
+        redirect_uri = (parsed.get("redirect_uri") or [""])[0]
+        assert "users:read" in scopes
+        assert "users:read.email" in scopes
+        assert "im:write" in scopes
+        assert user_scopes in (set(), {""})
+        assert redirect_uri == "https://public.clearledgr.test/api/workspace/integrations/slack/install/callback"
+
+    def test_slack_status_flags_missing_email_lookup_scope_for_reauth(self):
+        fake_db = MagicMock()
+        fake_db.get_organization.return_value = {
+            "id": "default",
+            "integration_mode": "per_org",
+            "settings_json": {"slack_channels": {"invoices": "cl-finance-ap"}},
+        }
+        fake_db.get_organization_integration.return_value = {
+            "status": "connected",
+            "mode": "per_org",
+            "last_sync_at": "2026-04-06T21:00:00+00:00",
+        }
+        fake_db.get_slack_installation.return_value = {
+            "team_id": "T123",
+            "team_name": "Clearledgr",
+            "scope_csv": "chat:write,commands,channels:read,groups:read,users:read",
+        }
+
+        with patch.object(workspace_shell_module, "get_db", return_value=fake_db):
+            with patch.object(
+                workspace_shell_module,
+                "_resolve_slack_runtime",
+                return_value={"connected": True, "source": "org_installation"},
+            ):
+                status = workspace_shell_module._slack_status_for_org("default")
+
+        assert status["connected"] is True
+        assert status["status"] == "reauthorization_required"
+        assert status["approval_channel"] == "cl-finance-ap"
+        assert status["requires_reauthorization"] is True
+        assert status["email_lookup_ready"] is False
+        assert "users:read.email" in status["missing_scopes"]
+        assert "im:write" in status["missing_scopes"]
+
+    def test_workspace_manifest_uses_invoice_interactive_callback(self, monkeypatch):
+        app.dependency_overrides[workspace_shell_module.get_current_user] = lambda: self._fake_user("admin")
+        monkeypatch.setenv("APP_BASE_URL", "https://public.clearledgr.test")
+        monkeypatch.delenv("SLACK_REDIRECT_URI", raising=False)
+        try:
+            response = client.get("/api/workspace/integrations/slack/manifest?organization_id=default")
+        finally:
+            app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        request_url = payload["manifest"]["settings"]["interactivity"]["request_url"]
+        redirect_urls = payload["manifest"]["oauth_config"]["redirect_urls"]
+        assert request_url.endswith("/slack/invoices/interactive")
+        assert request_url == "https://public.clearledgr.test/slack/invoices/interactive"
+        assert redirect_urls == ["https://public.clearledgr.test/api/workspace/integrations/slack/install/callback"]
+        bot_scopes = payload["manifest"]["oauth_config"]["scopes"]["bot"]
+        user_scopes = payload["manifest"]["oauth_config"]["scopes"]["user"]
+        assert "users:read.email" in bot_scopes
+        assert "im:write" in bot_scopes
+        assert user_scopes == []
 
 
 class TestERPEndpoints:
@@ -2545,6 +2777,29 @@ class TestExtensionEndpoints:
         assert allow_origin == "https://mail.google.com"
         assert "," not in allow_origin
         assert "*" not in allow_origin
+
+    def test_extension_worklist_nudges_gmail_autopilot_progress(self):
+        class _FakeDB:
+            def list_ap_items(self, *_args, **_kwargs):
+                return []
+
+        app.dependency_overrides[gmail_extension_module.get_current_user] = lambda: TokenData(
+            user_id="extension-user-1",
+            email="extension@example.com",
+            organization_id="default",
+            role="user",
+            exp=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        try:
+            with patch.object(gmail_extension_module, "get_db", return_value=_FakeDB()):
+                with patch("clearledgr.services.gmail_autopilot.ensure_gmail_autopilot_progress", AsyncMock(return_value={"started": True, "nudged": True})) as ensure_mock:
+                    response = client.get("/extension/worklist?organization_id=default")
+        finally:
+            app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
+
+        assert response.status_code == 200
+        assert response.json()["items"] == []
+        ensure_mock.assert_awaited_once()
 
     def test_cors_policy_drops_wildcard_when_explicit_origins_present(self):
         origins, regex = main_module._resolve_cors_policy(

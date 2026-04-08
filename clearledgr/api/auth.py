@@ -8,11 +8,14 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Query, Response, Cookie
@@ -213,6 +216,8 @@ def _issue_google_auth_code(*, access_token: str, refresh_token: str, organizati
         pass
     auth_code = secrets.token_urlsafe(32)
     expires_at = now + timedelta(seconds=_google_auth_code_ttl_seconds())
+    if not organization_id:
+        logger.warning("_issue_google_auth_code called without organization_id, falling back to 'default'")
     db.save_google_auth_code(
         auth_code=auth_code,
         access_token=access_token,
@@ -388,63 +393,11 @@ async def logout(
     return {"message": "Logged out successfully", "user_id": getattr(current_user, "user_id", None)}
 
 
-# ==================== GOOGLE IDENTITY ====================
-
-class GoogleIdentityRequest(BaseModel):
-    """Request from Gmail extension with Google identity."""
-    email: EmailStr
-    google_id: str = Field(..., description="Google account ID")
-
-
-class GoogleIdentityResponse(BaseModel):
-    """Response with Clearledgr token."""
-    access_token: str
-    expires_in: int
-    user_id: str
-    organization_id: str
-    is_new_user: bool = False
-
-
-@router.post("/google-identity", response_model=GoogleIdentityResponse)
-async def authenticate_with_google_identity(request: GoogleIdentityRequest):
-    """
-    Authenticate using Google Identity from Gmail.
-
-    This is used by the Gmail extension. Since the user is already
-    signed into Gmail, we trust their Google identity and:
-
-    1. If they're a registered Clearledgr user, return a token
-    2. If not, return 403 — open registration is disabled
-
-    No password needed - they're already authenticated with Google.
-    """
-    from clearledgr.core.auth import get_user_by_email
-
-    # Only allow existing users — no auto-registration via Google identity
-    user = get_user_by_email(request.email)
-    is_new = False
-
-    if not user:
-        raise HTTPException(
-            status_code=403,
-            detail="no_account_found",
-        )
-    
-    # Generate Clearledgr token
-    access_token = create_access_token(
-        user_id=user.id,
-        email=user.email,
-        organization_id=user.organization_id,
-        role=user.role,
-    )
-    
-    return GoogleIdentityResponse(
-        access_token=access_token,
-        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        user_id=user.id,
-        organization_id=user.organization_id,
-        is_new_user=is_new,
-    )
+# ==================== GOOGLE IDENTITY (REMOVED) ====================
+# The /google-identity endpoint was removed because it minted JWTs
+# from self-reported email without validating a Google token.
+# All auth now goes through Google OAuth token validation in
+# core/auth.py:_validate_google_token() — the Streak pattern.
 
 
 # ==================== USER MANAGEMENT ====================
@@ -719,7 +672,7 @@ async def invite_user(
         expires_at=expires_at,
     )
     base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")
-    invite_link = f"{base}/api/auth/google/start?invite_token={invite.get('token')}"
+    invite_link = f"{base}/auth/google/start?invite_token={invite.get('token')}"
 
     return {
         "message": "Invitation created",
@@ -741,6 +694,8 @@ async def start_google_web_auth(
         raise HTTPException(status_code=503, detail="GOOGLE_CLIENT_ID not configured")
 
     safe_redirect_path = _sanitize_redirect_path(redirect_path)
+    if not organization_id:
+        logger.warning("google_oauth_start called without organization_id, falling back to 'default'")
     state = _sign_google_state(
         {
             "organization_id": organization_id or "default",
@@ -827,14 +782,24 @@ async def google_web_auth_callback(
         org_id = str(invite.get("organization_id"))
         role = str(invite.get("role") or "member")
     else:
-        org_id = str(state_payload.get("organization_id") or email.split("@")[1].split(".")[0] or "default")
+        # Resolve org from email domain — never trust caller-supplied org_id
+        email_domain = email.split("@")[1].lower() if "@" in email else ""
+        from clearledgr.core.database import get_db as _get_db
+        _db = _get_db()
+        org = _db.get_organization_by_domain(email_domain) if email_domain else None
+        if org:
+            org_id = str(org.get("id") or org.get("organization_id"))
+        else:
+            org_id = "default"
+            logger.warning("No org found for domain %s — new user will be placed in default org", email_domain)
         role = "user"
 
     user = get_user_by_email(email)
     if user is None:
         user = create_user_from_google(email=email, google_id=google_id, organization_id=org_id)
     else:
-        db.update_user(user.id, google_id=google_id, organization_id=org_id, is_active=True)
+        db.update_user(user.id, google_id=google_id, is_active=True)
+        # Do not reassign existing users to a different org
         user = get_user_by_email(email)
     if user is None:
         raise HTTPException(status_code=500, detail="failed_to_create_user")

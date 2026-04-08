@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 
@@ -34,6 +34,79 @@ from clearledgr.core.database import get_db
 
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
+
+SLACK_REQUIRED_BOT_SCOPES = (
+    "chat:write",
+    "commands",
+    "channels:read",
+    "groups:read",
+    "im:write",
+    "users:read",
+    "users:read.email",
+)
+
+SLACK_REQUIRED_USER_SCOPES: tuple[str, ...] = ()
+
+
+def _public_app_base_url() -> str:
+    base = str(
+        os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")) or ""
+    ).strip().rstrip("/")
+    return base or "http://127.0.0.1:8010"
+
+
+def _slack_redirect_uri() -> str:
+    return str(
+        os.getenv(
+            "SLACK_REDIRECT_URI",
+            f"{_public_app_base_url()}/api/workspace/integrations/slack/install/callback",
+        )
+        or ""
+    ).strip()
+
+
+def _parse_slack_scope_csv(scope_csv: Optional[str]) -> List[str]:
+    return [
+        str(scope or "").strip()
+        for scope in str(scope_csv or "").split(",")
+        if str(scope or "").strip()
+    ]
+
+
+def _configured_slack_oauth_scopes() -> str:
+    configured = _parse_slack_scope_csv(
+        os.getenv("SLACK_OAUTH_SCOPES", ",".join(SLACK_REQUIRED_BOT_SCOPES))
+    )
+    merged: List[str] = []
+    seen = set()
+    for scope in [*configured, *SLACK_REQUIRED_BOT_SCOPES]:
+        token = str(scope or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        merged.append(token)
+    return ",".join(merged)
+
+
+def _configured_slack_user_oauth_scopes() -> str:
+    configured = _parse_slack_scope_csv(
+        os.getenv("SLACK_USER_OAUTH_SCOPES", ",".join(SLACK_REQUIRED_USER_SCOPES))
+    )
+    merged: List[str] = []
+    seen = set()
+    for scope in [*configured, *SLACK_REQUIRED_USER_SCOPES]:
+        token = str(scope or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        merged.append(token)
+    return ",".join(merged)
+
+
+def _missing_required_slack_scopes(scope_csv: Optional[str], user_scope_csv: Optional[str] = None) -> List[str]:
+    granted = set(_parse_slack_scope_csv(scope_csv)) | set(_parse_slack_scope_csv(user_scope_csv))
+    required = [*SLACK_REQUIRED_BOT_SCOPES, *SLACK_REQUIRED_USER_SCOPES]
+    return [scope for scope in required if scope not in granted]
 
 
 def _utcnow() -> datetime:
@@ -137,6 +210,12 @@ def _resolve_slack_runtime(*args, **kwargs):
     from clearledgr.services.slack_api import resolve_slack_runtime
 
     return resolve_slack_runtime(*args, **kwargs)
+
+
+def _get_slack_client(*args, **kwargs):
+    from clearledgr.services.slack_api import get_slack_client
+
+    return get_slack_client(*args, **kwargs)
 
 
 def _teams_api_client_class():
@@ -347,10 +426,16 @@ def _slack_status_for_org(organization_id: str) -> Dict[str, Any]:
     slack_channels = settings.get("slack_channels") if isinstance(settings.get("slack_channels"), dict) else {}
     connected = bool(runtime.get("connected"))
     approval_channel = slack_channels.get("invoices") if isinstance(slack_channels, dict) else None
+    scope_csv = str(install.get("scope_csv") or "").strip()
+    install_metadata = install.get("metadata") if isinstance(install.get("metadata"), dict) else {}
+    user_scope_csv = str((install_metadata or {}).get("user_scope_csv") or "").strip()
+    scope_audit_known = bool(scope_csv or user_scope_csv)
+    missing_scopes = _missing_required_slack_scopes(scope_csv, user_scope_csv) if scope_audit_known else []
+    requires_reauthorization = bool(connected and scope_audit_known and missing_scopes)
     return {
         "name": "slack",
         "connected": connected,
-        "status": "connected" if connected else "disconnected",
+        "status": "connected" if connected and not requires_reauthorization else ("reauthorization_required" if connected else "disconnected"),
         "mode": mode,
         "team_id": install.get("team_id"),
         "team_name": install.get("team_name"),
@@ -359,6 +444,12 @@ def _slack_status_for_org(organization_id: str) -> Dict[str, Any]:
         "install_recorded": bool(install),
         "source": runtime.get("source"),
         "last_sync_at": integration.get("last_sync_at"),
+        "scope_csv": scope_csv,
+        "user_scope_csv": user_scope_csv,
+        "scope_audit_known": scope_audit_known,
+        "missing_scopes": missing_scopes,
+        "email_lookup_ready": bool(scope_audit_known and "users:read.email" not in missing_scopes),
+        "requires_reauthorization": requires_reauthorization,
     }
 
 
@@ -444,6 +535,15 @@ def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
     slack_channels = settings.get("slack_channels") if isinstance(settings.get("slack_channels"), dict) else {}
     if integrations["slack"]["connected"] and not (slack_channels or {}).get("invoices"):
         required_actions.append({"code": "set_slack_channel", "message": "Set Slack approval channel"})
+    if integrations["slack"].get("requires_reauthorization"):
+        missing = ", ".join(integrations["slack"].get("missing_scopes") or [])
+        required_actions.append(
+            {
+                "code": "reauthorize_slack_scopes",
+                "message": f"Reconnect Slack to grant required scopes: {missing}",
+                "severity": "warning",
+            }
+        )
 
     slack_oauth_ready = bool(
         os.getenv("SLACK_CLIENT_ID", "").strip() and os.getenv("SLACK_CLIENT_SECRET", "").strip()
@@ -453,10 +553,7 @@ def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
             {"code": "configure_slack_oauth_env", "message": "Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET"}
         )
 
-    slack_redirect_uri = os.getenv(
-        "SLACK_REDIRECT_URI",
-        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/workspace/integrations/slack/install/callback",
-    ).strip()
+    slack_redirect_uri = _slack_redirect_uri()
 
     return {
         "organization_id": organization_id,
@@ -551,6 +648,34 @@ def _build_pilot_snapshot(kpis: Dict[str, Any]) -> Dict[str, Any]:
         "approval_reassigned_open_count": int(approval.get("reassigned_open_count") or 0),
         "entity_route_needs_review_count": int(summary.get("entity_route_needs_review_count") or 0),
         "entity_route_manual_resolution_count_30d": int(routing.get("manual_resolution_event_count_30d") or 0),
+        "highlights": [str(entry) for entry in highlights if str(entry or "").strip()][:4],
+    }
+
+
+def _build_proof_snapshot(kpis: Dict[str, Any]) -> Dict[str, Any]:
+    payload = kpis if isinstance(kpis, dict) else {}
+    proof = payload.get("proof_scorecard") if isinstance(payload.get("proof_scorecard"), dict) else {}
+    summary = proof.get("summary") if isinstance(proof.get("summary"), dict) else {}
+    decisions = proof.get("decisions") if isinstance(proof.get("decisions"), dict) else {}
+    followup = proof.get("approval_followup") if isinstance(proof.get("approval_followup"), dict) else {}
+    posting = proof.get("posting_reliability") if isinstance(proof.get("posting_reliability"), dict) else {}
+    recovery = proof.get("recovery") if isinstance(proof.get("recovery"), dict) else {}
+    highlights = proof.get("highlights") if isinstance(proof.get("highlights"), list) else []
+    return {
+        "window_days": int(proof.get("window_days") or 0),
+        "auto_approved_rate_pct": round(float(summary.get("auto_approved_rate_pct") or 0.0), 2),
+        "human_override_rate_pct": round(float(summary.get("human_override_rate_pct") or 0.0), 2),
+        "avg_approval_wait_hours": round(float(summary.get("avg_approval_wait_hours") or 0.0), 2),
+        "escalation_rate_pct": round(float(summary.get("escalation_rate_pct") or 0.0), 2),
+        "posting_success_rate_pct": round(float(summary.get("posting_success_rate_pct") or 0.0), 2),
+        "recovery_success_rate_pct": round(float(summary.get("recovery_success_rate_pct") or 0.0), 2),
+        "human_override_count": int(decisions.get("human_override_count") or 0),
+        "decision_count": int(decisions.get("decision_count") or 0),
+        "escalation_event_count_30d": int(followup.get("escalation_event_count_30d") or 0),
+        "posting_attempt_count": int(posting.get("attempted_count") or 0),
+        "posting_mismatch_count": int(posting.get("mismatch_count") or 0),
+        "recovery_attempt_count": int(recovery.get("attempted_count") or 0),
+        "recovered_count": int(recovery.get("recovered_count") or 0),
         "highlights": [str(entry) for entry in highlights if str(entry or "").strip()][:4],
     }
 
@@ -673,10 +798,17 @@ class LearningCalibrationRecomputeRequest(BaseModel):
 
 
 @router.get("/bootstrap")
-def get_admin_bootstrap(
+async def get_admin_bootstrap(
+    request: Request,
     organization_id: Optional[str] = Query(default=None),
     user: TokenData = Depends(get_current_user),
 ):
+    try:
+        from clearledgr.services.gmail_autopilot import ensure_gmail_autopilot_progress
+
+        await ensure_gmail_autopilot_progress(request.app, user_id=str(getattr(user, "user_id", "") or "").strip())
+    except Exception:
+        pass
     org_id = _resolve_org_id(user, organization_id)
     db = get_db()
     org = db.ensure_organization(org_id, organization_name=org_id)
@@ -748,6 +880,7 @@ def _safe_dashboard_stats(org_id: str) -> Dict[str, Any]:
         kpis = db.get_ap_kpis(org_id, approval_sla_minutes=approval_sla_minutes) if hasattr(db, "get_ap_kpis") else {}
         agentic_snapshot = _build_agentic_snapshot(kpis)
         pilot_snapshot = _build_pilot_snapshot(kpis)
+        proof_snapshot = _build_proof_snapshot(kpis)
         return {
             "total_invoices": total,
             "pending_approval": pending,
@@ -760,6 +893,7 @@ def _safe_dashboard_stats(org_id: str) -> Dict[str, Any]:
             "agentic_telemetry": (kpis or {}).get("agentic_telemetry") or {},
             "agentic_snapshot": agentic_snapshot,
             "pilot_snapshot": pilot_snapshot,
+            "proof_snapshot": proof_snapshot,
         }
     except Exception:
         return {}
@@ -828,14 +962,9 @@ def start_slack_install(
     if not client_id or not client_secret:
         raise HTTPException(status_code=503, detail="slack_oauth_not_configured")
 
-    redirect_uri = os.getenv(
-        "SLACK_REDIRECT_URI",
-        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/workspace/integrations/slack/install/callback",
-    ).strip()
-    scopes = os.getenv(
-        "SLACK_OAUTH_SCOPES",
-        "chat:write,commands,channels:read,groups:read,users:read",
-    ).strip()
+    redirect_uri = _slack_redirect_uri()
+    scopes = _configured_slack_oauth_scopes()
+    user_scopes = _configured_slack_user_oauth_scopes()
     state = _sign_state(
         {
             "organization_id": org_id,
@@ -853,6 +982,8 @@ def start_slack_install(
         "state": state,
         "response_type": "code",
     }
+    if user_scopes:
+        params["user_scope"] = user_scopes
     auth_url = f"https://slack.com/oauth/v2/authorize?{urlencode(params)}"
     return {"auth_url": auth_url, "state": state, "mode": request.mode}
 
@@ -875,10 +1006,7 @@ async def slack_install_callback(
 
     client_id = os.getenv("SLACK_CLIENT_ID", "").strip()
     client_secret = os.getenv("SLACK_CLIENT_SECRET", "").strip()
-    redirect_uri = os.getenv(
-        "SLACK_REDIRECT_URI",
-        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/workspace/integrations/slack/install/callback",
-    ).strip()
+    redirect_uri = _slack_redirect_uri()
     if not client_id or not client_secret:
         raise HTTPException(status_code=503, detail="slack_oauth_not_configured")
 
@@ -901,6 +1029,8 @@ async def slack_install_callback(
     authed_user = payload.get("authed_user") or {}
     access_token = payload.get("access_token")
     scope_csv = payload.get("scope") or ""
+    user_scope_csv = authed_user.get("scope") or ""
+    authed_user_token = authed_user.get("access_token")
     team_id = str(team.get("id") or "")
     if not team_id or not access_token:
         raise HTTPException(status_code=400, detail="invalid_slack_install_payload")
@@ -914,9 +1044,15 @@ async def slack_install_callback(
         bot_user_id=authed_user.get("id"),
         bot_token=access_token,
         scope_csv=scope_csv,
+        user_scope_csv=user_scope_csv,
+        user_token=authed_user_token,
         mode=mode,
         is_active=True,
-        metadata={"install_payload": payload},
+        metadata={
+            "install_payload": payload,
+            "user_scope_csv": user_scope_csv,
+            "authed_user_id": authed_user.get("id"),
+        },
     )
     db.update_organization(org_id, integration_mode=mode)
     from fastapi.responses import HTMLResponse
@@ -1065,11 +1201,10 @@ def slack_manifest_template(
     user: TokenData = Depends(get_current_user),
 ):
     org_id = _resolve_org_id(user, organization_id)
-    redirect_uri = os.getenv(
-        "SLACK_REDIRECT_URI",
-        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/api/workspace/integrations/slack/install/callback",
-    ).strip()
-    app_base = os.getenv("API_BASE_URL", "http://127.0.0.1:8010").rstrip("/")
+    redirect_uri = _slack_redirect_uri()
+    app_base = _public_app_base_url()
+    bot_scopes = [scope for scope in _configured_slack_oauth_scopes().split(",") if scope]
+    user_scopes = [scope for scope in _configured_slack_user_oauth_scopes().split(",") if scope]
     return {
         "organization_id": org_id,
         "manifest": {
@@ -1078,15 +1213,13 @@ def slack_manifest_template(
             "oauth_config": {
                 "redirect_urls": [redirect_uri],
                 "scopes": {
-                    "bot": os.getenv(
-                        "SLACK_OAUTH_SCOPES",
-                        "chat:write,commands,channels:read,groups:read,users:read",
-                    ).split(",")
+                    "bot": bot_scopes,
+                    "user": user_scopes,
                 },
             },
             "settings": {
                 "event_subscriptions": {"request_url": f"{app_base}/slack/events"},
-                "interactivity": {"is_enabled": True, "request_url": f"{app_base}/slack/interactions"},
+                "interactivity": {"is_enabled": True, "request_url": f"{app_base}/slack/invoices/interactive"},
                 "slash_commands": [
                     {"command": "/clearledgr", "url": f"{app_base}/slack/commands", "description": "Clearledgr AP"}
                 ],
@@ -2375,12 +2508,72 @@ def list_team_invites(
     organization_id: Optional[str] = Query(default=None),
     user: TokenData = Depends(get_current_user),
 ):
+    _require_admin(user)
     org_id = _resolve_org_id(user, organization_id)
     invites = get_db().list_team_invites(org_id)
     base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")
     for invite in invites:
-        invite["invite_link"] = f"{base}/api/auth/google/start?invite_token={invite.get('token')}"
+        invite["invite_link"] = f"{base}/auth/google/start?invite_token={invite.get('token')}"
     return {"organization_id": org_id, "invites": invites}
+
+
+@router.get("/team/approvers")
+async def list_team_approvers(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    runtime = _resolve_slack_runtime(org_id)
+    slack_connected = bool(runtime.get("connected"))
+    slack_client = _get_slack_client(organization_id=org_id) if slack_connected else None
+
+    approvers: List[Dict[str, Any]] = []
+    for row in db.get_users(org_id):
+        email = str(row.get("email") or "").strip().lower()
+        if not email:
+            continue
+
+        name = str(row.get("name") or "").strip() or email
+        slack_user_id = str(row.get("slack_user_id") or "").strip()
+        slack_resolution = "resolved" if slack_user_id else ("not_connected" if not slack_connected else "not_found")
+
+        if slack_connected and not slack_user_id and slack_client is not None:
+            try:
+                slack_user = await slack_client.lookup_user_by_email(email)
+                resolved_id = str((slack_user or {}).get("id") or "").strip()
+                if resolved_id:
+                    slack_user_id = resolved_id
+                    slack_resolution = "resolved"
+                    try:
+                        db.update_user(row["id"], slack_user_id=resolved_id)
+                    except Exception:
+                        pass
+                else:
+                    slack_resolution = "not_found"
+            except Exception:
+                slack_resolution = "lookup_failed"
+
+        approvers.append(
+            {
+                "id": row.get("id"),
+                "email": email,
+                "name": name,
+                "role": row.get("role") or "member",
+                "slack_user_id": slack_user_id or None,
+                "slack_resolution": slack_resolution,
+                "approval_ready": bool(slack_user_id),
+                "slack_mention": f"<@{slack_user_id}>" if slack_user_id else None,
+            }
+        )
+
+    approvers.sort(key=lambda entry: ((entry.get("name") or entry.get("email") or "").lower(), entry.get("email") or ""))
+    return {
+        "organization_id": org_id,
+        "slack_connected": slack_connected,
+        "approvers": approvers,
+    }
 
 
 @router.post("/team/invites")

@@ -21,6 +21,9 @@ __pycache__/
 *.log
 *.pid
 ui/gmail-extension/clearledgr.pem
+keys/
+*.pem
+*.key
 .claude/
 Screenshot *.png
 Claude rules.jpeg

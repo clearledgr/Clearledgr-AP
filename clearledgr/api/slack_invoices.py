@@ -5,7 +5,7 @@ import json
 import hashlib
 import logging
 import urllib.parse
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -17,6 +17,7 @@ from clearledgr.core.ap_item_resolution import (
 from clearledgr.core.database import get_db
 
 router = APIRouter(prefix="/slack/invoices", tags=["slack-invoices"])
+legacy_router = APIRouter(prefix="/slack", tags=["slack-invoices"])
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +43,86 @@ def _get_channel_action_block_reason(*args, **kwargs):
     from clearledgr.core.launch_controls import get_channel_action_block_reason
 
     return get_channel_action_block_reason(*args, **kwargs)
+
+
+def _slack_display_name_from_user(user_row: Optional[Dict[str, Any]], slack_user: Optional[Dict[str, Any]], fallback: str) -> str:
+    profile = (slack_user or {}).get("profile") if isinstance(slack_user, dict) else {}
+    candidates = [
+        (profile or {}).get("real_name_normalized"),
+        (profile or {}).get("real_name"),
+        (profile or {}).get("display_name_normalized"),
+        (profile or {}).get("display_name"),
+        (slack_user or {}).get("real_name") if isinstance(slack_user, dict) else None,
+        (slack_user or {}).get("name") if isinstance(slack_user, dict) else None,
+        (user_row or {}).get("name") if isinstance(user_row, dict) else None,
+        (user_row or {}).get("email") if isinstance(user_row, dict) else None,
+        fallback,
+    ]
+    for value in candidates:
+        token = str(value or "").strip()
+        if token:
+            return token
+    return fallback
+
+
+async def _resolve_slack_actor_identity(db, slack_user_id: str, organization_id: str) -> Dict[str, str]:
+    """Resolve Slack callback actor into a durable identity object."""
+    slack_user_id = str(slack_user_id or "").strip()
+    if not slack_user_id:
+        return {"email": "", "display_name": "", "slack_user_id": ""}
+
+    cached_user = db.get_user_by_slack_id(slack_user_id)
+    cached_email = str((cached_user or {}).get("email") or "").strip()
+    identity = {
+        "email": cached_email,
+        "display_name": _slack_display_name_from_user(cached_user, None, slack_user_id),
+        "slack_user_id": slack_user_id,
+    }
+
+    try:
+        from clearledgr.services.slack_api import get_slack_client
+
+        client = get_slack_client(organization_id=organization_id)
+        slack_user = await client.get_user_info(slack_user_id, prefer_user_token=True)
+        profile = slack_user.get("profile", {}) if isinstance(slack_user, dict) else {}
+        resolved_email = str(profile.get("email") or cached_email or "").strip()
+        display_name = _slack_display_name_from_user(cached_user, slack_user, slack_user_id)
+        identity = {
+            "email": resolved_email,
+            "display_name": display_name,
+            "slack_user_id": slack_user_id,
+        }
+
+        existing = db.get_user_by_email(resolved_email) if resolved_email else None
+        if existing:
+            updates: Dict[str, Any] = {"slack_user_id": slack_user_id}
+            if display_name and not str(existing.get("name") or "").strip():
+                updates["name"] = display_name
+            try:
+                db.update_user(existing["id"], **updates)
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.debug("Slack user identity resolution failed for %s: %s", slack_user_id, exc)
+
+    return identity
+
+
+def _get_pending_step_approvers(db, gmail_id: str, organization_id: str) -> Optional[list]:
+    """Get the approvers list from the pending approval step for an invoice."""
+    try:
+        chain = db.db_get_chain_by_invoice(organization_id, gmail_id)
+        if not chain or chain.get("status") != "pending":
+            return None
+        for step in (chain.get("steps") or []):
+            if step.get("status") == "pending":
+                raw = step.get("approvers") or "[]"
+                if isinstance(raw, str):
+                    return json.loads(raw)
+                return raw
+    except Exception as exc:
+        logger.debug("Pending step approvers lookup failed: %s", exc)
+    return None
 
 
 async def _require_slack_signature(request: Request) -> bytes:
@@ -180,10 +261,16 @@ async def _dispatch_slack_action(action: Any) -> Dict[str, Any]:
     runtime = _build_channel_runtime(
         organization_id=action.organization_id or "default",
         actor_id=action.actor_id or "slack_user",
-        actor_email=action.actor_display or action.actor_id or "slack_user",
+        actor_email=action.actor_email or action.actor_id or "slack_user",
         db=get_db(),
         fallback_actor="slack_user",
     )
+    actor_identity = {
+        "platform": "slack",
+        "platform_user_id": str(action.actor_id or "").strip(),
+        "email": str(action.actor_email or "").strip(),
+        "display_name": str(action.actor_display or "").strip(),
+    }
 
     if action.action == "approve":
         result = await _dispatch_runtime_intent(
@@ -198,6 +285,8 @@ async def _dispatch_slack_action(action: Any) -> Dict[str, Any]:
                 "source_message_ref": action.source_message_ref,
                 "actor_id": action.actor_id,
                 "actor_display": action.actor_display,
+                "actor_email": action.actor_email,
+                "actor_identity": actor_identity,
                 "action_run_id": action.run_id,
                 "decision_request_ts": action.request_ts,
                 "correlation_id": action.correlation_id,
@@ -248,6 +337,8 @@ async def _dispatch_slack_action(action: Any) -> Dict[str, Any]:
                 "source_message_ref": action.source_message_ref,
                 "actor_id": action.actor_id,
                 "actor_display": action.actor_display,
+                "actor_email": action.actor_email,
+                "actor_identity": actor_identity,
                 "action_run_id": action.run_id,
                 "decision_request_ts": action.request_ts,
                 "correlation_id": action.correlation_id,
@@ -281,6 +372,8 @@ async def _dispatch_slack_action(action: Any) -> Dict[str, Any]:
                 "source_message_ref": action.source_message_ref,
                 "actor_id": action.actor_id,
                 "actor_display": action.actor_display,
+                "actor_email": action.actor_email,
+                "actor_identity": actor_identity,
                 "action_run_id": action.run_id,
                 "decision_request_ts": action.request_ts,
                 "correlation_id": action.correlation_id,
@@ -297,6 +390,81 @@ async def _dispatch_slack_action(action: Any) -> Dict[str, Any]:
         }
 
     raise HTTPException(status_code=400, detail="unsupported_action")
+
+
+async def _run_and_record_slack_action(normalized: Any, processed_key: str) -> Dict[str, Any]:
+    db = get_db()
+    try:
+        response = await _dispatch_slack_action(normalized)
+    except HTTPException as exc:
+        _audit_callback_event(
+            db,
+            event_type="channel_action_failed",
+            source="slack",
+            organization_id=normalized.organization_id,
+            ap_item_id=normalized.ap_item_id,
+            actor_id=normalized.actor_id,
+            idempotency_key=f"{normalized.idempotency_key}:failed",
+            reason=str(exc.detail),
+            metadata={"action": normalized.to_dict(), "status_code": exc.status_code},
+            correlation_id=normalized.correlation_id,
+        )
+        raise
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.exception("Unhandled Slack interactive action error")
+        _audit_callback_event(
+            db,
+            event_type="channel_action_failed",
+            source="slack",
+            organization_id=normalized.organization_id,
+            ap_item_id=normalized.ap_item_id,
+            actor_id=normalized.actor_id,
+            idempotency_key=f"{normalized.idempotency_key}:failed",
+            reason=str(exc),
+            metadata={"action": normalized.to_dict(), "status_code": 500},
+            correlation_id=normalized.correlation_id,
+        )
+        raise HTTPException(status_code=500, detail="slack_action_failed")
+
+    _audit_callback_event(
+        db,
+        event_type="channel_action_processed",
+        source="slack",
+        organization_id=normalized.organization_id,
+        ap_item_id=normalized.ap_item_id,
+        actor_id=normalized.actor_id,
+        idempotency_key=processed_key,
+        metadata={
+            "action": normalized.to_dict(),
+            "response_type": response.get("response_type"),
+            "text": response.get("text"),
+            "result_status": (response.get("result") or {}).get("status"),
+        },
+        correlation_id=normalized.correlation_id,
+    )
+    return response
+
+
+async def _complete_slack_action_via_response_url(normalized: Any, processed_key: str, response_url: str) -> None:
+    try:
+        response = await _run_and_record_slack_action(normalized, processed_key)
+        final_reply = {
+            "response_type": response.get("response_type", "ephemeral"),
+            "text": response.get("text", "Action received."),
+            "replace_original": False,
+        }
+    except HTTPException as exc:
+        final_reply = {
+            "response_type": "ephemeral",
+            "text": str(exc.detail or "Action failed. Open the invoice in Clearledgr and try again."),
+            "replace_original": False,
+        }
+    await _post_to_response_url(
+        response_url,
+        final_reply,
+        organization_id=normalized.organization_id or "default",
+        ap_item_id=normalized.ap_item_id,
+    )
 
 
 @router.post("/interactive")
@@ -407,6 +575,7 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
         }
 
     processed_key = f"{normalized.idempotency_key}:processed"
+    received_key = f"{normalized.idempotency_key}:received"
     ap_item_row = None
     if normalized.ap_item_id and hasattr(db, "get_ap_item"):
         try:
@@ -414,10 +583,37 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
         except Exception as exc:
             logger.debug("AP item pre-fetch failed: %s", exc)
 
+    # Resolve Slack actor email for approver authorization
+    pending_step_approvers = None
+    try:
+        actor_identity = await _resolve_slack_actor_identity(db, normalized.actor_id, normalized.organization_id)
+        normalized.actor_email = str(actor_identity.get("email") or "").strip() or None
+        resolved_display = str(actor_identity.get("display_name") or "").strip()
+        if resolved_display:
+            normalized.actor_display = resolved_display
+        raw_payload = dict(normalized.raw_payload or {})
+        raw_payload.update(
+            {
+                "actor_email": normalized.actor_email,
+                "actor_display": normalized.actor_display,
+                "actor_identity": actor_identity,
+            }
+        )
+        normalized.raw_payload = raw_payload
+    except Exception as exc:
+        logger.debug("Slack actor email resolution failed: %s", exc)
+
+    # Load pending step approvers from approval chain
+    try:
+        pending_step_approvers = _get_pending_step_approvers(db, normalized.gmail_id, normalized.organization_id)
+    except Exception as exc:
+        logger.debug("Pending step approvers lookup failed: %s", exc)
+
     precedence = _resolve_action_precedence(
         normalized,
         ap_item_row,
-        already_processed=bool(db.get_ap_audit_event_by_key(processed_key)),
+        already_processed=bool(db.get_ap_audit_event_by_key(processed_key) or db.get_ap_audit_event_by_key(received_key)),
+        pending_step_approvers=pending_step_approvers,
     )
     if precedence.status == "duplicate":
         _audit_callback_event(
@@ -474,53 +670,30 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
         organization_id=normalized.organization_id,
         ap_item_id=normalized.ap_item_id,
         actor_id=normalized.actor_id,
-        idempotency_key=f"{normalized.idempotency_key}:received",
+        idempotency_key=received_key,
         metadata={"action": normalized.to_dict()},
         correlation_id=normalized.correlation_id,
     )
 
     response_url = str(payload.get("response_url") or "").strip()
-
-    try:
-        response = await _dispatch_slack_action(normalized)
-    except HTTPException as exc:
-        _audit_callback_event(
-            db,
-            event_type="channel_action_failed",
-            source="slack",
-            organization_id=normalized.organization_id,
-            ap_item_id=normalized.ap_item_id,
-            actor_id=normalized.actor_id,
-            idempotency_key=f"{normalized.idempotency_key}:failed",
-            reason=str(exc.detail),
-            metadata={"action": normalized.to_dict(), "status_code": exc.status_code},
-            correlation_id=normalized.correlation_id,
-        )
-        raise
-
-    _audit_callback_event(
-        db,
-        event_type="channel_action_processed",
-        source="slack",
-        organization_id=normalized.organization_id,
-        ap_item_id=normalized.ap_item_id,
-        actor_id=normalized.actor_id,
-        idempotency_key=processed_key,
-        metadata={
-            "action": normalized.to_dict(),
-            "response_type": response.get("response_type"),
-            "text": response.get("text"),
-            "result_status": (response.get("result") or {}).get("status"),
-        },
-        correlation_id=normalized.correlation_id,
-    )
-
-    final_reply = {"response_type": response.get("response_type", "ephemeral"), "text": response.get("text", "Action received.")}
     if response_url:
-        await _post_to_response_url(
+        background_tasks.add_task(
+            _complete_slack_action_via_response_url,
+            normalized,
+            processed_key,
             response_url,
-            final_reply,
-            organization_id=normalized.organization_id or "default",
-            ap_item_id=normalized.ap_item_id,
         )
-    return final_reply
+        return {
+            "response_type": "ephemeral",
+            "text": "Clearledgr is processing this action…",
+            "replace_original": False,
+        }
+
+    response = await _run_and_record_slack_action(normalized, processed_key)
+    return {"response_type": response.get("response_type", "ephemeral"), "text": response.get("text", "Action received.")}
+
+
+@legacy_router.post("/interactions")
+async def handle_legacy_slack_interactions(request: Request, background_tasks: BackgroundTasks):
+    """Backward-compatible alias for Slack apps configured from older manifests."""
+    return await handle_invoice_interactive(request, background_tasks)

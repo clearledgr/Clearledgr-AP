@@ -11,10 +11,11 @@ Alert channels are configurable via MONITOR_ALERT_CHANNELS env var
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ _DEFAULTS = {
     "stale_poll_hours": 2,          # hours since last autopilot poll
     "overdue_invoices_max": 20,     # max overdue invoices before alert
     "erp_error_rate_pct": 30,       # % of ERP calls that failed recently
+    "approver_stale_days": 30,      # days since last login to flag approver as stale
 }
 
 
@@ -61,6 +63,7 @@ class MonitoringService:
             self._check_stale_autopilot(),
             self._check_overdue_invoices(),
             self._check_posting_failures(),
+            self._check_approver_health(),
         ]
         alerts = [c for c in checks if c.get("alert")]
         return {
@@ -226,6 +229,141 @@ class MonitoringService:
             "alert": failure_rate > threshold and failed > 0,
             "severity": "critical" if failure_rate > 50 else "warning",
             "message": f"{failure_rate:.0f}% posting failure rate in last 24h ({failed} failed, threshold: {threshold}%)",
+        }
+
+
+    def _check_approver_health(self) -> Dict[str, Any]:
+        """Detect stale or unknown approver emails in approval routing rules.
+
+        Checks:
+        1. Approver emails not found in the org's user list (unknown/departed)
+        2. Approver emails belonging to inactive users (is_active=0)
+        3. Approver emails with no recent login (last_seen_at older than threshold)
+        4. Pending approval chains stuck on an unknown/inactive approver
+        """
+        problems: List[Dict[str, str]] = []
+
+        try:
+            # Collect all approver emails from org settings
+            org = self.db.get_organization(self.organization_id)
+            settings = org.get("settings_json") if org else None
+            if isinstance(settings, str):
+                settings = json.loads(settings) if settings else {}
+            settings = settings or {}
+            thresholds = settings.get("approval_thresholds") or []
+
+            configured_approvers: Set[str] = set()
+            for rule in thresholds:
+                for email in (rule.get("approvers") or []):
+                    email = str(email).strip().lower()
+                    if email:
+                        configured_approvers.add(email)
+
+            # Also collect approvers from active delegation rules
+            delegation_emails: Set[str] = set()
+            try:
+                from clearledgr.services.approval_delegation import get_delegation_service
+                svc = get_delegation_service(self.organization_id)
+                for rule in (svc.list_rules() or []):
+                    if rule.get("is_active"):
+                        delegation_emails.add(str(rule.get("delegate_email") or "").strip().lower())
+            except Exception:
+                pass
+
+            all_approver_emails = configured_approvers | delegation_emails
+
+            if not all_approver_emails:
+                return {
+                    "check": "approver_health",
+                    "value": 0,
+                    "threshold": 0,
+                    "alert": False,
+                    "severity": "info",
+                    "message": "No approver emails configured in routing rules",
+                }
+
+            # Load all org users (including inactive) for cross-reference
+            users = self.db.get_users(self.organization_id, include_inactive=True)
+            user_by_email = {
+                str(u.get("email") or "").strip().lower(): u
+                for u in users
+                if u.get("email")
+            }
+
+            stale_days = int(_threshold("approver_stale_days"))
+            stale_cutoff = (datetime.now(timezone.utc) - timedelta(days=stale_days)).isoformat()
+
+            for email in sorted(all_approver_emails):
+                user = user_by_email.get(email)
+                if not user:
+                    problems.append({"email": email, "issue": "unknown_user"})
+                    continue
+                if not user.get("is_active"):
+                    problems.append({"email": email, "issue": "inactive_user"})
+                    continue
+                last_seen = user.get("last_seen_at") or ""
+                if last_seen and last_seen < stale_cutoff:
+                    problems.append({"email": email, "issue": "stale_login", "last_seen_at": last_seen})
+
+            # Check pending approval chains for stuck approvers
+            try:
+                sql = self.db._prepare_sql(
+                    "SELECT s.approvers FROM approval_chains c "
+                    "JOIN approval_steps s ON s.chain_id = c.id "
+                    "WHERE c.organization_id = ? AND c.status = 'pending' AND s.status = 'pending'"
+                )
+                self.db.initialize()
+                with self.db.connect() as conn:
+                    cur = conn.cursor()
+                    cur.execute(sql, (self.organization_id,))
+                    rows = cur.fetchall()
+
+                pending_approver_emails: Set[str] = set()
+                for row in rows:
+                    raw = row[0] if row else "[]"
+                    try:
+                        emails = json.loads(raw) if isinstance(raw, str) else raw
+                        for e in (emails or []):
+                            pending_approver_emails.add(str(e).strip().lower())
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                for email in sorted(pending_approver_emails):
+                    user = user_by_email.get(email)
+                    if not user:
+                        # Only add if not already flagged from config rules
+                        if not any(p["email"] == email for p in problems):
+                            problems.append({"email": email, "issue": "pending_chain_unknown_approver"})
+                    elif not user.get("is_active"):
+                        if not any(p["email"] == email for p in problems):
+                            problems.append({"email": email, "issue": "pending_chain_inactive_approver"})
+            except Exception as exc:
+                logger.debug("Pending chain approver check failed: %s", exc)
+
+        except Exception as exc:
+            logger.debug("Approver health check failed: %s", exc)
+            return {
+                "check": "approver_health",
+                "value": 0,
+                "threshold": 0,
+                "alert": False,
+                "severity": "info",
+                "message": f"Approver health check skipped: {exc}",
+            }
+
+        count = len(problems)
+        return {
+            "check": "approver_health",
+            "value": count,
+            "threshold": 0,
+            "alert": count > 0,
+            "severity": "critical" if any(p["issue"].startswith("pending_chain") for p in problems) else "warning",
+            "message": (
+                f"{count} approver issue(s) detected: "
+                + ", ".join(f"{p['email']} ({p['issue']})" for p in problems[:5])
+                + (" ..." if count > 5 else "")
+            ) if problems else "All configured approvers are active org members",
+            "problems": problems,
         }
 
 

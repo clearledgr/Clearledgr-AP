@@ -203,3 +203,51 @@ def _m006_payment_overdue_alerted(cur, db):
     columns = db._table_columns(cur, "payments")
     if "overdue_alerted" not in columns:
         cur.execute("ALTER TABLE payments ADD COLUMN overdue_alerted TEXT")
+
+
+@migration(7, "User last_seen_at column for approver health checks")
+def _m007_user_last_seen_at(cur, db):
+    columns = db._table_columns(cur, "users")
+    if "last_seen_at" not in columns:
+        cur.execute("ALTER TABLE users ADD COLUMN last_seen_at TEXT")
+
+
+@migration(8, "User slack_user_id column for approver identity resolution")
+def _m008_user_slack_user_id(cur, db):
+    columns = db._table_columns(cur, "users")
+    if "slack_user_id" not in columns:
+        cur.execute("ALTER TABLE users ADD COLUMN slack_user_id TEXT")
+
+
+@migration(9, "Performance indexes on high-query tables")
+def _m009_performance_indexes(cur, db):
+    """Add indexes for query performance on ap_items, approval_steps,
+    ap_audit_events, and users tables."""
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_ap_items_vendor_name ON ap_items(vendor_name)",
+        "CREATE INDEX IF NOT EXISTS idx_ap_items_organization_state ON ap_items(organization_id, state)",
+        "CREATE INDEX IF NOT EXISTS idx_ap_items_due_date ON ap_items(due_date)",
+        "CREATE INDEX IF NOT EXISTS idx_approval_steps_status ON approval_steps(status)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_events_ap_item_id ON ap_audit_events(ap_item_id)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_events_event_type ON ap_audit_events(event_type)",
+        "CREATE INDEX IF NOT EXISTS idx_users_organization ON users(organization_id)",
+        "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+    ]
+    for ddl in indexes:
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v9] Index skipped (%s): %s", ddl.split("ON")[1].strip(), exc)
+
+
+@migration(10, "ERP OAuth state table for multi-worker support")
+def _m010_erp_oauth_state(cur, db):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS erp_oauth_states (
+            state TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            return_url TEXT,
+            erp_type TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)

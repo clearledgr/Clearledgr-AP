@@ -236,6 +236,39 @@ def _token_data_from_payload(payload: Dict[str, Any]) -> TokenData:
     )
 
 
+def _reconcile_token_data(token_data: TokenData) -> TokenData:
+    """Prefer the canonical DB user record over stale token claims.
+
+    Browser extension workspace tokens can outlive role or user-id migrations.
+    Reconcile by user_id first, then email, so admin/operator changes land
+    immediately without forcing the user through a full re-auth cycle.
+    """
+    try:
+        db = _get_db()
+        row = None
+        user_id = str(getattr(token_data, "user_id", "") or "").strip()
+        email = str(getattr(token_data, "email", "") or "").strip().lower()
+        if user_id:
+            row = db.get_user(user_id)
+        if not row and email:
+            row = db.get_user_by_email(email)
+        if not row:
+            return token_data
+        return TokenData(
+            user_id=str(row.get("id") or user_id or email or "unknown"),
+            email=str(row.get("email") or email or getattr(token_data, "email", "") or ""),
+            organization_id=str(
+                row.get("organization_id")
+                or getattr(token_data, "organization_id", None)
+                or "default"
+            ),
+            role=str(row.get("role") or getattr(token_data, "role", None) or "user"),
+            exp=token_data.exp,
+        )
+    except Exception:
+        return token_data
+
+
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
@@ -255,7 +288,7 @@ def get_current_user(
         try:
             payload = decode_token(token)
             if payload.get("type") == "access":
-                return _token_data_from_payload(payload)
+                return _reconcile_token_data(_token_data_from_payload(payload))
         except HTTPException:
             pass  # Not a Clearledgr JWT — try Google OAuth below
 
@@ -283,7 +316,7 @@ def get_current_user(
         try:
             payload = decode_token(workspace_access_cookie)
             if payload.get("type") == "access":
-                return _token_data_from_payload(payload)
+                return _reconcile_token_data(_token_data_from_payload(payload))
         except HTTPException:
             pass
         # Cookie might also be a Google token
@@ -337,21 +370,34 @@ def _validate_google_token(token: str) -> Optional[TokenData]:
         db = _get_db()
         user = db.get_user_by_email(email)
         if not user:
-            # Auto-provision: create user on first Google auth (like Streak)
+            # Auto-provision: resolve org from email domain (Streak pattern)
+            email_domain = email.split("@")[1].lower() if "@" in email else ""
+            domain_org = db.get_organization_by_domain(email_domain) if email_domain else None
+            provision_org = str((domain_org or {}).get("id") or "default")
+            if not domain_org:
+                logger.warning("No org found for domain %s — auto-provisioning into default org", email_domain)
             user = db.create_user(
                 email=email,
                 name=email.split("@")[0],
+                organization_id=provision_org,
                 role="operator",
             )
-            logger.info("Auto-provisioned user from Google OAuth: %s", email)
+            logger.info("Auto-provisioned user from Google OAuth: %s org=%s", email, provision_org)
 
+        user_id = user.get("id") or user.get("user_id") or email
         token_data = TokenData(
-            user_id=user.get("id") or user.get("user_id") or email,
+            user_id=user_id,
             email=email,
             organization_id=user.get("organization_id", "default"),
             role=user.get("role", "operator"),
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
+
+        # Record activity for approver health checks
+        try:
+            db.update_user(user_id, last_seen_at=datetime.now(timezone.utc).isoformat())
+        except Exception:
+            pass  # Non-critical — don't block auth on tracking failure
 
         # Cache the result
         _google_token_cache[token] = (
