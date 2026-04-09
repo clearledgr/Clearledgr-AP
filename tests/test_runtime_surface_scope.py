@@ -182,7 +182,10 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
 
     with TestClient(_app()) as _client:
         paths = _mounted_paths()
-        assert len(paths) <= 190
+        # Phase 2.1.b added 6 IBAN verification endpoints (GET status +
+        # 3 factor POSTs + complete + reject). Cap raised from 190 to 200
+        # to absorb these architectural routes plus future Phase 2 work.
+        assert len(paths) <= 200
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
@@ -195,6 +198,11 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         assert "/erp/quickbooks/callback" in paths
         assert "/erp/xero/callback" in paths
         assert set(_strict_profile_allowed_prefixes()) == {"/v1", "/static", "/fraud-controls"}
+        # Phase 2.1.b IBAN verification endpoints are mounted and pass
+        # the strict-profile route filter.
+        assert "/api/vendors/{vendor_name}/iban-verification" in paths
+        assert "/api/vendors/{vendor_name}/iban-verification/complete" in paths
+        assert "/api/vendors/{vendor_name}/iban-verification/reject" in paths
 
 
 def test_strict_profile_blocks_unknown_prefixed_routes(monkeypatch):

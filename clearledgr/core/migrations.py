@@ -445,3 +445,76 @@ def _m013_bank_details_encryption(cur, db):
             "[Migration v13] Backfilled bank details: ap_items=%d vendor_profiles=%d",
             ap_items_count, vendor_count,
         )
+
+
+@migration(14, "IBAN change freeze state (DESIGN_THESIS.md §8)")
+def _m014_iban_change_freeze(cur, db):
+    """Add IBAN-change-freeze columns to vendor_profiles.
+
+    Phase 2.1.b — IBAN change freeze + three-factor verification.
+
+    When an incoming invoice presents bank details that differ from the
+    vendor's verified details, we freeze the vendor: any further
+    invoices for that vendor are blocked until a human completes the
+    three-factor verification flow.
+
+    Columns:
+      - ``pending_bank_details_encrypted`` — Fernet ciphertext of the
+        NEW (unverified) details that triggered the freeze. The
+        verified ``bank_details_encrypted`` column stays untouched
+        until verification completes.
+      - ``iban_change_pending`` — boolean flag checked by the
+        validation gate. When true, the gate blocks every invoice for
+        the vendor with reason code ``iban_change_pending`` (error).
+      - ``iban_change_detected_at`` — ISO timestamp of the freeze start.
+      - ``iban_change_verification_state`` — JSON dict tracking the
+        three factors:
+            {
+              "email_domain_factor": {
+                "verified": bool,
+                "sender_domain": str,
+                "matched_known_domain": bool,
+                "recorded_at": iso
+              },
+              "phone_factor": {
+                "verified": bool,
+                "verified_phone_number": str,
+                "caller_name_at_vendor": str,
+                "verified_by": str,
+                "verified_at": iso,
+                "notes": str
+              },
+              "sign_off_factor": {
+                "verified": bool,
+                "verified_by": str,
+                "verified_at": iso
+              }
+            }
+    """
+    for ddl in (
+        "ALTER TABLE vendor_profiles ADD COLUMN pending_bank_details_encrypted TEXT",
+        "ALTER TABLE vendor_profiles ADD COLUMN iban_change_pending INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE vendor_profiles ADD COLUMN iban_change_detected_at TEXT",
+        "ALTER TABLE vendor_profiles ADD COLUMN iban_change_verification_state TEXT",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "already exists" in msg or "duplicate column" in msg:
+                logger.info(
+                    "[Migration v14] column already present, skipping: %s",
+                    ddl.split("ADD COLUMN")[1].strip(),
+                )
+            else:
+                raise
+
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_vendor_profiles_iban_change_pending "
+            "ON vendor_profiles(organization_id, iban_change_pending)"
+        )
+    except Exception as exc:
+        logger.warning(
+            "[Migration v14] iban_change_pending index skipped: %s", exc
+        )

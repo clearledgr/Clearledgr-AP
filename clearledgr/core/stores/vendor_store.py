@@ -44,6 +44,14 @@ CREATE TABLE IF NOT EXISTS vendor_profiles (
     -- Phase 2.1.a: Fernet-encrypted bank details (DESIGN_THESIS.md §19).
     -- Never store plaintext IBANs or account numbers in metadata.
     bank_details_encrypted TEXT,
+    -- Phase 2.1.b: IBAN change freeze state (DESIGN_THESIS.md §8).
+    -- pending_bank_details_encrypted holds the NEW unverified details
+    -- that triggered the freeze; the verified bank_details_encrypted
+    -- stays untouched until three-factor verification completes.
+    pending_bank_details_encrypted TEXT,
+    iban_change_pending INTEGER NOT NULL DEFAULT 0,
+    iban_change_detected_at TEXT,
+    iban_change_verification_state TEXT,
     UNIQUE(organization_id, vendor_name)
 )
 """
@@ -138,6 +146,7 @@ class VendorStore:
                         ("sender_domains", []),
                         ("anomaly_flags", []),
                         ("metadata", {}),
+                        ("iban_change_verification_state", None),
                     ):
                         decoded = _loads(parsed.get(key))
                         parsed[key] = decoded if decoded is not None else default
@@ -155,6 +164,7 @@ class VendorStore:
                         ("sender_domains", []),
                         ("anomaly_flags", []),
                         ("metadata", {}),
+                        ("iban_change_verification_state", None),
                     ):
                         decoded = _loads(parsed.get(key))
                         parsed[key] = decoded if decoded is not None else default
@@ -228,11 +238,24 @@ class VendorStore:
             # (set_vendor_bank_details / get_vendor_bank_details) handle
             # encryption + decryption + masking correctly.
             "bank_details_encrypted",
+            # Phase 2.1.b: IBAN change freeze state. Use
+            # start_iban_change_freeze / complete_iban_change_freeze /
+            # reject_iban_change_freeze for typed access.
+            "pending_bank_details_encrypted",
+            "iban_change_pending",
+            "iban_change_detected_at",
+            "iban_change_verification_state",
         }
         safe_fields = {k: v for k, v in fields.items() if k in _ALLOWED}
 
         # JSON-encode list/dict values
-        for key in ("vendor_aliases", "sender_domains", "anomaly_flags", "metadata"):
+        for key in (
+            "vendor_aliases",
+            "sender_domains",
+            "anomaly_flags",
+            "metadata",
+            "iban_change_verification_state",
+        ):
             if key in safe_fields and isinstance(safe_fields[key], (list, dict)):
                 safe_fields[key] = json.dumps(safe_fields[key])
 
@@ -366,6 +389,325 @@ class VendorStore:
         except Exception as exc:
             logger.warning(
                 "[VendorStore] set_vendor_bank_details upsert failed: %s", exc
+            )
+            return False
+
+    # ------------------------------------------------------------------ #
+    # Phase 2.1.b: IBAN change freeze state                                #
+    # ------------------------------------------------------------------ #
+
+    def is_iban_change_pending(
+        self, organization_id: str, vendor_name: str
+    ) -> bool:
+        """Return True iff the vendor is currently under an IBAN freeze."""
+        profile = self.get_vendor_profile(organization_id, vendor_name)
+        if not profile:
+            return False
+        return bool(profile.get("iban_change_pending"))
+
+    def get_iban_change_verification_state(
+        self, organization_id: str, vendor_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return the JSON-decoded verification state dict (or None)."""
+        profile = self.get_vendor_profile(organization_id, vendor_name)
+        if not profile:
+            return None
+        state = profile.get("iban_change_verification_state")
+        if isinstance(state, dict):
+            return state
+        return None
+
+    def get_pending_bank_details(
+        self, organization_id: str, vendor_name: str
+    ) -> Optional[Dict[str, str]]:
+        """Decrypt and return the pending (unverified) bank details."""
+        from clearledgr.core.stores.bank_details import decrypt_bank_details
+
+        sql = self._prepare_sql(
+            "SELECT pending_bank_details_encrypted FROM vendor_profiles "
+            "WHERE organization_id = ? AND vendor_name = ?"
+        )
+        try:
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, vendor_name))
+                row = cur.fetchone()
+        except Exception as exc:
+            logger.warning("[VendorStore] get_pending_bank_details failed: %s", exc)
+            return None
+        if not row:
+            return None
+        ciphertext = (
+            row["pending_bank_details_encrypted"]
+            if hasattr(row, "keys")
+            else (row[0] if row else None)
+        )
+        return decrypt_bank_details(ciphertext, decrypt_fn=self._decrypt_secret)
+
+    def get_pending_bank_details_masked(
+        self, organization_id: str, vendor_name: str
+    ) -> Optional[Dict[str, str]]:
+        """Return the masked-for-display pending bank details dict."""
+        from clearledgr.core.stores.bank_details import mask_bank_details
+
+        plaintext = self.get_pending_bank_details(organization_id, vendor_name)
+        return mask_bank_details(plaintext)
+
+    def start_iban_change_freeze(
+        self,
+        organization_id: str,
+        vendor_name: str,
+        *,
+        pending_bank_details: Dict[str, Any],
+        sender_domain: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Freeze the vendor and record the new unverified bank details.
+
+        Initializes the verification state dict:
+          - email_domain_factor auto-passes iff ``sender_domain`` is in
+            the vendor's known ``sender_domains`` list. Otherwise the
+            factor is auto-failed and the verifier must manually
+            override or reject.
+          - phone_factor starts unverified
+          - sign_off_factor starts unverified
+
+        Returns the updated verification state dict, or None on failure.
+        Callers that need to know whether the freeze is new vs. a
+        no-op (vendor already frozen) should check
+        ``is_iban_change_pending`` first — this method is idempotent
+        and will NOT overwrite an existing freeze.
+        """
+        from clearledgr.core.stores.bank_details import (
+            encrypt_bank_details,
+            normalize_bank_details,
+        )
+
+        profile = self.get_vendor_profile(organization_id, vendor_name)
+        if not profile:
+            logger.warning(
+                "[VendorStore] Cannot freeze unknown vendor %s/%s",
+                organization_id, vendor_name,
+            )
+            return None
+
+        # Idempotent: if already frozen, return current state unchanged
+        if profile.get("iban_change_pending"):
+            existing = profile.get("iban_change_verification_state")
+            return existing if isinstance(existing, dict) else None
+
+        cleaned = normalize_bank_details(pending_bank_details)
+        if not cleaned:
+            logger.warning(
+                "[VendorStore] start_iban_change_freeze called with empty bank details"
+            )
+            return None
+
+        try:
+            ciphertext = encrypt_bank_details(
+                cleaned, encrypt_fn=self._encrypt_secret
+            )
+        except Exception as exc:
+            logger.error(
+                "[VendorStore] pending bank details encryption failed: %s", exc
+            )
+            return None
+
+        # Auto-check email-domain factor against known sender_domains
+        known_domains = profile.get("sender_domains") or []
+        if isinstance(known_domains, str):
+            try:
+                known_domains = json.loads(known_domains)
+            except json.JSONDecodeError:
+                known_domains = []
+        normalized_sender = str(sender_domain or "").strip().lower()
+        normalized_known = [
+            str(d or "").strip().lower() for d in known_domains if d
+        ]
+        domain_matches = bool(
+            normalized_sender and normalized_sender in normalized_known
+        )
+        now = _now()
+        verification_state = {
+            "email_domain_factor": {
+                "verified": domain_matches,
+                "sender_domain": normalized_sender,
+                "matched_known_domain": domain_matches,
+                "recorded_at": now,
+            },
+            "phone_factor": {
+                "verified": False,
+                "verified_phone_number": None,
+                "caller_name_at_vendor": None,
+                "verified_by": None,
+                "verified_at": None,
+                "notes": None,
+            },
+            "sign_off_factor": {
+                "verified": False,
+                "verified_by": None,
+                "verified_at": None,
+            },
+        }
+
+        try:
+            self.upsert_vendor_profile(
+                organization_id,
+                vendor_name,
+                pending_bank_details_encrypted=ciphertext,
+                iban_change_pending=1,
+                iban_change_detected_at=now,
+                iban_change_verification_state=verification_state,
+            )
+        except Exception as exc:
+            logger.error(
+                "[VendorStore] start_iban_change_freeze upsert failed: %s", exc
+            )
+            return None
+        return verification_state
+
+    def record_iban_change_factor(
+        self,
+        organization_id: str,
+        vendor_name: str,
+        *,
+        factor: str,
+        payload: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Record a single verification factor on an active freeze.
+
+        ``factor`` must be one of:
+          - ``"email_domain_factor"``
+          - ``"phone_factor"``
+          - ``"sign_off_factor"``
+
+        Merges ``payload`` into the existing factor sub-dict and sets
+        ``verified=True`` if the payload does not explicitly pass
+        ``verified=False``. Returns the full updated verification state
+        dict, or None if the vendor isn't frozen or the factor name is
+        unknown.
+        """
+        _ALLOWED_FACTORS = {
+            "email_domain_factor",
+            "phone_factor",
+            "sign_off_factor",
+        }
+        if factor not in _ALLOWED_FACTORS:
+            return None
+
+        profile = self.get_vendor_profile(organization_id, vendor_name)
+        if not profile or not profile.get("iban_change_pending"):
+            return None
+
+        state = profile.get("iban_change_verification_state")
+        if not isinstance(state, dict):
+            state = {}
+        current_factor = dict(state.get(factor) or {})
+        current_factor.update(payload or {})
+        # Default verified=True unless the caller explicitly set it
+        if "verified" not in (payload or {}):
+            current_factor["verified"] = True
+        state[factor] = current_factor
+
+        try:
+            self.upsert_vendor_profile(
+                organization_id,
+                vendor_name,
+                iban_change_verification_state=state,
+            )
+        except Exception as exc:
+            logger.error(
+                "[VendorStore] record_iban_change_factor upsert failed: %s", exc
+            )
+            return None
+        return state
+
+    def complete_iban_change_freeze(
+        self,
+        organization_id: str,
+        vendor_name: str,
+    ) -> bool:
+        """Lift the freeze: promote pending bank details to verified.
+
+        Caller MUST have checked all three factors are verified before
+        calling this. The service layer enforces that check; direct
+        store callers are trusted.
+
+        Copies ``pending_bank_details_encrypted`` to
+        ``bank_details_encrypted``, clears the pending column, clears
+        the freeze flag + detected_at + verification_state, and bumps
+        ``bank_details_changed_at`` to now for audit.
+        """
+        profile = self.get_vendor_profile(organization_id, vendor_name)
+        if not profile or not profile.get("iban_change_pending"):
+            return False
+
+        # Read the pending ciphertext directly so we don't decrypt +
+        # re-encrypt unnecessarily.
+        sql = self._prepare_sql(
+            "SELECT pending_bank_details_encrypted FROM vendor_profiles "
+            "WHERE organization_id = ? AND vendor_name = ?"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (organization_id, vendor_name))
+            row = cur.fetchone()
+        if not row:
+            return False
+        pending_ct = (
+            row["pending_bank_details_encrypted"]
+            if hasattr(row, "keys")
+            else (row[0] if row else None)
+        )
+        if not pending_ct:
+            return False
+
+        now = _now()
+        try:
+            self.upsert_vendor_profile(
+                organization_id,
+                vendor_name,
+                bank_details_encrypted=pending_ct,
+                bank_details_changed_at=now,
+                pending_bank_details_encrypted=None,
+                iban_change_pending=0,
+                iban_change_detected_at=None,
+                iban_change_verification_state=None,
+            )
+            return True
+        except Exception as exc:
+            logger.error(
+                "[VendorStore] complete_iban_change_freeze upsert failed: %s", exc
+            )
+            return False
+
+    def reject_iban_change_freeze(
+        self, organization_id: str, vendor_name: str
+    ) -> bool:
+        """Reject the unverified change and clear the freeze.
+
+        The pending bank details are discarded; the verified
+        ``bank_details_encrypted`` column keeps its old value. Every
+        invoice that presented the rejected details should be
+        escalated to human review via the normal gate path (the new
+        details never reach the verified column, so future invoices
+        with the old details will pass).
+        """
+        profile = self.get_vendor_profile(organization_id, vendor_name)
+        if not profile or not profile.get("iban_change_pending"):
+            return False
+        try:
+            self.upsert_vendor_profile(
+                organization_id,
+                vendor_name,
+                pending_bank_details_encrypted=None,
+                iban_change_pending=0,
+                iban_change_detected_at=None,
+                iban_change_verification_state=None,
+            )
+            return True
+        except Exception as exc:
+            logger.error(
+                "[VendorStore] reject_iban_change_freeze upsert failed: %s", exc
             )
             return False
 

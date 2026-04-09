@@ -419,6 +419,11 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/ap/items/[^/]+/retry-post$",
         # Phase 1.4: override-window reversal endpoint
         r"^/api/ap/items/[^/]+/reverse$",
+        # Phase 2.1.b: IBAN change verification workflow endpoints
+        r"^/api/vendors/[^/]+/iban-verification$",
+        r"^/api/vendors/[^/]+/iban-verification/factors/(phone|sign-off|email-domain)$",
+        r"^/api/vendors/[^/]+/iban-verification/complete$",
+        r"^/api/vendors/[^/]+/iban-verification/reject$",
         r"^/api/ap/items/[^/]+/field-review/resolve$",
         r"^/api/ap/items/[^/]+/fields$",
         r"^/api/ap/items/[^/]+/gmail-link$",
@@ -856,6 +861,17 @@ except ImportError:
 try:
     from clearledgr.api.fraud_controls import router as fraud_controls_router
     app.include_router(fraud_controls_router)
+except ImportError:
+    pass
+
+# Include IBAN Change Verification API — Phase 2.1.b.
+# Three-factor verification workflow that lifts the IBAN change freeze
+# started by the validation gate when an invoice presents bank details
+# differing from the vendor's verified profile. CFO or owner role
+# required for writes. See DESIGN_THESIS.md §8.
+try:
+    from clearledgr.api.iban_verification import router as iban_verification_router
+    app.include_router(iban_verification_router)
 except ImportError:
     pass
 

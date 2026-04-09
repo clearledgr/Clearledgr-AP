@@ -1597,11 +1597,21 @@ class InvoiceValidationMixin:
         # of MISMATCHED FIELD NAMES in the gate reason details. Never
         # the values themselves: the audit trail records "iban changed"
         # without recording either the old or new IBAN.
+        #
+        # Phase 2.1.b: when a mismatch is detected on an established
+        # vendor, delegate to IbanChangeFreezeService to start a freeze.
+        # The freeze will also cause the ``iban_change_pending`` blocking
+        # reason code to fire via check 4d below on every subsequent
+        # invoice for the vendor until a human completes the three-factor
+        # verification flow.
         if isinstance(invoice.bank_details, dict) and invoice.bank_details:
             try:
                 from clearledgr.core.stores.bank_details import (
                     diff_bank_details_field_names,
                     normalize_bank_details,
+                )
+                from clearledgr.services.iban_change_freeze import (
+                    get_iban_change_freeze_service,
                 )
 
                 stored_bank: Optional[Dict[str, Any]] = None
@@ -1638,8 +1648,89 @@ class InvoiceValidationMixin:
                                 "mismatched_fields": mismatch_fields,
                             },
                         )
+
+                        # Auto-start the freeze when the IBAN or any
+                        # sensitive banking field has changed. The
+                        # freeze service records the pending details on
+                        # the vendor profile and runs the email-domain
+                        # factor auto-check. The existing
+                        # ``bank_details_mismatch_from_invoice`` reason
+                        # code above already blocks THIS invoice; the
+                        # freeze also blocks every FUTURE invoice for
+                        # this vendor via the check below.
+                        try:
+                            freeze_svc = get_iban_change_freeze_service(
+                                self.organization_id, db=self.db
+                            )
+                            sender_domain = ""
+                            sender_field = str(invoice.sender or "")
+                            if "@" in sender_field:
+                                sender_domain = sender_field.rsplit("@", 1)[-1]
+                            sender_domain = sender_domain.strip().lower().strip(">")
+                            ap_item_id_for_audit = self._lookup_ap_item_id(
+                                gmail_id=invoice.gmail_id,
+                                vendor_name=invoice.vendor_name,
+                                invoice_number=invoice.invoice_number,
+                            ) if hasattr(self, "_lookup_ap_item_id") else None
+                            freeze_svc.detect_and_maybe_freeze(
+                                vendor_name=invoice.vendor_name,
+                                extracted_bank_details=extracted_clean,
+                                sender_domain=sender_domain,
+                                triggering_ap_item_id=ap_item_id_for_audit,
+                            )
+                        except Exception as freeze_exc:
+                            logger.warning(
+                                "Auto-freeze detect failed (non-fatal): %s",
+                                freeze_exc,
+                            )
             except Exception as bank_exc:
                 logger.warning("Bank details comparison failed (non-fatal): %s", bank_exc)
+
+        # 4d) IBAN change freeze — blocks every invoice for a vendor
+        # whose freeze is still active (Phase 2.1.b). This fires
+        # independently of the 4c mismatch detection above: the freeze
+        # persists across multiple invoices until a human completes
+        # three-factor verification via the /iban-verification API.
+        # Severity=error so the Phase 1.1 enforcement machinery
+        # force-escalates any LLM 'approve' on a frozen vendor.
+        try:
+            if invoice.vendor_name and hasattr(self.db, "is_iban_change_pending"):
+                if self.db.is_iban_change_pending(
+                    self.organization_id, invoice.vendor_name
+                ):
+                    verification_state = self.db.get_iban_change_verification_state(
+                        self.organization_id, invoice.vendor_name
+                    ) or {}
+                    missing = [
+                        name
+                        for name in (
+                            "email_domain_factor",
+                            "phone_factor",
+                            "sign_off_factor",
+                        )
+                        if not (verification_state.get(name) or {}).get("verified")
+                    ]
+                    add_reason(
+                        "iban_change_pending",
+                        (
+                            f"Vendor '{invoice.vendor_name}' has a pending IBAN "
+                            "change freeze. All invoices for this vendor are "
+                            "blocked until three-factor verification completes "
+                            "(DESIGN_THESIS.md §8)."
+                        ),
+                        severity="error",
+                        details={
+                            # Factor names only — never values. The
+                            # pending bank details themselves live on
+                            # the vendor profile's encrypted column.
+                            "missing_factors": missing,
+                        },
+                    )
+        except Exception as freeze_check_exc:
+            logger.warning(
+                "IBAN change freeze check failed (non-fatal): %s",
+                freeze_check_exc,
+            )
 
         # 5a-pre) Payment terms mismatch detection.
         try:
