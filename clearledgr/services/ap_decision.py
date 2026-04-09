@@ -41,6 +41,97 @@ _TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 
 _VALID_RECOMMENDATIONS = {"approve", "needs_info", "escalate", "reject"}
 
+# Name of the structured-output tool Claude is forced to call.
+_DECISION_TOOL_NAME = "record_ap_decision"
+
+
+def _build_decision_tool_schema(
+    gate_passed: bool, reason_codes: List[str]
+) -> Dict[str, Any]:
+    """Build the Anthropic tool-use schema for the AP routing decision.
+
+    Layer 1 of the §7.6 enforcement: the ``recommendation`` enum is
+    dynamically narrowed when the deterministic gate has failed. Combined
+    with a forced ``tool_choice``, this structurally prevents Claude from
+    producing ``approve`` as a routing outcome for an invoice whose rules
+    have not been satisfied. Layer 2 (``enforce_gate_constraint``) remains
+    the hard backstop.
+    """
+    if gate_passed:
+        allowed_recommendations = ["approve", "needs_info", "escalate", "reject"]
+        rec_description = (
+            "The routing action. 'approve' = auto-post to ERP; "
+            "'needs_info' = ask the vendor a specific question; "
+            "'escalate' = a human must review; "
+            "'reject' = there is clear evidence this invoice should not be processed."
+        )
+        tool_description = (
+            "Record the AP routing decision for this invoice. "
+            "Choose the action that best matches the evidence and vendor history."
+        )
+    else:
+        allowed_recommendations = ["needs_info", "escalate", "reject"]
+        codes = ", ".join(reason_codes) if reason_codes else "unknown"
+        rec_description = (
+            "The routing action. 'needs_info' = ask the vendor a specific question; "
+            "'escalate' = a human must review; "
+            "'reject' = there is clear evidence this invoice should not be processed. "
+            "'approve' is STRUCTURALLY UNAVAILABLE because the deterministic "
+            "validation gate has failed — do not attempt to emit it."
+        )
+        tool_description = (
+            "Record the AP routing decision for this invoice. The deterministic "
+            f"validation gate has FAILED with reason codes: [{codes}]. Per "
+            "DESIGN_THESIS.md §7.6, rules bind your reasoning — 'approve' is "
+            "structurally excluded from this schema. Choose exactly one of: "
+            "needs_info, escalate, or reject."
+        )
+
+    return {
+        "name": _DECISION_TOOL_NAME,
+        "description": tool_description,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "recommendation": {
+                    "type": "string",
+                    "enum": allowed_recommendations,
+                    "description": rec_description,
+                },
+                "reasoning": {
+                    "type": "string",
+                    "description": (
+                        "2-3 sentences explaining the decision, referencing "
+                        "specific vendor history, anomalies, or policy signals."
+                    ),
+                },
+                "confidence": {
+                    "type": "number",
+                    "description": "Confidence in the decision, 0.0 (low) to 1.0 (high).",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                },
+                "info_needed": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "If recommendation is 'needs_info': the exact question to "
+                        "send the vendor (one sentence). Otherwise null."
+                    ),
+                },
+                "risk_flags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Risk signals detected (e.g. 'bank_details_changed', "
+                        "'duplicate_invoice', 'low_history', 'amount_anomaly'). "
+                        "Empty list if none."
+                    ),
+                },
+            },
+            "required": ["recommendation", "reasoning", "confidence"],
+        },
+    }
+
 
 @dataclass
 class APDecision:
@@ -54,6 +145,14 @@ class APDecision:
     vendor_context_used: Dict[str, Any]  # summary of vendor data consulted
     model: str                     # which Claude model (or "fallback")
     fallback: bool = False         # True when rule-based fallback was used
+    gate_override: bool = False    # True if enforce_gate_constraint overrode the LLM
+    original_recommendation: Optional[str] = None  # LLM's original rec, if overridden
+
+
+# Recommendations that remain valid even when the deterministic gate has failed.
+# "approve" is structurally unavailable when the gate rejects — the LLM may choose
+# among these alternatives but cannot bypass the gate by recommending approval.
+_VALID_WHEN_GATE_FAILED = frozenset({"escalate", "needs_info", "reject"})
 
 
 def _days_since(iso: Optional[str]) -> Optional[int]:
@@ -407,12 +506,31 @@ def _build_reasoning_prompt(
     if fc_lines:
         sections.append("FIELD CONFIDENCE SCORES:\n" + "\n".join(fc_lines))
 
-    sections.append(_FEW_SHOT_EXAMPLES + """---
-Decide what to do with this invoice. Choose exactly one action:
-- approve: safe to proceed autonomously, all signals are green
-- needs_info: I need specific information from the vendor before proceeding (state exactly what)
-- escalate: a human must review this — state why clearly
-- reject: clear problem with evidence — state reason and evidence
+    if gate_passed:
+        action_guidance_block = (
+            "Decide what to do with this invoice. Your options, via the "
+            "`record_ap_decision` tool:\n"
+            "- approve: safe to proceed autonomously, all signals are green\n"
+            "- needs_info: specific information is required from the vendor (state exactly what)\n"
+            "- escalate: a human must review this — state why clearly\n"
+            "- reject: clear problem with evidence — state reason and evidence"
+        )
+    else:
+        reason_codes_display = ", ".join(str(c) for c in reason_codes) if reason_codes else "unspecified"
+        action_guidance_block = (
+            "ARCHITECTURAL CONSTRAINT (DESIGN_THESIS.md §7.6): The deterministic "
+            f"validation gate FAILED with reason codes: [{reason_codes_display}].\n"
+            "Because rules have not been satisfied, 'approve' is structurally "
+            "UNAVAILABLE for this invoice — the `record_ap_decision` tool's "
+            "schema excludes it from the enum. Choose exactly one action from "
+            "the reduced set below:\n"
+            "- needs_info: specific information is required from the vendor (state exactly what)\n"
+            "- escalate: a human must review this — explain which gate failure drives the escalation\n"
+            "- reject: there is clear evidence this invoice should not be processed — state reason and evidence"
+        )
+
+    sections.append(_FEW_SHOT_EXAMPLES + f"""---
+{action_guidance_block}
 
 Consider:
 1. Does the amount match the vendor's historical pattern (within ~2 standard deviations)?
@@ -423,10 +541,85 @@ Consider:
 6. Is a PO required but missing?
 7. Respect recent human feedback patterns for this tenant/vendor (strict/permissive bias), but never bypass deterministic policy gates.
 
-Return ONLY valid JSON — no prose, no markdown fences:
-{"recommendation":"approve|needs_info|escalate|reject","reasoning":"2-3 sentences explaining your decision, referencing specific vendor history or signals","confidence":0.0,"info_needed":null,"risk_flags":[]}""")
+Call the `record_ap_decision` tool now with your decision. The example outputs
+above show the JSON shape of the tool's input arguments.""")
 
     return "\n\n".join(s for s in sections if s)
+
+
+def enforce_gate_constraint(
+    decision: APDecision,
+    validation_gate: Optional[Dict[str, Any]],
+) -> APDecision:
+    """Bind the LLM recommendation to the deterministic gate outcome.
+
+    This is the single enforcement point for the DESIGN_THESIS.md §7.6
+    architectural principle:
+
+        "The LLM reasons within boundaries set by rules. It never acts
+         beyond what the rules permit, regardless of its reasoning."
+
+    Contract:
+      - If validation_gate is None or gate.passed is True → return decision unchanged.
+      - If gate.passed is False and decision.recommendation is in
+        {escalate, needs_info, reject} → return decision unchanged (these
+        are all legitimate responses to a failed gate).
+      - If gate.passed is False and decision.recommendation is "approve"
+        (or any other value outside the allowed set when the gate has failed),
+        override to "escalate" with a specific reason that cites the gate
+        failure codes. Set gate_override=True and preserve the LLM's
+        original recommendation on the returned decision for audit and
+        model-improvement telemetry (§7.9).
+
+    The helper never mutates its input — it returns a new APDecision.
+
+    This function is deliberately generic over the "validation_gate" contract:
+    any dict with a boolean "passed" key and an optional "reason_codes" list
+    works. Phase 1.2a fraud primitives reuse this same helper by passing a
+    compound gate dict that includes fraud-gate failures.
+    """
+    if validation_gate is None:
+        return decision
+
+    gate_passed = bool(validation_gate.get("passed", True))
+    if gate_passed:
+        return decision
+
+    if decision.recommendation in _VALID_WHEN_GATE_FAILED:
+        return decision
+
+    # Gate failed and the LLM returned a recommendation that is not valid
+    # under a failed gate (almost always "approve"). Override to "escalate"
+    # and record the LLM's original choice.
+    reason_codes = validation_gate.get("reason_codes") or []
+    reason_codes_str = ", ".join(str(c) for c in reason_codes) if reason_codes else "unknown"
+    override_reason = (
+        f"Deterministic validation gate failed ({reason_codes_str}); "
+        f"'{decision.recommendation}' is not a valid outcome when the gate "
+        "has not passed. Routed to human review per §7.6 architectural "
+        "constraint."
+    )
+
+    logger.warning(
+        "[APDecision] Gate override applied: LLM recommended '%s' but gate "
+        "failed with codes %s. Forcing 'escalate'. Original reasoning: %s",
+        decision.recommendation,
+        reason_codes,
+        (decision.reasoning or "")[:200],
+    )
+
+    return APDecision(
+        recommendation="escalate",
+        reasoning=override_reason,
+        confidence=decision.confidence,
+        info_needed=None,
+        risk_flags=list(decision.risk_flags) + ["gate_override_applied"],
+        vendor_context_used=decision.vendor_context_used,
+        model=decision.model,
+        fallback=decision.fallback,
+        gate_override=True,
+        original_recommendation=decision.recommendation,
+    )
 
 
 class APDecisionService:
@@ -483,7 +676,7 @@ class APDecisionService:
 
         if not self._api_key:
             logger.info("[APDecision] No API key — using rule-based fallback")
-            return self._fallback_decision(
+            decision = self._fallback_decision(
                 invoice,
                 validation_gate,
                 vendor_context_used,
@@ -493,6 +686,10 @@ class APDecisionService:
                 cross_invoice_analysis=cross_invoice_analysis,
                 org_config=org_config,
             )
+            # Defense in depth: _fallback_decision already enforces the gate
+            # correctly for its rule cascade, but route through the single
+            # enforcement helper so the gate contract is uniform across paths.
+            return enforce_gate_constraint(decision, validation_gate)
 
         try:
             prompt = _build_reasoning_prompt(
@@ -507,8 +704,21 @@ class APDecisionService:
                 anomaly_signals=anomaly_signals,
                 vendor_risk_score=vendor_risk_score,
             )
-            raw = await self._call_claude(prompt)
-            return self._parse_response(raw, vendor_context_used)
+            # Layer 1 of §7.6 enforcement: narrow the tool's recommendation
+            # enum based on the gate outcome. Claude is then FORCED to call
+            # this tool via tool_choice — it cannot return plain text, and
+            # the schema structurally excludes 'approve' when the gate fails.
+            gate_passed = bool(validation_gate.get("passed", True))
+            gate_reason_codes = list(validation_gate.get("reason_codes") or [])
+            tool_schema = _build_decision_tool_schema(gate_passed, gate_reason_codes)
+            raw = await self._call_claude(prompt, tool_schema)
+            decision = self._parse_response(raw, vendor_context_used)
+            # Layer 2 (primary enforcement point): bind the LLM recommendation
+            # to the deterministic gate before returning. Per §7.6, the LLM
+            # never acts beyond what the rules permit regardless of its
+            # reasoning. This clamps any residual violations that slip past
+            # the Layer 1 tool-schema constraint.
+            return enforce_gate_constraint(decision, validation_gate)
         except Exception as exc:
             logger.warning("[APDecision] Claude call failed (%s) — using rule-based fallback", exc)
             result = self._fallback_decision(
@@ -522,20 +732,36 @@ class APDecisionService:
                 org_config=org_config,
             )
             result.fallback = True
-            return result
+            return enforce_gate_constraint(result, validation_gate)
 
-    async def _call_claude(self, prompt: str) -> Dict[str, Any]:
+    async def _call_claude(
+        self, prompt: str, tool_schema: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """POST to the Anthropic messages API, forcing a ``record_ap_decision`` tool call.
+
+        When ``tool_schema`` is supplied (the production path), Claude is
+        given exactly one tool and ``tool_choice`` is set to force that
+        tool — Claude cannot respond with plain text. The schema's
+        ``recommendation`` enum is the Layer 1 constraint that structurally
+        excludes ``approve`` when the deterministic gate has failed.
+        """
         headers = {
             "x-api-key": self._api_key,
             "anthropic-version": _ANTHROPIC_VERSION,
             "content-type": "application/json",
         }
-        payload = {
+        payload: Dict[str, Any] = {
             "model": _MODEL,
             "max_tokens": 512,
             "temperature": 0.1,
             "messages": [{"role": "user", "content": prompt}],
         }
+        if tool_schema is not None:
+            payload["tools"] = [tool_schema]
+            payload["tool_choice"] = {
+                "type": "tool",
+                "name": tool_schema.get("name", _DECISION_TOOL_NAME),
+            }
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(_API_URL, headers=headers, json=payload)
         resp.raise_for_status()
@@ -544,29 +770,65 @@ class APDecisionService:
     def _parse_response(
         self, data: Dict[str, Any], vendor_context_used: Dict[str, Any]
     ) -> APDecision:
+        """Extract an APDecision from a Claude tool-use response.
+
+        Prefers the forced ``record_ap_decision`` tool_use block (Layer 1).
+        Falls back to legacy text-JSON parsing only if no tool_use block is
+        present — this path exists for defensive back-compat and should be
+        unreachable in production because ``tool_choice`` is forced.
+        """
         content = data.get("content", [])
-        if isinstance(content, list):
-            text = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
+        content_list = content if isinstance(content, list) else []
+
+        # --- Preferred path: structured tool_use block ---
+        tool_input: Optional[Dict[str, Any]] = None
+        for block in content_list:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use" and block.get("name") == _DECISION_TOOL_NAME:
+                raw_input = block.get("input")
+                if isinstance(raw_input, dict):
+                    tool_input = raw_input
+                    break
+
+        if tool_input is not None:
+            parsed: Dict[str, Any] = tool_input
         else:
-            text = str(content or "")
-
-        # Strip markdown fences
-        text = text.strip()
-        fence = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
-        if fence:
-            text = fence.group(1)
-
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            obj = re.search(r"\{[\s\S]+?\}", text)
-            if obj:
-                try:
-                    parsed = json.loads(obj.group(0))
-                except json.JSONDecodeError:
-                    raise ValueError(f"Claude did not return valid JSON: {text[:200]}")
-            else:
-                raise ValueError(f"Claude did not return valid JSON: {text[:200]}")
+            # --- Defensive fallback: text-JSON parsing (should be unreachable) ---
+            logger.warning(
+                "[APDecision] Claude returned no tool_use block for '%s' — "
+                "falling back to text-JSON parsing. This indicates a model "
+                "refusal or API-shape change.",
+                _DECISION_TOOL_NAME,
+            )
+            text = "\n".join(
+                c.get("text", "") for c in content_list if isinstance(c, dict)
+            )
+            text = text.strip()
+            fence = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
+            if fence:
+                text = fence.group(1)
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                obj = re.search(r"\{[\s\S]+?\}", text)
+                if obj:
+                    try:
+                        parsed = json.loads(obj.group(0))
+                    except json.JSONDecodeError:
+                        raise ValueError(
+                            f"Claude did not return a tool_use block or valid "
+                            f"JSON: {text[:200]}"
+                        )
+                else:
+                    raise ValueError(
+                        f"Claude did not return a tool_use block or valid "
+                        f"JSON: {text[:200]}"
+                    )
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"Claude response parsed to non-dict: {type(parsed).__name__}"
+                )
 
         rec = str(parsed.get("recommendation") or "escalate").lower().strip()
         if rec not in _VALID_RECOMMENDATIONS:

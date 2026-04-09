@@ -629,6 +629,56 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         if ap_decision is None:
             ap_decision = await self._get_ap_decision(invoice, validation_gate)
 
+        # DESIGN_THESIS.md §7.6 — defense-in-depth enforcement point.
+        # Whether the decision came from Path A (_get_ap_decision, already enforced)
+        # or Path B (pre-computed via agent planning loop, NOT yet enforced), the
+        # narrow waist before routing must bind the recommendation to the gate.
+        # Re-applying here is idempotent for Path A (already escalated) and closes
+        # the bypass for Path B. Audit trail lives on the APDecision.gate_override flag.
+        from clearledgr.services.ap_decision import enforce_gate_constraint as _enforce_gate_constraint
+        _pre_override_recommendation = ap_decision.recommendation
+        ap_decision = _enforce_gate_constraint(ap_decision, validation_gate)
+        if ap_decision.gate_override and _pre_override_recommendation == "approve":
+            logger.warning(
+                "[InvoiceWorkflow] Gate override applied at routing waist: "
+                "invoice=%s vendor=%s pre-recommendation=%s → escalate "
+                "(gate reason_codes=%s)",
+                invoice.gmail_id,
+                invoice.vendor_name,
+                _pre_override_recommendation,
+                (validation_gate or {}).get("reason_codes") or [],
+            )
+            # Emit structured audit event so SOC/compliance can count these.
+            try:
+                self.db.append_ap_audit_event(
+                    {
+                        "ap_item_id": invoice_id or invoice.gmail_id or "",
+                        "event_type": "llm_gate_override_applied",
+                        "actor_type": "system",
+                        "actor_id": "invoice_workflow.enforce_gate_constraint",
+                        "reason": (
+                            f"LLM recommended '{_pre_override_recommendation}' "
+                            f"but deterministic validation gate failed with reason codes: "
+                            f"{(validation_gate or {}).get('reason_codes') or []}. "
+                            "Forced to 'escalate' per DESIGN_THESIS.md §7.6."
+                        ),
+                        "metadata": {
+                            "pre_override_recommendation": _pre_override_recommendation,
+                            "enforced_recommendation": ap_decision.recommendation,
+                            "gate_reason_codes": (validation_gate or {}).get("reason_codes") or [],
+                            "decision_model": ap_decision.model,
+                            "decision_fallback": bool(ap_decision.fallback),
+                            "decision_confidence": ap_decision.confidence,
+                            "original_reasoning": (ap_decision.reasoning or "")[:256],
+                            "correlation_id": correlation_id,
+                        },
+                        "organization_id": self.organization_id,
+                        "source": "invoice_workflow",
+                    }
+                )
+            except Exception as audit_exc:
+                logger.debug("[InvoiceWorkflow] audit log for gate override failed: %s", audit_exc)
+
         # Populate InvoiceData reasoning fields (surfaced in Slack cards, Gmail sidebar)
         invoice.reasoning_summary = ap_decision.reasoning
         invoice.reasoning_risks = ap_decision.risk_flags

@@ -100,7 +100,9 @@ async def _handle_enrich_with_context(
         # --- Vendor enrichment (existing) ---
         vendor_profile = db.get_vendor_profile(organization_id, invoice.vendor_name) or {}
         vendor_history = db.get_vendor_invoice_history(organization_id, invoice.vendor_name, limit=6) or []
-        decision_feedback = db.get_vendor_decision_feedback(organization_id, invoice.vendor_name) or []
+        decision_feedback = (
+            db.get_vendor_decision_feedback_summary(organization_id, invoice.vendor_name) or {}
+        )
 
         correction_suggestions = learning.suggest_corrections(
             vendor_name=invoice.vendor_name,
@@ -186,19 +188,35 @@ async def _handle_run_validation_gate(
     organization_id: str = "default",
     **_kwargs,
 ) -> Dict[str, Any]:
-    """Run deterministic validation: confidence threshold, PO check, budget gate."""
+    """Run deterministic validation: confidence threshold, PO check, budget gate.
+
+    The returned ``validation_gate`` object MUST be passed through to
+    ``get_ap_decision`` and ``execute_routing`` so the planning loop reasons
+    correctly. Server-side handlers also enforce the gate independently as
+    defense-in-depth per DESIGN_THESIS.md §7.6, but threading it explicitly
+    keeps the LLM's reasoning aligned with the enforced outcome.
+    """
     try:
         from clearledgr.services.invoice_workflow import get_invoice_workflow
 
         invoice = _build_invoice(invoice_payload)
         workflow = get_invoice_workflow(organization_id)
         gate = await workflow._evaluate_deterministic_validation(invoice)
-        passed = not gate.get("failed", False)
+        passed = bool(gate.get("passed", False))
+        reason_codes = list(gate.get("reason_codes") or [])
+        reasons = list(gate.get("reasons") or [])
         return {
             "ok": True,
             "passed": passed,
-            "gate_result": gate,
-            "failures": gate.get("failures", []),
+            "reason_codes": reason_codes,
+            "reasons": reasons,
+            # The canonical gate object — thread this forward unchanged.
+            "validation_gate": {
+                "passed": passed,
+                "reason_codes": reason_codes,
+                "reasons": reasons,
+            },
+            "gate_result": gate,  # retained for backward compat
             "override_needed": not passed,
         }
     except Exception as exc:
@@ -206,13 +224,70 @@ async def _handle_run_validation_gate(
         return {"ok": False, "error": str(exc)}
 
 
+async def _resolve_gate_for_enforcement(
+    invoice,
+    *,
+    passed_through_gate: Optional[Dict[str, Any]],
+    organization_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Return a canonical ``{passed, reason_codes, ...}`` gate dict.
+
+    Accepts whatever the LLM passed in (may be None, partial, or the full
+    ``run_validation_gate`` output) and — when missing — re-runs the gate
+    server-side. Never trusts the LLM to have threaded the gate forward:
+    the tools re-evaluate authoritatively whenever the passed-through value
+    is absent or malformed.
+    """
+    if isinstance(passed_through_gate, dict) and "passed" in passed_through_gate:
+        return {
+            "passed": bool(passed_through_gate.get("passed", False)),
+            "reason_codes": list(passed_through_gate.get("reason_codes") or []),
+            "reasons": list(passed_through_gate.get("reasons") or []),
+        }
+    try:
+        from clearledgr.services.invoice_workflow import get_invoice_workflow
+        workflow = get_invoice_workflow(organization_id)
+        gate = await workflow._evaluate_deterministic_validation(invoice)
+        return {
+            "passed": bool(gate.get("passed", False)),
+            "reason_codes": list(gate.get("reason_codes") or []),
+            "reasons": list(gate.get("reasons") or []),
+        }
+    except Exception as exc:
+        logger.warning(
+            "[APSkill] Server-side gate re-evaluation failed in enforcement path: %s", exc
+        )
+        # Fail closed: if we cannot evaluate the gate, treat as failed so the
+        # LLM cannot auto-approve behind an evaluation error.
+        return {
+            "passed": False,
+            "reason_codes": ["gate_evaluation_failed"],
+            "reasons": [
+                {
+                    "code": "gate_evaluation_failed",
+                    "message": f"Server-side gate re-evaluation failed: {exc}",
+                    "severity": "error",
+                }
+            ],
+        }
+
+
 async def _handle_get_ap_decision(
     invoice_payload: Dict[str, Any],
     vendor_context: Optional[Dict[str, Any]] = None,
+    validation_gate: Optional[Dict[str, Any]] = None,
     organization_id: str = "default",
     **_kwargs,
 ) -> Dict[str, Any]:
-    """Call APDecisionService (Claude Sonnet) with full vendor context."""
+    """Call APDecisionService (Claude Sonnet) with full vendor context.
+
+    ``validation_gate`` must be threaded from ``run_validation_gate``. If it
+    is absent or malformed, this handler re-evaluates the gate server-side
+    rather than trusting the LLM to have passed it through. The gate is
+    then forwarded to ``APDecisionService.decide()`` so the prompt excludes
+    ``approve`` when rules have not been satisfied (Layer 1) AND
+    ``enforce_gate_constraint`` clamps the result (Layer 2).
+    """
     try:
         from clearledgr.services.ap_decision import APDecisionService
         from clearledgr.core.database import get_db
@@ -221,9 +296,20 @@ async def _handle_get_ap_decision(
         db = get_db()
         ctx = vendor_context or {}
 
+        # Resolve gate authoritatively (re-runs if not threaded by Claude).
+        resolved_gate = await _resolve_gate_for_enforcement(
+            invoice,
+            passed_through_gate=validation_gate,
+            organization_id=organization_id,
+        )
+
         vendor_profile = ctx.get("vendor_profile") or db.get_vendor_profile(organization_id, invoice.vendor_name) or {}
         vendor_history = ctx.get("vendor_history") or db.get_vendor_invoice_history(organization_id, invoice.vendor_name, limit=6) or []
-        decision_feedback = ctx.get("decision_feedback") or db.get_vendor_decision_feedback(organization_id, invoice.vendor_name) or []
+        decision_feedback = (
+            ctx.get("decision_feedback")
+            or db.get_vendor_decision_feedback_summary(organization_id, invoice.vendor_name)
+            or {}
+        )
         correction_suggestions = ctx.get("correction_suggestions") or []
 
         service = APDecisionService()
@@ -234,6 +320,7 @@ async def _handle_get_ap_decision(
             decision_feedback=decision_feedback,
             correction_suggestions=correction_suggestions,
             org_config={"organization_id": organization_id},
+            validation_gate=resolved_gate,
         )
         decision = (
             await decision_or_awaitable
@@ -247,6 +334,11 @@ async def _handle_get_ap_decision(
             "confidence": decision.confidence,
             "risk_flags": decision.risk_flags,
             "info_needed": decision.info_needed,
+            "gate_override": bool(getattr(decision, "gate_override", False)),
+            "original_recommendation": getattr(decision, "original_recommendation", None),
+            # Forward the resolved gate so execute_routing can see it without
+            # trusting the LLM to re-thread it.
+            "validation_gate": resolved_gate,
         }
     except Exception as exc:
         logger.warning("[APSkill] get_ap_decision failed: %s", exc)
@@ -260,6 +352,7 @@ async def _handle_execute_routing(
     reason: str = "",
     risk_flags: Optional[list] = None,
     info_needed: Optional[str] = None,
+    validation_gate: Optional[Dict[str, Any]] = None,
     organization_id: str = "default",
     **_kwargs,
 ) -> Dict[str, Any]:
@@ -267,38 +360,70 @@ async def _handle_execute_routing(
 
     Passes the pre-computed AP decision from the planning loop into
     process_new_invoice so that Claude Sonnet is NOT called a second time.
+
+    DESIGN_THESIS.md §7.6 enforcement (Layer 3): If the LLM recommends
+    ``approve`` but the deterministic validation gate has failed, this
+    handler forces the recommendation to ``escalate`` BEFORE building the
+    pre-computed decision. The workflow narrow-waist re-enforces as a final
+    belt-and-suspenders check, but catching it here means Claude sees the
+    overridden outcome in its tool result and can reason about it.
     """
     try:
         from clearledgr.services.invoice_workflow import get_invoice_workflow
-        from clearledgr.services.ap_decision import APDecision
+        from clearledgr.services.ap_decision import APDecision, enforce_gate_constraint
 
         invoice = _build_invoice(invoice_payload)
         workflow = get_invoice_workflow(organization_id)
 
-        # Map recommendation → confidence that controls workflow routing
-        APPROVAL_THRESHOLD = float(
-            __import__("os").getenv("INVOICE_AUTO_APPROVE_THRESHOLD", "0.95")
+        # Resolve gate authoritatively (re-runs if LLM didn't thread it).
+        resolved_gate = await _resolve_gate_for_enforcement(
+            invoice,
+            passed_through_gate=validation_gate,
+            organization_id=organization_id,
         )
-        if recommendation == "approve" and confidence >= APPROVAL_THRESHOLD:
-            invoice.confidence = max(confidence, APPROVAL_THRESHOLD)
-        else:
-            # Anything below threshold → workflow sends for human review
-            invoice.confidence = min(confidence, APPROVAL_THRESHOLD - 0.01)
 
-        # Build pre-computed APDecision so process_new_invoice skips its
-        # internal _get_ap_decision() call (avoids double Sonnet invocation).
-        pre_computed_decision = APDecision(
+        # Apply enforcement to an APDecision shaped from the LLM's args.
+        # enforce_gate_constraint is the single authority on whether an
+        # 'approve' is valid given the gate state.
+        candidate_decision = APDecision(
             recommendation=recommendation,
             reasoning=reason or f"Agent planning loop decided: {recommendation}",
             confidence=confidence,
             info_needed=info_needed,
-            risk_flags=risk_flags or [],
+            risk_flags=list(risk_flags or []),
             vendor_context_used={},
             model="agent_planning_loop",
             fallback=False,
         )
+        enforced_decision = enforce_gate_constraint(candidate_decision, resolved_gate)
 
-        result = await workflow.process_new_invoice(invoice, ap_decision=pre_computed_decision)
+        # Log the override explicitly so the agent loop audit trail is visible.
+        if enforced_decision.gate_override:
+            logger.warning(
+                "[APSkill] execute_routing: LLM recommended '%s' but gate failed "
+                "(reason_codes=%s). Forcing 'escalate' per §7.6.",
+                recommendation,
+                (resolved_gate or {}).get("reason_codes") or [],
+            )
+
+        effective_recommendation = enforced_decision.recommendation
+        effective_reason = enforced_decision.reasoning
+        effective_confidence = enforced_decision.confidence
+        effective_risk_flags = list(enforced_decision.risk_flags)
+        effective_info_needed = enforced_decision.info_needed
+
+        # Map recommendation → confidence that controls workflow routing.
+        # Use the *enforced* recommendation, not the LLM's raw output.
+        APPROVAL_THRESHOLD = float(
+            __import__("os").getenv("INVOICE_AUTO_APPROVE_THRESHOLD", "0.95")
+        )
+        if effective_recommendation == "approve" and effective_confidence >= APPROVAL_THRESHOLD:
+            invoice.confidence = max(effective_confidence, APPROVAL_THRESHOLD)
+        else:
+            # Anything below threshold → workflow sends for human review
+            invoice.confidence = min(effective_confidence, APPROVAL_THRESHOLD - 0.01)
+
+        result = await workflow.process_new_invoice(invoice, ap_decision=enforced_decision)
         needs_human = result.get("status") in (
             "pending_approval", "needs_info", "escalated", "failed"
         )
@@ -306,13 +431,16 @@ async def _handle_execute_routing(
             "ok": True,
             "status": result.get("status"),
             "invoice_id": result.get("invoice_id"),
-            "recommendation": recommendation,
+            "recommendation": effective_recommendation,
+            "original_recommendation": recommendation if enforced_decision.gate_override else None,
+            "gate_override": enforced_decision.gate_override,
             "is_awaiting_human": needs_human,
             "hitl_context": {
                 "invoice_id": result.get("invoice_id"),
-                "recommendation": recommendation,
-                "reason": reason or result.get("reason", ""),
+                "recommendation": effective_recommendation,
+                "reason": effective_reason or result.get("reason", ""),
                 "status": result.get("status"),
+                "gate_override": enforced_decision.gate_override,
             } if needs_human else None,
         }
     except Exception as exc:
@@ -786,7 +914,9 @@ class APSkill(FinanceSkill):
                 description=(
                     "Call the AP decision AI with full vendor context to get a recommendation: "
                     "approve, needs_info, escalate, or reject. Use vendor_context from "
-                    "enrich_with_context if available."
+                    "enrich_with_context if available. You MUST pass validation_gate from "
+                    "run_validation_gate — when the gate has failed, 'approve' will be "
+                    "automatically overridden to 'escalate' per DESIGN_THESIS.md §7.6."
                 ),
                 input_schema={
                     "type": "object",
@@ -799,6 +929,14 @@ class APSkill(FinanceSkill):
                             "type": "object",
                             "description": "Vendor enrichment from enrich_with_context (optional).",
                         },
+                        "validation_gate": {
+                            "type": "object",
+                            "description": (
+                                "The validation_gate object returned by run_validation_gate "
+                                "(contains 'passed' and 'reason_codes'). Thread this through "
+                                "unchanged — the server enforces it regardless."
+                            ),
+                        },
                     },
                     "required": ["invoice_payload"],
                 },
@@ -808,9 +946,11 @@ class APSkill(FinanceSkill):
                 name="execute_routing",
                 description=(
                     "Route the invoice based on the AP decision recommendation. "
-                    "If recommendation is 'approve' with high confidence, auto-approves and posts to ERP. "
-                    "Otherwise routes for human review (pauses for HITL). "
-                    "Always call this as the final step."
+                    "If recommendation is 'approve' with high confidence AND the validation "
+                    "gate has passed, auto-approves and posts to ERP. Otherwise routes for "
+                    "human review (pauses for HITL). Always call this as the final step. "
+                    "If the validation gate has failed, 'approve' will be force-overridden "
+                    "to 'escalate' per DESIGN_THESIS.md §7.6."
                 ),
                 input_schema={
                     "type": "object",
@@ -840,6 +980,14 @@ class APSkill(FinanceSkill):
                         "info_needed": {
                             "type": "string",
                             "description": "If needs_info: the question to ask the vendor.",
+                        },
+                        "validation_gate": {
+                            "type": "object",
+                            "description": (
+                                "The validation_gate object returned by run_validation_gate "
+                                "(contains 'passed' and 'reason_codes'). Thread this through "
+                                "unchanged — the server enforces it regardless."
+                            ),
                         },
                     },
                     "required": ["invoice_payload", "recommendation"],
@@ -1012,15 +1160,16 @@ Your job: process this invoice through AP review using the available tools.
 
 Recommended sequence:
 1. Call enrich_with_context to understand the vendor relationship
-2. Call run_validation_gate to check hard rules
+2. Call run_validation_gate to check hard rules — it returns a 'validation_gate' object
 3. If an exception is flagged (exception_code on the AP item), call resolve_exception to attempt auto-resolution before routing
-4. Call get_ap_decision with the vendor context to get a recommendation
-5. Call execute_routing with the recommendation to complete processing
+4. Call get_ap_decision with the vendor context AND the validation_gate from step 2
+5. Call execute_routing with the recommendation AND the same validation_gate from step 2
 6. If recommendation is "needs_info", call request_vendor_info to draft a follow-up
 
-Rules:
+Architectural rules (DESIGN_THESIS.md §7.6 — LLM reasons within boundaries set by rules):
 - NEVER skip run_validation_gate — it is a hard guardrail
-- If validation gate fails, set recommendation to "escalate" in execute_routing
+- You MUST thread the 'validation_gate' object returned by run_validation_gate into BOTH get_ap_decision and execute_routing. The server enforces this regardless, but failing to pass it means you will be reasoning blind to the gate outcome.
+- If validation_gate.passed is FALSE, 'approve' is NOT a valid outcome. Your only options are 'needs_info', 'escalate', or 'reject'. If you return 'approve' anyway, it will be force-overridden to 'escalate' and logged as a gate override violation.
 - If an exception is flagged, call resolve_exception to attempt auto-resolution before routing
 - NEVER auto-approve without calling get_ap_decision first
 - NEVER reject without human sign-off — use "escalate" instead

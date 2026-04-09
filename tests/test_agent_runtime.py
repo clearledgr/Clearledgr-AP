@@ -113,7 +113,7 @@ def test_ap_skill_get_ap_decision_handles_sync_decider_without_fallback():
         def get_vendor_invoice_history(self, *_args, **_kwargs):
             return []
 
-        def get_vendor_decision_feedback(self, *_args, **_kwargs):
+        def get_vendor_decision_feedback_summary(self, *_args, **_kwargs):
             return {}
 
     class _FakeDecisionService:
@@ -143,11 +143,12 @@ def test_ap_skill_get_ap_decision_handles_sync_decider_without_fallback():
                 decision_tool.handler(
                     invoice_payload=invoice_payload,
                     vendor_context={},
+                    validation_gate={"passed": True, "reason_codes": []},
                     organization_id="default",
                 )
             )
 
-    assert result["ok"] is True
+    assert result["ok"] is True, f"handler returned error: {result.get('error')}"
     assert result["recommendation"] == "approve"
     assert result["confidence"] == pytest.approx(0.97)
     assert result.get("error") is None

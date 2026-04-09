@@ -55,7 +55,13 @@ def _make_invoice(**kwargs) -> Any:
 
 
 def _fake_claude_response(recommendation: str, reasoning: str, info_needed=None, risk_flags=None) -> Dict:
-    """Return a fake Anthropic API response dict."""
+    """Return a fake Anthropic API response shaped like a forced tool_use call.
+
+    After the Layer 1 upgrade to tool-use, APDecisionService._parse_response
+    reads the ``record_ap_decision`` tool_use block's ``input`` directly
+    instead of parsing JSON out of a text block. These test fixtures must
+    match the production API shape.
+    """
     payload = {
         "recommendation": recommendation,
         "reasoning": reasoning,
@@ -64,8 +70,16 @@ def _fake_claude_response(recommendation: str, reasoning: str, info_needed=None,
         "risk_flags": risk_flags or [],
     }
     return {
-        "content": [{"type": "text", "text": json.dumps(payload)}],
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "toolu_fake",
+                "name": "record_ap_decision",
+                "input": payload,
+            }
+        ],
         "model": "claude-sonnet-4-20250514",
+        "stop_reason": "tool_use",
     }
 
 
