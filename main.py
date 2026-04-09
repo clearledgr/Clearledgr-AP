@@ -247,6 +247,7 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
 STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/v1",
     "/static",
+    "/fraud-controls",  # DESIGN_THESIS.md §8 — architectural fraud-control admin
 )
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
@@ -843,6 +844,16 @@ try:
     if not STRICT_PROFILE_ACTIVE:
         from clearledgr.api.org_config import router as org_config_router
         app.include_router(org_config_router)
+except ImportError:
+    pass
+
+# Include Fraud Controls API — the only user-facing surface for modifying
+# architectural fraud-control parameters (payment ceiling, velocity limits,
+# first-payment dormancy). CFO or owner role required for writes; every
+# modification is logged to ap_audit_events. See DESIGN_THESIS.md §8.
+try:
+    from clearledgr.api.fraud_controls import router as fraud_controls_router
+    app.include_router(fraud_controls_router)
 except ImportError:
     pass
 

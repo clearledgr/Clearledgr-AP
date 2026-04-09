@@ -30,7 +30,11 @@ import httpx
 
 from clearledgr.core.utils import safe_float_or_none
 
-from clearledgr.core.prompt_guard import sanitize_subject
+from clearledgr.core.prompt_guard import (
+    clip_untrusted,
+    MAX_SUBJECT_LENGTH,
+    MAX_VENDOR_NAME_LENGTH,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -442,8 +446,12 @@ def _build_reasoning_prompt(
             fc_lines.append(f"  {label}: {val:.0%}")
 
     # ---- Current invoice ----
-    safe_subject = sanitize_subject(invoice.subject or "")
-    safe_vendor = sanitize_subject(invoice.vendor_name or "")
+    # By the time we reach this function, _evaluate_deterministic_validation
+    # has already blocked any invoice containing injection patterns in
+    # subject/vendor_name (reason_code=prompt_injection_detected, severity=
+    # error). Remaining text is length-disciplined only.
+    safe_subject = clip_untrusted(invoice.subject or "", max_length=MAX_SUBJECT_LENGTH)
+    safe_vendor = clip_untrusted(invoice.vendor_name or "", max_length=MAX_VENDOR_NAME_LENGTH)
     invoice_lines = [
         f"Amount: ${invoice.amount} {invoice.currency}" + (f" — confidence {safe_float_or_none(fc.get('amount')):.0%}" if fc.get('amount') else ""),
         f"Vendor: {safe_vendor}" + (f" — confidence {safe_float_or_none(fc.get('vendor')):.0%}" if fc.get('vendor') else ""),

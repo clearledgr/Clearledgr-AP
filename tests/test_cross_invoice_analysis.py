@@ -127,14 +127,46 @@ class TestAnomalyDetection:
         amount_anomalies = [a for a in result.anomalies if a.anomaly_type == "amount"]
         assert len(amount_anomalies) == 0
 
-    def test_frequency_anomaly(self, analyzer, mock_db):
+    def test_frequency_anomaly_does_not_fire_below_warning_threshold(
+        self, analyzer, mock_db
+    ):
+        """With default max_per_week=10, warning fires at 70% → 7 invoices.
+        Below that, no frequency anomaly is reported."""
         mock_db.get_vendor_invoice_history.return_value = [
             _make_invoice(amount=100.0, gmail_id=f"m{i}", inv_id=f"i{i}", days_ago=i)
             for i in range(4)
         ]
         result = analyzer.analyze(vendor="Acme", amount=100.0)
         freq_anomalies = [a for a in result.anomalies if a.anomaly_type == "frequency"]
+        assert len(freq_anomalies) == 0
+
+    def test_frequency_anomaly_fires_warning_at_70_percent_of_max(
+        self, analyzer, mock_db
+    ):
+        """7 invoices in 7 days with default max=10 → 'warning' severity."""
+        mock_db.get_vendor_invoice_history.return_value = [
+            _make_invoice(amount=100.0, gmail_id=f"m{i}", inv_id=f"i{i}", days_ago=i)
+            for i in range(7)
+        ]
+        result = analyzer.analyze(vendor="Acme", amount=100.0)
+        freq_anomalies = [a for a in result.anomalies if a.anomaly_type == "frequency"]
         assert len(freq_anomalies) == 1
+        assert freq_anomalies[0].severity == "warning"
+        assert freq_anomalies[0].expected_value == 10  # the hard max
+
+    def test_frequency_anomaly_escalates_to_high_at_hard_max(
+        self, analyzer, mock_db
+    ):
+        """10 invoices in 7 days with default max=10 → 'high' severity
+        because the gate is already blocking at this count."""
+        mock_db.get_vendor_invoice_history.return_value = [
+            _make_invoice(amount=100.0, gmail_id=f"m{i}", inv_id=f"i{i}", days_ago=i % 7)
+            for i in range(10)
+        ]
+        result = analyzer.analyze(vendor="Acme", amount=100.0)
+        freq_anomalies = [a for a in result.anomalies if a.anomaly_type == "frequency"]
+        assert len(freq_anomalies) == 1
+        assert freq_anomalies[0].severity == "high"
 
     def test_no_recent_invoices_no_anomalies(self, analyzer, mock_db):
         result = analyzer.analyze(vendor="Acme", amount=100.0)

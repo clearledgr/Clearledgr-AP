@@ -194,7 +194,7 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         # OAuth callbacks remain available for admin ERP install flows.
         assert "/erp/quickbooks/callback" in paths
         assert "/erp/xero/callback" in paths
-        assert set(_strict_profile_allowed_prefixes()) == {"/v1", "/static"}
+        assert set(_strict_profile_allowed_prefixes()) == {"/v1", "/static", "/fraud-controls"}
 
 
 def test_strict_profile_blocks_unknown_prefixed_routes(monkeypatch):

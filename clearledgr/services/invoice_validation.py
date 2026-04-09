@@ -1755,10 +1755,316 @@ class InvoiceValidationMixin:
                 },
             )
 
+        # ---------------------------------------------------------------
+        # 6) Fraud-control primitives (DESIGN_THESIS.md §8 — architectural,
+        #    not configurational). Every check here uses severity="error"
+        #    so it is unambiguously blocking. Numeric parameters come from
+        #    the organization's fraud_controls config (CFO-role-gated).
+        # ---------------------------------------------------------------
+        try:
+            from clearledgr.core.fraud_controls import (
+                load_fraud_controls,
+                evaluate_payment_ceiling,
+            )
+            from clearledgr.core.prompt_guard import scan_invoice_fields
+
+            fraud_config = load_fraud_controls(self.organization_id, self.db)
+        except Exception as fc_exc:
+            # If config loading itself fails, FAIL CLOSED with a specific
+            # reason code. "No silent disabling" of fraud controls.
+            logger.error(
+                "[Gate] Failed to load fraud_controls for org %s — failing closed: %s",
+                self.organization_id,
+                fc_exc,
+            )
+            add_reason(
+                "fraud_control_config_unavailable",
+                "Could not load fraud-control configuration; invoice held for review",
+                severity="error",
+                details={"error": str(fc_exc)},
+            )
+            fraud_config = None
+
+        if fraud_config is not None:
+            # 6a) Payment amount ceiling (fail-closed on FX unavailability)
+            try:
+                ceiling_result = evaluate_payment_ceiling(
+                    invoice_amount=float(invoice.amount or 0),
+                    invoice_currency=str(invoice.currency or ""),
+                    config=fraud_config,
+                )
+                if ceiling_result.fx_unavailable:
+                    add_reason(
+                        "fraud_control_fx_unavailable",
+                        (
+                            f"Cannot convert invoice amount from "
+                            f"{ceiling_result.invoice_currency} to "
+                            f"{ceiling_result.base_currency} to verify "
+                            "payment ceiling; holding for review."
+                        ),
+                        severity="error",
+                        details={
+                            "invoice_amount": ceiling_result.invoice_amount,
+                            "invoice_currency": ceiling_result.invoice_currency,
+                            "base_currency": ceiling_result.base_currency,
+                            "ceiling": ceiling_result.ceiling,
+                        },
+                    )
+                elif ceiling_result.exceeds_ceiling:
+                    add_reason(
+                        "payment_ceiling_exceeded",
+                        (
+                            f"Invoice amount {ceiling_result.base_currency} "
+                            f"{ceiling_result.converted_amount:,.2f} exceeds "
+                            f"the configured payment ceiling of "
+                            f"{ceiling_result.base_currency} "
+                            f"{ceiling_result.ceiling:,.2f}. Auto-approval "
+                            "is not permitted for amounts above the ceiling "
+                            "(DESIGN_THESIS.md §8)."
+                        ),
+                        severity="error",
+                        details={
+                            "invoice_amount": ceiling_result.invoice_amount,
+                            "invoice_currency": ceiling_result.invoice_currency,
+                            "converted_amount": ceiling_result.converted_amount,
+                            "base_currency": ceiling_result.base_currency,
+                            "rate": ceiling_result.rate,
+                            "ceiling": ceiling_result.ceiling,
+                        },
+                    )
+            except Exception as ceiling_exc:
+                logger.warning(
+                    "[Gate] Payment ceiling evaluation raised: %s", ceiling_exc
+                )
+                add_reason(
+                    "payment_ceiling_evaluation_failed",
+                    "Payment ceiling check failed unexpectedly; invoice held for review",
+                    severity="error",
+                    details={"error": str(ceiling_exc)},
+                )
+
+            # 6b) First payment hold — block the first invoice from a new
+            # vendor, OR the first invoice after extended dormancy.
+            try:
+                vendor_profile_for_first_payment = None
+                if invoice.vendor_name:
+                    vendor_profile_for_first_payment = self.db.get_vendor_profile(
+                        self.organization_id, invoice.vendor_name
+                    )
+
+                is_brand_new = (
+                    vendor_profile_for_first_payment is None
+                    or int(vendor_profile_for_first_payment.get("invoice_count") or 0) == 0
+                )
+
+                is_dormant = False
+                dormancy_days_observed: Optional[int] = None
+                if (
+                    vendor_profile_for_first_payment is not None
+                    and not is_brand_new
+                ):
+                    last_invoice_at = (
+                        vendor_profile_for_first_payment.get("last_invoice_date")
+                        or vendor_profile_for_first_payment.get("last_invoice_at")
+                        or vendor_profile_for_first_payment.get("updated_at")
+                    )
+                    if last_invoice_at:
+                        try:
+                            if isinstance(last_invoice_at, str):
+                                last_dt = datetime.fromisoformat(
+                                    last_invoice_at[:19].replace("Z", "+00:00")
+                                )
+                                if last_dt.tzinfo is None:
+                                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                            else:
+                                last_dt = last_invoice_at
+                            days_since = (datetime.now(timezone.utc) - last_dt).days
+                            dormancy_days_observed = days_since
+                            if days_since >= fraud_config.first_payment_dormancy_days:
+                                is_dormant = True
+                        except Exception as dormancy_parse_exc:
+                            logger.debug(
+                                "[Gate] Could not parse last_invoice_at for dormancy check: %s",
+                                dormancy_parse_exc,
+                            )
+
+                if is_brand_new:
+                    add_reason(
+                        "first_payment_hold",
+                        (
+                            f"First invoice from new vendor '{invoice.vendor_name}'. "
+                            "New-vendor first payments are held for human review "
+                            "per DESIGN_THESIS.md §8 (anti-vendor-impersonation)."
+                        ),
+                        severity="error",
+                        details={
+                            "vendor_name": invoice.vendor_name,
+                            "reason": "new_vendor",
+                        },
+                    )
+                elif is_dormant:
+                    add_reason(
+                        "first_payment_hold",
+                        (
+                            f"Vendor '{invoice.vendor_name}' has been dormant "
+                            f"for {dormancy_days_observed} days (threshold: "
+                            f"{fraud_config.first_payment_dormancy_days}). "
+                            "Treating as first-payment hold per DESIGN_THESIS.md §8."
+                        ),
+                        severity="error",
+                        details={
+                            "vendor_name": invoice.vendor_name,
+                            "reason": "dormancy",
+                            "days_since_last_invoice": dormancy_days_observed,
+                            "dormancy_threshold_days": fraud_config.first_payment_dormancy_days,
+                        },
+                    )
+            except Exception as first_payment_exc:
+                logger.warning(
+                    "[Gate] First payment hold evaluation raised: %s",
+                    first_payment_exc,
+                )
+
+            # 6c) Vendor velocity — block if vendor has submitted more than
+            # the configured max invoices in the last 7 days.
+            try:
+                if invoice.vendor_name and hasattr(self.db, "get_ap_items_by_vendor"):
+                    recent = self.db.get_ap_items_by_vendor(
+                        self.organization_id,
+                        invoice.vendor_name,
+                        days=7,
+                        limit=fraud_config.vendor_velocity_max_per_week + 5,
+                    ) or []
+                    # Exclude the current in-flight invoice (if it's already
+                    # persisted) and rejected items, which do not contribute
+                    # to velocity.
+                    current_id = str(
+                        getattr(invoice, "gmail_id", None)
+                        or getattr(invoice, "ap_item_id", None)
+                        or ""
+                    )
+                    active_recent = [
+                        item
+                        for item in recent
+                        if str(item.get("id") or "") != current_id
+                        and str(item.get("state") or "").lower() != "rejected"
+                    ]
+                    velocity_count = len(active_recent)
+                    if velocity_count >= fraud_config.vendor_velocity_max_per_week:
+                        add_reason(
+                            "vendor_velocity_exceeded",
+                            (
+                                f"Vendor '{invoice.vendor_name}' has submitted "
+                                f"{velocity_count} invoices in the last 7 days "
+                                f"(configured max: "
+                                f"{fraud_config.vendor_velocity_max_per_week}). "
+                                "High-velocity submissions are held for human "
+                                "review per DESIGN_THESIS.md §8."
+                            ),
+                            severity="error",
+                            details={
+                                "vendor_name": invoice.vendor_name,
+                                "observed_count_7d": velocity_count,
+                                "configured_max_per_week": (
+                                    fraud_config.vendor_velocity_max_per_week
+                                ),
+                            },
+                        )
+            except Exception as velocity_exc:
+                logger.warning(
+                    "[Gate] Velocity evaluation raised: %s", velocity_exc
+                )
+
+            # 6d) Prompt injection detection across untrusted invoice fields.
+            try:
+                line_item_descriptions = []
+                if isinstance(invoice.line_items, list):
+                    for li in invoice.line_items:
+                        if isinstance(li, dict) and li.get("description"):
+                            line_item_descriptions.append(str(li["description"]))
+
+                injection_results = scan_invoice_fields(
+                    subject=invoice.subject or "",
+                    vendor_name=invoice.vendor_name or "",
+                    email_body=getattr(invoice, "invoice_text", "") or "",
+                    attachment_text="",  # reserved for future pdf-text field
+                    line_item_descriptions=line_item_descriptions,
+                )
+                detected_fields: List[Dict[str, Any]] = []
+                all_matched_patterns: List[str] = []
+                for idx, result in enumerate(injection_results):
+                    if result.detected:
+                        # Map index to field name for the audit trail.
+                        if idx == 0:
+                            field = "subject"
+                        elif idx == 1:
+                            field = "vendor_name"
+                        elif idx == 2:
+                            field = "invoice_text"
+                        elif idx == 3:
+                            field = "attachment_text"
+                        else:
+                            field = f"line_item_{idx - 4}_description"
+                        detected_fields.append(
+                            {
+                                "field": field,
+                                "matched_patterns": list(result.matched_patterns),
+                            }
+                        )
+                        all_matched_patterns.extend(result.matched_patterns)
+
+                if detected_fields:
+                    add_reason(
+                        "prompt_injection_detected",
+                        (
+                            "Prompt injection patterns detected in untrusted "
+                            f"invoice fields: "
+                            f"{', '.join(d['field'] for d in detected_fields)}. "
+                            "Invoice rejected as attempted manipulation per "
+                            "DESIGN_THESIS.md §8."
+                        ),
+                        severity="error",
+                        details={
+                            "detected_fields": detected_fields,
+                            "unique_patterns": sorted(set(all_matched_patterns)),
+                        },
+                    )
+            except Exception as injection_exc:
+                logger.warning(
+                    "[Gate] Injection detection raised: %s", injection_exc
+                )
+
+        # Gate "passed" is governed by severity, not raw reason-code count.
+        # - severity="error":  definitive failure; blocks auto-approval.
+        # - severity="warning": still blocks auto-approval (needs human review).
+        # - severity="info":    surfaced in the gate dict for audit/telemetry,
+        #   but does NOT block. (Example: 'discount_applied' — informational
+        #   note about a legitimately discounted invoice.)
+        # Every fraud-control primitive added to the gate uses severity="error"
+        # so they are unambiguously blocking per DESIGN_THESIS.md §8.
+        blocking_severities = {"error", "warning"}
+        blocking_reasons = [
+            r for r in reasons if str(r.get("severity") or "").lower() in blocking_severities
+        ]
+        blocking_reason_codes = [
+            code
+            for code in reason_codes
+            if any(
+                str(r.get("code") or "").lower() == code
+                and str(r.get("severity") or "").lower() in blocking_severities
+                for r in reasons
+            )
+        ]
+
         gate = {
-            "passed": len(reason_codes) == 0,
+            "passed": len(blocking_reasons) == 0,
             "checked_at": checked_at,
+            # reason_codes continues to list ALL codes (including info) for
+            # backward-compatible telemetry. The Phase 1.1 enforcement layer
+            # reads gate.passed, not reason_codes, so info codes no longer
+            # cause spurious overrides.
             "reason_codes": reason_codes,
+            "blocking_reason_codes": blocking_reason_codes,
             "reasons": reasons,
             "policy_compliance": policy_result or {},
             "po_match_result": po_match_result,

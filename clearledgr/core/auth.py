@@ -431,6 +431,17 @@ def has_admin_access(role: Optional[str]) -> bool:
     return normalize_user_role(role) in {"owner", "admin", "api"}
 
 
+def has_fraud_control_admin(role: Optional[str]) -> bool:
+    """Return True for roles authorized to modify fraud-control parameters.
+
+    Per DESIGN_THESIS.md §8, fraud controls are an architectural baseline
+    that cannot be disabled by AP Managers. Their numeric parameters can
+    only be modified by the CFO role. ``owner`` retains superset access
+    because owners are the ultimate authority on an organization.
+    """
+    return normalize_user_role(role) in {"cfo", "owner"}
+
+
 def require_ops_user(user: TokenData = Depends(get_current_user)) -> TokenData:
     if not has_ops_access(getattr(user, "role", None)):
         raise HTTPException(status_code=403, detail="ops_role_required")
@@ -440,6 +451,18 @@ def require_ops_user(user: TokenData = Depends(get_current_user)) -> TokenData:
 def require_admin_user(user: TokenData = Depends(get_current_user)) -> TokenData:
     if not has_admin_access(getattr(user, "role", None)):
         raise HTTPException(status_code=403, detail="admin_role_required")
+    return user
+
+
+def require_fraud_control_admin(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """FastAPI dependency: only CFO or owner may modify fraud-control parameters."""
+    if not has_fraud_control_admin(getattr(user, "role", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="cfo_role_required_for_fraud_control_modification",
+        )
     return user
 
 

@@ -200,7 +200,14 @@ class CrossInvoiceAnalysis:
 class CrossInvoiceAnalyzer:
     """
     Analyzes invoices across the organization's history to detect issues.
-    
+
+    Velocity threshold is resolved from the organization's fraud-control
+    config (``fraud_controls.vendor_velocity_max_per_week``) — there is no
+    separate hard-coded setting. The gate blocks at the configured max;
+    this analyzer's "frequency" anomaly fires at 70% of the max (floor 3)
+    as an early-warning signal that does NOT block but is surfaced to
+    Claude's reasoning.
+
     Usage:
         analyzer = CrossInvoiceAnalyzer("org_123")
         analysis = analyzer.analyze(
@@ -209,20 +216,50 @@ class CrossInvoiceAnalyzer:
             invoice_number="INV-123",
             invoice_date="2026-01-15"
         )
-        
+
         if analysis.has_issues:
             for dup in analysis.duplicates:
                 print(f"Duplicate: {dup.message}")
     """
-    
+
     # Configuration
     DUPLICATE_AMOUNT_TOLERANCE = 0.01  # 1% tolerance for amount match
     DUPLICATE_DAYS_WINDOW = 7  # Look for duplicates within 7 days
     ANOMALY_AMOUNT_THRESHOLD = 0.30  # 30% deviation is anomalous
-    
+
     def __init__(self, organization_id: str = "default"):
         self.organization_id = organization_id
         self.db = get_db()
+        # Velocity thresholds derived from the org's fraud_controls config.
+        # Loaded lazily on first use to avoid import-time DB dependencies.
+        self._velocity_max_per_week: Optional[int] = None
+        self._velocity_warning_threshold: Optional[int] = None
+
+    def _get_velocity_thresholds(self) -> tuple[int, int]:
+        """Return (warning_threshold, hard_max) for vendor velocity.
+
+        hard_max is the configured blocking ceiling (same value the
+        validation gate uses — single source of truth). warning_threshold
+        is 70% of the hard max, floored at 3, so early-warning signals
+        fire before the hard block kicks in.
+        """
+        if self._velocity_max_per_week is not None and self._velocity_warning_threshold is not None:
+            return self._velocity_warning_threshold, self._velocity_max_per_week
+        try:
+            from clearledgr.core.fraud_controls import load_fraud_controls
+            config = load_fraud_controls(self.organization_id, self.db)
+            hard_max = int(config.vendor_velocity_max_per_week)
+        except Exception as exc:
+            logger.warning(
+                "[CrossInvoiceAnalyzer] Failed to load fraud_controls "
+                "for velocity threshold (org=%s): %s — using default 10",
+                self.organization_id, exc,
+            )
+            hard_max = 10
+        warning = max(3, int(hard_max * 0.7))
+        self._velocity_max_per_week = hard_max
+        self._velocity_warning_threshold = warning
+        return warning, hard_max
     
     def analyze(
         self,
@@ -430,22 +467,35 @@ class CrossInvoiceAnalyzer:
                     deviation_pct=deviation_pct * 100,
                 ))
         
-        # Check for frequency anomaly (too many invoices in short time)
+        # Check for frequency anomaly. Threshold comes from fraud_controls
+        # (single source of truth with the validation gate). Fires at 70% of
+        # the hard max as an early-warning signal; the gate blocks at the
+        # hard max itself.
         recent_count = len([
             inv for inv in recent_invoices
             if inv.get("created_at") and self._within_days(inv.get("created_at"), 7)
         ])
-        
-        if recent_count >= 3:
+
+        warning_threshold, hard_max = self._get_velocity_thresholds()
+        if recent_count >= warning_threshold:
+            # Escalate severity to "high" when the count has reached or
+            # passed the hard max — at that point the gate is already
+            # blocking, so this anomaly is reinforcing the block rather
+            # than acting as an early warning.
+            severity = "high" if recent_count >= hard_max else "warning"
             anomalies.append(AnomalyAlert(
-                severity="warning",
+                severity=severity,
                 anomaly_type="frequency",
-                message=f"Multiple invoices ({recent_count}) from {vendor} in past 7 days",
-                expected_value=1,
+                message=(
+                    f"Multiple invoices ({recent_count}) from {vendor} in past "
+                    f"7 days (warning at {warning_threshold}, blocking at "
+                    f"{hard_max})"
+                ),
+                expected_value=hard_max,
                 actual_value=recent_count,
-                deviation_pct=(recent_count - 1) * 100,
+                deviation_pct=((recent_count - warning_threshold) / max(warning_threshold, 1)) * 100,
             ))
-        
+
         return anomalies
     
     def _calculate_vendor_stats(
