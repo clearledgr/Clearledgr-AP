@@ -42,6 +42,25 @@ async def run_deferred_startup(app: Any) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Agent background not started: %s", exc)
 
+    # Phase 1.4: One-shot reaper sweep at boot so windows that expired
+    # while the process was down get finalized BEFORE the dedicated 60s
+    # reaper loop starts ticking. Without this sweep, a process restart
+    # can leave stale undo cards live for an extra 60s. With it, we
+    # converge to clean state immediately on boot.
+    try:
+        from clearledgr.services.agent_background import (
+            reap_expired_override_windows,
+        )
+
+        reaped = await asyncio.wait_for(reap_expired_override_windows(), timeout=10.0)
+        logger.info(
+            "Override window startup sweep complete (%d windows reaped)", reaped or 0
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Override window startup sweep timed out (10s) — skipping")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Override window startup sweep not started: %s", exc)
+
     try:
         from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
 

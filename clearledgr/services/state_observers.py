@@ -223,3 +223,102 @@ class GmailLabelObserver(StateObserver):
             )
         except Exception as exc:
             logger.warning("GmailLabelObserver: %s", exc)
+
+
+class OverrideWindowObserver(StateObserver):
+    """Open an override window + post the Slack undo card on posted_to_erp.
+
+    Per DESIGN_THESIS.md §8, every autonomous ERP post opens a time-bounded
+    reversal window. This observer is the canonical hook point: when an AP
+    item transitions into ``posted_to_erp``, it creates the
+    ``override_windows`` row via OverrideWindowService, then posts the
+    Slack undo card and stores the message ts back on the row so the
+    background reaper and the action handler can find it later.
+
+    The observer is fire-and-forget — failures here MUST NOT roll back
+    the post, because the post itself already succeeded at the ERP level.
+    Any failure simply means there is no undo card / no override window
+    for this item, which the customer can recover by reposting the card
+    via the ops surface (Phase 1.4 also exposes
+    POST /ap-items/{id}/reverse for the API path).
+    """
+
+    def __init__(self, db: Any) -> None:
+        self._db = db
+
+    async def on_transition(self, event: StateTransitionEvent) -> None:
+        if event.new_state != "posted_to_erp":
+            return
+        if not event.ap_item_id:
+            return
+
+        # Resolve the AP item to get the persisted erp_reference + erp_type
+        try:
+            ap_item = self._db.get_ap_item(event.ap_item_id) or {}
+        except Exception as exc:
+            logger.warning(
+                "[OverrideWindowObserver] Could not load AP item %s: %s",
+                event.ap_item_id, exc,
+            )
+            return
+
+        erp_reference = ap_item.get("erp_reference")
+        if not erp_reference:
+            logger.debug(
+                "[OverrideWindowObserver] AP item %s has no erp_reference yet — skipping",
+                event.ap_item_id,
+            )
+            return
+
+        # erp_type comes from metadata (sync_token persistence wrote it)
+        metadata = ap_item.get("metadata") or {}
+        if isinstance(metadata, str):
+            try:
+                import json as _json
+                metadata = _json.loads(metadata)
+            except Exception:
+                metadata = {}
+        erp_type = (
+            (metadata or {}).get("erp_type")
+            or (event.metadata or {}).get("erp_type")
+        )
+
+        # Open the window via the service
+        try:
+            from clearledgr.services.override_window import (
+                get_override_window_service,
+            )
+            service = get_override_window_service(
+                event.organization_id, db=self._db
+            )
+            window = service.open_window(
+                ap_item_id=event.ap_item_id,
+                erp_reference=str(erp_reference),
+                erp_type=erp_type,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[OverrideWindowObserver] open_window failed for ap_item=%s: %s",
+                event.ap_item_id, exc,
+            )
+            return
+
+        # Post the Slack undo card (best-effort)
+        try:
+            from clearledgr.services.slack_cards import post_undo_card_for_window
+            slack_refs = await post_undo_card_for_window(
+                organization_id=event.organization_id,
+                ap_item=ap_item,
+                window=window,
+                db=self._db,
+            )
+            if slack_refs:
+                self._db.update_override_window_slack_refs(
+                    window["id"],
+                    slack_channel=slack_refs.get("channel"),
+                    slack_message_ts=slack_refs.get("message_ts"),
+                )
+        except Exception as exc:
+            logger.warning(
+                "[OverrideWindowObserver] Slack undo card post failed: %s", exc,
+            )

@@ -251,3 +251,52 @@ def _m010_erp_oauth_state(cur, db):
             created_at TEXT NOT NULL
         )
     """)
+
+
+@migration(11, "Override window tracking (DESIGN_THESIS.md §8)")
+def _m011_override_windows(cur, db):
+    """Create the override_windows table + indexes.
+
+    Phase 1.4: Every autonomous ERP post opens a time-bounded window
+    during which a human can reverse the post via Slack or the API.
+    This table tracks those windows so the background reaper knows
+    when to finalize them and so action handlers can verify the
+    window hasn't already expired before calling reverse_bill.
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS override_windows (
+            id TEXT PRIMARY KEY,
+            ap_item_id TEXT NOT NULL,
+            organization_id TEXT NOT NULL,
+            erp_reference TEXT NOT NULL,
+            erp_type TEXT,
+            posted_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'pending',
+            slack_channel TEXT,
+            slack_message_ts TEXT,
+            reversed_at TEXT,
+            reversed_by TEXT,
+            reversal_reason TEXT,
+            reversal_ref TEXT,
+            failure_reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_override_windows_state_expiry "
+        "ON override_windows(state, expires_at)",
+        "CREATE INDEX IF NOT EXISTS idx_override_windows_ap_item "
+        "ON override_windows(ap_item_id)",
+        "CREATE INDEX IF NOT EXISTS idx_override_windows_org "
+        "ON override_windows(organization_id)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v11] Index skipped (%s): %s",
+                ddl.split("ON")[1].strip(),
+                exc,
+            )

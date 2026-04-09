@@ -417,6 +417,8 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/ap/items/[^/]+/non-invoice/resolve$",
         r"^/api/ap/items/[^/]+/resubmit$",
         r"^/api/ap/items/[^/]+/retry-post$",
+        # Phase 1.4: override-window reversal endpoint
+        r"^/api/ap/items/[^/]+/reverse$",
         r"^/api/ap/items/[^/]+/field-review/resolve$",
         r"^/api/ap/items/[^/]+/fields$",
         r"^/api/ap/items/[^/]+/gmail-link$",

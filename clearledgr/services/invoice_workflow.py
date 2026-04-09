@@ -92,6 +92,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             AuditTrailObserver,
             GmailLabelObserver,
             NotificationObserver,
+            OverrideWindowObserver,
             StateObserverRegistry,
             VendorFeedbackObserver,
         )
@@ -100,6 +101,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         self._observer_registry.register(VendorFeedbackObserver(self.db))
         self._observer_registry.register(NotificationObserver(self.db))
         self._observer_registry.register(GmailLabelObserver(self.db))
+        # Phase 1.4: open an override window + post the Slack undo card
+        # whenever an AP item transitions into posted_to_erp.
+        self._observer_registry.register(OverrideWindowObserver(self.db))
 
     def _load_settings(self):
         """Load organization settings if not already loaded."""
@@ -1003,6 +1007,28 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 )
                 if ap_id:
                     self._update_ap_item_metadata(ap_id, {"post_verified": False})
+
+            # Phase 1.4: persist ERP sync token + erp_type so the override
+            # window reversal path (reverse_bill_from_quickbooks) can use
+            # the cached SyncToken without an extra REST-GET. Also open
+            # the override window row — the OverrideWindowObserver will
+            # do this via the state transition, but we compute the data
+            # here so the observer has what it needs.
+            erp_sync_token = (result or {}).get("sync_token")
+            erp_type_hint = (result or {}).get("erp")
+            ap_id_for_meta = self._lookup_ap_item_id(
+                gmail_id=invoice.gmail_id,
+                vendor_name=invoice.vendor_name,
+                invoice_number=invoice.invoice_number,
+            )
+            if ap_id_for_meta:
+                meta_updates: Dict[str, Any] = {}
+                if erp_sync_token is not None:
+                    meta_updates["erp_sync_token"] = str(erp_sync_token)
+                if erp_type_hint:
+                    meta_updates["erp_type"] = str(erp_type_hint)
+                if meta_updates:
+                    self._update_ap_item_metadata(ap_id_for_meta, meta_updates)
             
             # LEARNING: Record auto-approval to learn vendor→GL mappings
             try:

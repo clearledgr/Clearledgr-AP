@@ -1585,3 +1585,157 @@ async def retry_erp_post(
             detail=f"ERP posting failed: {reason}",
         )
     raise HTTPException(status_code=502, detail=f"ERP posting failed: {status or 'retry_failed'}")
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.4: Override-window reversal endpoint
+# ---------------------------------------------------------------------------
+
+
+from pydantic import BaseModel, Field as _PydField  # noqa: E402  (local import)
+
+
+class ReverseAPItemRequest(BaseModel):
+    """Request body for ``POST /api/ap/items/{ap_item_id}/reverse``."""
+
+    reason: str = _PydField(
+        ...,
+        min_length=1,
+        max_length=512,
+        description=(
+            "Mandatory human-supplied reason for the reversal. Recorded "
+            "on the audit trail and forwarded to the ERP reverse_bill call."
+        ),
+    )
+
+
+@router.post("/{ap_item_id}/reverse")
+async def reverse_ap_item_post(
+    ap_item_id: str,
+    request: ReverseAPItemRequest,
+    organization_id: str = Query(default="default"),
+    user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    """Reverse a posted bill via the override-window service.
+
+    Phase 1.4 (DESIGN_THESIS.md §8): the API path for the override-window
+    "Undo post" action. Mirrors the Slack button handler in
+    ``api/slack_invoices.py`` but is callable from any non-Slack surface
+    (Gmail sidebar, ops console, CLI). Requires the ops role and that
+    the AP item belongs to the user's organization.
+
+    The request fails with 404 if no override window exists for the
+    given ap_item_id (the post happened before Phase 1.4 was enabled,
+    or the window was already finalized). It fails with 410 Gone if
+    the window has expired. It fails with 502 if the ERP rejects the
+    reversal.
+    """
+    db = shared.get_db()
+    item = shared._require_item(db, ap_item_id)
+    verify_org_access(item.get("organization_id") or organization_id or "default", user)
+
+    window = db.get_override_window_by_ap_item_id(ap_item_id)
+    if not window:
+        raise HTTPException(
+            status_code=404,
+            detail="no_override_window",
+        )
+
+    actor_label = (
+        getattr(user, "email", None)
+        or getattr(user, "user_id", None)
+        or "ops_user"
+    )
+
+    from clearledgr.services import slack_cards
+    from clearledgr.services.override_window import get_override_window_service
+
+    org_id_for_service = (
+        window.get("organization_id")
+        or item.get("organization_id")
+        or organization_id
+        or "default"
+    )
+
+    service = get_override_window_service(org_id_for_service, db=db)
+    outcome = await service.attempt_reversal(
+        window_id=str(window.get("id")),
+        actor_id=str(actor_label),
+        reason=request.reason,
+    )
+
+    fresh_window = db.get_override_window(str(window.get("id"))) or window
+    fresh_item = db.get_ap_item(ap_item_id) or item
+
+    # Best-effort Slack card sync — same logic as the Slack handler.
+    try:
+        if outcome.status in {"reversed", "already_reversed"}:
+            await slack_cards.update_card_to_reversed(
+                organization_id=org_id_for_service,
+                ap_item=fresh_item,
+                window=fresh_window,
+                actor_id=str(actor_label),
+                reversal_ref=outcome.reversal_ref,
+                reversal_method=outcome.reversal_method,
+            )
+        elif outcome.status == "expired":
+            await slack_cards.update_card_to_finalized(
+                organization_id=org_id_for_service,
+                ap_item=fresh_item,
+                window=fresh_window,
+            )
+        else:
+            await slack_cards.update_card_to_reversal_failed(
+                organization_id=org_id_for_service,
+                ap_item=fresh_item,
+                window=fresh_window,
+                actor_id=str(actor_label),
+                failure_reason=outcome.reason or outcome.status,
+                failure_message=outcome.message,
+            )
+    except Exception:
+        # Never let Slack failures break the API contract.
+        pass
+
+    if outcome.status == "reversed":
+        return {
+            "status": "reversed",
+            "ap_item_id": ap_item_id,
+            "window_id": outcome.window_id,
+            "reversal_ref": outcome.reversal_ref,
+            "reversal_method": outcome.reversal_method,
+            "erp": outcome.erp,
+        }
+    if outcome.status == "already_reversed":
+        return {
+            "status": "already_reversed",
+            "ap_item_id": ap_item_id,
+            "window_id": outcome.window_id,
+            "reversal_ref": outcome.reversal_ref,
+            "erp": outcome.erp,
+        }
+    if outcome.status == "expired":
+        raise HTTPException(
+            status_code=410,
+            detail="override_window_expired",
+        )
+    if outcome.status == "skipped":
+        raise HTTPException(
+            status_code=400,
+            detail="no_erp_connected",
+        )
+    if outcome.status == "not_found":
+        raise HTTPException(
+            status_code=404,
+            detail="no_override_window",
+        )
+    # status == "failed"
+    raise HTTPException(
+        status_code=502,
+        detail={
+            "error": "reversal_failed",
+            "reason": outcome.reason,
+            "message": outcome.message,
+            "erp": outcome.erp,
+        },
+    )

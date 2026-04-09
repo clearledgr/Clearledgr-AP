@@ -298,6 +298,12 @@ def _extract_slack_gmail_id(action: Dict[str, Any]) -> str:
         "request_budget_adjustment_",
         "request_info_",
         "reject_budget_",
+        # Phase 1.4: undo_post_<window_id> — the suffix is the override
+        # window id, NOT a gmail thread id. We surface it on
+        # NormalizedApprovalAction.gmail_id because the contract has no
+        # dedicated field for "lookup key" — the handler is responsible
+        # for treating it as a window id when action == "undo_post".
+        "undo_post_",
     )
     for prefix in prefixes:
         if action_id.startswith(prefix):
@@ -317,6 +323,9 @@ def _canonical_slack_action(action_id: str) -> Tuple[str, Optional[str]]:
         return "request_info", "budget_adjustment"
     if action_id.startswith(("reject_invoice_", "reject_budget_")):
         return "reject", ("budget_reject" if action_id.startswith("reject_budget_") else None)
+    # Phase 1.4: override-window reversal (DESIGN_THESIS.md §8)
+    if action_id.startswith("undo_post_"):
+        return "undo_post", None
     raise ApprovalActionContractError("unsupported_action", f"Unsupported Slack action: {action_id}", 400)
 
 

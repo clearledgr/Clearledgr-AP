@@ -389,7 +389,113 @@ async def _dispatch_slack_action(action: Any) -> Dict[str, Any]:
             "result": result,
         }
 
+    if action.action == "undo_post":
+        # Phase 1.4 override-window reversal (DESIGN_THESIS.md §8).
+        # The action's gmail_id field carries the override_window id
+        # because the contract has no dedicated lookup-key field — see
+        # the comment in approval_action_contract._extract_slack_gmail_id.
+        return await _handle_undo_post_action(action, actor_identity)
+
     raise HTTPException(status_code=400, detail="unsupported_action")
+
+
+async def _handle_undo_post_action(
+    action: Any, actor_identity: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Process a Slack ``undo_post`` button click.
+
+    Loads the override_window referenced by ``action.gmail_id`` (which
+    is actually the window id — see the contract comment), calls the
+    OverrideWindowService to attempt the reversal, then updates the
+    Slack card to reflect the new state.
+    """
+    window_id = str(action.gmail_id or "").strip()
+    if not window_id:
+        return {
+            "response_type": "ephemeral",
+            "text": "Cannot reverse: override window reference is missing.",
+        }
+
+    db = get_db()
+    window = db.get_override_window(window_id)
+    if not window:
+        return {
+            "response_type": "ephemeral",
+            "text": "This undo button no longer points to a valid override window.",
+        }
+
+    organization_id = (
+        action.organization_id
+        or window.get("organization_id")
+        or "default"
+    )
+    actor_label = (
+        action.actor_display
+        or action.actor_email
+        or action.actor_id
+        or "slack_user"
+    )
+
+    from clearledgr.services.override_window import get_override_window_service
+
+    service = get_override_window_service(organization_id, db=db)
+    outcome = await service.attempt_reversal(
+        window_id=window_id,
+        actor_id=str(actor_label),
+        reason=action.reason or "human_override_via_slack",
+    )
+
+    ap_item_id = window.get("ap_item_id")
+    ap_item = db.get_ap_item(ap_item_id) if ap_item_id else {}
+    fresh_window = db.get_override_window(window_id) or window
+
+    from clearledgr.services import slack_cards
+
+    if outcome.status in {"reversed", "already_reversed"}:
+        await slack_cards.update_card_to_reversed(
+            organization_id=organization_id,
+            ap_item=ap_item or {},
+            window=fresh_window,
+            actor_id=str(actor_label),
+            reversal_ref=outcome.reversal_ref,
+            reversal_method=outcome.reversal_method,
+        )
+        msg = (
+            "Bill reversed at the ERP."
+            if outcome.status == "reversed"
+            else "Bill was already reversed; nothing to do."
+        )
+        return {"response_type": "ephemeral", "text": msg, "result": outcome.to_dict()}
+
+    if outcome.status == "expired":
+        await slack_cards.update_card_to_finalized(
+            organization_id=organization_id,
+            ap_item=ap_item or {},
+            window=fresh_window,
+        )
+        return {
+            "response_type": "ephemeral",
+            "text": "The override window has expired — this post is final.",
+            "result": outcome.to_dict(),
+        }
+
+    # failed | not_found | skipped — surface a clear escalation message
+    await slack_cards.update_card_to_reversal_failed(
+        organization_id=organization_id,
+        ap_item=ap_item or {},
+        window=fresh_window,
+        actor_id=str(actor_label),
+        failure_reason=outcome.reason or "unknown_error",
+        failure_message=outcome.message,
+    )
+    return {
+        "response_type": "ephemeral",
+        "text": (
+            f"Reversal failed: {outcome.reason or outcome.status}. "
+            "Manual intervention may be required at the ERP level."
+        ),
+        "result": outcome.to_dict(),
+    }
 
 
 async def _run_and_record_slack_action(normalized: Any, processed_key: str) -> Dict[str, Any]:

@@ -14,6 +14,18 @@ Exception paths:
     ready_to_post -> failed_post
     failed_post -> ready_to_post  (retry)
     needs_info -> validated       (resubmit)
+
+Override-window reversal path (DESIGN_THESIS.md §8):
+    posted_to_erp -> reversed -> closed
+        A human can reverse an autonomous ERP post within the override
+        window (default 15 min). The reversal calls the Phase 1.3
+        ERP-level reverse_bill API, which creates a cancelling document
+        or soft-deletes the bill depending on the ERP. After a
+        successful reversal the AP item lands in ``reversed`` and is
+        then closed out. Reversal after the window has expired is NOT
+        a state-machine action — the window is finalized and only an
+        out-of-band intervention (e.g., a manual credit note) can
+        undo it.
 """
 
 from __future__ import annotations
@@ -27,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 class APState(str, Enum):
-    """Canonical AP item states from PLAN.md 2.1."""
+    """Canonical AP item states from PLAN.md 2.1 + Phase 1.4 reversal."""
 
     RECEIVED = "received"
     VALIDATED = "validated"
@@ -38,6 +50,9 @@ class APState(str, Enum):
     READY_TO_POST = "ready_to_post"
     POSTED_TO_ERP = "posted_to_erp"
     FAILED_POST = "failed_post"
+    # DESIGN_THESIS.md §8 override-window reversal outcome. The bill
+    # was posted and then reversed at the ERP level within the window.
+    REVERSED = "reversed"
     CLOSED = "closed"
 
 
@@ -49,8 +64,13 @@ VALID_TRANSITIONS: Dict[APState, FrozenSet[APState]] = {
     APState.APPROVED: frozenset({APState.READY_TO_POST, APState.NEEDS_INFO, APState.CLOSED}),
     APState.REJECTED: frozenset({APState.CLOSED}),
     APState.READY_TO_POST: frozenset({APState.POSTED_TO_ERP, APState.FAILED_POST, APState.CLOSED}),
-    APState.POSTED_TO_ERP: frozenset({APState.CLOSED}),
+    # posted_to_erp can either close directly (window expires without
+    # incident) or be reversed inside the override window.
+    APState.POSTED_TO_ERP: frozenset({APState.CLOSED, APState.REVERSED}),
     APState.FAILED_POST: frozenset({APState.READY_TO_POST, APState.CLOSED}),
+    # Reversed is a transient state — the AP item is cleaned up to
+    # closed shortly after the reversal is acknowledged.
+    APState.REVERSED: frozenset({APState.CLOSED}),
     APState.CLOSED: frozenset(),  # terminal
 }
 

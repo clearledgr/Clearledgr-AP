@@ -25,8 +25,9 @@ SLACK_CHANNEL = (
     or "#finance"
 )
 
-# Background task handle for cleanup
+# Background task handles for cleanup
 _background_task = None
+_override_window_reaper_task = None
 
 
 def _active_org_ids() -> List[str]:
@@ -155,9 +156,109 @@ async def _slack_alert(text: str, blocks=None, organization_id: Optional[str] = 
         logger.error("Slack alert failed: %s", e)
 
 
+async def reap_expired_override_windows() -> int:
+    """Process expired override windows: mark them expired, update Slack cards.
+
+    Phase 1.4: This is the canonical reaper for the override-window
+    mechanism (DESIGN_THESIS.md §8). It runs every 60 seconds via
+    ``_override_window_reaper_loop`` so that windows are finalized
+    promptly after their deadline — well before the user notices a
+    stale undo card.
+
+    Returns the number of windows that were reaped on this call. The
+    function is idempotent — windows already in a terminal state are
+    skipped, and a partial failure (e.g., Slack API hiccup) leaves
+    the window in ``expired`` state with no card update; the caller
+    can retry safely.
+    """
+    try:
+        from clearledgr.core.database import get_db
+        from clearledgr.services import slack_cards
+        from clearledgr.services.override_window import (
+            get_override_window_service,
+        )
+    except Exception as exc:
+        logger.warning("[OverrideWindowReaper] Imports failed: %s", exc)
+        return 0
+
+    try:
+        db = get_db()
+    except Exception as exc:
+        logger.warning("[OverrideWindowReaper] DB unavailable: %s", exc)
+        return 0
+
+    try:
+        expired = db.list_expired_override_windows()
+    except Exception as exc:
+        logger.warning("[OverrideWindowReaper] list_expired query failed: %s", exc)
+        return 0
+
+    reaped = 0
+    for window in expired or []:
+        window_id = window.get("id")
+        organization_id = window.get("organization_id")
+        if not window_id or not organization_id:
+            continue
+        try:
+            service = get_override_window_service(organization_id, db=db)
+            success = service.expire_window(window_id)
+        except Exception as exc:
+            logger.warning(
+                "[OverrideWindowReaper] expire_window failed for %s: %s",
+                window_id, exc,
+            )
+            continue
+        if not success:
+            continue
+        reaped += 1
+
+        # Best-effort Slack card update — if this fails the window is
+        # still marked expired in the DB, the user just sees a stale card.
+        try:
+            ap_item_id = window.get("ap_item_id")
+            ap_item = db.get_ap_item(ap_item_id) if ap_item_id else {}
+            await slack_cards.update_card_to_finalized(
+                organization_id=organization_id,
+                ap_item=ap_item or {},
+                window=window,
+            )
+        except Exception as exc:
+            logger.debug(
+                "[OverrideWindowReaper] Slack card finalize failed for %s: %s",
+                window_id, exc,
+            )
+    if reaped:
+        logger.info("[OverrideWindowReaper] Reaped %d expired override windows", reaped)
+    return reaped
+
+
+_OVERRIDE_WINDOW_REAPER_INTERVAL_SECONDS = int(
+    os.getenv("OVERRIDE_WINDOW_REAPER_INTERVAL_SECONDS", "60")
+)
+
+
+async def _override_window_reaper_loop() -> None:
+    """Dedicated 60-second loop that finalizes expired override windows.
+
+    Runs in parallel with the main 15-minute background loop so the
+    reaper cadence can stay tight (override windows are short-lived).
+    """
+    # Stagger startup so we don't compete with the main loop's first tick
+    await asyncio.sleep(5)
+    while True:
+        try:
+            await reap_expired_override_windows()
+        except asyncio.CancelledError:
+            logger.info("Override window reaper loop cancelled")
+            return
+        except Exception as exc:
+            logger.error("[OverrideWindowReaper] loop iteration failed: %s", exc)
+        await asyncio.sleep(_OVERRIDE_WINDOW_REAPER_INTERVAL_SECONDS)
+
+
 async def start_agent_background(app=None):
-    """Start the background intelligence loop."""
-    global _background_task
+    """Start the background intelligence loop + override-window reaper."""
+    global _background_task, _override_window_reaper_task
     if _background_task is not None:
         logger.warning("Agent background already running")
         return
@@ -172,17 +273,38 @@ async def start_agent_background(app=None):
                 logger.critical("Background loop crashed, restarting in 30s: %s", exc)
                 await asyncio.sleep(30)
 
+    async def _reaper_loop_with_restart():
+        while True:
+            try:
+                await _override_window_reaper_loop()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                logger.critical(
+                    "Override window reaper crashed, restarting in 30s: %s", exc
+                )
+                await asyncio.sleep(30)
+
     _background_task = asyncio.create_task(_run_loop_with_restart())
-    logger.info("Agent background intelligence loop started")
+    _override_window_reaper_task = asyncio.create_task(_reaper_loop_with_restart())
+    logger.info(
+        "Agent background intelligence loop started "
+        "(override window reaper: every %ds)",
+        _OVERRIDE_WINDOW_REAPER_INTERVAL_SECONDS,
+    )
 
 
 async def stop_agent_background():
-    """Stop the background loop."""
-    global _background_task
+    """Stop the background loop + override-window reaper."""
+    global _background_task, _override_window_reaper_task
     if _background_task:
         _background_task.cancel()
         _background_task = None
         logger.info("Agent background intelligence loop stopped")
+    if _override_window_reaper_task:
+        _override_window_reaper_task.cancel()
+        _override_window_reaper_task = None
+        logger.info("Override window reaper loop stopped")
 
 
 async def _run_loop():

@@ -62,6 +62,7 @@ def _load_store_symbols() -> None:
     global PaymentStore
     global WebhookStore
     global DisputeStore
+    global OverrideWindowStore
 
     if "APStore" in globals():
         return
@@ -83,6 +84,9 @@ def _load_store_symbols() -> None:
     from clearledgr.core.stores.payment_store import PaymentStore as _PaymentStore
     from clearledgr.core.stores.webhook_store import WebhookStore as _WebhookStore
     from clearledgr.core.stores.dispute_store import DisputeStore as _DisputeStore
+    from clearledgr.core.stores.override_window_store import (
+        OverrideWindowStore as _OverrideWindowStore,
+    )
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -99,6 +103,7 @@ def _load_store_symbols() -> None:
     PaymentStore = _PaymentStore
     WebhookStore = _WebhookStore
     DisputeStore = _DisputeStore
+    OverrideWindowStore = _OverrideWindowStore
 
 
 class _ClearledgrDBBase:
@@ -1172,6 +1177,16 @@ class _ClearledgrDBBase:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_channel_threads_ap_item ON channel_threads(ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_channel_threads_channel ON channel_threads(ap_item_id, channel)")
 
+            # Phase 1.4: Override-window tracking for ERP post reversals.
+            cur.execute(OverrideWindowStore.OVERRIDE_WINDOWS_TABLE_SQL)
+            for ddl in OverrideWindowStore.OVERRIDE_WINDOWS_INDEXES_SQL:
+                try:
+                    cur.execute(ddl)
+                except Exception as idx_exc:
+                    logger.warning(
+                        "[DB init] override_windows index skipped: %s", idx_exc
+                    )
+
             # Vendor intelligence tables (AP reasoning layer)
             cur.execute(VendorStore.VENDOR_PROFILE_TABLE_SQL)
             cur.execute(VendorStore.VENDOR_INVOICE_HISTORY_TABLE_SQL)
@@ -1308,6 +1323,7 @@ def _get_db_impl_class():
             PaymentStore,
             WebhookStore,
             DisputeStore,
+            OverrideWindowStore,
             _ClearledgrDBBase,
         ):
             pass
