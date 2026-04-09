@@ -52,6 +52,18 @@ CREATE TABLE IF NOT EXISTS vendor_profiles (
     iban_change_pending INTEGER NOT NULL DEFAULT 0,
     iban_change_detected_at TEXT,
     iban_change_verification_state TEXT,
+    -- Phase 2.4: KYC fields (DESIGN_THESIS.md §3). First-class columns
+    -- so operational queries (stale KYC, missing VAT numbers) are
+    -- simple SQL, not JSON scans. director_names stored as a JSON
+    -- array so the common "split by comma" ambiguity is avoided.
+    -- ytd_spend and risk_score are NOT stored — they're computed at
+    -- read time from invoice history and live signals.
+    registration_number TEXT,
+    vat_number TEXT,
+    registered_address TEXT,
+    director_names TEXT NOT NULL DEFAULT '[]',
+    kyc_completion_date TEXT,
+    vendor_kyc_updated_at TEXT,
     UNIQUE(organization_id, vendor_name)
 )
 """
@@ -147,6 +159,7 @@ class VendorStore:
                         ("anomaly_flags", []),
                         ("metadata", {}),
                         ("iban_change_verification_state", None),
+                        ("director_names", []),
                     ):
                         decoded = _loads(parsed.get(key))
                         parsed[key] = decoded if decoded is not None else default
@@ -165,6 +178,7 @@ class VendorStore:
                         ("anomaly_flags", []),
                         ("metadata", {}),
                         ("iban_change_verification_state", None),
+                        ("director_names", []),
                     ):
                         decoded = _loads(parsed.get(key))
                         parsed[key] = decoded if decoded is not None else default
@@ -245,6 +259,14 @@ class VendorStore:
             "iban_change_pending",
             "iban_change_detected_at",
             "iban_change_verification_state",
+            # Phase 2.4: KYC fields. Writes should go through
+            # update_vendor_kyc which handles validation + audit.
+            "registration_number",
+            "vat_number",
+            "registered_address",
+            "director_names",
+            "kyc_completion_date",
+            "vendor_kyc_updated_at",
         }
         safe_fields = {k: v for k, v in fields.items() if k in _ALLOWED}
 
@@ -255,6 +277,7 @@ class VendorStore:
             "anomaly_flags",
             "metadata",
             "iban_change_verification_state",
+            "director_names",
         ):
             if key in safe_fields and isinstance(safe_fields[key], (list, dict)):
                 safe_fields[key] = json.dumps(safe_fields[key])
@@ -849,6 +872,171 @@ class VendorStore:
                 "[VendorStore] reject_iban_change_freeze upsert failed: %s", exc
             )
             return False
+
+    # ------------------------------------------------------------------ #
+    # Phase 2.4: Vendor KYC typed accessors + computed fields              #
+    # ------------------------------------------------------------------ #
+
+    # Whitelisted KYC field set. Keep in sync with migration v16.
+    _KYC_FIELD_NAMES = (
+        "registration_number",
+        "vat_number",
+        "registered_address",
+        "director_names",
+        "kyc_completion_date",
+    )
+
+    def get_vendor_kyc(
+        self, organization_id: str, vendor_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return the KYC sub-dict for a vendor (or None if vendor absent).
+
+        Shape:
+            {
+                "registration_number": str | None,
+                "vat_number": str | None,
+                "registered_address": str | None,
+                "director_names": List[str],
+                "kyc_completion_date": str | None,
+                "vendor_kyc_updated_at": str | None,
+            }
+        """
+        profile = self.get_vendor_profile(organization_id, vendor_name)
+        if not profile:
+            return None
+        return {
+            "registration_number": profile.get("registration_number"),
+            "vat_number": profile.get("vat_number"),
+            "registered_address": profile.get("registered_address"),
+            "director_names": profile.get("director_names") or [],
+            "kyc_completion_date": profile.get("kyc_completion_date"),
+            "vendor_kyc_updated_at": profile.get("vendor_kyc_updated_at"),
+        }
+
+    def update_vendor_kyc(
+        self,
+        organization_id: str,
+        vendor_name: str,
+        *,
+        patch: Dict[str, Any],
+        actor_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply a partial KYC patch to a vendor profile.
+
+        Only fields in ``_KYC_FIELD_NAMES`` are accepted. The
+        ``director_names`` field is validated to be a list of non-empty
+        strings if provided. Bumps ``vendor_kyc_updated_at`` to now on
+        every successful write. Returns the updated KYC sub-dict on
+        success, None if the vendor doesn't exist or the patch was
+        entirely empty after filtering.
+
+        This method does NOT emit an audit event — that's the service
+        layer's responsibility so the caller can supply ``actor_id``
+        from the authenticated user context.
+        """
+        if not patch:
+            return None
+        profile = self.get_vendor_profile(organization_id, vendor_name)
+        if not profile:
+            return None
+
+        cleaned: Dict[str, Any] = {}
+        for field in self._KYC_FIELD_NAMES:
+            if field not in patch:
+                continue
+            value = patch[field]
+            if field == "director_names":
+                if value is None:
+                    cleaned[field] = []
+                elif isinstance(value, list):
+                    cleaned[field] = [
+                        str(name).strip()
+                        for name in value
+                        if name and str(name).strip()
+                    ]
+                else:
+                    # Reject non-list shapes rather than silently coercing
+                    continue
+            elif field == "kyc_completion_date":
+                if value is None:
+                    cleaned[field] = None
+                else:
+                    # Accept ISO dates; leave validation strictness to the
+                    # API layer's pydantic model
+                    cleaned[field] = str(value).strip() or None
+            else:
+                cleaned[field] = (
+                    str(value).strip() if value is not None else None
+                )
+
+        if not cleaned:
+            return None
+
+        cleaned["vendor_kyc_updated_at"] = _now()
+
+        try:
+            self.upsert_vendor_profile(
+                organization_id, vendor_name, **cleaned
+            )
+        except Exception as exc:
+            logger.error(
+                "[VendorStore] update_vendor_kyc upsert failed for %s/%s: %s",
+                organization_id, vendor_name, exc,
+            )
+            return None
+
+        return self.get_vendor_kyc(organization_id, vendor_name)
+
+    def compute_vendor_ytd_spend(
+        self,
+        organization_id: str,
+        vendor_name: str,
+        *,
+        year: Optional[int] = None,
+    ) -> float:
+        """Sum of posted invoice amounts for the vendor in the given year.
+
+        Defaults to the current calendar year (UTC). Uses
+        ``vendor_invoice_history`` rows that reached a terminal state
+        of ``posted_to_erp`` — anything not posted doesn't count as
+        spend. Returns 0.0 on error or empty history.
+        """
+        if year is None:
+            year = datetime.now(timezone.utc).year
+        start_iso = f"{year}-01-01T00:00:00+00:00"
+        end_iso = f"{year + 1}-01-01T00:00:00+00:00"
+
+        sql = self._prepare_sql(
+            """
+            SELECT COALESCE(SUM(amount), 0) AS total
+            FROM vendor_invoice_history
+            WHERE organization_id = ?
+              AND vendor_name = ?
+              AND final_state = 'posted_to_erp'
+              AND created_at >= ?
+              AND created_at < ?
+            """
+        )
+        try:
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    sql, (organization_id, vendor_name, start_iso, end_iso)
+                )
+                row = cur.fetchone()
+        except Exception as exc:
+            logger.warning(
+                "[VendorStore] compute_vendor_ytd_spend failed for %s/%s: %s",
+                organization_id, vendor_name, exc,
+            )
+            return 0.0
+        if row is None:
+            return 0.0
+        try:
+            total = row["total"] if hasattr(row, "keys") else row[0]
+            return float(total or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
 
     # ------------------------------------------------------------------ #
     # vendor_invoice_history                                               #

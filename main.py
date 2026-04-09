@@ -427,6 +427,8 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         # Phase 2.2: vendor trusted-domains allowlist endpoints
         r"^/api/vendors/[^/]+/trusted-domains$",
         r"^/api/vendors/[^/]+/trusted-domains/[^/]+$",
+        # Phase 2.4: vendor KYC + risk score endpoints
+        r"^/api/vendors/[^/]+/kyc$",
         r"^/api/ap/items/[^/]+/field-review/resolve$",
         r"^/api/ap/items/[^/]+/fields$",
         r"^/api/ap/items/[^/]+/gmail-link$",
@@ -886,6 +888,17 @@ except ImportError:
 try:
     from clearledgr.api.vendor_domains import router as vendor_domains_router
     app.include_router(vendor_domains_router)
+except ImportError:
+    pass
+
+# Include Vendor KYC API — Phase 2.4.
+# First-class KYC fields on the Vendor object plus computed signals
+# (iban_verified, ytd_spend, risk_score). Reads are any authenticated
+# org member; writes require Financial Controller or higher.
+# See DESIGN_THESIS.md §3.
+try:
+    from clearledgr.api.vendor_kyc import router as vendor_kyc_router
+    app.include_router(vendor_kyc_router)
 except ImportError:
     pass
 

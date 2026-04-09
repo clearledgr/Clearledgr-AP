@@ -580,3 +580,61 @@ def _m015_role_taxonomy_cutover(cur, db):
             "[Migration v15] Role taxonomy cutover complete — %d users updated",
             total_updated,
         )
+
+
+@migration(16, "Vendor KYC schema (DESIGN_THESIS.md §3)")
+def _m016_vendor_kyc_columns(cur, db):
+    """Add KYC fields to vendor_profiles.
+
+    Phase 2.4 — vendor KYC schema.
+
+    Adds six new columns to vendor_profiles:
+      - registration_number     — company registration id
+      - vat_number              — tax identity
+      - registered_address      — legal address
+      - director_names          — JSON array of director names
+      - kyc_completion_date     — ISO date when KYC was completed
+      - vendor_kyc_updated_at   — audit timestamp bumped on every KYC write
+
+    These are first-class typed columns (not JSON metadata) so
+    operational queries — "all vendors with stale KYC", "all vendors
+    missing a VAT number" — are simple SQL.
+
+    ``iban_verified`` / ``iban_verified_at`` / ``ytd_spend`` /
+    ``risk_score`` from the thesis §3 spec are NOT stored columns:
+      - iban_verified is derived from existing bank_details_encrypted
+        + iban_change_pending state (Phase 2.1.a + 2.1.b)
+      - iban_verified_at is derived from bank_details_changed_at
+      - ytd_spend is computed at read time from vendor_invoice_history
+      - risk_score is computed at read time by VendorRiskScoreService
+    """
+    for ddl in (
+        "ALTER TABLE vendor_profiles ADD COLUMN registration_number TEXT",
+        "ALTER TABLE vendor_profiles ADD COLUMN vat_number TEXT",
+        "ALTER TABLE vendor_profiles ADD COLUMN registered_address TEXT",
+        "ALTER TABLE vendor_profiles ADD COLUMN director_names TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE vendor_profiles ADD COLUMN kyc_completion_date TEXT",
+        "ALTER TABLE vendor_profiles ADD COLUMN vendor_kyc_updated_at TEXT",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "already exists" in msg or "duplicate column" in msg:
+                logger.info(
+                    "[Migration v16] column already present, skipping: %s",
+                    ddl.split("ADD COLUMN")[1].strip(),
+                )
+            else:
+                raise
+
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_vendor_profiles_kyc_completion "
+        "ON vendor_profiles(organization_id, kyc_completion_date)",
+        "CREATE INDEX IF NOT EXISTS idx_vendor_profiles_kyc_updated "
+        "ON vendor_profiles(organization_id, vendor_kyc_updated_at)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v16] index skipped: %s", exc)
