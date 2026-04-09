@@ -52,7 +52,6 @@ def test_admin_rollback_controls_put_get_and_health_projection(client, db):
             "organization_id": "default",
             "controls": {
                 "erp_posting_disabled": True,
-                "browser_fallback_disabled": True,
                 "channel_actions_disabled": {"slack": True, "teams": False},
                 "erp_connectors_disabled": ["XERO", "sap"],
                 "reason": "incident_2026_02_25",
@@ -63,7 +62,6 @@ def test_admin_rollback_controls_put_get_and_health_projection(client, db):
     body = put.json()
     controls = body["rollback_controls"]
     assert controls["erp_posting_disabled"] is True
-    assert controls["browser_fallback_disabled"] is True
     assert controls["channel_actions_disabled"]["slack"] is True
     assert controls["channel_actions_disabled"]["teams"] is False
     assert controls["erp_connectors_disabled"] == ["xero", "sap"]

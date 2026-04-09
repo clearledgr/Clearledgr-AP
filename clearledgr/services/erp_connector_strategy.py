@@ -11,7 +11,6 @@ class ConnectorCapability:
     supports_api_post_bill: bool
     supports_api_apply_credit: bool
     supports_api_apply_settlement: bool
-    browser_fallback_enabled: bool
     api_priority: int
     rollout_stage: str
     notes: str = ""
@@ -28,57 +27,51 @@ class ERPConnectorStrategy:
                 supports_api_post_bill=True,
                 supports_api_apply_credit=True,
                 supports_api_apply_settlement=True,
-                browser_fallback_enabled=True,
                 api_priority=100,
                 rollout_stage="api_primary",
-                notes="QBO bill posting, standard vendor-credit application, and standard bill payments are API-first with browser fallback reserved for refund-origin or tenant-specific edge flows.",
+                notes="QBO bill posting, standard vendor-credit application, and standard bill payments are API-first.",
             ),
             "xero": ConnectorCapability(
                 erp_type="xero",
                 supports_api_post_bill=True,
                 supports_api_apply_credit=True,
                 supports_api_apply_settlement=True,
-                browser_fallback_enabled=True,
                 api_priority=100,
                 rollout_stage="api_primary",
-                notes="Xero ACCPAY bill posting, credit allocations, and standard bill payments are API-first with controlled browser fallback for refund-specific or tenant-specific edge flows.",
+                notes="Xero ACCPAY bill posting, credit allocations, and standard bill payments are API-first.",
             ),
             "netsuite": ConnectorCapability(
                 erp_type="netsuite",
                 supports_api_post_bill=True,
                 supports_api_apply_credit=True,
                 supports_api_apply_settlement=True,
-                browser_fallback_enabled=True,
                 api_priority=95,
                 rollout_stage="api_primary",
-                notes="NetSuite REST bill posting, vendor-credit application, and standard vendor payments are API-first; refund-origin settlements and tenant-specific edge flows still use browser fallback.",
+                notes="NetSuite REST bill posting, vendor-credit application, and standard vendor payments are API-first.",
             ),
             "sap": ConnectorCapability(
                 erp_type="sap",
                 supports_api_post_bill=True,
                 supports_api_apply_credit=True,
                 supports_api_apply_settlement=True,
-                browser_fallback_enabled=True,
                 api_priority=90,
                 rollout_stage="api_primary",
-                notes="SAP Business One Service Layer bill posting, standard purchase-credit-note creation, and standard vendor payments are API-first; refund-origin settlements and tenant-specific edge flows still use browser fallback.",
+                notes="SAP Business One Service Layer bill posting, standard purchase-credit-note creation, and standard vendor payments are API-first.",
             ),
             "unconfigured": ConnectorCapability(
                 erp_type="unconfigured",
                 supports_api_post_bill=False,
                 supports_api_apply_credit=False,
                 supports_api_apply_settlement=False,
-                browser_fallback_enabled=True,
                 api_priority=0,
-                rollout_stage="fallback_only",
-                notes="No ERP connector configured; browser fallback can still gather posting evidence.",
+                rollout_stage="manual_only",
+                notes="No ERP connector configured; manual review required.",
             ),
             "unknown": ConnectorCapability(
                 erp_type="unknown",
                 supports_api_post_bill=False,
                 supports_api_apply_credit=False,
                 supports_api_apply_settlement=False,
-                browser_fallback_enabled=False,
                 api_priority=0,
                 rollout_stage="disabled",
                 notes="Unknown connector type; fail safe until connector capability is declared.",
@@ -112,8 +105,6 @@ class ERPConnectorStrategy:
 
         if api_supported and connection_present:
             primary_mode = "api"
-        elif capability.browser_fallback_enabled:
-            primary_mode = "browser_fallback"
         else:
             primary_mode = "manual_review"
         return {
@@ -122,7 +113,6 @@ class ERPConnectorStrategy:
             "connection_present": bool(connection_present),
             "rollout_stage": capability.rollout_stage,
             "primary_mode": primary_mode,
-            "fallback_enabled": bool(capability.browser_fallback_enabled),
             "api_supported": bool(api_supported),
             "api_priority": int(capability.api_priority),
             "notes": capability.notes,

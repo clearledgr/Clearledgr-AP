@@ -303,21 +303,6 @@ async def get_ap_aggregation(
     return {"metrics": metrics}
 
 
-@router.get("/browser-agent")
-async def get_browser_agent_metrics(
-    organization_id: str = Query("default"),
-    window_hours: int = Query(24, ge=1, le=168),
-    user: TokenData = Depends(get_current_user),
-) -> Dict[str, Any]:
-    _assert_org_access(user, organization_id)
-    db = get_db()
-    metrics = db.get_browser_agent_metrics(
-        organization_id=organization_id,
-        window_hours=window_hours,
-    )
-    return {"metrics": metrics}
-
-
 @router.get("/erp-routing-strategy")
 async def get_erp_routing_strategy(
     organization_id: str = Query("default"),

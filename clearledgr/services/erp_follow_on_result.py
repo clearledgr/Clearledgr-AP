@@ -17,7 +17,6 @@ _ERP_FOLLOW_ON_PENDING_STATUSES = {
     "pending",
     "queued",
     "requested",
-    "pending_browser_fallback",
     "pending_target_post",
 }
 
@@ -419,8 +418,6 @@ def _normalize_erp_follow_on_status(result: Dict[str, Any]) -> str:
     reason = str(result.get("reason") or "").strip().lower()
     if status in {"success", "completed", "already_applied"}:
         return "applied"
-    if status == "pending_browser_fallback":
-        return "pending_browser_fallback"
     if execution_mode == "pending_target_post" or reason == "target_not_posted_to_erp":
         return "pending_target_post"
     if status == "blocked":
@@ -466,8 +463,6 @@ def _apply_erp_follow_on_result(
         "reason": str(result.get("reason") or "").strip() or None,
         "error_code": str(result.get("error_code") or "").strip() or None,
         "error_message": str(result.get("error_message") or "").strip() or None,
-        "session_id": str(fallback.get("session_id") or "").strip() or None,
-        "macro_name": str(fallback.get("macro_name") or "").strip() or None,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     resolution["erp_follow_on"] = follow_on
@@ -484,7 +479,6 @@ def _apply_erp_follow_on_result(
                 "erp_application_status": normalized_status,
                 "erp_application_mode": follow_on.get("execution_mode"),
                 "erp_application_reference": follow_on.get("erp_reference"),
-                "erp_application_session_id": follow_on.get("session_id"),
                 "erp_last_applied_at": follow_on.get("updated_at"),
                 "erp_pending_reason": follow_on.get("reason"),
                 "erp_target_reference": follow_on.get("target_erp_reference"),
@@ -503,7 +497,6 @@ def _apply_erp_follow_on_result(
                 "erp_settlement_status": normalized_status,
                 "erp_settlement_mode": follow_on.get("execution_mode"),
                 "erp_settlement_reference": follow_on.get("erp_reference"),
-                "erp_settlement_session_id": follow_on.get("session_id"),
                 "erp_last_settled_at": follow_on.get("updated_at"),
                 "erp_pending_reason": follow_on.get("reason"),
                 "erp_target_reference": follow_on.get("target_erp_reference"),

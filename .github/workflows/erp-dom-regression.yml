@@ -1,14 +1,11 @@
-name: ERP DOM Regression
+name: ERP API Regression
 
 on:
   pull_request:
     paths:
-      - "clearledgr/services/browser_agent.py"
       - "clearledgr/services/erp_api_first.py"
       - "clearledgr/services/erp_connector_strategy.py"
-      - "tests/test_erp_dom_regression.py"
       - "tests/test_erp_api_first.py"
-      - "tests/erp_dom_regression/**"
       - ".github/workflows/erp-dom-regression.yml"
   push:
     branches:
@@ -16,16 +13,13 @@ on:
       - "master"
       - "codex/**"
     paths:
-      - "clearledgr/services/browser_agent.py"
       - "clearledgr/services/erp_api_first.py"
       - "clearledgr/services/erp_connector_strategy.py"
-      - "tests/test_erp_dom_regression.py"
       - "tests/test_erp_api_first.py"
-      - "tests/erp_dom_regression/**"
       - ".github/workflows/erp-dom-regression.yml"
 
 jobs:
-  erp-dom-regression:
+  erp-api-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -42,6 +36,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run staged ERP regression tests
+      - name: Run ERP API regression tests
         run: |
-          pytest -q tests/test_erp_dom_regression.py tests/test_erp_api_first.py tests/test_browser_agent_layer.py
+          pytest -q tests/test_erp_api_first.py

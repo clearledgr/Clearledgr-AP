@@ -615,7 +615,6 @@ def _build_agentic_snapshot(kpis: Dict[str, Any]) -> Dict[str, Any]:
         "window_hours": int(agentic.get("window_hours") or 0),
         "straight_through_rate_pct": round(_metric_percent(agentic.get("straight_through_rate")), 2),
         "human_intervention_rate_pct": round(_metric_percent(agentic.get("human_intervention_rate")), 2),
-        "erp_browser_fallback_rate_pct": round(_metric_percent(agentic.get("erp_browser_fallback_rate")), 2),
         "agent_suggestion_acceptance_pct": round(_metric_percent(agentic.get("agent_suggestion_acceptance")), 2),
         "manual_override_required_pct": round(_metric_percent(agentic.get("agent_actions_requiring_manual_override")), 2),
         "awaiting_approval_avg_hours": round(_metric_hours(agentic.get("awaiting_approval_time_hours")), 2),
@@ -2508,8 +2507,10 @@ def list_team_invites(
     organization_id: Optional[str] = Query(default=None),
     user: TokenData = Depends(get_current_user),
 ):
-    _require_admin(user)
     org_id = _resolve_org_id(user, organization_id)
+    # Non-admins get an empty list (bootstrap calls this for all users)
+    if user.role not in {"admin", "owner"}:
+        return {"organization_id": org_id, "invites": []}
     invites = get_db().list_team_invites(org_id)
     base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")
     for invite in invites:

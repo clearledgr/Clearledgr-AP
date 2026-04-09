@@ -8,9 +8,8 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -27,10 +26,8 @@ from clearledgr.services.ap_item_service import (
     _normalize_non_invoice_outcome,
     _parse_json,
 )
-from clearledgr.services.browser_agent import BrowserAgentService, SUPPORTED_MACROS
 from clearledgr.services.erp_connector_strategy import (
     ERPConnectorStrategy,
-    ConnectorCapability,
 )
 from clearledgr.services.erp_follow_on_result import (
     _ERP_FOLLOW_ON_APPLIED_STATUSES,
@@ -131,7 +128,7 @@ class TestFinanceEffectReviewBlockers:
 
     def test_block_linked_credit_application_pending(self):
         """Credit with ERP status in pending statuses triggers pending blocker."""
-        for pending_status in ("pending", "queued", "requested", "pending_browser_fallback", "pending_target_post"):
+        for pending_status in ("pending", "queued", "requested", "pending_target_post"):
             blockers = _finance_effect_review_blockers(
                 **self._base_kwargs(
                     applied_credit_total=100.0,
@@ -664,7 +661,7 @@ class TestERPConnectorStrategyBuildRoutePlan:
         )
         assert plan["action"] == "some_unknown_action"
         assert plan["api_supported"] is False
-        assert plan["primary_mode"] == "browser_fallback"
+        assert plan["primary_mode"] == "manual_review"
 
     def test_no_connection_falls_back_to_unconfigured(self):
         """connection_present=False resolves to the 'unconfigured' capability."""
@@ -676,10 +673,10 @@ class TestERPConnectorStrategyBuildRoutePlan:
         )
         assert plan["erp_type"] == "unconfigured"
         assert plan["api_supported"] is False
-        assert plan["primary_mode"] == "browser_fallback"
+        assert plan["primary_mode"] == "manual_review"
 
     def test_unknown_erp_type_resolves_to_unknown_capability(self):
-        """Unrecognized erp_type falls to the 'unknown' capability (no browser fallback)."""
+        """Unrecognized erp_type falls to the 'unknown' capability."""
         strategy = ERPConnectorStrategy()
         plan = strategy.build_route_plan(
             erp_type="oracle_fusion",
@@ -688,7 +685,6 @@ class TestERPConnectorStrategyBuildRoutePlan:
         )
         assert plan["erp_type"] == "unknown"
         assert plan["api_supported"] is False
-        assert plan["fallback_enabled"] is False
         assert plan["primary_mode"] == "manual_review"
 
     def test_all_configured_erps_support_credit_application_api(self):
@@ -717,152 +713,7 @@ class TestERPConnectorStrategyBuildRoutePlan:
 
 
 # ===================================================================
-# Category 4: Browser macro command generation
-# ===================================================================
-
-
-class TestBrowserMacroCommandGeneration:
-    """Tests for the BrowserAgentService._build_macro_commands method
-    for apply_credit_note_in_erp and apply_settlement_in_erp macros."""
-
-    def _make_service(self, db, monkeypatch) -> BrowserAgentService:
-        """Create a BrowserAgentService wired to the test DB."""
-        monkeypatch.setenv("AP_BROWSER_AGENT_ENABLED", "true")
-        service = BrowserAgentService.__new__(BrowserAgentService)
-        service.db = db
-        service.enabled = True
-        return service
-
-    def test_apply_credit_note_macro_generates_correct_commands(self, db, monkeypatch):
-        """apply_credit_note_in_erp macro generates the expected command sequence."""
-        item = _create_ap_item(db, item_id="MACRO-CN-1", thread_id="thread-macro-cn")
-        service = self._make_service(db, monkeypatch)
-
-        session = {"ap_item_id": "MACRO-CN-1", "organization_id": "default"}
-        params = {
-            "erp_url": "https://erp.example.com/payable/INV-001",
-            "target_erp_reference": "ERP-REF-100",
-            "credit_note_number": "CN-200",
-            "amount": 500.0,
-            "currency": "USD",
-        }
-
-        commands = service._build_macro_commands(
-            session, "apply_credit_note_in_erp", params, "corr-id-1"
-        )
-
-        assert len(commands) == 7
-        tool_names = [cmd["tool_name"] for cmd in commands]
-        assert tool_names == [
-            "open_tab",
-            "type",
-            "click",
-            "type",
-            "type",
-            "click",
-            "capture_evidence",
-        ]
-
-        # First command opens the ERP URL
-        assert commands[0]["command_id"] == "macro_credit_open_erp"
-        assert commands[0]["target"]["url"] == "https://erp.example.com/payable/INV-001"
-
-        # Target reference search
-        assert commands[1]["command_id"] == "macro_credit_target_ref"
-        assert commands[1]["params"]["value"] == "ERP-REF-100"
-
-        # Credit note number fill
-        assert commands[3]["command_id"] == "macro_credit_number"
-        assert commands[3]["params"]["value"] == "CN-200"
-
-        # Amount fill
-        assert commands[4]["command_id"] == "macro_credit_amount"
-        assert commands[4]["params"]["value"] == "500.0"
-
-        # Submit
-        assert commands[5]["command_id"] == "macro_credit_submit"
-
-        # Evidence capture
-        assert commands[6]["command_id"] == "macro_credit_capture_result"
-        assert commands[6]["tool_name"] == "capture_evidence"
-
-        # Correlation ID is set on all commands
-        for cmd in commands:
-            assert cmd["correlation_id"] == "corr-id-1"
-
-    def test_apply_settlement_macro_generates_correct_commands(self, db, monkeypatch):
-        """apply_settlement_in_erp macro generates the expected command sequence."""
-        item = _create_ap_item(db, item_id="MACRO-SET-1", thread_id="thread-macro-set")
-        service = self._make_service(db, monkeypatch)
-
-        session = {"ap_item_id": "MACRO-SET-1", "organization_id": "default"}
-        params = {
-            "erp_url": "https://erp.example.com/payable/INV-002",
-            "target_erp_reference": "ERP-REF-200",
-            "source_reference": "PMT-300",
-            "amount": 750.0,
-            "currency": "GBP",
-        }
-
-        commands = service._build_macro_commands(
-            session, "apply_settlement_in_erp", params, "corr-id-2"
-        )
-
-        assert len(commands) == 7
-        tool_names = [cmd["tool_name"] for cmd in commands]
-        assert tool_names == [
-            "open_tab",
-            "type",
-            "click",
-            "type",
-            "type",
-            "click",
-            "capture_evidence",
-        ]
-
-        # First command opens the ERP URL
-        assert commands[0]["command_id"] == "macro_settlement_open_erp"
-        assert commands[0]["target"]["url"] == "https://erp.example.com/payable/INV-002"
-
-        # Target reference search
-        assert commands[1]["command_id"] == "macro_settlement_target_ref"
-        assert commands[1]["params"]["value"] == "ERP-REF-200"
-
-        # Settlement flow open
-        assert commands[2]["command_id"] == "macro_settlement_open_apply"
-
-        # Source reference fill
-        assert commands[3]["command_id"] == "macro_settlement_source_ref"
-        assert commands[3]["params"]["value"] == "PMT-300"
-
-        # Amount fill
-        assert commands[4]["command_id"] == "macro_settlement_amount"
-        assert commands[4]["params"]["value"] == "750.0"
-
-        # Submit
-        assert commands[5]["command_id"] == "macro_settlement_submit"
-        assert "Apply Payment" in str(commands[5]["params"]["selector_candidates"])
-
-        # Evidence capture
-        assert commands[6]["command_id"] == "macro_settlement_capture_result"
-        assert commands[6]["tool_name"] == "capture_evidence"
-
-        # Correlation ID is set on all commands
-        for cmd in commands:
-            assert cmd["correlation_id"] == "corr-id-2"
-
-    def test_unsupported_macro_raises_value_error(self, db, monkeypatch):
-        """Unsupported macro name raises ValueError."""
-        item = _create_ap_item(db, item_id="MACRO-FAIL", thread_id="thread-macro-fail")
-        service = self._make_service(db, monkeypatch)
-        session = {"ap_item_id": "MACRO-FAIL", "organization_id": "default"}
-
-        with pytest.raises(ValueError, match="macro_not_supported"):
-            service._build_macro_commands(session, "nonexistent_macro", {}, None)
-
-
-# ===================================================================
-# Category 5: Helper function unit tests
+# Category 4: Helper function unit tests
 # ===================================================================
 
 
@@ -936,19 +787,14 @@ class TestERPFollowOnStatusSets:
         assert "pending" in _ERP_FOLLOW_ON_PENDING_STATUSES
         assert "queued" in _ERP_FOLLOW_ON_PENDING_STATUSES
         assert "requested" in _ERP_FOLLOW_ON_PENDING_STATUSES
-        assert "pending_browser_fallback" in _ERP_FOLLOW_ON_PENDING_STATUSES
         assert "pending_target_post" in _ERP_FOLLOW_ON_PENDING_STATUSES
 
     def test_applied_and_pending_are_disjoint(self):
         assert _ERP_FOLLOW_ON_APPLIED_STATUSES.isdisjoint(_ERP_FOLLOW_ON_PENDING_STATUSES)
 
-    def test_supported_macros_include_finance_follow_ons(self):
-        assert "apply_credit_note_in_erp" in SUPPORTED_MACROS
-        assert "apply_settlement_in_erp" in SUPPORTED_MACROS
-
 
 # ===================================================================
-# Category 7: reconcile_erp_follow_on_state() tests
+# Category 6: reconcile_erp_follow_on_state() tests
 # ===================================================================
 
 
@@ -1056,7 +902,7 @@ class TestERPFollowOnReconciliation:
                 "erp_follow_on": {
                     "status": "completed",
                     "action_type": "apply_settlement",
-                    "execution_mode": "browser_fallback",
+                    "execution_mode": "api",
                     "erp_reference": "SET-888",
                 },
             },
@@ -1071,7 +917,7 @@ class TestERPFollowOnReconciliation:
         related_meta = json.loads(related["metadata"]) if isinstance(related["metadata"], str) else related["metadata"]
         cash_summary = related_meta["cash_application_summary"]
         assert cash_summary["erp_settlement_status"] == "completed"
-        assert cash_summary["erp_settlement_mode"] == "browser_fallback"
+        assert cash_summary["erp_settlement_mode"] == "api"
         assert cash_summary["erp_settlement_reference"] == "SET-888"
         assert "erp_reconciled_at" in cash_summary
 

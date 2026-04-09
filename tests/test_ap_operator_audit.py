@@ -98,7 +98,7 @@ def test_normalize_operator_audit_event_maps_auto_escalation_reason():
     assert "after 6 hours pending" in str(row["operator_message"]).lower()
 
 
-def test_normalize_operator_audit_event_maps_approval_nudge_failed_and_browser_fallback_prepared():
+def test_normalize_operator_audit_event_maps_approval_nudge_failed():
     nudge_failed = normalize_operator_audit_event(
         {
             "id": "evt-7",
@@ -106,33 +106,10 @@ def test_normalize_operator_audit_event_maps_approval_nudge_failed_and_browser_f
             "reason": "approval_nudge",
         }
     )
-    fallback_ready = normalize_operator_audit_event(
-        {
-            "id": "evt-8",
-            "event_type": "browser_session_created",
-            "reason": "browser_session_created",
-        }
-    )
 
     assert nudge_failed["operator_title"] == "Approval reminder failed"
     assert "nudge approver" in str(nudge_failed["operator_message"]).lower()
     assert nudge_failed["operator_action_hint"] == 'Retry "Nudge approver".'
-
-    assert fallback_ready["operator_title"] == "ERP fallback prepared"
-    assert "prepared secure erp browser fallback session" in str(fallback_ready["operator_message"]).lower()
-    assert fallback_ready["operator_action_hint"] == "Continue approval/posting flow."
-
-
-def test_normalize_operator_audit_event_maps_erp_fallback_requested():
-    fallback_requested = normalize_operator_audit_event(
-        {
-            "id": "evt-9",
-            "event_type": "erp_api_fallback_requested",
-            "reason": "fallback_preview_confirmed_and_dispatched",
-        }
-    )
-    assert fallback_requested["operator_title"] == "ERP fallback prepared"
-    assert "fallback" in str(fallback_requested["operator_message"]).lower()
 
 
 def test_normalize_operator_audit_event_maps_runtime_event_classes_to_plain_language():

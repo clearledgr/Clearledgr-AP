@@ -172,15 +172,6 @@ def test_agent_memory_surface_aggregates_semantic_and_episodic_context(tmp_path,
         agent_recommendation="approve",
         reason="trusted_vendor",
     )
-    db.create_agent_session(
-        {
-            "organization_id": "test-org",
-            "ap_item_id": "ap-3",
-            "state": "running",
-            "created_by": "tester",
-            "metadata": {"workflow_id": "erp_posting_fallback"},
-        }
-    )
     db.create_workflow_run(
         {
             "organization_id": "test-org",
@@ -212,8 +203,8 @@ def test_agent_memory_surface_aggregates_semantic_and_episodic_context(tmp_path,
         skill_id="ap_v1",
         ap_item=db.get_ap_item("ap-3"),
         ap_item_id="ap-3",
-        event_type="erp_browser_fallback_failed",
-        reason="fallback_failed",
+        event_type="erp_api_failed",
+        reason="api_posting_failed",
         response={"status": "failed_post"},
         actor_id="tester",
         correlation_id="corr-agent-memory-3",
@@ -224,7 +215,6 @@ def test_agent_memory_surface_aggregates_semantic_and_episodic_context(tmp_path,
     assert surface["identity_memory"]["name"] == "Clearledgr AP Agent"
     assert surface["semantic_memory"]["vendor_profile"]["payment_terms"] == "Net 15"
     assert surface["semantic_memory"]["vendor_feedback_summary"]["total_feedback"] == 1
-    assert surface["episodic_memory"]["agent_sessions"]
     assert surface["episodic_memory"]["workflow_runs"]
     assert surface["episodic_memory"]["retry_jobs"]
     assert surface["episodic_memory"]["task_runs"]

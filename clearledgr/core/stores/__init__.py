@@ -7,7 +7,6 @@ from all of them, so callers continue to use ``get_db()`` unchanged.
 from clearledgr.core.stores.ap_store import APStore
 from clearledgr.core.stores.ap_runtime_store import APRuntimeStore
 from clearledgr.core.stores.auth_store import AuthStore
-from clearledgr.core.stores.browser_agent_store import BrowserAgentStore
 from clearledgr.core.stores.entity_store import EntityStore
 from clearledgr.core.stores.integration_store import IntegrationStore
 from clearledgr.core.stores.metrics_store import MetricsStore
@@ -17,7 +16,6 @@ __all__ = [
     "APStore",
     "APRuntimeStore",
     "AuthStore",
-    "BrowserAgentStore",
     "EntityStore",
     "IntegrationStore",
     "MetricsStore",

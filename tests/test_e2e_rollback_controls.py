@@ -1,14 +1,13 @@
 """Rollback control enforcement tests.
 
-Proves that ``clearledgr/core/launch_controls.py`` correctly gates ERP posting,
-browser fallback, and channel actions — the three production code paths that check
-these controls before executing side-effects.
+Proves that ``clearledgr/core/launch_controls.py`` correctly gates ERP posting
+and channel actions — the production code paths that check these controls before
+executing side-effects.
 
 Wiring verified in production code:
-  - clearledgr/services/erp_api_first.py:718  — get_erp_posting_block_reason()
-  - clearledgr/services/erp_api_first.py:877  — get_browser_fallback_block_reason()
-  - clearledgr/api/slack_invoices.py:286      — get_channel_action_block_reason("slack")
-  - clearledgr/api/teams_invoices.py:263      — get_channel_action_block_reason("teams")
+  - clearledgr/services/erp_api_first.py       — get_erp_posting_block_reason()
+  - clearledgr/api/slack_invoices.py            — get_channel_action_block_reason("slack")
+  - clearledgr/api/teams_invoices.py            — get_channel_action_block_reason("teams")
 
 No HTTP, no external calls — all tests use a temp-file SQLite DB.
 """
@@ -30,7 +29,6 @@ if str(ROOT) not in sys.path:
 from clearledgr.core.database import ClearledgrDB
 from clearledgr.core.launch_controls import (
     default_rollback_controls,
-    get_browser_fallback_block_reason,
     get_channel_action_block_reason,
     get_erp_posting_block_reason,
     get_rollback_controls,
@@ -174,27 +172,6 @@ class TestRollbackControlEnforcement:
             reason = get_channel_action_block_reason("rc-org", ch, db=db)
             assert reason is not None, f"Expected all-channel block for {ch}"
 
-    def test_browser_fallback_block(self, db):
-        """browser_fallback_disabled=True returns a block reason; False clears it."""
-
-        assert get_browser_fallback_block_reason("rc-org", db=db) is None
-
-        set_rollback_controls(
-            "rc-org",
-            {"browser_fallback_disabled": True, "reason": "browser_agent_instability"},
-            db=db,
-        )
-        reason = get_browser_fallback_block_reason("rc-org", db=db)
-        assert reason is not None
-        assert "browser_agent_instability" in reason
-
-        set_rollback_controls(
-            "rc-org",
-            {"browser_fallback_disabled": False},
-            db=db,
-        )
-        assert get_browser_fallback_block_reason("rc-org", db=db) is None
-
     def test_expired_control_is_inactive(self, db):
         """A control with expires_at in the past is treated as inactive
         — all block functions return None even if flags are set."""
@@ -205,7 +182,6 @@ class TestRollbackControlEnforcement:
             "rc-org",
             {
                 "erp_posting_disabled": True,
-                "browser_fallback_disabled": True,
                 "channel_actions_disabled": {"slack": True},
                 "erp_connectors_disabled": ["xero"],
                 "reason": "temporary_drill",
@@ -223,4 +199,3 @@ class TestRollbackControlEnforcement:
         assert get_erp_posting_block_reason("rc-org", db=db) is None
         assert get_erp_posting_block_reason("rc-org", erp_type="xero", db=db) is None
         assert get_channel_action_block_reason("rc-org", "slack", db=db) is None
-        assert get_browser_fallback_block_reason("rc-org", db=db) is None

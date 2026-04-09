@@ -116,7 +116,6 @@ def evaluate_erp_connector_readiness(
                 "erp_type": connector,
                 "rollout_stage": capability.rollout_stage,
                 "api_supported": bool(capability.supports_api_post_bill),
-                "fallback_enabled": bool(capability.browser_fallback_enabled),
                 "connection_present": connection_present,
                 "checklist_status": checklist_status,
                 "checklist_completed": checklist_completed,

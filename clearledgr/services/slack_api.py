@@ -471,14 +471,13 @@ class SlackAPIClient:
 
         touchless = SlackAPIClient._kpi_percent(payload.get("touchless_rate"))
         exception_rate = SlackAPIClient._kpi_percent(payload.get("exception_rate"))
-        fallback_rate = SlackAPIClient._kpi_percent(agentic.get("erp_browser_fallback_rate"))
         accepted_rate = SlackAPIClient._kpi_percent(agentic.get("agent_suggestion_acceptance"))
         manual_override_rate = SlackAPIClient._kpi_percent(agentic.get("agent_actions_requiring_manual_override"))
         awaiting_hours = SlackAPIClient._kpi_hours(agentic.get("awaiting_approval_time_hours"))
         return (
             f"AP KPI digest ({organization_id}) · "
             f"touchless {touchless:.1f}% · exceptions {exception_rate:.1f}% · "
-            f"fallback {fallback_rate:.1f}% · agent accepted {accepted_rate:.1f}% · "
+            f"agent accepted {accepted_rate:.1f}% · "
             f"manual override {manual_override_rate:.1f}% · awaiting approval {awaiting_hours:.1f}h"
         )
 
@@ -494,7 +493,6 @@ class SlackAPIClient:
         on_time = SlackAPIClient._kpi_percent(payload.get("on_time_approvals"))
         straight_through = SlackAPIClient._kpi_percent(agentic.get("straight_through_rate"))
         human_intervention = SlackAPIClient._kpi_percent(agentic.get("human_intervention_rate"))
-        fallback_rate = SlackAPIClient._kpi_percent(agentic.get("erp_browser_fallback_rate"))
         suggestion_acceptance = SlackAPIClient._kpi_percent(agentic.get("agent_suggestion_acceptance"))
         manual_override = SlackAPIClient._kpi_percent(agentic.get("agent_actions_requiring_manual_override"))
         awaiting_hours = SlackAPIClient._kpi_hours(agentic.get("awaiting_approval_time_hours"))
@@ -537,7 +535,7 @@ class SlackAPIClient:
                         + (f" ({window_hours}h window)" if window_hours > 0 else "")
                         + "\n"
                         f"Straight-through: {straight_through:.1f}% · Human intervention: {human_intervention:.1f}%\n"
-                        f"Browser fallback: {fallback_rate:.1f}% · Agent accepted: {suggestion_acceptance:.1f}%\n"
+                        f"Agent accepted: {suggestion_acceptance:.1f}% · "
                         f"Manual override required: {manual_override:.1f}% · Awaiting approval: {awaiting_hours:.1f}h"
                     ),
                 },

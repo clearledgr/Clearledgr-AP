@@ -450,7 +450,6 @@ class TeamsAPIClient:
         exception_rate = _percent(kpis.get("exception_rate"))
         cycle_time = _hours(kpis.get("cycle_time_hours"))
         on_time = _percent(kpis.get("on_time_approvals"))
-        fallback_rate = _percent(agentic.get("erp_browser_fallback_rate"))
         accepted_rate = _percent(agentic.get("agent_suggestion_acceptance"))
         manual_override_rate = _percent(agentic.get("agent_actions_requiring_manual_override"))
         awaiting_hours = _hours(agentic.get("awaiting_approval_time_hours"))
@@ -498,7 +497,6 @@ class TeamsAPIClient:
                             {
                                 "type": "FactSet",
                                 "facts": [
-                                    {"title": "Browser fallback", "value": f"{fallback_rate:.1f}%"},
                                     {"title": "Agent accepted", "value": f"{accepted_rate:.1f}%"},
                                     {"title": "Manual override req.", "value": f"{manual_override_rate:.1f}%"},
                                     {"title": "Awaiting approval", "value": f"{awaiting_hours:.1f}h"},

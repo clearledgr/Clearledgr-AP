@@ -1411,7 +1411,6 @@ class AgentMemoryService:
                     "episode": {},
                     "recent_events": [],
                     "workflow_runs": [],
-                    "agent_sessions": [],
                     "retry_jobs": [],
                     "task_runs": [],
                 },
@@ -1453,24 +1452,6 @@ class AgentMemoryService:
                 ][:5]
             except Exception:
                 workflow_runs = []
-
-        agent_sessions: List[Dict[str, Any]] = []
-        if hasattr(self.db, "list_agent_sessions"):
-            try:
-                sessions = self.db.list_agent_sessions(organization_id=self.organization_id, limit=50) or []
-                agent_sessions = [
-                    {
-                        "id": row.get("id"),
-                        "state": row.get("state"),
-                        "created_by": row.get("created_by"),
-                        "created_at": row.get("created_at"),
-                        "updated_at": row.get("updated_at"),
-                    }
-                    for row in sessions
-                    if str(row.get("ap_item_id") or "").strip() == resolved_ap_item_id
-                ][:5]
-            except Exception:
-                agent_sessions = []
 
         retry_jobs: List[Dict[str, Any]] = []
         if hasattr(self.db, "list_agent_retry_jobs"):
@@ -1517,7 +1498,6 @@ class AgentMemoryService:
             "episode": episode if isinstance(episode, dict) else {},
             "recent_events": recent_events,
             "workflow_runs": workflow_runs,
-            "agent_sessions": agent_sessions,
             "retry_jobs": retry_jobs,
             "task_runs": task_runs,
         }

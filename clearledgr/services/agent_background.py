@@ -198,8 +198,6 @@ async def _run_loop():
 
             # Every tick: drain ERP-post retry queue (Gap #5 crash recovery)
             await _drain_erp_post_retry_queue()
-            for org_id in org_ids:
-                await _check_erp_follow_on_fallback_timeouts(org_id)
 
             # Drain notification retry queue (F1: ensures failed Slack/Teams
             # notifications are retried instead of silently dropped)
@@ -359,23 +357,6 @@ async def _check_anomalies(org_id: str):
             await _slack_alert("\n".join(lines), organization_id=org_id)
     except Exception as e:
         logger.error("Anomaly detection failed: %s", e)
-
-
-async def _check_erp_follow_on_fallback_timeouts(organization_id: str):
-    """Sweep stale ERP follow-on browser fallback sessions and mark them timed out."""
-    try:
-        from clearledgr.services.erp_follow_on_session_reaper import (
-            run_erp_follow_on_session_reaper,
-        )
-
-        summary = await run_erp_follow_on_session_reaper(organization_id=organization_id)
-        if summary.get("timed_out"):
-            logger.warning(
-                "ERP follow-on timeout reaper marked %d session(s) timed out",
-                summary.get("timed_out"),
-            )
-    except Exception as e:
-        logger.error("ERP follow-on timeout reaper failed: %s", e)
 
 
 async def _send_daily_digest(org_id: str):

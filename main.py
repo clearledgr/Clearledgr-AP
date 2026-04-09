@@ -884,12 +884,7 @@ try:
 except ImportError:
     pass
 
-# Browser-agent control plane APIs
-try:
-    from clearledgr.api.agent_sessions import router as agent_sessions_router
-    app.include_router(agent_sessions_router)
-except ImportError:
-    pass
+# Browser-agent control plane APIs removed (browser agent fallback removed)
 
 # Agent intent runtime contract (preview/execute)
 try:

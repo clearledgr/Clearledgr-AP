@@ -80,7 +80,6 @@ def _normalize_str_list(raw: Any) -> list[str]:
 def default_rollback_controls() -> Dict[str, Any]:
     return {
         "erp_posting_disabled": False,
-        "browser_fallback_disabled": False,
         "channel_actions_disabled": {"all": False, "slack": False, "teams": False},
         "erp_connectors_disabled": [],
         "reason": None,
@@ -97,9 +96,6 @@ def get_rollback_controls(organization_id: str, db: Optional[ClearledgrDB] = Non
     defaults = default_rollback_controls()
     merged = dict(defaults)
     merged["erp_posting_disabled"] = bool(raw.get("erp_posting_disabled", defaults["erp_posting_disabled"]))
-    merged["browser_fallback_disabled"] = bool(
-        raw.get("browser_fallback_disabled", defaults["browser_fallback_disabled"])
-    )
     merged["channel_actions_disabled"] = _normalize_channel_flags(raw.get("channel_actions_disabled"))
     merged["erp_connectors_disabled"] = _normalize_str_list(raw.get("erp_connectors_disabled"))
     merged["reason"] = str(raw.get("reason")).strip() if raw.get("reason") else None
@@ -125,8 +121,6 @@ def set_rollback_controls(
     patch = _parse_dict(controls_patch)
     if "erp_posting_disabled" in patch:
         merged["erp_posting_disabled"] = bool(patch.get("erp_posting_disabled"))
-    if "browser_fallback_disabled" in patch:
-        merged["browser_fallback_disabled"] = bool(patch.get("browser_fallback_disabled"))
     if "channel_actions_disabled" in patch:
         flags = _normalize_channel_flags(patch.get("channel_actions_disabled"))
         merged["channel_actions_disabled"] = {
@@ -182,19 +176,6 @@ def get_erp_posting_block_reason(
     normalized_erp = str(erp_type or "").strip().lower()
     if normalized_erp and normalized_erp in set(_normalize_str_list(controls.get("erp_connectors_disabled"))):
         return str(controls.get("reason") or f"erp_connector_disabled:{normalized_erp}")
-    return None
-
-
-def get_browser_fallback_block_reason(
-    organization_id: str,
-    *,
-    db: Optional[ClearledgrDB] = None,
-) -> Optional[str]:
-    controls = get_rollback_controls(organization_id, db=db)
-    if not controls.get("active", True):
-        return None
-    if controls.get("browser_fallback_disabled"):
-        return str(controls.get("reason") or "browser_fallback_disabled")
     return None
 
 

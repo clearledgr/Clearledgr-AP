@@ -52,7 +52,6 @@ def _load_store_symbols() -> None:
     global AP_RUNTIME_COMPAT_TABLES
     global ApprovalChainStore
     global AuthStore
-    global BrowserAgentStore
     global IntegrationStore
     global MetricsStore
     global PolicyStore
@@ -74,7 +73,6 @@ def _load_store_symbols() -> None:
     )
     from clearledgr.core.stores.approval_chain_store import ApprovalChainStore as _ApprovalChainStore
     from clearledgr.core.stores.auth_store import AuthStore as _AuthStore
-    from clearledgr.core.stores.browser_agent_store import BrowserAgentStore as _BrowserAgentStore
     from clearledgr.core.stores.integration_store import IntegrationStore as _IntegrationStore
     from clearledgr.core.stores.metrics_store import MetricsStore as _MetricsStore
     from clearledgr.core.stores.policy_store import PolicyStore as _PolicyStore
@@ -91,7 +89,6 @@ def _load_store_symbols() -> None:
     AP_RUNTIME_COMPAT_TABLES = _AP_RUNTIME_COMPAT_TABLES
     ApprovalChainStore = _ApprovalChainStore
     AuthStore = _AuthStore
-    BrowserAgentStore = _BrowserAgentStore
     IntegrationStore = _IntegrationStore
     MetricsStore = _MetricsStore
     PolicyStore = _PolicyStore
@@ -805,18 +802,7 @@ class _ClearledgrDBBase:
                 )
             """)
 
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS agent_sessions (
-                    id TEXT PRIMARY KEY,
-                    organization_id TEXT NOT NULL,
-                    ap_item_id TEXT NOT NULL,
-                    state TEXT NOT NULL,
-                    created_by TEXT,
-                    created_at TEXT,
-                    updated_at TEXT,
-                    metadata TEXT
-                )
-            """)
+            # agent_sessions table removed (browser agent fallback removed)
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS workflow_runs (
@@ -864,41 +850,9 @@ class _ClearledgrDBBase:
                 )
             """)
 
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS browser_action_events (
-                    id TEXT PRIMARY KEY,
-                    organization_id TEXT NOT NULL,
-                    ap_item_id TEXT NOT NULL,
-                    session_id TEXT NOT NULL,
-                    command_id TEXT NOT NULL,
-                    tool_name TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    requires_confirmation INTEGER DEFAULT 0,
-                    approved_by TEXT,
-                    approved_at TEXT,
-                    policy_reason TEXT,
-                    request_payload TEXT,
-                    result_payload TEXT,
-                    idempotency_key TEXT UNIQUE,
-                    correlation_id TEXT,
-                    created_at TEXT,
-                    updated_at TEXT
-                )
-            """)
+            # browser_action_events table removed (browser agent fallback removed)
 
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS agent_policies (
-                    id TEXT PRIMARY KEY,
-                    organization_id TEXT NOT NULL,
-                    policy_name TEXT NOT NULL,
-                    enabled INTEGER DEFAULT 1,
-                    config_json TEXT,
-                    updated_by TEXT,
-                    created_at TEXT,
-                    updated_at TEXT,
-                    UNIQUE(organization_id, policy_name)
-                )
-            """)
+            # agent_policies table removed (browser agent fallback removed)
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS agent_profiles (
@@ -1112,16 +1066,13 @@ class _ClearledgrDBBase:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_org_event_ts ON audit_events(organization_id, event_type, ts)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_approvals_item ON approvals(ap_item_id)")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_item_decision_key ON approvals(ap_item_id, decision_idempotency_key)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_sessions_org_item ON agent_sessions(organization_id, ap_item_id)")
+            # idx_agent_sessions_org_item removed (browser agent fallback removed)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_org_status ON workflow_runs(organization_id, status, created_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_ap_item ON workflow_runs(ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_retry_jobs_org_status_next ON agent_retry_jobs(organization_id, status, next_retry_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_retry_jobs_ap_item ON agent_retry_jobs(ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_retry_jobs_job_type_status ON agent_retry_jobs(job_type, status, next_retry_at)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_browser_actions_session ON browser_action_events(session_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_browser_actions_status ON browser_action_events(session_id, status)")
-            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_browser_actions_session_command ON browser_action_events(session_id, command_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_policies_org ON agent_policies(organization_id)")
+            # browser_action_events and agent_policies indexes removed (browser agent fallback removed)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_profiles_org_skill ON agent_profiles(organization_id, skill_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_memory_events_org_item_created ON agent_memory_events(organization_id, ap_item_id, created_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_memory_events_org_event ON agent_memory_events(organization_id, event_type, created_at)")
@@ -1154,13 +1105,7 @@ class _ClearledgrDBBase:
             self._ensure_column(cur, "approvals", "decision_idempotency_key", "TEXT")
             self._ensure_column(cur, "approvals", "decision_payload", "TEXT")
 
-            self._ensure_column(cur, "browser_action_events", "requires_confirmation", "INTEGER DEFAULT 0")
-            self._ensure_column(cur, "browser_action_events", "approved_by", "TEXT")
-            self._ensure_column(cur, "browser_action_events", "approved_at", "TEXT")
-            self._ensure_column(cur, "browser_action_events", "policy_reason", "TEXT")
-            self._ensure_column(cur, "browser_action_events", "result_payload", "TEXT")
-            self._ensure_column(cur, "browser_action_events", "idempotency_key", "TEXT")
-            self._ensure_column(cur, "browser_action_events", "correlation_id", "TEXT")
+            # browser_action_events _ensure_column calls removed (browser agent fallback removed)
             self._ensure_column(cur, "agent_retry_jobs", "gmail_id", "TEXT")
             self._ensure_column(cur, "agent_retry_jobs", "job_type", "TEXT")
             self._ensure_column(cur, "agent_retry_jobs", "status", "TEXT")
@@ -1355,7 +1300,6 @@ def _get_db_impl_class():
             AuthStore,
             EntityStore,
             IntegrationStore,
-            BrowserAgentStore,
             PolicyStore,
             MetricsStore,
             TaskStore,

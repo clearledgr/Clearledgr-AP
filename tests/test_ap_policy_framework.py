@@ -382,7 +382,7 @@ def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, m
             "organization_id": "default",
             "updated_at": requested_at,
             "metadata": {
-                "approval_sent_to": ["approver-1"],
+                "approval_sent_to": ["U_APPROVER_1"],
                 "approval_requested_at": requested_at,
             },
         }
@@ -390,7 +390,7 @@ def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, m
     db.update_ap_item(
         created["id"],
         metadata={
-            "approval_sent_to": ["approver-1"],
+            "approval_sent_to": ["U_APPROVER_1"],
             "approval_requested_at": requested_at,
         },
     )
@@ -423,7 +423,7 @@ def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, m
     assert calls == [
         {
             "ap_item_id": "policy-timeout-1",
-            "approver_ids": ["approver-1"],
+            "approver_ids": ["U_APPROVER_1"],
             "hours_pending": 2.0,
             "organization_id": "default",
             "stage": "reminder",
@@ -431,7 +431,7 @@ def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, m
         },
         {
             "ap_item_id": "policy-timeout-1",
-            "approver_ids": ["approver-1"],
+            "approver_ids": ["U_APPROVER_1"],
             "hours_pending": 6.0,
             "organization_id": "default",
             "stage": "escalation",

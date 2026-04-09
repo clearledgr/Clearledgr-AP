@@ -1362,26 +1362,6 @@ class MetricsStore:
             if not bucketed:
                 approval_override_breakdown["other"] += 1
 
-        browser_metrics_window_hours = 24 * 7
-        try:
-            browser_metrics = self.get_browser_agent_metrics(
-                organization_id=organization_id,
-                window_hours=browser_metrics_window_hours,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Failed to compute browser agent metrics for AX6 KPI bundle: %s", exc)
-            browser_metrics = {
-                "window_hours": browser_metrics_window_hours,
-                "api_first_routing": {"attempt_count": 0, "fallback_requested_count": 0, "fallback_rate": 0.0},
-                "human_control": {
-                    "manual_override_required_count": 0,
-                    "manual_override_required_rate": 0.0,
-                    "suggestion_accepted_count": 0,
-                    "suggestion_acceptance_rate": 0.0,
-                },
-                "totals": {"events": 0},
-            }
-
         shadow_audit_events = self.list_audit_events(
             organization_id,
             event_types=[
@@ -1522,8 +1502,6 @@ class MetricsStore:
 
         approval_wait_avg_minutes = round(sum(approval_wait_minutes) / len(approval_wait_minutes), 2) if approval_wait_minutes else 0.0
         approval_wait_p95_minutes = round(self._p95(approval_wait_minutes) or 0.0, 2)
-        browser_human_control = browser_metrics.get("human_control") if isinstance(browser_metrics, dict) else {}
-        browser_routing = browser_metrics.get("api_first_routing") if isinstance(browser_metrics, dict) else {}
         extraction_drift_metrics = self._build_extraction_drift_metrics(items, now=now)
         shadow_decision_metrics = self._build_shadow_decision_metrics(
             items,
@@ -1875,14 +1853,10 @@ class MetricsStore:
                 "channel_distribution": channel_distribution,
             },
             "agentic_telemetry": {
-                "window_hours": int(browser_metrics.get("window_hours") or browser_metrics_window_hours) if isinstance(browser_metrics, dict) else browser_metrics_window_hours,
                 "definitions": {
                     "straight_through_rate": "completed invoices with no approval handoff record (proxy for touchless AP flow)",
                     "human_intervention_rate": "completed invoices that were not straight-through",
                     "awaiting_approval_time_hours": "approval wait time derived from approval records and open approval items",
-                    "erp_browser_fallback_rate": "fallback_requested / erp_api_attempt within window",
-                    "agent_suggestion_acceptance": "browser_command_confirmed / browser actions requiring confirmation within window",
-                    "agent_actions_requiring_manual_override": "browser actions requiring confirmation / total browser actions within window",
                     "approval_override_rate": "approval decisions that used budget/confidence/PO override semantics",
                     "top_blocker_reasons": "open-item blocker categories/reasons derived from AP item state, validation gates, confidence blockers, and ERP failures",
                     "extraction_drift": "vendor-level review-rate, conflict-rate, and provenance-shift scorecards with sampled review recommendations",
@@ -1904,21 +1878,6 @@ class MetricsStore:
                     "avg": round(approval_wait_avg_minutes / 60.0, 2),
                     "p95": round(approval_wait_p95_minutes / 60.0, 2),
                     "sla_hours": round(float(approval_sla_minutes) / 60.0, 2),
-                },
-                "erp_browser_fallback_rate": {
-                    "attempt_count": int(browser_routing.get("attempt_count") or 0),
-                    "fallback_requested_count": int(browser_routing.get("fallback_requested_count") or 0),
-                    "rate": round(float(browser_routing.get("fallback_rate") or 0.0), 4),
-                },
-                "agent_suggestion_acceptance": {
-                    "prompted_count": int(browser_human_control.get("manual_override_required_count") or 0),
-                    "accepted_count": int(browser_human_control.get("suggestion_accepted_count") or 0),
-                    "rate": round(float(browser_human_control.get("suggestion_acceptance_rate") or 0.0), 4),
-                },
-                "agent_actions_requiring_manual_override": {
-                    "total_actions": int((browser_metrics.get("totals") or {}).get("events") or 0) if isinstance(browser_metrics, dict) else 0,
-                    "count": int(browser_human_control.get("manual_override_required_count") or 0),
-                    "rate": round(float(browser_human_control.get("manual_override_required_rate") or 0.0), 4),
                 },
                 "approval_override_rate": {
                     "decision_population": int(approval_decision_population),
@@ -2073,177 +2032,3 @@ class MetricsStore:
             "spend_by_vendor": vendor_rows,
         }
 
-    # ------------------------------------------------------------------
-    # Browser agent metrics
-    # ------------------------------------------------------------------
-
-    def get_browser_agent_metrics(
-        self,
-        organization_id: str,
-        window_hours: int = 24,
-    ) -> Dict[str, Any]:
-        self.initialize()
-        now = datetime.now(timezone.utc)
-        safe_window_hours = max(1, int(window_hours or 24))
-        window_start = now - timedelta(hours=safe_window_hours)
-
-        sql = self._prepare_sql(
-            "SELECT * FROM browser_action_events WHERE organization_id = ? ORDER BY created_at DESC LIMIT ?"
-        )
-        audit_sql = self._prepare_sql(
-            "SELECT event_type, ts FROM audit_events WHERE organization_id = ? "
-            "AND event_type IN ('erp_api_attempt', 'erp_api_success', 'erp_api_fallback_requested', 'erp_api_failed', 'browser_command_confirmed') "
-            "ORDER BY ts DESC LIMIT ?"
-        )
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, (organization_id, 5000))
-            rows = cur.fetchall()
-            cur.execute(audit_sql, (organization_id, 5000))
-            audit_rows = cur.fetchall()
-
-        status_counts: Dict[str, int] = {}
-        tool_usage: Dict[str, int] = {}
-        failure_reasons: Dict[str, int] = {}
-        session_steps: Dict[str, int] = {}
-        latencies: List[float] = []
-        confirmation_required = 0
-        high_risk_count = 0
-        total_events = 0
-
-        high_risk_fallback_tools = {"click", "type", "select", "open_tab", "upload_file", "drag_drop"}
-
-        for raw_row in rows:
-            row = self._deserialize_browser_action_event(dict(raw_row))
-            ts = self._parse_iso(row.get("updated_at") or row.get("created_at"))
-            if ts and ts < window_start:
-                continue
-
-            total_events += 1
-            status = str(row.get("status") or "unknown")
-            status_counts[status] = status_counts.get(status, 0) + 1
-
-            tool_name = str(row.get("tool_name") or "unknown")
-            tool_usage[tool_name] = tool_usage.get(tool_name, 0) + 1
-
-            session_id = str(row.get("session_id") or "")
-            if session_id:
-                session_steps[session_id] = session_steps.get(session_id, 0) + 1
-
-            if bool(row.get("requires_confirmation")):
-                confirmation_required += 1
-
-            request_payload = row.get("request_payload") or {}
-            if not isinstance(request_payload, dict):
-                request_payload = {}
-            tool_risk = str(request_payload.get("tool_risk") or "").strip().lower()
-            if not tool_risk and tool_name in high_risk_fallback_tools:
-                tool_risk = "high_risk"
-            if tool_risk == "high_risk":
-                high_risk_count += 1
-
-            result_payload = row.get("result_payload") or {}
-            if not isinstance(result_payload, dict):
-                result_payload = {}
-            if status in {"failed", "denied_policy"}:
-                reason = (
-                    str(result_payload.get("error") or "")
-                    or str(row.get("policy_reason") or "")
-                    or "unknown"
-                )
-                failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
-
-            if status in {"completed", "failed"}:
-                created_at = self._parse_iso(row.get("created_at"))
-                updated_at = self._parse_iso(row.get("updated_at"))
-                if created_at and updated_at and updated_at >= created_at:
-                    latencies.append((updated_at - created_at).total_seconds())
-
-        completed = status_counts.get("completed", 0)
-        failed = status_counts.get("failed", 0)
-        denied = status_counts.get("denied_policy", 0)
-        terminal_count = completed + failed + denied
-        session_step_values = [float(count) for count in session_steps.values()]
-
-        routing_counts: Dict[str, int] = {
-            "erp_api_attempt": 0,
-            "erp_api_success": 0,
-            "erp_api_fallback_requested": 0,
-            "erp_api_failed": 0,
-        }
-        browser_command_confirmed_count = 0
-        for raw_row in audit_rows:
-            row = dict(raw_row)
-            ts = self._parse_iso(row.get("ts"))
-            if ts and ts < window_start:
-                continue
-            event_type = str(row.get("event_type") or "")
-            if event_type in routing_counts:
-                routing_counts[event_type] = routing_counts.get(event_type, 0) + 1
-            if event_type == "browser_command_confirmed":
-                browser_command_confirmed_count += 1
-
-        attempt_count = int(routing_counts.get("erp_api_attempt") or 0)
-        api_success_count = int(routing_counts.get("erp_api_success") or 0)
-        fallback_requested_count = int(routing_counts.get("erp_api_fallback_requested") or 0)
-        api_failed_count = int(routing_counts.get("erp_api_failed") or 0)
-        manual_override_required_count = int(confirmation_required)
-        suggestion_accepted_count = int(browser_command_confirmed_count)
-        suggestion_acceptance_rate = (
-            suggestion_accepted_count / manual_override_required_count
-            if manual_override_required_count
-            else 0.0
-        )
-        manual_override_required_rate = (
-            manual_override_required_count / total_events
-            if total_events
-            else 0.0
-        )
-
-        return {
-            "organization_id": organization_id,
-            "generated_at": now.isoformat(),
-            "window_hours": safe_window_hours,
-            "window_start": window_start.isoformat(),
-            "totals": {
-                "events": int(total_events),
-                "sessions": int(len(session_steps)),
-                "terminal_events": int(terminal_count),
-            },
-            "status_counts": status_counts,
-            "tool_usage": tool_usage,
-            "policy": {
-                "confirmation_required_count": int(confirmation_required),
-                "high_risk_count": int(high_risk_count),
-                "denied_policy_count": int(denied),
-            },
-            "human_control": {
-                "manual_override_required_count": manual_override_required_count,
-                "manual_override_required_rate": round(manual_override_required_rate, 4),
-                "suggestion_accepted_count": suggestion_accepted_count,
-                "suggestion_acceptance_rate": round(suggestion_acceptance_rate, 4),
-                "definition": {
-                    "manual_override_required_count": "browser_action_events requiring human confirmation",
-                    "suggestion_accepted_count": "browser_command_confirmed audit events",
-                },
-            },
-            "execution": {
-                "success_rate": round((completed / terminal_count) if terminal_count else 0.0, 4),
-                "avg_steps_per_session": round(
-                    (sum(session_step_values) / len(session_step_values)) if session_step_values else 0.0,
-                    2,
-                ),
-                "p95_steps_per_session": round(self._p95(session_step_values) or 0.0, 2),
-                "avg_latency_seconds": round((sum(latencies) / len(latencies)) if latencies else 0.0, 2),
-                "p95_latency_seconds": round(self._p95(latencies) or 0.0, 2),
-            },
-            "api_first_routing": {
-                "attempt_count": attempt_count,
-                "api_success_count": api_success_count,
-                "fallback_requested_count": fallback_requested_count,
-                "api_failed_count": api_failed_count,
-                "api_success_rate": round((api_success_count / attempt_count) if attempt_count else 0.0, 4),
-                "fallback_rate": round((fallback_requested_count / attempt_count) if attempt_count else 0.0, 4),
-            },
-            "failure_reasons": failure_reasons,
-        }

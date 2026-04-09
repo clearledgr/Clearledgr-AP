@@ -175,7 +175,10 @@ class FinanceAgentRuntime:
         return self._agent_loop
 
     def agent_profile(self, *, skill_id: str = "ap_v1") -> Dict[str, Any]:
-        return get_agent_memory_service(self.organization_id, db=self.db).ensure_profile(skill_id=skill_id)
+        try:
+            return get_agent_memory_service(self.organization_id, db=self.db).ensure_profile(skill_id=skill_id)
+        except Exception:
+            return {"skill_id": skill_id, "organization_id": self.organization_id}
 
     def agent_quality_snapshot(
         self,

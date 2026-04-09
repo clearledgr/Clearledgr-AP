@@ -83,10 +83,8 @@ _HIGH_IMPORTANCE_EVENT_TYPES = {
     "invoice_reject_blocked",
     "erp_post_completed",
     "erp_api_success",
-    "erp_browser_fallback_completed",
     "erp_post_failed",
     "erp_api_failed",
-    "erp_browser_fallback_failed",
     "erp_post_blocked",
     "invoice_escalated",
     "approval_escalation_sent",
@@ -331,7 +329,7 @@ def _operator_evidence(event: Dict[str, Any], context: Dict[str, Any]) -> Dict[s
         )
         return {"label": label, "detail": detail}
 
-    if event_type in {"erp_post_completed", "erp_api_success", "erp_browser_fallback_completed", "erp_post_failed", "erp_api_failed", "erp_browser_fallback_failed"}:
+    if event_type in {"erp_post_completed", "erp_api_success", "erp_post_failed", "erp_api_failed"}:
         detail = "Recorded from the ERP connector response."
         if erp_reference:
             detail = f"Recorded from the ERP connector response ({erp_reference})."
@@ -859,7 +857,7 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         )
         return operator
 
-    if event_type in {"erp_api_success", "erp_browser_fallback_completed"}:
+    if event_type == "erp_api_success":
         operator.update(
             {
                 "code": "erp_posted",
@@ -883,7 +881,7 @@ def _operator_view_for_event(event: Dict[str, Any]) -> Dict[str, Any]:
         )
         return operator
 
-    if event_type in {"erp_api_failed", "erp_browser_fallback_failed"}:
+    if event_type == "erp_api_failed":
         operator.update(
             {
                 "code": "erp_post_failed",
