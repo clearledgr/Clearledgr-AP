@@ -563,7 +563,10 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     "existing": True,
                 }
 
-        # Save invoice to database (canonical AP state: received)
+        # Save invoice to database (canonical AP state: received).
+        # Phase 2.1.a: bank_details flow through as a typed kwarg so they
+        # land in the bank_details_encrypted column, not the metadata
+        # blob. The store handles encryption.
         invoice_id = self.db.save_invoice_status(
             gmail_id=invoice.gmail_id,
             status="received",
@@ -576,6 +579,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             confidence=invoice.confidence,
             organization_id=self.organization_id,
             user_id=invoice.user_id,
+            bank_details=getattr(invoice, "bank_details", None),
         )
         
         logger.info(f"New invoice detected: {invoice.vendor_name} ${invoice.amount} (confidence: {invoice.confidence})")

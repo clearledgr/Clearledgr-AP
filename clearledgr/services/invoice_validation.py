@@ -1591,29 +1591,51 @@ class InvoiceValidationMixin:
                     )
 
         # 4c) Bank/payment details mismatch check.
+        # Phase 2.1.a: read the stored vendor bank details via the typed
+        # decryption accessor — never from `vendor_intelligence` (which
+        # would carry plaintext through memory). Persist only the list
+        # of MISMATCHED FIELD NAMES in the gate reason details. Never
+        # the values themselves: the audit trail records "iban changed"
+        # without recording either the old or new IBAN.
         if isinstance(invoice.bank_details, dict) and invoice.bank_details:
             try:
-                vendor_intelligence = invoice.vendor_intelligence or {}
-                vendor_bank_changed_at = vendor_intelligence.get("bank_details_changed_at")
-                stored_bank = vendor_intelligence.get("bank_details")
-                if vendor_bank_changed_at and isinstance(stored_bank, dict) and stored_bank:
-                    # Compare extracted bank details against stored vendor bank details
-                    mismatch_fields = []
-                    for bk in ("account_number", "routing_number", "iban", "swift", "sort_code"):
-                        extracted_val = (invoice.bank_details.get(bk) or "").strip()
-                        stored_val = (stored_bank.get(bk) or "").strip()
-                        if extracted_val and stored_val and extracted_val != stored_val:
-                            mismatch_fields.append(bk)
+                from clearledgr.core.stores.bank_details import (
+                    diff_bank_details_field_names,
+                    normalize_bank_details,
+                )
+
+                stored_bank: Optional[Dict[str, Any]] = None
+                if invoice.vendor_name and hasattr(self.db, "get_vendor_bank_details"):
+                    try:
+                        stored_bank = self.db.get_vendor_bank_details(
+                            self.organization_id, invoice.vendor_name
+                        )
+                    except Exception as fetch_exc:
+                        logger.warning(
+                            "Bank details fetch failed for %s/%s: %s",
+                            self.organization_id, invoice.vendor_name, fetch_exc,
+                        )
+                        stored_bank = None
+
+                if stored_bank:
+                    extracted_clean = normalize_bank_details(invoice.bank_details)
+                    mismatch_fields = diff_bank_details_field_names(
+                        extracted_clean, stored_bank
+                    )
                     if mismatch_fields:
                         sev = "error" if (invoice.amount or 0) >= 5000 else "warning"
                         add_reason(
                             "bank_details_mismatch_from_invoice",
-                            f"Bank details on invoice differ from vendor profile on: {', '.join(mismatch_fields)}",
+                            (
+                                "Bank details on invoice differ from vendor "
+                                f"profile on: {', '.join(mismatch_fields)}"
+                            ),
                             severity=sev,
                             details={
+                                # Field names only — NEVER the values.
+                                # DESIGN_THESIS.md §19: no plaintext bank
+                                # data in audit logs.
                                 "mismatched_fields": mismatch_fields,
-                                "invoice_bank_details": invoice.bank_details,
-                                "stored_bank_details": stored_bank,
                             },
                         )
             except Exception as bank_exc:

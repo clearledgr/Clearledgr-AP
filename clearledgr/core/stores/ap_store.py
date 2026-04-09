@@ -63,6 +63,11 @@ class APStore:
         "entity_id",
         # Document classification type (invoice, subscription_notification, credit_note, etc.)
         "document_type",
+        # Phase 2.1.a: Fernet-encrypted bank details — never plaintext.
+        # Use set_ap_item_bank_details() to encrypt-and-write atomically;
+        # the column itself is whitelisted here for direct update_ap_item
+        # callers, but they must pass the already-encrypted ciphertext.
+        "bank_details_encrypted",
     })
 
     # ------------------------------------------------------------------
@@ -90,7 +95,50 @@ class APStore:
                 )
                 if not payload.get("exception_code"):
                     payload["exception_code"] = "invalid_amount"
-        metadata = json.dumps(payload.get("metadata") or {})
+
+        # ---- Phase 2.1.a: bank details tokenisation (DESIGN_THESIS.md §19) ----
+        # Bank details are NEVER stored in the metadata JSON blob. They go to
+        # bank_details_encrypted as Fernet ciphertext. We accept the value
+        # at three levels for caller ergonomics, in priority order:
+        #   1. payload["bank_details"]                — typed top-level field
+        #   2. payload["metadata"]["bank_details"]    — defensive strip from
+        #                                              any caller still using
+        #                                              the legacy shape
+        # Then we encrypt it to bank_details_encrypted and remove every
+        # plaintext copy from the metadata before persisting.
+        from clearledgr.core.stores.bank_details import (
+            encrypt_bank_details,
+            normalize_bank_details,
+        )
+
+        raw_metadata = payload.get("metadata") or {}
+        if isinstance(raw_metadata, str):
+            try:
+                raw_metadata = json.loads(raw_metadata) if raw_metadata else {}
+            except json.JSONDecodeError:
+                raw_metadata = {}
+        if not isinstance(raw_metadata, dict):
+            raw_metadata = {}
+
+        bank_details_input = (
+            payload.get("bank_details")
+            or raw_metadata.pop("bank_details", None)
+        )
+        bank_details_normalized = normalize_bank_details(bank_details_input)
+        bank_details_ciphertext: Optional[str] = None
+        if bank_details_normalized:
+            try:
+                bank_details_ciphertext = encrypt_bank_details(
+                    bank_details_normalized, encrypt_fn=self._encrypt_secret
+                )
+            except Exception as enc_exc:
+                logger.error(
+                    "AP item %s bank details encryption failed: %s",
+                    item_id, enc_exc,
+                )
+                bank_details_ciphertext = None
+
+        metadata = json.dumps(raw_metadata)
         # Serialize field_confidences to JSON if provided as a dict
         raw_fc = payload.get("field_confidences")
         field_confidences_json: Optional[str] = None
@@ -107,8 +155,9 @@ class APStore:
              supersedes_ap_item_id, supersedes_invoice_key, superseded_by_ap_item_id, resubmission_reason, erp_reference,
              erp_posted_at, workflow_id, run_id, approval_surface, approval_policy_version, post_attempted_at,
              last_error, po_number, attachment_url, exception_code, exception_severity,
-             organization_id, user_id, entity_id, created_at, updated_at, metadata, field_confidences, document_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             organization_id, user_id, entity_id, created_at, updated_at, metadata, field_confidences, document_type,
+             bank_details_encrypted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         values = (
             item_id,
@@ -155,6 +204,7 @@ class APStore:
             metadata,
             field_confidences_json,
             payload.get("document_type") or "invoice",
+            bank_details_ciphertext,
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -425,6 +475,14 @@ class APStore:
             logger.error("Could not audit rejected AP state transition for %s: %s", ap_item_id, exc)
 
     def get_ap_item(self, ap_item_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch an AP item row by id.
+
+        Returns the raw row dict including the ``bank_details_encrypted``
+        ciphertext column. Callers that need the plaintext bank-details
+        dict must use ``get_ap_item_bank_details`` — the regular
+        ``get_ap_item`` deliberately does NOT decrypt, so a stray
+        ``logger.info(ap_item)`` cannot leak the plaintext.
+        """
         self.initialize()
         sql = self._prepare_sql("SELECT * FROM ap_items WHERE id = ?")
         with self.connect() as conn:
@@ -432,6 +490,102 @@ class APStore:
             cur.execute(sql, (ap_item_id,))
             row = cur.fetchone()
         return dict(row) if row else None
+
+    # ---- Phase 2.1.a: Bank-details typed accessors ----
+    #
+    # The four methods below are the ONLY supported read/write paths for
+    # bank account details on an AP item. Direct manipulation of the
+    # bank_details_encrypted column via update_ap_item is allowed (the
+    # column is in the whitelist), but callers must encrypt the value
+    # themselves; the helpers below do the encryption + masking +
+    # tombstone-stripping correctly.
+
+    def get_ap_item_bank_details(
+        self, ap_item_id: str
+    ) -> Optional[Dict[str, str]]:
+        """Decrypt and return the bank-details dict for an AP item.
+
+        Returns the canonical normalized shape (subset of
+        ``BANK_DETAIL_FIELDS``) or ``None`` when no bank details are
+        stored. Caller is responsible for masking before returning to
+        any user-facing surface — see ``get_ap_item_bank_details_masked``
+        for the API-safe variant.
+        """
+        from clearledgr.core.stores.bank_details import decrypt_bank_details
+
+        self.initialize()
+        sql = self._prepare_sql(
+            "SELECT bank_details_encrypted FROM ap_items WHERE id = ?"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (ap_item_id,))
+            row = cur.fetchone()
+        if not row:
+            return None
+        ciphertext = (
+            row["bank_details_encrypted"]
+            if hasattr(row, "keys")
+            else (row[0] if row else None)
+        )
+        return decrypt_bank_details(ciphertext, decrypt_fn=self._decrypt_secret)
+
+    def get_ap_item_bank_details_masked(
+        self, ap_item_id: str
+    ) -> Optional[Dict[str, str]]:
+        """Return the masked-for-display bank-details dict for an AP item.
+
+        This is the API-safe accessor — its output is what every
+        outbound API surface SHOULD return when surfacing bank details.
+        ``mask_bank_details`` produces shapes like
+        ``{"iban": "GB82 **** **** **** 5432", "sort_code": "**-**-00", ...}``.
+        Returns ``None`` when no bank details are stored.
+        """
+        from clearledgr.core.stores.bank_details import mask_bank_details
+
+        plaintext = self.get_ap_item_bank_details(ap_item_id)
+        return mask_bank_details(plaintext)
+
+    def set_ap_item_bank_details(
+        self,
+        ap_item_id: str,
+        bank_details: Optional[Dict[str, Any]],
+        *,
+        actor_id: Optional[str] = None,
+    ) -> bool:
+        """Encrypt + persist bank details on an AP item.
+
+        ``bank_details`` is the plaintext dict — encryption is handled
+        here. Pass ``None`` to clear the column. Returns True on success.
+        """
+        from clearledgr.core.stores.bank_details import (
+            encrypt_bank_details,
+            normalize_bank_details,
+        )
+
+        cleaned = normalize_bank_details(bank_details)
+        if cleaned is None:
+            ciphertext = None
+        else:
+            try:
+                ciphertext = encrypt_bank_details(
+                    cleaned, encrypt_fn=self._encrypt_secret
+                )
+            except Exception as exc:
+                logger.error(
+                    "set_ap_item_bank_details encryption failed for %s: %s",
+                    ap_item_id, exc,
+                )
+                return False
+        return self.update_ap_item(
+            ap_item_id,
+            bank_details_encrypted=ciphertext,
+            _actor_id=actor_id or "system",
+        )
+
+    def clear_ap_item_bank_details(self, ap_item_id: str) -> bool:
+        """Convenience: clear the bank-details column."""
+        return self.set_ap_item_bank_details(ap_item_id, None)
 
     # ---- Invoice-status bridge methods ----
     # invoice_workflow.py uses gmail_id-based methods (save_invoice_status,
@@ -490,6 +644,10 @@ class APStore:
             "field_confidences": kwargs.get("field_confidences"),
             "organization_id": kwargs.get("organization_id"),
             "user_id": kwargs.get("user_id"),
+            # Phase 2.1.a: forward bank_details so create_ap_item can
+            # encrypt it. The workflow caller passes invoice.bank_details
+            # which is the in-memory dict from the LLM extractor.
+            "bank_details": kwargs.get("bank_details"),
         }
         result = self.create_ap_item(payload)
         return result.get("id", gmail_id) if result else gmail_id

@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS vendor_profiles (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     metadata TEXT NOT NULL DEFAULT '{}',
+    -- Phase 2.1.a: Fernet-encrypted bank details (DESIGN_THESIS.md §19).
+    -- Never store plaintext IBANs or account numbers in metadata.
+    bank_details_encrypted TEXT,
     UNIQUE(organization_id, vendor_name)
 )
 """
@@ -220,6 +223,11 @@ class VendorStore:
             "avg_invoice_amount", "amount_stddev", "typical_invoice_day",
             "bank_details_changed_at", "always_approved",
             "approval_override_rate", "anomaly_flags", "metadata",
+            # Phase 2.1.a: Fernet ciphertext column. Direct callers must
+            # pass the already-encrypted value; the typed accessors below
+            # (set_vendor_bank_details / get_vendor_bank_details) handle
+            # encryption + decryption + masking correctly.
+            "bank_details_encrypted",
         }
         safe_fields = {k: v for k, v in fields.items() if k in _ALLOWED}
 
@@ -262,6 +270,104 @@ class VendorStore:
                 logger.warning("[VendorStore] upsert update failed: %s", exc)
 
         return self.get_vendor_profile(organization_id, vendor_name) or {}
+
+    # ------------------------------------------------------------------ #
+    # Phase 2.1.a: Bank-details typed accessors                            #
+    # ------------------------------------------------------------------ #
+
+    def get_vendor_bank_details(
+        self, organization_id: str, vendor_name: str
+    ) -> Optional[Dict[str, str]]:
+        """Decrypt and return the bank-details dict for a vendor.
+
+        Returns the canonical normalized shape or ``None`` when no bank
+        details are stored. Caller is responsible for masking before
+        returning to user-facing surfaces.
+        """
+        from clearledgr.core.stores.bank_details import decrypt_bank_details
+
+        sql = self._prepare_sql(
+            "SELECT bank_details_encrypted FROM vendor_profiles "
+            "WHERE organization_id = ? AND vendor_name = ?"
+        )
+        try:
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, vendor_name))
+                row = cur.fetchone()
+        except Exception as exc:
+            logger.warning("[VendorStore] get_vendor_bank_details failed: %s", exc)
+            return None
+        if not row:
+            return None
+        ciphertext = (
+            row["bank_details_encrypted"]
+            if hasattr(row, "keys")
+            else (row[0] if row else None)
+        )
+        return decrypt_bank_details(ciphertext, decrypt_fn=self._decrypt_secret)
+
+    def get_vendor_bank_details_masked(
+        self, organization_id: str, vendor_name: str
+    ) -> Optional[Dict[str, str]]:
+        """Return the masked-for-display bank-details dict for a vendor.
+
+        API-safe accessor — output is what every outbound API surface
+        should return when surfacing vendor bank details.
+        """
+        from clearledgr.core.stores.bank_details import mask_bank_details
+
+        plaintext = self.get_vendor_bank_details(organization_id, vendor_name)
+        return mask_bank_details(plaintext)
+
+    def set_vendor_bank_details(
+        self,
+        organization_id: str,
+        vendor_name: str,
+        bank_details: Optional[Dict[str, Any]],
+        *,
+        actor_id: Optional[str] = None,
+    ) -> bool:
+        """Encrypt + persist bank details on a vendor profile.
+
+        Pass ``None`` to clear the column. Also bumps the vendor's
+        ``bank_details_changed_at`` timestamp via ``upsert_vendor_profile``
+        so the validation gate's bank-details-mismatch check has a
+        signal even when reading just the timestamp without decrypting.
+        """
+        from clearledgr.core.stores.bank_details import (
+            encrypt_bank_details,
+            normalize_bank_details,
+        )
+
+        cleaned = normalize_bank_details(bank_details)
+        if cleaned is None:
+            ciphertext = None
+        else:
+            try:
+                ciphertext = encrypt_bank_details(
+                    cleaned, encrypt_fn=self._encrypt_secret
+                )
+            except Exception as exc:
+                logger.error(
+                    "set_vendor_bank_details encryption failed for %s/%s: %s",
+                    organization_id, vendor_name, exc,
+                )
+                return False
+        now = _now()
+        try:
+            self.upsert_vendor_profile(
+                organization_id,
+                vendor_name,
+                bank_details_encrypted=ciphertext,
+                bank_details_changed_at=now,
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                "[VendorStore] set_vendor_bank_details upsert failed: %s", exc
+            )
+            return False
 
     # ------------------------------------------------------------------ #
     # vendor_invoice_history                                               #

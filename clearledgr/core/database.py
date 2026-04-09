@@ -664,6 +664,10 @@ class _ClearledgrDBBase:
                     updated_at TEXT,
                     metadata TEXT,
                     document_type TEXT DEFAULT 'invoice',
+                    -- Phase 2.1.a: Fernet-encrypted bank details
+                    -- (DESIGN_THESIS.md §19). Never store plaintext IBANs
+                    -- or account numbers in metadata.
+                    bank_details_encrypted TEXT,
                     UNIQUE(organization_id, invoice_key)
                 )
             """)

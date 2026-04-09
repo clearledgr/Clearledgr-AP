@@ -1692,7 +1692,21 @@ def build_worklist_item(
     payload["subtotal"] = metadata.get("subtotal")
     payload["discount_amount"] = metadata.get("discount_amount")
     payload["discount_terms"] = metadata.get("discount_terms")
-    payload["bank_details"] = metadata.get("bank_details")
+    # Phase 2.1.a (DESIGN_THESIS.md §19): bank details are stored in the
+    # bank_details_encrypted column, not in metadata. Read via the typed
+    # accessor and return the MASKED shape so API clients never see
+    # plaintext IBANs / account numbers. Older data that still lived in
+    # metadata was migrated by migration v13; if any caller still passes
+    # the legacy shape we silently drop it (it would be plaintext).
+    try:
+        ap_item_id = payload.get("id") or payload.get("ap_item_id")
+        if ap_item_id and hasattr(db, "get_ap_item_bank_details_masked"):
+            payload["bank_details"] = db.get_ap_item_bank_details_masked(ap_item_id)
+        else:
+            payload["bank_details"] = None
+    except Exception as exc:
+        logger.debug("Bank details masked-read failed: %s", exc)
+        payload["bank_details"] = None
     # Document type: column is source of truth. Falls back to metadata for old records.
     _doc_type = payload.get("document_type") or metadata.get("document_type") or metadata.get("email_type") or "invoice"
     payload["document_type"] = _normalize_document_type_token(_doc_type)

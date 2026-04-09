@@ -337,3 +337,111 @@ def _m012_override_window_action_type(cur, db):
         logger.warning(
             "[Migration v12] action_type index skipped: %s", exc
         )
+
+
+@migration(13, "Bank details tokenisation (DESIGN_THESIS.md §19)")
+def _m013_bank_details_encryption(cur, db):
+    """Add Fernet-encrypted bank-details columns; backfill any plaintext.
+
+    Phase 2.1.a — IBAN tokenisation.
+
+    Adds ``bank_details_encrypted`` columns to both ``ap_items`` and
+    ``vendor_profiles``. Reads any existing plaintext bank details from
+    the ``metadata`` JSON blob, encrypts via the DB's Fernet helper, and
+    writes them to the new column. Strips the plaintext key from
+    metadata in the same transaction so a database dump no longer
+    contains raw IBANs / account numbers.
+
+    Hard cutover (no backcompat shim): after this migration runs, code
+    paths read bank data only via the new typed accessors. Any future
+    code that tries to put plaintext into ``metadata.bank_details`` is
+    a regression.
+    """
+    import json as _json
+
+    # ---- Add columns ----
+    for table in ("ap_items", "vendor_profiles"):
+        try:
+            cur.execute(
+                f"ALTER TABLE {table} ADD COLUMN bank_details_encrypted TEXT"
+            )
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "already exists" in msg or "duplicate column" in msg:
+                logger.info(
+                    "[Migration v13] %s.bank_details_encrypted already present, skipping",
+                    table,
+                )
+            else:
+                raise
+
+    def _backfill(table_name: str) -> int:
+        try:
+            cur.execute(
+                f"SELECT id, metadata FROM {table_name} "
+                "WHERE metadata IS NOT NULL AND metadata != '' AND metadata != '{}'"
+            )
+            rows = cur.fetchall()
+        except Exception as exc:
+            logger.warning(
+                "[Migration v13] %s backfill SELECT failed: %s", table_name, exc
+            )
+            return 0
+
+        backfilled = 0
+        for row in rows:
+            try:
+                row_dict = dict(row) if not isinstance(row, dict) else row
+            except Exception:
+                row_dict = {"id": row[0], "metadata": row[1]}
+            row_id = row_dict.get("id")
+            metadata_raw = row_dict.get("metadata")
+            if not row_id or not metadata_raw:
+                continue
+            try:
+                metadata = (
+                    _json.loads(metadata_raw)
+                    if isinstance(metadata_raw, str)
+                    else metadata_raw
+                )
+            except (_json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(metadata, dict):
+                continue
+            bank_details = metadata.get("bank_details")
+            if not bank_details:
+                continue
+            try:
+                payload = _json.dumps(
+                    bank_details, sort_keys=True, separators=(",", ":")
+                )
+                ciphertext = db._encrypt_secret(payload)
+            except Exception as enc_exc:
+                logger.warning(
+                    "[Migration v13] %s %s bank_details encryption failed: %s",
+                    table_name, row_id, enc_exc,
+                )
+                continue
+            metadata.pop("bank_details", None)
+            new_metadata = _json.dumps(metadata)
+            try:
+                cur.execute(
+                    f"UPDATE {table_name} SET bank_details_encrypted = ?, metadata = ? "
+                    "WHERE id = ?",
+                    (ciphertext, new_metadata, row_id),
+                )
+                backfilled += 1
+            except Exception as upd_exc:
+                logger.warning(
+                    "[Migration v13] %s %s UPDATE failed: %s",
+                    table_name, row_id, upd_exc,
+                )
+        return backfilled
+
+    ap_items_count = _backfill("ap_items")
+    vendor_count = _backfill("vendor_profiles")
+    if ap_items_count or vendor_count:
+        logger.info(
+            "[Migration v13] Backfilled bank details: ap_items=%d vendor_profiles=%d",
+            ap_items_count, vendor_count,
+        )
