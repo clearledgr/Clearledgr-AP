@@ -160,20 +160,20 @@ export function getDefaultNextMoveLabel(state, item = null, actorRole = 'operato
     return `Review ${getDocumentTypeLabel(documentType, { lowercase: true })}`;
   }
 
-  if (normalized === 'needs_approval') return 'Wait for approval decision';
+  if (normalized === 'needs_approval') return 'Approval pending';
   if (normalized === 'needs_info') {
     const followupNextAction = String(item?.followup_next_action || '').trim().toLowerCase();
-    if (followupNextAction === 'await_vendor_response') return 'Wait for vendor response';
+    if (followupNextAction === 'await_vendor_response') return 'Waiting for vendor reply';
     if (followupNextAction === 'manual_vendor_escalation') return 'Escalate vendor follow-up';
     return 'Prepare info request';
   }
   if ((normalized === 'approved' || normalized === 'ready_to_post') && !hasErpPostingConnection(item)) {
-    return 'Connect ERP';
+    return 'Set up ERP connection';
   }
-  if (normalized === 'approved') return 'Prepare ERP post';
+  if (normalized === 'approved') return 'Review and post to ERP';
   if (normalized === 'posted_to_erp' || normalized === 'closed') return 'Record is complete';
   if (normalized === 'rejected') return 'Record rejected';
-  return 'Review current AP state';
+  return 'Review this record';
 }
 
 export function getOperatorOverrideCopy(state, item = null, documentType = 'invoice') {
@@ -181,24 +181,24 @@ export function getOperatorOverrideCopy(state, item = null, documentType = 'invo
   if (mode === 'agent_monitoring') {
     return {
       title: 'Operator overrides',
-      detail: 'Clearledgr is monitoring this approval. Use these only if you need to intervene before the reminder or escalation policy runs.',
+      detail: 'Clearledgr will send reminders and escalate automatically. Use these only to intervene now.',
     };
   }
   if (mode === 'agent_waiting') {
     return {
       title: 'Operator overrides',
-      detail: 'Clearledgr already prepared the vendor follow-up and is waiting for a reply. Use these only if you need to intervene early.',
+      detail: 'Clearledgr sent a follow-up and is waiting for the vendor. Use these to intervene before the next reminder.',
     };
   }
   if (mode === 'agent_progressing') {
     return {
       title: 'Operator overrides',
-      detail: 'Clearledgr is already moving this record forward. Use these only if you need to step in manually.',
+      detail: 'Clearledgr is processing this record. Use these to override.',
     };
   }
   return {
     title: 'Operator overrides',
-    detail: 'Use these actions only when you need to override the normal agent path.',
+    detail: 'Use these to change what Clearledgr does next.',
   };
 }
 
@@ -286,10 +286,10 @@ export function getWorkStateNotice(state, documentType = 'invoice', item = null)
   if (normalized === 'needs_info') {
     const followupNextAction = String(item?.followup_next_action || '').trim().toLowerCase();
     if (followupNextAction === 'await_vendor_response') {
-      return 'Waiting for the vendor response. Clearledgr already prepared the follow-up.';
+      return 'Waiting on vendor reply. Clearledgr will send reminders automatically.';
     }
     if (followupNextAction === 'manual_vendor_escalation') {
-      return 'Vendor follow-up reached the retry limit and now needs manual escalation.';
+      return 'Vendor did not reply. Manual escalation needed.';
     }
     if (followupNextAction === 'nudge_vendor_followup') {
       return 'The vendor has not replied yet. Send the next follow-up when you are ready.';
@@ -301,10 +301,10 @@ export function getWorkStateNotice(state, documentType = 'invoice', item = null)
       : {};
     const pendingAssignees = Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees : [];
     if (approvalFollowup?.escalation_due) {
-      return 'Approval is past the escalation window. Clearledgr is waiting for an operator to escalate or reassign it.';
+      return 'Approval is overdue. Escalate or reassign now.';
     }
     if (approvalFollowup?.sla_breached) {
-      return 'Approval is past the reminder SLA. Clearledgr can send another reminder now.';
+      return 'Approval is overdue. Send a reminder now.';
     }
     if (pendingAssignees.length > 0) {
       return `Waiting on ${pendingAssignees.slice(0, 3).join(', ')}. Clearledgr is monitoring this approval and will remind or escalate if it slips.`;

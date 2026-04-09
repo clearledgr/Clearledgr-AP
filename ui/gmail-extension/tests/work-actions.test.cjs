@@ -107,7 +107,7 @@ test('approval waiting states default to agent monitoring instead of an operator
     getDefaultNextMoveLabel('needs_approval', {
       approval_followup: { pending_assignees: ['ap@clearledgr.com'] },
     }),
-    'Wait for approval decision',
+    'Approval pending',
   );
   assert.equal(
     getAgentExecutionMode('needs_approval', {
@@ -125,7 +125,7 @@ test('approval waiting states default to agent monitoring instead of an operator
     getOperatorOverrideCopy('needs_approval', {
       approval_followup: { pending_assignees: ['ap@clearledgr.com'] },
     }).detail,
-    /monitoring this approval/i,
+    /send reminders and escalate automatically/i,
   );
   assert.deepEqual(
     getPrimaryActionConfig('needs_approval', 'operator', 'invoice', {
@@ -160,7 +160,7 @@ test('approved or ready-to-post invoices without an ERP connection do not expose
 
   assert.equal(hasErpPostingConnection(disconnectedApproved), false);
   assert.equal(getPrimaryActionConfig('ready_to_post', 'operator', 'invoice', disconnectedReady), null);
-  assert.equal(getDefaultNextMoveLabel('approved', disconnectedApproved), 'Connect ERP');
+  assert.equal(getDefaultNextMoveLabel('approved', disconnectedApproved), 'Set up ERP connection');
   assert.equal(getAgentExecutionMode('approved', disconnectedApproved), 'operator_attention');
   assert.match(
     getWorkStateNotice('approved', 'invoice', disconnectedApproved),

@@ -151,7 +151,7 @@ function formatApproverStatus(status) {
   return 'Needs resolution';
 }
 
-function getApprovalAutomationConfig(configJson = {}, approvalAutomation = null) {
+export function getApprovalAutomationConfig(configJson = {}, approvalAutomation = null) {
   const nested = configJson?.approval_automation && typeof configJson.approval_automation === 'object'
     ? configJson.approval_automation
     : {};

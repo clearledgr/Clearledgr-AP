@@ -112,7 +112,7 @@ const SOURCE_LABELS = {
 
 const FINANCE_EFFECT_REASON_LABELS = {
   linked_finance_target_amount_missing: 'Target amount missing',
-  linked_finance_target_not_invoice: 'Linked target is not an invoice',
+  linked_finance_target_not_invoice: 'The linked document is not an invoice',
   linked_credit_adjustment_present: 'Linked credit changes payable amount',
   linked_cash_application_present: 'Linked cash activity changes settlement',
   linked_over_credit: 'Linked credits exceed invoice amount',
@@ -275,7 +275,7 @@ export function getWorkflowPauseReason(item = {}) {
   const blockers = getFieldReviewBlockers(item);
   if (blockers.length === 0 && !item?.requires_field_review) return '';
   const fieldLabels = blockers.map((blocker) => String(blocker?.field_label || '').trim().toLowerCase()).filter(Boolean);
-  if (fieldLabels.length === 0) return 'Check the extracted fields before continuing.';
+  if (fieldLabels.length === 0) return 'Review extracted invoice details to ensure accuracy.';
   if (fieldLabels.length === 1) {
     const hasSourceConflict = blockers.some((blocker) => blocker?.kind === 'source_conflict');
     return hasSourceConflict
@@ -312,7 +312,7 @@ export function getFinanceEffectNotice(item = {}) {
   const blockers = getFinanceEffectBlockers(item);
   if (Boolean(item?.finance_effect_review_required)) {
     return blockers[0]?.detail
-      || 'Credits, payments, or refunds change the invoice balance. Review them before continuing.';
+      || 'Applied credits or payments reduce the amount owed. Verify the balance is correct.';
   }
   if (!summary || Object.keys(summary).length === 0) return '';
 
@@ -474,16 +474,16 @@ function formatAgentNextActionLabel(value, item = {}, nextActionType = '', curre
     return buildFieldReviewNextStep(item);
   }
   if (typeToken === 'await_approval' || stateToken === 'needs_approval' || stateToken === 'pending_approval') {
-    return 'Waiting for approval';
+    return 'Approval request sent, waiting for decision';
   }
   if (typeToken === 'await_vendor_info' || stateToken === 'needs_info') {
-    return 'Waiting for vendor reply';
+    return 'Clearledgr is waiting for vendor to respond';
   }
   if (typeToken === 'operator_recovery') {
-    return 'Review the issue and decide what to do next';
+    return 'Review the blocking issue and take action';
   }
   if (typeToken === 'monitor_completion') {
-    return 'Clearledgr is finishing the workflow';
+    return 'Clearledgr is completing the final steps';
   }
   if (typeToken === 'reprocess_after_correction') {
     return 'Clearledgr is rerunning this invoice with the corrected details';
@@ -506,10 +506,10 @@ function formatAgentBeliefReason(value, item = {}) {
       return 'Approval has already been requested. Clearledgr is waiting for the approver response.';
     }
     if (token === 'needs_info') {
-      return 'Clearledgr is waiting for the missing information before this record can continue.';
+      return 'Missing details needed before this invoice can continue.';
     }
     if (token === 'failed_post') {
-      return 'Posting failed. Clearledgr needs a retry or connector review before it can continue.';
+      return 'Posting failed. Clearledgr needs a retry or ERP connection check before it can continue.';
     }
     return '';
   }
@@ -517,10 +517,10 @@ function formatAgentBeliefReason(value, item = {}) {
     return 'Approval has already been requested. Clearledgr is waiting for the approver response.';
   }
   if (token === 'needs_info' || token === 'await_vendor_info') {
-    return 'Clearledgr is waiting for the missing information before this record can continue.';
+    return 'Missing details needed before this invoice can continue.';
   }
   if (token === 'failed_post' || token === 'erp_post_failed') {
-    return 'Posting failed. Clearledgr needs a retry or connector review before it can continue.';
+    return 'Posting failed. Clearledgr needs a retry or ERP connection check before it can continue.';
   }
   return explicit;
 }
@@ -713,7 +713,7 @@ export function getIssueSummary(item) {
   if (ec === 'po_amount_mismatch') return 'Invoice amount does not match PO amount';
   if (ec === 'receipt_missing') return 'Receipt confirmation is required';
   if (ec === 'budget_overrun') return 'Invoice exceeds available budget';
-  if (ec === 'missing_budget_context') return 'Budget context is missing for this invoice';
+  if (ec === 'missing_budget_context') return 'Budget information is not available';
   if (ec === 'policy_validation_failed') return 'Invoice violated AP policy checks';
   if (ec === 'erp_not_connected') return 'ERP is not connected for posting';
   if (ec === 'erp_not_configured') return 'ERP setup is incomplete for posting';
@@ -756,13 +756,13 @@ export function getExceptionReason(exceptionCode) {
   if (c === 'missing_budget_context') return 'No budget context found for this cost center';
   if (c === 'policy_validation_failed') return 'AP policy check failed — review required';
   if (c === 'duplicate_invoice') return 'Duplicate invoice detected for this vendor';
-  if (c === 'confidence_low') return 'Extraction confidence too low for auto-posting';
-  if (c === 'planner_failed') return 'Automatic review could not continue for this invoice';
+  if (c === 'confidence_low') return 'Field accuracy is too low for automatic posting — review needed';
+  if (c === 'planner_failed') return 'Clearledgr could not continue processing this invoice automatically';
   if (c === 'erp_post_failed') return 'Posting to the ERP failed and needs retry';
   if (c === 'erp_not_connected') return 'Connect an ERP before posting this invoice';
   if (c === 'erp_not_configured') return 'Finish ERP configuration before posting this invoice';
   if (c === 'erp_type_unsupported') return 'This ERP connection does not support invoice posting yet';
-  if (c === 'posting_blocked') return 'ERP posting is paused by rollout controls right now';
+  if (c === 'posting_blocked') return 'ERP posting is temporarily paused. Try again later.';
   return '';
 }
 

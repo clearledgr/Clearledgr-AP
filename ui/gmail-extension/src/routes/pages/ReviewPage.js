@@ -160,7 +160,7 @@ function buildReviewSummary(item) {
     return workNotice || getIssueSummary(item) || 'ERP posting still needs review.';
   }
   if (section === 'needs_info') {
-    return workNotice || 'Clearledgr is waiting for the missing information before this record can continue.';
+    return workNotice || 'Missing details needed before this invoice can continue.';
   }
   if (section === 'non_invoice') {
     return getNonInvoiceWorkflowGuidance(documentType);

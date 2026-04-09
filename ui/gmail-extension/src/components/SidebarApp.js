@@ -131,10 +131,10 @@ function humanizeActionFailure(reason) {
   const token = String(reason || '').trim();
   if (!token) return '';
   const map = {
-    missing_gmail_reference: 'Clearledgr could not find the Gmail thread for this invoice.',
-    missing_item_reference: 'Clearledgr could not identify this invoice record.',
+    missing_gmail_reference: 'The source email for this invoice was not found.',
+    missing_item_reference: 'This invoice record could not be found in the system.',
     ap_item_not_found: 'Clearledgr could not find this invoice record.',
-    state_not_ready_for_approval: 'This invoice is not ready to send for approval yet.',
+    state_not_ready_for_approval: 'Resolve blockers before sending for approval.',
     entity_route_review_required: 'Choose the legal entity before sending this invoice for approval.',
     entity_selection_required: 'Select the correct legal entity first.',
     field_review_required: 'Finish the required field checks before sending this invoice for approval.',
@@ -142,7 +142,7 @@ function humanizeActionFailure(reason) {
     assignee_required: 'Choose the approver who should own this approval request.',
     state_not_waiting_for_approval: 'This invoice is no longer waiting on approval.',
     waiting_for_sla_window: 'Follow-up already sent. Wait for the vendor response before nudging again.',
-    followup_attempt_limit_reached: 'Clearledgr reached the vendor follow-up limit. This now needs manual escalation.',
+    followup_attempt_limit_reached: 'Vendor did not reply to automatic follow-ups. Escalate manually.',
     state_not_needs_info: 'This invoice is no longer waiting on vendor information.',
     segregation_of_duties_violation: 'You cannot approve this invoice because you submitted or processed it. Another team member must approve.',
     not_authorized_approver: 'You are not a designated approver for this invoice. Only named approvers in the routing rule can approve.',
@@ -180,22 +180,22 @@ function ScanStatus() {
   let text = '';
   let tone = '';
 
-  if (state === 'initializing') text = 'Getting ready.';
-  else if (state === 'scanning') text = 'Scanning this inbox.';
+  if (state === 'initializing') text = 'Setting up Clearledgr\u2026';
+  else if (state === 'scanning') text = 'Checking inbox for new invoices\u2026';
   else if (state === 'auth_required') {
-    text = 'Connect Gmail to keep Clearledgr working here.';
+    text = 'Gmail access is needed to monitor for new invoices.';
     tone = 'warning';
   } else if (state === 'blocked') {
-    text = 'Finish setup to keep Clearledgr working here.';
+    text = 'Complete Gmail setup to start processing invoices.';
     tone = 'warning';
   } else if (state === 'error') {
     const err = String(status?.error || '');
-    if (err.includes('backend')) text = "Can't reach Clearledgr.";
-    else if (err.includes('temporal')) text = 'Clearledgr is temporarily unavailable.';
+    if (err.includes('backend')) text = "Unable to reach Clearledgr.";
+    else if (err.includes('temporal')) text = 'Clearledgr service is temporarily unavailable. Try again shortly.';
     else if (err.includes('processing')) {
       const failedCount = Number(status?.failedCount || 0);
       text = failedCount > 0 ? `${failedCount} email(s) need another try.` : 'Something needs another try.';
-    } else text = 'Inbox sync issue. Retrying.';
+    } else text = 'Inbox connection paused. Reconnecting\u2026';
     tone = 'error';
   } else {
     const lastScan = status?.lastScanAt ? new Date(status.lastScanAt) : null;
@@ -205,7 +205,7 @@ function ScanStatus() {
   }
 
   if (state !== 'auth_required' && gmail?.requires_reconnect) {
-    text = 'Reconnect Gmail to keep this inbox connected.';
+    text = 'Gmail connection lost. Reconnect to resume invoice processing.';
     tone = 'warning';
   }
 
@@ -1158,7 +1158,7 @@ function WorkPanel({ item, queueManager }) {
       actionType: 'generic',
       title: 'Reassign approval',
       label: 'New approver',
-      message: 'Enter the approver who should own this approval request now.',
+      message: 'Select who should approve this invoice.',
       placeholder: 'Approver email or Slack user',
       confirmLabel: 'Reassign',
       cancelLabel: 'Cancel',
@@ -1205,7 +1205,7 @@ function WorkPanel({ item, queueManager }) {
       dialogMode: 'confirm',
       actionType: 'resume_workflow',
       title: 'Resume workflow',
-      message: 'Review blockers are cleared. Clearledgr will continue the guarded posting step.',
+      message: 'Field checks passed. Clearledgr will prepare to post to your ERP.',
       previewLines: [
         vendor,
         amountLabel,
@@ -1291,7 +1291,7 @@ function WorkPanel({ item, queueManager }) {
           actionType: 'field_review_manual',
           title: `Set ${blocker.field_label || 'field'}`,
           label: `${blocker.field_label || 'Field'} value`,
-          message: 'Enter the canonical value that Clearledgr should keep on the AP record.',
+          message: 'Enter the correct value for this field.',
           defaultValue: blocker.winning_value ?? '',
           confirmLabel: 'Apply value',
           cancelLabel: 'Cancel',

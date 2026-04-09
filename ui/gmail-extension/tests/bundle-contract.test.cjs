@@ -28,7 +28,7 @@ test('manifest content script is pinned to audited dist bundle', () => {
   const earlyJsFiles = Array.isArray(contentScripts[0]?.js) ? contentScripts[0].js : [];
   const bundleJsFiles = Array.isArray(contentScripts[1]?.js) ? contentScripts[1].js : [];
   assert.deepEqual(earlyJsFiles, ['route-capture.js']);
-  assert.deepEqual(bundleJsFiles, ['dist/inboxsdk-layer.js']);
+  assert.deepEqual(bundleJsFiles, ['config.js', 'dist/inboxsdk-layer.js']);
   assert.equal(contentScripts[0]?.run_at, 'document_start');
   assert.equal(contentScripts[1]?.run_at, 'document_idle');
   assert.equal(Boolean(manifest.action?.default_popup), false, 'default popup must be removed from shipped UX');

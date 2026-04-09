@@ -113,13 +113,13 @@ test('work-surface primary action map matches the current Gmail execution doctri
     getWorkStateNotice('needs_info', 'invoice', {
       followup_next_action: 'await_vendor_response',
     }),
-    'Waiting for the vendor response. Clearledgr already prepared the follow-up.',
+    'Waiting on vendor reply. Clearledgr will send reminders automatically.',
   );
   assert.equal(
     getWorkStateNotice('needs_info', 'invoice', {
       followup_next_action: 'manual_vendor_escalation',
     }),
-    'Vendor follow-up reached the retry limit and now needs manual escalation.',
+    'Vendor did not reply. Manual escalation needed.',
   );
   assert.equal(
     getWorkStateNotice('approved', 'invoice', {
@@ -332,7 +332,7 @@ test('agent memory formatter normalizes the canonical cross-surface memory paylo
   assert.equal(view.autonomyLabel, 'Assisted');
   assert.equal(view.currentStateLabel, 'Validated');
   assert.equal(view.statusLabel, 'Needs approval');
-  assert.equal(view.nextActionLabel, 'Waiting for approval');
+  assert.equal(view.nextActionLabel, 'Approval request sent, waiting for decision');
   assert.equal(view.nextActionOwnerLabel, 'Approver');
   assert.equal(view.beliefReason, 'Awaiting approval response.');
   assert.deepEqual(view.reasonCodes, [

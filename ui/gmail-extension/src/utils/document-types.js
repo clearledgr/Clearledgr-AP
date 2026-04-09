@@ -110,27 +110,27 @@ export function getDocumentReferenceText(value, reference) {
 export function getNonInvoiceWorkflowGuidance(value) {
   switch (normalizeDocumentType(value)) {
     case 'credit_note':
-      return 'Vendor credit reducing what you owe. Match to the original invoice.';
+      return 'Vendor credit that reduces your payable. Link to the original invoice to apply it.';
     case 'debit_note':
       return 'Additional charge from vendor. Link to the original invoice if applicable.';
     case 'refund':
       return 'Refund confirmation. Record for reconciliation.';
     case 'receipt':
-      return 'Payment already completed. Recorded for bookkeeping — no action needed.';
+      return 'Payment already completed. Archive this record.';
     case 'subscription':
-      return 'SaaS subscription charge — card was already billed. Recorded for GL coding. No approval needed.';
+      return 'Subscription charge already billed to your card. Assign a GL code and close.';
     case 'payment_request':
       return 'Non-invoice payment request. Route to approval before payment.';
     case 'remittance':
-      return 'Proof of payment sent to vendor. Match to the original AP item.';
+      return 'Proof that payment was sent. Link to the payment record.';
     case 'statement':
-      return 'Vendor account summary. Use for statement reconciliation — not a payable.';
+      return 'Vendor account summary for reconciliation. Route to accounting.';
     case 'bank_notification':
-      return 'Bank charge, direct debit, or FX notification. Record for reconciliation.';
+      return 'Bank fee or notification. Archive or route to accounting.';
     case 'po_confirmation':
-      return 'Vendor confirmed your purchase order. Update PO status.';
+      return 'Vendor confirmed your purchase order. Archive or route to procurement.';
     case 'tax_document':
-      return 'VAT invoice, WHT certificate, or tax receipt. Flag for tax compliance reporting.';
+      return 'Tax document. Route to accounting for compliance filing.';
     case 'contract':
       return 'Vendor contract or renewal notice. Review terms and link to vendor profile.';
     case 'dispute_response':

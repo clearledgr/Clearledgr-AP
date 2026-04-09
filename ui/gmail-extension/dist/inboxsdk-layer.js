@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:727d2829e1c15401112ce21bd732186aff421fd04694ac0ac7810e89d6579151 */
+/* clearledgr-source-fingerprint:368d07ef2eeaba086b3b87fc5f6e8b5733fcfb1214f43fef1424399118977294 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -58667,7 +58667,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   };
   var FINANCE_EFFECT_REASON_LABELS = {
     linked_finance_target_amount_missing: "Target amount missing",
-    linked_finance_target_not_invoice: "Linked target is not an invoice",
+    linked_finance_target_not_invoice: "The linked document is not an invoice",
     linked_credit_adjustment_present: "Linked credit changes payable amount",
     linked_cash_application_present: "Linked cash activity changes settlement",
     linked_over_credit: "Linked credits exceed invoice amount",
@@ -58814,7 +58814,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "";
     const fieldLabels = blockers.map((blocker) => String(blocker?.field_label || "").trim().toLowerCase()).filter(Boolean);
     if (fieldLabels.length === 0)
-      return "Check the extracted fields before continuing.";
+      return "Review extracted invoice details to ensure accuracy.";
     if (fieldLabels.length === 1) {
       const hasSourceConflict2 = blockers.some((blocker) => blocker?.kind === "source_conflict");
       return hasSourceConflict2 ? `Review ${fieldLabels[0]} before this invoice moves forward because the email and attachment do not match.` : `Review ${fieldLabels[0]} before this invoice moves forward.`;
@@ -58842,7 +58842,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const summary = item?.finance_effect_summary && typeof item.finance_effect_summary === "object" ? item.finance_effect_summary : {};
     const blockers = getFinanceEffectBlockers(item);
     if (Boolean(item?.finance_effect_review_required)) {
-      return blockers[0]?.detail || "Credits, payments, or refunds change the invoice balance. Review them before continuing.";
+      return blockers[0]?.detail || "Applied credits or payments reduce the amount owed. Verify the balance is correct.";
     }
     if (!summary || Object.keys(summary).length === 0)
       return "";
@@ -58999,16 +58999,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return buildFieldReviewNextStep(item);
     }
     if (typeToken === "await_approval" || stateToken === "needs_approval" || stateToken === "pending_approval") {
-      return "Waiting for approval";
+      return "Approval request sent, waiting for decision";
     }
     if (typeToken === "await_vendor_info" || stateToken === "needs_info") {
-      return "Waiting for vendor reply";
+      return "Clearledgr is waiting for vendor to respond";
     }
     if (typeToken === "operator_recovery") {
-      return "Review the issue and decide what to do next";
+      return "Review the blocking issue and take action";
     }
     if (typeToken === "monitor_completion") {
-      return "Clearledgr is finishing the workflow";
+      return "Clearledgr is completing the final steps";
     }
     if (typeToken === "reprocess_after_correction") {
       return "Clearledgr is rerunning this invoice with the corrected details";
@@ -59031,10 +59031,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return "Approval has already been requested. Clearledgr is waiting for the approver response.";
       }
       if (token === "needs_info") {
-        return "Clearledgr is waiting for the missing information before this record can continue.";
+        return "Missing details needed before this invoice can continue.";
       }
       if (token === "failed_post") {
-        return "Posting failed. Clearledgr needs a retry or connector review before it can continue.";
+        return "Posting failed. Clearledgr needs a retry or ERP connection check before it can continue.";
       }
       return "";
     }
@@ -59042,10 +59042,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "Approval has already been requested. Clearledgr is waiting for the approver response.";
     }
     if (token === "needs_info" || token === "await_vendor_info") {
-      return "Clearledgr is waiting for the missing information before this record can continue.";
+      return "Missing details needed before this invoice can continue.";
     }
     if (token === "failed_post" || token === "erp_post_failed") {
-      return "Posting failed. Clearledgr needs a retry or connector review before it can continue.";
+      return "Posting failed. Clearledgr needs a retry or ERP connection check before it can continue.";
     }
     return explicit;
   }
@@ -59202,7 +59202,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (ec === "budget_overrun")
       return "Invoice exceeds available budget";
     if (ec === "missing_budget_context")
-      return "Budget context is missing for this invoice";
+      return "Budget information is not available";
     if (ec === "policy_validation_failed")
       return "Invoice violated AP policy checks";
     if (ec === "erp_not_connected")
@@ -59261,9 +59261,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (c3 === "duplicate_invoice")
       return "Duplicate invoice detected for this vendor";
     if (c3 === "confidence_low")
-      return "Extraction confidence too low for auto-posting";
+      return "Field accuracy is too low for automatic posting — review needed";
     if (c3 === "planner_failed")
-      return "Automatic review could not continue for this invoice";
+      return "Clearledgr could not continue processing this invoice automatically";
     if (c3 === "erp_post_failed")
       return "Posting to the ERP failed and needs retry";
     if (c3 === "erp_not_connected")
@@ -59273,7 +59273,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (c3 === "erp_type_unsupported")
       return "This ERP connection does not support invoice posting yet";
     if (c3 === "posting_blocked")
-      return "ERP posting is paused by rollout controls right now";
+      return "ERP posting is temporarily paused. Try again later.";
     return "";
   }
   function getExceptionLabel(exceptionCode) {
@@ -59679,27 +59679,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function getNonInvoiceWorkflowGuidance(value) {
     switch (normalizeDocumentType(value)) {
       case "credit_note":
-        return "Vendor credit reducing what you owe. Match to the original invoice.";
+        return "Vendor credit that reduces your payable. Link to the original invoice to apply it.";
       case "debit_note":
         return "Additional charge from vendor. Link to the original invoice if applicable.";
       case "refund":
         return "Refund confirmation. Record for reconciliation.";
       case "receipt":
-        return "Payment already completed. Recorded for bookkeeping — no action needed.";
+        return "Payment already completed. Archive this record.";
       case "subscription":
-        return "SaaS subscription charge — card was already billed. Recorded for GL coding. No approval needed.";
+        return "Subscription charge already billed to your card. Assign a GL code and close.";
       case "payment_request":
         return "Non-invoice payment request. Route to approval before payment.";
       case "remittance":
-        return "Proof of payment sent to vendor. Match to the original AP item.";
+        return "Proof that payment was sent. Link to the payment record.";
       case "statement":
-        return "Vendor account summary. Use for statement reconciliation — not a payable.";
+        return "Vendor account summary for reconciliation. Route to accounting.";
       case "bank_notification":
-        return "Bank charge, direct debit, or FX notification. Record for reconciliation.";
+        return "Bank fee or notification. Archive or route to accounting.";
       case "po_confirmation":
-        return "Vendor confirmed your purchase order. Update PO status.";
+        return "Vendor confirmed your purchase order. Archive or route to procurement.";
       case "tax_document":
-        return "VAT invoice, WHT certificate, or tax receipt. Flag for tax compliance reporting.";
+        return "Tax document. Route to accounting for compliance filing.";
       case "contract":
         return "Vendor contract or renewal notice. Review terms and link to vendor profile.";
       case "dispute_response":
@@ -59851,49 +59851,49 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return `Review ${getDocumentTypeLabel(documentType, { lowercase: true })}`;
     }
     if (normalized === "needs_approval")
-      return "Wait for approval decision";
+      return "Approval pending";
     if (normalized === "needs_info") {
       const followupNextAction = String(item?.followup_next_action || "").trim().toLowerCase();
       if (followupNextAction === "await_vendor_response")
-        return "Wait for vendor response";
+        return "Waiting for vendor reply";
       if (followupNextAction === "manual_vendor_escalation")
         return "Escalate vendor follow-up";
       return "Prepare info request";
     }
     if ((normalized === "approved" || normalized === "ready_to_post") && !hasErpPostingConnection(item)) {
-      return "Connect ERP";
+      return "Set up ERP connection";
     }
     if (normalized === "approved")
-      return "Prepare ERP post";
+      return "Review and post to ERP";
     if (normalized === "posted_to_erp" || normalized === "closed")
       return "Record is complete";
     if (normalized === "rejected")
       return "Record rejected";
-    return "Review current AP state";
+    return "Review this record";
   }
   function getOperatorOverrideCopy(state, item = null, documentType = "invoice") {
     const mode = getAgentExecutionMode(state, item, documentType);
     if (mode === "agent_monitoring") {
       return {
         title: "Operator overrides",
-        detail: "Clearledgr is monitoring this approval. Use these only if you need to intervene before the reminder or escalation policy runs."
+        detail: "Clearledgr will send reminders and escalate automatically. Use these only to intervene now."
       };
     }
     if (mode === "agent_waiting") {
       return {
         title: "Operator overrides",
-        detail: "Clearledgr already prepared the vendor follow-up and is waiting for a reply. Use these only if you need to intervene early."
+        detail: "Clearledgr sent a follow-up and is waiting for the vendor. Use these to intervene before the next reminder."
       };
     }
     if (mode === "agent_progressing") {
       return {
         title: "Operator overrides",
-        detail: "Clearledgr is already moving this record forward. Use these only if you need to step in manually."
+        detail: "Clearledgr is processing this record. Use these to override."
       };
     }
     return {
       title: "Operator overrides",
-      detail: "Use these actions only when you need to override the normal agent path."
+      detail: "Use these to change what Clearledgr does next."
     };
   }
   function getPrimaryActionConfig(state, actorRole = "operator", documentType = "invoice", item = null) {
@@ -59976,10 +59976,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (normalized === "needs_info") {
       const followupNextAction = String(item?.followup_next_action || "").trim().toLowerCase();
       if (followupNextAction === "await_vendor_response") {
-        return "Waiting for the vendor response. Clearledgr already prepared the follow-up.";
+        return "Waiting on vendor reply. Clearledgr will send reminders automatically.";
       }
       if (followupNextAction === "manual_vendor_escalation") {
-        return "Vendor follow-up reached the retry limit and now needs manual escalation.";
+        return "Vendor did not reply. Manual escalation needed.";
       }
       if (followupNextAction === "nudge_vendor_followup") {
         return "The vendor has not replied yet. Send the next follow-up when you are ready.";
@@ -59989,10 +59989,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const approvalFollowup = item?.approval_followup && typeof item.approval_followup === "object" ? item.approval_followup : {};
       const pendingAssignees = Array.isArray(approvalFollowup?.pending_assignees) ? approvalFollowup.pending_assignees : [];
       if (approvalFollowup?.escalation_due) {
-        return "Approval is past the escalation window. Clearledgr is waiting for an operator to escalate or reassign it.";
+        return "Approval is overdue. Escalate or reassign now.";
       }
       if (approvalFollowup?.sla_breached) {
-        return "Approval is past the reminder SLA. Clearledgr can send another reminder now.";
+        return "Approval is overdue. Send a reminder now.";
       }
       if (pendingAssignees.length > 0) {
         return `Waiting on ${pendingAssignees.slice(0, 3).join(", ")}. Clearledgr is monitoring this approval and will remind or escalate if it slips.`;
@@ -61089,10 +61089,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (!token)
       return "";
     const map = {
-      missing_gmail_reference: "Clearledgr could not find the Gmail thread for this invoice.",
-      missing_item_reference: "Clearledgr could not identify this invoice record.",
+      missing_gmail_reference: "The source email for this invoice was not found.",
+      missing_item_reference: "This invoice record could not be found in the system.",
       ap_item_not_found: "Clearledgr could not find this invoice record.",
-      state_not_ready_for_approval: "This invoice is not ready to send for approval yet.",
+      state_not_ready_for_approval: "Resolve blockers before sending for approval.",
       entity_route_review_required: "Choose the legal entity before sending this invoice for approval.",
       entity_selection_required: "Select the correct legal entity first.",
       field_review_required: "Finish the required field checks before sending this invoice for approval.",
@@ -61100,7 +61100,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       assignee_required: "Choose the approver who should own this approval request.",
       state_not_waiting_for_approval: "This invoice is no longer waiting on approval.",
       waiting_for_sla_window: "Follow-up already sent. Wait for the vendor response before nudging again.",
-      followup_attempt_limit_reached: "Clearledgr reached the vendor follow-up limit. This now needs manual escalation.",
+      followup_attempt_limit_reached: "Vendor did not reply to automatic follow-ups. Escalate manually.",
       state_not_needs_info: "This invoice is no longer waiting on vendor information.",
       segregation_of_duties_violation: "You cannot approve this invoice because you submitted or processed it. Another team member must approve.",
       not_authorized_approver: "You are not a designated approver for this invoice. Only named approvers in the routing rule can approve."
@@ -61137,33 +61137,33 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     let text = "";
     let tone = "";
     if (state === "initializing")
-      text = "Getting ready.";
+      text = "Setting up Clearledgr…";
     else if (state === "scanning")
-      text = "Scanning this inbox.";
+      text = "Checking inbox for new invoices…";
     else if (state === "auth_required") {
-      text = "Connect Gmail to keep Clearledgr working here.";
+      text = "Gmail access is needed to monitor for new invoices.";
       tone = "warning";
     } else if (state === "blocked") {
-      text = "Finish setup to keep Clearledgr working here.";
+      text = "Complete Gmail setup to start processing invoices.";
       tone = "warning";
     } else if (state === "error") {
       const err = String(status?.error || "");
       if (err.includes("backend"))
-        text = "Can't reach Clearledgr.";
+        text = "Unable to reach Clearledgr.";
       else if (err.includes("temporal"))
-        text = "Clearledgr is temporarily unavailable.";
+        text = "Clearledgr service is temporarily unavailable. Try again shortly.";
       else if (err.includes("processing")) {
         const failedCount = Number(status?.failedCount || 0);
         text = failedCount > 0 ? `${failedCount} email(s) need another try.` : "Something needs another try.";
       } else
-        text = "Inbox sync issue. Retrying.";
+        text = "Inbox connection paused. Reconnecting…";
       tone = "error";
     } else {
       const lastScan = status?.lastScanAt ? new Date(status.lastScanAt) : null;
       text = lastScan ? `Monitoring active · ${lastScan.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Monitoring active";
     }
     if (state !== "auth_required" && gmail?.requires_reconnect) {
-      text = "Reconnect Gmail to keep this inbox connected.";
+      text = "Gmail connection lost. Reconnect to resume invoice processing.";
       tone = "warning";
     }
     return html2`<div id="cl-scan-status" class="cl-scan-status" data-tone=${tone}>${text}</div>`;
@@ -61995,7 +61995,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         actionType: "generic",
         title: "Reassign approval",
         label: "New approver",
-        message: "Enter the approver who should own this approval request now.",
+        message: "Select who should approve this invoice.",
         placeholder: "Approver email or Slack user",
         confirmLabel: "Reassign",
         cancelLabel: "Cancel",
@@ -62036,7 +62036,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         dialogMode: "confirm",
         actionType: "resume_workflow",
         title: "Resume workflow",
-        message: "Review blockers are cleared. Clearledgr will continue the guarded posting step.",
+        message: "Field checks passed. Clearledgr will prepare to post to your ERP.",
         previewLines: [
           vendor,
           amountLabel,
@@ -62118,7 +62118,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             actionType: "field_review_manual",
             title: `Set ${blocker.field_label || "field"}`,
             label: `${blocker.field_label || "Field"} value`,
-            message: "Enter the canonical value that Clearledgr should keep on the AP record.",
+            message: "Enter the correct value for this field.",
             defaultValue: blocker.winning_value ?? "",
             confirmLabel: "Apply value",
             cancelLabel: "Cancel",
@@ -66292,7 +66292,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return workNotice || getIssueSummary2(item) || "ERP posting still needs review.";
     }
     if (section === "needs_info") {
-      return workNotice || "Clearledgr is waiting for the missing information before this record can continue.";
+      return workNotice || "Missing details needed before this invoice can continue.";
     }
     if (section === "non_invoice") {
       return getNonInvoiceWorkflowGuidance(documentType);

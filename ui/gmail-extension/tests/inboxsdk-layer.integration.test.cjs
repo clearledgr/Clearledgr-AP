@@ -46,7 +46,7 @@ test('manifest ships the audited Gmail bundle as the only inbox content script',
   const contentScriptJs = manifest.content_scripts?.[1]?.js || [];
 
   assert.deepEqual(earlyContentScriptJs, ['route-capture.js']);
-  assert.deepEqual(contentScriptJs, ['dist/inboxsdk-layer.js']);
+  assert.deepEqual(contentScriptJs, ['config.js', 'dist/inboxsdk-layer.js']);
 });
 
 test('background worker preserves fresh-tab Clearledgr route intent before Gmail rewrites the hash', () => {
