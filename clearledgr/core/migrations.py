@@ -518,3 +518,65 @@ def _m014_iban_change_freeze(cur, db):
         logger.warning(
             "[Migration v14] iban_change_pending index skipped: %s", exc
         )
+
+
+@migration(15, "Role taxonomy cutover to thesis five roles (DESIGN_THESIS.md §17)")
+def _m015_role_taxonomy_cutover(cur, db):
+    """Rewrite ``users.role`` in place from legacy values to thesis roles.
+
+    Phase 2.3 — five-role thesis taxonomy.
+
+    Legacy → canonical mapping:
+
+        user     → ap_clerk
+        member   → ap_clerk
+        operator → ap_manager
+        admin    → financial_controller
+        viewer   → read_only
+        cfo      → cfo                      (unchanged)
+        owner    → owner                    (unchanged)
+        api      → api                      (unchanged)
+
+    The mapping is applied as a set of UPDATE statements — each legacy
+    value is rewritten in a single SQL statement, atomic per value.
+    Any stored value not in this map is left alone (including unknown
+    garbage, which the predicates will reject at the auth layer).
+
+    This is a hard cutover: after this migration runs, the database
+    contains only canonical thesis role strings (plus any unknown
+    values that were never on the legacy list). There is no
+    backward-compatibility shim — ``normalize_user_role`` at the auth
+    layer is an additional safety net for stale JWTs still in flight,
+    not a preservation mechanism.
+    """
+    mapping = {
+        "user": "ap_clerk",
+        "member": "ap_clerk",
+        "operator": "ap_manager",
+        "admin": "financial_controller",
+        "viewer": "read_only",
+    }
+    total_updated = 0
+    for legacy, canonical in mapping.items():
+        try:
+            cur.execute(
+                "UPDATE users SET role = ? WHERE role = ?",
+                (canonical, legacy),
+            )
+            rows = cur.rowcount or 0
+            if rows > 0:
+                logger.info(
+                    "[Migration v15] Upgraded %d users from %r to %r",
+                    rows, legacy, canonical,
+                )
+                total_updated += rows
+        except Exception as exc:
+            logger.warning(
+                "[Migration v15] UPDATE users SET role = %r WHERE role = %r failed: %s",
+                canonical, legacy, exc,
+            )
+    if total_updated:
+        logger.info(
+            "[Migration v15] Role taxonomy cutover complete — %d users updated",
+            total_updated,
+        )

@@ -39,7 +39,9 @@ def test_reconcile_token_data_prefers_canonical_user_role(monkeypatch):
     assert resolved.user_id == "USR-admin"
     assert resolved.email == "mo@clearledgr.com"
     assert resolved.organization_id == "default"
-    assert resolved.role == "admin"
+    # Phase 2.3: roles are normalized to canonical thesis values on
+    # every reconcile call. Legacy "admin" maps to "financial_controller".
+    assert resolved.role == "financial_controller"
 
 
 def test_reconcile_token_data_falls_back_to_email_when_user_id_is_stale(monkeypatch):
@@ -66,4 +68,6 @@ def test_reconcile_token_data_falls_back_to_email_when_user_id_is_stale(monkeypa
     assert resolved.user_id == "USR-admin"
     assert resolved.email == "mo@clearledgr.com"
     assert resolved.organization_id == "default"
-    assert resolved.role == "admin"
+    # Phase 2.3: roles are normalized to canonical thesis values on
+    # every reconcile call. Legacy "admin" maps to "financial_controller".
+    assert resolved.role == "financial_controller"

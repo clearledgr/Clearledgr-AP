@@ -227,11 +227,14 @@ def decode_token(token: str) -> Dict[str, Any]:
 
 
 def _token_data_from_payload(payload: Dict[str, Any]) -> TokenData:
+    # Phase 2.3: normalize legacy role strings on every token decode
+    # so predicates only ever see canonical thesis values.
+    raw_role = payload.get("role") or ROLE_AP_CLERK
     return TokenData(
         user_id=payload["sub"],
         email=payload["email"],
         organization_id=payload["org"],
-        role=payload.get("role", "user"),
+        role=normalize_user_role(raw_role) or ROLE_AP_CLERK,
         exp=datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
     )
 
@@ -240,8 +243,12 @@ def _reconcile_token_data(token_data: TokenData) -> TokenData:
     """Prefer the canonical DB user record over stale token claims.
 
     Browser extension workspace tokens can outlive role or user-id migrations.
-    Reconcile by user_id first, then email, so admin/operator changes land
+    Reconcile by user_id first, then email, so role changes land
     immediately without forcing the user through a full re-auth cycle.
+
+    Phase 2.3: roles are always normalized to canonical thesis values
+    on the way out so downstream predicates operate on ``cfo``,
+    ``ap_manager``, etc., regardless of what the stale token claimed.
     """
     try:
         db = _get_db()
@@ -254,6 +261,11 @@ def _reconcile_token_data(token_data: TokenData) -> TokenData:
             row = db.get_user_by_email(email)
         if not row:
             return token_data
+        raw_role = (
+            row.get("role")
+            or getattr(token_data, "role", None)
+            or ROLE_AP_CLERK
+        )
         return TokenData(
             user_id=str(row.get("id") or user_id or email or "unknown"),
             email=str(row.get("email") or email or getattr(token_data, "email", "") or ""),
@@ -262,7 +274,7 @@ def _reconcile_token_data(token_data: TokenData) -> TokenData:
                 or getattr(token_data, "organization_id", None)
                 or "default"
             ),
-            role=str(row.get("role") or getattr(token_data, "role", None) or "user"),
+            role=normalize_user_role(raw_role) or ROLE_AP_CLERK,
             exp=token_data.exp,
         )
     except Exception:
@@ -419,51 +431,224 @@ def _validate_google_token(token: str) -> Optional[TokenData]:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Phase 2.3 — Five-role thesis taxonomy (DESIGN_THESIS.md §17)
+# ---------------------------------------------------------------------------
+#
+# The thesis defines five human roles plus an ``owner`` superuser and a
+# service-account ``api`` role. Permissions are additive-upward: a CFO
+# has every permission an AP Manager has, etc. Each role has an integer
+# rank and a predicate ``has_<role>(role) → bool`` that returns True for
+# the role itself AND any role with a higher rank.
+#
+# Role canonical values:
+#     read_only             — view-only seat
+#     ap_clerk              — default write seat; day-to-day invoice entry
+#     ap_manager            — ops surface; approve within auto-approve limits
+#     financial_controller  — configure org settings + high-value approvals
+#     cfo                   — fraud control parameters + autonomy tier changes
+#     owner                 — org creator; universal superuser
+#     api                   — service account; equivalent to owner for automation
+#
+# Legacy role strings (``user``, ``admin``, ``operator``, ``viewer``,
+# ``member``) are normalized to their thesis equivalent at every read
+# boundary via ``normalize_user_role``. The same transformation is
+# applied in place by migration v15 so database rows match the normalized
+# shape. There is no backward-compat shim: after the migration runs,
+# ``admin`` is not a canonical value anywhere in the system — it's
+# silently upgraded to ``financial_controller`` at read time if it
+# still appears on a stale JWT.
+
+ROLE_READ_ONLY = "read_only"
+ROLE_AP_CLERK = "ap_clerk"
+ROLE_AP_MANAGER = "ap_manager"
+ROLE_FINANCIAL_CONTROLLER = "financial_controller"
+ROLE_CFO = "cfo"
+ROLE_OWNER = "owner"
+ROLE_API = "api"
+
+# Canonical rank map. Higher = more powerful. Missing/unknown roles
+# get rank 0, which fails every ``has_at_least`` check.
+ROLE_RANK: Dict[str, int] = {
+    ROLE_READ_ONLY: 10,
+    ROLE_AP_CLERK: 20,
+    ROLE_AP_MANAGER: 40,
+    ROLE_FINANCIAL_CONTROLLER: 60,
+    ROLE_CFO: 80,
+    ROLE_OWNER: 100,
+    # Service accounts equivalent to owner for automation paths.
+    ROLE_API: 100,
+}
+
+# Mapping from legacy role strings → thesis canonical values. Applied
+# by ``normalize_user_role`` at every read boundary. Migration v15
+# rewrites the ``users.role`` column in place so stored values match
+# the normalized shape going forward.
+_LEGACY_ROLE_MAP: Dict[str, str] = {
+    "user": ROLE_AP_CLERK,
+    "member": ROLE_AP_CLERK,
+    "operator": ROLE_AP_MANAGER,
+    "admin": ROLE_FINANCIAL_CONTROLLER,
+    "viewer": ROLE_READ_ONLY,
+}
+
+
 def normalize_user_role(role: Optional[str]) -> str:
-    return str(role or "").strip().lower()
+    """Return the canonical thesis role for a potentially-legacy input.
+
+    Empty, None, or unknown inputs return an empty string — callers
+    that need a default seat should explicitly fall back to
+    ``ROLE_AP_CLERK``. This function is intentionally conservative:
+    it never promotes an unknown role to a default, because that
+    would be a privilege-escalation vector on malformed tokens.
+    """
+    raw = str(role or "").strip().lower()
+    if not raw:
+        return ""
+    if raw in ROLE_RANK:
+        return raw
+    if raw in _LEGACY_ROLE_MAP:
+        return _LEGACY_ROLE_MAP[raw]
+    return raw  # preserve unknown values so predicates reject them
+
+
+def has_at_least(role: Optional[str], minimum: str) -> bool:
+    """Return True iff ``role`` has at least the rank of ``minimum``."""
+    normalized = normalize_user_role(role)
+    min_normalized = normalize_user_role(minimum)
+    return ROLE_RANK.get(normalized, 0) >= ROLE_RANK.get(min_normalized, 0)
+
+
+def has_read_only(role: Optional[str]) -> bool:
+    return has_at_least(role, ROLE_READ_ONLY)
+
+
+def has_ap_clerk(role: Optional[str]) -> bool:
+    return has_at_least(role, ROLE_AP_CLERK)
+
+
+def has_ap_manager(role: Optional[str]) -> bool:
+    return has_at_least(role, ROLE_AP_MANAGER)
+
+
+def has_financial_controller(role: Optional[str]) -> bool:
+    return has_at_least(role, ROLE_FINANCIAL_CONTROLLER)
+
+
+def has_cfo(role: Optional[str]) -> bool:
+    """Return True for CFO, owner, or api roles."""
+    return has_at_least(role, ROLE_CFO)
+
+
+def has_owner(role: Optional[str]) -> bool:
+    return has_at_least(role, ROLE_OWNER)
+
+
+# ---------------------------------------------------------------------------
+# Legacy predicates — kept at the same names but delegate to the rank
+# system. The semantic mapping is documented inline so future reviewers
+# understand why ``has_ops_access`` means "AP Manager or higher".
+# ---------------------------------------------------------------------------
 
 
 def has_ops_access(role: Optional[str]) -> bool:
-    return normalize_user_role(role) in {"owner", "admin", "operator", "api"}
+    """Ops surface access — AP Manager rank or higher.
+
+    Historically ``has_ops_access`` gated on ``{owner, admin, operator, api}``.
+    Under the thesis taxonomy these map to ``{owner, financial_controller,
+    ap_manager, api}`` — all rank ≥ 40, which is ``ap_manager``.
+    """
+    return has_at_least(role, ROLE_AP_MANAGER)
 
 
 def has_admin_access(role: Optional[str]) -> bool:
-    return normalize_user_role(role) in {"owner", "admin", "api"}
+    """Admin surface access — Financial Controller rank or higher.
+
+    Historically ``has_admin_access`` gated on ``{owner, admin, api}``.
+    Under the thesis taxonomy these map to ``{owner, financial_controller, api}``
+    — all rank ≥ 60, which is ``financial_controller``.
+    """
+    return has_at_least(role, ROLE_FINANCIAL_CONTROLLER)
 
 
 def has_fraud_control_admin(role: Optional[str]) -> bool:
-    """Return True for roles authorized to modify fraud-control parameters.
-
-    Per DESIGN_THESIS.md §8, fraud controls are an architectural baseline
-    that cannot be disabled by AP Managers. Their numeric parameters can
-    only be modified by the CFO role. ``owner`` retains superset access
-    because owners are the ultimate authority on an organization.
+    """Alias for ``has_cfo``. Kept for readability at call sites that
+    want to emphasize the fraud-control intent (e.g., Phase 1.2a's
+    /fraud-controls API). Semantically identical.
     """
-    return normalize_user_role(role) in {"cfo", "owner"}
+    return has_cfo(role)
 
 
 def require_ops_user(user: TokenData = Depends(get_current_user)) -> TokenData:
     if not has_ops_access(getattr(user, "role", None)):
-        raise HTTPException(status_code=403, detail="ops_role_required")
+        raise HTTPException(status_code=403, detail="ap_manager_role_required")
     return user
 
 
 def require_admin_user(user: TokenData = Depends(get_current_user)) -> TokenData:
     if not has_admin_access(getattr(user, "role", None)):
-        raise HTTPException(status_code=403, detail="admin_role_required")
-    return user
-
-
-def require_fraud_control_admin(
-    user: TokenData = Depends(get_current_user),
-) -> TokenData:
-    """FastAPI dependency: only CFO or owner may modify fraud-control parameters."""
-    if not has_fraud_control_admin(getattr(user, "role", None)):
         raise HTTPException(
-            status_code=403,
-            detail="cfo_role_required_for_fraud_control_modification",
+            status_code=403, detail="financial_controller_role_required"
         )
     return user
+
+
+def require_cfo(user: TokenData = Depends(get_current_user)) -> TokenData:
+    """FastAPI dependency: CFO or owner role required.
+
+    Used for fraud-control parameter modification, IBAN change
+    verification, vendor trusted-domain allowlist writes, and any
+    other CFO-level write surface per DESIGN_THESIS.md §17.
+    """
+    if not has_cfo(getattr(user, "role", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="cfo_role_required",
+        )
+    return user
+
+
+def require_financial_controller(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """FastAPI dependency: Financial Controller, CFO, or owner required."""
+    if not has_financial_controller(getattr(user, "role", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="financial_controller_role_required",
+        )
+    return user
+
+
+def require_ap_manager(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """FastAPI dependency: AP Manager, Controller, CFO, or owner required."""
+    if not has_ap_manager(getattr(user, "role", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="ap_manager_role_required",
+        )
+    return user
+
+
+def require_ap_clerk(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """FastAPI dependency: any write-capable human role (clerk or above)."""
+    if not has_ap_clerk(getattr(user, "role", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="ap_clerk_role_required",
+        )
+    return user
+
+
+# Phase 2.3 hard cutover: ``require_fraud_control_admin`` is removed.
+# Every caller migrated to ``require_cfo`` in the same commit so there
+# is no backcompat shim. If a future reviewer wants to track fraud-
+# control surfaces specifically, grep for ``require_cfo`` (which is
+# what every current CFO-gated endpoint uses).
 
 
 def get_optional_user(

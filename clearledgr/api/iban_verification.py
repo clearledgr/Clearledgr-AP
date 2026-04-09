@@ -11,7 +11,7 @@ Endpoints:
   POST   /api/vendors/{vendor_name}/iban-verification/factors/{factor}
     — Records a single verification factor. Valid factor names are
       ``email_domain_factor``, ``phone_factor``, ``sign_off_factor``.
-      Requires CFO or owner role (``require_fraud_control_admin``).
+      Requires CFO or owner role (``require_cfo``).
 
   POST   /api/vendors/{vendor_name}/iban-verification/complete
     — Completes verification and lifts the freeze. All three factors
@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 from clearledgr.core.auth import (
     TokenData,
     get_current_user,
-    require_fraud_control_admin,
+    require_cfo,
 )
 from clearledgr.core.database import get_db
 
@@ -205,7 +205,7 @@ def record_phone_factor(
     vendor_name: str,
     body: RecordPhoneFactorRequest,
     organization_id: str = Query(..., description="Organization identifier"),
-    user: TokenData = Depends(require_fraud_control_admin),
+    user: TokenData = Depends(require_cfo),
 ) -> Dict[str, Any]:
     """Record the phone-confirmation factor.
 
@@ -228,12 +228,12 @@ def record_sign_off_factor(
     vendor_name: str,
     body: RecordSignOffFactorRequest,
     organization_id: str = Query(..., description="Organization identifier"),
-    user: TokenData = Depends(require_fraud_control_admin),
+    user: TokenData = Depends(require_cfo),
 ) -> Dict[str, Any]:
     """Record the CFO/AP Manager sign-off factor.
 
     CFO or owner role required (enforced via
-    ``require_fraud_control_admin``). The actor's identity from the
+    ``require_cfo``). The actor's identity from the
     auth token is the substantive record.
     """
     _assert_same_org(user, organization_id)
@@ -252,7 +252,7 @@ def record_email_domain_factor(
     vendor_name: str,
     body: RecordEmailDomainFactorRequest,
     organization_id: str = Query(..., description="Organization identifier"),
-    user: TokenData = Depends(require_fraud_control_admin),
+    user: TokenData = Depends(require_cfo),
 ) -> Dict[str, Any]:
     """Manually override the auto-check on the email_domain_factor.
 
@@ -283,7 +283,7 @@ def record_email_domain_factor(
 def complete_iban_verification(
     vendor_name: str,
     organization_id: str = Query(..., description="Organization identifier"),
-    user: TokenData = Depends(require_fraud_control_admin),
+    user: TokenData = Depends(require_cfo),
 ) -> Dict[str, Any]:
     """Complete three-factor verification and lift the freeze.
 
@@ -326,7 +326,7 @@ def reject_iban_verification(
     vendor_name: str,
     body: RejectFreezeRequest,
     organization_id: str = Query(..., description="Organization identifier"),
-    user: TokenData = Depends(require_fraud_control_admin),
+    user: TokenData = Depends(require_cfo),
 ) -> Dict[str, Any]:
     """Reject the unverified change and clear the freeze.
 

@@ -28,7 +28,7 @@ from clearledgr.core.auth import (
     TokenData,
     get_current_user,
     has_fraud_control_admin,
-    require_fraud_control_admin,
+    require_cfo,
 )
 from clearledgr.core.database import get_db
 from clearledgr.core.fraud_controls import (
@@ -143,7 +143,7 @@ def get_fraud_controls(
 def update_fraud_controls(
     organization_id: str,
     request: FraudControlsUpdateRequest,
-    user: TokenData = Depends(require_fraud_control_admin),
+    user: TokenData = Depends(require_cfo),
 ) -> FraudControlsResponse:
     """Update fraud-control parameters. CFO or owner role required.
 
@@ -155,7 +155,7 @@ def update_fraud_controls(
     """
     _assert_same_org_or_admin(user, organization_id)
 
-    # Defense-in-depth: even though require_fraud_control_admin already
+    # Defense-in-depth: even though require_cfo already
     # enforces the role, re-check here so any future refactor that
     # accidentally swaps the dependency cannot silently open the endpoint.
     if not has_fraud_control_admin(getattr(user, "role", None)):

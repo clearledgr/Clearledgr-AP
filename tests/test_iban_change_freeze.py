@@ -581,7 +581,7 @@ class TestIbanVerificationAPI:
         from clearledgr.core.auth import (
             TokenData,
             get_current_user,
-            require_fraud_control_admin,
+            require_cfo,
         )
         from datetime import datetime, timezone
 
@@ -595,7 +595,7 @@ class TestIbanVerificationAPI:
             )
 
         main.app.dependency_overrides[get_current_user] = _user
-        main.app.dependency_overrides[require_fraud_control_admin] = _user
+        main.app.dependency_overrides[require_cfo] = _user
 
     def test_get_status_no_freeze(self, app_client):
         client, main, db = app_client

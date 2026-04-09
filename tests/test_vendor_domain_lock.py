@@ -579,7 +579,7 @@ class TestVendorTrustedDomainsAPI:
         from clearledgr.core.auth import (
             TokenData,
             get_current_user,
-            require_fraud_control_admin,
+            require_cfo,
         )
         from datetime import datetime, timezone
 
@@ -593,7 +593,7 @@ class TestVendorTrustedDomainsAPI:
             )
 
         main.app.dependency_overrides[get_current_user] = _user
-        main.app.dependency_overrides[require_fraud_control_admin] = _user
+        main.app.dependency_overrides[require_cfo] = _user
 
     def test_get_empty_allowlist(self, app_client):
         client, main, db = app_client

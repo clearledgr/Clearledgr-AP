@@ -263,7 +263,8 @@ async def register(
     - At least one lowercase letter
     - At least one digit
     """
-    if current_user.role not in {"admin", "owner"}:
+    from clearledgr.core.auth import has_admin_access
+    if not has_admin_access(current_user.role):
         raise HTTPException(status_code=403, detail="admin_required")
     if str(request.organization_id) != str(current_user.organization_id):
         raise HTTPException(status_code=403, detail="org_mismatch")
@@ -512,13 +513,15 @@ async def update_user(
     if not requesting_user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Check access
+    # Check access — admin access means Financial Controller or higher
+    # under the Phase 2.3 thesis taxonomy (legacy "admin" → "financial_controller").
+    from clearledgr.core.auth import has_admin_access
     is_self = user_id == current_user.user_id
-    is_admin = requesting_user.role == "admin"
-    
+    is_admin = has_admin_access(requesting_user.role)
+
     if not is_self and not is_admin:
         raise HTTPException(status_code=403, detail="Access denied")
-    
+
     # Non-admins can't change roles
     if request.role and not is_admin:
         raise HTTPException(status_code=403, detail="Only admins can change roles")
@@ -647,12 +650,19 @@ async def invite_user(
     from clearledgr.core.auth import get_user_by_id, get_user_by_email
     import uuid
     
+    from clearledgr.core.auth import has_admin_access, normalize_user_role, ROLE_RANK
     requesting_user = get_user_by_id(current_user.user_id)
-    if not requesting_user or requesting_user.role != "admin":
+    if not requesting_user or not has_admin_access(requesting_user.role):
         raise HTTPException(status_code=403, detail="Admin access required")
-    
-    if role not in ("admin", "member", "viewer"):
+
+    # Phase 2.3: invite role must be a canonical thesis role. Legacy
+    # values (admin/member/viewer) still work because normalize_user_role
+    # upgrades them in place — but the canonical form is what gets
+    # persisted on the new user record.
+    normalized_role = normalize_user_role(role)
+    if normalized_role not in ROLE_RANK or normalized_role == "owner":
         raise HTTPException(status_code=400, detail="Invalid role")
+    role = normalized_role
     
     # Check if user already exists
     existing = get_user_by_email(email)
@@ -776,11 +786,13 @@ async def google_web_auth_callback(
     if invite and invite.get("status") != "pending":
         invite = None
 
+    from clearledgr.core.auth import normalize_user_role, ROLE_AP_CLERK
     if invite:
         if str(invite.get("email")).lower().strip() != email:
             raise HTTPException(status_code=403, detail="invite_email_mismatch")
         org_id = str(invite.get("organization_id"))
-        role = str(invite.get("role") or "member")
+        # Phase 2.3: normalize to canonical thesis role.
+        role = normalize_user_role(invite.get("role")) or ROLE_AP_CLERK
     else:
         # Resolve org from email domain — never trust caller-supplied org_id
         email_domain = email.split("@")[1].lower() if "@" in email else ""
@@ -792,7 +804,7 @@ async def google_web_auth_callback(
         else:
             org_id = "default"
             logger.warning("No org found for domain %s — new user will be placed in default org", email_domain)
-        role = "user"
+        role = ROLE_AP_CLERK
 
     user = get_user_by_email(email)
     if user is None:
@@ -867,7 +879,9 @@ async def accept_invite(request: InviteAcceptRequest, response: Response):
             raise HTTPException(status_code=400, detail="invite_expired")
 
     email = str(invite.get("email")).lower().strip()
-    role = str(invite.get("role") or "member")
+    # Phase 2.3: normalize legacy invite roles to canonical thesis values.
+    from clearledgr.core.auth import normalize_user_role, ROLE_AP_CLERK
+    role = normalize_user_role(invite.get("role")) or ROLE_AP_CLERK
     organization_id = str(invite.get("organization_id") or "default")
     user = get_user_by_email(email)
     if user is None:

@@ -84,8 +84,10 @@ def test_require_ops_user_rejects_read_only_roles():
     with pytest.raises(HTTPException) as exc_info:
         require_ops_user(viewer)
 
+    # Phase 2.3: require_ops_user now returns the thesis-taxonomy
+    # error code naming the required role explicitly.
     assert exc_info.value.status_code == 403
-    assert exc_info.value.detail == "ops_role_required"
+    assert exc_info.value.detail == "ap_manager_role_required"
 
 
 def test_get_current_user_requires_auth():

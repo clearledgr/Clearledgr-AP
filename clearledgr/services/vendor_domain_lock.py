@@ -297,7 +297,7 @@ class VendorDomainLockService:
         """Add a trusted domain and emit an audit event.
 
         Role gating is enforced at the API boundary via
-        ``require_fraud_control_admin`` — this method trusts the
+        ``require_cfo`` — this method trusts the
         caller's authorization.
         """
         if not vendor_name or not domain:

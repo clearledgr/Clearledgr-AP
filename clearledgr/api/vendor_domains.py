@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from clearledgr.core.auth import (
     TokenData,
     get_current_user,
-    require_fraud_control_admin,
+    require_cfo,
 )
 from clearledgr.core.database import get_db
 
@@ -117,7 +117,7 @@ def add_trusted_domain(
     vendor_name: str,
     body: AddTrustedDomainRequest,
     organization_id: str = Query(..., description="Organization identifier"),
-    user: TokenData = Depends(require_fraud_control_admin),
+    user: TokenData = Depends(require_cfo),
 ) -> Dict[str, Any]:
     """Add a domain to the vendor's trusted-domain allowlist.
 
@@ -156,7 +156,7 @@ def remove_trusted_domain(
     vendor_name: str,
     domain: str,
     organization_id: str = Query(..., description="Organization identifier"),
-    user: TokenData = Depends(require_fraud_control_admin),
+    user: TokenData = Depends(require_cfo),
 ) -> Dict[str, Any]:
     """Remove a domain from the vendor's trusted-domain allowlist.
 

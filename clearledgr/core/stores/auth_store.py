@@ -342,13 +342,26 @@ class AuthStore:
         email: str,
         name: str,
         organization_id: str,
-        role: str = "user",
+        role: str = "ap_clerk",
         password_hash: Optional[str] = None,
         google_id: Optional[str] = None,
         is_active: bool = True,
     ) -> Dict[str, Any]:
+        """Create a user row with a canonical Phase 2.3 thesis role.
+
+        The ``role`` parameter is normalized via ``normalize_user_role``
+        before persistence, so legacy values (``user``, ``member``,
+        ``admin``, ``operator``, ``viewer``) are automatically upgraded
+        to their thesis equivalents (``ap_clerk``, ``ap_clerk``,
+        ``financial_controller``, ``ap_manager``, ``read_only``).
+        Unknown values are preserved so predicates can reject them.
+        Default seat is ``ap_clerk``.
+        """
         self.initialize()
         import uuid
+        from clearledgr.core.auth import normalize_user_role, ROLE_AP_CLERK
+
+        normalized_role = normalize_user_role(role) or ROLE_AP_CLERK
 
         now = datetime.now(timezone.utc).isoformat()
         user_id = f"USR-{uuid.uuid4().hex}"
@@ -368,7 +381,7 @@ class AuthStore:
                     email.lower().strip(),
                     name,
                     organization_id,
-                    role or "user",
+                    normalized_role,
                     password_hash,
                     google_id,
                     1 if is_active else 0,

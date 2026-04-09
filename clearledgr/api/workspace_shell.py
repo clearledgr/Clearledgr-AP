@@ -262,20 +262,32 @@ def _unsign_state(state: str) -> Dict[str, Any]:
 
 
 def _require_admin(user: TokenData) -> None:
-    if user.role not in {"admin", "owner"}:
+    # Phase 2.3: admin access == Financial Controller or higher under
+    # the thesis taxonomy (legacy "admin" → "financial_controller").
+    from clearledgr.core.auth import has_admin_access
+    if not has_admin_access(user.role):
         raise HTTPException(status_code=403, detail="admin_role_required")
 
 
 def _require_ops_access(user: TokenData) -> None:
-    if str(user.role or "").strip().lower() not in {"owner", "admin", "operator"}:
+    # Phase 2.3: ops access == AP Manager or higher.
+    from clearledgr.core.auth import has_ops_access
+    if not has_ops_access(user.role):
         raise HTTPException(status_code=403, detail="ops_role_required")
 
 
 def _workspace_capabilities(role: Optional[str]) -> Dict[str, bool]:
-    normalized_role = str(role or "").strip().lower()
+    # Phase 2.3: the capability matrix reads role via the rank
+    # predicates so legacy values get normalized transparently.
+    from clearledgr.core.auth import (
+        has_admin_access,
+        has_ops_access,
+        normalize_user_role,
+    )
+    normalized_role = normalize_user_role(role)
     has_workspace_role = bool(normalized_role)
-    is_admin = normalized_role in {"owner", "admin", "api"}
-    is_ops = normalized_role in {"owner", "admin", "operator", "api"}
+    is_admin = has_admin_access(role)
+    is_ops = has_ops_access(role)
 
     return {
         "view_home": True,
@@ -2508,8 +2520,10 @@ def list_team_invites(
     user: TokenData = Depends(get_current_user),
 ):
     org_id = _resolve_org_id(user, organization_id)
-    # Non-admins get an empty list (bootstrap calls this for all users)
-    if user.role not in {"admin", "owner"}:
+    # Non-admins get an empty list (bootstrap calls this for all users).
+    # Phase 2.3: "admin" here means Financial Controller or higher.
+    from clearledgr.core.auth import has_admin_access
+    if not has_admin_access(user.role):
         return {"organization_id": org_id, "invites": []}
     invites = get_db().list_team_invites(org_id)
     base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")

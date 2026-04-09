@@ -23,7 +23,7 @@ VendorStore freeze accessors added in Phase 2.1.b. It handles:
     ``ap_audit_events`` store.
 
 The service does NOT enforce role gating itself — that happens at the
-API layer via ``require_fraud_control_admin``. Service methods trust
+API layer via ``require_cfo``. Service methods trust
 the caller has already passed the role check, and always accept an
 ``actor_id`` for the audit trail.
 """
