@@ -33,6 +33,21 @@ DEFAULT_OVERRIDE_WINDOW_MINUTES = 15
 MIN_OVERRIDE_WINDOW_MINUTES = 1
 MAX_OVERRIDE_WINDOW_MINUTES = 60 * 24  # 24 hours as a sanity cap
 
+# Default action type — used when callers don't supply one. Phase 1.4
+# only emits "erp_post" because that's the only autonomous action type
+# in V1 scope. Future action types register their own strings:
+#   - "erp_post"            (Phase 1.4)
+#   - "payment_execution"   (Q4 thesis sequence)
+#   - "vendor_onboarding"   (when bank-detail change freezes ship)
+DEFAULT_ACTION_TYPE = "erp_post"
+
+# Special key in the per-action config that supplies the fallback value
+# for any action type without an explicit entry. The thesis says
+# "configurable per action type" — this gives orgs the ergonomics of a
+# single global default plus per-action overrides without forcing them
+# to enumerate every action type they don't care about.
+DEFAULT_ACTION_KEY = "default"
+
 
 @dataclass(frozen=True)
 class ReversalOutcome:
@@ -72,13 +87,25 @@ class OverrideWindowService:
     # Duration configuration
     # ------------------------------------------------------------------
 
-    def get_window_duration_minutes(self) -> int:
-        """Return the configured override window duration for the org.
+    def get_window_duration_minutes(
+        self, action_type: str = DEFAULT_ACTION_TYPE
+    ) -> int:
+        """Return the configured override window duration for an action type.
 
         Reads ``settings_json["workflow_controls"]["override_window_minutes"]``
-        with a fallback to ``DEFAULT_OVERRIDE_WINDOW_MINUTES``. Values
-        outside the [MIN, MAX] range are clamped with a warning.
+        which MUST be a dict mapping action_type → minutes. Lookup order:
+
+          1. Exact match: ``override_window_minutes[action_type]``
+          2. ``override_window_minutes["default"]`` if no exact match
+          3. ``DEFAULT_OVERRIDE_WINDOW_MINUTES`` (15 min) if no dict
+             configured at all
+
+        Values outside the ``[MIN, MAX]`` range are clamped with a warning.
+        Per the no-backwards-compat policy, the legacy flat-int shape is
+        not accepted — orgs must migrate to the dict shape.
         """
+        normalized_action = str(action_type or DEFAULT_ACTION_TYPE).strip() or DEFAULT_ACTION_TYPE
+
         try:
             org = self.db.get_organization(self.organization_id)
         except Exception as exc:
@@ -109,26 +136,46 @@ class OverrideWindowService:
         if raw is None:
             return DEFAULT_OVERRIDE_WINDOW_MINUTES
 
+        if not isinstance(raw, dict):
+            logger.warning(
+                "[OverrideWindow] override_window_minutes must be a dict mapping "
+                "action_type→minutes (got %s) — using default %d. The flat-int "
+                "shape is no longer accepted; migrate to "
+                "{\"erp_post\": 15, \"default\": 15} or similar.",
+                type(raw).__name__, DEFAULT_OVERRIDE_WINDOW_MINUTES,
+            )
+            return DEFAULT_OVERRIDE_WINDOW_MINUTES
+
+        # Lookup: exact action_type → "default" key → DEFAULT constant
+        if normalized_action in raw:
+            picked = raw[normalized_action]
+            picked_source = normalized_action
+        elif DEFAULT_ACTION_KEY in raw:
+            picked = raw[DEFAULT_ACTION_KEY]
+            picked_source = DEFAULT_ACTION_KEY
+        else:
+            return DEFAULT_OVERRIDE_WINDOW_MINUTES
+
         try:
-            minutes = int(raw)
+            minutes = int(picked)
         except (TypeError, ValueError):
             logger.warning(
-                "[OverrideWindow] override_window_minutes is not an int "
+                "[OverrideWindow] override_window_minutes[%r] is not an int "
                 "(got %r) — using default %d",
-                raw, DEFAULT_OVERRIDE_WINDOW_MINUTES,
+                picked_source, picked, DEFAULT_OVERRIDE_WINDOW_MINUTES,
             )
             return DEFAULT_OVERRIDE_WINDOW_MINUTES
 
         if minutes < MIN_OVERRIDE_WINDOW_MINUTES:
             logger.warning(
-                "[OverrideWindow] configured %d min is below minimum %d; clamping",
-                minutes, MIN_OVERRIDE_WINDOW_MINUTES,
+                "[OverrideWindow] action %r configured %d min is below minimum %d; clamping",
+                normalized_action, minutes, MIN_OVERRIDE_WINDOW_MINUTES,
             )
             return MIN_OVERRIDE_WINDOW_MINUTES
         if minutes > MAX_OVERRIDE_WINDOW_MINUTES:
             logger.warning(
-                "[OverrideWindow] configured %d min is above maximum %d; clamping",
-                minutes, MAX_OVERRIDE_WINDOW_MINUTES,
+                "[OverrideWindow] action %r configured %d min is above maximum %d; clamping",
+                normalized_action, minutes, MAX_OVERRIDE_WINDOW_MINUTES,
             )
             return MAX_OVERRIDE_WINDOW_MINUTES
         return minutes
@@ -143,30 +190,36 @@ class OverrideWindowService:
         ap_item_id: str,
         erp_reference: str,
         erp_type: Optional[str] = None,
+        action_type: str = DEFAULT_ACTION_TYPE,
         posted_at: Optional[datetime] = None,
     ) -> Dict[str, Any]:
         """Open a new override window for a freshly-posted AP item.
 
         Called by the ``OverrideWindowObserver`` immediately after the
-        ``posted_to_erp`` state transition. Returns the newly created
-        window row.
+        ``posted_to_erp`` state transition. The duration is resolved
+        per action type — Phase 1.4 only emits ``erp_post`` but the
+        column is open for future tiers (payment_execution, etc.) per
+        DESIGN_THESIS.md §8 "configurable per action type". Returns
+        the newly created window row.
         """
+        normalized_action = str(action_type or DEFAULT_ACTION_TYPE).strip() or DEFAULT_ACTION_TYPE
         now = posted_at or datetime.now(timezone.utc)
-        duration = self.get_window_duration_minutes()
+        duration = self.get_window_duration_minutes(normalized_action)
         expires = now + timedelta(minutes=duration)
         window = self.db.create_override_window(
             ap_item_id=ap_item_id,
             organization_id=self.organization_id,
             erp_reference=erp_reference,
             erp_type=erp_type,
+            action_type=normalized_action,
             posted_at=now.isoformat(),
             expires_at=expires.isoformat(),
         )
         logger.info(
             "[OverrideWindow] Opened window %s for ap_item=%s "
-            "(erp=%s, ref=%s, expires=%s, duration=%dm)",
-            window["id"], ap_item_id, erp_type, erp_reference,
-            window["expires_at"], duration,
+            "(action=%s, erp=%s, ref=%s, expires=%s, duration=%dm)",
+            window["id"], ap_item_id, normalized_action, erp_type,
+            erp_reference, window["expires_at"], duration,
         )
         return window
 

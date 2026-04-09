@@ -46,6 +46,12 @@ _VALID_STATES = frozenset(
 )
 
 
+# Default action type — used when callers don't supply one. The thesis
+# scopes V1 to ERP posts; future action types (payment_execution,
+# vendor_onboarding, etc.) register themselves with a distinct string.
+DEFAULT_ACTION_TYPE = "erp_post"
+
+
 OVERRIDE_WINDOWS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS override_windows (
     id TEXT PRIMARY KEY,
@@ -53,6 +59,7 @@ CREATE TABLE IF NOT EXISTS override_windows (
     organization_id TEXT NOT NULL,
     erp_reference TEXT NOT NULL,
     erp_type TEXT,
+    action_type TEXT NOT NULL DEFAULT 'erp_post',
     posted_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'pending',
@@ -72,6 +79,7 @@ OVERRIDE_WINDOWS_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_override_windows_state_expiry ON override_windows(state, expires_at)",
     "CREATE INDEX IF NOT EXISTS idx_override_windows_ap_item ON override_windows(ap_item_id)",
     "CREATE INDEX IF NOT EXISTS idx_override_windows_org ON override_windows(organization_id)",
+    "CREATE INDEX IF NOT EXISTS idx_override_windows_action_type ON override_windows(action_type, state, expires_at)",
 ]
 
 
@@ -106,25 +114,29 @@ class OverrideWindowStore:
         erp_reference: str,
         erp_type: Optional[str],
         expires_at: str,
+        action_type: str = DEFAULT_ACTION_TYPE,
         posted_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a new override-window row in the ``pending`` state.
 
         ``posted_at`` defaults to now if not supplied. ``expires_at`` must
         already be computed by the caller (the OverrideWindowService
-        knows the configured duration).
+        knows the configured duration). ``action_type`` defaults to
+        ``erp_post`` — the only action type Phase 1.4 emits — but the
+        column is open for future tiers (payment_execution, etc.).
         """
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
         window_id = f"ovw_{uuid.uuid4().hex[:16]}"
         posted_ts = posted_at or now
+        normalized_action = str(action_type or DEFAULT_ACTION_TYPE).strip() or DEFAULT_ACTION_TYPE
 
         sql = self._prepare_sql(
             """
             INSERT INTO override_windows
             (id, ap_item_id, organization_id, erp_reference, erp_type,
-             posted_at, expires_at, state, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+             action_type, posted_at, expires_at, state, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
             """
         )
         params = (
@@ -133,6 +145,7 @@ class OverrideWindowStore:
             organization_id,
             erp_reference,
             erp_type,
+            normalized_action,
             posted_ts,
             expires_at,
             now,
@@ -149,6 +162,7 @@ class OverrideWindowStore:
             "organization_id": organization_id,
             "erp_reference": erp_reference,
             "erp_type": erp_type,
+            "action_type": normalized_action,
             "posted_at": posted_ts,
             "expires_at": expires_at,
             "state": OVERRIDE_WINDOW_PENDING,

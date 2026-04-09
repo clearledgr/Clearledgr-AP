@@ -288,15 +288,76 @@ class TestOverrideWindowServiceDuration:
         service = OverrideWindowService("org_t", db=tmp_db)
         assert service.get_window_duration_minutes() == DEFAULT_OVERRIDE_WINDOW_MINUTES == 15
 
-    def test_configured_duration_honored(self, tmp_db):
+    def test_configured_duration_for_erp_post(self, tmp_db):
+        """Per-action dict with an explicit erp_post entry."""
         from clearledgr.services.override_window import OverrideWindowService
         _seed_org(
             tmp_db,
             "org_t",
-            settings={"workflow_controls": {"override_window_minutes": 30}},
+            settings={
+                "workflow_controls": {
+                    "override_window_minutes": {"erp_post": 30}
+                }
+            },
         )
         service = OverrideWindowService("org_t", db=tmp_db)
-        assert service.get_window_duration_minutes() == 30
+        assert service.get_window_duration_minutes("erp_post") == 30
+
+    def test_default_action_key_used_as_fallback(self, tmp_db):
+        """When the requested action isn't in the dict, fall back to 'default'."""
+        from clearledgr.services.override_window import OverrideWindowService
+        _seed_org(
+            tmp_db,
+            "org_t",
+            settings={
+                "workflow_controls": {
+                    "override_window_minutes": {"default": 45}
+                }
+            },
+        )
+        service = OverrideWindowService("org_t", db=tmp_db)
+        # Unknown action type → falls back to "default" key
+        assert service.get_window_duration_minutes("payment_execution") == 45
+        # Same for the standard erp_post action
+        assert service.get_window_duration_minutes("erp_post") == 45
+
+    def test_per_action_overrides_default_key(self, tmp_db):
+        """Exact action match wins over the 'default' key."""
+        from clearledgr.services.override_window import OverrideWindowService
+        _seed_org(
+            tmp_db,
+            "org_t",
+            settings={
+                "workflow_controls": {
+                    "override_window_minutes": {
+                        "default": 15,
+                        "erp_post": 5,
+                        "payment_execution": 60,
+                    }
+                }
+            },
+        )
+        service = OverrideWindowService("org_t", db=tmp_db)
+        assert service.get_window_duration_minutes("erp_post") == 5
+        assert service.get_window_duration_minutes("payment_execution") == 60
+        # An action not in the map falls through to 'default'
+        assert service.get_window_duration_minutes("vendor_onboarding") == 15
+
+    def test_dict_with_no_default_or_action_returns_constant_default(self, tmp_db):
+        """Empty config dict → DEFAULT_OVERRIDE_WINDOW_MINUTES constant."""
+        from clearledgr.services.override_window import (
+            DEFAULT_OVERRIDE_WINDOW_MINUTES,
+            OverrideWindowService,
+        )
+        _seed_org(
+            tmp_db,
+            "org_t",
+            settings={
+                "workflow_controls": {"override_window_minutes": {}}
+            },
+        )
+        service = OverrideWindowService("org_t", db=tmp_db)
+        assert service.get_window_duration_minutes("erp_post") == DEFAULT_OVERRIDE_WINDOW_MINUTES
 
     def test_negative_duration_clamped_to_minimum(self, tmp_db):
         from clearledgr.services.override_window import (
@@ -306,10 +367,14 @@ class TestOverrideWindowServiceDuration:
         _seed_org(
             tmp_db,
             "org_t",
-            settings={"workflow_controls": {"override_window_minutes": -5}},
+            settings={
+                "workflow_controls": {
+                    "override_window_minutes": {"erp_post": -5}
+                }
+            },
         )
         service = OverrideWindowService("org_t", db=tmp_db)
-        assert service.get_window_duration_minutes() == MIN_OVERRIDE_WINDOW_MINUTES
+        assert service.get_window_duration_minutes("erp_post") == MIN_OVERRIDE_WINDOW_MINUTES
 
     def test_huge_duration_clamped_to_maximum(self, tmp_db):
         from clearledgr.services.override_window import (
@@ -319,10 +384,14 @@ class TestOverrideWindowServiceDuration:
         _seed_org(
             tmp_db,
             "org_t",
-            settings={"workflow_controls": {"override_window_minutes": 99_999}},
+            settings={
+                "workflow_controls": {
+                    "override_window_minutes": {"erp_post": 99_999}
+                }
+            },
         )
         service = OverrideWindowService("org_t", db=tmp_db)
-        assert service.get_window_duration_minutes() == MAX_OVERRIDE_WINDOW_MINUTES
+        assert service.get_window_duration_minutes("erp_post") == MAX_OVERRIDE_WINDOW_MINUTES
 
     def test_invalid_duration_falls_back_to_default(self, tmp_db):
         from clearledgr.services.override_window import (
@@ -332,10 +401,29 @@ class TestOverrideWindowServiceDuration:
         _seed_org(
             tmp_db,
             "org_t",
-            settings={"workflow_controls": {"override_window_minutes": "not-a-number"}},
+            settings={
+                "workflow_controls": {
+                    "override_window_minutes": {"erp_post": "not-a-number"}
+                }
+            },
         )
         service = OverrideWindowService("org_t", db=tmp_db)
-        assert service.get_window_duration_minutes() == DEFAULT_OVERRIDE_WINDOW_MINUTES
+        assert service.get_window_duration_minutes("erp_post") == DEFAULT_OVERRIDE_WINDOW_MINUTES
+
+    def test_legacy_int_shape_rejected_with_default(self, tmp_db):
+        """The old flat-int shape is no longer accepted (no-backcompat policy)."""
+        from clearledgr.services.override_window import (
+            DEFAULT_OVERRIDE_WINDOW_MINUTES,
+            OverrideWindowService,
+        )
+        _seed_org(
+            tmp_db,
+            "org_t",
+            settings={"workflow_controls": {"override_window_minutes": 30}},
+        )
+        service = OverrideWindowService("org_t", db=tmp_db)
+        # Falls back to the constant default — orgs must migrate to the dict shape
+        assert service.get_window_duration_minutes("erp_post") == DEFAULT_OVERRIDE_WINDOW_MINUTES
 
 
 class TestOverrideWindowServiceLifecycle:
@@ -345,7 +433,11 @@ class TestOverrideWindowServiceLifecycle:
         _seed_org(
             tmp_db,
             "org_t",
-            settings={"workflow_controls": {"override_window_minutes": 20}},
+            settings={
+                "workflow_controls": {
+                    "override_window_minutes": {"erp_post": 20}
+                }
+            },
         )
         service = OverrideWindowService("org_t", db=tmp_db)
         before = datetime.now(timezone.utc)
@@ -353,9 +445,11 @@ class TestOverrideWindowServiceLifecycle:
             ap_item_id="AP-OPEN",
             erp_reference="bill-open",
             erp_type="xero",
+            action_type="erp_post",
         )
         after = datetime.now(timezone.utc)
         assert window["state"] == "pending"
+        assert window["action_type"] == "erp_post"
         expires = datetime.fromisoformat(
             window["expires_at"].replace("Z", "+00:00")
         )
@@ -364,6 +458,53 @@ class TestOverrideWindowServiceLifecycle:
         # also ensure we wrote the row
         fetched = tmp_db.get_override_window(window["id"])
         assert fetched["ap_item_id"] == "AP-OPEN"
+        assert fetched["action_type"] == "erp_post"
+
+    def test_open_window_uses_per_action_duration(self, tmp_db):
+        """Two different action types in the same org get different durations."""
+        from clearledgr.services.override_window import OverrideWindowService
+        _seed_org(
+            tmp_db,
+            "org_t",
+            settings={
+                "workflow_controls": {
+                    "override_window_minutes": {
+                        "erp_post": 5,
+                        "payment_execution": 60,
+                    }
+                }
+            },
+        )
+        service = OverrideWindowService("org_t", db=tmp_db)
+        before = datetime.now(timezone.utc)
+
+        erp_window = service.open_window(
+            ap_item_id="AP-ERP-1",
+            erp_reference="bill-erp-1",
+            erp_type="xero",
+            action_type="erp_post",
+        )
+        pay_window = service.open_window(
+            ap_item_id="AP-PAY-1",
+            erp_reference="bill-pay-1",
+            erp_type="xero",
+            action_type="payment_execution",
+        )
+
+        erp_expires = datetime.fromisoformat(erp_window["expires_at"].replace("Z", "+00:00"))
+        pay_expires = datetime.fromisoformat(pay_window["expires_at"].replace("Z", "+00:00"))
+
+        erp_delta_min = (erp_expires - before).total_seconds() / 60
+        pay_delta_min = (pay_expires - before).total_seconds() / 60
+
+        assert 4.5 <= erp_delta_min <= 5.5
+        assert 59.5 <= pay_delta_min <= 60.5
+
+        # action_type persisted independently
+        assert erp_window["action_type"] == "erp_post"
+        assert pay_window["action_type"] == "payment_execution"
+        assert tmp_db.get_override_window(erp_window["id"])["action_type"] == "erp_post"
+        assert tmp_db.get_override_window(pay_window["id"])["action_type"] == "payment_execution"
 
     def test_is_window_expired_logic(self):
         from clearledgr.services.override_window import OverrideWindowService
@@ -773,6 +914,55 @@ class TestOverrideWindowObserver:
         assert window["state"] == "pending"
         assert window["slack_channel"] == "C123"
         assert window["slack_message_ts"] == "ts-1"
+
+    def test_observer_records_action_type_erp_post(self, tmp_db, monkeypatch):
+        """The observer reacts to posted_to_erp transitions, so it must
+        record action_type='erp_post' on the window row regardless of
+        the org's per-action duration config."""
+        from clearledgr.services.state_observers import (
+            OverrideWindowObserver,
+            StateTransitionEvent,
+        )
+        _seed_org(
+            tmp_db,
+            "org_t",
+            settings={
+                "workflow_controls": {
+                    "override_window_minutes": {
+                        "erp_post": 7,
+                        "payment_execution": 120,
+                    }
+                }
+            },
+        )
+        _seed_posted_ap_item(tmp_db, ap_item_id="AP-ACT", organization_id="org_t")
+
+        async def _fake_post(*args, **kwargs):
+            return {"channel": "C1", "message_ts": "ts1"}
+
+        monkeypatch.setattr(
+            "clearledgr.services.slack_cards.post_undo_card_for_window",
+            _fake_post,
+        )
+
+        observer = OverrideWindowObserver(tmp_db)
+        event = StateTransitionEvent(
+            ap_item_id="AP-ACT",
+            organization_id="org_t",
+            old_state="ready_to_post",
+            new_state="posted_to_erp",
+        )
+        asyncio.run(observer.on_transition(event))
+
+        window = tmp_db.get_override_window_by_ap_item_id("AP-ACT")
+        assert window is not None
+        assert window["action_type"] == "erp_post"
+        # Duration must be 7 min (the erp_post entry), not 120 (payment_execution)
+        from datetime import datetime as _dt
+        posted_dt = _dt.fromisoformat(window["posted_at"].replace("Z", "+00:00"))
+        expires_dt = _dt.fromisoformat(window["expires_at"].replace("Z", "+00:00"))
+        delta_min = (expires_dt - posted_dt).total_seconds() / 60
+        assert 6.5 <= delta_min <= 7.5
 
     def test_observer_skips_when_no_erp_reference(self, tmp_db, monkeypatch):
         from clearledgr.services.state_observers import (

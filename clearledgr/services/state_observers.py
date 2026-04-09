@@ -283,7 +283,11 @@ class OverrideWindowObserver(StateObserver):
             or (event.metadata or {}).get("erp_type")
         )
 
-        # Open the window via the service
+        # Open the window via the service. action_type is "erp_post"
+        # because this observer reacts to the posted_to_erp transition
+        # specifically. Future autonomous actions (payment_execution,
+        # vendor_onboarding) get their own observers with their own
+        # action_type strings.
         try:
             from clearledgr.services.override_window import (
                 get_override_window_service,
@@ -295,6 +299,7 @@ class OverrideWindowObserver(StateObserver):
                 ap_item_id=event.ap_item_id,
                 erp_reference=str(erp_reference),
                 erp_type=erp_type,
+                action_type="erp_post",
             )
         except Exception as exc:
             logger.warning(

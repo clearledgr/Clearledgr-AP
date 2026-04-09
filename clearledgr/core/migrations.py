@@ -300,3 +300,40 @@ def _m011_override_windows(cur, db):
                 ddl.split("ON")[1].strip(),
                 exc,
             )
+
+
+@migration(12, "Override window per-action tiers (DESIGN_THESIS.md §8)")
+def _m012_override_window_action_type(cur, db):
+    """Add action_type column to override_windows.
+
+    Phase 1.4 supplement: the thesis says override windows are
+    "configurable per action type" — the same dataset needs to track
+    different action types (erp_post, payment_execution, etc.) with
+    independent durations. This column lets the reaper and the
+    duration lookup branch on action type without parsing metadata.
+
+    Defaults to 'erp_post' so existing rows (the only action type that
+    Phase 1.4 actually emits) classify correctly.
+    """
+    try:
+        cur.execute(
+            "ALTER TABLE override_windows ADD COLUMN action_type TEXT NOT NULL DEFAULT 'erp_post'"
+        )
+    except Exception as exc:
+        # Postgres + SQLite both error if the column already exists.
+        # We treat that as a no-op so re-running the migration is safe.
+        msg = str(exc).lower()
+        if "already exists" in msg or "duplicate column" in msg:
+            logger.info("[Migration v12] action_type column already present, skipping")
+        else:
+            raise
+
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_override_windows_action_type "
+            "ON override_windows(action_type, state, expires_at)"
+        )
+    except Exception as exc:
+        logger.warning(
+            "[Migration v12] action_type index skipped: %s", exc
+        )
