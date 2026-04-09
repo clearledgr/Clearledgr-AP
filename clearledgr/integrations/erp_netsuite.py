@@ -472,6 +472,180 @@ async def post_bill_to_netsuite(
         return {"status": "error", "erp": "netsuite", "reason": "bill_posting_failed", "erp_error_detail": str(e)}
 
 
+# ==================== Bill Reversal ====================
+
+
+async def reverse_bill_from_netsuite(
+    connection,
+    erp_reference: str,
+    *,
+    reason: str,
+) -> Dict[str, Any]:
+    """Reverse a posted NetSuite vendor bill via REST DELETE.
+
+    NetSuite's REST record API supports DELETE on vendorBill records
+    provided the bill has not been paid, voided, or used in a reconcile.
+    The override-window (Phase 1.4) precondition ensures no payment is
+    yet applied for same-session reversals.
+
+    NetSuite's DELETE hard-removes the record. Some accounts configure
+    their NetSuite schema to disallow DELETE on transactional records —
+    in that case we get a 403 and surface ``cannot_delete_record``.
+
+    On success returns ``reversal_method="delete"`` and ``reversal_ref``
+    equal to the original internalId.
+    """
+    if not connection.account_id:
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": "NetSuite account ID not configured",
+        }
+    if not erp_reference:
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": "missing_erp_reference",
+        }
+
+    url = (
+        f"https://{connection.account_id}.suitetalk.api.netsuite.com"
+        f"/services/rest/record/v1/vendorBill/{erp_reference}"
+    )
+    auth_header = _oauth_header(connection, "DELETE", url)
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.delete(
+                url,
+                headers={
+                    "Authorization": auth_header,
+                    "Accept": "application/json",
+                },
+                timeout=60,
+            )
+
+            if response.status_code == 401:
+                return {
+                    "status": "error",
+                    "erp": "netsuite",
+                    "reason": "Authentication failed",
+                    "needs_reauth": True,
+                }
+
+            if response.status_code == 404:
+                return {
+                    "status": "already_reversed",
+                    "erp": "netsuite",
+                    "reference_id": erp_reference,
+                    "reversal_method": "delete",
+                    "reversal_ref": erp_reference,
+                    "reason": "bill_not_found_in_erp",
+                }
+
+            # NetSuite DELETE returns 204 No Content on success
+            if response.status_code in (200, 204):
+                logger.info(
+                    "Deleted NetSuite Vendor Bill %s (reason=%s)",
+                    erp_reference, reason,
+                )
+                return {
+                    "status": "success",
+                    "erp": "netsuite",
+                    "reference_id": erp_reference,
+                    "reversal_method": "delete",
+                    "reversal_ref": erp_reference,
+                    "erp_status": "Deleted",
+                }
+
+            response.raise_for_status()
+            # Fallthrough — unexpected success status
+            return {
+                "status": "success",
+                "erp": "netsuite",
+                "reference_id": erp_reference,
+                "reversal_method": "delete",
+                "reversal_ref": erp_reference,
+                "erp_status": f"http_{response.status_code}",
+            }
+
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        erp_error_detail = ""
+        erp_error_code = ""
+        try:
+            error_body = e.response.json() or {}
+            status_obj = error_body.get("status") or {}
+            status_details = status_obj.get("statusDetail") or []
+            if status_details:
+                first = status_details[0]
+                erp_error_code = first.get("code") or ""
+                erp_error_detail = first.get("message") or ""
+            if not erp_error_detail:
+                ns_error = error_body.get("error") or {}
+                if isinstance(ns_error, dict):
+                    erp_error_detail = ns_error.get("message") or ""
+                    erp_error_code = erp_error_code or (ns_error.get("code") or "")
+            if not erp_error_detail:
+                erp_error_detail = (
+                    error_body.get("message") or error_body.get("title") or ""
+                )
+        except Exception:
+            erp_error_detail = (
+                e.response.text[:200] if hasattr(e.response, "text") else ""
+            )
+
+        detail_lower = erp_error_detail.lower()
+        code_upper = erp_error_code.upper()
+        reason_code = f"http_{status_code}"
+
+        if status_code == 403:
+            reason_code = "cannot_delete_record"
+        elif "paid" in detail_lower or "payment" in detail_lower:
+            reason_code = "payment_already_applied"
+        elif "closed" in detail_lower and "period" in detail_lower:
+            reason_code = "accounting_period_closed"
+        elif status_code == 404 or "not found" in detail_lower:
+            return {
+                "status": "already_reversed",
+                "erp": "netsuite",
+                "reference_id": erp_reference,
+                "reversal_method": "delete",
+                "reversal_ref": erp_reference,
+                "reason": "bill_not_found_in_erp",
+            }
+        elif code_upper == "INVALID_KEY_OR_REF":
+            reason_code = "erp_invalid_reference"
+
+        logger.error(
+            "NetSuite Vendor Bill reverse HTTP error: status=%d reason=%s code=%s detail=%s",
+            status_code, reason_code, erp_error_code, erp_error_detail[:200],
+        )
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reference_id": erp_reference,
+            "reversal_method": "delete",
+            "reason": reason_code,
+            "erp_error_detail": erp_error_detail,
+            "erp_error_code": erp_error_code,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as exc:
+        logger.error(
+            "NetSuite Vendor Bill reverse error: %s: %s",
+            type(exc).__name__, exc,
+        )
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reference_id": erp_reference,
+            "reversal_method": "delete",
+            "reason": "bill_reversal_failed",
+            "erp_error_detail": str(exc),
+        }
+
+
 # ==================== Bill & Credit Note Lookup ====================
 
 async def get_vendor_bill_netsuite(

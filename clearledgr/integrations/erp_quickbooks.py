@@ -381,6 +381,292 @@ async def get_bill_quickbooks(
         return {"status": "error", "erp": "quickbooks", "reason": "bill_lookup_failed"}
 
 
+# ==================== Bill Reversal ====================
+
+async def _fetch_quickbooks_bill_with_sync_token(
+    connection,
+    bill_id: str,
+) -> Dict[str, Any]:
+    """Fetch a Bill via the REST-GET endpoint, which returns SyncToken.
+
+    The SELECT-based ``get_bill_quickbooks`` query does not return SyncToken
+    (SuiteQL doesn't expose it), so we use the REST retrieval endpoint which
+    is the only way to get the current SyncToken required for delete
+    operations under QuickBooks' optimistic-locking contract.
+
+    Returns the raw Bill dict on success, or an error shape on failure.
+    """
+    if not connection.access_token or not connection.realm_id:
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "QuickBooks not properly configured",
+        }
+    if not bill_id:
+        return {"status": "error", "erp": "quickbooks", "reason": "invalid_bill_reference"}
+
+    url = (
+        f"https://quickbooks.api.intuit.com/v3/company/"
+        f"{connection.realm_id}/bill/{bill_id}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {connection.access_token}",
+                    "Accept": "application/json",
+                },
+                params={"minorversion": "73"},
+                timeout=30,
+            )
+            if response.status_code == 401:
+                return {
+                    "status": "error",
+                    "erp": "quickbooks",
+                    "reason": "Token expired",
+                    "needs_reauth": True,
+                }
+            if response.status_code == 404:
+                return {
+                    "status": "error",
+                    "erp": "quickbooks",
+                    "reason": "bill_not_found",
+                }
+            response.raise_for_status()
+            body = response.json() or {}
+            bill = body.get("Bill") if isinstance(body, dict) else None
+            if not isinstance(bill, dict) or not bill.get("Id"):
+                return {
+                    "status": "error",
+                    "erp": "quickbooks",
+                    "reason": "bill_not_found",
+                }
+            return {
+                "status": "success",
+                "erp": "quickbooks",
+                "bill_id": bill.get("Id"),
+                "sync_token": bill.get("SyncToken"),
+                "doc_number": bill.get("DocNumber"),
+                "status_raw": bill.get("status"),
+                "raw": bill,
+            }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": f"http_{status_code}",
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as exc:
+        logger.error(
+            "QuickBooks bill REST GET error: %s: %s", type(exc).__name__, exc
+        )
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "bill_lookup_failed",
+        }
+
+
+async def reverse_bill_from_quickbooks(
+    connection,
+    erp_reference: str,
+    *,
+    reason: str,
+    sync_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Reverse a posted QuickBooks bill by soft-delete.
+
+    QuickBooks Online does NOT support ``void`` for Bills — voidable
+    entities are Invoices, Sales Receipts, Credit Memos, and Bill
+    Payments. For Bills the only supported reversal is
+    ``?operation=delete``, which soft-deletes the record (it stays in
+    the audit trail but no longer affects the books).
+
+    QuickBooks uses optimistic locking via ``SyncToken``. If the caller
+    passes a stale or missing ``sync_token`` we fetch the current one
+    via the REST-GET endpoint and retry once transparently.
+
+    Returns the uniform reversal result shape. On success, the
+    ``reversal_method`` is ``"delete"`` and ``reversal_ref`` is the
+    original bill Id (QBO does not create a separate reversal doc).
+    """
+    if not connection.access_token or not connection.realm_id:
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "QuickBooks not properly configured",
+        }
+    if not erp_reference:
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reason": "missing_erp_reference",
+        }
+
+    # Resolve a fresh SyncToken if none was supplied by the caller.
+    effective_sync_token = sync_token
+    if not effective_sync_token:
+        fresh = await _fetch_quickbooks_bill_with_sync_token(connection, erp_reference)
+        if fresh.get("status") != "success":
+            # If the bill no longer exists, treat as already reversed.
+            if fresh.get("reason") == "bill_not_found":
+                return {
+                    "status": "already_reversed",
+                    "erp": "quickbooks",
+                    "reference_id": erp_reference,
+                    "reversal_method": "delete",
+                    "reversal_ref": erp_reference,
+                    "reason": "bill_not_found_in_erp",
+                }
+            return fresh
+        effective_sync_token = fresh.get("sync_token")
+
+    url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/bill"
+    payload = {"Id": erp_reference, "SyncToken": str(effective_sync_token or "0")}
+
+    async def _attempt_delete(token_to_use: str) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            return await client.post(
+                url,
+                json={**payload, "SyncToken": token_to_use},
+                headers={
+                    "Authorization": f"Bearer {connection.access_token}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                params={"operation": "delete"},
+                timeout=30,
+            )
+
+    try:
+        response = await _attempt_delete(str(effective_sync_token or "0"))
+
+        if response.status_code == 401:
+            return {
+                "status": "error",
+                "erp": "quickbooks",
+                "reason": "Token expired",
+                "needs_reauth": True,
+            }
+
+        # QBO returns 400 with a "stale object" fault when SyncToken is
+        # out of date. Refetch once and retry transparently.
+        if response.status_code == 400:
+            try:
+                fault = response.json()
+            except Exception:
+                fault = None
+            fault_text = _extract_quickbooks_fault_message(fault) or ""
+            if "stale" in fault_text.lower() or "version" in fault_text.lower():
+                logger.info(
+                    "QuickBooks SyncToken stale for bill %s — refetching and retrying once",
+                    erp_reference,
+                )
+                fresh = await _fetch_quickbooks_bill_with_sync_token(
+                    connection, erp_reference
+                )
+                if fresh.get("status") != "success":
+                    if fresh.get("reason") == "bill_not_found":
+                        return {
+                            "status": "already_reversed",
+                            "erp": "quickbooks",
+                            "reference_id": erp_reference,
+                            "reversal_method": "delete",
+                            "reversal_ref": erp_reference,
+                            "reason": "bill_not_found_in_erp",
+                        }
+                    return fresh
+                response = await _attempt_delete(str(fresh.get("sync_token") or "0"))
+
+        # After the possible retry, handle the now-current response.
+        if response.status_code == 404:
+            return {
+                "status": "already_reversed",
+                "erp": "quickbooks",
+                "reference_id": erp_reference,
+                "reversal_method": "delete",
+                "reversal_ref": erp_reference,
+                "reason": "bill_not_found_in_erp",
+            }
+
+        response.raise_for_status()
+        result = response.json() or {}
+        bill_block = result.get("Bill") if isinstance(result, dict) else None
+        status_raw = ""
+        if isinstance(bill_block, dict):
+            status_raw = str(bill_block.get("status") or "")
+
+        logger.info(
+            "Reversed QuickBooks Bill %s (reason=%s)", erp_reference, reason
+        )
+        return {
+            "status": "success",
+            "erp": "quickbooks",
+            "reference_id": erp_reference,
+            "reversal_method": "delete",
+            "reversal_ref": erp_reference,
+            "erp_status": status_raw or "Deleted",
+        }
+
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        erp_error_detail = ""
+        try:
+            fault_payload = e.response.json()
+            erp_error_detail = _extract_quickbooks_fault_message(fault_payload) or ""
+        except Exception:
+            erp_error_detail = (
+                e.response.text[:200] if hasattr(e.response, "text") else ""
+            )
+
+        detail_lower = erp_error_detail.lower()
+        reason_code = f"http_{status_code}"
+        if status_code == 401:
+            reason_code = "authentication_failed"
+        elif "payment" in detail_lower and (
+            "applied" in detail_lower or "linked" in detail_lower
+        ):
+            reason_code = "payment_already_applied"
+        elif "not found" in detail_lower or status_code == 404:
+            return {
+                "status": "already_reversed",
+                "erp": "quickbooks",
+                "reference_id": erp_reference,
+                "reversal_method": "delete",
+                "reversal_ref": erp_reference,
+                "reason": "bill_not_found_in_erp",
+            }
+
+        logger.error(
+            "QuickBooks Bill reverse HTTP error: status=%d reason=%s detail=%s",
+            status_code, reason_code, erp_error_detail[:200],
+        )
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reference_id": erp_reference,
+            "reversal_method": "delete",
+            "reason": reason_code,
+            "erp_error_detail": erp_error_detail,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as exc:
+        logger.error(
+            "QuickBooks Bill reverse error: %s: %s", type(exc).__name__, exc
+        )
+        return {
+            "status": "error",
+            "erp": "quickbooks",
+            "reference_id": erp_reference,
+            "reversal_method": "delete",
+            "reason": "bill_reversal_failed",
+            "erp_error_detail": str(exc),
+        }
+
+
 async def find_vendor_credit_quickbooks(
     connection,
     credit_note_number: str,

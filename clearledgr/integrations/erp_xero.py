@@ -320,6 +320,177 @@ async def post_bill_to_xero(
         return {"status": "error", "erp": "xero", "reason": "bill_posting_failed"}
 
 
+# ==================== Bill Reversal ====================
+
+
+async def reverse_bill_from_xero(
+    connection,
+    erp_reference: str,
+    *,
+    reason: str,
+) -> Dict[str, Any]:
+    """Reverse a posted Xero bill by setting its Status to VOIDED.
+
+    Xero supports voiding ACCPAY invoices directly as long as no payment
+    has been applied. Since the override window (Phase 1.4) only allows
+    reversals within a short interval after posting, the no-payment
+    precondition should hold in practice. If it doesn't, Xero returns a
+    validation error which we translate to ``payment_already_applied``.
+
+    On success returns ``reversal_method="void"`` and ``reversal_ref`` equal
+    to the original InvoiceID (Xero does not create a separate reversal
+    document).
+    """
+    if not connection.access_token or not connection.tenant_id:
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reason": "Xero not properly configured",
+        }
+    if not erp_reference:
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reason": "missing_erp_reference",
+        }
+
+    url = f"https://api.xero.com/api.xro/2.0/Invoices/{erp_reference}"
+    body = {
+        "Invoices": [
+            {
+                "InvoiceID": erp_reference,
+                "Status": "VOIDED",
+            }
+        ]
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            response = await client.post(
+                url,
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {connection.access_token}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "xero-tenant-id": connection.tenant_id,
+                },
+                timeout=30,
+            )
+
+            if response.status_code == 401:
+                return {
+                    "status": "error",
+                    "erp": "xero",
+                    "reason": "Token expired",
+                    "needs_reauth": True,
+                }
+
+            if response.status_code == 404:
+                return {
+                    "status": "already_reversed",
+                    "erp": "xero",
+                    "reference_id": erp_reference,
+                    "reversal_method": "void",
+                    "reversal_ref": erp_reference,
+                    "reason": "bill_not_found_in_erp",
+                }
+
+            response.raise_for_status()
+            result = response.json() or {}
+            invoices = result.get("Invoices") or []
+            erp_status_raw = ""
+            if invoices and isinstance(invoices[0], dict):
+                erp_status_raw = str(invoices[0].get("Status") or "")
+
+            if erp_status_raw.upper() != "VOIDED":
+                logger.warning(
+                    "Xero reversal for %s returned status=%r (expected VOIDED)",
+                    erp_reference, erp_status_raw,
+                )
+
+            logger.info("Voided Xero Bill %s (reason=%s)", erp_reference, reason)
+            return {
+                "status": "success",
+                "erp": "xero",
+                "reference_id": erp_reference,
+                "reversal_method": "void",
+                "reversal_ref": erp_reference,
+                "erp_status": erp_status_raw or "VOIDED",
+            }
+
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        erp_error_detail = ""
+        erp_error_code = ""
+        try:
+            error_body = e.response.json() or {}
+            erp_error_code = str(error_body.get("ErrorNumber") or "")
+            elements = error_body.get("Elements") or []
+            validation_msgs: List[str] = []
+            for elem in elements:
+                for verr in (elem.get("ValidationErrors") or []):
+                    msg = verr.get("Message") or ""
+                    if msg:
+                        validation_msgs.append(msg)
+            if validation_msgs:
+                erp_error_detail = "; ".join(validation_msgs)
+            else:
+                erp_error_detail = error_body.get("Message") or ""
+        except Exception:
+            erp_error_detail = (
+                e.response.text[:200] if hasattr(e.response, "text") else ""
+            )
+
+        detail_lower = erp_error_detail.lower()
+        reason_code = f"http_{status_code}"
+
+        if "payment" in detail_lower and (
+            "allocated" in detail_lower
+            or "applied" in detail_lower
+            or "made against" in detail_lower
+        ):
+            reason_code = "payment_already_applied"
+        elif "cannot" in detail_lower and "void" in detail_lower:
+            reason_code = "cannot_void_invoice"
+        elif "does not exist" in detail_lower or status_code == 404:
+            return {
+                "status": "already_reversed",
+                "erp": "xero",
+                "reference_id": erp_reference,
+                "reversal_method": "void",
+                "reversal_ref": erp_reference,
+                "reason": "bill_not_found_in_erp",
+            }
+
+        logger.error(
+            "Xero Bill reverse HTTP error: status=%d reason=%s detail=%s",
+            status_code, reason_code, erp_error_detail[:200],
+        )
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reference_id": erp_reference,
+            "reversal_method": "void",
+            "reason": reason_code,
+            "erp_error_detail": erp_error_detail,
+            "erp_error_code": erp_error_code,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as exc:
+        logger.error(
+            "Xero Bill reverse error: %s: %s", type(exc).__name__, exc
+        )
+        return {
+            "status": "error",
+            "erp": "xero",
+            "reference_id": erp_reference,
+            "reversal_method": "void",
+            "reason": "bill_reversal_failed",
+            "erp_error_detail": str(exc),
+        }
+
+
 # ==================== Credit Note Lookup & Application ====================
 
 async def find_credit_note_xero(

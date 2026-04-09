@@ -62,6 +62,7 @@ from clearledgr.integrations.erp_quickbooks import (  # noqa: F401, E402
     post_to_quickbooks,
     refresh_quickbooks_token,
     post_bill_to_quickbooks,
+    reverse_bill_from_quickbooks,
     get_bill_quickbooks,
     find_vendor_credit_quickbooks,
     apply_credit_note_to_quickbooks,
@@ -84,6 +85,7 @@ from clearledgr.integrations.erp_xero import (  # noqa: F401, E402
     post_to_xero,
     refresh_xero_token,
     post_bill_to_xero,
+    reverse_bill_from_xero,
     find_credit_note_xero,
     apply_credit_note_to_xero,
     apply_settlement_to_xero,
@@ -106,6 +108,7 @@ from clearledgr.integrations.erp_netsuite import (  # noqa: F401, E402
     get_netsuite_accounts,
     _poll_netsuite_async_result,
     post_bill_to_netsuite,
+    reverse_bill_from_netsuite,
     get_vendor_bill_netsuite,
     find_credit_note_netsuite,
     apply_credit_note_to_netsuite,
@@ -130,6 +133,7 @@ from clearledgr.integrations.erp_sap import (  # noqa: F401, E402
     _open_sap_service_layer_session,
     post_to_sap,
     post_bill_to_sap,
+    reverse_bill_from_sap,
     get_purchase_invoice_sap,
     find_credit_note_sap,
     _build_sap_credit_note_lines,
@@ -571,6 +575,275 @@ async def post_bill(
                     result["attachment_forwarded"] = True
             except Exception:
                 logger.warning("Attachment forwarding failed (non-fatal)")
+
+    return result
+
+
+# ==================== Bill Reversal Dispatch ====================
+
+
+async def reverse_bill(
+    organization_id: str,
+    erp_reference: str,
+    *,
+    reason: str,
+    ap_item_id: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    entity_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Reverse a posted ERP bill during the override window.
+
+    This is the single entry point used by the Phase 1.4 override-window
+    mechanism and any ops-surface "undo" action. It dispatches to the
+    connector-specific ``reverse_bill_from_<erp>`` function, handles
+    reauth retries on token expiry, enforces two layers of idempotency,
+    and emits structured audit events on every success, skip, and
+    failure.
+
+    ``reason`` is MANDATORY — every reversal must have a caller-supplied
+    reason string for the audit trail (e.g. ``"human_override"``,
+    ``"validation_failure_reprocess"``, ``"duplicate_post_detected"``).
+
+    Idempotency:
+      1. If the AP item's metadata already carries a ``reversal_reference``
+         we return ``status="already_reversed"`` without hitting the ERP.
+      2. If the ``idempotency_key`` matches an existing
+         ``erp_reversal_succeeded`` audit event we return the cached result.
+
+    Per DESIGN_THESIS.md §8, the ability to reverse a post within the
+    override window is the architectural precondition that lets
+    Clearledgr auto-post with confidence — the human escape hatch makes
+    autonomous posting safe.
+    """
+    org_id = str(organization_id or "").strip() or "default"
+    ref = str(erp_reference or "").strip()
+    if not ref:
+        return {
+            "status": "error",
+            "reason": "missing_erp_reference",
+            "idempotency_key": idempotency_key,
+        }
+    if not reason or not str(reason).strip():
+        return {
+            "status": "error",
+            "reason": "missing_reversal_reason",
+            "idempotency_key": idempotency_key,
+        }
+
+    reason_str = str(reason).strip()
+    import json  # local import to match the module's existing style
+
+    # --- Idempotency guard 1: AP item metadata cache ---
+    if ap_item_id:
+        db = _get_db()
+        existing = db.get_ap_item(ap_item_id)
+        if existing:
+            meta = existing.get("metadata") or {}
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta)
+                except Exception:
+                    meta = {}
+            cached_reversal = (meta or {}).get("reversal_reference") if isinstance(meta, dict) else None
+            if cached_reversal:
+                logger.info(
+                    "Idempotency: AP item %s already has reversal_reference=%s",
+                    ap_item_id, cached_reversal,
+                )
+                return {
+                    "status": "already_reversed",
+                    "reference_id": ref,
+                    "reversal_ref": cached_reversal,
+                    "reversal_method": (meta or {}).get("reversal_method"),
+                    "erp": (meta or {}).get("reversal_erp_type"),
+                    "idempotency_key": idempotency_key,
+                }
+
+    # --- Idempotency guard 2: audit event by idempotency_key ---
+    if idempotency_key:
+        try:
+            db = _get_db()
+            existing_event = db.get_ap_audit_event_by_key(idempotency_key)
+            if existing_event and str(
+                existing_event.get("event_type") or ""
+            ) == "erp_reversal_succeeded":
+                logger.info(
+                    "Idempotency: reversal key %s already succeeded — returning cached result",
+                    idempotency_key,
+                )
+                payload = existing_event.get("payload_json") or {}
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except Exception:
+                        payload = {}
+                return {
+                    "status": "already_reversed",
+                    "reference_id": ref,
+                    "reversal_ref": (payload or {}).get("reversal_ref"),
+                    "reversal_method": (payload or {}).get("reversal_method"),
+                    "erp": (payload or {}).get("erp"),
+                    "idempotency_key": idempotency_key,
+                }
+        except Exception as exc:
+            logger.debug("Reversal idempotency lookup failed (non-fatal): %s", exc)
+
+    connection = get_erp_connection(org_id, entity_id=entity_id)
+    if not connection:
+        logger.warning("No ERP connected for %s — cannot reverse bill", org_id)
+        return {
+            "status": "skipped",
+            "reason": "no_erp_connected",
+            "reference_id": ref,
+            "idempotency_key": idempotency_key,
+        }
+
+    erp_type = str(connection.type or "").strip().lower()
+
+    async def _dispatch_once() -> Dict[str, Any]:
+        if erp_type == "quickbooks":
+            # Try to pull cached sync_token from AP item metadata if available
+            sync_token: Optional[str] = None
+            if ap_item_id:
+                db = _get_db()
+                existing_item = db.get_ap_item(ap_item_id)
+                if existing_item:
+                    meta = existing_item.get("metadata") or {}
+                    if isinstance(meta, str):
+                        try:
+                            meta = json.loads(meta)
+                        except Exception:
+                            meta = {}
+                    if isinstance(meta, dict):
+                        st = meta.get("erp_sync_token")
+                        if st is not None:
+                            sync_token = str(st)
+            return await reverse_bill_from_quickbooks(
+                connection, ref, reason=reason_str, sync_token=sync_token
+            )
+        if erp_type == "xero":
+            return await reverse_bill_from_xero(connection, ref, reason=reason_str)
+        if erp_type == "netsuite":
+            return await reverse_bill_from_netsuite(connection, ref, reason=reason_str)
+        if erp_type == "sap":
+            return await reverse_bill_from_sap(connection, ref, reason=reason_str)
+        return {
+            "status": "error",
+            "reason": "unknown_erp_type",
+            "erp": erp_type,
+            "reference_id": ref,
+        }
+
+    result = await _dispatch_once()
+
+    # Reauth retry loop — refresh the token and retry once on expiry.
+    if isinstance(result, dict) and result.get("needs_reauth"):
+        refresh_fn = None
+        if erp_type == "quickbooks":
+            refresh_fn = refresh_quickbooks_token
+        elif erp_type == "xero":
+            refresh_fn = refresh_xero_token
+        if refresh_fn is not None:
+            try:
+                new_token = await refresh_fn(connection)
+            except Exception as exc:
+                logger.warning(
+                    "Token refresh raised during reversal for %s: %s",
+                    erp_type, exc,
+                )
+                new_token = None
+            if new_token:
+                set_erp_connection(org_id, connection)
+                result = await _dispatch_once()
+        elif erp_type in {"netsuite", "sap"}:
+            # NetSuite uses OAuth1, SAP uses session login — retry once
+            # triggers a fresh session via the connector itself.
+            logger.warning(
+                "%s reauth during reversal for org %s — retrying once",
+                erp_type, org_id,
+            )
+            result = await _dispatch_once()
+
+    if not isinstance(result, dict):
+        result = {"status": "error", "reason": "reversal_returned_non_dict"}
+
+    # Stamp the idempotency key on the result for the caller.
+    if idempotency_key and not result.get("idempotency_key"):
+        result = {**result, "idempotency_key": idempotency_key}
+    if ap_item_id and not result.get("ap_item_id"):
+        result = {**result, "ap_item_id": ap_item_id}
+
+    # --- Audit event emission ---
+    try:
+        db = _get_db()
+        audit_event_type = {
+            "success": "erp_reversal_succeeded",
+            "already_reversed": "erp_reversal_already_reversed",
+            "skipped": "erp_reversal_skipped",
+            "error": "erp_reversal_failed",
+        }.get(result.get("status"), "erp_reversal_failed")
+
+        audit_payload: Dict[str, Any] = {
+            "ap_item_id": ap_item_id or "",
+            "event_type": audit_event_type,
+            "actor_type": "user" if actor_id else "system",
+            "actor_id": actor_id or "erp_router.reverse_bill",
+            "reason": (
+                f"Bill reversal: {reason_str} (erp={erp_type}, "
+                f"ref={ref}, status={result.get('status')})"
+            ),
+            "metadata": {
+                "erp": result.get("erp") or erp_type,
+                "original_erp_reference": ref,
+                "reversal_ref": result.get("reversal_ref"),
+                "reversal_method": result.get("reversal_method"),
+                "reversal_reason": reason_str,
+                "request_reason_code": result.get("reason"),
+                "erp_error_detail": result.get("erp_error_detail"),
+                "erp_error_code": result.get("erp_error_code"),
+            },
+            "organization_id": org_id,
+            "source": "erp_router.reverse_bill",
+            "idempotency_key": idempotency_key,
+            "decision_reason": reason_str,
+        }
+        db.append_ap_audit_event(audit_payload)
+    except Exception as audit_exc:
+        logger.warning(
+            "Reversal audit event write failed (non-fatal): %s", audit_exc
+        )
+
+    # --- Persist reversal_reference on the AP item (for the guard on next call) ---
+    if (
+        ap_item_id
+        and isinstance(result, dict)
+        and result.get("status") in {"success", "already_reversed"}
+    ):
+        try:
+            db = _get_db()
+            current = db.get_ap_item(ap_item_id)
+            if current:
+                meta = current.get("metadata") or {}
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        meta = {}
+                if not isinstance(meta, dict):
+                    meta = {}
+                meta["reversal_reference"] = (
+                    result.get("reversal_ref") or result.get("reference_id") or ref
+                )
+                meta["reversal_method"] = result.get("reversal_method")
+                meta["reversal_erp_type"] = result.get("erp") or erp_type
+                meta["reversal_reason"] = reason_str
+                meta["reversal_recorded_at"] = datetime.now(timezone.utc).isoformat()
+                db.update_ap_item(ap_item_id, metadata=json.dumps(meta))
+        except Exception as persist_exc:
+            logger.warning(
+                "Reversal metadata persistence failed (non-fatal): %s", persist_exc
+            )
 
     return result
 

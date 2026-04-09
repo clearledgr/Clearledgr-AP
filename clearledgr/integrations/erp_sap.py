@@ -386,6 +386,208 @@ async def post_bill_to_sap(
         return {"status": "error", "erp": "sap", "reason": "bill_posting_failed", "erp_error_detail": str(e)}
 
 
+# ==================== Bill Reversal ====================
+
+
+async def reverse_bill_from_sap(
+    connection,
+    erp_reference: str,
+    *,
+    reason: str,
+) -> Dict[str, Any]:
+    """Reverse a posted SAP B1 A/P Invoice via the Cancel action.
+
+    SAP B1 Service Layer exposes a ``Cancel`` action on PurchaseInvoices
+    that creates a reversing document automatically (linked to the
+    original via DocEntry / DocNum). This is the correct SAP-native
+    reversal path — direct DELETE of a posted A/P Invoice is not
+    supported because posted documents cannot be removed without
+    affecting GL continuity.
+
+    Endpoint: ``POST {base_url}/PurchaseInvoices({DocEntry})/Cancel``
+
+    The cancellation creates a new A/P Credit Memo-equivalent document
+    that fully offsets the original. SAP returns the new document's
+    DocEntry; we expose it as ``reversal_ref`` so the caller can link
+    the cancellation document in the audit trail.
+
+    On success returns ``reversal_method="cancel_document"``.
+    """
+    if not connection.access_token or not connection.base_url:
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": "SAP not properly configured",
+        }
+
+    bill_ref = _normalize_sap_doc_entry(erp_reference)
+    if not bill_ref:
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reason": "invalid_bill_reference",
+        }
+
+    url = f"{connection.base_url}/PurchaseInvoices({bill_ref})/Cancel"
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            session = await _open_sap_service_layer_session(
+                connection, client, fetch_csrf_for=url
+            )
+            if session.get("status") != "success":
+                return session
+
+            response = await client.post(
+                url,
+                headers={**session["headers"], "Content-Type": "application/json"},
+                timeout=60,
+            )
+
+            if response.status_code == 401:
+                return {
+                    "status": "error",
+                    "erp": "sap",
+                    "reference_id": erp_reference,
+                    "reversal_method": "cancel_document",
+                    "reason": "authentication_failed",
+                    "needs_reauth": True,
+                }
+
+            if response.status_code == 404:
+                return {
+                    "status": "already_reversed",
+                    "erp": "sap",
+                    "reference_id": erp_reference,
+                    "reversal_method": "cancel_document",
+                    "reversal_ref": None,
+                    "reason": "bill_not_found_in_erp",
+                }
+
+            # SAP Cancel typically returns 204 No Content on success. Some
+            # versions return 200 with a body containing the new DocEntry
+            # of the cancellation document.
+            if response.status_code in (200, 204):
+                cancellation_doc_entry: Optional[str] = None
+                try:
+                    if response.status_code == 200 and response.content:
+                        body = response.json() or {}
+                        if isinstance(body, dict):
+                            cancellation_doc_entry = (
+                                body.get("DocEntry")
+                                or body.get("CancellationDocEntry")
+                            )
+                            if cancellation_doc_entry is not None:
+                                cancellation_doc_entry = str(cancellation_doc_entry)
+                except Exception:
+                    pass
+
+                logger.info(
+                    "Cancelled SAP A/P Invoice %s (reason=%s, cancel_doc=%s)",
+                    erp_reference, reason, cancellation_doc_entry,
+                )
+                return {
+                    "status": "success",
+                    "erp": "sap",
+                    "reference_id": erp_reference,
+                    "reversal_method": "cancel_document",
+                    "reversal_ref": cancellation_doc_entry,
+                    "erp_status": "Cancelled",
+                }
+
+            response.raise_for_status()
+
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        erp_error_detail = ""
+        erp_error_code = ""
+        try:
+            payload = e.response.json()
+            sap_error = payload.get("error") or {}
+            erp_error_code = str(sap_error.get("code") or "")
+            message_obj = sap_error.get("message")
+            if isinstance(message_obj, dict):
+                erp_error_detail = message_obj.get("value") or ""
+            elif isinstance(message_obj, str):
+                erp_error_detail = message_obj
+            if not erp_error_detail:
+                erp_error_detail = _extract_sap_validation_message(payload) or ""
+        except Exception:
+            erp_error_detail = (
+                e.response.text[:200] if hasattr(e.response, "text") else ""
+            )
+
+        detail_lower = erp_error_detail.lower()
+        reason_code = f"http_{status_code}"
+
+        if status_code == 404 or "does not exist" in detail_lower:
+            return {
+                "status": "already_reversed",
+                "erp": "sap",
+                "reference_id": erp_reference,
+                "reversal_method": "cancel_document",
+                "reversal_ref": None,
+                "reason": "bill_not_found_in_erp",
+            }
+        elif (
+            "already" in detail_lower
+            and ("cancel" in detail_lower or "reversed" in detail_lower)
+        ):
+            return {
+                "status": "already_reversed",
+                "erp": "sap",
+                "reference_id": erp_reference,
+                "reversal_method": "cancel_document",
+                "reversal_ref": None,
+                "reason": "already_cancelled_in_erp",
+            }
+        elif "paid" in detail_lower or (
+            "payment" in detail_lower and "applied" in detail_lower
+        ):
+            reason_code = "payment_already_applied"
+        elif "closed" in detail_lower and "period" in detail_lower:
+            reason_code = "accounting_period_closed"
+        elif "draft" in detail_lower:
+            reason_code = "bill_is_draft_not_posted"
+
+        logger.error(
+            "SAP A/P Invoice reverse HTTP error: status=%d reason=%s code=%s detail=%s",
+            status_code, reason_code, erp_error_code, erp_error_detail[:200],
+        )
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reference_id": erp_reference,
+            "reversal_method": "cancel_document",
+            "reason": reason_code,
+            "erp_error_detail": erp_error_detail,
+            "erp_error_code": erp_error_code,
+            "needs_reauth": status_code == 401,
+        }
+    except Exception as exc:
+        logger.error(
+            "SAP A/P Invoice reverse error: %s: %s",
+            type(exc).__name__, exc,
+        )
+        return {
+            "status": "error",
+            "erp": "sap",
+            "reference_id": erp_reference,
+            "reversal_method": "cancel_document",
+            "reason": "bill_reversal_failed",
+            "erp_error_detail": str(exc),
+        }
+
+    # Defensive — should never reach here because all branches return above.
+    return {
+        "status": "error",
+        "erp": "sap",
+        "reference_id": erp_reference,
+        "reversal_method": "cancel_document",
+        "reason": "unexpected_reversal_path",
+    }
+
+
 # ==================== Bill & Credit Note Lookup ====================
 
 async def get_purchase_invoice_sap(
