@@ -1732,6 +1732,49 @@ class InvoiceValidationMixin:
                 freeze_check_exc,
             )
 
+        # 4e) Vendor domain lock (Phase 2.2, DESIGN_THESIS.md §8 Group B).
+        # Detects vendor impersonation: an inbound invoice arriving
+        # from a sender domain that doesn't match the vendor's known
+        # allowlist is blocked as suspected impersonation. Bootstrap
+        # is covered by first_payment_hold — vendors with no known
+        # domains yet skip this check and TOFU on the first successful
+        # post via VendorDomainTrackingObserver.
+        try:
+            if invoice.vendor_name:
+                from clearledgr.services.vendor_domain_lock import (
+                    get_vendor_domain_lock_service,
+                    STATUS_MISMATCH,
+                )
+
+                lock_svc = get_vendor_domain_lock_service(
+                    self.organization_id, db=self.db
+                )
+                domain_result = lock_svc.check_sender_domain(
+                    vendor_name=invoice.vendor_name,
+                    sender=invoice.sender,
+                )
+                if domain_result.should_block:
+                    add_reason(
+                        "vendor_sender_domain_mismatch",
+                        (
+                            f"Invoice sender domain "
+                            f"'{domain_result.sender_domain}' is not in the "
+                            f"trusted allowlist for vendor "
+                            f"'{invoice.vendor_name}'. Potential vendor "
+                            "impersonation (DESIGN_THESIS.md §8)."
+                        ),
+                        severity="error",
+                        details={
+                            "sender_domain": domain_result.sender_domain,
+                            "trusted_domains": domain_result.known_domains,
+                        },
+                    )
+        except Exception as domain_check_exc:
+            logger.warning(
+                "Vendor domain lock check failed (non-fatal): %s",
+                domain_check_exc,
+            )
+
         # 5a-pre) Payment terms mismatch detection.
         try:
             invoice_terms = getattr(invoice, "payment_terms", None) or ""

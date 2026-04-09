@@ -94,6 +94,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             NotificationObserver,
             OverrideWindowObserver,
             StateObserverRegistry,
+            VendorDomainTrackingObserver,
             VendorFeedbackObserver,
         )
         self._observer_registry = StateObserverRegistry()
@@ -104,6 +105,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         # Phase 1.4: open an override window + post the Slack undo card
         # whenever an AP item transitions into posted_to_erp.
         self._observer_registry.register(OverrideWindowObserver(self.db))
+        # Phase 2.2: record the vendor's sender domain as trusted on
+        # first successful post (TOFU bootstrap for the domain lock).
+        self._observer_registry.register(VendorDomainTrackingObserver(self.db))
 
     def _load_settings(self):
         """Load organization settings if not already loaded."""

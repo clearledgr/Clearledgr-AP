@@ -393,6 +393,145 @@ class VendorStore:
             return False
 
     # ------------------------------------------------------------------ #
+    # Phase 2.2: Vendor domain lock — trusted sender-domain allowlist    #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _normalize_domain(value: Any) -> str:
+        """Lowercase + strip a domain string. Returns empty string on None."""
+        if value is None:
+            return ""
+        return str(value).strip().strip(">").strip("<").strip().lower()
+
+    def get_trusted_sender_domains(
+        self, organization_id: str, vendor_name: str
+    ) -> List[str]:
+        """Return the vendor's list of trusted sender domains (normalized).
+
+        Returns an empty list if the vendor does not exist or has no
+        domains recorded yet. Duplicates and empty strings are removed.
+        """
+        profile = self.get_vendor_profile(organization_id, vendor_name)
+        if not profile:
+            return []
+        raw = profile.get("sender_domains") or []
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                raw = []
+        if not isinstance(raw, list):
+            return []
+        seen: set = set()
+        normalized: List[str] = []
+        for entry in raw:
+            domain = self._normalize_domain(entry)
+            if not domain or domain in seen:
+                continue
+            seen.add(domain)
+            normalized.append(domain)
+        return normalized
+
+    def add_trusted_sender_domain(
+        self,
+        organization_id: str,
+        vendor_name: str,
+        domain: str,
+        *,
+        actor_id: Optional[str] = None,
+    ) -> bool:
+        """Append ``domain`` to the vendor's trusted sender-domain allowlist.
+
+        No-op when the domain is already present. Returns True on a
+        successful write (including the no-op case where the domain
+        already exists — the caller can distinguish "added" from
+        "already present" by diffing the returned list vs. the
+        pre-call list).
+        """
+        normalized = self._normalize_domain(domain)
+        if not normalized:
+            return False
+
+        existing = self.get_trusted_sender_domains(organization_id, vendor_name)
+        if normalized in existing:
+            return True
+
+        new_domains = list(existing) + [normalized]
+        try:
+            self.upsert_vendor_profile(
+                organization_id,
+                vendor_name,
+                sender_domains=new_domains,
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                "[VendorStore] add_trusted_sender_domain upsert failed: %s", exc
+            )
+            return False
+
+    def remove_trusted_sender_domain(
+        self,
+        organization_id: str,
+        vendor_name: str,
+        domain: str,
+    ) -> bool:
+        """Remove ``domain`` from the vendor's trusted sender-domain allowlist.
+
+        No-op when the domain is not present. Returns True if the
+        domain was removed, False if it wasn't found or the write
+        failed. Callers that need to distinguish "not found" from
+        "write failed" should check ``get_trusted_sender_domains``
+        before and after.
+        """
+        normalized = self._normalize_domain(domain)
+        if not normalized:
+            return False
+
+        existing = self.get_trusted_sender_domains(organization_id, vendor_name)
+        if normalized not in existing:
+            return False
+
+        new_domains = [d for d in existing if d != normalized]
+        try:
+            self.upsert_vendor_profile(
+                organization_id,
+                vendor_name,
+                sender_domains=new_domains,
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                "[VendorStore] remove_trusted_sender_domain upsert failed: %s", exc
+            )
+            return False
+
+    def ensure_trusted_sender_domain_tracked(
+        self,
+        organization_id: str,
+        vendor_name: str,
+        domain: str,
+    ) -> bool:
+        """Observer-friendly helper: record ``domain`` on first sighting.
+
+        If the vendor has no known sender domains yet, adds ``domain``.
+        Otherwise no-op. Returns True only when a new domain was
+        actually recorded. Used by the VendorDomainTrackingObserver to
+        auto-populate the allowlist from the first successful post
+        (which must have passed the first-payment-hold human review,
+        so the domain is trusted at the point the observer fires).
+        """
+        normalized = self._normalize_domain(domain)
+        if not normalized:
+            return False
+        existing = self.get_trusted_sender_domains(organization_id, vendor_name)
+        if existing:
+            return False
+        return self.add_trusted_sender_domain(
+            organization_id, vendor_name, normalized
+        )
+
+    # ------------------------------------------------------------------ #
     # Phase 2.1.b: IBAN change freeze state                                #
     # ------------------------------------------------------------------ #
 

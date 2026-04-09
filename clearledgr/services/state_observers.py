@@ -327,3 +327,63 @@ class OverrideWindowObserver(StateObserver):
             logger.warning(
                 "[OverrideWindowObserver] Slack undo card post failed: %s", exc,
             )
+
+
+class VendorDomainTrackingObserver(StateObserver):
+    """Record a vendor's sender domain on first successful post.
+
+    Phase 2.2 (DESIGN_THESIS.md §8 — vendor domain lock). This
+    observer implements the TOFU (trust on first use) side of the
+    vendor domain lock: the first invoice from a brand-new vendor
+    was already blocked by ``first_payment_hold`` and routed to human
+    review. When the human approves and the AP item reaches
+    ``posted_to_erp``, we record the sender domain as trusted so
+    future invoices for the same vendor are checked against it.
+
+    The observer only fires when the vendor has NO existing trusted
+    domains. Once a vendor has at least one trusted domain, only the
+    CFO can add or remove entries via the
+    ``/api/vendors/{vendor}/trusted-domains`` API — no automatic
+    expansion of the allowlist on subsequent posts. This prevents an
+    adversary from silently adding their domain to an established
+    vendor's allowlist by pushing a later invoice through.
+    """
+
+    def __init__(self, db: Any) -> None:
+        self._db = db
+
+    async def on_transition(self, event: StateTransitionEvent) -> None:
+        if event.new_state != "posted_to_erp":
+            return
+        if not event.ap_item_id:
+            return
+
+        try:
+            ap_item = self._db.get_ap_item(event.ap_item_id) or {}
+        except Exception as exc:
+            logger.debug(
+                "[VendorDomainTrackingObserver] get_ap_item failed: %s", exc
+            )
+            return
+
+        vendor_name = ap_item.get("vendor_name")
+        sender = ap_item.get("sender")
+        if not vendor_name or not sender:
+            return
+
+        try:
+            from clearledgr.services.vendor_domain_lock import (
+                get_vendor_domain_lock_service,
+            )
+            lock_svc = get_vendor_domain_lock_service(
+                event.organization_id, db=self._db
+            )
+            lock_svc.record_domain_on_first_post(
+                vendor_name=vendor_name,
+                sender=sender,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[VendorDomainTrackingObserver] record_domain_on_first_post failed: %s",
+                exc,
+            )

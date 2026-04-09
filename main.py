@@ -424,6 +424,9 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/vendors/[^/]+/iban-verification/factors/(phone|sign-off|email-domain)$",
         r"^/api/vendors/[^/]+/iban-verification/complete$",
         r"^/api/vendors/[^/]+/iban-verification/reject$",
+        # Phase 2.2: vendor trusted-domains allowlist endpoints
+        r"^/api/vendors/[^/]+/trusted-domains$",
+        r"^/api/vendors/[^/]+/trusted-domains/[^/]+$",
         r"^/api/ap/items/[^/]+/field-review/resolve$",
         r"^/api/ap/items/[^/]+/fields$",
         r"^/api/ap/items/[^/]+/gmail-link$",
@@ -872,6 +875,17 @@ except ImportError:
 try:
     from clearledgr.api.iban_verification import router as iban_verification_router
     app.include_router(iban_verification_router)
+except ImportError:
+    pass
+
+# Include Vendor Trusted-Domains API — Phase 2.2.
+# Vendor domain lock allowlist management. The validation gate blocks
+# invoices from sender domains not in the allowlist as potential
+# vendor impersonation. CFO or owner role required for writes.
+# See DESIGN_THESIS.md §8.
+try:
+    from clearledgr.api.vendor_domains import router as vendor_domains_router
+    app.include_router(vendor_domains_router)
 except ImportError:
     pass
 
