@@ -773,4 +773,52 @@ def _v20_vendor_contact_email(cur, db):
     try:
         cur.execute("ALTER TABLE vendor_profiles ADD COLUMN primary_contact_email TEXT")
     except Exception:
-        pass  # Column may already exist
+        pass
+
+
+@migration(21, "Parent account hierarchy (DESIGN_THESIS.md §3 Multi-Entity)")
+def _v21_parent_account_hierarchy(cur, db):
+    """§3: Organizations can be children of a parent account."""
+    for stmt in [
+        "ALTER TABLE organizations ADD COLUMN parent_organization_id TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_org_parent ON organizations(parent_organization_id)",
+    ]:
+        try:
+            cur.execute(stmt)
+        except Exception:
+            pass
+
+
+@migration(22, "Vendor entity overrides (DESIGN_THESIS.md §3 Multi-Entity)")
+def _v22_vendor_entity_overrides(cur, db):
+    """§3: Entity-specific payment terms and IBANs per vendor."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendor_entity_overrides (
+            id TEXT PRIMARY KEY,
+            vendor_profile_id TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            organization_id TEXT NOT NULL,
+            payment_terms TEXT,
+            bank_details_encrypted TEXT,
+            default_currency TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            UNIQUE(vendor_profile_id, entity_id)
+        )
+    """)
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_vendor_entity_overrides_vendor "
+            "ON vendor_entity_overrides(vendor_profile_id)"
+        )
+    except Exception:
+        pass
+
+
+@migration(23, "Approval chain entity_id (DESIGN_THESIS.md §3 Multi-Entity)")
+def _v23_approval_chain_entity(cur, db):
+    """§3: Approval chains scoped to entity."""
+    try:
+        cur.execute("ALTER TABLE approval_chains ADD COLUMN entity_id TEXT")
+    except Exception:
+        pass

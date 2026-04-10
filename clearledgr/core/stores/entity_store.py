@@ -40,6 +40,7 @@ class EntityStore:
             gl_mapping_json TEXT,
             approval_rules_json TEXT,
             default_currency TEXT DEFAULT 'USD',
+            settings_json TEXT DEFAULT '{}',
             is_active INTEGER DEFAULT 1,
             created_at TEXT,
             updated_at TEXT,
@@ -170,6 +171,112 @@ class EntityStore:
         return self.update_entity(entity_id, is_active=0)
 
     # ------------------------------------------------------------------
+    # §3 Multi-Entity: Parent/child organization hierarchy
+    # ------------------------------------------------------------------
+
+    def get_child_organizations(self, parent_org_id: str) -> List[Dict[str, Any]]:
+        """List all child organizations of a parent account."""
+        self.initialize()
+        sql = self._prepare_sql(
+            "SELECT * FROM organizations WHERE parent_organization_id = ?"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (parent_org_id,))
+            rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
+    def get_parent_organization(self, org_id: str) -> Optional[Dict[str, Any]]:
+        """Return the parent organization, or the org itself if it has no parent."""
+        self.initialize()
+        sql = self._prepare_sql("SELECT * FROM organizations WHERE id = ?")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (org_id,))
+            row = cur.fetchone()
+        if not row:
+            return None
+        org = dict(row)
+        parent_id = org.get("parent_organization_id")
+        if not parent_id or parent_id == org_id:
+            return org
+        # Fetch parent
+        cur2 = conn.cursor()
+        cur2.execute(sql, (parent_id,))
+        parent_row = cur2.fetchone()
+        return dict(parent_row) if parent_row else org
+
+    def is_parent_account(self, org_id: str) -> bool:
+        """True if this organization has child organizations."""
+        children = self.get_child_organizations(org_id)
+        return len(children) > 0
+
+    def get_all_entity_org_ids(self, parent_org_id: str) -> List[str]:
+        """Return org IDs for parent + all children (for consolidated queries)."""
+        children = self.get_child_organizations(parent_org_id)
+        return [parent_org_id] + [c["id"] for c in children]
+
+    def get_effective_subscription(self, org_id: str) -> Optional[Dict[str, Any]]:
+        """§3: Child orgs inherit parent's subscription."""
+        self.initialize()
+        # Check own subscription first
+        sql = self._prepare_sql("SELECT * FROM subscriptions WHERE organization_id = ?")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (org_id,))
+            row = cur.fetchone()
+        if row:
+            return dict(row)
+        # Walk up to parent
+        org_sql = self._prepare_sql("SELECT parent_organization_id FROM organizations WHERE id = ?")
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(org_sql, (org_id,))
+            org_row = cur.fetchone()
+        if org_row:
+            parent_id = dict(org_row).get("parent_organization_id")
+            if parent_id and parent_id != org_id:
+                with self.connect() as conn:
+                    cur = conn.cursor()
+                    cur.execute(sql, (parent_id,))
+                    parent_row = cur.fetchone()
+                if parent_row:
+                    return dict(parent_row)
+        return None
+
+    def get_effective_agent_config(self, entity_id: str) -> Dict[str, Any]:
+        """§3 Multi-entity: entity-specific agent config with org fallback.
+
+        Reads entity.settings_json for override keys like autonomy_tier,
+        override_window_minutes, auto_approve_threshold. Falls back to
+        org-level settings for any key not overridden.
+        """
+        entity = self.get_entity(entity_id)
+        if not entity:
+            return {}
+        org_id = entity.get("organization_id")
+        entity_settings = self._decode_json_value(entity.get("settings_json"), {})
+
+        # Get org-level settings
+        org_settings = {}
+        try:
+            sql = self._prepare_sql("SELECT settings_json FROM organizations WHERE id = ?")
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (org_id,))
+                row = cur.fetchone()
+            if row:
+                org_settings = self._decode_json_value(dict(row).get("settings_json"), {})
+        except Exception:
+            pass
+
+        # Merge: entity overrides take precedence
+        merged = {**org_settings, **entity_settings}
+        merged["_source"] = "entity" if entity_settings else "organization"
+        merged["entity_id"] = entity_id
+        return merged
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -177,5 +284,6 @@ class EntityStore:
         """Deserialize JSON fields on an entity row."""
         row["gl_mapping"] = self._decode_json_value(row.get("gl_mapping_json"), {})
         row["approval_rules"] = self._decode_json_value(row.get("approval_rules_json"), {})
+        row["settings"] = self._decode_json_value(row.get("settings_json"), {})
         row["is_active"] = bool(row.get("is_active"))
         return row

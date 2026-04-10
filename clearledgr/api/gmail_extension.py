@@ -682,6 +682,7 @@ def get_invoice_pipeline(
 async def get_extension_worklist(
     request: Request,
     organization_id: Optional[str] = None,
+    entity_id: Optional[str] = None,
     limit: int = Query(default=200, ge=1, le=1000),
     user=Depends(get_current_user),
 ):
@@ -689,6 +690,8 @@ async def get_extension_worklist(
 
     Requires authentication.  Non-admin users are restricted to their own
     organisation; admin/owner roles may request any org.
+
+    §3 Multi-entity: optional entity_id scopes the worklist to a single entity.
     """
     from fastapi import HTTPException
     from clearledgr.services.gmail_autopilot import ensure_gmail_autopilot_progress
@@ -700,7 +703,7 @@ async def get_extension_worklist(
         pass
 
     db = get_db()
-    items = db.list_ap_items(org_id, limit=limit, prioritized=True)
+    items = db.list_ap_items(org_id, entity_id=entity_id, limit=limit, prioritized=True)
     normalized = build_worklist_items(
         db,
         items,

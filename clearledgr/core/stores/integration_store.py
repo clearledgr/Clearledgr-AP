@@ -234,6 +234,54 @@ class IntegrationStore:
             rows = cur.fetchall()
         return [self._decrypt_erp_row(dict(row)) for row in rows]
 
+    def get_erp_connection_for_entity(
+        self,
+        organization_id: str,
+        entity_id: str,
+        erp_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """§3 Multi-entity: get ERP connection scoped to a specific entity.
+
+        Falls back to the org-level connection if no entity-specific one exists.
+        """
+        self.initialize()
+        # Try entity-specific first
+        if erp_type:
+            sql = self._prepare_sql(
+                "SELECT * FROM erp_connections WHERE organization_id = ? AND entity_id = ? AND erp_type = ? AND is_active = 1 LIMIT 1"
+            )
+            params = (organization_id, entity_id, erp_type)
+        else:
+            sql = self._prepare_sql(
+                "SELECT * FROM erp_connections WHERE organization_id = ? AND entity_id = ? AND is_active = 1 LIMIT 1"
+            )
+            params = (organization_id, entity_id)
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        if row:
+            return self._decrypt_erp_row(dict(row))
+
+        # Fallback: org-level connection (entity_id IS NULL or empty)
+        if erp_type:
+            sql = self._prepare_sql(
+                "SELECT * FROM erp_connections WHERE organization_id = ? AND (entity_id IS NULL OR entity_id = '') AND erp_type = ? AND is_active = 1 LIMIT 1"
+            )
+            params = (organization_id, erp_type)
+        else:
+            sql = self._prepare_sql(
+                "SELECT * FROM erp_connections WHERE organization_id = ? AND (entity_id IS NULL OR entity_id = '') AND is_active = 1 LIMIT 1"
+            )
+            params = (organization_id,)
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        if row:
+            return self._decrypt_erp_row(dict(row))
+        return None
+
     def get_erp_connection_by_id(self, connection_id: str) -> Optional[Dict[str, Any]]:
         """Get a single ERP connection by its ID."""
         self.initialize()

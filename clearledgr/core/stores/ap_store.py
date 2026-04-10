@@ -1063,47 +1063,45 @@ class APStore:
         self,
         organization_id: str,
         state: Optional[str] = None,
+        entity_id: Optional[str] = None,
         limit: int = 200,
         prioritized: bool = False,
     ) -> List[Dict[str, Any]]:
         self.initialize()
         safe_limit = max(1, min(int(limit or 200), 10000))
 
+        # Build WHERE clause dynamically — entity_id filter is optional (§3 multi-entity)
+        where_parts = ["organization_id = ?"]
+        params_list: list = [organization_id]
+        if state:
+            where_parts.append("state = ?")
+            params_list.append(state)
+        if entity_id:
+            where_parts.append("entity_id = ?")
+            params_list.append(entity_id)
+        where_clause = " AND ".join(where_parts)
+
         if prioritized:
-            # Pull a larger window before in-memory priority sort so older high-severity
-            # exceptions can surface ahead of recent low-risk items.
             fetch_limit = max(500, safe_limit * 8)
-            if state:
-                sql = self._prepare_sql(
-                    "SELECT * FROM ap_items WHERE organization_id = ? AND state = ? ORDER BY created_at DESC LIMIT ?"
-                )
-                params = (organization_id, state, fetch_limit)
-            else:
-                sql = self._prepare_sql(
-                    "SELECT * FROM ap_items WHERE organization_id = ? ORDER BY created_at DESC LIMIT ?"
-                )
-                params = (organization_id, fetch_limit)
+            sql = self._prepare_sql(
+                f"SELECT * FROM ap_items WHERE {where_clause} ORDER BY created_at DESC LIMIT ?"
+            )
+            params_list.append(fetch_limit)
             with self.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(sql, params)
+                cur.execute(sql, tuple(params_list))
                 rows = cur.fetchall()
             items = [dict(row) for row in rows]
             items.sort(key=self._worklist_sort_key)
             return items[:safe_limit]
 
-        if state:
-            sql = self._prepare_sql(
-                "SELECT * FROM ap_items WHERE organization_id = ? AND state = ? ORDER BY created_at DESC LIMIT ?"
-            )
-            params = (organization_id, state, safe_limit)
-        else:
-            sql = self._prepare_sql(
-                "SELECT * FROM ap_items WHERE organization_id = ? ORDER BY created_at DESC LIMIT ?"
-            )
-            params = (organization_id, safe_limit)
+        sql = self._prepare_sql(
+            f"SELECT * FROM ap_items WHERE {where_clause} ORDER BY created_at DESC LIMIT ?"
+        )
+        params_list.append(safe_limit)
         with self.connect() as conn:
             cur = conn.cursor()
-            cur.execute(sql, params)
+            cur.execute(sql, tuple(params_list))
             rows = cur.fetchall()
         return [dict(row) for row in rows]
 

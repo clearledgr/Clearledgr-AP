@@ -1936,3 +1936,80 @@ class VendorStore:
             logger.warning("[VendorStore] attach_erp_vendor_id failed: %s", exc)
             return None
         return self.get_onboarding_session_by_id(session_id)
+
+    # ------------------------------------------------------------------
+    # §3 Multi-Entity: Vendor Entity Overrides
+    # ------------------------------------------------------------------
+
+    def get_vendor_entity_override(
+        self, vendor_profile_id: str, entity_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get entity-specific vendor overrides (payment terms, bank details)."""
+        self.initialize()
+        sql = self._prepare_sql(
+            "SELECT * FROM vendor_entity_overrides WHERE vendor_profile_id = ? AND entity_id = ?"
+        )
+        try:
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (vendor_profile_id, entity_id))
+                row = cur.fetchone()
+            return dict(row) if row else None
+        except Exception:
+            return None
+
+    def set_vendor_entity_override(
+        self, vendor_profile_id: str, entity_id: str, organization_id: str, **fields
+    ) -> Dict[str, Any]:
+        """Create or update entity-specific vendor overrides."""
+        self.initialize()
+        allowed = {"payment_terms", "bank_details_encrypted", "default_currency"}
+        safe = {k: v for k, v in fields.items() if k in allowed}
+        now = datetime.now(timezone.utc).isoformat()
+
+        existing = self.get_vendor_entity_override(vendor_profile_id, entity_id)
+        if existing:
+            if not safe:
+                return existing
+            set_clause = ", ".join(f"{k} = ?" for k in safe)
+            sql = self._prepare_sql(
+                f"UPDATE vendor_entity_overrides SET {set_clause}, updated_at = ? WHERE vendor_profile_id = ? AND entity_id = ?"
+            )
+            params = (*safe.values(), now, vendor_profile_id, entity_id)
+            with self.connect() as conn:
+                conn.execute(sql, params)
+                conn.commit()
+            return self.get_vendor_entity_override(vendor_profile_id, entity_id) or {}
+
+        override_id = f"VEO-{uuid.uuid4().hex}"
+        cols = ["id", "vendor_profile_id", "entity_id", "organization_id", "created_at", "updated_at"]
+        vals = [override_id, vendor_profile_id, entity_id, organization_id, now, now]
+        for k, v in safe.items():
+            cols.append(k)
+            vals.append(v)
+        placeholders = ", ".join("?" for _ in cols)
+        sql = self._prepare_sql(
+            f"INSERT INTO vendor_entity_overrides ({', '.join(cols)}) VALUES ({placeholders})"
+        )
+        with self.connect() as conn:
+            conn.execute(sql, tuple(vals))
+            conn.commit()
+        return self.get_vendor_entity_override(vendor_profile_id, entity_id) or {}
+
+    def get_vendor_for_entity(
+        self, organization_id: str, vendor_name: str, entity_id: str
+    ) -> Dict[str, Any]:
+        """§3: Returns merged vendor profile — parent-level KYC + entity-level overrides."""
+        profile = self.get_vendor_profile(vendor_name, organization_id)
+        if not profile:
+            return {}
+        override = self.get_vendor_entity_override(profile.get("id", ""), entity_id)
+        if override:
+            if override.get("payment_terms"):
+                profile["payment_terms"] = override["payment_terms"]
+            if override.get("bank_details_encrypted"):
+                profile["bank_details_encrypted"] = override["bank_details_encrypted"]
+            if override.get("default_currency"):
+                profile["default_currency"] = override["default_currency"]
+            profile["entity_override"] = override
+        return profile

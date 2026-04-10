@@ -69,8 +69,8 @@ class ApprovalChainStore:
         chain_sql = self._prepare_sql("""
             INSERT OR IGNORE INTO approval_chains
             (id, organization_id, invoice_id, vendor_name, amount, gl_code, department,
-             status, current_step, requester_id, requester_name, created_at, completed_at, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             status, current_step, requester_id, requester_name, created_at, completed_at, metadata, entity_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         step_sql = self._prepare_sql("""
             INSERT OR IGNORE INTO approval_steps
@@ -95,6 +95,7 @@ class ApprovalChainStore:
                 chain.created_at.isoformat() if hasattr(chain.created_at, "isoformat") else str(chain.created_at),
                 chain.completed_at.isoformat() if chain.completed_at and hasattr(chain.completed_at, "isoformat") else chain.completed_at,
                 "{}",
+                getattr(chain, "entity_id", None),
             ))
             for idx, step in enumerate(chain.steps):
                 step_id = getattr(step, "step_id", None) or f"step-{uuid.uuid4().hex}"
