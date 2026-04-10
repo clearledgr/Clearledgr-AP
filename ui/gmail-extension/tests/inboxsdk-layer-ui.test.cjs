@@ -180,8 +180,10 @@ test('route registry keeps left nav sparse while AppMenu exposes eligible routes
   assert.ok(routeIds.includes('clearledgr/settings'));
   assert.equal(routeIds.some((id) => /\bops\b/i.test(id)), false);
   assert.equal(routeIds.some((id) => /\bbatch\b/i.test(id)), false);
+  // §6.2 thesis nav: AP Invoices, Vendor Onboarding, Home are default-pinned
   assert.deepEqual(defaultNavRouteIds, [
     'clearledgr/invoices',
+    'clearledgr/vendor-onboarding',
     'clearledgr/home',
   ]);
   assert.ok(customizedNavRouteIds.includes('clearledgr/vendors'));
@@ -190,16 +192,19 @@ test('route registry keeps left nav sparse while AppMenu exposes eligible routes
   assert.equal(adminEligibleRouteIds.includes('clearledgr/health'), true);
   assert.deepEqual(adminDefaultNavRouteIds, [
     'clearledgr/invoices',
+    'clearledgr/vendor-onboarding',
     'clearledgr/home',
   ]);
   assert.equal(defaultNavRouteIds.includes('clearledgr/health'), false);
   assert.equal(adminVisibleRouteIds.includes('clearledgr/health'), true);
   assert.deepEqual(approverVisibleRouteIds, [
     'clearledgr/invoices',
+    'clearledgr/vendor-onboarding',
     'clearledgr/home',
   ]);
   assert.deepEqual(defaultMenuRouteIds, [
     'clearledgr/invoices',
+    'clearledgr/vendor-onboarding',
     'clearledgr/home',
     'clearledgr/review',
     'clearledgr/upcoming',

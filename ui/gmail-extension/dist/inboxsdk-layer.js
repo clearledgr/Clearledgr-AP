@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:15c68ba822563c38282f24f24aa31da7e5e8ded4d4db79de0b54547592c4ec1c */
+/* clearledgr-source-fingerprint:cdba7e9887bac077248c4d4e78731e6801b65bac6ef7c1835e0c50758bc8069b */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -63175,6 +63175,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       canHide: true,
       menuGroup: "secondary",
       viewCapability: "view_activity"
+    },
+    {
+      id: "clearledgr/vendor-onboarding",
+      title: "Vendor Onboarding",
+      subtitle: "Track vendor onboarding from invite to activation.",
+      icon: "vendors",
+      navOrder: 15,
+      defaultPinned: true,
+      canHide: false,
+      menuGroup: "primary",
+      hideTopbar: true,
+      viewCapability: "view_vendors"
     },
     {
       id: "clearledgr/vendors",

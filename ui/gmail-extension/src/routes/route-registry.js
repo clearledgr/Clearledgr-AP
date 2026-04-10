@@ -81,6 +81,18 @@ export const ROUTES = [
     viewCapability: 'view_activity',
   },
   {
+    id: 'clearledgr/vendor-onboarding',
+    title: 'Vendor Onboarding',
+    subtitle: 'Track vendor onboarding from invite to activation.',
+    icon: 'vendors',
+    navOrder: 15,
+    defaultPinned: true,
+    canHide: false,
+    menuGroup: 'primary',
+    hideTopbar: true,
+    viewCapability: 'view_vendors',
+  },
+  {
     id: 'clearledgr/vendors',
     title: 'Vendors',
     subtitle: 'Vendor history and context.',
