@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:b7c166eec68f0c318d97c6b2d32a52fd7135744ba5d181077f0167b8f299ab36 */
+/* clearledgr-source-fingerprint:aa369c1f5ac8a81346526415b5a73d7fcde594b4fa7bb37ab93ba1a27148bc43 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59566,7 +59566,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   // src/components/ThreadSidebar.js
   var THREAD_SIDEBAR_CSS = `
 .cl-thread-sidebar { padding: 0; }
-.cl-ts-section { padding: 12px 16px; border-bottom: 1px solid #E5EBF0; }
+.cl-ts-section { padding: 12px 16px; border-bottom: 1px solid #E2E8F0; }
 .cl-ts-section:last-child { border-bottom: none; }
 .cl-ts-section-title {
   font-size: 11px; font-weight: 700; text-transform: uppercase;
@@ -59579,17 +59579,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 .cl-ts-match-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .cl-ts-match-icon { width: 16px; text-align: center; font-size: 14px; }
 .cl-ts-match-icon.pass { color: #10B981; }
-.cl-ts-match-icon.warn { color: #D97706; }
+.cl-ts-match-icon.warn { color: #CA8A04; }
 .cl-ts-match-icon.fail { color: #DC2626; }
-.cl-ts-match-icon.na { color: #9CA3AF; }
+.cl-ts-match-icon.na { color: #94A3B8; }
 .cl-ts-match-label { font-size: 12px; color: #0A1628; flex: 1; }
 .cl-ts-match-detail { font-size: 11px; color: #5C6B7A; }
 .cl-ts-risk-badge {
   display: inline-block; padding: 2px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600;
 }
-.cl-ts-risk-low { background: #ECFDF5; color: #059669; }
-.cl-ts-risk-medium { background: #FEF9EE; color: #92400E; }
+.cl-ts-risk-low { background: #ECFDF5; color: #16A34A; }
+.cl-ts-risk-medium { background: #FEFCE8; color: #92400E; }
 .cl-ts-risk-high { background: #FEF2F2; color: #991B1B; }
 .cl-ts-timeline { list-style: none; margin: 0; padding: 0; }
 .cl-ts-timeline li {
@@ -59600,21 +59600,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   content: ''; width: 6px; height: 6px; border-radius: 50%;
   background: #00D67E; position: absolute; left: 0; top: 5px;
 }
-.cl-ts-timeline-time { font-size: 10px; color: #9CA3AF; display: block; }
+.cl-ts-timeline-time { font-size: 10px; color: #94A3B8; display: block; }
 .cl-ts-iban-pill {
   display: inline-block; padding: 1px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600;
 }
-.cl-ts-iban-verified { background: #ECFDF5; color: #059669; }
+.cl-ts-iban-verified { background: #ECFDF5; color: #16A34A; }
 .cl-ts-iban-unverified { background: #FEF2F2; color: #991B1B; }
-.cl-ts-iban-pending { background: #FEF9EE; color: #92400E; }
+.cl-ts-iban-pending { background: #FEFCE8; color: #92400E; }
 .cl-ts-expand-btn {
   background: none; border: none; color: #00D67E; font-size: 12px;
   font-weight: 600; cursor: pointer; padding: 4px 0; font-family: inherit;
 }
 .cl-ts-timeline-why { font-weight: 400; color: #5C6B7A; }
 .cl-ts-timeline-next { display: block; font-size: 11px; color: #00A85F; font-weight: 500; margin-top: 2px; }
-.cl-ts-actions-bar { padding: 12px 16px; border-top: 1px solid #E5EBF0; }
+.cl-ts-actions-bar { padding: 12px 16px; border-top: 1px solid #E2E8F0; }
 .cl-ts-approve-btn {
   width: 100%; padding: 10px 16px; border: none; border-radius: 8px;
   background: #00D67E; color: #0A1628; font-size: 14px; font-weight: 600;
@@ -59623,11 +59623,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 .cl-ts-approve-btn:hover { background: #00C271; }
 .cl-ts-approve-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .cl-ts-query-input {
-  width: 100%; padding: 10px 12px; border: 1px solid #E5EBF0; border-radius: 8px;
+  width: 100%; padding: 10px 12px; border: 1px solid #E2E8F0; border-radius: 8px;
   font-size: 13px; color: #0A1628; background: #FBFCFD; font-family: inherit;
 }
 .cl-ts-query-input:focus { outline: none; border-color: #00D67E; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15); }
-.cl-ts-query-input::placeholder { color: #9CA3AF; }
+.cl-ts-query-input::placeholder { color: #94A3B8; }
 `;
   function formatAmount2(amount, currency) {
     if (amount == null || amount === "")
@@ -59755,7 +59755,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <span class="cl-ts-match-detail">${String(matchStatus || "—").replace(/_/g, " ")}</span>
       </div>
       ${item.match_exception_reason ? m3`
-        <div style="font-size: 12px; color: #92400E; margin-top: 4px; padding: 6px 8px; background: #FEF9EE; border-radius: 6px;">
+        <div style="font-size: 12px; color: #92400E; margin-top: 4px; padding: 6px 8px; background: #FEFCE8; border-radius: 6px;">
           ${item.match_exception_reason}
         </div>
       ` : ""}
@@ -59812,7 +59812,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       ` : ""}
       ${item.last_payment_date ? m3`
-        <div class="cl-ts-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E5EBF0;">
+        <div class="cl-ts-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E2E8F0;">
           <span class="cl-ts-label">Last payment</span>
           <span class="cl-ts-value">${formatDate(item.last_payment_date)}</span>
         </div>
@@ -59844,7 +59844,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           ${(auditEvents || []).length > 10 ? m3`
             <button class="cl-ts-expand-btn">Show all ${auditEvents.length} actions</button>
           ` : ""}
-        ` : m3`<div style="font-size: 12px; color: #9CA3AF;">No agent actions yet</div>`}
+        ` : m3`<div style="font-size: 12px; color: #94A3B8;">No agent actions yet</div>`}
     </div>
   `;
   }
@@ -59874,12 +59874,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ${canSnooze && onSnooze ? m3`
           <button
             class="cl-ts-snooze-btn"
-            style="padding:6px 14px;border:1px solid #D97706;border-radius:6px;background:#FEF9EE;color:#92400E;font:500 12px/1.2 'DM Sans',sans-serif;cursor:pointer;"
+            style="padding:6px 14px;border:1px solid #CA8A04;border-radius:6px;background:#FEFCE8;color:#92400E;font:500 12px/1.2 'DM Sans',sans-serif;cursor:pointer;"
             onClick=${() => onSnooze(item)}
           >Snooze</button>
         ` : ""}
         ${isSnoozed ? m3`
-          <div style="font:500 11px/1.3 'DM Sans',sans-serif;color:#D97706;padding:4px 0;">
+          <div style="font:500 11px/1.3 'DM Sans',sans-serif;color:#CA8A04;padding:4px 0;">
             Snoozed until ${item.metadata?.snoozed_until ? new Date(item.metadata.snoozed_until).toLocaleString() : "later"}
           </div>
         ` : ""}
@@ -70497,8 +70497,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         { key: "paid", label: "Paid", states: ["posted_to_erp", "closed"] }
       ];
       const stageColors = {
-        received: "#9CA3AF",
-        matching: "#D97706",
+        received: "#94A3B8",
+        matching: "#CA8A04",
         exception: "#DC2626",
         approved: "#2563EB",
         paid: "#10B981"
@@ -70512,7 +70512,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 display:flex;flex-direction:column;
               ">
                 <div style="
-                  padding:10px 14px;border-bottom:2px solid ${stageColors[stage.key] || "#E5EBF0"};
+                  padding:10px 14px;border-bottom:2px solid ${stageColors[stage.key] || "#E2E8F0"};
                   display:flex;align-items:center;justify-content:space-between;
                 ">
                   <strong style="font-size:13px;color:#0A1628">${stage.label}</strong>
@@ -70530,7 +70530,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                             key=${item.id}
                             class="kanban-card"
                             style="
-                              background:#fff;border:1px solid ${active ? "#00D67E" : "#E5EBF0"};
+                              background:#fff;border:1px solid ${active ? "#00D67E" : "#E2E8F0"};
                               border-radius:8px;padding:10px 12px;cursor:pointer;
                               ${active ? "box-shadow:0 0 0 2px rgba(0,214,126,0.2);" : ""}
                             "
@@ -74838,9 +74838,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const stateConfig = {
       needs_approval: { bg: "#fef9ee", border: "#d97706", text: "#92400e", label: "Needs approval" },
       pending_approval: { bg: "#fef9ee", border: "#d97706", text: "#92400e", label: "Pending approval" },
-      approved: { bg: "#ECFDF5", border: "#10B981", text: "#059669", label: "Approved" },
-      ready_to_post: { bg: "#ECFDF5", border: "#10B981", text: "#059669", label: "Ready to post" },
-      posted_to_erp: { bg: "#ECFDF5", border: "#10B981", text: "#059669", label: "Posted to ERP" },
+      approved: { bg: "#ECFDF5", border: "#10B981", text: "#16A34A", label: "Approved" },
+      ready_to_post: { bg: "#ECFDF5", border: "#10B981", text: "#16A34A", label: "Ready to post" },
+      posted_to_erp: { bg: "#ECFDF5", border: "#10B981", text: "#16A34A", label: "Posted to ERP" },
       rejected: { bg: "#fef2f2", border: "#dc2626", text: "#991b1b", label: "Rejected" },
       failed_post: { bg: "#fef2f2", border: "#dc2626", text: "#991b1b", label: "ERP post failed" },
       needs_info: { bg: "#fef9ee", border: "#d97706", text: "#92400e", label: "Info requested" }

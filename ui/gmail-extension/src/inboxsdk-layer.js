@@ -846,9 +846,9 @@ function injectInvoiceBanner(threadView, item) {
   const stateConfig = {
     needs_approval:   { bg: '#fef9ee', border: '#d97706', text: '#92400e', label: 'Needs approval' },
     pending_approval: { bg: '#fef9ee', border: '#d97706', text: '#92400e', label: 'Pending approval' },
-    approved:         { bg: '#ECFDF5', border: '#10B981', text: '#059669', label: 'Approved' },
-    ready_to_post:    { bg: '#ECFDF5', border: '#10B981', text: '#059669', label: 'Ready to post' },
-    posted_to_erp:    { bg: '#ECFDF5', border: '#10B981', text: '#059669', label: 'Posted to ERP' },
+    approved:         { bg: '#ECFDF5', border: '#10B981', text: '#16A34A', label: 'Approved' },
+    ready_to_post:    { bg: '#ECFDF5', border: '#10B981', text: '#16A34A', label: 'Ready to post' },
+    posted_to_erp:    { bg: '#ECFDF5', border: '#10B981', text: '#16A34A', label: 'Posted to ERP' },
     rejected:         { bg: '#fef2f2', border: '#dc2626', text: '#991b1b', label: 'Rejected' },
     failed_post:      { bg: '#fef2f2', border: '#dc2626', text: '#991b1b', label: 'ERP post failed' },
     needs_info:       { bg: '#fef9ee', border: '#d97706', text: '#92400e', label: 'Info requested' },

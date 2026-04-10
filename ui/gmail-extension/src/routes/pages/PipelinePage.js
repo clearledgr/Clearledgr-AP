@@ -937,8 +937,8 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
             { key: 'paid',         label: 'Paid',       states: ['posted_to_erp', 'closed'] },
           ];
           const stageColors = {
-            received:  '#9CA3AF',
-            matching:  '#D97706',
+            received:  '#94A3B8',
+            matching:  '#CA8A04',
             exception: '#DC2626',
             approved:  '#2563EB',
             paid:      '#10B981',
@@ -954,7 +954,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                 display:flex;flex-direction:column;
               ">
                 <div style="
-                  padding:10px 14px;border-bottom:2px solid ${stageColors[stage.key] || '#E5EBF0'};
+                  padding:10px 14px;border-bottom:2px solid ${stageColors[stage.key] || '#E2E8F0'};
                   display:flex;align-items:center;justify-content:space-between;
                 ">
                   <strong style="font-size:13px;color:#0A1628">${stage.label}</strong>
@@ -974,7 +974,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                             key=${item.id}
                             class="kanban-card"
                             style="
-                              background:#fff;border:1px solid ${active ? '#00D67E' : '#E5EBF0'};
+                              background:#fff;border:1px solid ${active ? '#00D67E' : '#E2E8F0'};
                               border-radius:8px;padding:10px 12px;cursor:pointer;
                               ${active ? 'box-shadow:0 0 0 2px rgba(0,214,126,0.2);' : ''}
                             "
