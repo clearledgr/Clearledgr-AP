@@ -94,6 +94,79 @@ VENDOR_TEMPLATES: Dict[str, Dict[str, str]] = {
             "{company_name}"
         ),
     },
+    # ------------------------------------------------------------------
+    # Vendor Onboarding Templates — Phase 3.1.c
+    # ------------------------------------------------------------------
+    "onboarding_invite": {
+        "subject": "Supplier onboarding — {customer_name} needs your details",
+        "body": (
+            "Hi {contact_name},\n\n"
+            "{customer_name} is getting you set up as a supplier. "
+            "To complete onboarding, please click the link below and fill in your "
+            "business details and bank information:\n\n"
+            "{magic_link}\n\n"
+            "This link is private to you. It will expire on {expires_at}.\n\n"
+            "If you have any questions, reply directly to this email and your "
+            "contact at {customer_name} will see it.\n\n"
+            "Thank you,\n"
+            "{customer_name}"
+        ),
+    },
+    "onboarding_chase_24h": {
+        "subject": "Reminder: Supplier onboarding for {customer_name}",
+        "body": (
+            "Hi {contact_name},\n\n"
+            "Just a quick reminder — we sent you an onboarding link yesterday "
+            "and haven't seen your details yet. The link is still active:\n\n"
+            "{magic_link}\n\n"
+            "It only takes a few minutes to complete.\n\n"
+            "Thank you,\n"
+            "{customer_name}"
+        ),
+    },
+    "onboarding_chase_48h": {
+        "subject": "Still waiting on your supplier details — {customer_name}",
+        "body": (
+            "Hi {contact_name},\n\n"
+            "We're following up on the onboarding request we sent two days ago. "
+            "To avoid any delay in processing your invoices, please complete "
+            "your details at the link below:\n\n"
+            "{magic_link}\n\n"
+            "If you're having trouble with the link or need to speak to someone, "
+            "reply to this email.\n\n"
+            "Thank you,\n"
+            "{customer_name}"
+        ),
+    },
+    "onboarding_escalation_72h": {
+        "subject": "Action required: Supplier onboarding overdue — {vendor_name}",
+        "body": (
+            "Hi {contact_name},\n\n"
+            "We've been trying to reach you about onboarding as a supplier "
+            "for {customer_name}. It has been {days_waiting} days since we sent "
+            "the initial request.\n\n"
+            "Without your details we cannot process any invoices from your "
+            "company. Please complete the form at the link below as soon "
+            "as possible:\n\n"
+            "{magic_link}\n\n"
+            "If there is an issue, reply to this email and we will connect "
+            "you with the right person.\n\n"
+            "Thank you,\n"
+            "{customer_name}"
+        ),
+    },
+    "onboarding_complete": {
+        "subject": "You're all set — onboarding complete with {customer_name}",
+        "body": (
+            "Hi {contact_name},\n\n"
+            "Your onboarding as a supplier for {customer_name} is now complete. "
+            "You can start sending invoices to the usual accounts payable "
+            "address — they will be processed automatically.\n\n"
+            "Thank you for getting set up.\n\n"
+            "Best regards,\n"
+            "{customer_name}"
+        ),
+    },
 }
 
 # Regex to strip anything that looks like an HTML tag.

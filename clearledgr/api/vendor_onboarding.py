@@ -196,12 +196,63 @@ def invite_vendor(
         raise HTTPException(status_code=500, detail="onboarding_token_issue_failed")
     raw_token, token_row = issued
 
+    magic_link = _build_magic_link(raw_token)
+
+    # Dispatch the invite email via the customer's connected Gmail
+    # account. Best-effort: if no Gmail client is available or sending
+    # fails, the magic link is still returned in the API response so
+    # the customer can copy/paste it manually. Phase 3.1.e's chase
+    # loop will retry failed dispatches on the next cadence.
+    email_dispatch: Optional[Dict[str, Any]] = None
+    try:
+        import asyncio
+        from clearledgr.services.vendor_onboarding_email import (
+            dispatch_onboarding_invite,
+        )
+
+        # Resolve the customer's display name from the org record.
+        org_record = db.get_organization(organization_id)
+        customer_name = (
+            (org_record or {}).get("name")
+            or organization_id
+        )
+
+        coro = dispatch_onboarding_invite(
+            organization_id=organization_id,
+            vendor_name=vendor_name,
+            contact_email=body.contact_email,
+            contact_name=body.contact_name or body.contact_email.split("@")[0],
+            customer_name=customer_name,
+            magic_link=magic_link,
+            expires_at=token_row.get("expires_at") or "",
+            session_id=session["id"],
+        )
+        # Run the async dispatch in the current event loop if available,
+        # otherwise run synchronously for tests.
+        try:
+            loop = asyncio.get_running_loop()
+            # We're already in an async context — await directly.
+            # But we're in a sync FastAPI endpoint, so schedule and let
+            # the loop pick it up. Use asyncio.run for simplicity since
+            # FastAPI runs sync endpoints in a threadpool.
+            email_result = asyncio.run(coro)
+        except RuntimeError:
+            email_result = asyncio.run(coro)
+        email_dispatch = email_result.to_dict()
+    except Exception as email_exc:
+        logger.warning(
+            "[vendor_onboarding] invite email dispatch failed (non-fatal): %s",
+            email_exc,
+        )
+        email_dispatch = {"success": False, "method": "failed", "error": str(email_exc)}
+
     return {
         "session": session,
-        "magic_link": _build_magic_link(raw_token),
+        "magic_link": magic_link,
         "expires_at": token_row.get("expires_at"),
         "purpose": token_row.get("purpose"),
         "contact_email": body.contact_email,
+        "email_dispatch": email_dispatch,
     }
 
 
