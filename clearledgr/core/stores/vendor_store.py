@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS vendor_profiles (
     director_names TEXT NOT NULL DEFAULT '[]',
     kyc_completion_date TEXT,
     vendor_kyc_updated_at TEXT,
+    primary_contact_email TEXT,
     UNIQUE(organization_id, vendor_name)
 )
 """
@@ -311,6 +312,8 @@ class VendorStore:
             "director_names",
             "kyc_completion_date",
             "vendor_kyc_updated_at",
+            # §3: primary AP contact email on the Vendor record.
+            "primary_contact_email",
         }
         safe_fields = {k: v for k, v in fields.items() if k in _ALLOWED}
 

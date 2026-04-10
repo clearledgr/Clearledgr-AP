@@ -2190,6 +2190,42 @@ class InvoiceValidationMixin:
                     "[Gate] Injection detection raised: %s", injection_exc
                 )
 
+            # 6e) Vendor risk score gating — §3: "the agent's autonomy
+            # thresholds adjust accordingly" for high-risk vendors.
+            try:
+                from clearledgr.services.vendor_risk import VendorRiskScoreService
+
+                risk_service = VendorRiskScoreService(db=db)
+                risk_result = risk_service.compute(
+                    vendor_name=invoice.vendor_name or "",
+                    organization_id=self.organization_id,
+                )
+                if risk_result and risk_result.score >= 70:
+                    add_reason(
+                        "vendor_high_risk",
+                        (
+                            f"Vendor '{invoice.vendor_name}' has a risk score "
+                            f"of {risk_result.score}/100 ({risk_result.level}). "
+                            "High-risk vendors require human review per "
+                            "DESIGN_THESIS.md §3."
+                        ),
+                        severity="warning",
+                        details={
+                            "vendor_name": invoice.vendor_name,
+                            "risk_score": risk_result.score,
+                            "risk_level": risk_result.level,
+                            "risk_components": [
+                                {"name": c.name, "points": c.points}
+                                for c in (risk_result.components or [])
+                                if c.points > 0
+                            ],
+                        },
+                    )
+            except Exception as risk_exc:
+                logger.warning(
+                    "[Gate] Vendor risk evaluation raised: %s", risk_exc
+                )
+
         # Gate "passed" is governed by severity, not raw reason-code count.
         # - severity="error":  definitive failure; blocks auto-approval.
         # - severity="warning": still blocks auto-approval (needs human review).

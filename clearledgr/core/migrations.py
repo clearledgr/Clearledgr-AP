@@ -765,3 +765,12 @@ def _v19_archived_users_and_snooze(cur, db):
             cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
         except Exception:
             pass  # Column may already exist
+
+
+@migration(20, "Vendor primary AP contact email (DESIGN_THESIS.md §3)")
+def _v20_vendor_contact_email(cur, db):
+    """§3: 'primary AP contact email' on the Vendor record."""
+    try:
+        cur.execute("ALTER TABLE vendor_profiles ADD COLUMN primary_contact_email TEXT")
+    except Exception:
+        pass  # Column may already exist
