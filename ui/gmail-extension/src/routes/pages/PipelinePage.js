@@ -925,126 +925,91 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
         </div>
       </div>
 
-      <div class="panel pipeline-table-panel" style="padding:0;overflow:hidden">
-        <div class="pipeline-table-meta pipeline-table-head" style="padding:10px 14px;border-bottom:1px solid var(--border)">
-          <div>
-            <strong style="font-size:13px">Invoice rows</strong>
-            <div class="muted" style="font-size:12px">${currentViewLabel} · ${displayed.length} visible of ${items.length} records</div>
-          </div>
-          <div class="muted pipeline-table-actions" style="font-size:12px">Click a row to keep it active, then open the record or thread from the same queue.</div>
-        </div>
-
-        <div style="overflow:auto">
-          <table class="table pipeline-table" style="min-width:1200px;table-layout:fixed">
-            <colgroup>
-              <col style="width:54px" />
-              <col style="width:318px" />
-              <col style="width:104px" />
-              <col style="width:88px" />
-              <col style="width:104px" />
-              <col style="width:82px" />
-              <col style="width:90px" />
-              <col style="width:248px" />
-              <col style="width:104px" />
-              <col style="width:178px" />
-            </colgroup>
-            <thead>
-              <tr>
-                <th>Select</th>
-                <th>Record</th>
-                <th style="text-align:right">Amount</th>
-                <th>Due</th>
-                <th>Status</th>
-                <th>Queue</th>
-                <th>Approval</th>
-                <th>Signals</th>
-                <th>Updated</th>
-                <th style="text-align:right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${displayed.length === 0
-                ? html`<tr><td colspan="10" class="muted" style="text-align:center;padding:32px">No records match this view.</td></tr>`
-                : displayed.map((item) => {
-                    const pipelineBlockers = getPipelineBlockers(item);
-                    const blockerChips = pipelineBlockers.filter((blocker, index, collection) => (
-                      collection.findIndex((candidate) => candidate.kind === blocker.kind) === index
-                    ));
-                    const focused = String(navState.focusItemId || '') === String(item.id || '');
-                    const active = String(activeItemId || '') === String(item.id || '');
-                    const approvalWait = getApprovalWaitMinutes(item);
-                    const queueAge = getQueueAgeMinutes(item);
-                    const erpStatus = getErpStatus(item);
-                    const isInvoiceDocument = isInvoiceDocumentType(item?.document_type);
-                    const routeable = isRouteableInvoiceItem(item);
-                    const entityNeedsReview = needsEntityRouting(item, item.state, item.document_type);
-                    const escalateReady = canEscalateApproval(item, item.state, actorRole, item.document_type);
-                    const timelineBits = [];
-                    if (item?.entity_code || item?.entity_name) timelineBits.push(`Entity ${item.entity_code || item.entity_name}`);
-                    timelineBits.push(item.thread_id || item.message_id ? 'Email linked' : 'No email link');
-                    return html`
-                      <tr
-                        key=${item.id}
-                        style=${active || focused ? 'background:rgba(14,165,233,0.07)' : ''}
-                        onClick=${() => setActiveItemId(String(item.id || ''))}
-                      >
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked=${selectedSet.has(String(item.id || ''))}
-                            onClick=${(event) => event.stopPropagation()}
-                            onChange=${() => toggleSelected(item.id)}
-                          />
-                        </td>
-                        <td class="pipeline-record-cell" style="cursor:pointer" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>
-                          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                            <strong style="font-size:14px">${item.vendor_name || item.vendor || 'Unknown vendor'}</strong>
-                            ${focused ? html`<span style="font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink);text-transform:uppercase;letter-spacing:0.04em">Current thread</span>` : null}
+      <!-- §6.7 Kanban board — stage columns with cards -->
+      <div class="pipeline-kanban" style="display:flex;gap:12px;overflow-x:auto;padding:0 0 16px;min-height:400px">
+        ${(() => {
+          // Thesis §6.7 AP Invoice stages: Received, Matching, Exception, Approved, Paid
+          const KANBAN_STAGES = [
+            { key: 'received',     label: 'Received',  states: ['received', 'validated'] },
+            { key: 'matching',     label: 'Matching',   states: ['needs_approval', 'pending_approval'] },
+            { key: 'exception',    label: 'Exception',  states: ['needs_info', 'failed_post', 'reversed'] },
+            { key: 'approved',     label: 'Approved',   states: ['approved', 'ready_to_post'] },
+            { key: 'paid',         label: 'Paid',       states: ['posted_to_erp', 'closed'] },
+          ];
+          const stageColors = {
+            received:  '#9CA3AF',
+            matching:  '#D97706',
+            exception: '#DC2626',
+            approved:  '#2563EB',
+            paid:      '#10B981',
+          };
+          return KANBAN_STAGES.map((stage) => {
+            const stageItems = displayed.filter((item) =>
+              stage.states.includes(String(item.state || '').toLowerCase())
+            );
+            return html`
+              <div key=${stage.key} class="kanban-column" style="
+                min-width:240px;max-width:280px;flex:1;
+                background:#F7F9FB;border-radius:10px;padding:0;
+                display:flex;flex-direction:column;
+              ">
+                <div style="
+                  padding:10px 14px;border-bottom:2px solid ${stageColors[stage.key] || '#E5EBF0'};
+                  display:flex;align-items:center;justify-content:space-between;
+                ">
+                  <strong style="font-size:13px;color:#0A1628">${stage.label}</strong>
+                  <span style="
+                    font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;
+                    background:${stageColors[stage.key]}20;color:${stageColors[stage.key]};
+                  ">${stageItems.length}</span>
+                </div>
+                <div style="padding:8px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px">
+                  ${stageItems.length === 0
+                    ? html`<div class="muted" style="font-size:12px;text-align:center;padding:24px 8px">No invoices</div>`
+                    : stageItems.map((item) => {
+                        const pipelineBlockers = getPipelineBlockers(item);
+                        const active = String(activeItemId || '') === String(item.id || '');
+                        return html`
+                          <div
+                            key=${item.id}
+                            class="kanban-card"
+                            style="
+                              background:#fff;border:1px solid ${active ? '#00D67E' : '#E5EBF0'};
+                              border-radius:8px;padding:10px 12px;cursor:pointer;
+                              ${active ? 'box-shadow:0 0 0 2px rgba(0,214,126,0.2);' : ''}
+                            "
+                            onClick=${() => { setActiveItemId(String(item.id || '')); openItemDetail(navigate, pipelineScope, item); }}
+                          >
+                            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+                              <strong style="font-size:13px;color:#0A1628;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px">
+                                ${item.vendor_name || item.vendor || 'Unknown'}
+                              </strong>
+                              <span style="font-size:12px;font-family:var(--font-mono);color:#0A1628;font-weight:500">
+                                ${getAmountLabel(item)}
+                              </span>
+                            </div>
+                            <div class="muted" style="font-size:11px;margin-bottom:4px">
+                              ${item.invoice_number || item.reference || ''}
+                              ${item.due_date ? ` · Due ${fmtDate(item.due_date)}` : ''}
+                            </div>
+                            ${pipelineBlockers.length > 0
+                              ? html`<div style="font-size:11px;color:#92400E;margin-top:2px">
+                                  ${pipelineBlockers[0]?.label || pipelineBlockers[0]?.kind || 'Blocker'}
+                                </div>`
+                              : ''}
+                            <div class="muted" style="font-size:10px;margin-top:4px">${formatDurationMinutes(getQueueAgeMinutes(item))} in queue</div>
                           </div>
-                          <div class="muted" style="font-size:12px;margin-top:3px">${getDocumentSummary(item)} · ${timelineBits.join(' · ')}</div>
-                        </td>
-                        <td style="text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums">${getAmountLabel(item)}</td>
-                        <td>${isInvoiceDocument && item.due_date ? fmtDate(item.due_date) : '—'}</td>
-                        <td><${StatePill} state=${item.state} /></td>
-                        <td>${formatDurationMinutes(queueAge)}</td>
-                        <td>${isInvoiceDocument && approvalWait ? formatDurationMinutes(approvalWait) : '—'}</td>
-                        <td class="pipeline-signals-cell">
-                          <div class="muted" style="font-size:12px;font-weight:700;margin-bottom:${blockerChips.length || pipelineBlockers.length ? '8px' : '4px'}">
-                            ${isInvoiceDocument ? `ERP ${ERP_STATUS_LABELS[erpStatus] || erpStatus}` : 'Non-invoice record'}
-                          </div>
-                          <div class="pipeline-signal-stack" style="display:flex;gap:6px;flex-wrap:wrap">
-                            ${blockerChips.length
-                              ? blockerChips.slice(0, 2).map((blocker) => html`<${BlockerChip} key=${`${blocker.kind}:${blocker.type}:${blocker.field || ''}`} blocker=${blocker} />`)
-                              : html`<span class="muted" style="font-size:12px">No blocking signals</span>`}
-                          </div>
-                          <${PipelineBlockerSummary} item=${item} compact=${true} />
-                        </td>
-                        <td class="muted" style="font-size:12px">${fmtDateTime(item.updated_at || item.created_at)}</td>
-                        <td style="text-align:right">
-                          <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
-                            ${routeable
-                              ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); routeSelected([item]); }} disabled=${routingSelected}>${routingSelected ? 'Routing…' : 'Route'}</button>`
-                              : entityNeedsReview
-                                ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Resolve</button>`
-                                : (escalateReady
-                                  ? html`<button class="btn-primary btn-sm" onClick=${(event) => { event.stopPropagation(); escalateApprovalItem(item); }} disabled=${escalatingApproval}>${escalatingApproval ? 'Escalating…' : 'Escalate'}</button>`
-                                  : null)}
-                            <button class="btn-secondary btn-sm" onClick=${(event) => { event.stopPropagation(); openItemDetail(navigate, pipelineScope, item); }}>Open</button>
-                            ${(item.thread_id || item.message_id) && html`
-                              <button class="btn-ghost btn-sm" onClick=${(event) => { event.stopPropagation(); openItemEmail(pipelineScope, item); }}>Email</button>
-                            `}
-                          </div>
-                        </td>
-                      </tr>
-                    `;
-                  })}
-            </tbody>
-          </table>
-        </div>
+                        `;
+                      })}
+                </div>
+              </div>
+            `;
+          });
+        })()}
       </div>
 
       <div class="muted" style="text-align:center;padding:2px 0 0;font-size:12px">
-        Showing ${displayed.length} of ${items.length} records in ${currentSliceLabel}.
+        ${displayed.length} of ${items.length} records in ${currentSliceLabel}.
       </div>
     </div>
   `;
