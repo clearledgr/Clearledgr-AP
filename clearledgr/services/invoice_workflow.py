@@ -402,10 +402,17 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
 
         decision_feedback: Dict[str, Any] = {}
         try:
-            vendor_profile = (
-                self.db.get_vendor_profile(self.organization_id, invoice.vendor_name)
-                if hasattr(self.db, "get_vendor_profile") else None
-            )
+            # §3 Multi-entity: use entity-scoped vendor profile when available
+            _entity_id = getattr(invoice, "_entity_id", None)
+            if _entity_id and hasattr(self.db, "get_vendor_for_entity"):
+                vendor_profile = self.db.get_vendor_for_entity(
+                    self.organization_id, invoice.vendor_name, _entity_id
+                )
+            else:
+                vendor_profile = (
+                    self.db.get_vendor_profile(self.organization_id, invoice.vendor_name)
+                    if hasattr(self.db, "get_vendor_profile") else None
+                )
             vendor_history = (
                 self.db.get_vendor_invoice_history(self.organization_id, invoice.vendor_name, limit=6)
                 if hasattr(self.db, "get_vendor_invoice_history") else []

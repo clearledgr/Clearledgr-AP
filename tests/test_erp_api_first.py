@@ -69,7 +69,7 @@ def test_post_bill_api_first_success_records_attempt_and_success(db, monkeypatch
     monkeypatch.setattr(
         erp_api_first_module,
         "get_erp_connection",
-        lambda organization_id: ERPConnection(type="quickbooks"),
+        lambda organization_id, **kw: ERPConnection(type="quickbooks"),
     )
 
     async def _fake_post_bill(organization_id: str, bill: Bill, **kwargs) -> Dict[str, str]:
@@ -125,7 +125,7 @@ def test_post_bill_api_first_fails_safe_when_connector_fallback_disabled(db, mon
     monkeypatch.setattr(
         erp_api_first_module,
         "get_erp_connection",
-        lambda organization_id: ERPConnection(type="custom_erp"),
+        lambda organization_id, **kw: ERPConnection(type="custom_erp"),
     )
 
     async def _fake_post_bill(organization_id: str, bill: Bill, **kwargs) -> Dict[str, str]:
@@ -168,7 +168,7 @@ def test_post_bill_api_first_propagates_explicit_idempotency_key(db, monkeypatch
     monkeypatch.setattr(
         erp_api_first_module,
         "get_erp_connection",
-        lambda organization_id: ERPConnection(type="quickbooks"),
+        lambda organization_id, **kw: ERPConnection(type="quickbooks"),
     )
 
     captured = {}
@@ -213,7 +213,7 @@ def test_apply_credit_note_api_first_prefers_quickbooks_api_and_records_success(
     monkeypatch.setattr(
         erp_api_first_module,
         "get_erp_connection",
-        lambda organization_id: ERPConnection(type="quickbooks"),
+        lambda organization_id, **kw: ERPConnection(type="quickbooks"),
     )
 
     async def _fake_apply_credit_note(
@@ -265,7 +265,7 @@ def test_apply_credit_note_api_first_prefers_xero_api_and_records_success(db, mo
     monkeypatch.setattr(
         erp_api_first_module,
         "get_erp_connection",
-        lambda organization_id: ERPConnection(type="xero"),
+        lambda organization_id, **kw: ERPConnection(type="xero"),
     )
 
     async def _fake_apply_credit_note(
@@ -318,7 +318,7 @@ def test_apply_credit_note_api_first_prefers_netsuite_api_and_records_success(db
     monkeypatch.setattr(
         erp_api_first_module,
         "get_erp_connection",
-        lambda organization_id: ERPConnection(type="netsuite"),
+        lambda organization_id, **kw: ERPConnection(type="netsuite"),
     )
 
     async def _fake_apply_credit_note(
@@ -370,7 +370,7 @@ def test_apply_credit_note_api_first_prefers_sap_api_and_records_success(db, mon
     monkeypatch.setattr(
         erp_api_first_module,
         "get_erp_connection",
-        lambda organization_id: ERPConnection(type="sap"),
+        lambda organization_id, **kw: ERPConnection(type="sap"),
     )
 
     async def _fake_apply_credit_note(
@@ -434,7 +434,7 @@ def test_post_bill_api_first_blocks_when_rollout_control_disables_erp_posting(db
     monkeypatch.setattr(
         erp_api_first_module,
         "get_erp_connection",
-        lambda organization_id: ERPConnection(type="quickbooks"),
+        lambda organization_id, **kw: ERPConnection(type="quickbooks"),
     )
 
     async def _fake_post_bill(organization_id: str, bill: Bill, **kwargs) -> Dict[str, str]:
@@ -478,7 +478,7 @@ def test_post_bill_api_first_treats_already_posted_as_successful_idempotent_resu
     monkeypatch.setattr(
         erp_api_first_module,
         "get_erp_connection",
-        lambda organization_id: ERPConnection(type="quickbooks"),
+        lambda organization_id, **kw: ERPConnection(type="quickbooks"),
     )
 
     async def _fake_post_bill(organization_id: str, bill: Bill, **kwargs) -> Dict[str, str]:

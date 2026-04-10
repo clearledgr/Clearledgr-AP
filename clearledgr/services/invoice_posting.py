@@ -1415,11 +1415,18 @@ class InvoicePostingMixin:
             except Exception:
                 pass  # Non-fatal
 
+        # §3 Multi-entity: resolve entity_id from the AP item so the
+        # correct entity-specific ERP connection is used.
+        entity_id_for_post = None
+        if existing and existing.get("entity_id"):
+            entity_id_for_post = existing["entity_id"]
+
         result = await post_bill_api_first(
             organization_id=self.organization_id,
             bill=bill,
             actor_id="invoice_workflow",
             ap_item_id=ap_item_id,
+            entity_id=entity_id_for_post,
             email_id=invoice.gmail_id,
             invoice_number=invoice.invoice_number,
             vendor_name=invoice.vendor_name,

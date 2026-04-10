@@ -1422,7 +1422,7 @@ class FinanceAgentRuntime:
         window_hours: int = 168,
         ap_item: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        return runtime_ap_autonomy_policy(
+        policy = runtime_ap_autonomy_policy(
             self,
             vendor_name=vendor_name,
             action=action,
@@ -1430,6 +1430,22 @@ class FinanceAgentRuntime:
             window_hours=window_hours,
             ap_item=ap_item,
         )
+
+        # §3 Multi-entity: apply entity-specific agent config overrides
+        entity_id = (ap_item or {}).get("entity_id")
+        if entity_id and hasattr(self.db, "get_effective_agent_config"):
+            try:
+                entity_config = self.db.get_effective_agent_config(entity_id)
+                if entity_config.get("auto_approve_threshold"):
+                    policy["auto_approve_threshold_override"] = entity_config["auto_approve_threshold"]
+                if entity_config.get("override_window_minutes"):
+                    policy["override_window_minutes_override"] = entity_config["override_window_minutes"]
+                if entity_config.get("_source") == "entity":
+                    policy["entity_config_applied"] = True
+            except Exception:
+                pass
+
+        return policy
 
     def ap_autonomy_summary(self, *, window_hours: int = 168) -> Dict[str, Any]:
         return runtime_ap_autonomy_summary(self, window_hours=window_hours)

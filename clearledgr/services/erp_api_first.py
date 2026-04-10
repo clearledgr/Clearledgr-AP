@@ -294,6 +294,7 @@ async def post_bill_api_first(
     bill: Bill,
     actor_id: str = "erp_router",
     ap_item_id: Optional[str] = None,
+    entity_id: Optional[str] = None,
     email_id: Optional[str] = None,
     invoice_number: Optional[str] = None,
     vendor_name: Optional[str] = None,
@@ -309,11 +310,14 @@ async def post_bill_api_first(
 
     Returns ERP response fields plus:
     - execution_mode: "api" | "api_failed"
+
+    §3 Multi-entity: entity_id resolves entity-specific ERP connection
+    with org-level fallback.
     """
     resolved_db = db or get_db()
     strategy = get_erp_connector_strategy()
 
-    connection = get_erp_connection(organization_id)
+    connection = get_erp_connection(organization_id, entity_id=entity_id)
     connection_present = connection is not None
     detected_erp_type = str((connection.type if connection else "unconfigured") or "unconfigured").strip().lower()
     route_plan = strategy.build_route_plan(
