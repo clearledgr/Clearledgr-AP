@@ -213,6 +213,7 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         assert "/portal/onboard/{token}/kyc" in paths
         assert "/portal/onboard/{token}/bank-details" in paths
         assert "/portal/onboard/{token}/microdeposit" in paths
+        assert "/api/vendors/{vendor_name}/onboarding/microdeposit/initiate" in paths
 
 
 def test_strict_profile_blocks_unknown_prefixed_routes(monkeypatch):

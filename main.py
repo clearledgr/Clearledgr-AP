@@ -434,6 +434,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/vendors/[^/]+/onboarding/session$",
         r"^/api/vendors/[^/]+/onboarding/escalate$",
         r"^/api/vendors/[^/]+/onboarding/reject$",
+        r"^/api/vendors/[^/]+/onboarding/microdeposit/initiate$",
         # Phase 3.1.b: vendor portal magic-link surface (public, unauthenticated)
         r"^/portal/onboard/[^/]+$",
         r"^/portal/onboard/[^/]+/kyc$",

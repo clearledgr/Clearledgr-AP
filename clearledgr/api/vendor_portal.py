@@ -334,14 +334,13 @@ def submit_microdeposit_amounts(
     amount_two: str = Form(...),
     portal: PortalSession = Depends(require_portal_token),
 ):
-    """Record the vendor's claimed micro-deposit amounts.
+    """Verify the vendor's submitted micro-deposit amounts.
 
-    Phase 3.1.b stub: stores the submission on session metadata so the
-    customer's AP Manager can verify manually. Does NOT transition the
-    state machine — Phase 3.1.d will replace this with the actual
-    amount-matching service that compares against the encrypted
-    expected amounts and transitions to bank_verified on success or
-    locks the session after 3 failed attempts.
+    Phase 3.1.d: compares the two submitted amounts against the
+    encrypted expected amounts stored on the session. On success,
+    transitions to ``bank_verified``. On failure, increments the
+    attempt counter. After 3 failed attempts, kicks back to
+    ``awaiting_bank`` so the vendor can re-enter their IBAN.
     """
     try:
         a1 = float(amount_one.strip().replace(",", "."))
@@ -354,14 +353,43 @@ def submit_microdeposit_amounts(
     if a1 <= 0 or a2 <= 0 or a1 >= 10 or a2 >= 10:
         return _redirect_with_error(
             token,
-            "Deposit amounts should be small positive numbers under £10.",
+            "Deposit amounts should be small positive numbers under 10.",
         )
 
-    # For Phase 3.1.b we just record receipt — the verification logic
-    # arrives in Phase 3.1.d.
-    return _redirect_with_flash(
+    from clearledgr.services.micro_deposit import get_micro_deposit_service
+
+    db = get_db()
+    service = get_micro_deposit_service(db=db)
+    result = service.verify(
+        session_id=portal.session_id,
+        submitted_amount_one=a1,
+        submitted_amount_two=a2,
+        actor_id=f"vendor_portal:{portal.token_id}",
+    )
+
+    if not result.success:
+        return _redirect_with_error(
+            token,
+            result.error or "Verification failed. Please try again.",
+        )
+
+    if result.verified:
+        return _redirect_with_flash(
+            token,
+            "Bank account verified! Your customer will activate you in their finance system shortly.",
+        )
+
+    if result.locked_out:
+        return _redirect_with_error(
+            token,
+            "Too many incorrect attempts. Please re-enter your bank details and your customer will initiate new deposits.",
+        )
+
+    remaining = 3 - result.attempt_number
+    return _redirect_with_error(
         token,
-        "Amounts received. We'll let your customer know to verify them.",
+        f"The amounts don't match. You have {remaining} attempt(s) remaining. "
+        f"Please check your bank statement and try again.",
     )
 
 
