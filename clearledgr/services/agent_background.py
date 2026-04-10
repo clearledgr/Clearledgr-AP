@@ -356,6 +356,24 @@ async def _run_loop():
                 for org_id in org_ids:
                     await _verify_recent_erp_postings(org_id)
 
+            # Every hour (4 ticks): trust-building arc milestones
+            # Phase 3.2 — time-gated Slack messages that accumulate trust:
+            # Week 1 transparency banner, Day 14 baseline, Day 30 tier
+            # expansion recommendation, weekly Monday signal.
+            if tick % 4 == 0:
+                try:
+                    from clearledgr.services.trust_arc import run_trust_arc_tick
+                    arc_result = await run_trust_arc_tick()
+                    if (arc_result.week1_banners or arc_result.day14_baselines
+                            or arc_result.day30_expansions or arc_result.weekly_signals):
+                        logger.info(
+                            "[background] trust arc: week1=%d day14=%d day30=%d weekly=%d",
+                            arc_result.week1_banners, arc_result.day14_baselines,
+                            arc_result.day30_expansions, arc_result.weekly_signals,
+                        )
+                except Exception as arc_exc:
+                    logger.warning("[background] trust arc tick failed: %s", arc_exc)
+
             # Every hour (4 ticks): chase stale vendor onboarding sessions
             # Phase 3.1.e — scans all orgs in a single pass, dispatches
             # 24h/48h chase emails, escalates after 72h, abandons after 30d.

@@ -78,12 +78,11 @@ class TestOnboardingTemplates:
             "contact_name": "Alice",
             "customer_name": "Customer Inc",
             "magic_link": "https://app.clearledgr.com/portal/onboard/abc123",
-            "expires_at": "2026-04-24",
         })
         assert "Alice" in result["body"]
         assert "Customer Inc" in result["subject"]
         assert "abc123" in result["body"]
-        assert "2026-04-24" in result["body"]
+        assert "14 days" in result["body"]
 
     def test_chase_24h_renders_without_crashing(self):
         from clearledgr.services.vendor_communication_templates import render_template

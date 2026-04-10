@@ -105,7 +105,7 @@ VENDOR_TEMPLATES: Dict[str, Dict[str, str]] = {
             "To complete onboarding, please click the link below and fill in your "
             "business details and bank information:\n\n"
             "{magic_link}\n\n"
-            "This link is private to you. It will expire on {expires_at}.\n\n"
+            "This link is private to you and will expire in 14 days.\n\n"
             "If you have any questions, reply directly to this email and your "
             "contact at {customer_name} will see it.\n\n"
             "Thank you,\n"
