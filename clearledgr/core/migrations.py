@@ -638,3 +638,63 @@ def _m016_vendor_kyc_columns(cur, db):
             cur.execute(ddl)
         except Exception as exc:
             logger.warning("[Migration v16] index skipped: %s", exc)
+
+
+@migration(17, "Vendor onboarding sessions table (DESIGN_THESIS.md §9)")
+def _m017_vendor_onboarding_sessions(cur, db):
+    """Create vendor_onboarding_sessions table for Phase 3.1.a.
+
+    Greenfield table — no backfill, no plaintext-strip, no rename. The
+    in-memory `VendorManagementService._vendors` dict that this replaces
+    was never persisted, so there is nothing to migrate. Sessions begin
+    accumulating from the first invite-vendor call after this migration
+    runs.
+
+    Schema mirrors :data:`VendorStore.VENDOR_ONBOARDING_SESSIONS_TABLE_SQL`.
+    The state column is enforced by
+    :class:`clearledgr.core.vendor_onboarding_states.VendorOnboardingState`
+    at the application layer — there is no SQL CHECK constraint because
+    SQLite versions and Postgres dialects diverge on enum support and
+    we want the same migration body to run on both.
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendor_onboarding_sessions (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            vendor_name TEXT NOT NULL,
+            state TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            invited_at TEXT NOT NULL,
+            invited_by TEXT NOT NULL,
+            last_activity_at TEXT NOT NULL,
+            last_chase_at TEXT,
+            chase_count INTEGER NOT NULL DEFAULT 0,
+            kyc_submitted_at TEXT,
+            bank_submitted_at TEXT,
+            microdeposit_initiated_at TEXT,
+            microdeposit_initiated_by TEXT,
+            bank_verified_at TEXT,
+            erp_activated_at TEXT,
+            erp_vendor_id TEXT,
+            completed_at TEXT,
+            escalated_at TEXT,
+            escalated_reason TEXT,
+            rejected_at TEXT,
+            rejected_by TEXT,
+            rejection_reason TEXT,
+            abandoned_at TEXT,
+            metadata TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_vendor_onboarding_active "
+        "ON vendor_onboarding_sessions(organization_id, vendor_name, is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_vendor_onboarding_state_activity "
+        "ON vendor_onboarding_sessions(state, last_activity_at)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v17] index skipped: %s", exc)

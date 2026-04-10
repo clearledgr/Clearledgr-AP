@@ -106,6 +106,49 @@ CREATE TABLE IF NOT EXISTS vendor_decision_feedback (
 )
 """
 
+# Phase 3.1.a: vendor onboarding session state (DESIGN_THESIS.md §9).
+# A session is the temporal workflow record that drives a single vendor
+# from invited → active. The vendor's durable identity lives in
+# vendor_profiles; this table carries the workflow state machine.
+#
+# is_active distinguishes the currently-running session from historical
+# ones — a vendor can have many sessions over time (re-onboarding),
+# but at most one active session at any moment. The state column is
+# enforced by the VendorOnboardingState machine in the
+# clearledgr.core.vendor_onboarding_states module — never write it
+# directly, always go through transition_onboarding_session_state.
+_TABLE_VENDOR_ONBOARDING_SESSIONS = """
+CREATE TABLE IF NOT EXISTS vendor_onboarding_sessions (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    vendor_name TEXT NOT NULL,
+    state TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    invited_at TEXT NOT NULL,
+    invited_by TEXT NOT NULL,
+    last_activity_at TEXT NOT NULL,
+    last_chase_at TEXT,
+    chase_count INTEGER NOT NULL DEFAULT 0,
+    kyc_submitted_at TEXT,
+    bank_submitted_at TEXT,
+    microdeposit_initiated_at TEXT,
+    microdeposit_initiated_by TEXT,
+    bank_verified_at TEXT,
+    erp_activated_at TEXT,
+    erp_vendor_id TEXT,
+    completed_at TEXT,
+    escalated_at TEXT,
+    escalated_reason TEXT,
+    rejected_at TEXT,
+    rejected_by TEXT,
+    rejection_reason TEXT,
+    abandoned_at TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -132,6 +175,7 @@ class VendorStore:
     VENDOR_PROFILE_TABLE_SQL = _TABLE_VENDOR_PROFILES
     VENDOR_INVOICE_HISTORY_TABLE_SQL = _TABLE_VENDOR_INVOICE_HISTORY
     VENDOR_DECISION_FEEDBACK_TABLE_SQL = _TABLE_VENDOR_DECISION_FEEDBACK
+    VENDOR_ONBOARDING_SESSIONS_TABLE_SQL = _TABLE_VENDOR_ONBOARDING_SESSIONS
 
     # ------------------------------------------------------------------ #
     # vendor_profiles                                                      #
@@ -1397,3 +1441,495 @@ class VendorStore:
         except Exception as exc:
             logger.warning("[VendorStore] get_vendor_payment_lateness failed: %s", exc)
             return []
+
+    # ------------------------------------------------------------------ #
+    # Bulk vendor profile listing                                         #
+    # ------------------------------------------------------------------ #
+
+    def list_vendor_profiles(
+        self,
+        organization_id: str,
+        limit: int = 1000,
+    ) -> List[Dict[str, Any]]:
+        """Return all vendor profiles for an organization.
+
+        Used by the Gmail extension's vendor-suggestion surface to fuzzy
+        match an extracted vendor name against the customer's known
+        vendor master. The bulk dict accessor is keyed by name; this one
+        returns a list ordered by recency so callers can iterate without
+        re-sorting.
+        """
+        sql = self._prepare_sql(
+            "SELECT * FROM vendor_profiles "
+            "WHERE organization_id = ? "
+            "ORDER BY updated_at DESC LIMIT ?"
+        )
+        try:
+            with self.connect() as conn:
+                if self.use_postgres:
+                    cur = conn.cursor()
+                    cur.execute(sql, (organization_id, limit))
+                    rows = cur.fetchall()
+                else:
+                    conn.row_factory = __import__("sqlite3").Row
+                    cur = conn.cursor()
+                    cur.execute(sql, (organization_id, limit))
+                    rows = cur.fetchall()
+        except Exception as exc:
+            logger.warning("[VendorStore] list_vendor_profiles failed: %s", exc)
+            return []
+
+        profiles: List[Dict[str, Any]] = []
+        for row in rows:
+            parsed = dict(row)
+            for key, default in (
+                ("vendor_aliases", []),
+                ("sender_domains", []),
+                ("anomaly_flags", []),
+                ("metadata", {}),
+                ("director_names", []),
+            ):
+                decoded = _loads(parsed.get(key))
+                parsed[key] = decoded if decoded is not None else default
+            profiles.append(parsed)
+        return profiles
+
+    # ------------------------------------------------------------------ #
+    # vendor_onboarding_sessions (Phase 3.1.a)                             #
+    # ------------------------------------------------------------------ #
+    #
+    # All state-machine transitions go through
+    # transition_onboarding_session_state. Direct UPDATEs to the state
+    # column are forbidden by convention — they bypass the
+    # VendorOnboardingState validator and corrupt the audit timeline.
+
+    _ONBOARDING_SESSION_JSON_COLUMNS = ("metadata",)
+
+    @staticmethod
+    def _decode_onboarding_session_row(row: Any) -> Dict[str, Any]:
+        parsed = dict(row)
+        for key in VendorStore._ONBOARDING_SESSION_JSON_COLUMNS:
+            decoded = _loads(parsed.get(key))
+            parsed[key] = decoded if decoded is not None else {}
+        # Normalize is_active to a Python bool for downstream code that
+        # may pass the dict back into JSON / API responses.
+        if "is_active" in parsed:
+            parsed["is_active"] = bool(parsed["is_active"])
+        return parsed
+
+    def create_vendor_onboarding_session(
+        self,
+        organization_id: str,
+        vendor_name: str,
+        invited_by: str,
+        initial_state: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Open a new onboarding session for a vendor in INVITED state.
+
+        Fails (returns ``None``) if there is already an active session
+        for ``(organization_id, vendor_name)``. The caller is expected
+        to either resume the existing session or close it before
+        opening a new one.
+
+        ``initial_state`` defaults to ``invited`` and is validated
+        against :class:`VendorOnboardingState`. Tests use this hook to
+        construct sessions in arbitrary starting states without going
+        through the full chase loop.
+        """
+        from clearledgr.core.vendor_onboarding_states import (
+            VALID_STATE_VALUES,
+            VendorOnboardingState,
+        )
+
+        existing = self.get_active_onboarding_session(organization_id, vendor_name)
+        if existing is not None:
+            logger.info(
+                "[VendorStore] cannot open onboarding session for %r/%r — active session %s in state %r",
+                organization_id, vendor_name, existing.get("id"), existing.get("state"),
+            )
+            return None
+
+        state_value = (initial_state or VendorOnboardingState.INVITED.value).strip().lower()
+        if state_value not in VALID_STATE_VALUES:
+            logger.warning(
+                "[VendorStore] refusing to create onboarding session in unknown state %r",
+                state_value,
+            )
+            return None
+
+        session_id = str(uuid.uuid4())
+        now = _now()
+        sql = self._prepare_sql(
+            """
+            INSERT INTO vendor_onboarding_sessions (
+                id, organization_id, vendor_name, state, is_active,
+                invited_at, invited_by, last_activity_at,
+                chase_count, metadata, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+        )
+        try:
+            with self.connect() as conn:
+                conn.execute(
+                    sql,
+                    (
+                        session_id, organization_id, vendor_name,
+                        state_value, 1, now, invited_by, now,
+                        0, "{}", now, now,
+                    ),
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.warning(
+                "[VendorStore] create_vendor_onboarding_session failed: %s", exc
+            )
+            return None
+
+        return self.get_onboarding_session_by_id(session_id)
+
+    def get_onboarding_session_by_id(
+        self, session_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch a session by primary key, regardless of active flag."""
+        sql = self._prepare_sql(
+            "SELECT * FROM vendor_onboarding_sessions WHERE id = ?"
+        )
+        try:
+            with self.connect() as conn:
+                if self.use_postgres:
+                    cur = conn.cursor()
+                    cur.execute(sql, (session_id,))
+                    row = cur.fetchone()
+                else:
+                    conn.row_factory = __import__("sqlite3").Row
+                    cur = conn.cursor()
+                    cur.execute(sql, (session_id,))
+                    row = cur.fetchone()
+                if row is None:
+                    return None
+                return self._decode_onboarding_session_row(row)
+        except Exception as exc:
+            logger.warning("[VendorStore] get_onboarding_session_by_id failed: %s", exc)
+            return None
+
+    def get_active_onboarding_session(
+        self, organization_id: str, vendor_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return the currently active session for the vendor, if any."""
+        sql = self._prepare_sql(
+            "SELECT * FROM vendor_onboarding_sessions "
+            "WHERE organization_id = ? AND vendor_name = ? AND is_active = 1 "
+            "ORDER BY invited_at DESC LIMIT 1"
+        )
+        try:
+            with self.connect() as conn:
+                if self.use_postgres:
+                    cur = conn.cursor()
+                    cur.execute(sql, (organization_id, vendor_name))
+                    row = cur.fetchone()
+                else:
+                    conn.row_factory = __import__("sqlite3").Row
+                    cur = conn.cursor()
+                    cur.execute(sql, (organization_id, vendor_name))
+                    row = cur.fetchone()
+                if row is None:
+                    return None
+                return self._decode_onboarding_session_row(row)
+        except Exception as exc:
+            logger.warning(
+                "[VendorStore] get_active_onboarding_session failed: %s", exc
+            )
+            return None
+
+    def list_pending_onboarding_sessions(
+        self,
+        organization_id: Optional[str] = None,
+        states: Optional[List[str]] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """List all active, non-terminal sessions matching the filters.
+
+        ``organization_id`` is optional so the chase loop can scan all
+        organizations in a single query. ``states`` defaults to the
+        pre-active states from
+        :data:`VendorOnboardingState.PRE_ACTIVE_STATES` — pass an
+        explicit list to query escalated, ready_for_erp, or any other
+        slice.
+        """
+        from clearledgr.core.vendor_onboarding_states import (
+            PRE_ACTIVE_STATES,
+        )
+
+        target_states = [s.lower().strip() for s in (states or [s.value for s in PRE_ACTIVE_STATES])]
+        if not target_states:
+            return []
+
+        placeholders = ", ".join("?" for _ in target_states)
+        clauses = ["is_active = 1", f"state IN ({placeholders})"]
+        params: List[Any] = list(target_states)
+        if organization_id:
+            clauses.append("organization_id = ?")
+            params.append(organization_id)
+        params.append(limit)
+
+        sql = self._prepare_sql(
+            "SELECT * FROM vendor_onboarding_sessions WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY last_activity_at ASC LIMIT ?"
+        )
+        try:
+            with self.connect() as conn:
+                if self.use_postgres:
+                    cur = conn.cursor()
+                    cur.execute(sql, params)
+                    rows = cur.fetchall()
+                else:
+                    conn.row_factory = __import__("sqlite3").Row
+                    cur = conn.cursor()
+                    cur.execute(sql, params)
+                    rows = cur.fetchall()
+        except Exception as exc:
+            logger.warning(
+                "[VendorStore] list_pending_onboarding_sessions failed: %s", exc
+            )
+            return []
+
+        return [self._decode_onboarding_session_row(r) for r in rows]
+
+    def transition_onboarding_session_state(
+        self,
+        session_id: str,
+        target_state: str,
+        actor_id: str,
+        reason: Optional[str] = None,
+        metadata_patch: Optional[Dict[str, Any]] = None,
+        emit_audit: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """Move a session through the state machine.
+
+        Validates the transition via
+        :func:`vendor_onboarding_states.transition_or_raise`. On success
+        the canonical timestamp columns are stamped (e.g. transitioning
+        into ``bank_verified`` sets ``bank_verified_at``), the session
+        is marked inactive on terminal states, and an
+        ``vendor_onboarding_state_transition`` audit event is emitted.
+
+        Returns the updated session dict, or ``None`` if the session is
+        not found. Raises
+        :class:`IllegalVendorOnboardingTransitionError` for an illegal
+        edge — the caller decides whether to translate that into a 409
+        Conflict or a 500 internal error.
+        """
+        from clearledgr.core.vendor_onboarding_states import (
+            TERMINAL_STATES,
+            VendorOnboardingState,
+            normalize_state,
+            transition_or_raise,
+        )
+
+        session = self.get_onboarding_session_by_id(session_id)
+        if session is None:
+            logger.info(
+                "[VendorStore] transition_onboarding_session_state: session %s not found",
+                session_id,
+            )
+            return None
+
+        current = session.get("state") or ""
+        target = normalize_state(target_state)
+        transition_or_raise(current, target, session_id=session_id)
+
+        now = _now()
+        updates: Dict[str, Any] = {
+            "state": target,
+            "last_activity_at": now,
+            "updated_at": now,
+        }
+
+        # Stamp the canonical timestamp column for each state we land
+        # in. This means callers don't need to remember which side-table
+        # column corresponds to which state — the state machine layer
+        # handles the bookkeeping.
+        if target == VendorOnboardingState.AWAITING_BANK.value:
+            updates["kyc_submitted_at"] = now
+        elif target == VendorOnboardingState.MICRODEPOSIT_PENDING.value:
+            updates["bank_submitted_at"] = updates.get("bank_submitted_at") or now
+            updates["microdeposit_initiated_at"] = now
+            updates["microdeposit_initiated_by"] = actor_id
+        elif target == VendorOnboardingState.BANK_VERIFIED.value:
+            updates["bank_verified_at"] = now
+        elif target == VendorOnboardingState.ACTIVE.value:
+            updates["erp_activated_at"] = now
+            updates["completed_at"] = now
+        elif target == VendorOnboardingState.ESCALATED.value:
+            updates["escalated_at"] = now
+            if reason:
+                updates["escalated_reason"] = reason
+        elif target == VendorOnboardingState.REJECTED.value:
+            updates["rejected_at"] = now
+            updates["rejected_by"] = actor_id
+            if reason:
+                updates["rejection_reason"] = reason
+        elif target == VendorOnboardingState.ABANDONED.value:
+            updates["abandoned_at"] = now
+
+        # Terminal states deactivate the session so the next
+        # create_vendor_onboarding_session call will succeed.
+        try:
+            terminal = VendorOnboardingState(target) in TERMINAL_STATES
+        except ValueError:
+            terminal = False
+        if terminal:
+            updates["is_active"] = 0
+
+        if metadata_patch:
+            current_meta = session.get("metadata") or {}
+            if not isinstance(current_meta, dict):
+                current_meta = {}
+            current_meta.update(metadata_patch)
+            updates["metadata"] = json.dumps(current_meta)
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        params = list(updates.values()) + [session_id]
+        sql = self._prepare_sql(
+            f"UPDATE vendor_onboarding_sessions SET {set_clause} WHERE id = ?"
+        )
+        try:
+            with self.connect() as conn:
+                conn.execute(sql, params)
+                conn.commit()
+        except Exception as exc:
+            logger.warning(
+                "[VendorStore] transition_onboarding_session_state UPDATE failed: %s", exc
+            )
+            return None
+
+        updated = self.get_onboarding_session_by_id(session_id)
+
+        if emit_audit and hasattr(self, "append_ap_audit_event"):
+            try:
+                self.append_ap_audit_event(
+                    {
+                        "ap_item_id": "",
+                        "event_type": "vendor_onboarding_state_transition",
+                        "actor_type": "user" if actor_id else "agent",
+                        "actor_id": actor_id or "agent",
+                        "reason": (
+                            f"Vendor onboarding session {session_id}: "
+                            f"{current} -> {target}"
+                            + (f" — {reason}" if reason else "")
+                        ),
+                        "metadata": {
+                            "session_id": session_id,
+                            "vendor_name": session.get("vendor_name"),
+                            "from_state": current,
+                            "to_state": target,
+                            "reason": reason,
+                        },
+                        "organization_id": session.get("organization_id") or "",
+                        "source": "vendor_onboarding_state_machine",
+                    }
+                )
+            except Exception as audit_exc:
+                logger.warning(
+                    "[VendorStore] onboarding state transition audit failed (non-fatal): %s",
+                    audit_exc,
+                )
+
+        return updated
+
+    def record_onboarding_chase(
+        self,
+        session_id: str,
+        chase_type: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Stamp last_chase_at and increment chase_count after a chase send.
+
+        Does NOT advance the state machine — chases happen in the same
+        state. The chase loop calls this after a successful email
+        dispatch so the next tick can decide whether to chase again.
+        """
+        session = self.get_onboarding_session_by_id(session_id)
+        if session is None:
+            return None
+
+        now = _now()
+        new_count = int(session.get("chase_count") or 0) + 1
+        sql = self._prepare_sql(
+            "UPDATE vendor_onboarding_sessions "
+            "SET last_chase_at = ?, chase_count = ?, updated_at = ? "
+            "WHERE id = ?"
+        )
+        try:
+            with self.connect() as conn:
+                conn.execute(sql, (now, new_count, now, session_id))
+                conn.commit()
+        except Exception as exc:
+            logger.warning(
+                "[VendorStore] record_onboarding_chase failed: %s", exc
+            )
+            return None
+
+        if hasattr(self, "append_ap_audit_event"):
+            try:
+                self.append_ap_audit_event(
+                    {
+                        "ap_item_id": "",
+                        "event_type": "vendor_onboarding_chase_sent",
+                        "actor_type": "agent",
+                        "actor_id": "agent",
+                        "reason": (
+                            f"Vendor onboarding chase #{new_count} ({chase_type}) "
+                            f"for session {session_id}"
+                        ),
+                        "metadata": {
+                            "session_id": session_id,
+                            "vendor_name": session.get("vendor_name"),
+                            "chase_type": chase_type,
+                            "chase_count": new_count,
+                            "current_state": session.get("state"),
+                        },
+                        "organization_id": session.get("organization_id") or "",
+                        "source": "vendor_onboarding_state_machine",
+                    }
+                )
+            except Exception as audit_exc:
+                logger.warning(
+                    "[VendorStore] onboarding chase audit failed (non-fatal): %s",
+                    audit_exc,
+                )
+
+        return self.get_onboarding_session_by_id(session_id)
+
+    def attach_erp_vendor_id(
+        self,
+        session_id: str,
+        erp_vendor_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Persist the ERP vendor ID returned by the create_vendor dispatcher.
+
+        Called by Phase 3.1.e when the agent successfully writes the
+        vendor to the customer's ERP vendor master. Must be called
+        BEFORE the state machine transitions to ``active`` so the audit
+        trail captures both the ERP ID and the state change in the
+        right order.
+        """
+        if not erp_vendor_id:
+            return None
+        session = self.get_onboarding_session_by_id(session_id)
+        if session is None:
+            return None
+        now = _now()
+        sql = self._prepare_sql(
+            "UPDATE vendor_onboarding_sessions "
+            "SET erp_vendor_id = ?, updated_at = ? "
+            "WHERE id = ?"
+        )
+        try:
+            with self.connect() as conn:
+                conn.execute(sql, (erp_vendor_id, now, session_id))
+                conn.commit()
+        except Exception as exc:
+            logger.warning("[VendorStore] attach_erp_vendor_id failed: %s", exc)
+            return None
+        return self.get_onboarding_session_by_id(session_id)

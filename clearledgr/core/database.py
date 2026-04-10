@@ -1195,6 +1195,8 @@ class _ClearledgrDBBase:
             cur.execute(VendorStore.VENDOR_PROFILE_TABLE_SQL)
             cur.execute(VendorStore.VENDOR_INVOICE_HISTORY_TABLE_SQL)
             cur.execute(VendorStore.VENDOR_DECISION_FEEDBACK_TABLE_SQL)
+            # Phase 3.1.a: vendor onboarding workflow sessions (DESIGN_THESIS.md §9)
+            cur.execute(VendorStore.VENDOR_ONBOARDING_SESSIONS_TABLE_SQL)
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_vendor_profiles_org_name "
                 "ON vendor_profiles(organization_id, vendor_name)"
@@ -1206,6 +1208,14 @@ class _ClearledgrDBBase:
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_vendor_decision_feedback_org_vendor "
                 "ON vendor_decision_feedback(organization_id, vendor_name, created_at)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_vendor_onboarding_active "
+                "ON vendor_onboarding_sessions(organization_id, vendor_name, is_active)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_vendor_onboarding_state_activity "
+                "ON vendor_onboarding_sessions(state, last_activity_at)"
             )
 
             # Approval chain persistence tables

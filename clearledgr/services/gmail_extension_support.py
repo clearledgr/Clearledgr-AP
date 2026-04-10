@@ -607,43 +607,79 @@ def build_vendor_suggestion_payload(
     sender_email: Optional[str] = None,
     extracted_vendor: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build vendor-match suggestions from extraction and sender domain."""
-    from clearledgr.services.fuzzy_matching import get_fuzzy_matcher
-    from clearledgr.services.vendor_management import get_vendor_management_service
+    """Build vendor-match suggestions from extraction and sender domain.
 
-    matcher = get_fuzzy_matcher()
-    vendor_service = get_vendor_management_service(organization_id)
+    Phase 3.1.a — rewritten to read directly from the DB-backed
+    ``vendor_profiles`` table via :class:`VendorStore`. The previous
+    implementation depended on
+    ``clearledgr.services.vendor_management.VendorManagementService``,
+    which carried an in-memory ``_vendors`` dict that was never
+    populated in production and on a stale fuzzy-matcher API that no
+    longer exists. Both have been removed in Phase 3.1.a.
+
+    Match strategy:
+      1. Score the extracted vendor name against every vendor profile
+         in the org using :func:`vendor_similarity`. Top hits above the
+         confidence floor are returned as ``"extraction"`` matches.
+      2. Match the sender's email domain against any vendor profile
+         whose ``sender_domains`` list contains the registrable domain.
+         These are returned as ``"email_domain"`` matches.
+
+    The two paths can both produce a hit for the same vendor; we
+    deduplicate by vendor_name and keep the higher-confidence source.
+    """
+    from clearledgr.core.database import get_db
+    from clearledgr.services.fuzzy_matching import vendor_similarity
+
+    db = get_db()
+    profiles = db.list_vendor_profiles(organization_id)
 
     candidates: List[Dict[str, Any]] = []
-    vendors = vendor_service.get_all_vendors()
+    seen_names: set = set()
 
     if extracted_vendor:
-        match = matcher.find_best_vendor_match(extracted_vendor, vendors)
-        if match and match.get("score", 0) > 0.6:
-            candidates.append(
-                {
-                    "vendor_id": match.get("vendor_id"),
-                    "vendor_name": match.get("vendor_name"),
-                    "confidence": match.get("score", 0.7),
-                    "source": "extraction",
-                    "matched_from": extracted_vendor,
-                }
-            )
-
-    if sender_email:
-        domain = sender_email.split("@")[-1] if "@" in sender_email else None
-        if domain:
-            domain_match = matcher.find_vendor_by_domain(domain, vendors)
-            if domain_match and not any(c["vendor_id"] == domain_match.get("vendor_id") for c in candidates):
-                candidates.append(
+        scored: List[Dict[str, Any]] = []
+        for profile in profiles:
+            vendor_name = str(profile.get("vendor_name") or "").strip()
+            if not vendor_name:
+                continue
+            score = vendor_similarity(extracted_vendor, vendor_name)
+            if score >= 0.6:
+                scored.append(
                     {
-                        "vendor_id": domain_match.get("vendor_id"),
-                        "vendor_name": domain_match.get("vendor_name"),
-                        "confidence": domain_match.get("score", 0.6),
-                        "source": "email_domain",
-                        "matched_from": domain,
+                        "vendor_name": vendor_name,
+                        "confidence": round(score, 4),
+                        "source": "extraction",
+                        "matched_from": extracted_vendor,
                     }
                 )
+        scored.sort(key=lambda entry: entry["confidence"], reverse=True)
+        for entry in scored:
+            if entry["vendor_name"] in seen_names:
+                continue
+            seen_names.add(entry["vendor_name"])
+            candidates.append(entry)
+
+    if sender_email and "@" in sender_email:
+        domain = sender_email.split("@", 1)[-1].strip().lower()
+        if domain:
+            for profile in profiles:
+                vendor_name = str(profile.get("vendor_name") or "").strip()
+                if not vendor_name or vendor_name in seen_names:
+                    continue
+                sender_domains = profile.get("sender_domains") or []
+                if not isinstance(sender_domains, list):
+                    continue
+                if domain in {str(d).strip().lower() for d in sender_domains}:
+                    seen_names.add(vendor_name)
+                    candidates.append(
+                        {
+                            "vendor_name": vendor_name,
+                            "confidence": 0.85,
+                            "source": "email_domain",
+                            "matched_from": domain,
+                        }
+                    )
 
     candidates.sort(key=lambda entry: entry["confidence"], reverse=True)
     return {
