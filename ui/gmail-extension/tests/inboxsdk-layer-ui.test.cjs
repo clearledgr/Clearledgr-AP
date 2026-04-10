@@ -656,7 +656,7 @@ test('invoice detail page exposes explicit non-invoice review actions', () => {
   assert.equal(source.includes('Record vendor credit'), true);
 });
 
-test('home page queue shortcuts and saved views stay user and org scoped', () => {
+test('home page renders thesis §6.1 sections and stays user and org scoped', () => {
   const source = fs.readFileSync(
     path.resolve(__dirname, '..', 'src/routes/pages/HomePage.js'),
     'utf8',
@@ -670,46 +670,39 @@ test('home page queue shortcuts and saved views stay user and org scoped', () =>
     'utf8',
   );
 
+  // Auth + scoping contracts still hold
   assert.equal(source.includes('const adminAccess = hasAdminAccess(bootstrap);'), true);
   assert.equal(source.includes('const pipelineScope = { orgId, userEmail };'), true);
-  assert.equal(source.includes('getBootstrappedPipelinePreferences(bootstrap)'), true);
-  assert.equal(source.includes('readPipelinePreferences(pipelineScope)'), true);
-  assert.equal(source.includes('getPinnedPipelineViews(pipelinePrefs)'), true);
-  assert.equal(source.includes('getStarterPipelineViews(pipelinePrefs)'), true);
-  assert.equal(source.includes('writePipelinePreferences(pipelineScope, view.snapshot)'), true);
-  assert.equal(source.includes("activatePipelineSlice(pipelineScope, sliceId)"), true);
   assert.equal(source.includes("/api/ap/audit/recent?organization_id="), true);
-  assert.equal(source.includes('Welcome to Clearledgr'), true);
-  assert.equal(source.includes("import { getRouteIconUrl } from '../route-icons.js';"), true);
-  assert.equal(source.includes('Connections'), true);
-  assert.equal(source.includes('Team'), true);
-  assert.equal(source.includes('Billing'), true);
-  assert.equal(source.includes('home-utility-icon-button'), true);
-  assert.equal(source.includes('home-utility-primary'), true);
+
+  // §6.1 thesis-defined Home sections
+  assert.equal(source.includes('Exception queue'), true);
+  assert.equal(source.includes('Awaiting your approval'), true);
+  assert.equal(source.includes('Due for payment this week'), true);
+  assert.equal(source.includes('Agent actions today'), true);
+  assert.equal(source.includes('Vendor onboarding blockers'), true);
   assert.equal(source.includes('Quick access'), true);
-  assert.equal(source.includes('Recent work'), true);
-  assert.equal(source.includes('Recently posted'), true);
-  assert.equal(source.includes('Upcoming tasks'), true);
-  assert.equal(source.includes('class="home-quick-row"'), true);
-  assert.equal(source.includes('class="home-main-grid"'), true);
+
+  // Quick access has the three thesis-specified links
+  assert.equal(source.includes('AP Invoices'), true);
+  assert.equal(source.includes('Vendor Onboarding'), true);
+  assert.equal(source.includes('Agent Activity'), true);
+
+  // Home header branding
+  assert.equal(source.includes('Clearledgr Home'), true);
+
+  // Structural grid + panel classes still present
   assert.equal(source.includes('class="home-panel-grid"'), true);
-  assert.equal(source.includes('Saved views and slices'), true);
-  assert.equal(source.includes('Highlights'), true);
-  assert.equal(source.includes('Choose what stays on Home'), false);
+  assert.equal(source.includes('class="home-quick-row"'), true);
+
+  // Style contracts
   assert.equal(routeStyles.includes('box-sizing: border-box;'), true);
   assert.equal(routeStyles.includes('max-width: none;'), true);
   assert.equal(routeStyles.includes('.cl-route .home-header-shell {'), true);
-  assert.equal(routeStyles.includes('.cl-route .home-utility-rail {'), true);
-  assert.equal(routeStyles.includes('.cl-route .home-utility-strip {'), true);
-  assert.equal(routeStyles.includes('.cl-route .home-utility-icon {'), true);
-  assert.equal(routeStyles.includes('.cl-route .home-utility-icon-button {'), true);
-  assert.equal(routeStyles.includes('.cl-route .home-utility-primary {'), true);
-  assert.equal(routeStyles.includes('.cl-route input[type="checkbox"],'), true);
   assert.equal(routeStyles.includes('.cl-route .home-quick-row {'), true);
-  assert.equal(routeStyles.includes('.cl-route .home-main-grid {'), true);
   assert.equal(routeStyles.includes('.cl-route .home-panel-grid {'), true);
-  assert.equal(routeStyles.includes('.cl-route .home-status-pill {'), true);
-  assert.equal(routeStyles.includes('grid-template-columns: minmax(0, 1.42fr) minmax(336px, 0.78fr);'), true);
+
+  // Layout contracts
   assert.equal(inboxLayerSource.includes("routeEl.style.maxWidth = 'none';"), true);
   assert.equal(inboxLayerSource.includes("routeEl.style.width = '100%';"), true);
 });

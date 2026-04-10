@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:545f7b5d82c01434e67fa6c024e9d27abc7f1cf9de880efbfd98286aaf378d5d */
+/* clearledgr-source-fingerprint:17ceaf4bf5b29ad774d65b55f96b7239214b79579dd40b86bf45f8876dc8fe4d */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -65721,39 +65721,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     "blocked_exception",
     "needs_info"
   ];
-  function UtilityIconAction({ label, detail, icon, onClick }) {
-    const title = detail ? `${label} — ${detail}` : label;
-    return html4`<button
-    class="home-utility-icon-button"
-    onClick=${onClick}
-    title=${title}
-    aria-label=${label}
-  >
-    <span class="home-utility-icon" style=${`background-image:url(${icon || getRouteIconUrl("activity")})`}></span>
-  </button>`;
-  }
-  function HomeStatusPill({ label, value, tone = "default" }) {
-    return html4`<span class=${`home-status-pill ${tone}`}>
-    <strong>${value}</strong>
-    <span>${label}</span>
-  </span>`;
-  }
-  function QuickLinkRow({ label, detail, actionLabel = "Open", onClick }) {
-    return html4`<button
-    onClick=${onClick}
-    style="
-      display:flex;align-items:center;justify-content:space-between;gap:14px;
-      width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);
-      background:var(--surface);cursor:pointer;font-family:inherit;text-align:left;
-    "
-  >
-    <span style="min-width:0;flex:1">
-      <strong style="display:block;font-size:13px;margin-bottom:2px">${label}</strong>
-      <span class="muted" style="display:block;font-size:12px;line-height:1.45">${detail}</span>
-    </span>
-    <span class="muted" style="font-size:12px;font-weight:700;white-space:nowrap">${actionLabel}</span>
-  </button>`;
-  }
   function buildTaskLocator(task = {}) {
     return {
       id: task.ap_item_id,
@@ -65797,35 +65764,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   </div>`;
   }
-  function UpcomingTaskActionRow({ task, onOpenRecord, onOpenSlice, onOpenEmail }) {
-    const statusLabel = String(task?.status || "").toLowerCase() === "overdue" ? "Overdue" : String(task?.status || "").toLowerCase() === "today" ? "Today" : "Queued";
-    return html4`<div class="home-event-row">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <div style="min-width:0;flex:1">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-          <strong style="font-size:13px">${task?.title || "Follow-up"}</strong>
-          <span style="
-            font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;
-            background:${statusLabel === "Overdue" ? "#FEF2F2" : statusLabel === "Today" ? "#FEF3C7" : "#EFF6FF"};
-            color:${statusLabel === "Overdue" ? "#B91C1C" : statusLabel === "Today" ? "#92400E" : "#1D4ED8"};
-          ">${statusLabel}</span>
-        </div>
-        <div class="muted" style="font-size:12px;margin-bottom:4px">
-          ${task?.vendor_name || "Unknown vendor"} · ${task?.invoice_number || "No invoice #"} · ${formatAmount(task?.amount, task?.currency)}
-        </div>
-        <div class="muted" style="font-size:12px;line-height:1.5">${task?.detail || "Follow-up needed."}</div>
-        <div class="muted" style="font-size:12px;margin-top:6px">
-          ${task?.due_at ? `Due ${fmtDateTime(task.due_at)}` : "No explicit follow-up time"}
-        </div>
-      </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-        <button class="btn-secondary btn-sm" onClick=${onOpenRecord}>Open record</button>
-        <button class="btn-ghost btn-sm" onClick=${onOpenSlice}>Open slice</button>
-        ${task?.thread_id || task?.message_id ? html4`<button class="btn-ghost btn-sm" onClick=${onOpenEmail}>Open email</button>` : null}
-      </div>
-    </div>
-  </div>`;
-  }
   function SetupNotice({
     adminAccess,
     missingSetup,
@@ -65862,46 +65800,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return html4`<div class="home-empty-state">
     <div class="home-empty-glyph"></div>
     <div class="home-empty-copy">${text}</div>
-  </div>`;
-  }
-  function QuickAccessStrip({ items = [] }) {
-    if (!Array.isArray(items) || items.length === 0)
-      return null;
-    return html4`
-    <div class="panel">
-      <div class="panel-head compact">
-        <div>
-          <div class="home-eyebrow">Quick access</div>
-          <p class="muted" style="margin:0">The work and tool shortcuts you should not have to hunt for in Gmail.</p>
-        </div>
-      </div>
-      <div class="home-quick-row">
-        ${items.map((item) => html4`
-          <${ToolbarAction}
-            key=${item.key}
-            label=${item.label}
-            detail=${item.detail}
-            meta=${item.meta || "Open"}
-            onClick=${item.onClick}
-          />
-        `)}
-      </div>
-    </div>
-  `;
-  }
-  function InsightList({ items = [] }) {
-    const rows = (Array.isArray(items) ? items : []).filter(Boolean);
-    if (!rows.length)
-      return null;
-    return html4`<div class="home-list-stack">
-    ${rows.map((item, index) => html4`
-      <div key=${index} class="home-event-row">
-        <div style="display:flex;align-items:flex-start;gap:10px">
-          <span style="width:7px;height:7px;border-radius:999px;background:var(--accent);margin-top:7px;flex:0 0 auto"></span>
-          <div class="muted" style="font-size:13px;line-height:1.55">${item}</div>
-        </div>
-      </div>
-    `)}
   </div>`;
   }
   function SectionPanel({ title, detail, actionLabel = "", onAction, children, panelMinHeight = 0, className = "" }) {
@@ -66187,41 +66085,57 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     ].filter(Boolean).slice(0, 5);
     const primaryUtility = utilityItems.find((item) => item.tone === "accent") || null;
     const secondaryUtilities = utilityItems.filter((item) => item.tone !== "accent");
+    const queue = Array.isArray(bootstrap?.queue) ? bootstrap.queue : [];
+    const exceptionQueue = T2(() => queue.filter((item) => {
+      const s3 = String(item?.state || "").toLowerCase();
+      return s3 === "needs_info" || s3 === "failed_post" || s3 === "reversed" || Boolean(item?.exception_code);
+    }).sort((a3, b) => {
+      const dueA = a3?.due_date || a3?.payment_due_date || "9999";
+      const dueB = b?.due_date || b?.payment_due_date || "9999";
+      return dueA < dueB ? -1 : dueA > dueB ? 1 : 0;
+    }).slice(0, 10), [queue]);
+    const awaitingApproval = T2(() => queue.filter((item) => {
+      const s3 = String(item?.state || "").toLowerCase();
+      return s3 === "needs_approval" || s3 === "pending_approval";
+    }).sort((a3, b) => {
+      const dueA = a3?.due_date || a3?.payment_due_date || "9999";
+      const dueB = b?.due_date || b?.payment_due_date || "9999";
+      return dueA < dueB ? -1 : dueA > dueB ? 1 : 0;
+    }).slice(0, 10), [queue]);
+    const dueThisWeek = T2(() => {
+      const now = new Date;
+      const weekFromNow = new Date(now.getTime() + 7 * 86400000);
+      return queue.filter((item) => {
+        const s3 = String(item?.state || "").toLowerCase();
+        if (s3 !== "approved" && s3 !== "ready_to_post" && s3 !== "posted_to_erp")
+          return false;
+        const due = item?.due_date || item?.payment_due_date;
+        if (!due)
+          return false;
+        try {
+          const d3 = new Date(due);
+          return d3 >= now && d3 <= weekFromNow;
+        } catch {
+          return false;
+        }
+      }).sort((a3, b) => {
+        const dueA = a3?.due_date || a3?.payment_due_date || "";
+        const dueB = b?.due_date || b?.payment_due_date || "";
+        return dueA < dueB ? -1 : dueA > dueB ? 1 : 0;
+      }).slice(0, 10);
+    }, [queue]);
+    const agentActionsToday = T2(() => {
+      const midnightIso = new Date().toISOString().slice(0, 10);
+      return (Array.isArray(recentAudit) ? recentAudit : []).filter((e3) => String(e3?.ts || e3?.created_at || "").slice(0, 10) >= midnightIso).slice(0, 10);
+    }, [recentAudit]);
     return html4`
     <div class="topbar home-header-shell">
       <div class="home-header-copy">
-        <div class="home-eyebrow">Home</div>
-        <h2>Welcome to Clearledgr</h2>
-        <p>
-          ${allReady ? "Run the finance lane from Gmail: reopen work, clear blockers, watch follow-ups, and move invoices forward without hunting through the product." : gmailOk ? `${greeting}${firstName ? `, ${firstName}` : ""}. Gmail is active. Finish the remaining setup so approvals, posting, and automation can run from the same place.` : `${greeting}${firstName ? `, ${firstName}` : ""}. Connect Gmail to start processing invoices from inside the workspace.`}
+        <div class="home-eyebrow">Clearledgr Home</div>
+        <h2>${greeting}${firstName ? `, ${firstName}` : ""}</h2>
+        <p class="muted">
+          ${allReady ? "What broke overnight, what needs approval, what is due soon, and what the agent is working on." : gmailOk ? "Gmail is active. Finish the remaining setup so approvals and posting can run." : "Connect Gmail to start processing invoices."}
         </p>
-        <div class="home-status-row">
-          <${HomeStatusPill}
-            label=${allReady ? "Lane" : gmailOk ? "Status" : "Setup"}
-            value=${allReady ? "Active" : gmailOk ? "Processing" : "Needed"}
-            tone=${allReady ? "success" : gmailOk ? "info" : "warning"}
-          />
-          <${HomeStatusPill} label="Pending approval" value=${Number(dashboard?.pending_approval || 0).toLocaleString()} />
-          <${HomeStatusPill} label="Posted today" value=${Number(dashboard?.posted_today || 0).toLocaleString()} />
-          ${Number(dashboard?.auto_approved_rate || 0) > 0 ? html4`<${HomeStatusPill} label="Touchless" value=${fmtRate(dashboard.auto_approved_rate)} tone="success" />` : null}
-          ${lastScanAt ? html4`<${HomeStatusPill} label="Last scan" value=${fmtDateTime(lastScanAt)} />` : null}
-        </div>
-      </div>
-      <div class="home-utility-rail">
-        <div class="home-utility-strip">
-          ${secondaryUtilities.map((item) => html4`
-            <${UtilityIconAction}
-              key=${item.key}
-              label=${item.label}
-              detail=${item.detail}
-              icon=${item.icon}
-              onClick=${item.onClick}
-            />
-          `)}
-        </div>
-        ${primaryUtility ? html4`<button class="home-utility-primary" onClick=${primaryUtility.onClick}>
-              ${primaryUtility.label}
-            </button>` : null}
       </div>
     </div>
 
@@ -66235,118 +66149,133 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           showRulesAction=${!policyOk}
         />` : null}
 
-    ${allReady ? html4`<div class="home-banner">
-          <div style="min-width:0;flex:1">
-            <div class="home-eyebrow" style="margin-bottom:6px">Finance lane update</div>
-            <p class="muted" style="margin:0">
-              ${Number(dashboard?.pending_approval || 0).toLocaleString()} waiting on approval · ${Number(dashboard?.posted_today || 0).toLocaleString()} posted today
-              ${Number(agenticSnapshot?.shadow_disagreement_count || 0) > 0 ? ` · ${Number(agenticSnapshot.shadow_disagreement_count).toLocaleString()} shadow disagreements still under review` : ""}
-            </p>
-          </div>
-          <div class="toolbar-actions">
-            <button class="btn-secondary btn-sm" onClick=${() => navigate(adminAccess ? "clearledgr/reports" : "clearledgr/activity")}>
-              ${adminAccess ? "Open reports" : "Open activity"}
-            </button>
-          </div>
-        </div>` : null}
+    <!-- §6.1 Section 1: Exception Queue -->
+    <${SectionPanel}
+      title="Exception queue"
+      detail=${exceptionQueue.length > 0 ? `${exceptionQueue.length} exception${exceptionQueue.length === 1 ? "" : "s"} need resolution, ordered by due date.` : "No exceptions right now. Everything is flowing."}
+      actionLabel=${exceptionQueue.length > 0 ? "Open exceptions" : ""}
+      onAction=${() => {
+      openPipelineSlice("blocked_exception");
+    }}
+      panelMinHeight=${120}
+    >
+      ${exceptionQueue.length > 0 ? html4`<div class="home-list-stack">
+            ${exceptionQueue.map((item, i3) => html4`
+              <${AuditEventRow}
+                key=${item.id || i3}
+                entry=${{
+      title: item.vendor_name || item.vendor || "Unknown vendor",
+      detail: item.exception_reason || item.last_error || String(item.state || "").replace(/_/g, " "),
+      amount: item.amount,
+      currency: item.currency,
+      invoice_number: item.invoice_number,
+      vendor_name: item.vendor_name || item.vendor,
+      ts: item.due_date || item.payment_due_date || item.updated_at,
+      operator_severity: "warning"
+    }}
+                actionLabel="Resolve"
+                onAction=${() => openRecord(item.id, { id: item.id })}
+              />
+            `)}
+          </div>` : html4`<${EmptyPanelState} text="Exceptions that need resolution before their due date will appear here." />`}
+    </${SectionPanel}>
 
-    <${QuickAccessStrip} items=${quickAccessItems} />
+    <!-- §6.1 Section 2: Awaiting Your Approval -->
+    <${SectionPanel}
+      title="Awaiting your approval"
+      detail=${awaitingApproval.length > 0 ? `${awaitingApproval.length} invoice${awaitingApproval.length === 1 ? "" : "s"} matched and waiting for sign-off.` : "No invoices waiting on you."}
+      actionLabel=${awaitingApproval.length > 0 ? "Open approvals" : ""}
+      onAction=${() => {
+      openPipelineSlice("waiting_on_approval");
+    }}
+      panelMinHeight=${120}
+    >
+      ${awaitingApproval.length > 0 ? html4`<div class="home-list-stack">
+            ${awaitingApproval.map((item, i3) => html4`
+              <${AuditEventRow}
+                key=${item.id || i3}
+                entry=${{
+      title: `${item.vendor_name || item.vendor || "Unknown"} — ${formatAmount(item.amount, item.currency)}`,
+      detail: item.invoice_number ? `Invoice ${item.invoice_number}` : "Approve or reject from here.",
+      ts: item.due_date || item.payment_due_date || item.updated_at
+    }}
+                actionLabel="Review"
+                onAction=${() => openRecord(item.id, { id: item.id })}
+              />
+            `)}
+          </div>` : html4`<${EmptyPanelState} text="Invoices the agent has matched and routed for your sign-off will appear here." />`}
+    </${SectionPanel}>
 
-    <div class="home-main-grid">
+    <div class="home-panel-grid">
+      <!-- §6.1 Section 3: Due For Payment This Week -->
       <${SectionPanel}
-        title="Recent work"
-        detail=${recentWork.length > 0 ? "Resume the records that moved most recently." : "Recent invoice movement will collect here as work happens."}
-        actionLabel=${workAccess ? "Open activity" : ""}
-        onAction=${() => navigate("clearledgr/activity")}
-        panelMinHeight=${240}
-        className="home-primary-panel"
+        title="Due for payment this week"
+        detail=${dueThisWeek.length > 0 ? `${dueThisWeek.length} approved invoice${dueThisWeek.length === 1 ? "" : "s"} scheduled for payment in the next 7 days.` : "No payments due this week."}
+        actionLabel=${dueThisWeek.length > 0 ? "Open invoices" : ""}
+        onAction=${() => navigate("clearledgr/invoices")}
+        panelMinHeight=${160}
       >
-        ${recentWork.length > 0 ? html4`<div class="home-list-stack">
-              ${recentWork.map((entry, index) => {
+        ${dueThisWeek.length > 0 ? html4`<div class="home-list-stack">
+              ${dueThisWeek.map((item, i3) => html4`
+                <${AuditEventRow}
+                  key=${item.id || i3}
+                  entry=${{
+      title: `${item.vendor_name || item.vendor || "Unknown"} — ${formatAmount(item.amount, item.currency)}`,
+      detail: `Due ${fmtDateTime(item.due_date || item.payment_due_date)}`,
+      ts: item.due_date || item.payment_due_date,
+      operator_severity: "info"
+    }}
+                  actionLabel="Open"
+                  onAction=${() => openRecord(item.id, { id: item.id })}
+                />
+              `)}
+            </div>` : html4`<${EmptyPanelState} text="Approved invoices scheduled for payment in the next 7 days will appear here." />`}
+      </${SectionPanel}>
+
+      <!-- §6.1 Section 4: Agent Actions Today -->
+      <${SectionPanel}
+        title="Agent actions today"
+        detail=${agentActionsToday.length > 0 ? `${agentActionsToday.length} action${agentActionsToday.length === 1 ? "" : "s"} since midnight.` : "No agent actions yet today."}
+        actionLabel="Open activity"
+        onAction=${() => navigate("clearledgr/activity")}
+        panelMinHeight=${160}
+      >
+        ${agentActionsToday.length > 0 ? html4`<div class="home-list-stack">
+              ${agentActionsToday.map((entry, index) => {
       const recordId = String(entry?.ap_item_id || "").trim();
       const auditRow = buildAuditRow(entry);
       return html4`<${AuditEventRow}
                   key=${entry?.id || `${entry?.ts || "event"}:${index}`}
                   entry=${{ ...entry, ...auditRow, operator_severity: auditRow.severity }}
-                  actionLabel=${recordId ? "Open record" : "Open activity"}
-                  onAction=${() => recordId ? openRecord(recordId, { id: recordId }) : navigate("clearledgr/activity")}
+                  actionLabel=${recordId ? "Open" : ""}
+                  onAction=${() => recordId && openRecord(recordId, { id: recordId })}
                 />`;
     })}
-            </div>` : html4`<${EmptyPanelState} text="Recent AP activity will appear here once invoices start moving through the workflow." />`}
-      </${SectionPanel}>
-
-      <${SectionPanel}
-        title="Recently posted"
-        detail=${Number(dashboard?.posted_today || 0) > 0 ? `${Number(dashboard.posted_today).toLocaleString()} record${Number(dashboard.posted_today) === 1 ? "" : "s"} posted or closed today.` : "Posted invoices and completed records will show up here."}
-        actionLabel=${adminAccess ? "Open reports" : "Open invoices"}
-        onAction=${() => navigate(adminAccess ? "clearledgr/reports" : "clearledgr/invoices")}
-        panelMinHeight=${240}
-        className="home-secondary-panel"
-      >
-        ${recentWins.length > 0 ? html4`<div class="home-list-stack">
-              ${recentWins.map((entry, index) => {
-      const recordId = String(entry?.ap_item_id || "").trim();
-      const auditRow = buildAuditRow(entry);
-      return html4`<${AuditEventRow}
-                  key=${entry?.id || `${entry?.ts || "win"}:${index}`}
-                  entry=${{ ...entry, ...auditRow, operator_severity: auditRow.severity }}
-                  actionLabel=${recordId ? "Open record" : "Open reports"}
-                  onAction=${() => recordId ? openRecord(recordId, { id: recordId }) : navigate(adminAccess ? "clearledgr/reports" : "clearledgr/invoices")}
-                />`;
-    })}
-            </div>` : html4`<${EmptyPanelState} text="Posted invoices, recovered posts, and other finance wins will appear here." />`}
+            </div>` : html4`<${EmptyPanelState} text="The agent's actions since midnight will appear here — one line each." />`}
       </${SectionPanel}>
     </div>
 
     <div class="home-panel-grid">
+      <!-- §6.1 Section 5: Vendor Onboarding Blockers -->
       <${SectionPanel}
-        title="Upcoming tasks"
-        detail=${upcomingSummary > 0 ? `${upcomingSummary} thing${upcomingSummary === 1 ? "" : "s"} need attention next.` : "No upcoming follow-ups yet."}
-        actionLabel=${workAccess ? "Open upcoming" : ""}
-        onAction=${() => navigate("clearledgr/upcoming")}
-        panelMinHeight=${240}
+        title="Vendor onboarding blockers"
+        detail="Vendors stuck in onboarding for more than 48 hours."
+        panelMinHeight=${120}
       >
-        ${Array.isArray(upcomingPayload?.tasks) && upcomingPayload.tasks.length > 0 ? html4`<div class="home-list-stack">
-              ${upcomingPayload.tasks.map((task) => html4`
-                <${UpcomingTaskActionRow}
-                  key=${task.id}
-                  task=${task}
-                  onOpenRecord=${() => openUpcomingTaskRecord(task)}
-                  onOpenSlice=${() => openUpcomingTaskSlice(task)}
-                  onOpenEmail=${() => openUpcomingTaskEmail(task)}
-                />
-              `)}
-            </div>` : html4`<${EmptyPanelState} text="Clearledgr will show the next approvals, vendor follow-ups, and posting retries here." />`}
+        <${EmptyPanelState} text="Blocked vendor onboarding engagements will appear here with vendor name, stage, what is missing, and days elapsed." />
       </${SectionPanel}>
 
+      <!-- §6.1 Section 6: Quick Access -->
       <${SectionPanel}
-        title=${savedOrStarterViews.length > 0 ? "Saved views and slices" : "Queue slices"}
-        detail=${savedOrStarterViews.length > 0 ? "The queue views operators come back to most." : "Jump straight to the queue segment you need."}
-        actionLabel="Open invoices"
-        onAction=${() => navigate("clearledgr/invoices")}
-        panelMinHeight=${240}
+        title="Quick access"
+        detail="One-click shortcuts."
+        panelMinHeight=${120}
       >
-        <div class="home-list-stack">
-          ${(savedOrStarterViews.length > 0 ? savedOrStarterViews : starterPipelineSlices).map((entry) => html4`
-            <${QuickLinkRow}
-              key=${savedOrStarterViews.length > 0 ? `${entry.scope || "starter"}:${entry.id}` : entry.id}
-              label=${savedOrStarterViews.length > 0 ? entry.name || "Saved view" : entry.label}
-              detail=${savedOrStarterViews.length > 0 ? entry.description || "Open this saved view." : entry.description}
-              onClick=${() => savedOrStarterViews.length > 0 ? openSavedPipelineView(entry) : openPipelineSlice(entry.id)}
-            />
-          `)}
+        <div class="home-quick-row">
+          <${ToolbarAction} label="AP Invoices" detail="Open the invoice pipeline." meta="Pipeline" onClick=${() => navigate("clearledgr/invoices")} />
+          <${ToolbarAction} label="Vendor Onboarding" detail="Open the vendor pipeline." meta="Pipeline" onClick=${() => navigate("clearledgr/vendors")} />
+          <${ToolbarAction} label="Agent Activity" detail="Full feed of all agent actions." meta="Feed" onClick=${() => navigate("clearledgr/activity")} />
         </div>
-      </${SectionPanel}>
-
-      <${SectionPanel}
-        title="Highlights"
-        detail="The current finance lane signals, pilot highlights, and blockers worth paying attention to."
-        actionLabel=${adminAccess ? "Open reports" : workAccess ? "Open activity" : ""}
-        onAction=${() => navigate(adminAccess ? "clearledgr/reports" : "clearledgr/activity")}
-        className="home-panel-span"
-      >
-        <${InsightList} items=${homeInsights} />
-        ${homeInsights.length === 0 ? html4`<${EmptyPanelState} text="Clearledgr will surface pilot highlights, blocker trends, and finance guidance here as the lane matures." />` : null}
       </${SectionPanel}>
     </div>
   `;
