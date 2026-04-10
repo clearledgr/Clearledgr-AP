@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:368d07ef2eeaba086b3b87fc5f6e8b5733fcfb1214f43fef1424399118977294 */
+/* clearledgr-source-fingerprint:545f7b5d82c01434e67fa6c024e9d27abc7f1cf9de880efbfd98286aaf378d5d */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59560,6 +59560,260 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
+  // node_modules/htm/preact/index.module.js
+  var m3 = htm_module_default.bind(_);
+
+  // src/components/ThreadSidebar.js
+  var THREAD_SIDEBAR_CSS = `
+.cl-thread-sidebar { padding: 0; }
+.cl-ts-section { padding: 12px 16px; border-bottom: 1px solid #E5EBF0; }
+.cl-ts-section:last-child { border-bottom: none; }
+.cl-ts-section-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: #5C6B7A; margin-bottom: 8px;
+}
+.cl-ts-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.cl-ts-label { font-size: 12px; color: #5C6B7A; }
+.cl-ts-value { font-size: 13px; color: #0A1628; font-weight: 500; text-align: right; max-width: 60%; }
+.cl-ts-value.mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
+.cl-ts-match-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.cl-ts-match-icon { width: 16px; text-align: center; font-size: 14px; }
+.cl-ts-match-icon.pass { color: #10B981; }
+.cl-ts-match-icon.warn { color: #D97706; }
+.cl-ts-match-icon.fail { color: #DC2626; }
+.cl-ts-match-icon.na { color: #9CA3AF; }
+.cl-ts-match-label { font-size: 12px; color: #0A1628; flex: 1; }
+.cl-ts-match-detail { font-size: 11px; color: #5C6B7A; }
+.cl-ts-risk-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 600;
+}
+.cl-ts-risk-low { background: #ECFDF5; color: #059669; }
+.cl-ts-risk-medium { background: #FEF9EE; color: #92400E; }
+.cl-ts-risk-high { background: #FEF2F2; color: #991B1B; }
+.cl-ts-timeline { list-style: none; margin: 0; padding: 0; }
+.cl-ts-timeline li {
+  font-size: 12px; color: #374151; margin-bottom: 8px;
+  padding-left: 16px; position: relative; line-height: 1.4;
+}
+.cl-ts-timeline li::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: #00D67E; position: absolute; left: 0; top: 5px;
+}
+.cl-ts-timeline-time { font-size: 10px; color: #9CA3AF; display: block; }
+.cl-ts-iban-pill {
+  display: inline-block; padding: 1px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 600;
+}
+.cl-ts-iban-verified { background: #ECFDF5; color: #059669; }
+.cl-ts-iban-unverified { background: #FEF2F2; color: #991B1B; }
+.cl-ts-iban-pending { background: #FEF9EE; color: #92400E; }
+.cl-ts-expand-btn {
+  background: none; border: none; color: #00D67E; font-size: 12px;
+  font-weight: 600; cursor: pointer; padding: 4px 0; font-family: inherit;
+}
+`;
+  function formatAmount2(amount, currency) {
+    if (amount == null || amount === "")
+      return "—";
+    try {
+      const num = parseFloat(amount);
+      if (isNaN(num))
+        return "—";
+      const cur = String(currency || "USD").toUpperCase();
+      return `${cur} ${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    } catch {
+      return "—";
+    }
+  }
+  function formatDate(iso) {
+    if (!iso)
+      return "—";
+    try {
+      const d3 = new Date(iso);
+      return d3.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+    } catch {
+      return iso;
+    }
+  }
+  function formatTimeAgo(iso) {
+    if (!iso)
+      return "";
+    try {
+      const d3 = new Date(iso);
+      const now = new Date;
+      const hours = Math.floor((now - d3) / 3600000);
+      if (hours < 1)
+        return "just now";
+      if (hours < 24)
+        return `${hours}h ago`;
+      const days = Math.floor(hours / 24);
+      return `${days}d ago`;
+    } catch {
+      return "";
+    }
+  }
+  function matchIcon(status) {
+    if (!status)
+      return m3`<span class="cl-ts-match-icon na">—</span>`;
+    const s3 = String(status).toLowerCase();
+    if (s3 === "passed" || s3 === "match" || s3 === "matched" || s3 === "verified")
+      return m3`<span class="cl-ts-match-icon pass">✓</span>`;
+    if (s3 === "exception" || s3 === "warning" || s3 === "partial")
+      return m3`<span class="cl-ts-match-icon warn">⚠</span>`;
+    if (s3 === "failed" || s3 === "mismatch" || s3 === "missing")
+      return m3`<span class="cl-ts-match-icon fail">✗</span>`;
+    return m3`<span class="cl-ts-match-icon na">—</span>`;
+  }
+  function riskBadge(score) {
+    if (score == null)
+      return "";
+    const n3 = parseInt(score, 10);
+    if (isNaN(n3))
+      return "";
+    if (n3 <= 30)
+      return m3`<span class="cl-ts-risk-badge cl-ts-risk-low">Low (${n3})</span>`;
+    if (n3 <= 60)
+      return m3`<span class="cl-ts-risk-badge cl-ts-risk-medium">Medium (${n3})</span>`;
+    return m3`<span class="cl-ts-risk-badge cl-ts-risk-high">High (${n3})</span>`;
+  }
+  function ibanPill(item) {
+    if (item?.iban_change_pending)
+      return m3`<span class="cl-ts-iban-pill cl-ts-iban-pending">Freeze active</span>`;
+    if (item?.iban_verified)
+      return m3`<span class="cl-ts-iban-pill cl-ts-iban-verified">Verified</span>`;
+    return m3`<span class="cl-ts-iban-pill cl-ts-iban-unverified">Unverified</span>`;
+  }
+  function InvoiceSection({ item }) {
+    return m3`
+    <div class="cl-ts-section">
+      <div class="cl-ts-section-title">Invoice</div>
+      <div class="cl-ts-row">
+        <span class="cl-ts-label">Amount</span>
+        <span class="cl-ts-value mono">${formatAmount2(item.amount, item.currency)}</span>
+      </div>
+      <div class="cl-ts-row">
+        <span class="cl-ts-label">Invoice #</span>
+        <span class="cl-ts-value">${item.invoice_number || item.reference || "—"}</span>
+      </div>
+      ${item.po_number ? m3`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">PO #</span>
+          <span class="cl-ts-value">${item.po_number}</span>
+        </div>
+      ` : ""}
+      <div class="cl-ts-row">
+        <span class="cl-ts-label">Due date</span>
+        <span class="cl-ts-value">${formatDate(item.due_date || item.payment_due_date)}</span>
+      </div>
+      ${item.payment_terms ? m3`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">Terms</span>
+          <span class="cl-ts-value">${item.payment_terms}</span>
+        </div>
+      ` : ""}
+    </div>
+  `;
+  }
+  function MatchSection({ item }) {
+    const matchStatus = item.match_status || item.three_way_match_status;
+    const poStatus = item.po_match_status || (item.po_number ? "matched" : "missing");
+    const grnStatus = item.grn_match_status || "na";
+    const invoiceStatus = matchStatus || "na";
+    return m3`
+    <div class="cl-ts-section">
+      <div class="cl-ts-section-title">3-Way Match</div>
+      <div class="cl-ts-match-row">
+        ${matchIcon(poStatus)}
+        <span class="cl-ts-match-label">Purchase Order</span>
+        <span class="cl-ts-match-detail">${item.po_number || "Not linked"}</span>
+      </div>
+      <div class="cl-ts-match-row">
+        ${matchIcon(grnStatus)}
+        <span class="cl-ts-match-label">Goods Received Note</span>
+        <span class="cl-ts-match-detail">${item.grn_reference || "—"}</span>
+      </div>
+      <div class="cl-ts-match-row">
+        ${matchIcon(invoiceStatus)}
+        <span class="cl-ts-match-label">Invoice</span>
+        <span class="cl-ts-match-detail">${String(matchStatus || "—").replace(/_/g, " ")}</span>
+      </div>
+      ${item.match_exception_reason ? m3`
+        <div style="font-size: 12px; color: #92400E; margin-top: 4px; padding: 6px 8px; background: #FEF9EE; border-radius: 6px;">
+          ${item.match_exception_reason}
+        </div>
+      ` : ""}
+    </div>
+  `;
+  }
+  function VendorSection({ item }) {
+    const vendorName = item.vendor_name || item.vendor || "Unknown";
+    return m3`
+    <div class="cl-ts-section">
+      <div class="cl-ts-section-title">Vendor</div>
+      <div class="cl-ts-row">
+        <span class="cl-ts-label">Name</span>
+        <span class="cl-ts-value">${vendorName}</span>
+      </div>
+      ${item.ytd_spend != null ? m3`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">YTD spend</span>
+          <span class="cl-ts-value mono">${formatAmount2(item.ytd_spend, item.currency)}</span>
+        </div>
+      ` : ""}
+      ${item.invoice_count != null ? m3`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">Invoices</span>
+          <span class="cl-ts-value">${item.invoice_count}</span>
+        </div>
+      ` : ""}
+      <div class="cl-ts-row">
+        <span class="cl-ts-label">IBAN</span>
+        <span class="cl-ts-value">${ibanPill(item)}</span>
+      </div>
+      ${item.risk_score != null ? m3`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">Risk</span>
+          <span class="cl-ts-value">${riskBadge(item.risk_score)}</span>
+        </div>
+      ` : ""}
+    </div>
+  `;
+  }
+  function AgentActionsSection({ item, auditEvents }) {
+    const events = (auditEvents || []).slice(0, 5);
+    return m3`
+    <div class="cl-ts-section">
+      <div class="cl-ts-section-title">Agent Actions</div>
+      ${events.length > 0 ? m3`
+          <ul class="cl-ts-timeline">
+            ${events.map((e3) => m3`
+              <li key=${e3.id || e3.ts}>
+                ${e3.summary || e3.decision_reason || e3.event_type?.replace(/_/g, " ") || "Action"}
+                <span class="cl-ts-timeline-time">${formatTimeAgo(e3.ts || e3.created_at)}</span>
+              </li>
+            `)}
+          </ul>
+          ${(auditEvents || []).length > 5 ? m3`
+            <button class="cl-ts-expand-btn">Show all ${auditEvents.length} actions</button>
+          ` : ""}
+        ` : m3`<div style="font-size: 12px; color: #9CA3AF;">No agent actions yet</div>`}
+    </div>
+  `;
+  }
+  function ThreadSidebar({ item, auditEvents }) {
+    if (!item)
+      return null;
+    return m3`
+    <div class="cl-thread-sidebar">
+      <style>${THREAD_SIDEBAR_CSS}</style>
+      <${InvoiceSection} item=${item} />
+      <${MatchSection} item=${item} />
+      <${VendorSection} item=${item} />
+      <${AgentActionsSection} item=${item} auditEvents=${auditEvents} />
+    </div>
+  `;
+  }
 
   // src/utils/roles.js
   function normalizeUserRole(role) {
@@ -62756,7 +63010,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       `}
 
       <${ErrorBoundary} fallback="Could not load record details">
-        ${item ? html2`<${WorkPanel} item=${item} queueManager=${queueManager} />` : html2`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
+        ${item ? html2`
+            ${store_default.currentThreadId ? html2`<${ThreadSidebar} item=${item} auditEvents=${store_default.auditState?.events || []} />` : html2`<${WorkPanel} item=${item} queueManager=${queueManager} />`}` : html2`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
       <//>
     </div>
   `;
@@ -74745,6 +75000,120 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       console.warn("[Clearledgr] Toolbar icon registration failed:", err);
     }
   }
+  function registerThreadToolbarButtons() {
+    if (!sdk?.Toolbars || typeof sdk.Toolbars.registerThreadButton !== "function") {
+      console.warn("[Clearledgr] sdk.Toolbars.registerThreadButton not available — skipping thread toolbar");
+      return;
+    }
+    sdk.Toolbars.registerThreadButton({
+      title: "Approve",
+      iconUrl: getAssetUrl(LOGO_PATH2) || undefined,
+      positions: ["THREAD"],
+      threadSection: "METADATA_STATE",
+      orderHint: 1,
+      onClick: async (event) => {
+        const threadViews = event.selectedThreadViews || [];
+        if (!threadViews.length)
+          return;
+        const threadView = threadViews[0];
+        let threadId = null;
+        try {
+          threadId = typeof threadView.getThreadIDAsync === "function" ? await threadView.getThreadIDAsync() : null;
+        } catch (_2) {
+          return;
+        }
+        if (!threadId)
+          return;
+        const item = store_default.findItemByThreadId(threadId);
+        if (!item?.id) {
+          showToast("No invoice found for this thread", "error");
+          return;
+        }
+        const state = String(item.state || "").toLowerCase();
+        if (state !== "needs_approval" && state !== "pending_approval") {
+          showToast(`Cannot approve — invoice is ${state.replace(/_/g, " ")}`, "error");
+          return;
+        }
+        try {
+          const result = await queueManager.approveAndPost(item, { override: false });
+          const ok = ["posted", "approved", "posted_to_erp"].includes(String(result?.status || "").toLowerCase());
+          showToast(ok ? "Invoice approved" : result?.reason || "Approval failed", ok ? "success" : "error");
+          if (ok)
+            await queueManager.refreshQueue();
+        } catch (err) {
+          showToast(`Approval failed: ${err.message || err}`, "error");
+        }
+      }
+    });
+    sdk.Toolbars.registerThreadButton({
+      title: "Review exception",
+      positions: ["THREAD"],
+      threadSection: "METADATA_STATE",
+      orderHint: 2,
+      onClick: async (event) => {
+        const threadViews = event.selectedThreadViews || [];
+        if (!threadViews.length)
+          return;
+        const threadView = threadViews[0];
+        let threadId = null;
+        try {
+          threadId = typeof threadView.getThreadIDAsync === "function" ? await threadView.getThreadIDAsync() : null;
+        } catch (_2) {
+          return;
+        }
+        if (!threadId)
+          return;
+        const item = store_default.findItemByThreadId(threadId);
+        if (!item?.id) {
+          showToast("No invoice found for this thread", "error");
+          return;
+        }
+        openItemInPipeline(item, "thread_toolbar");
+      }
+    });
+    sdk.Toolbars.registerThreadButton({
+      title: "Open in ERP",
+      positions: ["THREAD"],
+      threadSection: "OTHER",
+      orderHint: 3,
+      onClick: async (event) => {
+        const threadViews = event.selectedThreadViews || [];
+        if (!threadViews.length)
+          return;
+        const threadView = threadViews[0];
+        let threadId = null;
+        try {
+          threadId = typeof threadView.getThreadIDAsync === "function" ? await threadView.getThreadIDAsync() : null;
+        } catch (_2) {
+          return;
+        }
+        if (!threadId)
+          return;
+        const item = store_default.findItemByThreadId(threadId);
+        if (!item?.id) {
+          showToast("No invoice found for this thread", "error");
+          return;
+        }
+        const erpRef = item.erp_reference || item.erp_reference_id || "";
+        const erpType = String(item.erp_type || "").toLowerCase();
+        if (!erpRef) {
+          showToast("No ERP reference — invoice has not been posted yet", "error");
+          return;
+        }
+        let erpUrl = null;
+        if (erpType === "quickbooks" && item.erp_realm_id) {
+          erpUrl = `https://app.qbo.intuit.com/app/bill?txnId=${erpRef}`;
+        } else if (erpType === "xero") {
+          erpUrl = `https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${erpRef}`;
+        }
+        if (erpUrl) {
+          window.open(erpUrl, "_blank", "noopener");
+        } else {
+          showToast(`ERP reference: ${erpRef}`, "success");
+        }
+      }
+    });
+  }
   function registerSearchSuggestions() {
     if (!sdk?.Search || typeof sdk.Search.registerSearchSuggestionsProvider !== "function")
       return;
@@ -74950,6 +75319,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     registerThreadRowLabels();
     registerToolbarIcon();
     registerBulkActions();
+    registerThreadToolbarButtons();
     registerInboxHeadsUp();
     registerKeyboardShortcuts();
     registerSearchSuggestions();

@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-04-08T16:58:01.040Z",
-  "fingerprint": "368d07ef2eeaba086b3b87fc5f6e8b5733fcfb1214f43fef1424399118977294",
+  "generated_at": "2026-04-10T10:06:05.904Z",
+  "fingerprint": "545f7b5d82c01434e67fa6c024e9d27abc7f1cf9de880efbfd98286aaf378d5d",
   "inputs": [
     "background.js",
     "manifest.json",
@@ -8,6 +8,7 @@
     "queue-manager.js",
     "src/components/ActionDialog.js",
     "src/components/SidebarApp.js",
+    "src/components/ThreadSidebar.js",
     "src/inboxsdk-layer.js",
     "src/routes/oauth-bridge.js",
     "src/routes/pages/ActivityPage.js",

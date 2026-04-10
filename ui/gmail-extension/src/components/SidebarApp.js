@@ -5,6 +5,7 @@ import htm from 'htm';
 import store from '../utils/store.js';
 import { SIDEBAR_CSS, STATE_PILL_CSS } from '../styles.js';
 import ActionDialog, { useActionDialog } from './ActionDialog.js';
+import { ThreadSidebar } from './ThreadSidebar.js';
 import { hasAdminAccessRole, hasOpsAccessRole } from '../utils/roles.js';
 import {
   getStateLabel,
@@ -1963,7 +1964,11 @@ export default function SidebarApp({ queueManager }) {
 
       <${ErrorBoundary} fallback="Could not load record details">
         ${item
-          ? html`<${WorkPanel} item=${item} queueManager=${queueManager} />`
+          ? html`
+            ${store.currentThreadId
+              ? html`<${ThreadSidebar} item=${item} auditEvents=${(store.auditState?.events || [])} />`
+              : html`<${WorkPanel} item=${item} queueManager=${queueManager} />`
+            }`
           : html`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
       <//>
     </div>

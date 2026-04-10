@@ -1061,6 +1061,138 @@ function registerToolbarIcon() {
   }
 }
 
+// ==================== THREAD TOOLBAR BUTTONS (Phase 3.3 — §6.5) ====================
+
+function registerThreadToolbarButtons() {
+  if (!sdk?.Toolbars || typeof sdk.Toolbars.registerThreadButton !== 'function') {
+    console.warn('[Clearledgr] sdk.Toolbars.registerThreadButton not available — skipping thread toolbar');
+    return;
+  }
+
+  // 1. Approve button — visible when the current thread maps to an AP item
+  //    in needs_approval state. Calls the same queueManager.approveAndPost()
+  //    that the sidebar's primary action uses.
+  sdk.Toolbars.registerThreadButton({
+    title: 'Approve',
+    iconUrl: getAssetUrl(LOGO_PATH) || undefined,
+    positions: ['THREAD'],
+    threadSection: 'METADATA_STATE',
+    orderHint: 1,
+    onClick: async (event) => {
+      const threadViews = event.selectedThreadViews || [];
+      if (!threadViews.length) return;
+      const threadView = threadViews[0];
+      let threadId = null;
+      try {
+        threadId = typeof threadView.getThreadIDAsync === 'function'
+          ? await threadView.getThreadIDAsync()
+          : null;
+      } catch (_) { return; }
+      if (!threadId) return;
+
+      const item = store.findItemByThreadId(threadId);
+      if (!item?.id) {
+        showToast('No invoice found for this thread', 'error');
+        return;
+      }
+
+      const state = String(item.state || '').toLowerCase();
+      if (state !== 'needs_approval' && state !== 'pending_approval') {
+        showToast(`Cannot approve — invoice is ${state.replace(/_/g, ' ')}`, 'error');
+        return;
+      }
+
+      try {
+        const result = await queueManager.approveAndPost(item, { override: false });
+        const ok = ['posted', 'approved', 'posted_to_erp'].includes(
+          String(result?.status || '').toLowerCase()
+        );
+        showToast(ok ? 'Invoice approved' : (result?.reason || 'Approval failed'), ok ? 'success' : 'error');
+        if (ok) await queueManager.refreshQueue();
+      } catch (err) {
+        showToast(`Approval failed: ${err.message || err}`, 'error');
+      }
+    },
+  });
+
+  // 2. Review Exception button — visible when the thread has an AP item
+  //    with an exception (needs_info, failed_post, etc.). Opens the item
+  //    in the full pipeline view where the user can resolve it.
+  sdk.Toolbars.registerThreadButton({
+    title: 'Review exception',
+    positions: ['THREAD'],
+    threadSection: 'METADATA_STATE',
+    orderHint: 2,
+    onClick: async (event) => {
+      const threadViews = event.selectedThreadViews || [];
+      if (!threadViews.length) return;
+      const threadView = threadViews[0];
+      let threadId = null;
+      try {
+        threadId = typeof threadView.getThreadIDAsync === 'function'
+          ? await threadView.getThreadIDAsync()
+          : null;
+      } catch (_) { return; }
+      if (!threadId) return;
+
+      const item = store.findItemByThreadId(threadId);
+      if (!item?.id) {
+        showToast('No invoice found for this thread', 'error');
+        return;
+      }
+      openItemInPipeline(item, 'thread_toolbar');
+    },
+  });
+
+  // 3. ERP link button — opens the invoice in the connected ERP system.
+  //    Only shown when the item has an erp_reference (posted or posted_to_erp).
+  sdk.Toolbars.registerThreadButton({
+    title: 'Open in ERP',
+    positions: ['THREAD'],
+    threadSection: 'OTHER',
+    orderHint: 3,
+    onClick: async (event) => {
+      const threadViews = event.selectedThreadViews || [];
+      if (!threadViews.length) return;
+      const threadView = threadViews[0];
+      let threadId = null;
+      try {
+        threadId = typeof threadView.getThreadIDAsync === 'function'
+          ? await threadView.getThreadIDAsync()
+          : null;
+      } catch (_) { return; }
+      if (!threadId) return;
+
+      const item = store.findItemByThreadId(threadId);
+      if (!item?.id) {
+        showToast('No invoice found for this thread', 'error');
+        return;
+      }
+
+      const erpRef = item.erp_reference || item.erp_reference_id || '';
+      const erpType = String(item.erp_type || '').toLowerCase();
+      if (!erpRef) {
+        showToast('No ERP reference — invoice has not been posted yet', 'error');
+        return;
+      }
+
+      // Build ERP-specific deep link. Falls back to showing the reference.
+      let erpUrl = null;
+      if (erpType === 'quickbooks' && item.erp_realm_id) {
+        erpUrl = `https://app.qbo.intuit.com/app/bill?txnId=${erpRef}`;
+      } else if (erpType === 'xero') {
+        erpUrl = `https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${erpRef}`;
+      }
+
+      if (erpUrl) {
+        window.open(erpUrl, '_blank', 'noopener');
+      } else {
+        showToast(`ERP reference: ${erpRef}`, 'success');
+      }
+    },
+  });
+}
+
 function registerSearchSuggestions() {
   // Search integration — type in Gmail search to find Clearledgr invoices
   if (!sdk?.Search || typeof sdk.Search.registerSearchSuggestionsProvider !== 'function') return;
@@ -1303,6 +1435,7 @@ async function bootstrap() {
   registerThreadRowLabels();
   registerToolbarIcon();
   registerBulkActions();
+  registerThreadToolbarButtons();
   registerInboxHeadsUp();
   registerKeyboardShortcuts();
   registerSearchSuggestions();
