@@ -1145,9 +1145,20 @@ function registerThreadToolbarButtons() {
   });
 
   // 3. ERP link button — opens the invoice in the connected ERP system.
-  //    Only shown when the item has an erp_reference (posted or posted_to_erp).
+  //    Thesis §6.5: "NetSuite ↗" — reflects actual connected ERP name.
+  const erpDisplayNames = {
+    quickbooks: 'QuickBooks',
+    xero: 'Xero',
+    netsuite: 'NetSuite',
+    sap: 'SAP',
+  };
+  const connectedErpType = String(queueManager?.runtimeConfig?.erpType || '').toLowerCase();
+  const erpButtonTitle = erpDisplayNames[connectedErpType]
+    ? `${erpDisplayNames[connectedErpType]} ↗`
+    : 'Open in ERP ↗';
+
   sdk.Toolbars.registerThreadButton({
-    title: 'Open in ERP',
+    title: erpButtonTitle,
     positions: ['THREAD'],
     threadSection: 'OTHER',
     orderHint: 3,

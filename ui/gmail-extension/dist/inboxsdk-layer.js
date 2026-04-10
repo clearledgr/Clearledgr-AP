@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:b597d88a77ebfb0dc4546489fe4ff3030c61c8e98bdbd3a5933daf5f551f4617 */
+/* clearledgr-source-fingerprint:9a740cf7269ac281230c1860c55bdbb32cec84fda2233ea52c4d845adbb80487 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -75087,8 +75087,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         openItemInPipeline(item, "thread_toolbar");
       }
     });
+    const erpDisplayNames = {
+      quickbooks: "QuickBooks",
+      xero: "Xero",
+      netsuite: "NetSuite",
+      sap: "SAP"
+    };
+    const connectedErpType = String(queueManager?.runtimeConfig?.erpType || "").toLowerCase();
+    const erpButtonTitle = erpDisplayNames[connectedErpType] ? `${erpDisplayNames[connectedErpType]} ↗` : "Open in ERP ↗";
     sdk.Toolbars.registerThreadButton({
-      title: "Open in ERP",
+      title: erpButtonTitle,
       positions: ["THREAD"],
       threadSection: "OTHER",
       orderHint: 3,
