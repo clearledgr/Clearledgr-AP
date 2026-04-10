@@ -63,6 +63,7 @@ def _load_store_symbols() -> None:
     global WebhookStore
     global DisputeStore
     global OverrideWindowStore
+    global OnboardingTokenStore
 
     if "APStore" in globals():
         return
@@ -87,6 +88,9 @@ def _load_store_symbols() -> None:
     from clearledgr.core.stores.override_window_store import (
         OverrideWindowStore as _OverrideWindowStore,
     )
+    from clearledgr.core.stores.onboarding_token_store import (
+        OnboardingTokenStore as _OnboardingTokenStore,
+    )
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -104,6 +108,7 @@ def _load_store_symbols() -> None:
     WebhookStore = _WebhookStore
     DisputeStore = _DisputeStore
     OverrideWindowStore = _OverrideWindowStore
+    OnboardingTokenStore = _OnboardingTokenStore
 
 
 class _ClearledgrDBBase:
@@ -1197,6 +1202,8 @@ class _ClearledgrDBBase:
             cur.execute(VendorStore.VENDOR_DECISION_FEEDBACK_TABLE_SQL)
             # Phase 3.1.a: vendor onboarding workflow sessions (DESIGN_THESIS.md §9)
             cur.execute(VendorStore.VENDOR_ONBOARDING_SESSIONS_TABLE_SQL)
+            # Phase 3.1.b: one-time onboarding magic-link tokens
+            cur.execute(OnboardingTokenStore.VENDOR_ONBOARDING_TOKENS_TABLE_SQL)
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_vendor_profiles_org_name "
                 "ON vendor_profiles(organization_id, vendor_name)"
@@ -1216,6 +1223,14 @@ class _ClearledgrDBBase:
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_vendor_onboarding_state_activity "
                 "ON vendor_onboarding_sessions(state, last_activity_at)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_vendor_onboarding_tokens_session "
+                "ON vendor_onboarding_tokens(session_id)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_vendor_onboarding_tokens_expiry "
+                "ON vendor_onboarding_tokens(expires_at)"
             )
 
             # Approval chain persistence tables
@@ -1333,6 +1348,7 @@ def _get_db_impl_class():
             MetricsStore,
             TaskStore,
             VendorStore,
+            OnboardingTokenStore,
             ReconStore,
             PaymentStore,
             WebhookStore,

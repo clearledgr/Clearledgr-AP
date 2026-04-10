@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>{% block title %}Vendor Onboarding · Clearledgr{% endblock %}</title>
+  <style>
+    /* DESIGN.md brand: mint green #00D67E + navy #0A1628.
+       Server-rendered HTML, zero JS framework, total page weight < 30KB. */
+    :root {
+      --mint: #00D67E;
+      --navy: #0A1628;
+      --bg: #F7F9FB;
+      --card: #FFFFFF;
+      --border: #E5EBF0;
+      --muted: #5C6B7A;
+      --error: #C0392B;
+      --success: #00A85F;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--navy); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.5; }
+    .page { max-width: 640px; margin: 0 auto; padding: 32px 20px 64px; }
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+    .logo { width: 28px; height: 28px; border-radius: 6px; background: var(--mint); display: inline-block; }
+    .brand { font-weight: 700; font-size: 18px; color: var(--navy); }
+    h1 { font-size: 24px; margin: 0 0 8px; color: var(--navy); }
+    h2 { font-size: 16px; margin: 0 0 12px; color: var(--navy); font-weight: 600; }
+    p { margin: 0 0 12px; color: var(--muted); }
+    p.lead { color: var(--navy); margin-bottom: 20px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 16px; }
+    .card.disabled { opacity: 0.55; }
+    .card.disabled label, .card.disabled input, .card.disabled button { pointer-events: none; }
+    .card.complete { border-left: 3px solid var(--success); }
+    .card.active { border-left: 3px solid var(--mint); }
+    label { display: block; font-size: 13px; font-weight: 600; color: var(--navy); margin-bottom: 4px; margin-top: 12px; }
+    label:first-child { margin-top: 0; }
+    .hint { font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+    input[type=text], input[type=email], textarea {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+      font-size: 14px; color: var(--navy); background: #FBFCFD; font-family: inherit;
+    }
+    input:focus, textarea:focus { outline: none; border-color: var(--mint); box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15); }
+    textarea { min-height: 60px; resize: vertical; }
+    .btn {
+      display: inline-block; padding: 10px 20px; background: var(--mint); color: var(--navy);
+      border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+      margin-top: 16px; font-family: inherit;
+    }
+    .btn:hover { background: #00C271; }
+    .status-pill {
+      display: inline-block; padding: 3px 10px; background: rgba(0, 214, 126, 0.15);
+      color: var(--success); border-radius: 12px; font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.3px;
+    }
+    .status-pill.pending { background: #F4F1E0; color: #8A6F00; }
+    .progress { display: flex; gap: 8px; margin-bottom: 24px; }
+    .step { flex: 1; height: 4px; background: var(--border); border-radius: 2px; }
+    .step.done { background: var(--success); }
+    .step.active { background: var(--mint); }
+    .footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 32px; }
+    .error { color: var(--error); font-size: 13px; margin-top: 8px; }
+    .field-row { margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <span class="logo"></span>
+      <span class="brand">Clearledgr</span>
+    </header>
+    {% block content %}{% endblock %}
+    <p class="footer">Powered by Clearledgr · This link is private to you and your customer.</p>
+  </div>
+</body>
+</html>

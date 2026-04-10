@@ -698,3 +698,56 @@ def _m017_vendor_onboarding_sessions(cur, db):
             cur.execute(ddl)
         except Exception as exc:
             logger.warning("[Migration v17] index skipped: %s", exc)
+
+
+@migration(18, "Vendor onboarding magic-link tokens (DESIGN_THESIS.md §9)")
+def _m018_vendor_onboarding_tokens(cur, db):
+    """Create vendor_onboarding_tokens table for Phase 3.1.b.
+
+    Greenfield table — there were no pre-existing magic-link tokens to
+    backfill. The token table is intentionally separate from
+    vendor_onboarding_sessions because the token is the auth primitive,
+    not the workflow primitive: a session can have multiple tokens over
+    its lifetime if the customer re-issues, and we want to keep the
+    revocation history for audit.
+
+    Token storage rules:
+      - Only the SHA-256 hash of the raw token is persisted (column
+        ``token_hash``). The raw token is returned exactly once at
+        issue time, then discarded.
+      - ``UNIQUE(token_hash)`` enforces collision-free hashing.
+      - ``revoked_at`` flips a token to dead state — the auth
+        dependency rejects revoked tokens with a 410 Gone.
+      - ``expires_at`` defaults to ``issued_at + 14 days`` and is
+        enforced at the application layer (no SQL trigger).
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendor_onboarding_tokens (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            vendor_name TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            token_hash TEXT NOT NULL,
+            purpose TEXT NOT NULL DEFAULT 'full_onboarding',
+            issued_at TEXT NOT NULL,
+            issued_by TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            last_accessed_at TEXT,
+            access_count INTEGER NOT NULL DEFAULT 0,
+            revoked_at TEXT,
+            revoked_by TEXT,
+            revoke_reason TEXT,
+            metadata TEXT NOT NULL DEFAULT '{}',
+            UNIQUE(token_hash)
+        )
+    """)
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_vendor_onboarding_tokens_session "
+        "ON vendor_onboarding_tokens(session_id)",
+        "CREATE INDEX IF NOT EXISTS idx_vendor_onboarding_tokens_expiry "
+        "ON vendor_onboarding_tokens(expires_at)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v18] index skipped: %s", exc)

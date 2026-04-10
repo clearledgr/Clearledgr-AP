@@ -182,10 +182,10 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
 
     with TestClient(_app()) as _client:
         paths = _mounted_paths()
-        # Phase 2.1.b added 6 IBAN verification endpoints (GET status +
-        # 3 factor POSTs + complete + reject). Cap raised from 190 to 200
-        # to absorb these architectural routes plus future Phase 2 work.
-        assert len(paths) <= 200
+        # Phase 2.1.b added 6 IBAN verification endpoints. Phase 3.1.b
+        # added 4 vendor onboarding control endpoints + 4 public portal
+        # endpoints. Cap raised from 200 to 215 to absorb these.
+        assert len(paths) <= 215
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
@@ -203,6 +203,16 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         assert "/api/vendors/{vendor_name}/iban-verification" in paths
         assert "/api/vendors/{vendor_name}/iban-verification/complete" in paths
         assert "/api/vendors/{vendor_name}/iban-verification/reject" in paths
+        # Phase 3.1.b vendor onboarding endpoints are mounted (customer
+        # control + public portal magic-link surface).
+        assert "/api/vendors/{vendor_name}/onboarding/invite" in paths
+        assert "/api/vendors/{vendor_name}/onboarding/session" in paths
+        assert "/api/vendors/{vendor_name}/onboarding/escalate" in paths
+        assert "/api/vendors/{vendor_name}/onboarding/reject" in paths
+        assert "/portal/onboard/{token}" in paths
+        assert "/portal/onboard/{token}/kyc" in paths
+        assert "/portal/onboard/{token}/bank-details" in paths
+        assert "/portal/onboard/{token}/microdeposit" in paths
 
 
 def test_strict_profile_blocks_unknown_prefixed_routes(monkeypatch):

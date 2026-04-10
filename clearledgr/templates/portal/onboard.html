@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Vendor Onboarding · {{ vendor_name }}{% endblock %}
+{% block content %}
+<h1>Onboarding for {{ vendor_name }}</h1>
+<p class="lead">A few details to get you set up as a supplier. Each section saves independently — you can come back to this link if you need to break it up.</p>
+
+<div class="progress">
+  <div class="step {% if state in ['awaiting_kyc', 'awaiting_bank', 'microdeposit_pending', 'bank_verified', 'ready_for_erp', 'active'] %}done{% elif state == 'invited' %}active{% endif %}"></div>
+  <div class="step {% if state in ['awaiting_bank', 'microdeposit_pending', 'bank_verified', 'ready_for_erp', 'active'] %}done{% elif state == 'awaiting_kyc' %}active{% endif %}"></div>
+  <div class="step {% if state in ['microdeposit_pending', 'bank_verified', 'ready_for_erp', 'active'] %}done{% elif state == 'awaiting_bank' %}active{% endif %}"></div>
+  <div class="step {% if state in ['bank_verified', 'ready_for_erp', 'active'] %}done{% elif state == 'microdeposit_pending' %}active{% endif %}"></div>
+</div>
+
+{% if flash_message %}
+  <div class="card" style="border-left: 3px solid var(--success);">
+    <p style="margin: 0; color: var(--success); font-weight: 600;">{{ flash_message }}</p>
+  </div>
+{% endif %}
+{% if flash_error %}
+  <div class="card" style="border-left: 3px solid var(--error);">
+    <p style="margin: 0; color: var(--error); font-weight: 600;">{{ flash_error }}</p>
+  </div>
+{% endif %}
+
+<!-- Section 1: Business details -->
+<div class="card {% if kyc.kyc_completion_date %}complete{% elif state in ['invited', 'awaiting_kyc'] %}active{% else %}disabled{% endif %}">
+  <h2>1. Business details
+    {% if kyc.kyc_completion_date %}<span class="status-pill">Saved</span>{% endif %}
+  </h2>
+  <form method="post" action="/portal/onboard/{{ token }}/kyc">
+    <label>Registered company name
+      <input type="text" name="registered_address" value="{{ kyc.registered_address or '' }}" placeholder="123 Example Road, London, UK" required>
+      <span class="hint">Full registered address as filed with Companies House (or your local equivalent).</span>
+    </label>
+    <label>Company registration number
+      <input type="text" name="registration_number" value="{{ kyc.registration_number or '' }}" placeholder="12345678" required>
+    </label>
+    <label>VAT number
+      <input type="text" name="vat_number" value="{{ kyc.vat_number or '' }}" placeholder="GB123456789">
+      <span class="hint">Leave blank if not VAT registered.</span>
+    </label>
+    <label>Director names
+      <textarea name="director_names" placeholder="One per line">{{ '\n'.join(kyc.director_names or []) }}</textarea>
+      <span class="hint">One name per line. Include all listed directors / beneficial owners.</span>
+    </label>
+    <button type="submit" class="btn">Save business details</button>
+  </form>
+</div>
+
+<!-- Section 2: Bank details -->
+<div class="card {% if bank_submitted %}complete{% elif state == 'awaiting_bank' %}active{% else %}disabled{% endif %}">
+  <h2>2. Bank details
+    {% if bank_submitted %}<span class="status-pill">Saved</span>{% endif %}
+  </h2>
+  {% if bank_submitted %}
+    <p>We've recorded your bank details. Once your customer initiates the verification deposits, you'll see them here.</p>
+  {% else %}
+    <form method="post" action="/portal/onboard/{{ token }}/bank-details">
+      <label>IBAN
+        <input type="text" name="iban" placeholder="GB82 BARC 2000 0055 5555 55" required>
+        <span class="hint">We'll send two small test deposits to verify the account belongs to you.</span>
+      </label>
+      <label>Account holder name
+        <input type="text" name="account_holder_name" placeholder="Acme Limited" required>
+      </label>
+      <label>Bank name (optional)
+        <input type="text" name="bank_name" placeholder="Barclays">
+      </label>
+      <button type="submit" class="btn">Save bank details</button>
+    </form>
+  {% endif %}
+</div>
+
+<!-- Section 3: Micro-deposit confirmation -->
+<div class="card {% if state in ['bank_verified', 'ready_for_erp', 'active'] %}complete{% elif state == 'microdeposit_pending' %}active{% else %}disabled{% endif %}">
+  <h2>3. Confirm verification deposits
+    {% if state in ['bank_verified', 'ready_for_erp', 'active'] %}<span class="status-pill">Verified</span>{% elif state == 'microdeposit_pending' %}<span class="status-pill pending">Pending</span>{% endif %}
+  </h2>
+  {% if state in ['bank_verified', 'ready_for_erp', 'active'] %}
+    <p>Bank account verified. You're all set — your customer will activate you in their finance system shortly.</p>
+  {% elif state == 'microdeposit_pending' %}
+    <p>Your customer has initiated two small deposits to the IBAN you provided. They should land within 1–2 business days. When you see them on your bank statement, enter the exact amounts below.</p>
+    <form method="post" action="/portal/onboard/{{ token }}/microdeposit">
+      <label>Amount 1
+        <input type="text" name="amount_one" placeholder="0.17" required>
+      </label>
+      <label>Amount 2
+        <input type="text" name="amount_two" placeholder="0.42" required>
+      </label>
+      <span class="hint">Order doesn't matter. We'll match either way.</span>
+      <button type="submit" class="btn">Confirm amounts</button>
+    </form>
+  {% else %}
+    <p>This section will unlock once we've initiated the verification deposits to your bank.</p>
+  {% endif %}
+</div>
+{% endblock %}

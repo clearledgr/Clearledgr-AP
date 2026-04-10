@@ -429,6 +429,16 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/vendors/[^/]+/trusted-domains/[^/]+$",
         # Phase 2.4: vendor KYC + risk score endpoints
         r"^/api/vendors/[^/]+/kyc$",
+        # Phase 3.1.b: vendor onboarding control endpoints (customer-side)
+        r"^/api/vendors/[^/]+/onboarding/invite$",
+        r"^/api/vendors/[^/]+/onboarding/session$",
+        r"^/api/vendors/[^/]+/onboarding/escalate$",
+        r"^/api/vendors/[^/]+/onboarding/reject$",
+        # Phase 3.1.b: vendor portal magic-link surface (public, unauthenticated)
+        r"^/portal/onboard/[^/]+$",
+        r"^/portal/onboard/[^/]+/kyc$",
+        r"^/portal/onboard/[^/]+/bank-details$",
+        r"^/portal/onboard/[^/]+/microdeposit$",
         r"^/api/ap/items/[^/]+/field-review/resolve$",
         r"^/api/ap/items/[^/]+/fields$",
         r"^/api/ap/items/[^/]+/gmail-link$",
@@ -899,6 +909,29 @@ except ImportError:
 try:
     from clearledgr.api.vendor_kyc import router as vendor_kyc_router
     app.include_router(vendor_kyc_router)
+except ImportError:
+    pass
+
+# Include Vendor Onboarding control API — Phase 3.1.b.
+# Customer-side endpoints for opening / inspecting / escalating /
+# rejecting onboarding sessions. JWT-authenticated, Financial
+# Controller or higher for writes (CFO-only for reject).
+# See DESIGN_THESIS.md §9.
+try:
+    from clearledgr.api.vendor_onboarding import router as vendor_onboarding_router
+    app.include_router(vendor_onboarding_router)
+except ImportError:
+    pass
+
+# Include Vendor Portal — Phase 3.1.b.
+# Public, unauthenticated magic-link surface for vendors to submit
+# their onboarding details. The /portal/onboard/{token} routes are
+# the ONLY part of Clearledgr that accepts unauthenticated traffic.
+# Auth is via one-time SHA-256-hashed magic-link tokens with a
+# default 14-day TTL. See DESIGN_THESIS.md §9 + clearledgr/core/portal_auth.py.
+try:
+    from clearledgr.api.vendor_portal import router as vendor_portal_router
+    app.include_router(vendor_portal_router)
 except ImportError:
     pass
 
