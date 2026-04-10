@@ -25,6 +25,7 @@ from clearledgr.api.ap_item_contracts import (
     ResolveFieldReviewRequest,
     ResolveNonInvoiceReviewRequest,
     ResubmitRejectedItemRequest,
+    SnoozeAPItemRequest,
     SplitItemRequest,
     UpdateApItemFieldsRequest,
     UpdateApItemTaskStatusRequest,
@@ -59,6 +60,62 @@ class _SharedProxy:
 
 
 shared = _SharedProxy()
+
+
+def _dispatch_mention_notifications(
+    *, body: str, ap_item_id: str, item: Dict[str, Any], actor_id: str
+) -> None:
+    """§5.3 @Mentions — parse @email from note/comment body and notify via Slack DM.
+
+    "When a Box timeline @mention happens in Gmail, Clearledgr also sends a
+    Slack DM to the mentioned person with the comment and a direct link."
+    """
+    import re
+
+    mentions = re.findall(r"@([\w.+-]+@[\w.-]+\.\w+)", body)
+    if not mentions:
+        return
+
+    vendor = item.get("vendor_name") or item.get("vendor") or "Unknown"
+    org_id = item.get("organization_id") or "default"
+
+    for email in mentions:
+        try:
+            from clearledgr.services.slack_api import resolve_slack_runtime
+
+            runtime = resolve_slack_runtime(org_id)
+            if not runtime or not runtime.get("token"):
+                continue
+
+            import httpx
+
+            headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
+
+            # Look up Slack user by email
+            lookup_resp = httpx.post(
+                "https://slack.com/api/users.lookupByEmail",
+                json={"email": email},
+                headers=headers,
+                timeout=10,
+            )
+            lookup_data = lookup_resp.json()
+            if not lookup_data.get("ok"):
+                continue
+            slack_user_id = lookup_data["user"]["id"]
+
+            # Send DM
+            dm_text = (
+                f"*{actor_id}* mentioned you on {vendor} (invoice {item.get('invoice_number', 'N/A')}):\n"
+                f">{body[:500]}"
+            )
+            httpx.post(
+                "https://slack.com/api/chat.postMessage",
+                json={"channel": slack_user_id, "text": dm_text},
+                headers=headers,
+                timeout=10,
+            )
+        except Exception as exc:
+            logger.warning("[mentions] notification to %s failed: %s", email, exc)
 
 
 def _resolve_task_owner_item(db: Any, task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1021,6 +1078,15 @@ def add_ap_item_note(
             },
         }
     )
+
+    # §5.3 @Mentions — parse @email in note body, dispatch notifications
+    _dispatch_mention_notifications(
+        body=note["body"],
+        ap_item_id=ap_item_id,
+        item=item,
+        actor_id=actor_id,
+    )
+
     return {"status": "created", "note": note}
 
 
@@ -1739,3 +1805,96 @@ async def reverse_ap_item_post(
             "erp": outcome.erp,
         },
     )
+
+
+# ==================== SNOOZE (DESIGN_THESIS.md §3 Gmail Power Features) ====================
+
+
+@router.post("/{ap_item_id}/snooze")
+async def snooze_ap_item(
+    ap_item_id: str,
+    request: SnoozeAPItemRequest,
+    organization_id: str = Query(default="default"),
+    user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    """Snooze an AP item — archive it and return it to the queue after a set time.
+
+    DESIGN_THESIS.md §3: "AP Managers can snooze a vendor email thread —
+    archive on email and return it to the top of the queue after a set time.
+    Snooze timings surface in the Box context."
+    """
+    from clearledgr.core.database import get_db
+    from clearledgr.core.ap_states import transition_or_raise
+
+    db = get_db()
+    verify_org_access(organization_id, user)
+    item = db.get_ap_item(ap_item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+
+    current_state = str(item.get("state", "")).lower()
+    transition_or_raise(current_state, "snoozed", ap_item_id)
+
+    now = datetime.now(timezone.utc)
+    snoozed_until = now + __import__("datetime").timedelta(minutes=request.duration_minutes)
+
+    # Store pre-snooze state so the reaper can restore it
+    metadata = dict(item.get("metadata") or {})
+    metadata["pre_snooze_state"] = current_state
+    metadata["snoozed_until"] = snoozed_until.isoformat()
+    if request.note:
+        metadata["snooze_note"] = request.note
+
+    db.update_ap_item(ap_item_id, state="snoozed", metadata=metadata)
+
+    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "system")
+    db.append_ap_item_timeline_entry(ap_item_id, {
+        "event_type": "snoozed",
+        "summary": f"Snoozed for {request.duration_minutes} minutes.",
+        "reason": request.note or "",
+        "next_action": f"Returns to queue at {snoozed_until.strftime('%Y-%m-%d %H:%M UTC')}.",
+        "actor": actor_id,
+        "timestamp": now.isoformat(),
+    })
+
+    return {
+        "status": "snoozed",
+        "snoozed_until": snoozed_until.isoformat(),
+        "pre_snooze_state": current_state,
+    }
+
+
+@router.post("/{ap_item_id}/unsnooze")
+async def unsnooze_ap_item(
+    ap_item_id: str,
+    organization_id: str = Query(default="default"),
+    user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    """Manually unsnooze an AP item before the timer expires."""
+    from clearledgr.core.database import get_db
+
+    db = get_db()
+    verify_org_access(organization_id, user)
+    item = db.get_ap_item(ap_item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+
+    if str(item.get("state", "")).lower() != "snoozed":
+        raise HTTPException(status_code=409, detail="not_snoozed")
+
+    metadata = dict(item.get("metadata") or {})
+    restore_state = metadata.pop("pre_snooze_state", "needs_approval")
+    metadata.pop("snoozed_until", None)
+    metadata.pop("snooze_note", None)
+
+    db.update_ap_item(ap_item_id, state=restore_state, metadata=metadata)
+
+    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "system")
+    db.append_ap_item_timeline_entry(ap_item_id, {
+        "event_type": "unsnoozed",
+        "summary": f"Unsnoozed manually. Restored to {restore_state.replace('_', ' ')}.",
+        "actor": actor_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {"status": "unsnoozed", "restored_state": restore_state}

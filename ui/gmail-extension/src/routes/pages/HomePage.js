@@ -294,6 +294,7 @@ export default function HomePage({
   const [pipelinePrefs, setPipelinePrefs] = useState(() => readPipelinePreferences(pipelineScope));
   const [upcomingPayload, setUpcomingPayload] = useState({ summary: {}, tasks: [] });
   const [recentAudit, setRecentAudit] = useState([]);
+  const [onboardingBlockers, setOnboardingBlockers] = useState([]);
   const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
 
   const pinnedPipelineViews = getPinnedPipelineViews(pipelinePrefs).slice(0, 3);
@@ -377,6 +378,39 @@ export default function HomePage({
       })
       .catch(() => {
         setRecentAudit([]);
+      });
+  }, [api, orgId, workAccess]);
+
+  // §6.1 Section 5 — Vendor Onboarding Blockers
+  useEffect(() => {
+    if (!workAccess) {
+      setOnboardingBlockers([]);
+      return;
+    }
+    api(`/api/ops/vendor-onboarding/sessions?organization_id=${encodeURIComponent(orgId)}&limit=200`, { silent: true })
+      .then((data) => {
+        const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
+        const now = Date.now();
+        const blockedStates = new Set(['invited', 'awaiting_kyc', 'awaiting_bank', 'microdeposit_pending', 'escalated']);
+        const blocked = sessions.filter((s) => {
+          if (!blockedStates.has(s.state)) return false;
+          const elapsed = s.invited_at ? (now - new Date(s.invited_at).getTime()) / 3600000 : 0;
+          return elapsed >= 48;
+        }).map((s) => {
+          const hours = s.invited_at ? Math.floor((now - new Date(s.invited_at).getTime()) / 3600000) : 0;
+          const days = Math.floor(hours / 24);
+          const reasons = [];
+          if (s.state === 'awaiting_kyc') reasons.push('Missing KYC documents');
+          else if (s.state === 'awaiting_bank') reasons.push('Bank details not submitted');
+          else if (s.state === 'microdeposit_pending') reasons.push('Micro-deposit unconfirmed');
+          else if (s.state === 'escalated') reasons.push('Escalated — needs manual resolution');
+          else if (s.state === 'invited') reasons.push('Vendor has not responded');
+          return { ...s, days, reason: reasons[0] || 'Blocked' };
+        });
+        setOnboardingBlockers(blocked);
+      })
+      .catch(() => {
+        setOnboardingBlockers([]);
       });
   }, [api, orgId, workAccess]);
 
@@ -792,7 +826,16 @@ export default function HomePage({
         detail="Vendors stuck in onboarding for more than 48 hours."
         panelMinHeight=${120}
       >
-        <${EmptyPanelState} text="Blocked vendor onboarding engagements will appear here with vendor name, stage, what is missing, and days elapsed." />
+        ${onboardingBlockers.length === 0
+          ? html`<${EmptyPanelState} text="No blocked vendor onboarding engagements." />`
+          : onboardingBlockers.map((b) => html`
+            <div class="home-blocker-row" key=${b.id || b.vendor_name} onClick=${() => navigate('clearledgr/vendor/' + encodeURIComponent(b.vendor_name || ''))} style="cursor:pointer;padding:6px 0;border-bottom:1px solid #f0f0ed;display:flex;align-items:baseline;gap:8px;">
+              <span style="font:600 13px/1.3 'DM Sans',sans-serif;color:#1b1b1b;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${b.vendor_name || 'Unknown vendor'}</span>
+              <span style="font:500 11px/1 'DM Sans',sans-serif;color:#92400e;flex-shrink:0;">${b.state?.replace(/_/g, ' ')}</span>
+              <span style="font:500 11px/1 'Geist Mono',monospace;color:#6b7280;flex-shrink:0;margin-left:auto;">${b.days}d</span>
+            </div>
+            <div style="font:400 11px/1.3 'DM Sans',sans-serif;color:#6b7280;padding:0 0 4px;">${b.reason}</div>
+          `)}
       </${SectionPanel}>
 
       <!-- §6.1 Section 6: Quick Access -->
@@ -803,7 +846,7 @@ export default function HomePage({
       >
         <div class="home-quick-row">
           <${ToolbarAction} label="AP Invoices" detail="Open the invoice pipeline." meta="Pipeline" onClick=${() => navigate('clearledgr/invoices')} />
-          <${ToolbarAction} label="Vendor Onboarding" detail="Open the vendor pipeline." meta="Pipeline" onClick=${() => navigate('clearledgr/vendors')} />
+          <${ToolbarAction} label="Vendor Onboarding" detail="Open the vendor pipeline." meta="Pipeline" onClick=${() => navigate('clearledgr/vendor-onboarding')} />
           <${ToolbarAction} label="Agent Activity" detail="Full feed of all agent actions." meta="Feed" onClick=${() => navigate('clearledgr/activity')} />
         </div>
       </${SectionPanel}>

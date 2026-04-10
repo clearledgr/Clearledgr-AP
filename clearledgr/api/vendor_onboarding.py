@@ -410,3 +410,98 @@ def initiate_microdeposit(
             if result.amounts else ""
         ),
     }
+
+
+# ==================== CSV VENDOR IMPORT (§3 Migration from Existing Tools) ====================
+
+
+@router.post("/import/csv")
+async def import_vendors_csv(
+    request: Request,
+    organization_id: str = Query(default="default"),
+    user=Depends(require_financial_controller),
+):
+    """§3 Migration: Import vendors from CSV with column mapping.
+
+    Accepts a JSON payload with:
+    - rows: list of dicts (parsed CSV rows)
+    - column_map: mapping from CSV column names to vendor fields
+      e.g. {"Company Name": "vendor_name", "VAT": "vat_number", ...}
+    """
+    import json as _json
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_json")
+
+    rows = body.get("rows", [])
+    column_map = body.get("column_map", {})
+    if not rows or not column_map:
+        raise HTTPException(status_code=400, detail="rows and column_map required")
+
+    db = get_db()
+    created = []
+    skipped = []
+    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "system")
+
+    vendor_field_map = {
+        "vendor_name": "vendor_name",
+        "registration_number": "registration_number",
+        "vat_number": "vat_number",
+        "registered_address": "registered_address",
+        "payment_terms": "payment_terms",
+        "contact_email": "primary_contact_email",
+        "category": "category",
+    }
+
+    for row in rows:
+        mapped = {}
+        for csv_col, field_key in column_map.items():
+            canonical = vendor_field_map.get(field_key, field_key)
+            value = row.get(csv_col, "")
+            if value:
+                mapped[canonical] = str(value).strip()
+
+        vendor_name = mapped.get("vendor_name", "")
+        if not vendor_name:
+            skipped.append({"row": row, "reason": "missing vendor_name"})
+            continue
+
+        # Check if vendor already exists
+        existing = db.get_vendor_profile(vendor_name, organization_id) if hasattr(db, "get_vendor_profile") else None
+        if existing:
+            skipped.append({"row": row, "reason": "vendor_already_exists"})
+            continue
+
+        # Create vendor profile
+        try:
+            if hasattr(db, "upsert_vendor_profile"):
+                db.upsert_vendor_profile(vendor_name, organization_id, **{
+                    k: v for k, v in mapped.items() if k != "vendor_name"
+                })
+            created.append(vendor_name)
+        except Exception as exc:
+            skipped.append({"row": row, "reason": str(exc)})
+
+    # Audit event
+    db.append_ap_audit_event({
+        "event_type": "vendor_csv_import",
+        "actor_type": "user",
+        "actor_id": actor_id,
+        "organization_id": organization_id,
+        "source": "vendor_onboarding_api",
+        "payload_json": {
+            "created_count": len(created),
+            "skipped_count": len(skipped),
+            "created_vendors": created[:20],
+        },
+    })
+
+    return {
+        "status": "imported",
+        "created": len(created),
+        "skipped": len(skipped),
+        "created_vendors": created,
+        "skipped_details": skipped[:10],
+    }

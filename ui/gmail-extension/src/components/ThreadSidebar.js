@@ -317,11 +317,13 @@ function AgentActionsSection({ item, auditEvents }) {
 // Main component
 // ---------------------------------------------------------------------------
 
-export function ThreadSidebar({ item, auditEvents, onApprove, onQuery }) {
+export function ThreadSidebar({ item, auditEvents, onApprove, onSnooze, onQuery }) {
   if (!item) return null;
 
   const state = String(item.state || '').toLowerCase();
   const matchPassed = state === 'needs_approval' || state === 'pending_approval';
+  const canSnooze = ['needs_approval', 'pending_approval', 'needs_info', 'validated', 'failed_post'].includes(state);
+  const isSnoozed = state === 'snoozed';
 
   return html`
     <div class="cl-thread-sidebar">
@@ -331,13 +333,25 @@ export function ThreadSidebar({ item, auditEvents, onApprove, onQuery }) {
       <${VendorSection} item=${item} />
       <${AgentActionsSection} item=${item} auditEvents=${auditEvents} />
 
-      <!-- §6.6: Below the four sections — approve button + query field -->
+      <!-- §6.6: Below the four sections — approve button + snooze + query field -->
       <div class="cl-ts-actions-bar">
         ${matchPassed ? html`
           <button
             class="cl-ts-approve-btn"
             onClick=${() => onApprove && onApprove(item)}
           >Approve</button>
+        ` : ''}
+        ${canSnooze && onSnooze ? html`
+          <button
+            class="cl-ts-snooze-btn"
+            style="padding:6px 14px;border:1px solid #D97706;border-radius:6px;background:#FEF9EE;color:#92400E;font:500 12px/1.2 'DM Sans',sans-serif;cursor:pointer;"
+            onClick=${() => onSnooze(item)}
+          >Snooze</button>
+        ` : ''}
+        ${isSnoozed ? html`
+          <div style="font:500 11px/1.3 'DM Sans',sans-serif;color:#D97706;padding:4px 0;">
+            Snoozed until ${item.metadata?.snoozed_until ? new Date(item.metadata.snoozed_until).toLocaleString() : 'later'}
+          </div>
         ` : ''}
         <input
           class="cl-ts-query-input"

@@ -26,6 +26,42 @@ from clearledgr.core.database import get_db
 logger = logging.getLogger(__name__)
 
 
+def format_agent_message(did: str, why: str, next_step: str) -> str:
+    """DESIGN_THESIS.md §7.1 — DID-WHY-NEXT three-sentence format.
+
+    Every agent action follows one pattern without exception:
+    - DID: what the agent did (one sentence)
+    - WHY: why it did it (one sentence)
+    - NEXT: what happens next (one sentence)
+
+    Example: "Matched INV-2841 to PO-2041. Three-way match complete
+    within 0.3% tolerance. Routed to Sarah Chen for approval."
+    """
+    parts = [s.strip().rstrip(".") + "." for s in (did, why, next_step) if s and s.strip()]
+    return " ".join(parts)
+
+
+def build_agent_timeline_entry(
+    event_type: str,
+    *,
+    did: str,
+    why: str = "",
+    next_step: str = "",
+    actor: str = "agent",
+    **extra,
+) -> Dict[str, Any]:
+    """Build a timeline entry dict with §7.1 DID-WHY-NEXT format."""
+    return {
+        "event_type": event_type,
+        "summary": did.strip().rstrip(".") + "." if did else "",
+        "reason": why.strip().rstrip(".") + "." if why else "",
+        "next_action": next_step.strip().rstrip(".") + "." if next_step else "",
+        "actor": actor,
+        "timestamp": datetime.utcnow().isoformat(),
+        **extra,
+    }
+
+
 class AuditEventType(Enum):
     """Types of audit events."""
     # Lifecycle events

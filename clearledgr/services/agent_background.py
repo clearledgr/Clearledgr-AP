@@ -374,6 +374,14 @@ async def _run_loop():
                 except Exception as arc_exc:
                     logger.warning("[background] trust arc tick failed: %s", arc_exc)
 
+            # Every tick (~15 min): reap expired snoozes (§3 Gmail Power Features)
+            try:
+                unsnoozed = await _reap_expired_snoozes(org_ids)
+                if unsnoozed:
+                    logger.info("[background] unsnoozed %d expired AP items", unsnoozed)
+            except Exception as snooze_exc:
+                logger.warning("[background] snooze reaper failed: %s", snooze_exc)
+
             # Every hour (4 ticks): chase stale vendor onboarding sessions
             # Phase 3.1.e — scans all orgs in a single pass, dispatches
             # 24h/48h chase emails, escalates after 72h, abandons after 30d.
@@ -501,6 +509,47 @@ async def _check_overdue_tasks():
         logger.error("Overdue task check failed: %s", e)
 
 
+async def _reap_expired_snoozes(org_ids) -> int:
+    """Unsnooze AP items whose snooze timer has expired (§3 Gmail Power Features)."""
+    from clearledgr.core.database import get_db
+
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    unsnoozed_count = 0
+
+    for org_id in (org_ids if isinstance(org_ids, (list, tuple)) else [org_ids]):
+        try:
+            items = db.list_ap_items(organization_id=org_id, state="snoozed", limit=500)
+        except Exception:
+            items = []
+        for item in items:
+            metadata = dict(item.get("metadata") or {})
+            snoozed_until_str = metadata.get("snoozed_until")
+            if not snoozed_until_str:
+                continue
+            try:
+                snoozed_until = datetime.fromisoformat(snoozed_until_str.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            if now < snoozed_until:
+                continue
+
+            restore_state = metadata.pop("pre_snooze_state", "needs_approval")
+            metadata.pop("snoozed_until", None)
+            metadata.pop("snooze_note", None)
+            db.update_ap_item(item["id"], state=restore_state, metadata=metadata)
+            db.append_ap_item_timeline_entry(item["id"], {
+                "event_type": "unsnoozed",
+                "summary": f"Snooze expired. Restored to {restore_state.replace('_', ' ')}.",
+                "next_action": "Item is back in the active queue.",
+                "actor": "agent",
+                "timestamp": now.isoformat(),
+            })
+            unsnoozed_count += 1
+
+    return unsnoozed_count
+
+
 async def _check_anomalies(org_id: str):
     """Detect volume and pattern anomalies, alert Slack."""
     try:
@@ -522,24 +571,20 @@ async def _check_anomalies(org_id: str):
 
 
 async def _send_daily_digest(org_id: str):
-    """Generate and send daily spending digest to Slack."""
+    """§6.8 Conditional Digest — silence is the signal.
+
+    Sends the structured daily digest only when there's something actionable.
+    If no exceptions, no pending approvals, and no onboarding blockers,
+    no message is sent.
+    """
     try:
-        from clearledgr.services.proactive_insights import get_proactive_insights
+        from clearledgr.services.slack_digest import send_digest
 
-        insights_service = get_proactive_insights(org_id)
-        digest = insights_service.generate_daily_digest()
-
-        if digest and digest.insights:
-            logger.info(
-                "Daily digest for org=%s: %d insights generated — %s",
-                org_id,
-                len(digest.insights),
-                digest.summary,
-            )
-            lines = [f":bar_chart: *Daily AP Digest* — {digest.summary}"]
-            for insight in digest.insights[:8]:
-                lines.append(f"  • {insight.title}")
-            await _slack_alert("\n".join(lines), organization_id=org_id)
+        sent = await send_digest(org_id)
+        if sent:
+            logger.info("[background] conditional digest sent for org=%s", org_id)
+        else:
+            logger.info("[background] conditional digest: silence for org=%s (nothing actionable)", org_id)
     except Exception as e:
         logger.error("Daily digest generation failed: %s", e)
 

@@ -803,3 +803,176 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
 async def handle_legacy_slack_interactions(request: Request, background_tasks: BackgroundTasks):
     """Backward-compatible alias for Slack apps configured from older manifests."""
     return await handle_invoice_interactive(request, background_tasks)
+
+
+# ==================== CONVERSATIONAL QUERIES (§6.8) ====================
+
+
+@router.post("/events")
+async def handle_slack_events(request: Request, background_tasks: BackgroundTasks):
+    """§6.8 Conversational Queries — AP team asks the agent questions in Slack.
+
+    "What's our outstanding with AWS this month?" — agent returns live data.
+    No slash commands — plain English. Agent responds in thread.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_json")
+
+    # Slack URL verification challenge
+    if body.get("type") == "url_verification":
+        return {"challenge": body.get("challenge", "")}
+
+    event = body.get("event") or {}
+    event_type = event.get("type", "")
+
+    # Only handle message events (not bot messages, not edits)
+    if event_type != "message" or event.get("subtype") or event.get("bot_id"):
+        return {"ok": True}
+
+    text = str(event.get("text", "")).strip()
+    channel = event.get("channel", "")
+    thread_ts = event.get("thread_ts") or event.get("ts", "")
+    user_id = event.get("user", "")
+
+    if not text or not channel:
+        return {"ok": True}
+
+    # Process the query in the background to respond within 3s
+    background_tasks.add_task(
+        _handle_conversational_query,
+        text=text,
+        channel=channel,
+        thread_ts=thread_ts,
+        user_id=user_id,
+        team_id=body.get("team_id", ""),
+    )
+
+    return {"ok": True}
+
+
+async def _handle_conversational_query(
+    *,
+    text: str,
+    channel: str,
+    thread_ts: str,
+    user_id: str,
+    team_id: str,
+):
+    """Process a natural language query from Slack and respond in thread."""
+    try:
+        from clearledgr.services.slack_api import resolve_slack_runtime
+
+        # Find the org for this Slack team
+        runtime = None
+        db = get_db()
+        orgs = db.list_organizations() if hasattr(db, "list_organizations") else []
+        for org in orgs:
+            rt = resolve_slack_runtime(org.get("id", "default"))
+            if rt and rt.get("team_id") == team_id:
+                runtime = rt
+                org_id = org.get("id", "default")
+                break
+
+        if not runtime:
+            # Fallback: try default org
+            runtime = resolve_slack_runtime("default")
+            org_id = "default"
+
+        if not runtime or not runtime.get("token"):
+            logger.warning("[conversational] no Slack runtime for team=%s", team_id)
+            return
+
+        # Build context from AP data
+        items = db.list_ap_items(organization_id=org_id, limit=500)
+
+        # Use Claude to answer the query with AP context
+        answer = await _answer_query_with_context(text, items, org_id)
+
+        # Post reply in thread
+        headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
+        payload = {
+            "channel": channel,
+            "thread_ts": thread_ts,
+            "text": answer,
+        }
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post("https://slack.com/api/chat.postMessage", json=payload, headers=headers)
+            data = resp.json()
+            if not data.get("ok"):
+                logger.warning("[conversational] Slack reply failed: %s", data.get("error"))
+
+    except Exception as exc:
+        logger.error("[conversational] query handling failed: %s", exc)
+
+
+async def _answer_query_with_context(query: str, items: list, org_id: str) -> str:
+    """Use Claude to answer a natural language AP query."""
+    import os
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return _answer_query_rule_based(query, items)
+
+    # Build a compact AP summary for context
+    summary_lines = []
+    for item in items[:100]:
+        vendor = item.get("vendor_name") or item.get("vendor") or "Unknown"
+        amount = float(item.get("amount") or 0)
+        state = item.get("state", "")
+        due = item.get("due_date", "")
+        ref = item.get("invoice_number", "")
+        summary_lines.append(f"{vendor} | {ref} | {state} | {amount:.0f} | due:{due}")
+
+    context = "\n".join(summary_lines) if summary_lines else "No AP items found."
+
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model=os.environ.get("AGENT_RUNTIME_MODEL", "claude-sonnet-4-6"),
+            max_tokens=500,
+            system=(
+                "You are Clearledgr's AP agent. Answer finance questions using the AP data provided. "
+                "Be specific — use vendor names, amounts, dates. Follow DID-WHY-NEXT: state the fact, "
+                "explain the context, suggest what to do next. Keep responses under 3 sentences when possible."
+            ),
+            messages=[
+                {"role": "user", "content": f"AP data:\n{context}\n\nQuestion: {query}"},
+            ],
+        )
+        return response.content[0].text
+    except Exception as exc:
+        logger.warning("[conversational] Claude call failed: %s", exc)
+        return _answer_query_rule_based(query, items)
+
+
+def _answer_query_rule_based(query: str, items: list) -> str:
+    """Fallback rule-based answer when Claude is unavailable."""
+    q = query.lower()
+    from datetime import datetime, timedelta
+
+    if "outstanding" in q or "open" in q:
+        # Find vendor if mentioned
+        for item in items:
+            vendor = (item.get("vendor_name") or "").lower()
+            if vendor and vendor in q:
+                vendor_items = [i for i in items if (i.get("vendor_name") or "").lower() == vendor and i.get("state") not in ("closed", "rejected")]
+                total = sum(float(i.get("amount") or 0) for i in vendor_items)
+                return f"{len(vendor_items)} open items with {item.get('vendor_name')} totalling {total:,.0f}."
+        open_items = [i for i in items if i.get("state") not in ("closed", "rejected")]
+        total = sum(float(i.get("amount") or 0) for i in open_items)
+        return f"{len(open_items)} open items totalling {total:,.0f}."
+
+    if "due" in q and ("friday" in q or "this week" in q or "week" in q):
+        now = datetime.utcnow()
+        week_end = now + timedelta(days=(4 - now.weekday()) % 7 + 1)
+        due_items = [i for i in items if i.get("due_date") and i.get("state") not in ("closed", "rejected")]
+        return f"{len(due_items)} invoices with due dates in the current period."
+
+    if "onboarding" in q:
+        return "Check the Vendor Onboarding pipeline for current onboarding status."
+
+    return f"I found {len(items)} AP items. Try asking about a specific vendor, due dates, or outstanding amounts."

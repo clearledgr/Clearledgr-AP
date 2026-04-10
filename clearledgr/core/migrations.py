@@ -751,3 +751,17 @@ def _m018_vendor_onboarding_tokens(cur, db):
             cur.execute(ddl)
         except Exception as exc:
             logger.warning("[Migration v18] index skipped: %s", exc)
+
+
+@migration(19, "Archived users + snooze columns (DESIGN_THESIS.md §5.4, §3)")
+def _v19_archived_users_and_snooze(cur, db):
+    """§5.4: Add archived_at to users. §3: Add snoozed_until to ap_items."""
+    for col, table, col_type in [
+        ("archived_at", "users", "TEXT"),
+        ("archived_by", "users", "TEXT"),
+        ("snoozed_until", "ap_items", "TEXT"),
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass  # Column may already exist

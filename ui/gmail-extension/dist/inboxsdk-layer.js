@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:f64c0ff681d9ede12425bec117c8df7da6484bfe76295258358499beb02891fa */
+/* clearledgr-source-fingerprint:b7c166eec68f0c318d97c6b2d32a52fd7135744ba5d181077f0167b8f299ab36 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59848,11 +59848,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
-  function ThreadSidebar({ item, auditEvents, onApprove, onQuery }) {
+  function ThreadSidebar({ item, auditEvents, onApprove, onSnooze, onQuery }) {
     if (!item)
       return null;
     const state = String(item.state || "").toLowerCase();
     const matchPassed = state === "needs_approval" || state === "pending_approval";
+    const canSnooze = ["needs_approval", "pending_approval", "needs_info", "validated", "failed_post"].includes(state);
+    const isSnoozed = state === "snoozed";
     return m3`
     <div class="cl-thread-sidebar">
       <style>${THREAD_SIDEBAR_CSS}</style>
@@ -59861,13 +59863,25 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <${VendorSection} item=${item} />
       <${AgentActionsSection} item=${item} auditEvents=${auditEvents} />
 
-      <!-- §6.6: Below the four sections — approve button + query field -->
+      <!-- §6.6: Below the four sections — approve button + snooze + query field -->
       <div class="cl-ts-actions-bar">
         ${matchPassed ? m3`
           <button
             class="cl-ts-approve-btn"
             onClick=${() => onApprove && onApprove(item)}
           >Approve</button>
+        ` : ""}
+        ${canSnooze && onSnooze ? m3`
+          <button
+            class="cl-ts-snooze-btn"
+            style="padding:6px 14px;border:1px solid #D97706;border-radius:6px;background:#FEF9EE;color:#92400E;font:500 12px/1.2 'DM Sans',sans-serif;cursor:pointer;"
+            onClick=${() => onSnooze(item)}
+          >Snooze</button>
+        ` : ""}
+        ${isSnoozed ? m3`
+          <div style="font:500 11px/1.3 'DM Sans',sans-serif;color:#D97706;padding:4px 0;">
+            Snoozed until ${item.metadata?.snoozed_until ? new Date(item.metadata.snoozed_until).toLocaleString() : "later"}
+          </div>
         ` : ""}
         <input
           class="cl-ts-query-input"
@@ -60515,7 +60529,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       description: "Longest-waiting approvals first.",
       snapshot: {
         activeSliceId: "waiting_on_approval",
-        viewMode: "table",
+        viewMode: "kanban",
         sortCol: "approval_wait",
         sortDir: "desc",
         filters: buildDefaultFilters()
@@ -60527,7 +60541,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       description: "Invoices due soon with nearest due dates first.",
       snapshot: {
         activeSliceId: "due_soon",
-        viewMode: "table",
+        viewMode: "kanban",
         sortCol: "due_date",
         sortDir: "asc",
         filters: buildDefaultFilters()
@@ -60539,7 +60553,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       description: "Highest-value approved invoices ready for ERP posting.",
       snapshot: {
         activeSliceId: "ready_to_post",
-        viewMode: "table",
+        viewMode: "kanban",
         sortCol: "amount",
         sortDir: "desc",
         filters: buildDefaultFilters()
@@ -60551,7 +60565,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       description: "Blocked invoices ordered by queue age.",
       snapshot: {
         activeSliceId: "blocked_exception",
-        viewMode: "table",
+        viewMode: "kanban",
         sortCol: "queue_age",
         sortDir: "desc",
         filters: {
@@ -60796,7 +60810,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function defaultPipelinePreferences() {
     return {
       activeSliceId: "all_open",
-      viewMode: "table",
+      viewMode: "kanban",
       sortCol: "queue_age",
       sortDir: "desc",
       filters: buildDefaultFilters(),
@@ -63108,23 +63122,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var NAV_PREFS_STORAGE_KEY = "clearledgr_nav_preferences_v1";
   var ROUTES = [
     {
-      id: "clearledgr/invoices",
-      title: "Invoices",
-      subtitle: "All invoices and finance documents across states.",
-      icon: "pipeline",
-      navOrder: 10,
-      defaultPinned: true,
-      canHide: false,
-      menuGroup: "primary",
-      hideTopbar: true,
-      viewCapability: "view_pipeline"
-    },
-    {
       id: "clearledgr/home",
-      title: "Home",
-      subtitle: "Quick access, recent work, and secondary tools.",
+      title: "Clearledgr Home",
+      subtitle: "Your daily AP briefing.",
       icon: "home",
-      navOrder: 20,
+      navOrder: 1,
       defaultPinned: true,
       canHide: false,
       menuGroup: "primary",
@@ -63132,56 +63134,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       viewCapability: "view_home"
     },
     {
-      id: "clearledgr/review",
-      title: "Review",
-      subtitle: "Handle records that need a closer look.",
-      icon: "review",
-      navOrder: 22,
-      defaultPinned: false,
-      canHide: true,
+      id: "clearledgr/invoices",
+      title: "AP Invoices",
+      subtitle: "All invoice Boxes organised by stage.",
+      icon: "pipeline",
+      navOrder: 2,
+      defaultPinned: true,
+      canHide: false,
       menuGroup: "primary",
-      viewCapability: "view_review"
-    },
-    {
-      id: "clearledgr/upcoming",
-      title: "Upcoming",
-      subtitle: "See what needs attention next.",
-      icon: "upcoming",
-      navOrder: 25,
-      defaultPinned: false,
-      canHide: true,
-      menuGroup: "primary",
-      viewCapability: "view_upcoming"
-    },
-    {
-      id: "clearledgr/connections",
-      title: "Connections",
-      subtitle: "Connect Gmail, approvals, and your ERP.",
-      icon: "connections",
-      navOrder: 30,
-      defaultPinned: false,
-      canHide: true,
-      menuGroup: "secondary",
-      viewCapability: "view_connections",
-      manageCapability: "manage_connections"
-    },
-    {
-      id: "clearledgr/activity",
-      title: "Activity",
-      subtitle: "See recent changes.",
-      icon: "activity",
-      navOrder: 40,
-      defaultPinned: false,
-      canHide: true,
-      menuGroup: "secondary",
-      viewCapability: "view_activity"
+      hideTopbar: true,
+      viewCapability: "view_pipeline"
     },
     {
       id: "clearledgr/vendor-onboarding",
       title: "Vendor Onboarding",
-      subtitle: "Track vendor onboarding from invite to activation.",
+      subtitle: "All vendor Boxes from Invited to Active.",
       icon: "vendors",
-      navOrder: 15,
+      navOrder: 3,
       defaultPinned: true,
       canHide: false,
       menuGroup: "primary",
@@ -63189,82 +63158,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       viewCapability: "view_vendors"
     },
     {
-      id: "clearledgr/vendors",
-      title: "Vendors",
-      subtitle: "Vendor history and context.",
-      icon: "vendors",
-      navOrder: 50,
-      defaultPinned: false,
-      canHide: true,
-      menuGroup: "secondary",
-      viewCapability: "view_vendors"
-    },
-    {
-      id: "clearledgr/templates",
-      title: "Templates",
-      subtitle: "Reusable email drafts.",
-      icon: "templates",
-      navOrder: 55,
-      defaultPinned: false,
-      canHide: true,
-      menuGroup: "secondary",
-      viewCapability: "view_templates"
-    },
-    {
-      id: "clearledgr/rules",
-      title: "Approval Rules",
-      subtitle: "Rules for when invoices auto-approve or wait.",
-      icon: "rules",
-      navOrder: 60,
-      defaultPinned: false,
-      canHide: true,
-      menuGroup: "secondary",
-      viewCapability: "view_rules",
-      manageCapability: "manage_rules"
+      id: "clearledgr/activity",
+      title: "Agent Activity",
+      subtitle: "All autonomous actions across both pipelines.",
+      icon: "activity",
+      navOrder: 4,
+      defaultPinned: true,
+      canHide: false,
+      menuGroup: "primary",
+      viewCapability: "view_activity"
     },
     {
       id: "clearledgr/settings",
       title: "Settings",
-      subtitle: "Team, workspace, and billing.",
+      subtitle: "ERP, policies, approvals, team, and billing.",
       icon: "settings",
-      navOrder: 70,
-      defaultPinned: false,
-      canHide: true,
-      menuGroup: "secondary",
+      navOrder: 5,
+      defaultPinned: true,
+      canHide: false,
+      menuGroup: "settings",
       viewCapability: "view_settings"
-    },
-    {
-      id: "clearledgr/reconciliation",
-      title: "Reconciliation",
-      subtitle: "Early reconciliation tools.",
-      icon: "recon",
-      navOrder: 100,
-      defaultPinned: false,
-      canHide: true,
-      menuGroup: "secondary",
-      viewCapability: "view_reconciliation"
-    },
-    {
-      id: "clearledgr/health",
-      title: "System Status",
-      subtitle: "Check what is connected and what needs attention.",
-      icon: "health",
-      navOrder: 110,
-      defaultPinned: false,
-      canHide: true,
-      menuGroup: "hidden",
-      viewCapability: "view_system_status"
-    },
-    {
-      id: "clearledgr/reports",
-      title: "Reports",
-      subtitle: "A quick view of volume, spend, and risk.",
-      icon: "reports",
-      navOrder: 115,
-      defaultPinned: false,
-      canHide: true,
-      menuGroup: "secondary",
-      viewCapability: "view_reports"
     }
   ];
   var DEFAULT_ROUTE = "clearledgr/invoices";
@@ -63274,24 +63187,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     if ("includeAdmin" in options || "includeOps" in options) {
       const includeAdmin = Boolean(options.includeAdmin);
-      const includeOps = options.includeOps !== false;
       return {
         view_home: true,
         view_pipeline: true,
-        view_review: includeOps,
-        view_upcoming: includeOps,
-        view_connections: includeAdmin,
-        view_activity: includeOps,
-        view_vendors: includeOps,
-        view_templates: includeOps,
-        view_rules: includeAdmin,
-        view_settings: includeAdmin,
-        view_reconciliation: includeOps,
-        view_system_status: includeAdmin,
-        view_reports: includeAdmin,
-        manage_connections: includeAdmin,
-        manage_rules: includeAdmin,
-        manage_admin_pages: includeAdmin
+        view_vendors: true,
+        view_activity: true,
+        view_settings: includeAdmin
       };
     }
     return null;
@@ -65699,9 +65600,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const iconKey = typeof routeOrIconKey === "string" ? routeOrIconKey : String(routeOrIconKey?.icon || "").trim();
     return buildRouteIconUrl(iconKey || "activity");
   }
-  function getPipelineViewIconUrl() {
-    return buildRouteIconUrl("view");
-  }
 
   // src/routes/route-helpers.js
   var html3 = htm_module_default.bind(_);
@@ -65941,6 +65839,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [pipelinePrefs, setPipelinePrefs] = d2(() => readPipelinePreferences(pipelineScope));
     const [upcomingPayload, setUpcomingPayload] = d2({ summary: {}, tasks: [] });
     const [recentAudit, setRecentAudit] = d2([]);
+    const [onboardingBlockers, setOnboardingBlockers] = d2([]);
     const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
     const pinnedPipelineViews = getPinnedPipelineViews(pipelinePrefs).slice(0, 3);
     const starterSavedViews = getStarterPipelineViews(pipelinePrefs).filter((view) => !pinnedPipelineViews.some((pinnedView) => pinnedView.id === view.id && pinnedView.scope === view.scope)).slice(0, 3);
@@ -66012,6 +65911,41 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         setRecentAudit(Array.isArray(data?.events) ? data.events.slice(0, 12) : []);
       }).catch(() => {
         setRecentAudit([]);
+      });
+    }, [api, orgId, workAccess]);
+    y2(() => {
+      if (!workAccess) {
+        setOnboardingBlockers([]);
+        return;
+      }
+      api(`/api/ops/vendor-onboarding/sessions?organization_id=${encodeURIComponent(orgId)}&limit=200`, { silent: true }).then((data) => {
+        const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
+        const now = Date.now();
+        const blockedStates = new Set(["invited", "awaiting_kyc", "awaiting_bank", "microdeposit_pending", "escalated"]);
+        const blocked = sessions.filter((s3) => {
+          if (!blockedStates.has(s3.state))
+            return false;
+          const elapsed = s3.invited_at ? (now - new Date(s3.invited_at).getTime()) / 3600000 : 0;
+          return elapsed >= 48;
+        }).map((s3) => {
+          const hours = s3.invited_at ? Math.floor((now - new Date(s3.invited_at).getTime()) / 3600000) : 0;
+          const days = Math.floor(hours / 24);
+          const reasons = [];
+          if (s3.state === "awaiting_kyc")
+            reasons.push("Missing KYC documents");
+          else if (s3.state === "awaiting_bank")
+            reasons.push("Bank details not submitted");
+          else if (s3.state === "microdeposit_pending")
+            reasons.push("Micro-deposit unconfirmed");
+          else if (s3.state === "escalated")
+            reasons.push("Escalated — needs manual resolution");
+          else if (s3.state === "invited")
+            reasons.push("Vendor has not responded");
+          return { ...s3, days, reason: reasons[0] || "Blocked" };
+        });
+        setOnboardingBlockers(blocked);
+      }).catch(() => {
+        setOnboardingBlockers([]);
       });
     }, [api, orgId, workAccess]);
     const openPipelineSlice = (sliceId) => {
@@ -66361,7 +66295,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         detail="Vendors stuck in onboarding for more than 48 hours."
         panelMinHeight=${120}
       >
-        <${EmptyPanelState} text="Blocked vendor onboarding engagements will appear here with vendor name, stage, what is missing, and days elapsed." />
+        ${onboardingBlockers.length === 0 ? html4`<${EmptyPanelState} text="No blocked vendor onboarding engagements." />` : onboardingBlockers.map((b) => html4`
+            <div class="home-blocker-row" key=${b.id || b.vendor_name} onClick=${() => navigate("clearledgr/vendor/" + encodeURIComponent(b.vendor_name || ""))} style="cursor:pointer;padding:6px 0;border-bottom:1px solid #f0f0ed;display:flex;align-items:baseline;gap:8px;">
+              <span style="font:600 13px/1.3 'DM Sans',sans-serif;color:#1b1b1b;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${b.vendor_name || "Unknown vendor"}</span>
+              <span style="font:500 11px/1 'DM Sans',sans-serif;color:#92400e;flex-shrink:0;">${b.state?.replace(/_/g, " ")}</span>
+              <span style="font:500 11px/1 'Geist Mono',monospace;color:#6b7280;flex-shrink:0;margin-left:auto;">${b.days}d</span>
+            </div>
+            <div style="font:400 11px/1.3 'DM Sans',sans-serif;color:#6b7280;padding:0 0 4px;">${b.reason}</div>
+          `)}
       </${SectionPanel}>
 
       <!-- §6.1 Section 6: Quick Access -->
@@ -66372,7 +66313,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       >
         <div class="home-quick-row">
           <${ToolbarAction} label="AP Invoices" detail="Open the invoice pipeline." meta="Pipeline" onClick=${() => navigate("clearledgr/invoices")} />
-          <${ToolbarAction} label="Vendor Onboarding" detail="Open the vendor pipeline." meta="Pipeline" onClick=${() => navigate("clearledgr/vendors")} />
+          <${ToolbarAction} label="Vendor Onboarding" detail="Open the vendor pipeline." meta="Pipeline" onClick=${() => navigate("clearledgr/vendor-onboarding")} />
           <${ToolbarAction} label="Agent Activity" detail="Full feed of all agent actions." meta="Feed" onClick=${() => navigate("clearledgr/activity")} />
         </div>
       </${SectionPanel}>
@@ -68863,10 +68804,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const canManageCompany = hasCapability(bootstrap, "manage_company");
     const canManagePlan = hasCapability(bootstrap, "manage_plan");
     const canManageAny = canManageTeam || canManageCompany || canManagePlan;
-    const teamRef = A2(null);
-    const workspaceRef = A2(null);
-    const billingRef = A2(null);
+    const erpRef = A2(null);
+    const policyRef = A2(null);
     const approvalRef = A2(null);
+    const vendorPolicyRef = A2(null);
+    const autonomyRef = A2(null);
+    const teamRef = A2(null);
+    const billingRef = A2(null);
+    const integrations = bootstrap?.integrations || [];
+    const gmail = integrations.find((i3) => i3.type === "gmail") || {};
+    const slack = integrations.find((i3) => i3.type === "slack") || {};
+    const teams = integrations.find((i3) => i3.type === "teams") || {};
+    const erp = integrations.find((i3) => i3.type === "erp") || {};
+    const erpType = (erp.erp_type || "").charAt(0).toUpperCase() + (erp.erp_type || "").slice(1);
     const scrollToSection = (ref) => {
       try {
         ref?.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
@@ -68998,29 +68948,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return html10`
     <div class=${`secondary-banner ${canManageAny ? "" : "warning"}`}>
       <div class="secondary-banner-copy">
-        <h3>${canManageAny ? "Manage workspace settings" : "Workspace settings"}</h3>
+        <h3>Settings</h3>
         <p class="muted">
-          Team access, workspace details, and billing live here now.
-          ${canManageAny ? " Use the sections below to keep the workspace current." : " You can review these settings here, but only admins can make changes."}
+          ERP, policies, approvals, team, and billing.
         </p>
       </div>
-      <div class="secondary-banner-actions">
-        <button
-          class=${`segmented-button btn-sm ${activeAlias === "clearledgr/team" ? "is-active" : ""}`}
-          onClick=${() => scrollToSection(teamRef)}
-        >Team</button>
-        <button
-          class=${`segmented-button btn-sm ${activeAlias === "clearledgr/company" ? "is-active" : ""}`}
-          onClick=${() => scrollToSection(workspaceRef)}
-        >Workspace</button>
-        <button
-          class=${`segmented-button btn-sm ${activeAlias === "clearledgr/plan" ? "is-active" : ""}`}
-          onClick=${() => scrollToSection(billingRef)}
-        >Billing</button>
-        <button
-          class=${`segmented-button btn-sm ${activeAlias === "clearledgr/approvals" ? "is-active" : ""}`}
-          onClick=${() => scrollToSection(approvalRef)}
-        >Approvals</button>
+      <div class="secondary-banner-actions" style="flex-wrap:wrap">
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(erpRef)}>ERP Connection</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(policyRef)}>AP Policy</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(approvalRef)}>Approval Routing</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(vendorPolicyRef)}>Vendor Onboarding</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(autonomyRef)}>Autonomy</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(teamRef)}>Team</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(billingRef)}>Billing</button>
       </div>
     </div>
 
@@ -69044,6 +68984,76 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
 
     <div class="secondary-main">
+      <!-- §16.1 ERP Connection -->
+      <div class="panel" ref=${erpRef}>
+        <div class="panel-head compact">
+          <div>
+            <h3 style="margin-top:0">ERP Connection</h3>
+            <p class="muted" style="margin:0">Connect your accounting system. Clearledgr posts approved invoices here.</p>
+          </div>
+        </div>
+        <div class="settings-section-grid">
+          <div>
+            <div class="settings-summary-grid">
+              <div class="settings-summary-card">
+                <strong>ERP</strong>
+                <span>${erp.connected ? erpType || "Connected" : "Not connected"}</span>
+              </div>
+              <div class="settings-summary-card">
+                <strong>Gmail</strong>
+                <span>${gmail.connected ? "Connected" : "Not connected"}</span>
+              </div>
+              <div class="settings-summary-card">
+                <strong>Approval surface</strong>
+                <span>${slack.connected ? "Slack" : teams.connected ? "Teams" : "Not connected"}</span>
+              </div>
+            </div>
+          </div>
+          <div class="secondary-note">
+            ERP credentials are encrypted at rest. OAuth tokens refresh automatically. If a connection drops, the agent pauses posting and notifies the AP Manager.
+          </div>
+        </div>
+      </div>
+
+      <!-- §16.2 AP Policy -->
+      <div class="panel" ref=${policyRef}>
+        <div class="panel-head compact">
+          <div>
+            <h3 style="margin-top:0">AP Policy</h3>
+            <p class="muted" style="margin:0">Auto-approve threshold, duplicate detection window, PO requirement, and payment ceiling.</p>
+          </div>
+        </div>
+        <div class="secondary-note">
+          AP policy controls are configured via the API. A full settings UI for these controls is coming in the next release.
+        </div>
+      </div>
+
+      <!-- §16.4 Vendor Onboarding Policy -->
+      <div class="panel" ref=${vendorPolicyRef}>
+        <div class="panel-head compact">
+          <div>
+            <h3 style="margin-top:0">Vendor Onboarding Policy</h3>
+            <p class="muted" style="margin:0">Auto-chase timing, micro-deposit verification, and escalation windows.</p>
+          </div>
+        </div>
+        <div class="secondary-note">
+          Vendor onboarding policy is configured via the API. Chase emails send at 24h and 48h, escalation at 72h, abandonment at 30 days.
+        </div>
+      </div>
+
+      <!-- §16.5 Autonomy Configuration -->
+      <div class="panel" ref=${autonomyRef}>
+        <div class="panel-head compact">
+          <div>
+            <h3 style="margin-top:0">Autonomy Configuration</h3>
+            <p class="muted" style="margin:0">Processing tier, transparency mode, and override window duration.</p>
+          </div>
+        </div>
+        <div class="secondary-note">
+          Autonomy tiers progress through the trust-building arc. The agent starts in observation mode and expands autonomy as accuracy is demonstrated.
+        </div>
+      </div>
+
       <div class="panel" ref=${teamRef}>
         <div class="panel-head compact">
           <div>
@@ -69078,59 +69088,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       </div>
 
-      <div class="panel" ref=${workspaceRef}>
-        <div class="panel-head compact">
-          <div>
-            <h3 style="margin-top:0">Workspace${!canManageCompany ? html10`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
-            <p class="muted" style="margin:0">Keep the company record and inbox setup current.</p>
-          </div>
-          <div class="row-actions">
-            <button class="btn-primary" onClick=${saveOrg} disabled=${savingOrg || !canManageCompany}>
-              ${savingOrg ? "Saving…" : "Save workspace"}
-            </button>
-          </div>
-        </div>
-        <div class="settings-section-grid">
-          <div style="display:flex;flex-direction:column;gap:16px">
-            <div><label>Company name</label><input id="cl-org-name" value=${org.name || ""} placeholder="Your company name" disabled=${!canManageCompany} /></div>
-            <div><label>Domain</label><input id="cl-org-domain" value=${org.domain || ""} placeholder="company.com" disabled=${!canManageCompany} /></div>
-            <div><label>Integration mode</label>
-              <select id="cl-org-mode" disabled=${!canManageCompany}>
-                <option value="shared" selected=${org.integration_mode === "shared"}>Shared workspace</option>
-                <option value="per_org" selected=${org.integration_mode === "per_org"}>Per organization</option>
-              </select>
-            </div>
-          </div>
-          <div class="settings-summary-grid">
-            <div class="settings-summary-card">
-              <strong>Organization ID</strong>
-              <span>${org.id || orgId || "—"}</span>
-            </div>
-            <div class="settings-summary-card">
-              <strong>Domain</strong>
-              <span>${org.domain || "Not set"}</span>
-            </div>
-            <div class="settings-summary-card">
-              <strong>Mode</strong>
-              <span>${org.integration_mode === "per_org" ? "Per organization" : "Shared workspace"}</span>
-            </div>
-            <div class="settings-summary-card">
-              <strong>Current plan</strong>
-              <span>${planName}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div class="panel" ref=${billingRef}>
         <div class="panel-head compact">
           <div>
             <h3 style="margin-top:0">Billing${!canManagePlan ? html10`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
-            <p class="muted" style="margin:0">See the current billing state here, then open the dedicated billing page for plan comparison and usage detail.</p>
+            <p class="muted" style="margin:0">Current plan, usage, and billing cycle.</p>
           </div>
-          ${navigate ? html10`<div class="row-actions">
-                <button class="btn-primary btn-sm" onClick=${() => navigate("clearledgr/plan")}>Open billing page</button>
-              </div>` : null}
         </div>
         <div class="settings-section-grid">
           <div>
@@ -69971,7 +69934,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [activeItemId, setActiveItemId] = d2("");
     const [viewPrefs, setViewPrefs] = d2(() => normalizePipelinePreferences({
       ...readPipelinePreferences(pipelineScope),
-      viewMode: "table"
+      viewMode: "kanban"
     }));
     const [navState, setNavState] = d2(() => readPipelineNavigation(pipelineScope));
     const [savedViewName, setSavedViewName] = d2("");
@@ -69982,7 +69945,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     y2(() => {
       setViewPrefs(normalizePipelinePreferences({
         ...readPipelinePreferences(pipelineScope),
-        viewMode: "table"
+        viewMode: "kanban"
       }));
       setNavState(readPipelineNavigation(pipelineScope));
     }, [pipelineScope]);
@@ -74200,23 +74163,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var appMenuPanelReady = null;
   var appMenuNavItemViews = [];
   var fallbackNavItemViews = [];
-  var APPMENU_WORKSPACE_ROUTE_IDS = new Set([
-    "clearledgr/invoices",
+  var _cachedExceptionCount = 0;
+  var APPMENU_PRIMARY_ROUTE_IDS = new Set([
     "clearledgr/home",
-    "clearledgr/review",
-    "clearledgr/upcoming",
-    "clearledgr/activity",
-    "clearledgr/vendors",
-    "clearledgr/reports",
-    "clearledgr/reconciliation"
+    "clearledgr/invoices",
+    "clearledgr/vendor-onboarding",
+    "clearledgr/activity"
   ]);
-  var APPMENU_CONFIGURATION_ROUTE_IDS = new Set([
-    "clearledgr/connections",
-    "clearledgr/rules",
+  var APPMENU_SETTINGS_ROUTE_IDS = new Set([
     "clearledgr/settings"
-  ]);
-  var APPMENU_LIBRARY_ROUTE_IDS = new Set([
-    "clearledgr/templates"
   ]);
   function injectFonts() {
     if (document.getElementById("cl-fonts-loaded"))
@@ -74768,6 +74723,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       display: flex;
       flex-direction: column;
     }
+    .cl-appmenu-panel-view-badge {
+      margin-left: auto;
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 9px;
+      background: #dc2626;
+      color: #fff;
+      font: 600 10px/1 "DM Sans", sans-serif;
+    }
   `;
     document.head.appendChild(style);
   }
@@ -74984,6 +74953,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           return false;
         }
       }).length;
+      const newExceptionCount = failedPost + needsInfo;
+      if (newExceptionCount !== _cachedExceptionCount) {
+        _cachedExceptionCount = newExceptionCount;
+        rebuildMenuNavigation().catch(() => {});
+      }
       const parts = [];
       if (needsApproval)
         parts.push(`${needsApproval} awaiting approval`);
@@ -75230,14 +75204,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             iconUrl: getAssetUrl(LOGO_PATH2) || undefined
           });
         }
-        if ("reconcil".includes(q3) || "recon".includes(q3) || "bank".includes(q3)) {
-          suggestions.push({
-            name: "Reconciliation",
-            description: "Match bank transactions to invoices",
-            routeID: "clearledgr/reconciliation",
-            iconUrl: getAssetUrl(LOGO_PATH2) || undefined
-          });
-        }
         return suggestions.slice(0, 5);
       });
     } catch (err) {
@@ -75258,11 +75224,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         description: "Go to Clearledgr Activity"
       });
       goActivity.on("activate", () => sdk.Router.goto("clearledgr/activity"));
-      const goRecon = sdk.Keyboard.createShortcutHandle({
-        chord: "g r",
-        description: "Go to Clearledgr Reconciliation"
+      const goHomeView = sdk.Keyboard.createShortcutHandle({
+        chord: "g h",
+        description: "Go to Clearledgr Home"
       });
-      goRecon.on("activate", () => sdk.Router.goto("clearledgr/reconciliation"));
+      goHomeView.on("activate", () => sdk.Router.goto("clearledgr/home"));
     } catch (err) {
       console.warn("[Clearledgr] Keyboard shortcuts failed:", err);
     }
@@ -75738,7 +75704,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         pinned: true,
         snapshot: currentPreferences
       });
-      rebuildMenuNavigation();
+      rebuildMenuNavigation2();
       showToast(`Saved "${name}" to Views.`, "success");
     }
     async function handlePrimaryAppMenuAction() {
@@ -75770,7 +75736,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       navigateInboxRoute(DEFAULT_ROUTE, sdk);
       showToast("Open an invoice email, then use New record again to create or link a finance record from that email.", "info");
     }
-    function renderAppMenuPanelChrome({ workspaceRoutes = [], pinnedViews = [], configurationRoutes = [], libraryRoutes = [] } = {}) {
+    function renderAppMenuPanelChrome({ primaryRoutes = [], savedViews = [], settingsRoutes = [] } = {}) {
       const panelRoot = resolveAppMenuPanelRoot();
       if (!panelRoot)
         return;
@@ -75856,6 +75822,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           }
           button.appendChild(icon);
           button.appendChild(meta);
+          if (row.badge) {
+            const badge = document.createElement("span");
+            badge.className = "cl-appmenu-panel-view-badge";
+            badge.textContent = row.badge;
+            button.appendChild(badge);
+          }
           button.addEventListener("click", () => {
             row.onClick?.();
           });
@@ -75863,48 +75835,42 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         });
         shell.appendChild(section);
       };
-      renderSection("Workspace", workspaceRoutes.map((route) => ({
-        name: route.title,
-        iconUrl: getRouteIconUrl(route),
-        active: currentHash === normalizeClearledgrHash(route.id),
-        onClick: () => navigateInboxRoute(route.id, sdk)
-      })));
-      const viewsToRender = Array.isArray(pinnedViews) ? pinnedViews.slice(0, 6) : [];
-      const viewRows = viewsToRender.length > 0 ? viewsToRender.map((view) => {
+      const exceptionCount = _cachedExceptionCount ?? 0;
+      renderSection(null, primaryRoutes.map((route) => {
+        const row = {
+          name: route.title,
+          iconUrl: getRouteIconUrl(route),
+          active: currentHash === normalizeClearledgrHash(route.id),
+          onClick: () => navigateInboxRoute(route.id, sdk)
+        };
+        if (route.id === "clearledgr/invoices" && exceptionCount > 0) {
+          row.badge = String(exceptionCount);
+        }
+        return row;
+      }));
+      const viewRows = (Array.isArray(savedViews) ? savedViews : []).map((view) => {
         const viewHash = buildClearledgrRouteHash(view.id, view.routeParams || undefined);
         return {
           name: String(view?.name || view?.title || "Saved view"),
-          description: String(view?.description || "Open this AP queue view in Gmail."),
+          description: String(view?.description || ""),
           iconText: "▸",
           active: Boolean(viewHash && currentHash === viewHash),
           onClick: () => navigateInboxRoute(view.id, sdk, view.routeParams || undefined)
         };
-      }) : [{
-        name: "Save your first view",
-        description: "Pin the queues your finance team comes back to every day.",
-        iconText: "+",
-        active: false,
-        onClick: saveCurrentPipelineView
-      }];
-      renderSection("Views", viewRows, {
+      });
+      renderSection("Saved Views", viewRows, {
         trailingActionLabel: "+",
         trailingActionAriaLabel: "Save current view",
         onTrailingAction: saveCurrentPipelineView
       });
-      renderSection("Configurations", configurationRoutes.map((route) => ({
-        name: route.title,
-        iconUrl: getRouteIconUrl(route),
-        active: currentHash === normalizeClearledgrHash(route.id),
-        onClick: () => navigateInboxRoute(route.id, sdk)
-      })));
-      renderSection("Templates", libraryRoutes.map((route) => ({
+      renderSection("Settings", settingsRoutes.map((route) => ({
         name: route.title,
         iconUrl: getRouteIconUrl(route),
         active: currentHash === normalizeClearledgrHash(route.id),
         onClick: () => navigateInboxRoute(route.id, sdk)
       })));
     }
-    async function rebuildMenuNavigation() {
+    async function rebuildMenuNavigation2() {
       if (!routeAccessResolved)
         return;
       if (appMenuPanelReady) {
@@ -75915,27 +75881,45 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const routeOptions = currentRouteAccess;
       const routePreferences = readRoutePreferences(routeOptions);
       const menuRoutes = getMenuNavRoutes(routePreferences, routeOptions);
-      const workspaceRoutes = menuRoutes.filter((route) => APPMENU_WORKSPACE_ROUTE_IDS.has(route.id));
+      const primaryRoutes = menuRoutes.filter((route) => APPMENU_PRIMARY_ROUTE_IDS.has(route.id));
+      const thesisSavedViews = [
+        {
+          name: "Exceptions",
+          description: "Invoices with Match Status = Exception or Failed.",
+          id: "clearledgr/invoices-view/:ref",
+          routeParams: { ref: "thesis:exceptions" }
+        },
+        {
+          name: "Awaiting Approval",
+          description: "Invoices routed for approval but not yet actioned.",
+          id: "clearledgr/invoices-view/:ref",
+          routeParams: { ref: "thesis:awaiting_approval" }
+        },
+        {
+          name: "Due This Week",
+          description: "Invoices due within 5 days.",
+          id: "clearledgr/invoices-view/:ref",
+          routeParams: { ref: "thesis:due_this_week" }
+        }
+      ];
       const pipelineScope = {
         orgId: queueManager?.runtimeConfig?.organizationId || "default",
         userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || ""
       };
-      const pinnedViewRoutes = getPinnedPipelineViews(readPipelinePreferences(pipelineScope)).slice(0, 3).map((view) => ({
-        title: view.name,
+      const userPinnedViews = getPinnedPipelineViews(readPipelinePreferences(pipelineScope)).slice(0, 3).map((view) => ({
         name: view.name,
         description: view.description || "Pinned AP queue view.",
         id: "clearledgr/invoices-view/:ref",
-        routeParams: { ref: getPipelineViewRef(view) },
-        iconUrl: getPipelineViewIconUrl()
+        routeParams: { ref: getPipelineViewRef(view) }
       }));
+      const allSavedViews = [...thesisSavedViews, ...userPinnedViews];
       clearNavItemViews(appMenuNavItemViews);
       clearNavItemViews(fallbackNavItemViews);
       if (appMenuPanelView && typeof appMenuPanelView.addNavItem === "function") {
         renderAppMenuPanelChrome({
-          workspaceRoutes,
-          pinnedViews: pinnedViewRoutes,
-          configurationRoutes: menuRoutes.filter((route) => APPMENU_CONFIGURATION_ROUTE_IDS.has(route.id)),
-          libraryRoutes: menuRoutes.filter((route) => APPMENU_LIBRARY_ROUTE_IDS.has(route.id))
+          primaryRoutes,
+          savedViews: allSavedViews,
+          settingsRoutes: menuRoutes.filter((route) => APPMENU_SETTINGS_ROUTE_IDS.has(route.id))
         });
         return;
       }
@@ -76011,7 +75995,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         routeAccessResolved = true;
         if (!hadResolvedRouteAccess || appMenuNavItemViews.length === 0 || JSON.stringify(nextRouteAccess.capabilities) !== JSON.stringify(currentRouteAccess.capabilities)) {
           currentRouteAccess = nextRouteAccess;
-          rebuildMenuNavigation();
+          rebuildMenuNavigation2();
         }
         bootstrapPromise = null;
         return data;
@@ -76020,7 +76004,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         routeAccessResolved = true;
         currentRouteAccess = { capabilities: getCapabilities({}) };
         if (appMenuNavItemViews.length === 0 && fallbackNavItemViews.length === 0) {
-          rebuildMenuNavigation();
+          rebuildMenuNavigation2();
         }
         return {};
       });
@@ -76051,10 +76035,22 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           prefs = normalizedRemotePrefs;
         }
       }
-      const targetView = resolvePipelineViewByRef(prefs, decodeURIComponent(rawRef));
-      if (targetView?.snapshot) {
+      const decodedRef = decodeURIComponent(rawRef);
+      const THESIS_VIEW_SNAPSHOTS = {
+        "thesis:exceptions": { activeSliceId: "blocked_exception", viewMode: "table", sortCol: "due_date", sortDir: "asc" },
+        "thesis:awaiting_approval": { activeSliceId: "waiting_on_approval", viewMode: "table", sortCol: "due_date", sortDir: "asc" },
+        "thesis:due_this_week": { activeSliceId: "due_soon", viewMode: "table", sortCol: "due_date", sortDir: "asc" }
+      };
+      const thesisSnapshot = THESIS_VIEW_SNAPSHOTS[decodedRef];
+      if (thesisSnapshot) {
         clearPipelineNavigation(pipelineScope);
-        writePipelinePreferences(pipelineScope, targetView.snapshot);
+        writePipelinePreferences(pipelineScope, thesisSnapshot);
+      } else {
+        const targetView = resolvePipelineViewByRef(prefs, decodedRef);
+        if (targetView?.snapshot) {
+          clearPipelineNavigation(pipelineScope);
+          writePipelinePreferences(pipelineScope, targetView.snapshot);
+        }
       }
       sdk.Router.goto("clearledgr/invoices");
       try {
@@ -76088,7 +76084,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const params = customRouteView.getParams?.() || {};
       const rawId = resolveRecordRouteId(params, window.location.hash);
       rememberActiveClearledgrRoute("clearledgr/invoice/:id", { id: rawId });
-      rebuildMenuNavigation();
+      rebuildMenuNavigation2();
       const orgId = workspaceShellApi.orgId();
       const navigate = (routeId, params2) => sdk.Router.goto(routeId, params2);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
@@ -76123,7 +76119,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const params = customRouteView.getParams?.() || {};
       const rawName = resolveVendorRouteName(params, window.location.hash);
       rememberActiveClearledgrRoute("clearledgr/vendor/:name", { name: rawName });
-      rebuildMenuNavigation();
+      rebuildMenuNavigation2();
       const orgId = workspaceShellApi.orgId();
       const navigate = (routeId, params2) => sdk.Router.goto(routeId, params2);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
@@ -76145,7 +76141,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       sdk.Router.handleCustomRoute(route.id, async (customRouteView) => {
         bindRouteSidebarBehavior(customRouteView);
         rememberActiveClearledgrRoute(route.id);
-        rebuildMenuNavigation();
+        rebuildMenuNavigation2();
         const releaseDocumentTitle = claimRouteDocumentTitle(route.title);
         customRouteView?.on?.("destroy", releaseDocumentTitle);
         const container = document.createElement("div");
@@ -76171,7 +76167,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const bootstrap2 = await getBootstrap();
           const routeOptions = { capabilities: getCapabilities(bootstrap2) };
           const normalized = writeRoutePreferences(nextPreferences, routeOptions);
-          rebuildMenuNavigation();
+          rebuildMenuNavigation2();
           await renderCurrentPage();
           return normalized;
         };
@@ -76214,7 +76210,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       sdk.Router.handleCustomRoute(routeId, async (customRouteView) => {
         bindRouteSidebarBehavior(customRouteView);
         rememberActiveClearledgrRoute(routeId);
-        rebuildMenuNavigation();
+        rebuildMenuNavigation2();
         const releaseDocumentTitle = claimRouteDocumentTitle(routeId === "clearledgr/plan" ? "Billing" : "Settings");
         customRouteView?.on?.("destroy", releaseDocumentTitle);
         const container = document.createElement("div");
@@ -76266,7 +76262,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           availableRoutes=${getNavEligibleRoutes(routeOptions)}
           updateRoutePreferences=${async (nextPreferences) => {
             const normalized = writeRoutePreferences(nextPreferences, routeOptions);
-            rebuildMenuNavigation();
+            rebuildMenuNavigation2();
             await renderCurrentPage();
             return normalized;
           }}
@@ -76310,7 +76306,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         }
       } catch (err) {
         console.warn("[Clearledgr] AppMenu not available, falling back to NavMenu", err);
-        rebuildMenuNavigation();
+        rebuildMenuNavigation2();
       }
     }
     window.addEventListener("pagehide", persistReloadedClearledgrRoute, true);
@@ -76322,7 +76318,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       } else {
         lastKnownMailboxDocumentTitle = String(document.title || "").trim() || lastKnownMailboxDocumentTitle;
       }
-      rebuildMenuNavigation();
+      rebuildMenuNavigation2();
       window.setTimeout(async () => {
         const restored = await maybeRestoreReloadedClearledgrRoute();
         if (!restored) {

@@ -357,6 +357,62 @@ async def activate_vendor_in_erp(
     return ActivationResult(success=True, erp_vendor_id=erp_vendor_id)
 
 
+async def enrich_vendor_on_kyc(
+    organization_id: str,
+    vendor_name: str,
+    registration_number: Optional[str] = None,
+    vat_number: Optional[str] = None,
+    db: Any = None,
+) -> Dict[str, Any]:
+    """Best-effort vendor enrichment after KYC submission (§3).
+
+    Called when a vendor transitions from ``awaiting_kyc`` to
+    ``awaiting_bank``. Looks up the vendor in Companies House and
+    (if a VAT number was provided) the HMRC VAT register, then
+    persists the enriched fields on the vendor profile.
+
+    Never raises — all external errors are caught and logged. Returns
+    the enrichment result dict (may be empty if all lookups failed).
+    """
+    from clearledgr.core.database import get_db as _get_db
+
+    db = db or _get_db()
+
+    # If no registration_number / vat_number passed, try reading from
+    # the vendor profile (the portal already wrote them via update_vendor_kyc).
+    if not registration_number or not vat_number:
+        profile = db.get_vendor_profile(organization_id, vendor_name)
+        if profile:
+            registration_number = registration_number or profile.get("registration_number")
+            vat_number = vat_number or profile.get("vat_number")
+
+    try:
+        from clearledgr.services.vendor_enrichment import enrich_vendor
+
+        result = await enrich_vendor(
+            vendor_name,
+            registration_number=registration_number or None,
+            vat_number=vat_number or None,
+            organization_id=organization_id,
+            persist=True,
+        )
+        sources = result.get("sources") or []
+        if sources:
+            logger.info(
+                "[onboarding_lifecycle] vendor enrichment complete for %s/%s "
+                "from %s",
+                organization_id, vendor_name, sources,
+            )
+        return result
+    except Exception as exc:
+        logger.warning(
+            "[onboarding_lifecycle] vendor enrichment failed (non-fatal) "
+            "for %s/%s: %s",
+            organization_id, vendor_name, exc,
+        )
+        return {"vendor_name": vendor_name, "sources": [], "error": str(exc)}
+
+
 async def _dispatch_erp_create_vendor(
     organization_id: str,
     vendor_name: str,

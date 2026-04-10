@@ -135,95 +135,63 @@ test('work-surface primary action map matches the current Gmail execution doctri
   assert.equal(canReassignApproval({}, 'needs_approval'), true);
 });
 
-test('route registry keeps left nav sparse while AppMenu exposes eligible routes', async () => {
+test('route registry matches thesis §6.2 — exactly 5 nav routes + legacy routes for backward compat', async () => {
   const {
     ROUTES,
+    LEGACY_ROUTES,
     DEFAULT_ROUTE,
     getMenuNavRoutes,
-    getNavEligibleRoutes,
     getVisibleNavRoutes,
-    hideRoute,
-    pinRoute,
   } = await importModule('src/routes/route-registry.js');
-  const { getFallbackCapabilities } = await importModule('src/utils/capabilities.js');
   const routeIds = ROUTES.map((route) => route.id);
-  const routeMap = new Map(ROUTES.map((route) => [route.id, route]));
-  const operatorCapabilities = getFallbackCapabilities('operator');
-  const viewerCapabilities = getFallbackCapabilities('viewer');
-  const adminCapabilities = getFallbackCapabilities('admin');
-  const defaultNavRouteIds = getVisibleNavRoutes({}, { capabilities: operatorCapabilities }).map((route) => route.id);
-  const customizedNavRouteIds = getVisibleNavRoutes(
-    pinRoute('clearledgr/vendors', hideRoute('clearledgr/connections', {}, { capabilities: operatorCapabilities }), { capabilities: operatorCapabilities }),
-    { capabilities: operatorCapabilities },
-  ).map((route) => route.id);
-  const adminEligibleRouteIds = getNavEligibleRoutes({ capabilities: adminCapabilities }).map((route) => route.id);
-  const adminDefaultNavRouteIds = getVisibleNavRoutes({}, { capabilities: adminCapabilities }).map((route) => route.id);
-  const approverVisibleRouteIds = getVisibleNavRoutes({}, { capabilities: viewerCapabilities }).map((route) => route.id);
-  const adminVisibleRouteIds = getVisibleNavRoutes(
-    pinRoute('clearledgr/health', {}, { capabilities: adminCapabilities }),
-    { capabilities: adminCapabilities },
-  ).map((route) => route.id);
-  const defaultMenuRouteIds = getMenuNavRoutes({}, { capabilities: operatorCapabilities }).map((route) => route.id);
-  const approverMenuRouteIds = getMenuNavRoutes({}, { capabilities: viewerCapabilities }).map((route) => route.id);
-  const adminMenuRouteIds = getMenuNavRoutes({}, { capabilities: adminCapabilities }).map((route) => route.id);
-  const hiddenMenuRouteIds = getMenuNavRoutes(
-    hideRoute('clearledgr/vendors', pinRoute('clearledgr/vendors', {}, { capabilities: operatorCapabilities }), { capabilities: operatorCapabilities }),
-    { capabilities: operatorCapabilities },
-  ).map((route) => route.id);
+  const legacyIds = LEGACY_ROUTES.map((route) => route.id);
 
+  // §6.2 — exactly 5 thesis-defined nav routes
   assert.equal(DEFAULT_ROUTE, 'clearledgr/invoices');
-  assert.ok(routeIds.includes('clearledgr/home'));
-  assert.ok(routeIds.includes('clearledgr/invoices'));
-  assert.ok(routeIds.includes('clearledgr/review'));
-  assert.ok(routeIds.includes('clearledgr/activity'));
-  assert.ok(routeIds.includes('clearledgr/connections'));
-  assert.ok(routeIds.includes('clearledgr/settings'));
-  assert.equal(routeIds.some((id) => /\bops\b/i.test(id)), false);
-  assert.equal(routeIds.some((id) => /\bbatch\b/i.test(id)), false);
-  // §6.2 thesis nav: AP Invoices, Vendor Onboarding, Home are default-pinned
-  assert.deepEqual(defaultNavRouteIds, [
+  assert.deepEqual(routeIds, [
+    'clearledgr/home',
     'clearledgr/invoices',
     'clearledgr/vendor-onboarding',
-    'clearledgr/home',
-  ]);
-  assert.ok(customizedNavRouteIds.includes('clearledgr/vendors'));
-  assert.equal(customizedNavRouteIds.includes('clearledgr/connections'), false);
-  assert.equal(customizedNavRouteIds.includes('clearledgr/activity'), false);
-  assert.equal(adminEligibleRouteIds.includes('clearledgr/health'), true);
-  assert.deepEqual(adminDefaultNavRouteIds, [
-    'clearledgr/invoices',
-    'clearledgr/vendor-onboarding',
-    'clearledgr/home',
-  ]);
-  assert.equal(defaultNavRouteIds.includes('clearledgr/health'), false);
-  assert.equal(adminVisibleRouteIds.includes('clearledgr/health'), true);
-  assert.deepEqual(approverVisibleRouteIds, [
-    'clearledgr/invoices',
-    'clearledgr/vendor-onboarding',
-    'clearledgr/home',
-  ]);
-  assert.deepEqual(defaultMenuRouteIds, [
-    'clearledgr/invoices',
-    'clearledgr/vendor-onboarding',
-    'clearledgr/home',
-    'clearledgr/review',
-    'clearledgr/upcoming',
-    'clearledgr/connections',
     'clearledgr/activity',
-    'clearledgr/vendors',
-    'clearledgr/templates',
-    'clearledgr/rules',
     'clearledgr/settings',
-    'clearledgr/reconciliation',
-    'clearledgr/reports',
   ]);
-  assert.deepEqual(approverMenuRouteIds, defaultMenuRouteIds);
-  assert.deepEqual(adminMenuRouteIds, defaultMenuRouteIds);
-  assert.equal(hiddenMenuRouteIds.includes('clearledgr/vendors'), true);
-  assert.equal(routeMap.get('clearledgr/connections').manageCapability, 'manage_connections');
-  assert.equal(routeMap.get('clearledgr/rules').manageCapability, 'manage_rules');
-  assert.equal(routeMap.get('clearledgr/home').hideTopbar, true);
-  assert.equal(routeMap.get('clearledgr/settings').viewCapability, 'view_settings');
+
+  // All 5 are defaultPinned and canHide: false
+  for (const route of ROUTES) {
+    assert.equal(route.defaultPinned, true, `${route.id} should be defaultPinned`);
+    assert.equal(route.canHide, false, `${route.id} should not be hideable`);
+  }
+
+  // Nav order: Home(1), Invoices(2), Vendor Onboarding(3), Activity(4), Settings(5)
+  const orderedIds = [...ROUTES].sort((a, b) => a.navOrder - b.navOrder).map((r) => r.id);
+  assert.deepEqual(orderedIds, routeIds);
+
+  // Legacy routes exist for backward compat but not in ROUTES
+  assert.ok(legacyIds.includes('clearledgr/review'));
+  assert.ok(legacyIds.includes('clearledgr/connections'));
+  assert.ok(legacyIds.includes('clearledgr/rules'));
+  assert.ok(legacyIds.includes('clearledgr/vendors'));
+  assert.ok(legacyIds.includes('clearledgr/health'));
+  assert.equal(routeIds.includes('clearledgr/review'), false);
+  assert.equal(routeIds.includes('clearledgr/connections'), false);
+  assert.equal(routeIds.includes('clearledgr/vendors'), false);
+
+  // Pre-thesis pages that redirect to settings
+  const settingsRedirects = LEGACY_ROUTES.filter((r) => r.redirectTo === 'clearledgr/settings');
+  assert.ok(settingsRedirects.some((r) => r.id === 'clearledgr/connections'));
+  assert.ok(settingsRedirects.some((r) => r.id === 'clearledgr/rules'));
+  assert.ok(settingsRedirects.some((r) => r.id === 'clearledgr/plan'));
+
+  // Visible nav = all 5 thesis routes (all defaultPinned, none hideable)
+  const visibleNavRouteIds = getVisibleNavRoutes({}).map((route) => route.id);
+  assert.deepEqual(visibleNavRouteIds, routeIds);
+
+  // Menu nav = same 5 routes (no secondary group exists now)
+  const menuRouteIds = getMenuNavRoutes({}).map((route) => route.id);
+  assert.deepEqual(menuRouteIds, routeIds);
+
+  assert.equal(ROUTES.find((r) => r.id === 'clearledgr/home').hideTopbar, true);
+  assert.equal(ROUTES.find((r) => r.id === 'clearledgr/settings').viewCapability, 'view_settings');
 });
 
 test('route icon mapper returns concrete icon assets for menu routes', async () => {
@@ -232,16 +200,13 @@ test('route icon mapper returns concrete icon assets for menu routes', async () 
 
   const iconUrls = ROUTES.map((route) => getRouteIconUrl(route));
   const decodeSvg = (url) => decodeURIComponent(String(url).split(',')[1] || '');
-  const connectionsSvg = decodeSvg(getRouteIconUrl('connections'));
   const settingsSvg = decodeSvg(getRouteIconUrl('settings'));
-  const templatesSvg = decodeSvg(getRouteIconUrl('templates'));
 
+  // All 5 thesis routes have icons
   assert.equal(iconUrls.every((url) => String(url).startsWith('data:image/svg+xml')), true);
-  assert.equal(new Set(iconUrls).size >= 6, true);
+  assert.equal(new Set(iconUrls).size >= 4, true);
   assert.equal(getPipelineViewIconUrl().startsWith('data:image/svg+xml'), true);
-  assert.match(connectionsSvg, /scale\(1\.16\)/);
   assert.match(settingsSvg, /stroke-width="1\.84"/);
-  assert.match(templatesSvg, /scale\(1\.13\)/);
 });
 
 test('pipeline blocker helpers prefer canonical backend blocker payloads', async () => {
@@ -1001,7 +966,10 @@ test('secondary Gmail pages stay lightweight and avoid raw admin/dashboard surfa
   assert.equal(planSource.includes("navigate('clearledgr/settings')"), true);
   assert.equal(planSource.includes("changePlan('trial')"), true);
   assert.equal(settingsSource.includes('routeId, navigate }'), true);
-  assert.equal(settingsSource.includes("navigate('clearledgr/plan')"), true);
+  // §16: Settings no longer links to a separate plan page — billing is inline
+  assert.equal(settingsSource.includes('ERP Connection'), true);
+  assert.equal(settingsSource.includes('AP Policy'), true);
+  assert.equal(settingsSource.includes('Autonomy Configuration'), true);
   assert.equal(inboxLayerSource.includes("'clearledgr/plan': PlanPage"), true);
   assert.equal(inboxLayerSource.includes("<h2>Billing</h2><p>Plan, usage, and workspace limits.</p>"), true);
   assert.equal(reconSource.includes('Use this page when you want to test or run reconciliation work from a spreadsheet.'), true);
@@ -1059,13 +1027,12 @@ test('app menu panel exposes a Clearledgr start-work CTA and a saved views secti
 
   assert.equal(source.includes("createSavedPipelineView"), true);
   assert.equal(source.includes('<span class="cl-appmenu-panel-cta-copy">New record</span>'), true);
-  assert.equal(source.includes("function renderAppMenuPanelChrome({ workspaceRoutes = [], pinnedViews = [], configurationRoutes = [], libraryRoutes = [] } = {}) {"), true);
+  assert.equal(source.includes("function renderAppMenuPanelChrome({ primaryRoutes = [], savedViews = [], settingsRoutes = [] } = {}) {"), true);
   assert.equal(source.includes("renderAppMenuPanelChrome({"), true);
-  assert.equal(source.includes("renderSection('Workspace', workspaceRoutes.map((route) => ({"), true);
-  assert.equal(source.includes("configurationRoutes: menuRoutes.filter((route) => APPMENU_CONFIGURATION_ROUTE_IDS.has(route.id)),"), true);
-  assert.equal(source.includes("libraryRoutes: menuRoutes.filter((route) => APPMENU_LIBRARY_ROUTE_IDS.has(route.id)),"), true);
-  assert.equal(source.includes("renderSection('Configurations', configurationRoutes.map((route) => ({"), true);
-  assert.equal(source.includes("renderSection('Templates', libraryRoutes.map((route) => ({"), true);
+  assert.equal(source.includes("APPMENU_PRIMARY_ROUTE_IDS"), true);
+  assert.equal(source.includes("settingsRoutes: menuRoutes.filter((route) => APPMENU_SETTINGS_ROUTE_IDS.has(route.id)),"), true);
+  assert.equal(source.includes("renderSection('Settings', settingsRoutes.map((route) => ({"), true);
+  assert.equal(source.includes("renderSection('Saved Views', viewRows,"), true);
   assert.equal(source.includes("iconImage.src = row.iconUrl;"), true);
   assert.equal(source.includes("const currentHash = normalizeClearledgrHash(window.location.hash) || lastActiveClearledgrRoute;"), true);
   assert.equal(source.includes("trailingActionAriaLabel: 'Save current view'"), true);

@@ -90,23 +90,19 @@ let appMenuPanelView = null;
 let appMenuPanelReady = null; // Promise that resolves when panel is available
 let appMenuNavItemViews = [];
 let fallbackNavItemViews = [];
-const APPMENU_WORKSPACE_ROUTE_IDS = new Set([
-  'clearledgr/invoices',
+let _cachedExceptionCount = 0;
+// §6.2 — thesis-defined nav structure:
+// Primary: Home, AP Invoices (badge), Vendor Onboarding, Agent Activity.
+// Saved Views (nested): Exceptions, Awaiting Approval, Due This Week.
+// Settings: single entry per §16.
+const APPMENU_PRIMARY_ROUTE_IDS = new Set([
   'clearledgr/home',
-  'clearledgr/review',
-  'clearledgr/upcoming',
+  'clearledgr/invoices',
+  'clearledgr/vendor-onboarding',
   'clearledgr/activity',
-  'clearledgr/vendors',
-  'clearledgr/reports',
-  'clearledgr/reconciliation',
 ]);
-const APPMENU_CONFIGURATION_ROUTE_IDS = new Set([
-  'clearledgr/connections',
-  'clearledgr/rules',
+const APPMENU_SETTINGS_ROUTE_IDS = new Set([
   'clearledgr/settings',
-]);
-const APPMENU_LIBRARY_ROUTE_IDS = new Set([
-  'clearledgr/templates',
 ]);
 
 // ==================== FONT LOADING ====================
@@ -712,6 +708,20 @@ function injectAppMenuPanelStyles() {
       display: flex;
       flex-direction: column;
     }
+    .cl-appmenu-panel-view-badge {
+      margin-left: auto;
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 9px;
+      background: #dc2626;
+      color: #fff;
+      font: 600 10px/1 "DM Sans", sans-serif;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -966,6 +976,13 @@ function registerInboxHeadsUp() {
       if (!i.due_date) return false;
       try { return new Date(i.due_date) < new Date(); } catch { return false; }
     }).length;
+
+    // Update cached exception count for nav badge (§6.2)
+    const newExceptionCount = failedPost + needsInfo;
+    if (newExceptionCount !== _cachedExceptionCount) {
+      _cachedExceptionCount = newExceptionCount;
+      rebuildMenuNavigation().catch(() => {});
+    }
 
     const parts = [];
     if (needsApproval) parts.push(`${needsApproval} awaiting approval`);
@@ -1242,15 +1259,6 @@ function registerSearchSuggestions() {
           iconUrl: getAssetUrl(LOGO_PATH) || undefined,
         });
       }
-      if ('reconcil'.includes(q) || 'recon'.includes(q) || 'bank'.includes(q)) {
-        suggestions.push({
-          name: 'Reconciliation',
-          description: 'Match bank transactions to invoices',
-          routeID: 'clearledgr/reconciliation',
-          iconUrl: getAssetUrl(LOGO_PATH) || undefined,
-        });
-      }
-
       return suggestions.slice(0, 5);
     });
   } catch (err) {
@@ -1275,12 +1283,12 @@ function registerKeyboardShortcuts() {
     });
     goActivity.on('activate', () => sdk.Router.goto('clearledgr/activity'));
 
-    // G then R → Go to Reconciliation
-    const goRecon = sdk.Keyboard.createShortcutHandle({
-      chord: 'g r',
-      description: 'Go to Clearledgr Reconciliation',
+    // G then H → Go to Clearledgr Home
+    const goHomeView = sdk.Keyboard.createShortcutHandle({
+      chord: 'g h',
+      description: 'Go to Clearledgr Home',
     });
-    goRecon.on('activate', () => sdk.Router.goto('clearledgr/reconciliation'));
+    goHomeView.on('activate', () => sdk.Router.goto('clearledgr/home'));
 
   } catch (err) {
     console.warn('[Clearledgr] Keyboard shortcuts failed:', err);
@@ -1868,7 +1876,7 @@ function registerAppMenuAndRoutes() {
     showToast('Open an invoice email, then use New record again to create or link a finance record from that email.', 'info');
   }
 
-  function renderAppMenuPanelChrome({ workspaceRoutes = [], pinnedViews = [], configurationRoutes = [], libraryRoutes = [] } = {}) {
+  function renderAppMenuPanelChrome({ primaryRoutes = [], savedViews = [], settingsRoutes = [] } = {}) {
     const panelRoot = resolveAppMenuPanelRoot();
     if (!panelRoot) return;
     const navContainer = panelRoot.querySelector('.nM.inboxsdk__collapsiblePanel_navItems, .inboxsdk__collapsiblePanel_navItems');
@@ -1962,6 +1970,14 @@ function registerAppMenuAndRoutes() {
 
         button.appendChild(icon);
         button.appendChild(meta);
+
+        if (row.badge) {
+          const badge = document.createElement('span');
+          badge.className = 'cl-appmenu-panel-view-badge';
+          badge.textContent = row.badge;
+          button.appendChild(badge);
+        }
+
         button.addEventListener('click', () => {
           row.onClick?.();
         });
@@ -1971,47 +1987,39 @@ function registerAppMenuAndRoutes() {
       shell.appendChild(section);
     };
 
-    renderSection('Workspace', workspaceRoutes.map((route) => ({
-      name: route.title,
-      iconUrl: getRouteIconUrl(route),
-      active: currentHash === normalizeClearledgrHash(route.id),
-      onClick: () => navigateInboxRoute(route.id, sdk),
-    })));
+    // §6.2 — primary nav: Home, AP Invoices (with badge), Vendor Onboarding, Agent Activity
+    const exceptionCount = _cachedExceptionCount ?? 0;
+    renderSection(null, primaryRoutes.map((route) => {
+      const row = {
+        name: route.title,
+        iconUrl: getRouteIconUrl(route),
+        active: currentHash === normalizeClearledgrHash(route.id),
+        onClick: () => navigateInboxRoute(route.id, sdk),
+      };
+      if (route.id === 'clearledgr/invoices' && exceptionCount > 0) {
+        row.badge = String(exceptionCount);
+      }
+      return row;
+    }));
 
-    const viewsToRender = Array.isArray(pinnedViews) ? pinnedViews.slice(0, 6) : [];
-    const viewRows = viewsToRender.length > 0
-      ? viewsToRender.map((view) => {
-          const viewHash = buildClearledgrRouteHash(view.id, view.routeParams || undefined);
-          return {
-            name: String(view?.name || view?.title || 'Saved view'),
-            description: String(view?.description || 'Open this AP queue view in Gmail.'),
-            iconText: '▸',
-            active: Boolean(viewHash && currentHash === viewHash),
-            onClick: () => navigateInboxRoute(view.id, sdk, view.routeParams || undefined),
-          };
-        })
-      : [{
-          name: 'Save your first view',
-          description: 'Pin the queues your finance team comes back to every day.',
-          iconText: '+',
-          active: false,
-          onClick: saveCurrentPipelineView,
-        }];
-
-    renderSection('Views', viewRows, {
+    // §6.2 — saved views: thesis defaults + user-pinned
+    const viewRows = (Array.isArray(savedViews) ? savedViews : []).map((view) => {
+      const viewHash = buildClearledgrRouteHash(view.id, view.routeParams || undefined);
+      return {
+        name: String(view?.name || view?.title || 'Saved view'),
+        description: String(view?.description || ''),
+        iconText: '▸',
+        active: Boolean(viewHash && currentHash === viewHash),
+        onClick: () => navigateInboxRoute(view.id, sdk, view.routeParams || undefined),
+      };
+    });
+    renderSection('Saved Views', viewRows, {
       trailingActionLabel: '+',
       trailingActionAriaLabel: 'Save current view',
       onTrailingAction: saveCurrentPipelineView,
     });
 
-    renderSection('Configurations', configurationRoutes.map((route) => ({
-      name: route.title,
-      iconUrl: getRouteIconUrl(route),
-      active: currentHash === normalizeClearledgrHash(route.id),
-      onClick: () => navigateInboxRoute(route.id, sdk),
-    })));
-
-    renderSection('Templates', libraryRoutes.map((route) => ({
+    renderSection('Settings', settingsRoutes.map((route) => ({
       name: route.title,
       iconUrl: getRouteIconUrl(route),
       active: currentHash === normalizeClearledgrHash(route.id),
@@ -2030,30 +2038,53 @@ function registerAppMenuAndRoutes() {
     const routeOptions = currentRouteAccess;
     const routePreferences = readRoutePreferences(routeOptions);
     const menuRoutes = getMenuNavRoutes(routePreferences, routeOptions);
-    const workspaceRoutes = menuRoutes.filter((route) => APPMENU_WORKSPACE_ROUTE_IDS.has(route.id));
+    const primaryRoutes = menuRoutes.filter((route) => APPMENU_PRIMARY_ROUTE_IDS.has(route.id));
+
+    // §6.2 — three thesis-required saved views, always present
+    const thesisSavedViews = [
+      {
+        name: 'Exceptions',
+        description: 'Invoices with Match Status = Exception or Failed.',
+        id: 'clearledgr/invoices-view/:ref',
+        routeParams: { ref: 'thesis:exceptions' },
+      },
+      {
+        name: 'Awaiting Approval',
+        description: 'Invoices routed for approval but not yet actioned.',
+        id: 'clearledgr/invoices-view/:ref',
+        routeParams: { ref: 'thesis:awaiting_approval' },
+      },
+      {
+        name: 'Due This Week',
+        description: 'Invoices due within 5 days.',
+        id: 'clearledgr/invoices-view/:ref',
+        routeParams: { ref: 'thesis:due_this_week' },
+      },
+    ];
+
+    // Append any user-pinned views after the thesis defaults
     const pipelineScope = {
       orgId: queueManager?.runtimeConfig?.organizationId || 'default',
       userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
     };
-    const pinnedViewRoutes = getPinnedPipelineViews(readPipelinePreferences(pipelineScope))
+    const userPinnedViews = getPinnedPipelineViews(readPipelinePreferences(pipelineScope))
       .slice(0, 3)
       .map((view) => ({
-        title: view.name,
         name: view.name,
         description: view.description || 'Pinned AP queue view.',
         id: 'clearledgr/invoices-view/:ref',
         routeParams: { ref: getPipelineViewRef(view) },
-        iconUrl: getPipelineViewIconUrl(),
       }));
+    const allSavedViews = [...thesisSavedViews, ...userPinnedViews];
+
     clearNavItemViews(appMenuNavItemViews);
     clearNavItemViews(fallbackNavItemViews);
 
     if (appMenuPanelView && typeof appMenuPanelView.addNavItem === 'function') {
       renderAppMenuPanelChrome({
-        workspaceRoutes,
-        pinnedViews: pinnedViewRoutes,
-        configurationRoutes: menuRoutes.filter((route) => APPMENU_CONFIGURATION_ROUTE_IDS.has(route.id)),
-        libraryRoutes: menuRoutes.filter((route) => APPMENU_LIBRARY_ROUTE_IDS.has(route.id)),
+        primaryRoutes,
+        savedViews: allSavedViews,
+        settingsRoutes: menuRoutes.filter((route) => APPMENU_SETTINGS_ROUTE_IDS.has(route.id)),
       });
       return;
     }
@@ -2186,10 +2217,24 @@ function registerAppMenuAndRoutes() {
         prefs = normalizedRemotePrefs;
       }
     }
-    const targetView = resolvePipelineViewByRef(prefs, decodeURIComponent(rawRef));
-    if (targetView?.snapshot) {
+    const decodedRef = decodeURIComponent(rawRef);
+
+    // §6.2 thesis-defined saved views — resolve to pipeline slice directly
+    const THESIS_VIEW_SNAPSHOTS = {
+      'thesis:exceptions': { activeSliceId: 'blocked_exception', viewMode: 'table', sortCol: 'due_date', sortDir: 'asc' },
+      'thesis:awaiting_approval': { activeSliceId: 'waiting_on_approval', viewMode: 'table', sortCol: 'due_date', sortDir: 'asc' },
+      'thesis:due_this_week': { activeSliceId: 'due_soon', viewMode: 'table', sortCol: 'due_date', sortDir: 'asc' },
+    };
+    const thesisSnapshot = THESIS_VIEW_SNAPSHOTS[decodedRef];
+    if (thesisSnapshot) {
       clearPipelineNavigation(pipelineScope);
-      writePipelinePreferences(pipelineScope, targetView.snapshot);
+      writePipelinePreferences(pipelineScope, thesisSnapshot);
+    } else {
+      const targetView = resolvePipelineViewByRef(prefs, decodedRef);
+      if (targetView?.snapshot) {
+        clearPipelineNavigation(pipelineScope);
+        writePipelinePreferences(pipelineScope, targetView.snapshot);
+      }
     }
     sdk.Router.goto('clearledgr/invoices');
     try {

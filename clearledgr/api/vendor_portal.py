@@ -69,7 +69,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -216,6 +216,7 @@ def submit_kyc(
     vat_number: str = Form("", max_length=64),
     director_names: str = Form("", max_length=2048),
     portal: PortalSession = Depends(require_portal_token),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Save KYC fields, transition to awaiting_bank."""
     db = get_db()
@@ -263,7 +264,50 @@ def submit_kyc(
             actor_id=f"vendor_portal:{portal.token_id}",
         )
 
+        # Best-effort vendor enrichment from Companies House / HMRC VAT
+        # (DESIGN_THESIS §3). Runs in a background task so the vendor
+        # redirect is not delayed by external API calls.
+        background_tasks.add_task(
+            _enrich_vendor_background,
+            organization_id=portal.organization_id,
+            vendor_name=portal.vendor_name,
+            registration_number=registration_number.strip(),
+            vat_number=vat_clean,
+        )
+
     return _redirect_with_flash(token, "Business details saved.")
+
+
+async def _enrich_vendor_background(
+    organization_id: str,
+    vendor_name: str,
+    registration_number: str,
+    vat_number: str,
+) -> None:
+    """Background task: enrich vendor from Companies House / HMRC VAT.
+
+    Delegates to the lifecycle module's ``enrich_vendor_on_kyc`` which
+    handles all error catching and logging internally.
+    """
+    try:
+        from clearledgr.services.vendor_onboarding_lifecycle import (
+            enrich_vendor_on_kyc,
+        )
+
+        await enrich_vendor_on_kyc(
+            organization_id=organization_id,
+            vendor_name=vendor_name,
+            registration_number=registration_number or None,
+            vat_number=vat_number or None,
+        )
+    except Exception as exc:
+        # Final safety net — enrich_vendor_on_kyc already catches
+        # internally, but guard against import errors or unexpected
+        # failures so the background task never crashes silently.
+        logger.warning(
+            "[vendor_portal] background enrichment failed for %s/%s: %s",
+            organization_id, vendor_name, exc,
+        )
 
 
 # ---------------------------------------------------------------------------

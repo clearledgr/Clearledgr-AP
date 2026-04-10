@@ -50,6 +50,11 @@ class APState(str, Enum):
     READY_TO_POST = "ready_to_post"
     POSTED_TO_ERP = "posted_to_erp"
     FAILED_POST = "failed_post"
+    # DESIGN_THESIS.md §3 Gmail Power Features: snooze a thread —
+    # archive and return it to the top of the queue after a set time.
+    # The pre-snooze state is stored in metadata so the reaper can
+    # restore it when the snooze expires.
+    SNOOZED = "snoozed"
     # DESIGN_THESIS.md §8 override-window reversal outcome. The bill
     # was posted and then reversed at the ERP level within the window.
     REVERSED = "reversed"
@@ -58,16 +63,18 @@ class APState(str, Enum):
 
 VALID_TRANSITIONS: Dict[APState, FrozenSet[APState]] = {
     APState.RECEIVED: frozenset({APState.VALIDATED, APState.CLOSED, APState.REJECTED}),
-    APState.VALIDATED: frozenset({APState.NEEDS_APPROVAL, APState.NEEDS_INFO, APState.CLOSED}),
-    APState.NEEDS_INFO: frozenset({APState.VALIDATED, APState.CLOSED}),
-    APState.NEEDS_APPROVAL: frozenset({APState.APPROVED, APState.REJECTED, APState.NEEDS_INFO, APState.CLOSED}),
+    APState.VALIDATED: frozenset({APState.NEEDS_APPROVAL, APState.NEEDS_INFO, APState.SNOOZED, APState.CLOSED}),
+    APState.NEEDS_INFO: frozenset({APState.VALIDATED, APState.SNOOZED, APState.CLOSED}),
+    APState.NEEDS_APPROVAL: frozenset({APState.APPROVED, APState.REJECTED, APState.NEEDS_INFO, APState.SNOOZED, APState.CLOSED}),
     APState.APPROVED: frozenset({APState.READY_TO_POST, APState.NEEDS_INFO, APState.CLOSED}),
     APState.REJECTED: frozenset({APState.CLOSED}),
     APState.READY_TO_POST: frozenset({APState.POSTED_TO_ERP, APState.FAILED_POST, APState.CLOSED}),
     # posted_to_erp can either close directly (window expires without
     # incident) or be reversed inside the override window.
     APState.POSTED_TO_ERP: frozenset({APState.CLOSED, APState.REVERSED}),
-    APState.FAILED_POST: frozenset({APState.READY_TO_POST, APState.CLOSED}),
+    APState.FAILED_POST: frozenset({APState.READY_TO_POST, APState.SNOOZED, APState.CLOSED}),
+    # Snoozed can return to any pre-snooze state (stored in metadata).
+    APState.SNOOZED: frozenset({APState.VALIDATED, APState.NEEDS_INFO, APState.NEEDS_APPROVAL, APState.FAILED_POST, APState.CLOSED}),
     # Reversed is a transient state — the AP item is cleaned up to
     # closed shortly after the reversal is acknowledged.
     APState.REVERSED: frozenset({APState.CLOSED}),

@@ -1,34 +1,23 @@
 /**
- * Route registry — single source of truth for all Clearledgr pages inside Gmail.
- * Each route renders as a full-page view in Gmail's content area via InboxSDK Router.
+ * Route registry — thesis-conformant §6.2.
  *
- * Streak-style doctrine:
- * - Keep the always-visible left nav sparse and work-first.
- * - Let AppMenu expose the broader Gmail route catalog.
- * - Keep the Gmail surface work-first instead of settings-first.
+ * ROUTES = thesis-defined nav entries (Home, AP Invoices, Vendor Onboarding,
+ * Agent Activity, Settings). These appear in the left nav.
+ *
+ * LEGACY_ROUTES = pre-thesis pages kept for direct-URL access only.
+ * They render when navigated to but never appear in the nav.
  */
 
 export const NAV_PREFS_STORAGE_KEY = 'clearledgr_nav_preferences_v1';
 
+// §6.2 — thesis-defined nav routes only
 export const ROUTES = [
   {
-    id: 'clearledgr/invoices',
-    title: 'Invoices',
-    subtitle: 'All invoices and finance documents across states.',
-    icon: 'pipeline',
-    navOrder: 10,
-    defaultPinned: true,
-    canHide: false,
-    menuGroup: 'primary',
-    hideTopbar: true,
-    viewCapability: 'view_pipeline',
-  },
-  {
     id: 'clearledgr/home',
-    title: 'Home',
-    subtitle: 'Quick access, recent work, and secondary tools.',
+    title: 'Clearledgr Home',
+    subtitle: 'Your daily AP briefing.',
     icon: 'home',
-    navOrder: 20,
+    navOrder: 1,
     defaultPinned: true,
     canHide: false,
     menuGroup: 'primary',
@@ -36,56 +25,23 @@ export const ROUTES = [
     viewCapability: 'view_home',
   },
   {
-    id: 'clearledgr/review',
-    title: 'Review',
-    subtitle: 'Handle records that need a closer look.',
-    icon: 'review',
-    navOrder: 22,
-    defaultPinned: false,
-    canHide: true,
+    id: 'clearledgr/invoices',
+    title: 'AP Invoices',
+    subtitle: 'All invoice Boxes organised by stage.',
+    icon: 'pipeline',
+    navOrder: 2,
+    defaultPinned: true,
+    canHide: false,
     menuGroup: 'primary',
-    viewCapability: 'view_review',
-  },
-  {
-    id: 'clearledgr/upcoming',
-    title: 'Upcoming',
-    subtitle: 'See what needs attention next.',
-    icon: 'upcoming',
-    navOrder: 25,
-    defaultPinned: false,
-    canHide: true,
-    menuGroup: 'primary',
-    viewCapability: 'view_upcoming',
-  },
-  {
-    id: 'clearledgr/connections',
-    title: 'Connections',
-    subtitle: 'Connect Gmail, approvals, and your ERP.',
-    icon: 'connections',
-    navOrder: 30,
-    defaultPinned: false,
-    canHide: true,
-    menuGroup: 'secondary',
-    viewCapability: 'view_connections',
-    manageCapability: 'manage_connections',
-  },
-  {
-    id: 'clearledgr/activity',
-    title: 'Activity',
-    subtitle: 'See recent changes.',
-    icon: 'activity',
-    navOrder: 40,
-    defaultPinned: false,
-    canHide: true,
-    menuGroup: 'secondary',
-    viewCapability: 'view_activity',
+    hideTopbar: true,
+    viewCapability: 'view_pipeline',
   },
   {
     id: 'clearledgr/vendor-onboarding',
     title: 'Vendor Onboarding',
-    subtitle: 'Track vendor onboarding from invite to activation.',
+    subtitle: 'All vendor Boxes from Invited to Active.',
     icon: 'vendors',
-    navOrder: 15,
+    navOrder: 3,
     defaultPinned: true,
     canHide: false,
     menuGroup: 'primary',
@@ -93,83 +49,44 @@ export const ROUTES = [
     viewCapability: 'view_vendors',
   },
   {
-    id: 'clearledgr/vendors',
-    title: 'Vendors',
-    subtitle: 'Vendor history and context.',
-    icon: 'vendors',
-    navOrder: 50,
-    defaultPinned: false,
-    canHide: true,
-    menuGroup: 'secondary',
-    viewCapability: 'view_vendors',
-  },
-  {
-    id: 'clearledgr/templates',
-    title: 'Templates',
-    subtitle: 'Reusable email drafts.',
-    icon: 'templates',
-    navOrder: 55,
-    defaultPinned: false,
-    canHide: true,
-    menuGroup: 'secondary',
-    viewCapability: 'view_templates',
-  },
-  {
-    id: 'clearledgr/rules',
-    title: 'Approval Rules',
-    subtitle: 'Rules for when invoices auto-approve or wait.',
-    icon: 'rules',
-    navOrder: 60,
-    defaultPinned: false,
-    canHide: true,
-    menuGroup: 'secondary',
-    viewCapability: 'view_rules',
-    manageCapability: 'manage_rules',
+    id: 'clearledgr/activity',
+    title: 'Agent Activity',
+    subtitle: 'All autonomous actions across both pipelines.',
+    icon: 'activity',
+    navOrder: 4,
+    defaultPinned: true,
+    canHide: false,
+    menuGroup: 'primary',
+    viewCapability: 'view_activity',
   },
   {
     id: 'clearledgr/settings',
     title: 'Settings',
-    subtitle: 'Team, workspace, and billing.',
+    subtitle: 'ERP, policies, approvals, team, and billing.',
     icon: 'settings',
-    navOrder: 70,
-    defaultPinned: false,
-    canHide: true,
-    menuGroup: 'secondary',
+    navOrder: 5,
+    defaultPinned: true,
+    canHide: false,
+    menuGroup: 'settings',
     viewCapability: 'view_settings',
   },
-  {
-    id: 'clearledgr/reconciliation',
-    title: 'Reconciliation',
-    subtitle: 'Early reconciliation tools.',
-    icon: 'recon',
-    navOrder: 100,
-    defaultPinned: false,
-    canHide: true,
-    menuGroup: 'secondary',
-    viewCapability: 'view_reconciliation',
-  },
-  {
-    id: 'clearledgr/health',
-    title: 'System Status',
-    subtitle: 'Check what is connected and what needs attention.',
-    icon: 'health',
-    navOrder: 110,
-    defaultPinned: false,
-    canHide: true,
-    menuGroup: 'hidden',
-    viewCapability: 'view_system_status',
-  },
-  {
-    id: 'clearledgr/reports',
-    title: 'Reports',
-    subtitle: 'A quick view of volume, spend, and risk.',
-    icon: 'reports',
-    navOrder: 115,
-    defaultPinned: false,
-    canHide: true,
-    menuGroup: 'secondary',
-    viewCapability: 'view_reports',
-  },
+];
+
+// Pre-thesis routes — still render via handleCustomRoute but never appear in nav.
+// Some redirect to Settings sections; others render their legacy page.
+export const LEGACY_ROUTES = [
+  { id: 'clearledgr/review', title: 'Review', redirectTo: null },
+  { id: 'clearledgr/upcoming', title: 'Upcoming', redirectTo: null },
+  { id: 'clearledgr/connections', title: 'Connections', redirectTo: 'clearledgr/settings' },
+  { id: 'clearledgr/rules', title: 'Approval Rules', redirectTo: 'clearledgr/settings' },
+  { id: 'clearledgr/vendors', title: 'Vendors', redirectTo: null },
+  { id: 'clearledgr/templates', title: 'Templates', redirectTo: null },
+  { id: 'clearledgr/reconciliation', title: 'Reconciliation', redirectTo: null },
+  { id: 'clearledgr/health', title: 'System Status', redirectTo: null },
+  { id: 'clearledgr/reports', title: 'Reports', redirectTo: null },
+  { id: 'clearledgr/plan', title: 'Plan', redirectTo: 'clearledgr/settings' },
+  { id: 'clearledgr/company', title: 'Company', redirectTo: 'clearledgr/settings' },
+  { id: 'clearledgr/team', title: 'Team', redirectTo: 'clearledgr/settings' },
 ];
 
 // Dynamic routes (not in AppMenu nav, accessed via navigation)
@@ -185,30 +102,22 @@ export function getRouteById(id) {
   return ROUTES.find((route) => route.id === id) || null;
 }
 
+export function getLegacyRouteById(id) {
+  return LEGACY_ROUTES.find((route) => route.id === id) || null;
+}
+
 function resolveCapabilities(options = {}) {
   if (options?.capabilities && typeof options.capabilities === 'object') {
     return options.capabilities;
   }
   if ('includeAdmin' in options || 'includeOps' in options) {
     const includeAdmin = Boolean(options.includeAdmin);
-    const includeOps = options.includeOps !== false;
     return {
       view_home: true,
       view_pipeline: true,
-      view_review: includeOps,
-      view_upcoming: includeOps,
-      view_connections: includeAdmin,
-      view_activity: includeOps,
-      view_vendors: includeOps,
-      view_templates: includeOps,
-      view_rules: includeAdmin,
+      view_vendors: true,
+      view_activity: true,
       view_settings: includeAdmin,
-      view_reconciliation: includeOps,
-      view_system_status: includeAdmin,
-      view_reports: includeAdmin,
-      manage_connections: includeAdmin,
-      manage_rules: includeAdmin,
-      manage_admin_pages: includeAdmin,
     };
   }
   return null;

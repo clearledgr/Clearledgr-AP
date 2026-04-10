@@ -308,7 +308,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
   const [activeItemId, setActiveItemId] = useState('');
   const [viewPrefs, setViewPrefs] = useState(() => normalizePipelinePreferences({
     ...readPipelinePreferences(pipelineScope),
-    viewMode: 'table',
+    viewMode: 'kanban',
   }));
   const [navState, setNavState] = useState(() => readPipelineNavigation(pipelineScope));
   const [savedViewName, setSavedViewName] = useState('');
@@ -320,7 +320,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
   useEffect(() => {
     setViewPrefs(normalizePipelinePreferences({
       ...readPipelinePreferences(pipelineScope),
-      viewMode: 'table',
+      viewMode: 'kanban',
     }));
     setNavState(readPipelineNavigation(pipelineScope));
   }, [pipelineScope]);

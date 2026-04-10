@@ -662,6 +662,99 @@ class GmailAPIClient:
             response.raise_for_status()
             return response.json()
 
+    async def get_draft(self, draft_id: str, format: str = "raw") -> Dict[str, Any]:
+        """Retrieve a draft by ID.
+
+        Args:
+            draft_id: The Gmail draft ID.
+            format: Response format — ``raw`` returns the full MIME in
+                ``message.raw``; ``full`` returns parsed payload.
+
+        Returns:
+            The draft resource dict from the Gmail API.
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{GMAIL_API_BASE}/users/me/drafts/{draft_id}",
+                headers=self._headers(),
+                params={"format": format},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def schedule_draft_send(
+        self,
+        draft_id: str,
+        send_at_unix_ms: int,
+    ) -> Dict[str, Any]:
+        """Send a draft as a scheduled message.
+
+        Gmail does not expose a first-class "schedule" verb in its public
+        REST API.  The supported server-side mechanism is:
+
+        1. Retrieve the draft in ``raw`` format.
+        2. Decode the MIME, inject the ``X-Google-Delayed-Sending`` header
+           with the target timestamp (seconds since epoch).
+        3. Delete the original draft.
+        4. Create a *new* draft carrying the modified MIME — Gmail's
+           backend honours the delay header and holds the message until the
+           requested time.
+
+        This keeps the message in the user's Drafts folder with a visible
+        "Scheduled" chip in Gmail, matching the behaviour of the Gmail web
+        UI "Schedule send" feature.
+
+        Args:
+            draft_id: The Gmail draft ID to schedule.
+            send_at_unix_ms: Target send time as milliseconds since epoch.
+
+        Returns:
+            The new draft resource dict (with the scheduled header baked in).
+        """
+        import email as email_lib
+
+        # 1. Fetch the raw MIME content of the existing draft.
+        draft_data = await self.get_draft(draft_id, format="raw")
+        raw_b64 = (draft_data.get("message") or {}).get("raw", "")
+        thread_id = (draft_data.get("message") or {}).get("threadId")
+        if not raw_b64:
+            raise ValueError("draft_empty_or_missing_raw")
+
+        raw_bytes = base64.urlsafe_b64decode(raw_b64)
+        msg = email_lib.message_from_bytes(raw_bytes)
+
+        # 2. Inject (or replace) the scheduled-send header.
+        #    Gmail interprets this as "hold until <epoch-seconds>".
+        send_at_secs = send_at_unix_ms // 1000
+        header_name = "X-Google-Delayed-Sending"
+        if header_name in msg:
+            del msg[header_name]
+        msg[header_name] = str(send_at_secs)
+
+        new_raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+
+        # 3. Delete the original draft so we don't leave duplicates.
+        async with httpx.AsyncClient() as client:
+            await client.delete(
+                f"{GMAIL_API_BASE}/users/me/drafts/{draft_id}",
+                headers=self._headers(),
+            )
+            # Ignore 404 — draft may already have been removed.
+
+        # 4. Create a replacement draft with the schedule header.
+        payload: Dict[str, Any] = {"message": {"raw": new_raw}}
+        if thread_id:
+            payload["message"]["threadId"] = thread_id
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{GMAIL_API_BASE}/users/me/drafts",
+                headers={**self._headers(), "Content-Type": "application/json"},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def list_labels(self) -> List[Dict[str, Any]]:
         """List all labels."""
         async with httpx.AsyncClient() as client:

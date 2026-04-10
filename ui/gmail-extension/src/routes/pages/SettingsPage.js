@@ -40,10 +40,21 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
   const canManagePlan = hasCapability(bootstrap, 'manage_plan');
   const canManageAny = canManageTeam || canManageCompany || canManagePlan;
 
-  const teamRef = useRef(null);
-  const workspaceRef = useRef(null);
-  const billingRef = useRef(null);
+  const erpRef = useRef(null);
+  const policyRef = useRef(null);
   const approvalRef = useRef(null);
+  const vendorPolicyRef = useRef(null);
+  const autonomyRef = useRef(null);
+  const teamRef = useRef(null);
+  const billingRef = useRef(null);
+
+  // ERP + integration state from bootstrap
+  const integrations = bootstrap?.integrations || [];
+  const gmail = integrations.find((i) => i.type === 'gmail') || {};
+  const slack = integrations.find((i) => i.type === 'slack') || {};
+  const teams = integrations.find((i) => i.type === 'teams') || {};
+  const erp = integrations.find((i) => i.type === 'erp') || {};
+  const erpType = (erp.erp_type || '').charAt(0).toUpperCase() + (erp.erp_type || '').slice(1);
 
   const scrollToSection = (ref) => {
     try {
@@ -183,31 +194,19 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
   return html`
     <div class=${`secondary-banner ${canManageAny ? '' : 'warning'}`}>
       <div class="secondary-banner-copy">
-        <h3>${canManageAny ? 'Manage workspace settings' : 'Workspace settings'}</h3>
+        <h3>Settings</h3>
         <p class="muted">
-          Team access, workspace details, and billing live here now.
-          ${canManageAny
-            ? ' Use the sections below to keep the workspace current.'
-            : ' You can review these settings here, but only admins can make changes.'}
+          ERP, policies, approvals, team, and billing.
         </p>
       </div>
-      <div class="secondary-banner-actions">
-        <button
-          class=${`segmented-button btn-sm ${activeAlias === 'clearledgr/team' ? 'is-active' : ''}`}
-          onClick=${() => scrollToSection(teamRef)}
-        >Team</button>
-        <button
-          class=${`segmented-button btn-sm ${activeAlias === 'clearledgr/company' ? 'is-active' : ''}`}
-          onClick=${() => scrollToSection(workspaceRef)}
-        >Workspace</button>
-        <button
-          class=${`segmented-button btn-sm ${activeAlias === 'clearledgr/plan' ? 'is-active' : ''}`}
-          onClick=${() => scrollToSection(billingRef)}
-        >Billing</button>
-        <button
-          class=${`segmented-button btn-sm ${activeAlias === 'clearledgr/approvals' ? 'is-active' : ''}`}
-          onClick=${() => scrollToSection(approvalRef)}
-        >Approvals</button>
+      <div class="secondary-banner-actions" style="flex-wrap:wrap">
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(erpRef)}>ERP Connection</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(policyRef)}>AP Policy</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(approvalRef)}>Approval Routing</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(vendorPolicyRef)}>Vendor Onboarding</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(autonomyRef)}>Autonomy</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(teamRef)}>Team</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(billingRef)}>Billing</button>
       </div>
     </div>
 
@@ -231,6 +230,76 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
     </div>
 
     <div class="secondary-main">
+      <!-- §16.1 ERP Connection -->
+      <div class="panel" ref=${erpRef}>
+        <div class="panel-head compact">
+          <div>
+            <h3 style="margin-top:0">ERP Connection</h3>
+            <p class="muted" style="margin:0">Connect your accounting system. Clearledgr posts approved invoices here.</p>
+          </div>
+        </div>
+        <div class="settings-section-grid">
+          <div>
+            <div class="settings-summary-grid">
+              <div class="settings-summary-card">
+                <strong>ERP</strong>
+                <span>${erp.connected ? erpType || 'Connected' : 'Not connected'}</span>
+              </div>
+              <div class="settings-summary-card">
+                <strong>Gmail</strong>
+                <span>${gmail.connected ? 'Connected' : 'Not connected'}</span>
+              </div>
+              <div class="settings-summary-card">
+                <strong>Approval surface</strong>
+                <span>${slack.connected ? 'Slack' : teams.connected ? 'Teams' : 'Not connected'}</span>
+              </div>
+            </div>
+          </div>
+          <div class="secondary-note">
+            ERP credentials are encrypted at rest. OAuth tokens refresh automatically. If a connection drops, the agent pauses posting and notifies the AP Manager.
+          </div>
+        </div>
+      </div>
+
+      <!-- §16.2 AP Policy -->
+      <div class="panel" ref=${policyRef}>
+        <div class="panel-head compact">
+          <div>
+            <h3 style="margin-top:0">AP Policy</h3>
+            <p class="muted" style="margin:0">Auto-approve threshold, duplicate detection window, PO requirement, and payment ceiling.</p>
+          </div>
+        </div>
+        <div class="secondary-note">
+          AP policy controls are configured via the API. A full settings UI for these controls is coming in the next release.
+        </div>
+      </div>
+
+      <!-- §16.4 Vendor Onboarding Policy -->
+      <div class="panel" ref=${vendorPolicyRef}>
+        <div class="panel-head compact">
+          <div>
+            <h3 style="margin-top:0">Vendor Onboarding Policy</h3>
+            <p class="muted" style="margin:0">Auto-chase timing, micro-deposit verification, and escalation windows.</p>
+          </div>
+        </div>
+        <div class="secondary-note">
+          Vendor onboarding policy is configured via the API. Chase emails send at 24h and 48h, escalation at 72h, abandonment at 30 days.
+        </div>
+      </div>
+
+      <!-- §16.5 Autonomy Configuration -->
+      <div class="panel" ref=${autonomyRef}>
+        <div class="panel-head compact">
+          <div>
+            <h3 style="margin-top:0">Autonomy Configuration</h3>
+            <p class="muted" style="margin:0">Processing tier, transparency mode, and override window duration.</p>
+          </div>
+        </div>
+        <div class="secondary-note">
+          Autonomy tiers progress through the trust-building arc. The agent starts in observation mode and expands autonomy as accuracy is demonstrated.
+        </div>
+      </div>
+
       <div class="panel" ref=${teamRef}>
         <div class="panel-head compact">
           <div>
@@ -267,61 +336,12 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         </div>
       </div>
 
-      <div class="panel" ref=${workspaceRef}>
-        <div class="panel-head compact">
-          <div>
-            <h3 style="margin-top:0">Workspace${!canManageCompany ? html`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
-            <p class="muted" style="margin:0">Keep the company record and inbox setup current.</p>
-          </div>
-          <div class="row-actions">
-            <button class="btn-primary" onClick=${saveOrg} disabled=${savingOrg || !canManageCompany}>
-              ${savingOrg ? 'Saving…' : 'Save workspace'}
-            </button>
-          </div>
-        </div>
-        <div class="settings-section-grid">
-          <div style="display:flex;flex-direction:column;gap:16px">
-            <div><label>Company name</label><input id="cl-org-name" value=${org.name || ''} placeholder="Your company name" disabled=${!canManageCompany} /></div>
-            <div><label>Domain</label><input id="cl-org-domain" value=${org.domain || ''} placeholder="company.com" disabled=${!canManageCompany} /></div>
-            <div><label>Integration mode</label>
-              <select id="cl-org-mode" disabled=${!canManageCompany}>
-                <option value="shared" selected=${org.integration_mode === 'shared'}>Shared workspace</option>
-                <option value="per_org" selected=${org.integration_mode === 'per_org'}>Per organization</option>
-              </select>
-            </div>
-          </div>
-          <div class="settings-summary-grid">
-            <div class="settings-summary-card">
-              <strong>Organization ID</strong>
-              <span>${org.id || orgId || '—'}</span>
-            </div>
-            <div class="settings-summary-card">
-              <strong>Domain</strong>
-              <span>${org.domain || 'Not set'}</span>
-            </div>
-            <div class="settings-summary-card">
-              <strong>Mode</strong>
-              <span>${org.integration_mode === 'per_org' ? 'Per organization' : 'Shared workspace'}</span>
-            </div>
-            <div class="settings-summary-card">
-              <strong>Current plan</strong>
-              <span>${planName}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div class="panel" ref=${billingRef}>
         <div class="panel-head compact">
           <div>
             <h3 style="margin-top:0">Billing${!canManagePlan ? html`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
-            <p class="muted" style="margin:0">See the current billing state here, then open the dedicated billing page for plan comparison and usage detail.</p>
+            <p class="muted" style="margin:0">Current plan, usage, and billing cycle.</p>
           </div>
-          ${navigate
-            ? html`<div class="row-actions">
-                <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/plan')}>Open billing page</button>
-              </div>`
-            : null}
         </div>
         <div class="settings-section-grid">
           <div>

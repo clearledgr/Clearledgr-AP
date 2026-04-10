@@ -160,3 +160,9 @@ class ResolveEntityRouteRequest(BaseModel):
     entity_code: Optional[str] = None
     entity_name: Optional[str] = None
     note: Optional[str] = None
+
+
+class SnoozeAPItemRequest(BaseModel):
+    """DESIGN_THESIS.md §3 Gmail Power Features: snooze a thread."""
+    duration_minutes: int = Field(..., gt=0, le=43200, description="Snooze duration in minutes (max 30 days)")
+    note: Optional[str] = None

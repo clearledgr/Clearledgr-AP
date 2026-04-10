@@ -99,6 +99,89 @@ def _build_approval_followup_blocks(
     return blocks
 
 
+def _resolve_intelligent_route(
+    *,
+    message_type: str = "channel",
+    approver_email: Optional[str] = None,
+    organization_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """§6.8 Intelligent Routing — determine where to send based on message type.
+
+    Returns {"target": "channel"|"dm", "channel": "...", "user_email": "..."}.
+
+    Routing rules (thesis §6.8):
+    - Personal approval → Slack DM to the specific approver
+    - CFO escalation → DM to CFO with 4-hour timer
+    - No-PO exception → procurement contact from Settings
+    - Everything else → org's configured approval channel
+    """
+    result = {"target": "channel", "channel": None, "user_email": None}
+
+    if message_type in ("personal_approval", "cfo_escalation") and approver_email:
+        result["target"] = "dm"
+        result["user_email"] = approver_email
+    elif message_type == "no_po_exception":
+        # Route to procurement contact if configured
+        try:
+            from clearledgr.core.database import get_db
+            db = get_db()
+            org = db.get_organization(organization_id) if organization_id else None
+            settings = (org.get("settings_json") if org else None) or {}
+            procurement_contact = settings.get("procurement_contact_email")
+            if procurement_contact:
+                result["target"] = "dm"
+                result["user_email"] = procurement_contact
+        except Exception:
+            pass
+
+    return result
+
+
+async def _post_slack_dm(
+    *,
+    user_email: str,
+    blocks: List[Dict[str, Any]],
+    text: str,
+    organization_id: Optional[str] = None,
+) -> bool:
+    """Send a Slack DM to a specific user by email (§6.8 intelligent routing)."""
+    try:
+        runtime = resolve_slack_runtime(organization_id or "default")
+        if not runtime or not runtime.get("token"):
+            return False
+
+        token = runtime["token"]
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        # Look up Slack user by email
+        async with httpx.AsyncClient(timeout=10) as client:
+            lookup = await client.post(
+                "https://slack.com/api/users.lookupByEmail",
+                json={"email": user_email},
+                headers=headers,
+            )
+            data = lookup.json()
+            if not data.get("ok"):
+                logger.warning("[intelligent_routing] user lookup failed for %s: %s", user_email, data.get("error"))
+                return False
+            slack_user_id = data["user"]["id"]
+
+            # Send DM
+            resp = await client.post(
+                "https://slack.com/api/chat.postMessage",
+                json={"channel": slack_user_id, "text": text, "blocks": blocks},
+                headers=headers,
+            )
+            dm_data = resp.json()
+            if not dm_data.get("ok"):
+                logger.warning("[intelligent_routing] DM failed: %s", dm_data.get("error"))
+                return False
+            return True
+    except Exception as exc:
+        logger.warning("[intelligent_routing] DM to %s failed: %s", user_email, exc)
+        return False
+
+
 async def _post_slack_blocks(
     blocks: List[Dict[str, Any]],
     text: str,
@@ -832,6 +915,26 @@ async def send_invoice_approval_notification(
         }
     ]
     
+    # §6.8 Intelligent Routing — personal approvals go as DMs, not channel
+    route = _resolve_intelligent_route(
+        message_type="personal_approval" if user_email else "channel",
+        approver_email=user_email,
+        organization_id=organization_id,
+    )
+
+    if route["target"] == "dm" and route["user_email"]:
+        sent = await _post_slack_dm(
+            user_email=route["user_email"],
+            blocks=blocks,
+            text=f"Invoice {invoice_id} needs your approval",
+            organization_id=organization_id,
+        )
+        if sent:
+            logger.info("[intelligent_routing] DM approval to %s for %s", route["user_email"], invoice_id)
+            return True
+        # Fall through to channel if DM fails
+        logger.info("[intelligent_routing] DM failed, falling back to channel for %s", invoice_id)
+
     sent = await send_with_retry(
         blocks=blocks,
         text=f"Invoice {invoice_id} needs approval",

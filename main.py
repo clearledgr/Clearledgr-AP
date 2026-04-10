@@ -943,6 +943,13 @@ try:
 except ImportError:
     pass
 
+# Gmail scheduled send (Thesis §3 — vendor communication timing)
+try:
+    from clearledgr.api.gmail_schedule import router as gmail_schedule_router
+    app.include_router(gmail_schedule_router)
+except ImportError:
+    pass
+
 # Outlook / Microsoft 365 routes (OAuth + webhooks)
 try:
     from clearledgr.api.outlook_routes import router as outlook_router

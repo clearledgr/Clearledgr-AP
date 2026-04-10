@@ -53,7 +53,7 @@ export const PIPELINE_STARTER_VIEWS = [
     description: 'Longest-waiting approvals first.',
     snapshot: {
       activeSliceId: 'waiting_on_approval',
-      viewMode: 'table',
+      viewMode: 'kanban',
       sortCol: 'approval_wait',
       sortDir: 'desc',
       filters: buildDefaultFilters(),
@@ -65,7 +65,7 @@ export const PIPELINE_STARTER_VIEWS = [
     description: 'Invoices due soon with nearest due dates first.',
     snapshot: {
       activeSliceId: 'due_soon',
-      viewMode: 'table',
+      viewMode: 'kanban',
       sortCol: 'due_date',
       sortDir: 'asc',
       filters: buildDefaultFilters(),
@@ -77,7 +77,7 @@ export const PIPELINE_STARTER_VIEWS = [
     description: 'Highest-value approved invoices ready for ERP posting.',
     snapshot: {
       activeSliceId: 'ready_to_post',
-      viewMode: 'table',
+      viewMode: 'kanban',
       sortCol: 'amount',
       sortDir: 'desc',
       filters: buildDefaultFilters(),
@@ -89,7 +89,7 @@ export const PIPELINE_STARTER_VIEWS = [
     description: 'Blocked invoices ordered by queue age.',
     snapshot: {
       activeSliceId: 'blocked_exception',
-      viewMode: 'table',
+      viewMode: 'kanban',
       sortCol: 'queue_age',
       sortDir: 'desc',
       filters: {
@@ -365,7 +365,7 @@ export function getPipelinePreferenceKey(scopeOrOrgId, maybeUserEmail = '') {
 export function defaultPipelinePreferences() {
   return {
     activeSliceId: 'all_open',
-    viewMode: 'table',
+    viewMode: 'kanban',
     sortCol: 'queue_age',
     sortDir: 'desc',
     filters: buildDefaultFilters(),
