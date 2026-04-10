@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:cdba7e9887bac077248c4d4e78731e6801b65bac6ef7c1835e0c50758bc8069b */
+/* clearledgr-source-fingerprint:f64c0ff681d9ede12425bec117c8df7da6484bfe76295258358499beb02891fa */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -73768,6 +73768,161 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
 
+  // src/routes/pages/VendorOnboardingPage.js
+  var html20 = htm_module_default.bind(_);
+  var ONBOARDING_STAGES = [
+    { key: "invited", label: "Invited", states: ["invited"], color: "#9CA3AF" },
+    { key: "kyc", label: "KYC", states: ["awaiting_kyc"], color: "#D97706" },
+    { key: "bank_verify", label: "Bank Verify", states: ["awaiting_bank", "microdeposit_pending"], color: "#2563EB" },
+    { key: "active", label: "Active", states: ["bank_verified", "ready_for_erp", "active"], color: "#10B981" }
+  ];
+  var SECONDARY_STATES = {
+    escalated: { label: "Escalated", color: "#DC2626" },
+    rejected: { label: "Rejected", color: "#991B1B" },
+    abandoned: { label: "Abandoned", color: "#6B7280" }
+  };
+  function daysElapsed(isoDate) {
+    if (!isoDate)
+      return 0;
+    try {
+      const d3 = new Date(isoDate);
+      return Math.max(0, Math.floor((Date.now() - d3.getTime()) / 86400000));
+    } catch {
+      return 0;
+    }
+  }
+  function StateBadge({ state }) {
+    const secondary = SECONDARY_STATES[state];
+    if (secondary) {
+      return html20`<span style="
+      font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;
+      background:${secondary.color}20;color:${secondary.color};text-transform:uppercase;
+    ">${secondary.label}</span>`;
+    }
+    return null;
+  }
+  function VendorOnboardingPage({ bootstrap, api, navigate, toast }) {
+    const [sessions, setSessions] = d2([]);
+    const [loading, setLoading] = d2(true);
+    const orgId = bootstrap?.organization_id || bootstrap?.orgId || "default";
+    y2(() => {
+      if (!api)
+        return;
+      setLoading(true);
+      api(`/api/ops/vendor-onboarding/sessions?organization_id=${encodeURIComponent(orgId)}&limit=200`, { silent: true }).then((data) => {
+        setSessions(Array.isArray(data?.sessions) ? data.sessions : []);
+      }).catch(() => {
+        setSessions([]);
+      }).finally(() => setLoading(false));
+    }, [api, orgId]);
+    const stageGroups = T2(() => {
+      const groups = {};
+      ONBOARDING_STAGES.forEach((stage) => {
+        groups[stage.key] = [];
+      });
+      groups._secondary = [];
+      sessions.forEach((session) => {
+        const state = String(session.state || "").toLowerCase();
+        if (SECONDARY_STATES[state]) {
+          groups._secondary.push(session);
+          return;
+        }
+        const matched = ONBOARDING_STAGES.find((s3) => s3.states.includes(state));
+        if (matched) {
+          groups[matched.key].push(session);
+        } else {
+          groups.invited.push(session);
+        }
+      });
+      return groups;
+    }, [sessions]);
+    return html20`
+    <div class="topbar" style="padding:16px 20px 12px">
+      <div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#5C6B7A;margin-bottom:4px">Vendor Onboarding</div>
+        <h2 style="margin:0;font-size:20px;color:#0A1628">Onboarding pipeline</h2>
+        <p class="muted" style="margin:4px 0 0;font-size:13px">Track vendors from invite to ERP activation.</p>
+      </div>
+    </div>
+
+    ${loading ? html20`<div class="muted" style="text-align:center;padding:48px 0;font-size:13px">Loading onboarding sessions…</div>` : html20`
+        <div style="display:flex;gap:12px;overflow-x:auto;padding:12px 20px 20px;min-height:400px">
+          ${ONBOARDING_STAGES.map((stage) => {
+      const items = stageGroups[stage.key] || [];
+      return html20`
+              <div key=${stage.key} style="
+                min-width:220px;max-width:260px;flex:1;
+                background:#F7F9FB;border-radius:10px;
+                display:flex;flex-direction:column;
+              ">
+                <div style="
+                  padding:10px 14px;border-bottom:2px solid ${stage.color};
+                  display:flex;align-items:center;justify-content:space-between;
+                ">
+                  <strong style="font-size:13px;color:#0A1628">${stage.label}</strong>
+                  <span style="
+                    font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;
+                    background:${stage.color}20;color:${stage.color};
+                  ">${items.length}</span>
+                </div>
+                <div style="padding:8px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px">
+                  ${items.length === 0 ? html20`<div class="muted" style="font-size:12px;text-align:center;padding:24px 8px">No vendors</div>` : items.map((session) => html20`
+                      <div
+                        key=${session.id}
+                        style="
+                          background:#fff;border:1px solid #E5EBF0;border-radius:8px;
+                          padding:10px 12px;cursor:pointer;
+                        "
+                        onClick=${() => navigate && navigate("clearledgr/vendor/" + encodeURIComponent(session.vendor_name))}
+                      >
+                        <strong style="font-size:13px;color:#0A1628;display:block;margin-bottom:4px">
+                          ${session.vendor_name || "Unknown vendor"}
+                        </strong>
+                        <div class="muted" style="font-size:11px;margin-bottom:2px">
+                          ${session.metadata?.invite_email_to || "No contact email"}
+                        </div>
+                        <div class="muted" style="font-size:11px;display:flex;justify-content:space-between;align-items:center">
+                          <span>${daysElapsed(session.invited_at)}d elapsed</span>
+                          ${session.chase_count > 0 ? html20`<span>${session.chase_count} chase${session.chase_count > 1 ? "s" : ""}</span>` : ""}
+                        </div>
+                        <${StateBadge} state=${session.state} />
+                      </div>
+                    `)}
+                </div>
+              </div>
+            `;
+    })}
+        </div>
+
+        ${stageGroups._secondary.length > 0 ? html20`
+          <div style="padding:0 20px 20px">
+            <div style="font-size:13px;font-weight:600;color:#5C6B7A;margin-bottom:8px">
+              Escalated, rejected, and abandoned (${stageGroups._secondary.length})
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              ${stageGroups._secondary.map((session) => html20`
+                <div
+                  key=${session.id}
+                  style="background:#fff;border:1px solid #E5EBF0;border-radius:8px;padding:8px 12px;cursor:pointer;min-width:200px"
+                  onClick=${() => navigate && navigate("clearledgr/vendor/" + encodeURIComponent(session.vendor_name))}
+                >
+                  <strong style="font-size:12px">${session.vendor_name}</strong>
+                  <span style="margin-left:8px"><${StateBadge} state=${session.state} /></span>
+                </div>
+              `)}
+            </div>
+          </div>
+        ` : ""}
+
+        ${sessions.length === 0 ? html20`
+          <div class="muted" style="text-align:center;padding:48px 20px;font-size:13px">
+            No vendor onboarding sessions yet. Use the invite endpoint or Slack to start onboarding a vendor.
+          </div>
+        ` : ""}
+      `}
+  `;
+  }
+
   // src/settings-tab.js
   var SETTINGS_TAB_ID = "clearledgr-settings-tab";
   var SETTINGS_CONTENT_ID = "clearledgr-settings-content";
@@ -74026,7 +74181,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/inboxsdk-layer.js
-  var html20 = htm_module_default.bind(_);
+  var html21 = htm_module_default.bind(_);
   var APP_ID = "sdk_Clearledgr2026_dc12c60472";
   var INIT_KEY = "__clearledgr_ap_v1_inboxsdk_initialized";
   var LOGO_PATH2 = "icons/icon48.png";
@@ -74093,7 +74248,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function mountSidebar() {
     if (!sidebarContainer)
       return;
-    J(html20`<${SidebarApp} queueManager=${queueManager} />`, sidebarContainer);
+    J(html21`<${SidebarApp} queueManager=${queueManager} />`, sidebarContainer);
   }
   async function ensureSidebarPanelView() {
     if (sidebarPanelView && !sidebarPanelView.destroyed)
@@ -75261,6 +75416,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       "clearledgr/upcoming": UpcomingPage,
       "clearledgr/invoices": PipelinePage,
       "clearledgr/activity": ActivityPage,
+      "clearledgr/vendor-onboarding": VendorOnboardingPage,
       "clearledgr/vendors": VendorsPage,
       "clearledgr/templates": TemplatesPage,
       "clearledgr/reports": ReportsPage,
@@ -75937,7 +76093,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const navigate = (routeId, params2) => sdk.Router.goto(routeId, params2);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
       const bootstrap2 = await getBootstrap();
-      J(html20`<${InvoiceDetailPage}
+      J(html21`<${InvoiceDetailPage}
       api=${workspaceShellApi.api}
       bootstrap=${bootstrap2}
       toast=${workspaceShellApi.toast}
@@ -75972,7 +76128,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const navigate = (routeId, params2) => sdk.Router.goto(routeId, params2);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
       const bootstrap2 = await getBootstrap();
-      J(html20`<${VendorDetailPage}
+      J(html21`<${VendorDetailPage}
       api=${workspaceShellApi.api}
       bootstrap=${bootstrap2}
       toast=${workspaceShellApi.toast}
@@ -76023,7 +76179,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const bootstrap2 = await getBootstrap();
           const routeOptions = { capabilities: getCapabilities(bootstrap2) };
           if (!canViewRoute(route, routeOptions)) {
-            J(html20`
+            J(html21`
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
@@ -76033,7 +76189,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             return;
           }
           const routePreferences = readRoutePreferences(routeOptions);
-          J(html20`<${PageComponent}
+          J(html21`<${PageComponent}
           bootstrap=${bootstrap2}
           api=${workspaceShellApi.api}
           toast=${workspaceShellApi.toast}
@@ -76084,7 +76240,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const bootstrap2 = await getBootstrap();
           const routeOptions = { capabilities: getCapabilities(bootstrap2) };
           if (settingsRoute && !canViewRoute(settingsRoute, routeOptions)) {
-            J(html20`
+            J(html21`
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
@@ -76094,7 +76250,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             return;
           }
           const routePreferences = readRoutePreferences(routeOptions);
-          J(html20`<${PageComponent}
+          J(html21`<${PageComponent}
           bootstrap=${bootstrap2}
           api=${workspaceShellApi.api}
           toast=${workspaceShellApi.toast}

@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-04-10T11:00:22.292Z",
-  "fingerprint": "cdba7e9887bac077248c4d4e78731e6801b65bac6ef7c1835e0c50758bc8069b",
+  "generated_at": "2026-04-10T11:09:01.948Z",
+  "fingerprint": "f64c0ff681d9ede12425bec117c8df7da6484bfe76295258358499beb02891fa",
   "inputs": [
     "background.js",
     "manifest.json",
@@ -28,6 +28,7 @@
     "src/routes/pages/TemplatesPage.js",
     "src/routes/pages/UpcomingPage.js",
     "src/routes/pages/VendorDetailPage.js",
+    "src/routes/pages/VendorOnboardingPage.js",
     "src/routes/pages/VendorsPage.js",
     "src/routes/pipeline-views.js",
     "src/routes/reply-templates.js",

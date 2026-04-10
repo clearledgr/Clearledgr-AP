@@ -53,6 +53,7 @@ import VendorsPage from './routes/pages/VendorsPage.js';
 import VendorDetailPage from './routes/pages/VendorDetailPage.js';
 import TemplatesPage from './routes/pages/TemplatesPage.js';
 import ReportsPage from './routes/pages/ReportsPage.js';
+import VendorOnboardingPage from './routes/pages/VendorOnboardingPage.js';
 import { getCapabilities } from './routes/route-helpers.js';
 import {
   clearPipelineNavigation,
@@ -1465,6 +1466,7 @@ function registerAppMenuAndRoutes() {
     'clearledgr/upcoming': UpcomingPage,
     'clearledgr/invoices': PipelinePage,
     'clearledgr/activity': ActivityPage,
+    'clearledgr/vendor-onboarding': VendorOnboardingPage,
     'clearledgr/vendors': VendorsPage,
     'clearledgr/templates': TemplatesPage,
     'clearledgr/reports': ReportsPage,
