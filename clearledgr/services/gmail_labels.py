@@ -1,13 +1,28 @@
 """Gmail label management for Clearledgr finance workflow.
 
-The product surface in Gmail relies on native labels being trustworthy.
-That means labels need to reflect both:
+DESIGN_THESIS.md §6.4 defines a three-level nested label hierarchy:
 
-1. document type (`Invoices`, `Receipts`, `Bank Statements`, ...)
-2. workflow state (`Needs Review`, `Needs Approval`, `Posted`, ...)
+  Clearledgr/
+    Invoice/
+      Received        — Email classified, Box created, extraction in progress
+      Matched         — 3-way match passed, awaiting approval
+      Exception       — Match failed or flagged, requires human resolution
+      Approved        — Approved by AP Manager or auto-approved
+      Paid            — Payment executed and confirmed by ERP
+    Vendor/
+      Onboarding      — Email related to an active vendor onboarding engagement
+    Finance/
+      Credit Note     — Classified as a credit note
+      Statement       — Vendor statement of account
+      Query           — Vendor payment query or dispute
+      Renewal         — Contract renewal notice
+    Review Required   — Agent confidence below threshold, needs manual classification
+    Not Finance       — Promotional/irrelevant, no action taken
 
-This module owns the canonical label taxonomy plus compatibility handling
-for older/legacy label names that may still exist in live mailboxes.
+This module owns the canonical label taxonomy, the mapping from AP
+state machine states to labels, and backward-compatible migration of
+labels from the old flat structure (``Clearledgr/Invoices``, etc.) to
+the thesis hierarchy.
 """
 from __future__ import annotations
 
@@ -20,37 +35,98 @@ from clearledgr.core.utils import safe_int
 
 logger = logging.getLogger(__name__)
 
+# ── Canonical label taxonomy (DESIGN_THESIS.md §6.4) ──
+#
+# Keys are internal identifiers used everywhere in the codebase.
+# Values are the Gmail label display names — three-level nested.
+#
+# The thesis hierarchy supersedes the old flat structure. The
+# LEGACY_LABEL_ALIASES dict maps old names so migration is seamless.
 CLEARLEDGR_LABELS = {
-    "processed":        "Clearledgr/Processed",
-    "invoices":         "Clearledgr/Invoices",
-    "payment_requests": "Clearledgr/Payment Requests",
-    "payments":         "Clearledgr/Payments",
-    "receipts":         "Clearledgr/Receipts",
-    "refunds":          "Clearledgr/Refunds",
-    "credit_notes":     "Clearledgr/Credit Notes",
-    "bank_statements":  "Clearledgr/Bank Statements",
-    "needs_review":     "Clearledgr/Needs Review",
-    "exceptions":       "Clearledgr/Exceptions",
-    "needs_approval": "Clearledgr/Needs Approval",
-    "approved":         "Clearledgr/Approved",
-    "posted":           "Clearledgr/Posted",
-    "rejected":         "Clearledgr/Rejected",
+    # ── Invoice pipeline stages ──
+    "invoice_received":     "Clearledgr/Invoice/Received",
+    "invoice_matched":      "Clearledgr/Invoice/Matched",
+    "invoice_exception":    "Clearledgr/Invoice/Exception",
+    "invoice_approved":     "Clearledgr/Invoice/Approved",
+    "invoice_paid":         "Clearledgr/Invoice/Paid",
+    # ── Vendor pipeline ──
+    "vendor_onboarding":    "Clearledgr/Vendor/Onboarding",
+    # ── Finance document types ──
+    "finance_credit_note":  "Clearledgr/Finance/Credit Note",
+    "finance_statement":    "Clearledgr/Finance/Statement",
+    "finance_query":        "Clearledgr/Finance/Query",
+    "finance_renewal":      "Clearledgr/Finance/Renewal",
+    # ── Classification states ──
+    "review_required":      "Clearledgr/Review Required",
+    "not_finance":          "Clearledgr/Not Finance",
+    # ── Backward-compat aliases: old keys still work via _LABEL_KEY_ALIASES ──
+    # These are NOT labels — they map old internal keys to new ones so
+    # callers that pass e.g. "invoices" still resolve correctly.
 }
 
+# Map old internal keys → canonical new keys so every call site that
+# passes the old key continues to work without code changes.
+_LABEL_KEY_ALIASES = {
+    "processed":        "invoice_received",
+    "invoices":         "invoice_received",
+    "needs_approval":   "invoice_matched",
+    "needs_review":     "review_required",
+    "exceptions":       "invoice_exception",
+    "approved":         "invoice_approved",
+    "posted":           "invoice_paid",
+    "rejected":         "invoice_exception",
+    "payment_requests": "invoice_received",
+    "payments":         "invoice_paid",
+    "receipts":         "invoice_received",
+    "refunds":          "finance_credit_note",
+    "credit_notes":     "finance_credit_note",
+    "bank_statements":  "finance_statement",
+}
+
+
+def _resolve_label_key(key: str) -> str:
+    """Resolve an old or new label key to the canonical key."""
+    k = str(key).strip()
+    if k in CLEARLEDGR_LABELS:
+        return k
+    return _LABEL_KEY_ALIASES.get(k, k)
+
+
 LEGACY_LABEL_ALIASES = {
-    "invoices": (
+    "invoice_received": (
+        "Clearledgr/Processed",
+        "Clearledgr/Invoices",
         "Clearledgr/Invoice",
         "Clearledgr/Invoices/Matched",
         "Clearledgr/Invoices/Unmatched",
+        "Clearledgr/Payment Requests",
+        "Clearledgr/Receipts",
     ),
-    "payment_requests": (
-        "Clearledgr/Payment Request",
+    "invoice_matched": (
+        "Clearledgr/Needs Approval",
     ),
-    "needs_review": (
+    "invoice_exception": (
+        "Clearledgr/Exceptions",
+        "Clearledgr/Rejected",
+    ),
+    "invoice_approved": (
+        "Clearledgr/Approved",
+    ),
+    "invoice_paid": (
+        "Clearledgr/Posted",
+        "Clearledgr/Payments",
+        "Clearledgr/Invoices/Posted",
+    ),
+    "review_required": (
+        "Clearledgr/Needs Review",
         "Clearledgr/Pending",
     ),
-    "posted": (
-        "Clearledgr/Invoices/Posted",
+    "finance_credit_note": (
+        "Clearledgr/Credit Notes",
+        "Clearledgr/Refunds",
+    ),
+    "finance_statement": (
+        "Clearledgr/Bank Statements",
     ),
 }
 
@@ -59,23 +135,45 @@ STALE_LABEL_NAMES = frozenset({
 })
 
 LEGACY_LABEL_MIGRATIONS = {
-    "Clearledgr/Invoice": {"invoices"},
-    "Clearledgr/Invoices/Matched": {"invoices"},
-    "Clearledgr/Invoices/Unmatched": {"invoices", "needs_review"},
-    "Clearledgr/Payment Request": {"payment_requests"},
-    "Clearledgr/Pending": {"needs_review"},
-    "Clearledgr/Invoices/Posted": {"invoices", "posted"},
-    "Clearledgr/Skipped": set(),
+    # Old flat labels → new thesis hierarchy keys
+    "Clearledgr/Invoices":            {"invoice_received"},
+    "Clearledgr/Invoice":             {"invoice_received"},
+    "Clearledgr/Invoices/Matched":    {"invoice_matched"},
+    "Clearledgr/Invoices/Unmatched":  {"invoice_received", "review_required"},
+    "Clearledgr/Invoices/Posted":     {"invoice_paid"},
+    "Clearledgr/Processed":           {"invoice_received"},
+    "Clearledgr/Payment Requests":    {"invoice_received"},
+    "Clearledgr/Payment Request":     {"invoice_received"},
+    "Clearledgr/Payments":            {"invoice_paid"},
+    "Clearledgr/Receipts":            {"invoice_received"},
+    "Clearledgr/Refunds":             {"finance_credit_note"},
+    "Clearledgr/Credit Notes":        {"finance_credit_note"},
+    "Clearledgr/Bank Statements":     {"finance_statement"},
+    "Clearledgr/Needs Review":        {"review_required"},
+    "Clearledgr/Pending":             {"review_required"},
+    "Clearledgr/Exceptions":          {"invoice_exception"},
+    "Clearledgr/Needs Approval":      {"invoice_matched"},
+    "Clearledgr/Approved":            {"invoice_approved"},
+    "Clearledgr/Posted":              {"invoice_paid"},
+    "Clearledgr/Rejected":            {"invoice_exception"},
+    "Clearledgr/Skipped":             set(),
 }
 
+# AP state machine → label key mapping (DESIGN_THESIS.md §6.4).
+# The invoice label reflects the stage the AP item is in.
 AP_STATE_TO_LABEL = {
-    "needs_approval":   "needs_approval",
-    "pending_approval": "needs_approval",
-    "approved":         "approved",
-    "ready_to_post":    "approved",
-    "posted_to_erp":    "posted",
-    "closed":           "posted",
-    "rejected":         "rejected",
+    "received":         "invoice_received",
+    "validated":        "invoice_received",
+    "needs_info":       "invoice_exception",
+    "needs_approval":   "invoice_matched",
+    "pending_approval": "invoice_matched",
+    "approved":         "invoice_approved",
+    "ready_to_post":    "invoice_approved",
+    "posted_to_erp":    "invoice_paid",
+    "closed":           "invoice_paid",
+    "reversed":         "invoice_exception",
+    "failed_post":      "invoice_exception",
+    "rejected":         "invoice_exception",
 }
 
 # Cache label name → id per Gmail identity to avoid repeated list_labels calls.
@@ -160,21 +258,22 @@ def _subject_document_type_hint(record: Any) -> str:
 
 
 def _document_label_keys(document_type: str) -> Set[str]:
+    """Map a document type to the thesis-hierarchy label key(s)."""
     normalized = _normalize_document_type(document_type)
     if normalized == "invoice":
-        return {"invoices"}
+        return {"invoice_received"}
     if normalized == "payment_request":
-        return {"payment_requests"}
+        return {"invoice_received"}
     if normalized == "payment":
-        return {"payments"}
+        return {"invoice_paid"}
     if normalized == "receipt":
-        return {"receipts"}
+        return {"invoice_received"}
     if normalized == "refund":
-        return {"refunds"}
+        return {"finance_credit_note"}
     if normalized == "credit_note":
-        return {"credit_notes"}
+        return {"finance_credit_note"}
     if normalized == "statement":
-        return {"bank_statements"}
+        return {"finance_statement"}
     return set()
 
 
@@ -217,17 +316,19 @@ def _forget_label(cache_scope: str, label_name: str) -> None:
 
 
 def _label_names_for_key(label_key: str) -> Set[str]:
-    canonical = CLEARLEDGR_LABELS.get(label_key)
+    resolved = _resolve_label_key(label_key)
+    canonical = CLEARLEDGR_LABELS.get(resolved)
     if not canonical:
         return set()
     names = {canonical}
-    names.update(LEGACY_LABEL_ALIASES.get(label_key, ()))
+    names.update(LEGACY_LABEL_ALIASES.get(resolved, ()))
     return {str(name).strip() for name in names if str(name).strip()}
 
 
 async def ensure_label(client, label_key: str, user_email: str = "") -> Optional[str]:
     """Get or create a canonical Clearledgr label and return its Gmail label ID."""
-    label_name = CLEARLEDGR_LABELS.get(label_key)
+    resolved = _resolve_label_key(label_key)
+    label_name = CLEARLEDGR_LABELS.get(resolved)
     if not label_name:
         return None
 
@@ -282,7 +383,7 @@ async def update_ap_label(client, message_id: str, new_state: str, user_email: s
     if not new_label_key:
         return
 
-    await sync_labels(client, message_id, {"processed", "invoices", new_label_key}, user_email)
+    await sync_labels(client, message_id, {"invoice_received", new_label_key}, user_email)
     logger.info("Gmail AP labels synced: %s → %s for message %s", new_state, new_label_key, message_id)
 
 
@@ -293,7 +394,7 @@ def finance_label_keys(
     document_type: Optional[str] = None,
 ) -> Set[str]:
     """Return the canonical Clearledgr label keys for a finance record."""
-    keys: Set[str] = {"processed"}
+    keys: Set[str] = {"invoice_received"}
 
     ap_row = dict(ap_item or {})
     ap_metadata = _parse_metadata(ap_row.get("metadata"))
@@ -345,7 +446,7 @@ def finance_label_keys(
     )
 
     if requires_field_review or requires_extraction_review or has_confidence_blockers or blocking_conflicts:
-        keys.add("needs_review")
+        keys.add("review_required")
 
     exception_code = str(
         ap_row.get("exception_code")
@@ -358,10 +459,10 @@ def finance_label_keys(
     finance_status = str(_normalize_record_value(finance_email, "status") or "").strip().lower()
     if state in {"failed_post", "needs_info"} or exception_code or finance_status in {"error", "failed"}:
         if state != "rejected":
-            keys.add("exceptions")
+            keys.add("invoice_exception")
 
     if not state and normalized_document_type == "payment_request" and finance_status not in {"error", "failed", "ignored"}:
-        keys.add("needs_approval")
+        keys.add("invoice_matched")
 
     return keys
 
@@ -374,9 +475,9 @@ async def sync_labels(
 ) -> Set[str]:
     """Synchronize all managed Clearledgr labels on a Gmail message."""
     normalized_keys = {
-        str(label_key).strip()
+        _resolve_label_key(str(label_key).strip())
         for label_key in (desired_keys or [])
-        if str(label_key).strip() in CLEARLEDGR_LABELS
+        if _resolve_label_key(str(label_key).strip()) in CLEARLEDGR_LABELS
     }
     if not normalized_keys:
         return set()
@@ -462,9 +563,9 @@ async def cleanup_legacy_labels(
         label_id = str(label.get("id") or "").strip()
         approx_messages_total = safe_int(label.get("messagesTotal"), 0)
         target_keys = {
-            str(key).strip()
+            _resolve_label_key(str(key).strip())
             for key in (target_keys or set())
-            if str(key).strip() in CLEARLEDGR_LABELS
+            if _resolve_label_key(str(key).strip()) in CLEARLEDGR_LABELS
         }
         target_label_names = [CLEARLEDGR_LABELS[key] for key in sorted(target_keys)]
         target_label_ids = []
