@@ -1,8 +1,49 @@
 # Design Thesis Audit — Codebase vs. DESIGN_THESIS.md
 
-**Date:** 2026-04-09 (initial) · **Phase 1 update:** 2026-04-09
+**Date:** 2026-04-09 (initial) · **Phase 1 update:** 2026-04-09 · **Phase 2 update:** 2026-04-09
 **Method:** Four parallel structured audits across extension/surfaces, agent architecture, object model/security, and fraud/onboarding/commercial. Each audit produced a gap matrix with file:line citations.
 **Status legend:** ✅ Aligned · ⚠️ Partial · ❌ Missing · 🚫 Conflicts
+
+---
+
+## ✅ Phase 2 Vendor Identity & IBAN Security — Shipped
+
+The entire P0 vendor-identity + IBAN-security ship-blocker cluster (#5, #6, #7 Group B, #8, #19) shipped between 2026-04-09 commits `253a41c` and `3894e82`. **234 net new tests added. Test suite: 1581 → 1815 passing.**
+
+| Phase | Commit | Theme | Items closed |
+|---|---|---|---|
+| 2.1.a | [`253a41c`](#) | Bank details tokenisation — Fernet column encryption for `ap_items` + `vendor_profiles`, masked display helpers, plaintext-strip migration, diff utility that only flags mismatches when both sides have a value (§19) | #6 |
+| 2.1.b | [`733ce26`](#) | IBAN change freeze + three-factor verification — detection on invoice ingest, immediate payment hold for frozen vendors, CFO-only complete/reject endpoints, audit-trail per factor (§8) | #5 |
+| 2.2 | [`6a72858`](#) | Vendor domain lock — sender-domain extraction, dot-boundary suffix matching (blocks `fake-acme.com` impersonation of `acme.com`), payment-processor bypass list, TOFU bootstrap via `posted_to_erp` state observer, validation gate reason `vendor_sender_domain_mismatch` (§8) | #7 Group B (complete) |
+| 2.3 | [`78be156`](#) | Five-role thesis taxonomy — hard cutover to AP Clerk / AP Manager / Financial Controller / CFO / Read Only via additive-upward `ROLE_RANK` map, in-place DB migration v15, `normalize_user_role` at token reconciliation, `require_cfo` replaces `require_fraud_control_admin` at all call sites (§17) | #8 |
+| 2.4 | [`3894e82`](#) | Vendor KYC schema — `registration_number`, `vat_number`, `registered_address`, `director_names`, `kyc_completion_date` columns; `VendorRiskScoreService` computes 9-component weighted score at read time; `/api/vendors/{name}/kyc` GET (intelligence shape: kyc + masked bank + iban_verified + ytd_spend + risk_score) and PUT (partial patch, field names only in audit) (§3) | #19 |
+
+**What changed in the architecture as a result:**
+
+- **§19 plaintext-free bank data is now structural.** Every bank-details write goes through `encrypt_bank_details()` into `bank_details_encrypted` columns on both `ap_items` and `vendor_profiles`. Reads go through `mask_bank_details()` helpers that return `GB82 **** **** **** 5432` / `**-**-00` / `A*** T****** L**` shapes. The migration v13 backfills from `metadata` JSON and strips the plaintext in the same transaction — no dual-write window. Audit events record field names only, never values. The `diff_bank_details_field_names()` helper is deliberately one-sided-silence-tolerant: missing data on one side is not a mismatch, only a value change on both sides triggers the freeze.
+
+- **§8 IBAN change freeze is a validation-gate blocker, not a soft warning.** `IbanChangeFreezeService.detect_and_maybe_freeze` runs on every invoice ingest that carries bank details. When a mismatch is detected, the pending IBAN is encrypted into `pending_bank_details_encrypted`, `iban_change_pending` flips to true, and the vendor enters a hard freeze. Two validation gate reasons enforce this: `vendor_sender_domain_mismatch` (Phase 2.2) and a frozen-vendor block (Phase 2.1.b check 4d) that fails every invoice for the vendor until CFO completes or rejects the freeze via the `/api/vendors/iban-verification/*` endpoints. Three factors required to lift: `email_domain_factor` (auto-checked against known sender domains), `phone_factor` (AP manager records), `sign_off_factor` (CFO attests). Rejection writes to the audit trail and requires the pending details be resubmitted through the onboarding flow.
+
+- **§8 vendor domain lock runs on every invoice.** `extract_sender_domain()` parses Gmail From headers via `email.utils.parseaddr`. `domain_matches_allowlist()` uses dot-boundary suffix matching so `fake-acme.com` structurally cannot match `acme.com`. `PAYMENT_PROCESSOR_DOMAINS` frozenset (Stripe, PayPal, Paddle, Bill.com, Wise, etc.) bypasses the check for known intermediaries without allowing them to overwrite the vendor's own domain set. TOFU bootstrap happens via `VendorDomainTrackingObserver` on the `posted_to_erp` state transition — safe because Phase 1.2a's first-payment hold already routes first invoices to human review before the observer auto-records the domain.
+
+- **§17 role taxonomy is live across the whole codebase.** `ROLE_RANK` dict (`read_only=10, ap_clerk=20, ap_manager=40, financial_controller=60, cfo=80, owner=100`) gives additive-upward semantics at every predicate. Five new `has_*` predicates and five new `require_*` FastAPI dependencies. Migration v15 rewrites the `users.role` column in place — `user`/`member` → `ap_clerk`, `operator` → `ap_manager`, `admin` → `financial_controller`, `viewer` → `read_only`. `normalize_user_role` called at every token-decode boundary so legacy JWTs still work through the cutover, but the DB is the canonical source. `require_fraud_control_admin` has been deleted — every call site now uses `require_cfo` directly. No shim.
+
+- **§3 vendor is now a first-class object at the API layer.** `GET /api/vendors/{vendor_name}/kyc` returns the full intelligence shape in one call: KYC sub-object (the 5 new fields + timestamp), `iban_verified` + `iban_verified_at` (derived from `bank_details_encrypted` AND NOT `iban_change_pending` — no duplicate source of truth), `verified_bank_details_masked`, `iban_change_pending` flag, `ytd_spend` + year (computed at read time from the posted-invoice history), and `risk_score` with a full component breakdown. The 9-component formula (new vendor +30, IBAN freeze +50, recent bank change +15, override rate >30% +20, KYC missing +15, KYC stale >365d +10, missing registration/VAT/directors +5 each) is transparent and clamped to [0, 100] — clients can render an explanation tooltip straight from the response.
+
+**Cross-cutting Phase 2 wins:**
+
+- **Five new tests files**: `test_bank_details_tokenisation.py` (37), `test_iban_change_freeze.py` (39), `test_vendor_domain_lock.py` (62), `test_role_taxonomy.py` (53), `test_vendor_kyc.py` (43). Full coverage of store, service, API, and validation-gate integration paths.
+- **Four in-place DB migrations** (v13-v16) — all hard cutover, no dual-write. v13 strips plaintext bank data in the same transaction as the backfill. v14 adds the freeze state columns. v15 rewrites role names in place. v16 adds the KYC columns.
+- **Three new API routers mounted in `main.py`**: `iban_verification`, `vendor_domains`, `vendor_kyc`. Strict profile route cap raised from 190 to 200 with positive assertions that the new endpoints are mounted.
+- **No backward-compat shims anywhere.** Every rename (`require_fraud_control_admin` → `require_cfo`, legacy role names → five-role taxonomy) is a hard replace at all call sites, per the standing principle.
+
+**What's still in scope for Phase 3** (product features, not architectural ship-blockers):
+
+- Micro-deposit bank verification workflow (#9)
+- Vendor onboarding portal + auto-chase + ERP activation (#10)
+- Trust-building arc scheduled messaging (#4)
+- Gmail thread toolbar buttons + four-section sidebar restructure (#13, #14)
+- Conditional digest + intelligent routing + conversational queries (#12, #16, #17)
 
 ---
 
@@ -26,22 +67,22 @@ The four P0 architectural items in this audit (#1 LLM-bound-to-gate, #2 override
 - **§7.4 override window is live.** Every successful ERP post opens an override window (default 15 min, per-action configurable). The `OverrideWindowObserver` posts a Slack card with a confirm-dialogged danger button. Clicking the button calls `reverse_bill` and updates the card. A dedicated 60-second reaper finalizes expired windows and updates cards to "locked." Process restarts run a one-shot sweep so stale cards never linger. The new `reversed` AP state and `posted_to_erp → reversed → closed` transition path are enforced by the state machine.
 - **§8 "configurable per action type" is honored.** Override window duration is now a per-action dict (`{"erp_post": 15, "payment_execution": 60, ...}`) with a `default` fallback key. The data model is open for future autonomous action types — no schema migration required to add them.
 
-**What's still in scope for Phase 2** (deferred from Phase 1 with intent):
+**What was deferred from Phase 1 into Phase 2** (all now ✅ shipped — see the Phase 2 section above):
 
-- Vendor domain lock (item #7, the "domain lock" sub-primitive) — was Phase 1.2b, deferred
-- IBAN change freeze + three-factor verification (item #5, paired with the IBAN tokenisation audit #6)
-- Five-role thesis taxonomy (item #8) — Phase 1.2a added `cfo` as an additive role for fraud-control admin only; the full AP Clerk / AP Manager / Controller / CFO / Read Only hierarchy is still missing
-- Trust-building arc (item #4) — no time-gated rollout shipped
+- Vendor domain lock (item #7, the "domain lock" sub-primitive) → Phase 2.2 `6a72858`
+- IBAN change freeze + three-factor verification (item #5, paired with the IBAN tokenisation audit #6) → Phase 2.1.b `733ce26` + Phase 2.1.a `253a41c`
+- Five-role thesis taxonomy (item #8) → Phase 2.3 `78be156`
+- Trust-building arc (item #4) → deferred to Phase 3 (product feature, not architectural safety)
 
 ---
 
-## Verdict (post-Phase 1)
+## Verdict (post-Phase 2)
 
-**The thesis and the codebase are now roughly 60% aligned (up from ~40%).** The four most load-bearing architectural commitments — §7.6 (LLM bound by rules), §7.8 (reversibility), §7.4 (override window), and §8 (fraud controls as architectural gates for the Group A primitives) — are now structurally enforced and test-covered. The codebase can no longer auto-approve an invoice that failed the deterministic gate, and every autonomous post is reversible during the override window.
+**The thesis and the codebase are now roughly 75% aligned (up from ~60% after Phase 1 and ~40% at baseline).** The entire architectural spine of the thesis is now in place: §7.6 (LLM bound by rules), §7.4 (override window), §7.8 (reversibility), §8 (fraud controls as architectural gates including the IBAN change freeze and vendor domain lock), §17 (five-role taxonomy), §19 (plaintext-free bank data), and §3 (vendor as first-class object with KYC + risk score). Every ship-blocker that procurement would ask about directly has been closed.
 
-The remaining ship-blocker cluster is **vendor identity and IBAN security**: the IBAN change freeze, the IBAN storage tokenisation audit, vendor domain lock, and the five-role taxonomy are unchanged from the original audit and remain P0 for enterprise go-live. Procurement will still ask directly about these.
+The remaining work is product surface area — micro-deposit onboarding (#9, #10), trust-building arc (#4), Gmail toolbar / sidebar restructure (#13, #14), intelligent Slack routing (#12, #16, #17) — not architectural safety. These are 8–10 weeks of feature work rather than load-bearing principle fixes.
 
-**Overall grade: ⚠️ SHIP-BLOCKER for enterprise (narrowed scope).** The product can now run on Starter customers with normal CS oversight (the architectural safety net is in place). It still cannot safely go live with NetSuite/SAP enterprise customers without the Phase 2 IBAN security work below.
+**Overall grade: ✅ SHIP-READY for enterprise (with Phase 3 product gaps disclosed).** The product can now safely go live with NetSuite/SAP enterprise customers. The architectural safety net is in place. The first autonomous payment to a new vendor still requires a human in the loop (first-payment hold from Phase 1.2a), every ERP post is reversible (Phase 1.3/1.4), every IBAN change freezes the vendor until three-factor CFO verification (Phase 2.1.b), every sender-domain mismatch blocks the invoice (Phase 2.2), and the CFO-only controls are enforced by a real role hierarchy (Phase 2.3). Remaining Phase 3 items are product polish that can ship incrementally without blocking onboarding.
 
 ---
 
@@ -70,6 +111,18 @@ Post-Phase-1 (2026-04-09 evening):
 | **Total** | **26** | **29** | **20** | **0** |
 
 *34% aligned, 38% partial, 26% missing, 0% conflicting. **Net -3 conflicting / +8 aligned**, with the three architectural conflicts (#1 LLM-overrides-rules, plus the two related fraud-primitive conflicts) all resolved by Phase 1.1 + 1.2a.*
+
+Post-Phase-2 (2026-04-09, later):
+
+| Dimension | ✅ | ⚠️ | ❌ | 🚫 |
+|-----------|----|----|----|-----|
+| Extension & Gmail surfaces | 7 | 4 | 3 | 0 |
+| Agent architecture & LLM guardrails | 9 | 8 | 4 | 0 |
+| Object model, data & security | 6 | 5 | 7 | 0 |
+| Fraud controls, onboarding & commercial | 9 | 10 | 3 | 0 |
+| **Total** | **31** | **27** | **17** | **0** |
+
+*41% aligned, 36% partial, 23% missing, 0% conflicting. **Net +5 aligned** from Phase 2 closing items #5, #6, #7 (Group B), #8, and #19. Every P0 ship-blocker is now either ✅ DONE or moved out of P0 — no remaining ❌ items in the P0 Security & Fraud band.*
 
 ---
 
@@ -166,27 +219,44 @@ The dispatcher provides two-layer idempotency (AP item metadata cache + audit-ev
 
 ---
 
-## 🔴 P0 — Security & Fraud Ship-Blockers
+## ✅ P0 — Security & Fraud Ship-Blockers (all closed in Phase 2)
 
-These block enterprise sales. Procurement will ask directly.
+This section was the ship-blocker cluster for enterprise onboarding. Every item in it (#5, #6, #7, #8) is now ✅ DONE. Retained as a historical record of what was originally flagged and how it was resolved — procurement questionnaires can cite the resolution blurbs below.
 
-### 5. ❌ IBAN fraud controls missing entirely
+### 5. ✅ DONE — IBAN change freeze + three-factor verification live (Phase 2.1.b, `733ce26`)
 
 **Thesis (§8):** IBAN change freeze with three-factor verification (vendor email domain + phone confirmation + AP Manager sign-off). **"IBAN changes trigger an immediate payment hold for the affected vendor — no payment is scheduled to any new IBAN until the change is verified."**
 
-**Reality:** No IBAN change detection, no payment hold, no three-factor verification flow. [clearledgr/core/stores/vendor_store.py:37](clearledgr/core/stores/vendor_store.py) has `bank_details_changed_at` timestamp but no enforcement.
+**Original gap:** No IBAN change detection, no payment hold, no three-factor verification flow.
 
-**Impact:** The single most common AP fraud (IBAN swap) is undefended.
+**Resolution:** Phase 2.1.b shipped the full freeze + verification mechanism:
 
-### 6. ❌ IBAN tokenisation status unclear — likely plaintext
+- **Detection** — `IbanChangeFreezeService.detect_and_maybe_freeze` runs during invoice validation (check 4c in `invoice_validation.py`). Reads the vendor's current encrypted bank details, diffs field-by-field against the inbound invoice's bank details via `diff_bank_details_field_names` (silence-tolerant — only flags when both sides have a value). Any mismatch triggers an auto-freeze: the pending IBAN is encrypted into `pending_bank_details_encrypted`, `iban_change_pending` flips true, `iban_change_detected_at` is stamped, and `iban_change_verification_state` starts at `pending`.
+- **Hard payment hold** — New check 4d in `invoice_validation.py` adds an `iban_change_pending` blocking reason code to every invoice for a frozen vendor, including invoices that don't themselves involve bank details. No path to bypass without a CFO completing or rejecting the freeze.
+- **Three-factor verification** — `record_factor` persists `email_domain_factor`, `phone_factor`, `sign_off_factor` independently with actor + timestamp. `complete_freeze` fails closed unless all three factors are recorded. `reject_freeze` clears the pending details and writes a `iban_change_freeze_rejected` audit event.
+- **CFO-only API** — [clearledgr/api/iban_verification.py](clearledgr/api/iban_verification.py) exposes 6 endpoints: GET status, POST factor recording (×3), POST complete, POST reject. Every mutation requires `require_cfo`. Cross-tenant access blocked via `_assert_same_org`.
+- **Plaintext-free audit** — Every audit event (`iban_change_freeze_started`, `iban_change_factor_recorded`, `iban_change_freeze_lifted`, `iban_change_freeze_rejected`) carries the vendor name + field names + actor + factor code, never the IBAN value itself.
+- **Derived `iban_verified`** — The vendor KYC API (#19) computes `iban_verified = bool(bank_details_encrypted) AND NOT iban_change_pending` at read time — no duplicate source of truth, no stale "verified" flag lingering through a freeze.
+
+**Verification:** [tests/test_iban_change_freeze.py](tests/test_iban_change_freeze.py) — 39 tests across detection, store accessors, factor recording, completion/rejection lifecycle, audit trail, API role gating, and validation-gate integration.
+
+### 6. ✅ DONE — Bank details tokenised with Fernet column encryption (Phase 2.1.a, `253a41c`)
 
 **Thesis (§19):** *"Bank account numbers or IBANs in plaintext at any point. IBANs are stored in tokenised form and displayed masked in the UI (`GB82 **** **** **** 4332`)."*
 
-**Reality:** [clearledgr/core/stores/vendor_store.py](clearledgr/core/stores/vendor_store.py) has no `iban` column in the audit's schema view. [clearledgr/services/invoice_validation.py:1598](clearledgr/services/invoice_validation.py) references `stored_bank` as a string field. If IBANs are stored in `vendor_profiles.metadata` JSON without encryption, this violates data minimisation.
+**Original gap:** Bank details were stored as plaintext strings in `vendor_profiles.metadata` JSON and inside invoice metadata — direct violation of data-minimisation guarantees.
 
-**Action:** **Audit all IBAN storage paths immediately.** Grep for `iban`, `bank_account`, `account_number`, `sort_code`. If plaintext, implement Fernet tokenisation with column-level encryption and masked display.
+**Resolution:** Phase 2.1.a shipped a pure-helper tokenisation layer plus a hard-cutover migration:
 
-### 7. ⚠️ Anti-fraud primitives — 5 of 7 promoted to blocking gates (Phase 1.2a, `1bc7379`); 2 remain for Phase 2
+- **[clearledgr/core/stores/bank_details.py](clearledgr/core/stores/bank_details.py)** — new helper module with `BANK_DETAIL_FIELDS`, `normalize_bank_details`, `encrypt_bank_details`, `decrypt_bank_details`, `mask_bank_details`, `diff_bank_details_field_names`. Encryption uses the same Fernet key derivation as `_ClearledgrDBBase._encrypt_secret` / `_decrypt_secret`. Masking produces `GB82 **** **** **** 5432` (IBAN), `**-**-00` (sort code), `A*** T****** L**` (holder name).
+- **Migration v13** — adds `bank_details_encrypted` columns to both `ap_items` and `vendor_profiles`, backfills from existing `metadata` JSON plaintext, then **strips the plaintext in the same transaction**. No dual-write window.
+- **Store accessors** — `VendorStore` gained `get_vendor_bank_details` (authenticated full read), `get_vendor_bank_details_masked` (default UI read — always masked), `set_vendor_bank_details` (encrypts then writes). `APStore` matches for invoice-scoped bank details.
+- **Silence-tolerant diff** — `diff_bank_details_field_names` only flags fields where both sides have a value, preventing false-positive freezes on first-time bank detail capture. This is the primitive that powers check 4c in the validation gate for IBAN change detection (#5).
+- **Plaintext-free audit** — All audit events for bank-detail writes record field names only, never values, consistent with the §19 no-plaintext-in-logs discipline.
+
+**Verification:** [tests/test_bank_details_tokenisation.py](tests/test_bank_details_tokenisation.py) — 37 tests covering normalisation, encryption round-trip, masking shapes, diff edge cases, store accessors for both `ap_items` and `vendor_profiles`, and migration backfill.
+
+### 7. ✅ DONE — Anti-fraud primitives all 7 architectural (Phase 1.2a + Phase 2.1.b + Phase 2.2)
 
 **Thesis (§8):** *"Fraud controls must be architectural, not configurational. The controls that matter most — IBAN change freeze, first payment hold, domain lock — cannot be disabled by the AP Manager."*
 
@@ -210,19 +280,32 @@ These block enterprise sales. Procurement will ask directly.
 
 **Verification:** [tests/test_fraud_controls_gate.py](tests/test_fraud_controls_gate.py) — 42 tests across config, gate contributions, severity bug fix, fail-closed handling, CFO API role gating, and end-to-end Phase 1.1 enforcement integration. [tests/test_prompt_guard.py](tests/test_prompt_guard.py) rewritten with 37 tests for the new detector + gate integration.
 
-**Group B — still pending (Phase 2):**
-- **Vendor domain lock** — was originally part of Phase 1.2b, deferred per agreement. The mechanism: detect when an inbound invoice arrives from a sender domain that doesn't match the vendor's known domains, treat as potential vendor impersonation, block.
-- **IBAN change freeze** — paired with item #5 below. The most common AP fraud and the highest-priority Phase 2 item.
+**Group B — now shipped (Phase 2.1.b + Phase 2.2):**
 
-### 8. ❌ Role hierarchy fundamentally misaligned
+| Primitive | Status | How |
+|---|---|---|
+| IBAN change freeze | ✅ Blocking | Phase 2.1.b (`733ce26`) — see #5 above. `IbanChangeFreezeService.detect_and_maybe_freeze` + validation gate checks 4c/4d + three-factor CFO verification API. |
+| Vendor domain lock | ✅ Blocking | Phase 2.2 (`6a72858`) — `extract_sender_domain` parses Gmail From headers, `domain_matches_allowlist` uses dot-boundary suffix matching (`fake-acme.com` structurally cannot match `acme.com`), `PAYMENT_PROCESSOR_DOMAINS` bypass list for Stripe/PayPal/etc., TOFU bootstrap via `VendorDomainTrackingObserver` on `posted_to_erp` (safe because first-payment hold routes first invoices to human review). Validation gate reason code `vendor_sender_domain_mismatch`. CFO-only `/api/vendor-domains/{org}/{vendor}` CRUD API. |
+
+**Verification for Group B:** [tests/test_vendor_domain_lock.py](tests/test_vendor_domain_lock.py) — 62 tests across extraction, matching, processor bypass, TOFU observer, validation-gate integration, and API role gating.
+
+### 8. ✅ DONE — Five-role thesis taxonomy hard-cutover live (Phase 2.3, `78be156`)
 
 **Thesis (§17):** Five roles — AP Clerk, AP Manager, Financial Controller, CFO, Read Only. Additive upward. CFO-only for ERP connection changes and autonomy tier modifications.
 
-**Reality:** [clearledgr/core/auth.py:107-444](clearledgr/core/auth.py) has four generic roles: owner, admin, operator, viewer. AP Clerk, AP Manager, Controller do not exist. API guards use `require_ops_user` or `require_admin_user` — not role-specific.
+**Original gap:** `auth.py` had four generic roles (owner, admin, operator, viewer). API guards used `require_ops_user` / `require_admin_user`, not role-specific. The permission model in the thesis could not be enforced.
 
-**Impact:** The permission model in the thesis cannot be enforced because the roles do not exist in code. Approval routing cannot distinguish "route to AP Manager" from "route to Controller" because both collapse to `operator`.
+**Resolution:** Phase 2.3 shipped a hard cutover to the thesis taxonomy:
 
-**Fix:** Expand the role enum. Implement additive-upward permission checks. Update API guards to be role-specific.
+- **`ROLE_RANK` map** in [clearledgr/core/auth.py](clearledgr/core/auth.py): `read_only=10, ap_clerk=20, ap_manager=40, financial_controller=60, cfo=80, owner=100, api=100`. Additive-upward semantics at every predicate.
+- **Six new predicates**: `has_read_only`, `has_ap_clerk`, `has_ap_manager`, `has_financial_controller`, `has_cfo`, `has_owner`. Each returns true iff the user's normalized role rank is ≥ the predicate's rank.
+- **Five new FastAPI dependencies**: `require_ap_clerk`, `require_ap_manager`, `require_financial_controller`, `require_cfo`, plus the existing `require_ops_user` / `require_admin_user` rewritten to delegate to the rank map so they keep working through the cutover.
+- **Hard rename**: `require_fraud_control_admin` → `require_cfo` at every call site. No alias. The old name does not exist in the codebase any more.
+- **Legacy role mapping**: `_LEGACY_ROLE_MAP = {"user": ap_clerk, "member": ap_clerk, "operator": ap_manager, "admin": financial_controller, "viewer": read_only}` is applied in `normalize_user_role` at every token-decode boundary (`_token_data_from_payload`, `_reconcile_token_data`) so legacy JWTs keep working but only the new role names exist in memory.
+- **Migration v15** rewrites the `users.role` column in place via the same legacy map. The DB is the canonical source — legacy names are dead everywhere except in normalizers that translate them on read.
+- **Test cutover** — `test_ap_role_guards.py`, `test_auth_token_reconciliation.py`, and all downstream tests updated to assert on the new role names and detail codes (`ap_manager_role_required` replacing `ops_role_required`).
+
+**Verification:** [tests/test_role_taxonomy.py](tests/test_role_taxonomy.py) — 53 tests across rank ordering, predicates, dependencies (positive + negative for each tier), legacy normalization, migration backfill, and end-to-end API role gating for the new fraud-control and KYC endpoints.
 
 ---
 
@@ -274,9 +357,22 @@ Thesis positions Clearledgr as Streak-like with Boxes, Pipelines, Stages, Column
 
 **Scope:** This is a substantial refactor. The fix is to introduce a `boxes` table with polymorphic `box_type` (invoice / vendor_onboarding), a `pipelines` table, and a `box_links` table. Current `ap_items` becomes a view on `boxes WHERE box_type='invoice'`.
 
-### 19. ⚠️ Vendor first-class object incomplete (§3)
+### 19. ✅ DONE — Vendor first-class object complete (Phase 2.4, `3894e82`)
 
-[clearledgr/core/stores/vendor_store.py](clearledgr/core/stores/vendor_store.py) has `vendor_profiles` with payment_terms, invoice_count, exception_count. **Missing:** registration_number, vat_number, registered_address, director_names, kyc_completion_date, iban (verified), iban_verified_at, ytd_spend, risk_score. Vendor risk scoring not implemented.
+**Thesis (§3):** Vendor as a persistent first-class object with registration_number, vat_number, registered_address, director_names, kyc_completion_date plus computed signals iban_verified, iban_verified_at, ytd_spend, risk_score.
+
+**Original gap:** `vendor_profiles` had only operational columns (payment_terms, invoice_count, exception_count). The KYC and intelligence fields from §3 did not exist and no risk scoring was implemented.
+
+**Resolution:** Phase 2.4 shipped the full intelligence surface:
+
+- **Migration v16** adds `registration_number`, `vat_number`, `registered_address`, `director_names` (JSON array), `kyc_completion_date`, `vendor_kyc_updated_at` to `vendor_profiles`.
+- **`VendorStore` accessors**: `get_vendor_kyc`, `update_vendor_kyc` (partial patch with `_KYC_FIELD_NAMES` whitelist), `compute_vendor_ytd_spend` (read-time sum from `ap_items.total_amount` for the requested year). The `_ALLOWED` upsert whitelist is extended with the new columns.
+- **[clearledgr/services/vendor_risk.py](clearledgr/services/vendor_risk.py) — `VendorRiskScoreService.compute()`** returns a `VendorRiskScore` dataclass with score (0–100 clamped), component breakdown, and `computed_at`. Nine weighted components: new vendor (+30), active IBAN freeze (+50), recent bank change (+15), high override rate (+20), KYC missing (+15), KYC stale >365d (+10), missing registration_number / vat_number / director_names (+5 each). The formula is pure Python, no network I/O, no LLM — clients can render explanation tooltips straight from the component list.
+- **[clearledgr/api/vendor_kyc.py](clearledgr/api/vendor_kyc.py)** — two endpoints:
+  - **GET `/api/vendors/{vendor_name}/kyc`** returns the full vendor intelligence shape in one call: `kyc` sub-dict + `iban_verified` (derived from `bank_details_encrypted` AND NOT `iban_change_pending`, no stored duplicate) + `iban_verified_at` + `verified_bank_details_masked` + `iban_change_pending` + `ytd_spend` + `ytd_spend_year` + `risk_score`. Any org member can read.
+  - **PUT `/api/vendors/{vendor_name}/kyc`** — partial patch via Pydantic `model_fields_set` (distinguishes "clear this" from "don't mention this"), `require_financial_controller` role gate, cross-tenant check, `vendor_kyc_updated` audit event with field names only.
+
+**Verification:** [tests/test_vendor_kyc.py](tests/test_vendor_kyc.py) — 43 tests covering store accessors, partial-patch semantics, `iban_verified` derivation (including "freeze active → unverified regardless of history"), ytd_spend computation with year boundaries, all 9 risk components in isolation and combination, score clamping, and the API shape end-to-end.
 
 ### 20. ⚠️ Multi-entity partial (§3)
 
@@ -346,14 +442,16 @@ Suggested execution sequence. P0 items should block any enterprise go-live.
 
    *Phase 1 net: 174 new tests, 1407 → 1581 passing, zero new regressions, four 🚫 conflicts resolved.*
 
-**Phase 2 — Vendor identity & IBAN security (4–6 weeks) ← NEXT**
-5. **Audit and remediate IBAN storage** — grep all IBAN/account-number paths, tokenise with Fernet column-level encryption, masked UI display (#6)
-6. **Implement IBAN change freeze + three-factor verification** — vendor email domain confirm + phone confirm + AP Manager sign-off; immediate payment hold on detection of changed IBAN (#5)
-7. **Vendor domain lock** — block invoices arriving from sender domains that don't match the vendor's known domains; pair with onboarding domain registration (#7 Group B)
-8. **Expand role enum to thesis taxonomy** — AP Clerk, AP Manager, Financial Controller, CFO, Read Only as additive-upward; update API guards to be role-specific instead of `require_ops_user` / `require_admin_user` (#8)
-9. **Extend vendor schema with KYC fields + risk scoring** — registration_number, vat_number, registered_address, director_names, kyc_completion_date, iban_verified, iban_verified_at, ytd_spend, risk_score (#19)
+**Phase 2 — Vendor identity & IBAN security ✅ SHIPPED 2026-04-09**
+5. ✅ `253a41c` — Bank details tokenisation with Fernet column encryption + masked display + migration v13 strip-plaintext (#6)
+6. ✅ `733ce26` — IBAN change freeze + three-factor CFO verification + validation-gate hard hold on frozen vendors (#5)
+7. ✅ `6a72858` — Vendor domain lock with dot-boundary suffix matching + payment-processor bypass + TOFU observer (#7 Group B)
+8. ✅ `78be156` — Five-role thesis taxonomy hard cutover via `ROLE_RANK` + migration v15 + `require_cfo` rename everywhere (#8)
+9. ✅ `3894e82` — Vendor KYC schema + `VendorRiskScoreService` 9-component formula + `/api/vendors/{name}/kyc` intelligence endpoint (#19)
 
-**Phase 3 — Core missing features (8–10 weeks)**
+   *Phase 2 net: 234 new tests, 1581 → 1815 passing, zero new regressions, all P0 ship-blocker items closed, vendor-identity cluster fully resolved.*
+
+**Phase 3 — Core missing features (8–10 weeks) ← NEXT**
 10. Micro-deposit bank verification workflow (#9)
 11. Vendor onboarding portal + auto-chase + ERP activation (#10)
 12. Trust-building arc scheduled messaging — Week 1 / Day 14 / Day 30 / weekly (#4)
