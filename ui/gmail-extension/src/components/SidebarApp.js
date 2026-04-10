@@ -1966,7 +1966,23 @@ export default function SidebarApp({ queueManager }) {
         ${item
           ? html`
             ${store.currentThreadId
-              ? html`<${ThreadSidebar} item=${item} auditEvents=${(store.auditState?.events || [])} />`
+              ? html`<${ThreadSidebar}
+                  item=${item}
+                  auditEvents=${(store.auditState?.events || [])}
+                  onApprove=${async (approveItem) => {
+                    try {
+                      const result = await queueManager.approveAndPost(approveItem, { override: false });
+                      const ok = ['posted', 'approved', 'posted_to_erp'].includes(String(result?.status || '').toLowerCase());
+                      showToast(ok ? 'Invoice approved' : (result?.reason || 'Approval failed'), ok ? 'success' : 'error');
+                      if (ok) await queueManager.refreshQueue();
+                    } catch (err) {
+                      showToast('Approval failed: ' + (err.message || err), 'error');
+                    }
+                  }}
+                  onQuery=${async (query, queryItem) => {
+                    showToast('Query received — agent response coming soon', 'info');
+                  }}
+                />`
               : html`<${WorkPanel} item=${item} queueManager=${queueManager} />`
             }`
           : html`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}

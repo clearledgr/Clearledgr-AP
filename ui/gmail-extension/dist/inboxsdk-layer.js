@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:17ceaf4bf5b29ad774d65b55f96b7239214b79579dd40b86bf45f8876dc8fe4d */
+/* clearledgr-source-fingerprint:b597d88a77ebfb0dc4546489fe4ff3030c61c8e98bdbd3a5933daf5f551f4617 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59612,6 +59612,22 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   background: none; border: none; color: #00D67E; font-size: 12px;
   font-weight: 600; cursor: pointer; padding: 4px 0; font-family: inherit;
 }
+.cl-ts-timeline-why { font-weight: 400; color: #5C6B7A; }
+.cl-ts-timeline-next { display: block; font-size: 11px; color: #00A85F; font-weight: 500; margin-top: 2px; }
+.cl-ts-actions-bar { padding: 12px 16px; border-top: 1px solid #E5EBF0; }
+.cl-ts-approve-btn {
+  width: 100%; padding: 10px 16px; border: none; border-radius: 8px;
+  background: #00D67E; color: #0A1628; font-size: 14px; font-weight: 600;
+  cursor: pointer; font-family: inherit; margin-bottom: 8px;
+}
+.cl-ts-approve-btn:hover { background: #00C271; }
+.cl-ts-approve-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cl-ts-query-input {
+  width: 100%; padding: 10px 12px; border: 1px solid #E5EBF0; border-radius: 8px;
+  font-size: 13px; color: #0A1628; background: #FBFCFD; font-family: inherit;
+}
+.cl-ts-query-input:focus { outline: none; border-color: #00D67E; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15); }
+.cl-ts-query-input::placeholder { color: #9CA3AF; }
 `;
   function formatAmount2(amount, currency) {
     if (amount == null || amount === "")
@@ -59755,6 +59771,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <span class="cl-ts-label">Name</span>
         <span class="cl-ts-value">${vendorName}</span>
       </div>
+      ${item.vendor_category ? m3`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">Category</span>
+          <span class="cl-ts-value">${item.vendor_category}</span>
+        </div>
+      ` : ""}
       ${item.ytd_spend != null ? m3`
         <div class="cl-ts-row">
           <span class="cl-ts-label">YTD spend</span>
@@ -59767,6 +59789,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <span class="cl-ts-value">${item.invoice_count}</span>
         </div>
       ` : ""}
+      ${item.exception_count != null ? m3`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">Exceptions</span>
+          <span class="cl-ts-value">${item.exception_count}</span>
+        </div>
+      ` : ""}
+      ${item.vendor_payment_terms || item.payment_terms ? m3`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">Payment terms</span>
+          <span class="cl-ts-value">${item.vendor_payment_terms || item.payment_terms}</span>
+        </div>
+      ` : ""}
       <div class="cl-ts-row">
         <span class="cl-ts-label">IBAN</span>
         <span class="cl-ts-value">${ibanPill(item)}</span>
@@ -59777,33 +59811,48 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <span class="cl-ts-value">${riskBadge(item.risk_score)}</span>
         </div>
       ` : ""}
+      ${item.last_payment_date ? m3`
+        <div class="cl-ts-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E5EBF0;">
+          <span class="cl-ts-label">Last payment</span>
+          <span class="cl-ts-value">${formatDate(item.last_payment_date)}</span>
+        </div>
+      ` : ""}
     </div>
   `;
   }
   function AgentActionsSection({ item, auditEvents }) {
-    const events = (auditEvents || []).slice(0, 5);
+    const events = (auditEvents || []).slice(0, 10);
     return m3`
     <div class="cl-ts-section">
       <div class="cl-ts-section-title">Agent Actions</div>
       ${events.length > 0 ? m3`
           <ul class="cl-ts-timeline">
-            ${events.map((e3) => m3`
-              <li key=${e3.id || e3.ts}>
-                ${e3.summary || e3.decision_reason || e3.event_type?.replace(/_/g, " ") || "Action"}
-                <span class="cl-ts-timeline-time">${formatTimeAgo(e3.ts || e3.created_at)}</span>
-              </li>
-            `)}
+            ${events.map((e3) => {
+      const what = e3.summary || e3.decision_reason || e3.event_type?.replace(/_/g, " ") || "Action";
+      const why = e3.reasoning_summary || e3.reasoning || e3.reason || "";
+      const next = e3.next_action || e3.next_step || "";
+      return m3`
+                <li key=${e3.id || e3.ts}>
+                  <strong>${what}</strong>
+                  ${why ? m3`<span class="cl-ts-timeline-why"> — ${why}</span>` : ""}
+                  ${next ? m3`<span class="cl-ts-timeline-next">Next: ${next}</span>` : ""}
+                  <span class="cl-ts-timeline-time">${formatTimeAgo(e3.ts || e3.created_at)}</span>
+                </li>
+              `;
+    })}
           </ul>
-          ${(auditEvents || []).length > 5 ? m3`
+          ${(auditEvents || []).length > 10 ? m3`
             <button class="cl-ts-expand-btn">Show all ${auditEvents.length} actions</button>
           ` : ""}
         ` : m3`<div style="font-size: 12px; color: #9CA3AF;">No agent actions yet</div>`}
     </div>
   `;
   }
-  function ThreadSidebar({ item, auditEvents }) {
+  function ThreadSidebar({ item, auditEvents, onApprove, onQuery }) {
     if (!item)
       return null;
+    const state = String(item.state || "").toLowerCase();
+    const matchPassed = state === "needs_approval" || state === "pending_approval";
     return m3`
     <div class="cl-thread-sidebar">
       <style>${THREAD_SIDEBAR_CSS}</style>
@@ -59811,6 +59860,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <${MatchSection} item=${item} />
       <${VendorSection} item=${item} />
       <${AgentActionsSection} item=${item} auditEvents=${auditEvents} />
+
+      <!-- §6.6: Below the four sections — approve button + query field -->
+      <div class="cl-ts-actions-bar">
+        ${matchPassed ? m3`
+          <button
+            class="cl-ts-approve-btn"
+            onClick=${() => onApprove && onApprove(item)}
+          >Approve</button>
+        ` : ""}
+        <input
+          class="cl-ts-query-input"
+          type="text"
+          placeholder="Ask about this vendor or invoice..."
+          onKeyDown=${(e3) => {
+      if (e3.key === "Enter" && e3.target.value.trim() && onQuery) {
+        onQuery(e3.target.value.trim(), item);
+        e3.target.value = "";
+      }
+    }}
+        />
+      </div>
     </div>
   `;
   }
@@ -63011,7 +63081,24 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
       <${ErrorBoundary} fallback="Could not load record details">
         ${item ? html2`
-            ${store_default.currentThreadId ? html2`<${ThreadSidebar} item=${item} auditEvents=${store_default.auditState?.events || []} />` : html2`<${WorkPanel} item=${item} queueManager=${queueManager} />`}` : html2`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
+            ${store_default.currentThreadId ? html2`<${ThreadSidebar}
+                  item=${item}
+                  auditEvents=${store_default.auditState?.events || []}
+                  onApprove=${async (approveItem) => {
+      try {
+        const result = await queueManager.approveAndPost(approveItem, { override: false });
+        const ok = ["posted", "approved", "posted_to_erp"].includes(String(result?.status || "").toLowerCase());
+        showToast(ok ? "Invoice approved" : result?.reason || "Approval failed", ok ? "success" : "error");
+        if (ok)
+          await queueManager.refreshQueue();
+      } catch (err) {
+        showToast("Approval failed: " + (err.message || err), "error");
+      }
+    }}
+                  onQuery=${async (query, queryItem) => {
+      showToast("Query received — agent response coming soon", "info");
+    }}
+                />` : html2`<${WorkPanel} item=${item} queueManager=${queueManager} />`}` : html2`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
       <//>
     </div>
   `;

@@ -72,6 +72,22 @@ const THREAD_SIDEBAR_CSS = `
   background: none; border: none; color: #00D67E; font-size: 12px;
   font-weight: 600; cursor: pointer; padding: 4px 0; font-family: inherit;
 }
+.cl-ts-timeline-why { font-weight: 400; color: #5C6B7A; }
+.cl-ts-timeline-next { display: block; font-size: 11px; color: #00A85F; font-weight: 500; margin-top: 2px; }
+.cl-ts-actions-bar { padding: 12px 16px; border-top: 1px solid #E5EBF0; }
+.cl-ts-approve-btn {
+  width: 100%; padding: 10px 16px; border: none; border-radius: 8px;
+  background: #00D67E; color: #0A1628; font-size: 14px; font-weight: 600;
+  cursor: pointer; font-family: inherit; margin-bottom: 8px;
+}
+.cl-ts-approve-btn:hover { background: #00C271; }
+.cl-ts-approve-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cl-ts-query-input {
+  width: 100%; padding: 10px 12px; border: 1px solid #E5EBF0; border-radius: 8px;
+  font-size: 13px; color: #0A1628; background: #FBFCFD; font-family: inherit;
+}
+.cl-ts-query-input:focus { outline: none; border-color: #00D67E; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15); }
+.cl-ts-query-input::placeholder { color: #9CA3AF; }
 `;
 
 // ---------------------------------------------------------------------------
@@ -214,6 +230,12 @@ function VendorSection({ item }) {
         <span class="cl-ts-label">Name</span>
         <span class="cl-ts-value">${vendorName}</span>
       </div>
+      ${item.vendor_category ? html`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">Category</span>
+          <span class="cl-ts-value">${item.vendor_category}</span>
+        </div>
+      ` : ''}
       ${item.ytd_spend != null ? html`
         <div class="cl-ts-row">
           <span class="cl-ts-label">YTD spend</span>
@@ -226,6 +248,18 @@ function VendorSection({ item }) {
           <span class="cl-ts-value">${item.invoice_count}</span>
         </div>
       ` : ''}
+      ${item.exception_count != null ? html`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">Exceptions</span>
+          <span class="cl-ts-value">${item.exception_count}</span>
+        </div>
+      ` : ''}
+      ${item.vendor_payment_terms || item.payment_terms ? html`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">Payment terms</span>
+          <span class="cl-ts-value">${item.vendor_payment_terms || item.payment_terms}</span>
+        </div>
+      ` : ''}
       <div class="cl-ts-row">
         <span class="cl-ts-label">IBAN</span>
         <span class="cl-ts-value">${ibanPill(item)}</span>
@@ -236,26 +270,40 @@ function VendorSection({ item }) {
           <span class="cl-ts-value">${riskBadge(item.risk_score)}</span>
         </div>
       ` : ''}
+      ${item.last_payment_date ? html`
+        <div class="cl-ts-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E5EBF0;">
+          <span class="cl-ts-label">Last payment</span>
+          <span class="cl-ts-value">${formatDate(item.last_payment_date)}</span>
+        </div>
+      ` : ''}
     </div>
   `;
 }
 
 function AgentActionsSection({ item, auditEvents }) {
-  const events = (auditEvents || []).slice(0, 5);
+  const events = (auditEvents || []).slice(0, 10);
   return html`
     <div class="cl-ts-section">
       <div class="cl-ts-section-title">Agent Actions</div>
       ${events.length > 0
         ? html`
           <ul class="cl-ts-timeline">
-            ${events.map(e => html`
-              <li key=${e.id || e.ts}>
-                ${e.summary || e.decision_reason || e.event_type?.replace(/_/g, ' ') || 'Action'}
-                <span class="cl-ts-timeline-time">${formatTimeAgo(e.ts || e.created_at)}</span>
-              </li>
-            `)}
+            ${events.map(e => {
+              // Thesis §6.6: "what the agent did, why it did it, and what happens next"
+              const what = e.summary || e.decision_reason || e.event_type?.replace(/_/g, ' ') || 'Action';
+              const why = e.reasoning_summary || e.reasoning || e.reason || '';
+              const next = e.next_action || e.next_step || '';
+              return html`
+                <li key=${e.id || e.ts}>
+                  <strong>${what}</strong>
+                  ${why ? html`<span class="cl-ts-timeline-why"> — ${why}</span>` : ''}
+                  ${next ? html`<span class="cl-ts-timeline-next">Next: ${next}</span>` : ''}
+                  <span class="cl-ts-timeline-time">${formatTimeAgo(e.ts || e.created_at)}</span>
+                </li>
+              `;
+            })}
           </ul>
-          ${(auditEvents || []).length > 5 ? html`
+          ${(auditEvents || []).length > 10 ? html`
             <button class="cl-ts-expand-btn">Show all ${auditEvents.length} actions</button>
           ` : ''}
         `
@@ -269,8 +317,11 @@ function AgentActionsSection({ item, auditEvents }) {
 // Main component
 // ---------------------------------------------------------------------------
 
-export function ThreadSidebar({ item, auditEvents }) {
+export function ThreadSidebar({ item, auditEvents, onApprove, onQuery }) {
   if (!item) return null;
+
+  const state = String(item.state || '').toLowerCase();
+  const matchPassed = state === 'needs_approval' || state === 'pending_approval';
 
   return html`
     <div class="cl-thread-sidebar">
@@ -279,6 +330,27 @@ export function ThreadSidebar({ item, auditEvents }) {
       <${MatchSection} item=${item} />
       <${VendorSection} item=${item} />
       <${AgentActionsSection} item=${item} auditEvents=${auditEvents} />
+
+      <!-- §6.6: Below the four sections — approve button + query field -->
+      <div class="cl-ts-actions-bar">
+        ${matchPassed ? html`
+          <button
+            class="cl-ts-approve-btn"
+            onClick=${() => onApprove && onApprove(item)}
+          >Approve</button>
+        ` : ''}
+        <input
+          class="cl-ts-query-input"
+          type="text"
+          placeholder="Ask about this vendor or invoice..."
+          onKeyDown=${(e) => {
+            if (e.key === 'Enter' && e.target.value.trim() && onQuery) {
+              onQuery(e.target.value.trim(), item);
+              e.target.value = '';
+            }
+          }}
+        />
+      </div>
     </div>
   `;
 }
