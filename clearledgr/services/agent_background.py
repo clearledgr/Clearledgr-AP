@@ -356,6 +356,28 @@ async def _run_loop():
                 for org_id in org_ids:
                     await _verify_recent_erp_postings(org_id)
 
+            # Every hour (4 ticks): chase stale vendor onboarding sessions
+            # Phase 3.1.e — scans all orgs in a single pass, dispatches
+            # 24h/48h chase emails, escalates after 72h, abandons after 30d.
+            if tick % 4 == 0:
+                try:
+                    from clearledgr.services.vendor_onboarding_lifecycle import (
+                        chase_stale_sessions,
+                    )
+                    chase_result = await chase_stale_sessions()
+                    if chase_result.chases_sent or chase_result.escalations or chase_result.abandonments:
+                        logger.info(
+                            "[background] vendor onboarding chase: scanned=%d chases=%d escalations=%d abandonments=%d",
+                            chase_result.sessions_scanned,
+                            chase_result.chases_sent,
+                            chase_result.escalations,
+                            chase_result.abandonments,
+                        )
+                except Exception as chase_exc:
+                    logger.warning(
+                        "[background] vendor onboarding chase failed: %s", chase_exc
+                    )
+
             # Every hour (4 ticks)
             if tick % 4 == 0:
                 for org_id in org_ids:
