@@ -242,7 +242,7 @@ class DeterministicPlanningEngine:
                 Action("post_timeline_entry", "DET",
                        {"format": "DID-WHY-NEXT", "override_reason": override_reason},
                        "Record DID-WHY-NEXT timeline entry"),
-                Action("send_override_window", "DET", {},
+                Action("send_slack_override_window", "DET", {},
                        "Post override window notification with Undo button"),
                 Action("watch_thread", "DET", {},
                        "Register thread for monitoring"),
