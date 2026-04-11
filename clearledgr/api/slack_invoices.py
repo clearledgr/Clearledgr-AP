@@ -1032,11 +1032,32 @@ async def _handle_conversational_query(
             logger.warning("[conversational] no Slack runtime for team=%s", team_id)
             return
 
-        # Build context from AP data
+        # Build context from AP data + onboarding + audit trail
         items = db.list_ap_items(organization_id=org_id, limit=500)
 
-        # Use Claude to answer the query with AP context
-        answer = await _answer_query_with_context(text, items, org_id)
+        # Add vendor onboarding sessions for onboarding queries
+        onboarding_sessions = []
+        try:
+            if hasattr(db, "list_pending_onboarding_sessions"):
+                onboarding_sessions = db.list_pending_onboarding_sessions(org_id)
+        except Exception:
+            pass
+
+        # Add recent audit events for timeline queries
+        audit_events = []
+        try:
+            if hasattr(db, "list_recent_audit_events"):
+                audit_events = db.list_recent_audit_events(org_id, limit=50)
+            elif hasattr(db, "list_ap_audit_events"):
+                audit_events = db.list_ap_audit_events(org_id, limit=50)
+        except Exception:
+            pass
+
+        answer = await _answer_query_with_context(
+            text, items, org_id,
+            onboarding_sessions=onboarding_sessions,
+            audit_events=audit_events,
+        )
 
         # Post reply in thread
         headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
@@ -1055,25 +1076,69 @@ async def _handle_conversational_query(
         logger.error("[conversational] query handling failed: %s", exc)
 
 
-async def _answer_query_with_context(query: str, items: list, org_id: str) -> str:
-    """Use Claude to answer a natural language AP query."""
+async def _answer_query_with_context(
+    query: str,
+    items: list,
+    org_id: str,
+    onboarding_sessions: list = None,
+    audit_events: list = None,
+) -> str:
+    """Use Claude to answer a natural language AP query with full context."""
     import os
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         return _answer_query_rule_based(query, items)
 
-    # Build a compact AP summary for context
+    # Build rich AP context — thesis examples show individual invoice detail
     summary_lines = []
     for item in items[:100]:
         vendor = item.get("vendor_name") or item.get("vendor") or "Unknown"
         amount = float(item.get("amount") or 0)
+        currency = item.get("currency") or "USD"
         state = item.get("state", "")
-        due = item.get("due_date", "")
+        due = item.get("due_date", "")[:10] if item.get("due_date") else ""
         ref = item.get("invoice_number", "")
-        summary_lines.append(f"{vendor} | {ref} | {state} | {amount:.0f} | due:{due}")
+        match = item.get("match_status") or ""
+        exception = item.get("exception_reason") or item.get("exception_code") or ""
+        erp_ref = item.get("erp_reference") or ""
+        summary_lines.append(
+            f"{vendor} | {ref} | {state} | {currency} {amount:.2f} | due:{due}"
+            + (f" | match:{match}" if match else "")
+            + (f" | exception:{exception}" if exception else "")
+            + (f" | erp:{erp_ref}" if erp_ref else "")
+        )
 
     context = "\n".join(summary_lines) if summary_lines else "No AP items found."
+
+    # Add onboarding context for vendor status queries
+    onboarding_context = ""
+    if onboarding_sessions:
+        ob_lines = []
+        for s in (onboarding_sessions or [])[:20]:
+            vn = s.get("vendor_name") or "Unknown"
+            st = s.get("state") or ""
+            inv_at = (s.get("invited_at") or "")[:10]
+            chase = s.get("chase_count") or 0
+            ob_lines.append(f"{vn} | {st} | invited:{inv_at} | chases:{chase}")
+        if ob_lines:
+            onboarding_context = "\n\nVENDOR ONBOARDING SESSIONS:\n" + "\n".join(ob_lines)
+
+    # Add audit trail for timeline queries
+    audit_context = ""
+    if audit_events:
+        ae_lines = []
+        for e in (audit_events or [])[:30]:
+            ts = (e.get("ts") or e.get("timestamp") or e.get("created_at") or "")[:19]
+            etype = e.get("event_type") or ""
+            actor = e.get("actor_id") or e.get("actor") or "agent"
+            summary = e.get("summary") or e.get("reason") or ""
+            vendor = e.get("vendor_name") or ""
+            ae_lines.append(f"{ts} | {etype} | {actor} | {vendor} | {summary[:80]}")
+        if ae_lines:
+            audit_context = "\n\nRECENT AGENT ACTIONS:\n" + "\n".join(ae_lines)
+
+    full_context = context + onboarding_context + audit_context
 
     try:
         import anthropic
@@ -1081,25 +1146,34 @@ async def _answer_query_with_context(query: str, items: list, org_id: str) -> st
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model=os.environ.get("AGENT_RUNTIME_MODEL", "claude-sonnet-4-6"),
-            max_tokens=500,
+            max_tokens=600,
             system=(
                 "You are Clearledgr's AP agent answering finance questions from the AP team in Slack.\n\n"
-                "DATA FORMAT: Each line is: vendor | invoice_ref | state | amount | due_date\n"
+                "DATA FORMAT:\n"
+                "AP ITEMS: vendor | invoice_ref | state | currency amount | due:date | match:status | exception:reason | erp:ref\n"
+                "ONBOARDING: vendor | state | invited:date | chases:count\n"
+                "AGENT ACTIONS: timestamp | event_type | actor | vendor | summary\n\n"
                 "STATES: received, validated, needs_approval, approved, ready_to_post, posted_to_erp, "
-                "closed, needs_info, failed_post, rejected, snoozed, reversed\n"
-                "STATE MEANINGS: needs_approval = waiting for human sign-off. needs_info = blocked, "
-                "vendor follow-up required. failed_post = ERP posting failed. posted_to_erp = paid/completed.\n\n"
-                "RESPONSE RULES:\n"
-                "- Be specific: use vendor names, exact amounts, exact dates\n"
-                "- Follow DID-WHY-NEXT: state the fact, explain context, suggest what to do next\n"
-                "- Keep responses under 3 sentences\n"
-                "- For 'outstanding' queries: sum amounts where state NOT IN (closed, rejected, posted_to_erp)\n"
-                "- For 'due' queries: filter by due_date, show each item\n"
-                "- For vendor queries: filter by vendor name, show all their items\n"
-                "- If unsure, say what data you have and suggest checking the pipeline view"
+                "closed, needs_info, failed_post, rejected, snoozed, reversed\n\n"
+                "RESPONSE FORMAT — match these exact examples:\n"
+                "- Outstanding query: 'AWS EMEA has 2 open invoices this month: INV-2840 (£8,922 — exception, awaiting your review) "
+                "and INV-2843 (£4,200 — matched, due 18 April). Total outstanding: £13,122.'\n"
+                "- Due query: '3 invoices due Friday 11 April: Deel HR BV £31,200 (approved, SEPA scheduled), "
+                "Notion Labs £1,450 (pending your approval), Linear App £890 (matched, ready to approve).'\n"
+                "- Onboarding query: 'Brex Inc. is at KYC stage — their certificate of incorporation has not been received. "
+                "The agent chased them yesterday at 09:12. No response yet. Want me to escalate to their finance director?'\n"
+                "- Timeline query: 'A condensed timeline of all autonomous actions in that window. "
+                "Each line: timestamp, action, invoice or vendor, outcome.'\n\n"
+                "RULES:\n"
+                "- List EACH invoice individually with ref, amount, state description, and due date\n"
+                "- Include currency symbols (£, $, €) from the data\n"
+                "- Sum totals for outstanding/open queries\n"
+                "- For onboarding: include stage, what's missing, last agent action, and offer to help\n"
+                "- For timeline: list each action on its own line with timestamp\n"
+                "- Be specific. Never say 'some invoices' — name them"
             ),
             messages=[
-                {"role": "user", "content": f"AP data ({len(summary_lines)} items):\n{context}\n\nQuestion: {query}"},
+                {"role": "user", "content": f"AP data ({len(summary_lines)} items):\n{full_context}\n\nQuestion: {query}"},
             ],
         )
         return response.content[0].text
@@ -1109,29 +1183,69 @@ async def _answer_query_with_context(query: str, items: list, org_id: str) -> st
 
 
 def _answer_query_rule_based(query: str, items: list) -> str:
-    """Fallback rule-based answer when Claude is unavailable."""
+    """Fallback rule-based answer when Claude is unavailable.
+
+    Produces thesis-quality responses with individual invoice detail.
+    """
     q = query.lower()
     from datetime import datetime, timedelta
+
+    _state_labels = {
+        "needs_approval": "pending your approval",
+        "pending_approval": "pending your approval",
+        "needs_info": "exception, awaiting review",
+        "approved": "approved",
+        "ready_to_post": "matched, ready to approve",
+        "posted_to_erp": "posted to ERP",
+        "closed": "closed",
+        "failed_post": "ERP posting failed",
+    }
 
     if "outstanding" in q or "open" in q:
         # Find vendor if mentioned
         for item in items:
             vendor = (item.get("vendor_name") or "").lower()
             if vendor and vendor in q:
-                vendor_items = [i for i in items if (i.get("vendor_name") or "").lower() == vendor and i.get("state") not in ("closed", "rejected")]
+                vendor_items = [i for i in items if (i.get("vendor_name") or "").lower() == vendor and i.get("state") not in ("closed", "rejected", "posted_to_erp")]
+                if not vendor_items:
+                    return f"No open items with {item.get('vendor_name')} this month."
                 total = sum(float(i.get("amount") or 0) for i in vendor_items)
-                return f"{len(vendor_items)} open items with {item.get('vendor_name')} totalling {total:,.0f}."
-        open_items = [i for i in items if i.get("state") not in ("closed", "rejected")]
+                currency = vendor_items[0].get("currency") or "USD"
+                lines = [f"{item.get('vendor_name')} has {len(vendor_items)} open invoice(s) this month:"]
+                for vi in vendor_items[:5]:
+                    ref = vi.get("invoice_number") or "N/A"
+                    amt = float(vi.get("amount") or 0)
+                    state_desc = _state_labels.get(vi.get("state"), vi.get("state", ""))
+                    due = vi.get("due_date", "")[:10]
+                    lines.append(f"  {ref} ({currency} {amt:,.2f} — {state_desc}" + (f", due {due}" if due else "") + ")")
+                lines.append(f"Total outstanding: {currency} {total:,.2f}.")
+                return "\n".join(lines)
+
+        open_items = [i for i in items if i.get("state") not in ("closed", "rejected", "posted_to_erp")]
         total = sum(float(i.get("amount") or 0) for i in open_items)
         return f"{len(open_items)} open items totalling {total:,.0f}."
 
-    if "due" in q and ("friday" in q or "this week" in q or "week" in q):
+    if "due" in q:
         now = datetime.utcnow()
-        week_end = now + timedelta(days=(4 - now.weekday()) % 7 + 1)
-        due_items = [i for i in items if i.get("due_date") and i.get("state") not in ("closed", "rejected")]
-        return f"{len(due_items)} invoices with due dates in the current period."
+        week_end = now + timedelta(days=7)
+        due_items = [
+            i for i in items
+            if i.get("due_date") and i.get("state") not in ("closed", "rejected")
+        ]
+        due_items.sort(key=lambda i: i.get("due_date") or "")
+        if not due_items:
+            return "No invoices with upcoming due dates."
+        lines = [f"{len(due_items)} invoices with due dates:"]
+        for di in due_items[:5]:
+            vendor = di.get("vendor_name") or "Unknown"
+            amt = float(di.get("amount") or 0)
+            currency = di.get("currency") or "USD"
+            due = di.get("due_date", "")[:10]
+            state_desc = _state_labels.get(di.get("state"), di.get("state", ""))
+            lines.append(f"  {vendor} {currency} {amt:,.2f} ({state_desc}" + (f", due {due}" if due else "") + ")")
+        return "\n".join(lines)
 
     if "onboarding" in q:
-        return "Check the Vendor Onboarding pipeline for current onboarding status."
+        return "Check the Vendor Onboarding pipeline for current onboarding status. I can answer more specifically if you name the vendor."
 
     return f"I found {len(items)} AP items. Try asking about a specific vendor, due dates, or outstanding amounts."
