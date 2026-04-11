@@ -2650,6 +2650,37 @@ def get_admin_subscription(
     return {"organization_id": org_id, "subscription": _get_subscription_service().get_subscription(org_id).to_dict()}
 
 
+@router.get("/implementation/status")
+async def get_implementation_status(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """§13 Implementation Service: get checklist status."""
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    from clearledgr.services.implementation_service import get_implementation_status as _get_impl
+    return await _get_impl(org_id)
+
+
+class CompleteImplStepRequest(BaseModel):
+    organization_id: Optional[str] = None
+    step_id: str
+    notes: str = ""
+
+
+@router.post("/implementation/complete-step")
+async def complete_impl_step(
+    request: CompleteImplStepRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    """§13 Implementation Service: mark a step complete."""
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    actor = getattr(user, "email", None) or user.user_id
+    from clearledgr.services.implementation_service import complete_implementation_step
+    return await complete_implementation_step(org_id, request.step_id, actor, request.notes)
+
+
 @router.get("/subscription/billing-summary")
 def get_billing_summary(
     organization_id: Optional[str] = Query(default=None),
