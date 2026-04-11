@@ -380,13 +380,14 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
             <strong style="font-size:13px;">Change plan</strong>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px;">
               ${[
-                { id: 'starter', name: 'Starter', price: '$79/mo', desc: 'Mid-market. 3 users, 1 ERP, Slack.' },
-                { id: 'professional', name: 'Professional', price: '$149/mo', desc: 'Multi-entity, 3-way match, API, priority support.' },
-                { id: 'enterprise', name: 'Enterprise', price: '$299/mo', desc: 'Unlimited users, custom ERP, SSO, data residency.' },
+                { id: 'starter', name: 'Starter', price: '$79/mo', annual: '$65/mo annual', desc: 'Up to 500 invoices/mo. One ERP, Slack integration, core AP and Vendor Onboarding. Go live in under 30 minutes.' },
+                { id: 'professional', name: 'Professional', price: '$149/mo', annual: '$125/mo annual', desc: 'Per seat plus invoice volume. Multi-entity, 3-way match, advanced reporting, API access, priority support.' },
+                { id: 'enterprise', name: 'Enterprise', price: '$299/mo', annual: '$249/mo annual', desc: 'NetSuite/SAP custom. Unlimited users, custom ERP integrations, SSO, data residency. Contract.' },
               ].map((tier) => html`
                 <div key=${tier.id} style="border:1px solid ${(sub.plan || '').toLowerCase() === tier.id ? '#00D67E' : '#E2E8F0'};border-radius:8px;padding:12px;${(sub.plan || '').toLowerCase() === tier.id ? 'background:#ECFDF5;' : ''}">
                   <strong style="font-size:14px;">${tier.name}</strong>
                   <div style="font:600 16px/1.2 'Geist Mono',monospace;color:#0A1628;margin:4px 0;">${tier.price}</div>
+                  <div style="font:400 11px/1 'DM Sans',sans-serif;color:#94A3B8;margin-bottom:4px;">${tier.annual}</div>
                   <div class="muted" style="font-size:11px;margin-bottom:8px;">${tier.desc}</div>
                   ${(sub.plan || '').toLowerCase() === tier.id
                     ? html`<span style="font-size:11px;color:#00B87A;font-weight:600;">Current plan</span>`

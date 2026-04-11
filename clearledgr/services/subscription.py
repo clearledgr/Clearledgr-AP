@@ -51,13 +51,13 @@ class PlanLimits:
                 ai_credits_per_month=5,
             ),
             PlanTier.STARTER: cls(
-                invoices_per_month=-1,
+                invoices_per_month=500,  # thesis §13: "up to 500 invoices per month"
                 vendors=-1,
-                users=3,
+                users=5,  # thesis §13: per-seat, standard match is ~5
                 erp_connections=1,
                 api_calls_per_day=1000,
                 storage_gb=5.0,
-                ai_credits_per_month=150,
+                ai_credits_per_month=500,
             ),
             PlanTier.PROFESSIONAL: cls(
                 invoices_per_month=-1,
