@@ -77,73 +77,118 @@ class DeterministicPlanningEngine:
     # ------------------------------------------------------------------
 
     def _plan_email_received(self, event: AgentEvent, box_state: dict) -> Plan:
-        """§4.1: The most complex planning path — handles all incoming emails."""
+        """§4.1: The most complex planning path — handles all incoming emails.
+
+        Steps 1-2 (read + classify) always run. Step 3 branches on
+        classification type to produce the correct plan per §4.1.3:
+          invoice      → 19-step invoice plan
+          credit_note  → credit note plan
+          payment_query → query plan
+          vendor_statement → statement plan
+          onboarding_response → onboarding plan
+          irrelevant   → apply_label(Not Finance), archive
+          unclassifiable → apply_label(Review Required), flag
+        """
         payload = event.payload
         message_id = payload.get("message_id", "")
         mailbox = payload.get("mailbox", "")
         user_id = payload.get("user_id", "")
 
         # Check if thread is already watched (linked to existing Box)
-        # If yes: skip classification, route to continuation handler
         thread_id = payload.get("thread_id", "")
         if thread_id and box_state.get("thread_id") == thread_id:
             return self._plan_thread_continuation(event, box_state)
 
+        # Steps 1-2: always read + classify. The execution engine's
+        # classify_email handler returns _stop_plan=True for non-invoice
+        # types, so the invoice steps below only execute for invoices.
+        #
+        # For non-invoice types, the classify handler also sets
+        # ctx["classification"]["type"] which the execution engine uses
+        # to select the right follow-up plan.
         actions = [
+            # Step 1: Fetch and check
             Action("read_email", "DET",
                    {"message_id": message_id, "user_id": user_id},
                    "Fetch full email content from Gmail API"),
+            # Step 2: Classify
             Action("classify_email", "LLM",
                    {"message_id": message_id},
                    "Classify email as invoice, credit note, query, or irrelevant"),
+            # Step 3: Flag internal instruction (fraud control)
+            Action("flag_internal_instruction", "DET",
+                   {},
+                   "Detect emails from internal senders instructing payment actions"),
+            # Step 4: Apply received label
             Action("apply_label", "DET",
                    {"label": "Clearledgr/Invoice/Received"},
                    "Apply Received stage label to Gmail thread"),
+            # Step 5: Create Box
             Action("create_box", "DET",
                    {"pipeline": "ap_invoices", "mailbox": mailbox, "user_id": user_id},
                    "Create AP item in Received stage"),
+            # Step 6: Vendor check (spec: lookup_vendor_master)
+            Action("lookup_vendor_master", "DET",
+                   {},
+                   "Query ERP vendor master for match by domain and name"),
             Action("check_domain_match", "DET",
                    {},
                    "Validate sender domain matches vendor master"),
+            # Step 7: Duplicate check (pre-extraction)
             Action("check_duplicate", "DET",
                    {"window_days": 90, "phase": "pre_extraction"},
                    "Check for duplicate invoice (pre-extraction, partial)"),
+            # Step 8: Extraction
             Action("extract_invoice_fields", "LLM",
                    {"message_id": message_id},
                    "Extract structured invoice fields via Claude"),
+            # Step 9: Guardrails
             Action("run_extraction_guardrails", "DET",
                    {},
                    "Apply 5 deterministic extraction guardrails"),
+            # Step 10: Duplicate check (post-extraction, full)
             Action("check_duplicate_full", "DET",
                    {"window_days": 90, "phase": "post_extraction"},
                    "Check for duplicate invoice (post-extraction, full)"),
+            # Step 11: Fraud checks
             Action("check_amount_ceiling", "DET",
                    {},
                    "Validate amount does not exceed per-vendor ceiling"),
             Action("check_velocity", "DET",
                    {"window_days": 7},
                    "Check invoice velocity for this vendor"),
+            # Step 12: Update fields
             Action("update_box_fields", "DET",
                    {},
                    "Persist extracted fields to Box record"),
+            Action("link_vendor_to_box", "DET",
+                   {},
+                   "Associate Vendor record with invoice Box"),
+            # Step 13: ERP lookups
             Action("lookup_po", "DET",
                    {},
                    "Fetch Purchase Order from ERP"),
+            # Step 14: GRN lookup
             Action("lookup_grn", "DET",
                    {},
                    "Fetch Goods Receipt Notes from ERP"),
+            # Step 15: 3-way match
             Action("run_three_way_match", "DET",
                    {},
                    "Execute deterministic 3-way match algorithm"),
+            # Step 16: Apply matched label
             Action("apply_label", "DET",
                    {"label": "Clearledgr/Invoice/Matched"},
                    "Apply Matched stage label"),
+            # Step 17: Move stage
             Action("move_box_stage", "DET",
                    {"target": "awaiting_approval"},
                    "Advance Box to awaiting_approval stage"),
-            Action("send_approval", "DET",
+            # Step 18: Send approval (spec: send_slack_approval)
+            Action("send_slack_approval", "DET",
                    {},
-                   "Send structured approval message to Slack/Teams"),
+                   "Send structured approval message to Slack"),
+            # Step 19: Set waiting condition
             Action("set_waiting_condition", "DET",
                    {"type": "approval_response", "timeout_hours": 4},
                    "Record that agent is waiting for approval decision"),
