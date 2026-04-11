@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:57f11fad151860028908079945261898a5cdafc8bad1f3a875a8714996ffef22 */
+/* clearledgr-source-fingerprint:5e6664ef1433fc7646b7e59bc0d5a851c4d0b01fd9cdec966fc79f70cbdd4624 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -58588,14 +58588,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   };
   var STATE_COLORS = {
     received: "#94A3B8",
-    validated: "#2563EB",
-    needs_info: "#CA8A04",
-    needs_approval: "#CA8A04",
-    pending_approval: "#CA8A04",
-    approved: "#16A34A",
-    ready_to_post: "#2563EB",
-    posted_to_erp: "#16A34A",
-    closed: "#16A34A",
+    validated: "#1A73E8",
+    needs_info: "#D97706",
+    needs_approval: "#D97706",
+    pending_approval: "#D97706",
+    approved: "#00B87A",
+    ready_to_post: "#1A73E8",
+    posted_to_erp: "#00B87A",
+    closed: "#00B87A",
     rejected: "#DC2626",
     failed_post: "#DC2626",
     reversed: "#DC2626",

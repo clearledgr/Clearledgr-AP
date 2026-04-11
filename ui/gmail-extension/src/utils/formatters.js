@@ -6,22 +6,22 @@ export const STATE_LABELS = {
   posted_to_erp: 'Posted to ERP', closed: 'Closed', rejected: 'Rejected', failed_post: 'Failed post',
 };
 
-// §6.3 Inbox Stage Labels — thesis color semantics:
-// Green (#16A34A) = passed, active, approved
-// Amber (#CA8A04) = exception, pending human action
-// Red (#DC2626) = failed, blocked
-// Blue (#2563EB) = approved and in progress
-// Grey (#94A3B8) = neutral, not yet processed
+// §10 Visual Language — thesis color semantics (authoritative):
+// Green (#00B87A) = passed, verified, active, approved
+// Amber (#D97706) = requires attention, exception, pending human action
+// Red (#DC2626) = failed, blocked, rejected
+// Blue (#1A73E8) = in progress, scheduled, approval in transit
+// Grey = neutral, not yet processed
 export const STATE_COLORS = {
   received: '#94A3B8',          // grey — not yet processed
-  validated: '#2563EB',         // blue — in progress
-  needs_info: '#CA8A04',        // amber — pending human action
-  needs_approval: '#CA8A04',    // amber — pending human action
-  pending_approval: '#CA8A04',  // amber — pending human action
-  approved: '#16A34A',          // green — approved
-  ready_to_post: '#2563EB',     // blue — in progress
-  posted_to_erp: '#16A34A',     // green — active/passed
-  closed: '#16A34A',            // green — passed
+  validated: '#1A73E8',         // blue — in progress
+  needs_info: '#D97706',        // amber — requires attention
+  needs_approval: '#D97706',    // amber — pending human action
+  pending_approval: '#D97706',  // amber — pending human action
+  approved: '#00B87A',          // green — approved
+  ready_to_post: '#1A73E8',     // blue — scheduled
+  posted_to_erp: '#00B87A',     // green — active/passed
+  closed: '#00B87A',            // green — passed
   rejected: '#DC2626',          // red — blocked
   failed_post: '#DC2626',       // red — failed
   reversed: '#DC2626',          // red — blocked
