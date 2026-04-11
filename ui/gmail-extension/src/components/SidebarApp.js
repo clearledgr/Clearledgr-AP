@@ -1965,25 +1965,35 @@ export default function SidebarApp({ queueManager }) {
       <${ErrorBoundary} fallback="Could not load record details">
         ${item
           ? html`
-            ${store.currentThreadId
-              ? html`<${ThreadSidebar}
-                  item=${item}
-                  auditEvents=${(store.auditState?.events || [])}
-                  onApprove=${async (approveItem) => {
-                    try {
-                      const result = await queueManager.approveAndPost(approveItem, { override: false });
-                      const ok = ['posted', 'approved', 'posted_to_erp'].includes(String(result?.status || '').toLowerCase());
-                      showToast(ok ? 'Invoice approved' : (result?.reason || 'Approval failed'), ok ? 'success' : 'error');
-                      if (ok) await queueManager.refreshQueue();
-                    } catch (err) {
-                      showToast('Approval failed: ' + (err.message || err), 'error');
-                    }
-                  }}
-                  onQuery=${async (query, queryItem) => {
-                    showToast('Query received — agent response coming soon', 'info');
-                  }}
-                />`
-              : html`<${WorkPanel} item=${item} queueManager=${queueManager} />`
+            ${html`<${ThreadSidebar}
+                item=${item}
+                auditEvents=${(store.auditState?.events || [])}
+                onApprove=${async (approveItem) => {
+                  try {
+                    const result = await queueManager.approveAndPost(approveItem, { override: false });
+                    const ok = ['posted', 'approved', 'posted_to_erp'].includes(String(result?.status || '').toLowerCase());
+                    showToast(ok ? 'Invoice approved' : (result?.reason || 'Approval failed'), ok ? 'success' : 'error');
+                    if (ok) await queueManager.refreshQueue();
+                  } catch (err) {
+                    showToast('Approval failed: ' + (err.message || err), 'error');
+                  }
+                }}
+                onSnooze=${async (snoozeItem) => {
+                  try {
+                    const result = await queueManager.backendFetch(
+                      queueManager.runtimeConfig?.backendUrl + '/api/ap/items/' + snoozeItem.id + '/snooze?organization_id=' + encodeURIComponent(queueManager.runtimeConfig?.organizationId || 'default'),
+                      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ duration_minutes: 240 }) },
+                    );
+                    showToast(result?.ok ? 'Snoozed for 4 hours' : 'Snooze failed', result?.ok ? 'success' : 'error');
+                    if (result?.ok) await queueManager.refreshQueue();
+                  } catch (err) {
+                    showToast('Snooze failed: ' + (err.message || err), 'error');
+                  }
+                }}
+                onQuery=${async (query, queryItem) => {
+                  showToast('Query received — agent response coming soon', 'info');
+                }}
+              />`
             }`
           : html`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
       <//>
