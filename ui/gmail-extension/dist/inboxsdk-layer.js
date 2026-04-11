@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:aaf651b3e52391229d4b75c8a9be26063c074c3aad6ddc92f56a2972cf736d32 */
+/* clearledgr-source-fingerprint:e368fe77a382830053b92181e9195fb81f342cdbced6274e6ab849d6be540978 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -69125,9 +69125,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <div class="panel-head compact">
           <div>
             <h3 style="margin-top:0">Billing${!canManagePlan ? html10`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
-            <p class="muted" style="margin:0">Current plan, usage, and billing cycle.</p>
+            <p class="muted" style="margin:0">Plan, usage, and subscription — managed here inside Gmail.</p>
           </div>
         </div>
+
+        <!-- Current plan + usage against limits -->
         <div class="settings-section-grid">
           <div>
             <div class="settings-summary-grid">
@@ -69138,21 +69140,53 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 </div>
               `)}
             </div>
-            <div class="secondary-note">
-              Billing changes now live on the dedicated page so subscription details, limits, and plan choices are not squeezed into the general settings view.
-            </div>
           </div>
           <div>
-            ${usageKeys.length ? html10`<div class="secondary-stat-grid">
-                  ${billingUsagePreview.map((entry) => html10`
-                    <div class="secondary-stat-card" key=${entry.label}>
-                      <strong>${entry.label}</strong>
-                      <span>${entry.value}</span>
-                    </div>
-                  `)}
-                </div>` : html10`<p class="secondary-empty">Usage data will appear here once invoices are processed.</p>`}
+            <div class="settings-summary-grid">
+              <div class="settings-summary-card">
+                <strong>Invoices</strong>
+                <span>${Number(usage.invoices_this_month || 0).toLocaleString()} this month</span>
+              </div>
+              <div class="settings-summary-card">
+                <strong>Users</strong>
+                <span>${Number(usage.users_count || 0).toLocaleString()} of ${sub.limits?.users === -1 ? "∞" : sub.limits?.users || "—"}</span>
+              </div>
+              <div class="settings-summary-card">
+                <strong>AI credits</strong>
+                <span>${Number(usage.ai_credits_this_month || 0).toLocaleString()} this month</span>
+              </div>
+            </div>
           </div>
         </div>
+
+        <!-- §13: Plan comparison + upgrade inside Gmail -->
+        ${canManagePlan ? html10`
+          <div style="margin-top:16px;border-top:1px solid var(--cl-border, #e2e8f0);padding-top:16px;">
+            <strong style="font-size:13px;">Change plan</strong>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px;">
+              ${[
+      { id: "starter", name: "Starter", price: "$79/mo", desc: "Mid-market. 3 users, 1 ERP, Slack." },
+      { id: "professional", name: "Professional", price: "$149/mo", desc: "Multi-entity, 3-way match, API, priority support." },
+      { id: "enterprise", name: "Enterprise", price: "$299/mo", desc: "Unlimited users, custom ERP, SSO, data residency." }
+    ].map((tier) => html10`
+                <div key=${tier.id} style="border:1px solid ${(sub.plan || "").toLowerCase() === tier.id ? "#00D67E" : "#E2E8F0"};border-radius:8px;padding:12px;${(sub.plan || "").toLowerCase() === tier.id ? "background:#ECFDF5;" : ""}">
+                  <strong style="font-size:14px;">${tier.name}</strong>
+                  <div style="font:600 16px/1.2 'Geist Mono',monospace;color:#0A1628;margin:4px 0;">${tier.price}</div>
+                  <div class="muted" style="font-size:11px;margin-bottom:8px;">${tier.desc}</div>
+                  ${(sub.plan || "").toLowerCase() === tier.id ? html10`<span style="font-size:11px;color:#00B87A;font-weight:600;">Current plan</span>` : html10`<button class="btn-secondary btn-sm" onClick=${() => {
+      api("/api/workspace/subscription/plan", {
+        method: "POST",
+        body: JSON.stringify({ organization_id: orgId, plan: tier.id })
+      }).then(() => {
+        toast("Plan updated to " + tier.name, "success");
+        onRefresh?.();
+      }).catch(() => toast("Plan change failed", "error"));
+    }}>Switch to ${tier.name}</button>`}
+                </div>
+              `)}
+            </div>
+          </div>
+        ` : ""}
       </div>
 
       <div class="panel" ref=${approvalRef}>
