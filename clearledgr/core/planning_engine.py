@@ -306,6 +306,9 @@ class DeterministicPlanningEngine:
                 actions=[
                     Action("escalate_approval", "DET", {},
                            "Escalate approval to next tier in hierarchy"),
+                    Action("post_timeline_entry", "DET",
+                           {"summary": "Approval escalated to next tier due to timeout"},
+                           "Log escalation to Box timeline"),
                 ],
                 box_id=box_id,
             )
@@ -327,6 +330,9 @@ class DeterministicPlanningEngine:
                     Action("freeze_vendor_payments", "DET",
                            {"reason": "iban_verification_timeout"},
                            "Freeze vendor payments — IBAN verification deadline exceeded"),
+                    Action("send_slack_exception", "DET",
+                           {"reason": "IBAN verification not complete within 5 business days"},
+                           "Alert AP Manager about IBAN verification deadline"),
                 ],
                 box_id=box_id,
             )
