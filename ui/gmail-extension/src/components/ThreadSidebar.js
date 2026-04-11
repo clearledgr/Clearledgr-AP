@@ -19,6 +19,7 @@
  *   - "The sidebar never shows more than one invoice"
  */
 import { html } from 'htm/preact';
+import { useState, useEffect } from 'preact/hooks';
 
 // ---------------------------------------------------------------------------
 // CSS
@@ -74,6 +75,22 @@ const THREAD_SIDEBAR_CSS = `
 }
 .cl-ts-timeline-why { font-weight: 400; color: #5C6B7A; }
 .cl-ts-timeline-next { display: block; font-size: 11px; color: #00A85F; font-weight: 500; margin-top: 2px; }
+.cl-ts-linked-box {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px;
+  margin-bottom: 6px;
+}
+.cl-ts-linked-box-icon { font-size: 14px; width: 20px; text-align: center; }
+.cl-ts-linked-box-info { flex: 1; min-width: 0; }
+.cl-ts-linked-box-title { font-size: 12px; color: #0A1628; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cl-ts-linked-box-meta { font-size: 11px; color: #5C6B7A; }
+.cl-ts-linked-box-status {
+  display: inline-block; padding: 1px 6px; border-radius: 8px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+}
+.cl-ts-linked-box-status.active { background: #ECFDF5; color: #16A34A; }
+.cl-ts-linked-box-status.pending { background: #FEFCE8; color: #92400E; }
+.cl-ts-linked-box-status.completed { background: #EFF6FF; color: #1D4ED8; }
 .cl-ts-actions-bar { padding: 12px 16px; border-top: 1px solid #E2E8F0; }
 .cl-ts-approve-btn {
   width: 100%; padding: 10px 16px; border: none; border-radius: 8px;
@@ -336,10 +353,60 @@ function AgentActionsSection({ item, auditEvents }) {
 }
 
 // ---------------------------------------------------------------------------
+// Linked Boxes — §5.1: show linked vendor onboarding sessions
+// ---------------------------------------------------------------------------
+
+function LinkedBoxesSection({ links }) {
+  if (!links || links.length === 0) return null;
+
+  function statusClass(link) {
+    const type = String(link.target_box_type || link.source_box_type || '').toLowerCase();
+    if (type === 'vendor_onboarding') return 'pending';
+    return 'active';
+  }
+
+  return html`
+    <div class="cl-ts-section">
+      <div class="cl-ts-section-title">Linked Records</div>
+      ${links.map(link => {
+        const isSource = link.source_box_type === 'invoice';
+        const linkedId = isSource ? link.target_box_id : link.source_box_id;
+        const linkedType = isSource ? link.target_box_type : link.source_box_type;
+        const icon = linkedType === 'vendor_onboarding' ? '🏢' : '🔗';
+        const label = (linkedType || 'record').replace(/_/g, ' ');
+        return html`
+          <div class="cl-ts-linked-box" key=${link.id}>
+            <span class="cl-ts-linked-box-icon">${icon}</span>
+            <div class="cl-ts-linked-box-info">
+              <div class="cl-ts-linked-box-title">${label}</div>
+              <div class="cl-ts-linked-box-meta">${linkedId}</div>
+            </div>
+            <span class="cl-ts-linked-box-status ${statusClass(link)}">${link.link_type || 'related'}</span>
+          </div>
+        `;
+      })}
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
-export function ThreadSidebar({ item, auditEvents, onApprove, onSnooze, onQuery }) {
+export function ThreadSidebar({ item, auditEvents, onApprove, onSnooze, onQuery, fetchBoxLinks }) {
+  const [boxLinks, setBoxLinks] = useState([]);
+
+  useEffect(() => {
+    if (!item?.id || !fetchBoxLinks) return;
+    let cancelled = false;
+    fetchBoxLinks(item.id, 'invoice').then(links => {
+      if (!cancelled) setBoxLinks(links || []);
+    }).catch(() => {
+      if (!cancelled) setBoxLinks([]);
+    });
+    return () => { cancelled = true; };
+  }, [item?.id, fetchBoxLinks]);
+
   if (!item) return null;
 
   const state = String(item.state || '').toLowerCase();
@@ -353,6 +420,7 @@ export function ThreadSidebar({ item, auditEvents, onApprove, onSnooze, onQuery 
       <${InvoiceSection} item=${item} />
       <${MatchSection} item=${item} />
       <${VendorSection} item=${item} />
+      <${LinkedBoxesSection} links=${boxLinks} />
       <${AgentActionsSection} item=${item} auditEvents=${auditEvents} />
 
       <!-- §6.6: Below the four sections — approve button + snooze + query field -->

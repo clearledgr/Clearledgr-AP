@@ -109,12 +109,16 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
   // --- Approval Rules state ---
   const [approvalRules, setApprovalRules] = useState([]);
   const [billingSummary, setBillingSummary] = useState(null);
+  const [implStatus, setImplStatus] = useState(null);
 
-  // §13: Fetch metered billing summary
+  // §13: Fetch metered billing summary + implementation status
   useEffect(() => {
     if (!orgId) return;
     api(`/api/workspace/subscription/billing-summary?organization_id=${encodeURIComponent(orgId)}`, { silent: true })
       .then((data) => setBillingSummary(data))
+      .catch(() => {});
+    api(`/api/workspace/implementation/status?organization_id=${encodeURIComponent(orgId)}`, { silent: true })
+      .then((data) => setImplStatus(data))
       .catch(() => {});
   }, [orgId]);
   const [showAddRule, setShowAddRule] = useState(false);
@@ -528,6 +532,43 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
           </div>
         ` : ''}
       </div>
+
+      ${implStatus?.steps ? html`
+        <div class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin-top:0">Implementation checklist</h3>
+              <p class="muted" style="margin:0">${implStatus.completed_count || 0} of ${implStatus.total_count || 0} steps complete</p>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            ${(implStatus.steps || []).map((step) => html`
+              <div key=${step.key} style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:${step.completed ? '#ECFDF5' : '#FBFCFD'};border:1px solid ${step.completed ? '#BBF7D0' : '#E2E8F0'};border-radius:6px;">
+                <span style="font-size:14px;">${step.completed ? '\u2705' : '\u2B1C'}</span>
+                <div style="flex:1;">
+                  <div style="font:500 13px/1.3 'DM Sans',sans-serif;color:#0A1628;">${step.label}</div>
+                  ${step.description ? html`<div style="font:400 11px/1.3 'DM Sans',sans-serif;color:#5C6B7A;">${step.description}</div>` : ''}
+                </div>
+                ${!step.completed && canManageCompany ? html`
+                  <button class="btn-outline btn-sm" onClick=${() => {
+                    api('/api/workspace/implementation/complete-step', {
+                      method: 'POST',
+                      body: JSON.stringify({ step_key: step.key, organization_id: orgId }),
+                    }).then(() => {
+                      setImplStatus((prev) => ({
+                        ...prev,
+                        completed_count: (prev?.completed_count || 0) + 1,
+                        steps: (prev?.steps || []).map((s) => s.key === step.key ? { ...s, completed: true } : s),
+                      }));
+                      toast?.('Step completed', 'success');
+                    }).catch(() => toast?.('Failed to mark step', 'error'));
+                  }}>Mark done</button>
+                ` : ''}
+              </div>
+            `)}
+          </div>
+        </div>
+      ` : ''}
 
       <div class="panel" ref=${approvalRef}>
         <div class="panel-head compact">

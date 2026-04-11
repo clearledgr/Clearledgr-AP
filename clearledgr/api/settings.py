@@ -688,3 +688,17 @@ async def get_migration_status(
         "minimum_parallel_days": 14,
         "can_cutover": status == "parallel" and days_in_parallel >= 14,
     }
+
+
+# ==================== SHADOW MODE REPORT — §7.7 ====================
+
+@router.get("/{organization_id}/shadow-mode-report")
+async def get_shadow_mode_report_endpoint(
+    organization_id: str,
+    user: TokenData = Depends(get_current_user),
+):
+    """Get shadow model promotion readiness report (§7.7)."""
+    from clearledgr.services.shadow_mode import get_shadow_mode_report
+
+    db = get_db()
+    return get_shadow_mode_report(db, organization_id=organization_id)

@@ -956,6 +956,13 @@ try:
 except ImportError:
     pass
 
+# Organization settings API (thresholds, GL mappings, migration)
+try:
+    from clearledgr.api.settings import router as settings_router
+    app.include_router(settings_router)
+except ImportError:
+    pass
+
 # Outlook / Microsoft 365 routes (OAuth + webhooks)
 try:
     from clearledgr.api.outlook_routes import router as outlook_router

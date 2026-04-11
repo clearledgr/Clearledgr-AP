@@ -2158,8 +2158,8 @@ function registerAppMenuAndRoutes() {
     const menuRoutes = getMenuNavRoutes(routePreferences, routeOptions);
     const primaryRoutes = menuRoutes.filter((route) => APPMENU_PRIMARY_ROUTE_IDS.has(route.id));
 
-    // §6.2 — three thesis-required saved views, always present
-    const thesisSavedViews = [
+    // §6.2 — three thesis-required saved views (hardcoded fallback)
+    const thesisSavedViewsFallback = [
       {
         name: 'Exceptions',
         description: 'Invoices with Match Status = Exception or Failed.',
@@ -2180,13 +2180,35 @@ function registerAppMenuAndRoutes() {
       },
     ];
 
-    // Append any user-pinned views after the thesis defaults
+    // §5.1 — fetch saved views from API, fall back to hardcoded thesis defaults
+    let apiSavedViews = [];
+    try {
+      const orgId = queueManager?.runtimeConfig?.organizationId || 'default';
+      const backendUrl = queueManager?.runtimeConfig?.backendUrl || '';
+      if (backendUrl && queueManager?.backendFetch) {
+        const resp = await queueManager.backendFetch(
+          `${backendUrl}/api/saved-views?organization_id=${encodeURIComponent(orgId)}&pipeline=ap-invoices`,
+        );
+        const views = resp?.saved_views || [];
+        apiSavedViews = views.map((v) => ({
+          name: v.name,
+          description: v.filter_json ? `Filter: ${JSON.stringify(v.filter_json)}` : '',
+          id: 'clearledgr/invoices-view/:ref',
+          routeParams: { ref: `saved:${v.id}` },
+        }));
+      }
+    } catch (_) { /* non-fatal — use fallback */ }
+
+    const thesisSavedViews = apiSavedViews.length > 0 ? apiSavedViews : thesisSavedViewsFallback;
+
+    // Append any user-pinned views after the thesis/API views
     const pipelineScope = {
       orgId: queueManager?.runtimeConfig?.organizationId || 'default',
       userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || '',
     };
     const userPinnedViews = getPinnedPipelineViews(readPipelinePreferences(pipelineScope))
       .slice(0, 3)
+      .filter((view) => !thesisSavedViews.some((sv) => sv.name === view.name))
       .map((view) => ({
         name: view.name,
         description: view.description || 'Pinned AP queue view.',

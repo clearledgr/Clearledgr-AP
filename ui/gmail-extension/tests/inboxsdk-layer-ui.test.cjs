@@ -881,10 +881,6 @@ test('secondary Gmail pages stay lightweight and avoid raw admin/dashboard surfa
     path.resolve(__dirname, '..', 'src/routes/pages/ConnectionsPage.js'),
     'utf8',
   );
-  const companySource = fs.readFileSync(
-    path.resolve(__dirname, '..', 'src/routes/pages/CompanyPage.js'),
-    'utf8',
-  );
   const healthSource = fs.readFileSync(
     path.resolve(__dirname, '..', 'src/routes/pages/HealthPage.js'),
     'utf8',
@@ -903,10 +899,6 @@ test('secondary Gmail pages stay lightweight and avoid raw admin/dashboard surfa
   );
   const reconSource = fs.readFileSync(
     path.resolve(__dirname, '..', 'src/routes/pages/ReconciliationPage.js'),
-    'utf8',
-  );
-  const teamSource = fs.readFileSync(
-    path.resolve(__dirname, '..', 'src/routes/pages/TeamPage.js'),
     'utf8',
   );
   const upcomingSource = fs.readFileSync(
@@ -939,9 +931,6 @@ test('secondary Gmail pages stay lightweight and avoid raw admin/dashboard surfa
   assert.equal(activitySource.includes('SnapshotCard'), false);
   assert.equal(activitySource.includes('kpi-row'), false);
   assert.equal(connectionsSource.includes('<table class="table">'), false);
-  assert.equal(companySource.includes('cl-org-json'), false);
-  assert.equal(companySource.includes('cl-entity-code-0'), true);
-  assert.equal(companySource.includes('cl-entity-rule-entity-code-0'), true);
   assert.equal(healthSource.includes('<table class="table">'), false);
   assert.equal(rulesSource.includes('cl-policy-json'), false);
   assert.equal(rulesSource.includes("import { useEffect, useMemo, useState } from 'preact/hooks';"), true);
@@ -973,7 +962,6 @@ test('secondary Gmail pages stay lightweight and avoid raw admin/dashboard surfa
   assert.equal(inboxLayerSource.includes("'clearledgr/plan': PlanPage"), true);
   assert.equal(inboxLayerSource.includes("<h2>Billing</h2><p>Plan, usage, and workspace limits.</p>"), true);
   assert.equal(reconSource.includes('Use this page when you want to test or run reconciliation work from a spreadsheet.'), true);
-  assert.equal(teamSource.includes('<table class="table">'), false);
   assert.equal(upcomingSource.includes('See what needs attention next'), true);
   assert.equal(templatesSource.includes('Syncfusion'), false);
   assert.equal(reportsSource.includes('Get a quick view of queue health, spend, coverage, and duplicate risk, then jump back into the work.'), true);

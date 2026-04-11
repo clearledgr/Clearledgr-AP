@@ -1829,14 +1829,36 @@ async def export_report(
             content={"error": f"Unknown report_type. Must be one of: {sorted(REPORT_TYPES)}"},
         )
 
-    rows, columns = generate_report(
-        report_type=report_type,
-        organization_id=org_id,
-        period_days=period_days,
-        start_date=start_date,
-        end_date=end_date,
-        vendor=vendor,
-    )
+    # §3 Multi-entity: parent accounts can pull consolidated reports
+    # across all child entities via get_all_entity_org_ids
+    report_org_ids = [org_id]
+    try:
+        db = get_db()
+        if hasattr(db, "get_all_entity_org_ids"):
+            all_ids = db.get_all_entity_org_ids(org_id)
+            if len(all_ids) > 1:
+                report_org_ids = all_ids
+    except Exception:
+        pass
+
+    all_rows: list = []
+    columns: list = []
+    for rid in report_org_ids:
+        r, c = generate_report(
+            report_type=report_type,
+            organization_id=rid,
+            period_days=period_days,
+            start_date=start_date,
+            end_date=end_date,
+            vendor=vendor,
+        )
+        if c and not columns:
+            columns = c
+        if r:
+            for row in r:
+                row["entity_org_id"] = rid
+            all_rows.extend(r)
+    rows = all_rows
 
     if format == "json":
         return {

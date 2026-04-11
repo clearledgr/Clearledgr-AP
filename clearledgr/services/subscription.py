@@ -454,9 +454,19 @@ class SubscriptionService:
         return self._subscription_from_row(row, sub.organization_id)
 
     def get_subscription(self, organization_id: str) -> Subscription:
-        """Get or create subscription for an organization."""
+        """Get or create subscription for an organization.
+
+        §3 Multi-entity: child orgs inherit the parent's subscription via
+        ``get_effective_subscription`` so billing is consolidated at the
+        parent account level.
+        """
         self.db.ensure_organization(organization_id, organization_name=organization_id)
-        row = self.db.get_subscription_record(organization_id)
+        # Try entity-aware lookup first (child → parent fallback)
+        row = None
+        if hasattr(self.db, "get_effective_subscription"):
+            row = self.db.get_effective_subscription(organization_id)
+        if not row:
+            row = self.db.get_subscription_record(organization_id)
         sub = self._subscription_from_row(row, organization_id)
         self._update_trial_status(sub)
         sub = self._save_subscription(sub)

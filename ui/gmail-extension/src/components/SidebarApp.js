@@ -1968,6 +1968,16 @@ export default function SidebarApp({ queueManager }) {
             ${html`<${ThreadSidebar}
                 item=${item}
                 auditEvents=${(store.auditState?.events || [])}
+                fetchBoxLinks=${async (boxId, boxType) => {
+                  try {
+                    const url = queueManager.runtimeConfig?.backendUrl
+                      + '/api/box-links?box_id=' + encodeURIComponent(boxId)
+                      + '&box_type=' + encodeURIComponent(boxType);
+                    const resp = await queueManager.backendFetch(url);
+                    const data = resp?.ok !== false ? resp : null;
+                    return data?.links || [];
+                  } catch { return []; }
+                }}
                 onApprove=${async (approveItem) => {
                   try {
                     const result = await queueManager.approveAndPost(approveItem, { override: false });

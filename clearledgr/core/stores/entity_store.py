@@ -194,17 +194,17 @@ class EntityStore:
             cur = conn.cursor()
             cur.execute(sql, (org_id,))
             row = cur.fetchone()
-        if not row:
-            return None
-        org = dict(row)
-        parent_id = org.get("parent_organization_id")
-        if not parent_id or parent_id == org_id:
-            return org
-        # Fetch parent
-        cur2 = conn.cursor()
-        cur2.execute(sql, (parent_id,))
-        parent_row = cur2.fetchone()
-        return dict(parent_row) if parent_row else org
+            if not row:
+                return None
+            org = dict(row)
+            parent_id = org.get("parent_organization_id")
+            if not parent_id or parent_id == org_id:
+                return org
+            # Fetch parent within the same connection
+            cur2 = conn.cursor()
+            cur2.execute(sql, (parent_id,))
+            parent_row = cur2.fetchone()
+            return dict(parent_row) if parent_row else org
 
     def is_parent_account(self, org_id: str) -> bool:
         """True if this organization has child organizations."""
@@ -217,24 +217,23 @@ class EntityStore:
         return [parent_org_id] + [c["id"] for c in children]
 
     def get_effective_subscription(self, org_id: str) -> Optional[Dict[str, Any]]:
-        """§3: Child orgs inherit parent's subscription."""
+        """§3: Child orgs inherit parent's subscription.
+
+        Uses ``get_parent_organization`` to walk up the hierarchy.
+        """
         self.initialize()
-        # Check own subscription first
         sql = self._prepare_sql("SELECT * FROM subscriptions WHERE organization_id = ?")
+        # Check own subscription first
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (org_id,))
             row = cur.fetchone()
         if row:
             return dict(row)
-        # Walk up to parent
-        org_sql = self._prepare_sql("SELECT parent_organization_id FROM organizations WHERE id = ?")
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(org_sql, (org_id,))
-            org_row = cur.fetchone()
-        if org_row:
-            parent_id = dict(org_row).get("parent_organization_id")
+        # Walk up to parent via get_parent_organization
+        parent = self.get_parent_organization(org_id)
+        if parent:
+            parent_id = parent.get("id")
             if parent_id and parent_id != org_id:
                 with self.connect() as conn:
                     cur = conn.cursor()

@@ -20,7 +20,10 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Supported report types
-REPORT_TYPES = {"ap_aging", "vendor_spend", "posting_status"}
+REPORT_TYPES = {
+    "ap_aging", "vendor_spend", "posting_status",
+    "invoice_volume", "agent_action_log", "match_accuracy", "onboarding_duration",
+}
 
 
 def generate_report(

@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:b6c4f9b90b8bb5b1155d6ae52df9f047ff3e85f6920b72dd43f6e8eaac8e6646 */
+/* clearledgr-source-fingerprint:502b33d599ff23b8a3d7ac6e60bb58b24aa3c7a22d258227ca9bd82d66936a8d */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59035,6 +59035,22 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 }
 .cl-ts-timeline-why { font-weight: 400; color: #5C6B7A; }
 .cl-ts-timeline-next { display: block; font-size: 11px; color: #00A85F; font-weight: 500; margin-top: 2px; }
+.cl-ts-linked-box {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px;
+  margin-bottom: 6px;
+}
+.cl-ts-linked-box-icon { font-size: 14px; width: 20px; text-align: center; }
+.cl-ts-linked-box-info { flex: 1; min-width: 0; }
+.cl-ts-linked-box-title { font-size: 12px; color: #0A1628; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cl-ts-linked-box-meta { font-size: 11px; color: #5C6B7A; }
+.cl-ts-linked-box-status {
+  display: inline-block; padding: 1px 6px; border-radius: 8px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+}
+.cl-ts-linked-box-status.active { background: #ECFDF5; color: #16A34A; }
+.cl-ts-linked-box-status.pending { background: #FEFCE8; color: #92400E; }
+.cl-ts-linked-box-status.completed { background: #EFF6FF; color: #1D4ED8; }
 .cl-ts-actions-bar { padding: 12px 16px; border-top: 1px solid #E2E8F0; }
 .cl-ts-approve-btn {
   width: 100%; padding: 10px 16px; border: none; border-radius: 8px;
@@ -59292,7 +59308,55 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
-  function ThreadSidebar({ item, auditEvents, onApprove, onSnooze, onQuery }) {
+  function LinkedBoxesSection({ links }) {
+    if (!links || links.length === 0)
+      return null;
+    function statusClass(link) {
+      const type = String(link.target_box_type || link.source_box_type || "").toLowerCase();
+      if (type === "vendor_onboarding")
+        return "pending";
+      return "active";
+    }
+    return m3`
+    <div class="cl-ts-section">
+      <div class="cl-ts-section-title">Linked Records</div>
+      ${links.map((link) => {
+      const isSource = link.source_box_type === "invoice";
+      const linkedId = isSource ? link.target_box_id : link.source_box_id;
+      const linkedType = isSource ? link.target_box_type : link.source_box_type;
+      const icon = linkedType === "vendor_onboarding" ? "\uD83C\uDFE2" : "\uD83D\uDD17";
+      const label = (linkedType || "record").replace(/_/g, " ");
+      return m3`
+          <div class="cl-ts-linked-box" key=${link.id}>
+            <span class="cl-ts-linked-box-icon">${icon}</span>
+            <div class="cl-ts-linked-box-info">
+              <div class="cl-ts-linked-box-title">${label}</div>
+              <div class="cl-ts-linked-box-meta">${linkedId}</div>
+            </div>
+            <span class="cl-ts-linked-box-status ${statusClass(link)}">${link.link_type || "related"}</span>
+          </div>
+        `;
+    })}
+    </div>
+  `;
+  }
+  function ThreadSidebar({ item, auditEvents, onApprove, onSnooze, onQuery, fetchBoxLinks }) {
+    const [boxLinks, setBoxLinks] = d2([]);
+    y2(() => {
+      if (!item?.id || !fetchBoxLinks)
+        return;
+      let cancelled = false;
+      fetchBoxLinks(item.id, "invoice").then((links) => {
+        if (!cancelled)
+          setBoxLinks(links || []);
+      }).catch(() => {
+        if (!cancelled)
+          setBoxLinks([]);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [item?.id, fetchBoxLinks]);
     if (!item)
       return null;
     const state = String(item.state || "").toLowerCase();
@@ -59305,6 +59369,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <${InvoiceSection} item=${item} />
       <${MatchSection} item=${item} />
       <${VendorSection} item=${item} />
+      <${LinkedBoxesSection} links=${boxLinks} />
       <${AgentActionsSection} item=${item} auditEvents=${auditEvents} />
 
       <!-- §6.6: Below the four sections — approve button + snooze + query field -->
@@ -61240,6 +61305,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             ${html2`<${ThreadSidebar}
                 item=${item}
                 auditEvents=${store_default.auditState?.events || []}
+                fetchBoxLinks=${async (boxId, boxType) => {
+      try {
+        const url = queueManager.runtimeConfig?.backendUrl + "/api/box-links?box_id=" + encodeURIComponent(boxId) + "&box_type=" + encodeURIComponent(boxType);
+        const resp = await queueManager.backendFetch(url);
+        const data = resp?.ok !== false ? resp : null;
+        return data?.links || [];
+      } catch {
+        return [];
+      }
+    }}
                 onApprove=${async (approveItem) => {
       try {
         const result = await queueManager.approveAndPost(approveItem, { override: false });
@@ -67251,10 +67326,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     });
     const [approvalRules, setApprovalRules] = d2([]);
     const [billingSummary, setBillingSummary] = d2(null);
+    const [implStatus, setImplStatus] = d2(null);
     y2(() => {
       if (!orgId)
         return;
       api(`/api/workspace/subscription/billing-summary?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).then((data) => setBillingSummary(data)).catch(() => {});
+      api(`/api/workspace/implementation/status?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).then((data) => setImplStatus(data)).catch(() => {});
     }, [orgId]);
     const [showAddRule, setShowAddRule] = d2(false);
     y2(() => {
@@ -67659,6 +67736,43 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         ` : ""}
       </div>
+
+      ${implStatus?.steps ? html11`
+        <div class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3 style="margin-top:0">Implementation checklist</h3>
+              <p class="muted" style="margin:0">${implStatus.completed_count || 0} of ${implStatus.total_count || 0} steps complete</p>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            ${(implStatus.steps || []).map((step) => html11`
+              <div key=${step.key} style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:${step.completed ? "#ECFDF5" : "#FBFCFD"};border:1px solid ${step.completed ? "#BBF7D0" : "#E2E8F0"};border-radius:6px;">
+                <span style="font-size:14px;">${step.completed ? "✅" : "⬜"}</span>
+                <div style="flex:1;">
+                  <div style="font:500 13px/1.3 'DM Sans',sans-serif;color:#0A1628;">${step.label}</div>
+                  ${step.description ? html11`<div style="font:400 11px/1.3 'DM Sans',sans-serif;color:#5C6B7A;">${step.description}</div>` : ""}
+                </div>
+                ${!step.completed && canManageCompany ? html11`
+                  <button class="btn-outline btn-sm" onClick=${() => {
+      api("/api/workspace/implementation/complete-step", {
+        method: "POST",
+        body: JSON.stringify({ step_key: step.key, organization_id: orgId })
+      }).then(() => {
+        setImplStatus((prev) => ({
+          ...prev,
+          completed_count: (prev?.completed_count || 0) + 1,
+          steps: (prev?.steps || []).map((s3) => s3.key === step.key ? { ...s3, completed: true } : s3)
+        }));
+        toast?.("Step completed", "success");
+      }).catch(() => toast?.("Failed to mark step", "error"));
+    }}>Mark done</button>
+                ` : ""}
+              </div>
+            `)}
+          </div>
+        </div>
+      ` : ""}
 
       <div class="panel" ref=${approvalRef}>
         <div class="panel-head compact">
@@ -74528,7 +74642,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const routePreferences = readRoutePreferences(routeOptions);
       const menuRoutes = getMenuNavRoutes(routePreferences, routeOptions);
       const primaryRoutes = menuRoutes.filter((route) => APPMENU_PRIMARY_ROUTE_IDS.has(route.id));
-      const thesisSavedViews = [
+      const thesisSavedViewsFallback = [
         {
           name: "Exceptions",
           description: "Invoices with Match Status = Exception or Failed.",
@@ -74548,11 +74662,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           routeParams: { ref: "thesis:due_this_week" }
         }
       ];
+      let apiSavedViews = [];
+      try {
+        const orgId = queueManager?.runtimeConfig?.organizationId || "default";
+        const backendUrl = queueManager?.runtimeConfig?.backendUrl || "";
+        if (backendUrl && queueManager?.backendFetch) {
+          const resp = await queueManager.backendFetch(`${backendUrl}/api/saved-views?organization_id=${encodeURIComponent(orgId)}&pipeline=ap-invoices`);
+          const views = resp?.saved_views || [];
+          apiSavedViews = views.map((v3) => ({
+            name: v3.name,
+            description: v3.filter_json ? `Filter: ${JSON.stringify(v3.filter_json)}` : "",
+            id: "clearledgr/invoices-view/:ref",
+            routeParams: { ref: `saved:${v3.id}` }
+          }));
+        }
+      } catch (_2) {}
+      const thesisSavedViews = apiSavedViews.length > 0 ? apiSavedViews : thesisSavedViewsFallback;
       const pipelineScope = {
         orgId: queueManager?.runtimeConfig?.organizationId || "default",
         userEmail: sdk?.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || ""
       };
-      const userPinnedViews = getPinnedPipelineViews(readPipelinePreferences(pipelineScope)).slice(0, 3).map((view) => ({
+      const userPinnedViews = getPinnedPipelineViews(readPipelinePreferences(pipelineScope)).slice(0, 3).filter((view) => !thesisSavedViews.some((sv) => sv.name === view.name)).map((view) => ({
         name: view.name,
         description: view.description || "Pinned AP queue view.",
         id: "clearledgr/invoices-view/:ref",

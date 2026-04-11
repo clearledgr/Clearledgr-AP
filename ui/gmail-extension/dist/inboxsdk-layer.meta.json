@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-04-11T16:47:41.469Z",
-  "fingerprint": "b6c4f9b90b8bb5b1155d6ae52df9f047ff3e85f6920b72dd43f6e8eaac8e6646",
+  "generated_at": "2026-04-11T17:45:57.453Z",
+  "fingerprint": "502b33d599ff23b8a3d7ac6e60bb58b24aa3c7a22d258227ca9bd82d66936a8d",
   "inputs": [
     "background.js",
     "manifest.json",
@@ -13,7 +13,6 @@
     "src/inboxsdk-layer.js",
     "src/routes/oauth-bridge.js",
     "src/routes/pages/ActivityPage.js",
-    "src/routes/pages/CompanyPage.js",
     "src/routes/pages/ConnectionsPage.js",
     "src/routes/pages/HealthPage.js",
     "src/routes/pages/HomePage.js",
@@ -25,7 +24,6 @@
     "src/routes/pages/ReviewPage.js",
     "src/routes/pages/RulesPage.js",
     "src/routes/pages/SettingsPage.js",
-    "src/routes/pages/TeamPage.js",
     "src/routes/pages/TemplatesPage.js",
     "src/routes/pages/UpcomingPage.js",
     "src/routes/pages/VendorDetailPage.js",
