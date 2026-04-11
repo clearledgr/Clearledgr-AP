@@ -689,17 +689,60 @@ export default function HomePage({
       </div>
     </div>
 
-    ${!allReady
-      ? html`<${SetupNotice}
-          adminAccess=${adminAccess}
-          missingSetup=${missingSetup}
-          navigate=${navigate}
-          connectGmail=${connectGmail}
-          gmailPending=${gmailPending}
-          showGmailAction=${!gmailOk}
-          showRulesAction=${!policyOk}
-        />`
-      : null}
+    ${!allReady && bootstrap?.onboarding && !bootstrap.onboarding.completed
+      ? html`
+        <!-- §15: Guided onboarding wizard — 4 thesis steps -->
+        <div style="background:#0A1628;color:#fff;border-radius:10px;padding:20px 24px;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+            <strong style="font-size:16px;color:#00D67E;">Get started with Clearledgr</strong>
+            <span style="font-size:11px;opacity:0.6;">Under 30 minutes</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+            ${(bootstrap.onboarding.steps || []).map((step, idx) => {
+              const done = (bootstrap.onboarding.step || 0) > idx;
+              const current = (bootstrap.onboarding.step || 0) === idx;
+              const stepActions = {
+                0: null,
+                1: () => connectGmail(),
+                2: () => navigate('clearledgr/settings'),
+                3: () => navigate('clearledgr/settings'),
+              };
+              return html`
+                <div key=${step.id} style="
+                  background:${done ? 'rgba(0,214,126,0.15)' : current ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)'};
+                  border-radius:8px;padding:12px;
+                  border:1px solid ${done ? '#00D67E40' : current ? '#ffffff30' : 'transparent'};
+                ">
+                  <div style="font-size:11px;opacity:0.5;margin-bottom:4px;">Step ${step.id}</div>
+                  <strong style="font-size:13px;display:block;margin-bottom:4px;color:${done ? '#00D67E' : '#fff'};">
+                    ${done ? '✓ ' : ''}${step.name}
+                  </strong>
+                  <div style="font-size:11px;opacity:0.6;margin-bottom:8px;">${step.description || ''}</div>
+                  ${step.time_estimate ? html`<div style="font-size:10px;opacity:0.4;">${step.time_estimate}</div>` : ''}
+                  ${current && stepActions[idx] ? html`
+                    <button
+                      style="margin-top:8px;padding:6px 14px;border:none;border-radius:6px;background:#00D67E;color:#0A1628;font:600 12px/1 'DM Sans',sans-serif;cursor:pointer;"
+                      onClick=${stepActions[idx]}
+                      disabled=${gmailPending}
+                    >${gmailPending ? 'Working…' : 'Start'}</button>
+                  ` : ''}
+                </div>
+              `;
+            })}
+          </div>
+        </div>
+      `
+      : !allReady
+        ? html`<${SetupNotice}
+            adminAccess=${adminAccess}
+            missingSetup=${missingSetup}
+            navigate=${navigate}
+            connectGmail=${connectGmail}
+            gmailPending=${gmailPending}
+            showGmailAction=${!gmailOk}
+            showRulesAction=${!policyOk}
+          />`
+        : null}
 
     <!-- §7.5 Trust Arc: Week 1 persistent banner -->
     ${bootstrap?.trust_arc?.phase === 'week1_observation' ? html`
