@@ -178,10 +178,29 @@ function InvoiceSection({ item }) {
         <span class="cl-ts-label">Due date</span>
         <span class="cl-ts-value">${formatDate(item.due_date || item.payment_due_date)}</span>
       </div>
+      ${(item.due_date || item.payment_due_date) ? html`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">Days to due</span>
+          <span class="cl-ts-value mono">${(() => {
+            try {
+              const due = new Date(item.due_date || item.payment_due_date);
+              const now = new Date();
+              const days = Math.ceil((due - now) / 86400000);
+              return days > 0 ? days + 'd' : days === 0 ? 'Today' : Math.abs(days) + 'd overdue';
+            } catch { return '—'; }
+          })()}</span>
+        </div>
+      ` : ''}
       ${item.payment_terms ? html`
         <div class="cl-ts-row">
           <span class="cl-ts-label">Terms</span>
           <span class="cl-ts-value">${item.payment_terms}</span>
+        </div>
+      ` : ''}
+      ${item.erp_posted_at ? html`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">ERP posted</span>
+          <span class="cl-ts-value">${formatDate(item.erp_posted_at)}</span>
         </div>
       ` : ''}
     </div>

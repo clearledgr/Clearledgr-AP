@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:dd77c45ec3576b6c791f5999b9803780a1de80ddd8f84401e0cea8dc521bd443 */
+/* clearledgr-source-fingerprint:1b191e369a5d4339f6544b2351e8be153eb66231a7a2bd60ddb8415a18824e1f */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59722,10 +59722,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <span class="cl-ts-label">Due date</span>
         <span class="cl-ts-value">${formatDate(item.due_date || item.payment_due_date)}</span>
       </div>
+      ${item.due_date || item.payment_due_date ? m3`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">Days to due</span>
+          <span class="cl-ts-value mono">${(() => {
+      try {
+        const due = new Date(item.due_date || item.payment_due_date);
+        const now = new Date;
+        const days = Math.ceil((due - now) / 86400000);
+        return days > 0 ? days + "d" : days === 0 ? "Today" : Math.abs(days) + "d overdue";
+      } catch {
+        return "—";
+      }
+    })()}</span>
+        </div>
+      ` : ""}
       ${item.payment_terms ? m3`
         <div class="cl-ts-row">
           <span class="cl-ts-label">Terms</span>
           <span class="cl-ts-value">${item.payment_terms}</span>
+        </div>
+      ` : ""}
+      ${item.erp_posted_at ? m3`
+        <div class="cl-ts-row">
+          <span class="cl-ts-label">ERP posted</span>
+          <span class="cl-ts-value">${formatDate(item.erp_posted_at)}</span>
         </div>
       ` : ""}
     </div>

@@ -982,6 +982,24 @@ def _v25_object_model(cur, db):
         )
 
 
+@migration(26, "Agent Columns as first-class fields (DESIGN_THESIS.md §5.5)")
+def _v26_agent_columns(cur, db):
+    """§5.5: GRN Reference, Match Status, Exception Reason as stored columns."""
+    for col, col_type in [
+        ("grn_reference", "TEXT"),
+        ("match_status", "TEXT"),       # 'passed' | 'exception' | 'failed'
+        ("exception_reason", "TEXT"),   # plain-language reason
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE ap_items ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_match_status ON ap_items(organization_id, match_status)")
+    except Exception:
+        pass
+
+
 @migration(24, "Migration from Existing Tools (DESIGN_THESIS.md §3)")
 def _v24_migration_state(cur, db):
     """§3 Migration: parallel running mode + cutover decision tracking."""

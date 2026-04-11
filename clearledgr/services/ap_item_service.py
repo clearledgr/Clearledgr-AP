@@ -1956,6 +1956,20 @@ def build_worklist_item(
     payload["agent_summary"] = agent_memory.get("summary") if isinstance(agent_memory.get("summary"), dict) else {}
     payload["agent_episode"] = agent_memory.get("episode") if isinstance(agent_memory.get("episode"), dict) else {}
 
+    # §5.5 Agent Columns: enrich with IBAN Verified from vendor profile
+    try:
+        _vendor_name = payload.get("vendor_name") or payload.get("vendor")
+        _org_id = payload.get("organization_id") or "default"
+        if _vendor_name and hasattr(db, "get_vendor_profile"):
+            _vp = db.get_vendor_profile(_vendor_name, _org_id)
+            if _vp:
+                _has_bank = bool(_vp.get("bank_details_encrypted"))
+                _iban_pending = bool(_vp.get("iban_change_pending"))
+                payload["iban_verified"] = _has_bank and not _iban_pending
+                payload["iban_change_pending"] = _iban_pending
+    except Exception:
+        pass
+
     payload["next_action"] = _derive_next_action(payload)
     payload["pipeline_blockers"] = _build_pipeline_blockers(payload, budget_summary)
     return payload

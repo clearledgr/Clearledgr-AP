@@ -672,6 +672,34 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             },
         )
 
+        # §5.5 Agent Columns: persist GRN Reference, Match Status, Exception
+        # Reason as first-class columns on the AP item (not just metadata).
+        gate = validation_gate if isinstance(validation_gate, dict) else {}
+        agent_column_updates = {}
+        # Match Status: derived from gate passed/failed + reason codes
+        reason_codes = gate.get("reason_codes") or []
+        if gate.get("passed"):
+            agent_column_updates["match_status"] = "passed"
+        elif any(c in reason_codes for c in ["no_po_match", "grn_mismatch", "amount_mismatch"]):
+            agent_column_updates["match_status"] = "exception"
+        elif reason_codes:
+            agent_column_updates["match_status"] = "failed"
+        # Exception Reason: first reason in plain language
+        reasons_list = gate.get("reasons") or []
+        if reasons_list and isinstance(reasons_list[0], dict):
+            agent_column_updates["exception_reason"] = reasons_list[0].get("message", "")
+        elif reasons_list and isinstance(reasons_list[0], str):
+            agent_column_updates["exception_reason"] = reasons_list[0]
+        # GRN Reference: from PO match result
+        po_match = invoice.po_match_result or {}
+        if isinstance(po_match, dict) and po_match.get("grn_number"):
+            agent_column_updates["grn_reference"] = po_match["grn_number"]
+        if agent_column_updates and invoice_id:
+            try:
+                self.db.update_ap_item(invoice_id, **agent_column_updates)
+            except Exception:
+                pass
+
         # Validation/extraction completed: advance AP item to canonical `validated`
         # before routing to human approval or auto-posting.
         self._transition_invoice_state(

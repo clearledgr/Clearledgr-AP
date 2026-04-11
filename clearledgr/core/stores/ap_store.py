@@ -68,6 +68,10 @@ class APStore:
         # the column itself is whitelisted here for direct update_ap_item
         # callers, but they must pass the already-encrypted ciphertext.
         "bank_details_encrypted",
+        # §5.5 Agent Columns: first-class fields populated by the agent
+        "grn_reference",
+        "match_status",
+        "exception_reason",
     })
 
     # ------------------------------------------------------------------
