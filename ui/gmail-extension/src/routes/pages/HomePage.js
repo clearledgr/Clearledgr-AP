@@ -701,6 +701,14 @@ export default function HomePage({
         />`
       : null}
 
+    <!-- §7.5 Trust Arc: Week 1 persistent banner -->
+    ${bootstrap?.trust_arc?.phase === 'week1_observation' ? html`
+      <div style="padding:12px 16px;background:#0A1628;color:#fff;border-radius:8px;margin-bottom:16px;font:500 13px/1.4 'DM Sans',sans-serif;">
+        <strong style="color:#00D67E">Agent in observation mode</strong>
+        <span style="opacity:0.8"> — Week 1. Every action is logged with full reasoning. Override window extended to 30 minutes. Watch, correct if needed.</span>
+      </div>
+    ` : ''}
+
     <!-- §6.1 Section 1: Exception Queue -->
     <${SectionPanel}
       title="Exception queue"

@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:233239ffd4e89e235d6e03b2623a1bc67f5af0294de3cbd95be36122db83a6ff */
+/* clearledgr-source-fingerprint:57f11fad151860028908079945261898a5cdafc8bad1f3a875a8714996ffef22 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -66204,6 +66204,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           showGmailAction=${!gmailOk}
           showRulesAction=${!policyOk}
         />` : null}
+
+    <!-- §7.5 Trust Arc: Week 1 persistent banner -->
+    ${bootstrap?.trust_arc?.phase === "week1_observation" ? html4`
+      <div style="padding:12px 16px;background:#0A1628;color:#fff;border-radius:8px;margin-bottom:16px;font:500 13px/1.4 'DM Sans',sans-serif;">
+        <strong style="color:#00D67E">Agent in observation mode</strong>
+        <span style="opacity:0.8"> — Week 1. Every action is logged with full reasoning. Override window extended to 30 minutes. Watch, correct if needed.</span>
+      </div>
+    ` : ""}
 
     <!-- §6.1 Section 1: Exception Queue -->
     <${SectionPanel}

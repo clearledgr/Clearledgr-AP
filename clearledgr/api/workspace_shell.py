@@ -873,7 +873,18 @@ async def get_admin_bootstrap(
         "health": health,
         "required_actions": health.get("required_actions", []),
         "dashboard": _safe_dashboard_stats(org_id),
+        "trust_arc": _safe_trust_arc_state(org_id),
     }
+
+
+def _safe_trust_arc_state(org_id: str) -> Dict[str, Any]:
+    """§7.5: Load trust arc state for the Home page banner."""
+    try:
+        db = get_db()
+        from clearledgr.services.trust_arc import get_trust_arc_status
+        return get_trust_arc_status(db, org_id)
+    except Exception:
+        return {"phase": "not_started"}
 
 
 def _safe_dashboard_stats(org_id: str) -> Dict[str, Any]:
