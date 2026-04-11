@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:8ae3277c8f3c5dfb900b63d4280290440b15a52d6efbebddd600df19a3a16a3b */
+/* clearledgr-source-fingerprint:496386a9961e7199d6bdf704c0e50ffa46379948a6866a87f641ce810f46ea5e */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -76153,6 +76153,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         if (!hadResolvedRouteAccess || appMenuNavItemViews.length === 0 || JSON.stringify(nextRouteAccess.capabilities) !== JSON.stringify(currentRouteAccess.capabilities)) {
           currentRouteAccess = nextRouteAccess;
           rebuildMenuNavigation2();
+        }
+        if (data?.onboarding && !data.onboarding.completed) {
+          const currentHash = (window.location.hash || "").toLowerCase();
+          if (!currentHash.includes("clearledgr/")) {
+            try {
+              sdk.Router.goto("clearledgr/home");
+            } catch (_2) {}
+          }
         }
         bootstrapPromise = null;
         return data;

@@ -2255,6 +2255,17 @@ function registerAppMenuAndRoutes() {
         currentRouteAccess = nextRouteAccess;
         rebuildMenuNavigation();
       }
+      // §15: First install — auto-navigate to Home if onboarding not complete
+      if (data?.onboarding && !data.onboarding.completed) {
+        const currentHash = (window.location.hash || '').toLowerCase();
+        if (!currentHash.includes('clearledgr/')) {
+          // User hasn't navigated to any Clearledgr page yet — take them to Home
+          try {
+            sdk.Router.goto('clearledgr/home');
+          } catch (_) { /* best effort */ }
+        }
+      }
+
       bootstrapPromise = null;
       return data;
     }).catch(() => {
