@@ -544,6 +544,22 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         Returns:
             Dict with status, invoice_id, and action taken
         """
+        # §7.8 Circuit breaker: if the override rate is elevated, hold processing
+        try:
+            from clearledgr.services.circuit_breaker import is_circuit_breaker_tripped
+            if is_circuit_breaker_tripped(self.organization_id, db=self.db):
+                logger.warning(
+                    "[InvoiceWorkflow] Circuit breaker tripped for org=%s — holding invoice",
+                    self.organization_id,
+                )
+                return {
+                    "status": "held",
+                    "reason": "circuit_breaker_tripped",
+                    "message": "Invoice processing held due to elevated override rate. Contact engineering.",
+                }
+        except Exception:
+            pass
+
         # --- L7: lightweight input validation at service boundary ---
         if not isinstance(invoice, InvoiceData):
             return {"status": "error", "reason": "invalid_invoice_data"}

@@ -390,6 +390,17 @@ async def _run_loop():
             except Exception as snooze_exc:
                 logger.warning("[background] snooze reaper failed: %s", snooze_exc)
 
+            # Every hour (4 ticks): check circuit breaker (§7.8)
+            if tick % 4 == 0:
+                for org_id in org_ids:
+                    try:
+                        from clearledgr.services.circuit_breaker import check_circuit_breaker
+                        cb_result = await check_circuit_breaker(org_id)
+                        if cb_result.get("tripped"):
+                            logger.warning("[background] circuit breaker tripped for org=%s", org_id)
+                    except Exception as cb_exc:
+                        logger.debug("[background] circuit breaker check failed: %s", cb_exc)
+
             # Every hour (4 ticks): chase stale vendor onboarding sessions
             # Phase 3.1.e — scans all orgs in a single pass, dispatches
             # 24h/48h chase emails, escalates after 72h, abandons after 30d.
