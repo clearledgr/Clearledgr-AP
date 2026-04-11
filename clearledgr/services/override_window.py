@@ -192,6 +192,7 @@ class OverrideWindowService:
         erp_type: Optional[str] = None,
         action_type: str = DEFAULT_ACTION_TYPE,
         posted_at: Optional[datetime] = None,
+        confidence: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Open a new override window for a freshly-posted AP item.
 
@@ -199,12 +200,24 @@ class OverrideWindowService:
         ``posted_to_erp`` state transition. The duration is resolved
         per action type — Phase 1.4 only emits ``erp_post`` but the
         column is open for future tiers (payment_execution, etc.) per
-        DESIGN_THESIS.md §8 "configurable per action type". Returns
-        the newly created window row.
+        DESIGN_THESIS.md §8 "configurable per action type".
+
+        §7.4 Confidence Model: medium confidence shortens the window
+        to 15 minutes so reasoning is surfaced prominently.
+
+        Returns the newly created window row.
         """
         normalized_action = str(action_type or DEFAULT_ACTION_TYPE).strip() or DEFAULT_ACTION_TYPE
         now = posted_at or datetime.now(timezone.utc)
         duration = self.get_window_duration_minutes(normalized_action)
+
+        # §7.4: medium confidence → shorten override window to 15 minutes
+        if confidence is not None and 0.7 <= confidence < 0.95:
+            duration = min(duration, 15)
+            logger.info(
+                "[OverrideWindow] Medium confidence %.2f — window shortened to %d min for %s",
+                confidence, duration, ap_item_id,
+            )
         expires = now + timedelta(minutes=duration)
         window = self.db.create_override_window(
             ap_item_id=ap_item_id,

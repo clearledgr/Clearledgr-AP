@@ -314,11 +314,15 @@ class OverrideWindowObserver(StateObserver):
             service = get_override_window_service(
                 event.organization_id, db=self._db
             )
+            # §7.4: pass confidence so medium-confidence posts get a shorter window
+            item_confidence = float(ap_item.get("confidence") or 0.99)
+
             window = service.open_window(
                 ap_item_id=event.ap_item_id,
                 erp_reference=str(erp_reference),
                 erp_type=erp_type,
                 action_type="erp_post",
+                confidence=item_confidence,
             )
         except Exception as exc:
             logger.warning(
