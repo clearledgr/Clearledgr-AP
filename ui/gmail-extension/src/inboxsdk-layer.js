@@ -1461,8 +1461,87 @@ async function bootstrap() {
   registerSearchSuggestions();
   watchForSettingsPage(queueManager);
 
+  // §6.2 "Show in Inbox" — add saved view sections to the Gmail inbox
+  registerInboxSavedViewSections();
+
   // Register full-page routes inside Gmail (Streak pattern)
   registerAppMenuAndRoutes();
+}
+
+// ==================== §6.2 INBOX SAVED VIEW SECTIONS ====================
+
+function registerInboxSavedViewSections() {
+  // "Saved Views can be set to 'Show in Inbox' — this surfaces the
+  // filtered Box list as a labelled section at the top of the Gmail inbox."
+  if (!sdk?.Router || typeof sdk.Router.handleListRoute !== 'function') return;
+
+  sdk.Router.handleListRoute(sdk.Router.NativeRouteIDs.INBOX, (listRouteView) => {
+    const items = store.queue || [];
+
+    // Exceptions section — Match Status = Exception or Failed
+    const exceptionItems = items.filter((i) => {
+      const state = String(i.state || '').toLowerCase();
+      return ['needs_info', 'failed_post', 'reversed'].includes(state);
+    });
+    if (exceptionItems.length > 0) {
+      listRouteView.addSection({
+        title: `Exceptions (${exceptionItems.length})`,
+        subtitle: 'Invoices requiring human resolution',
+        tableRows: exceptionItems.slice(0, 5).map((item) => ({
+          title: item.vendor_name || item.vendor || 'Unknown',
+          body: `${item.currency || ''} ${Number(item.amount || 0).toLocaleString()} — ${(item.exception_reason || item.exception_code || item.state || '').replace(/_/g, ' ')}`,
+          shortDetailText: item.invoice_number || '',
+          isRead: false,
+          routeID: 'clearledgr/invoices',
+        })),
+      });
+    }
+
+    // Awaiting Approval section
+    const approvalItems = items.filter((i) => {
+      const state = String(i.state || '').toLowerCase();
+      return ['needs_approval', 'pending_approval'].includes(state);
+    });
+    if (approvalItems.length > 0) {
+      listRouteView.addSection({
+        title: `Awaiting Approval (${approvalItems.length})`,
+        subtitle: 'Invoices routed for human approval',
+        tableRows: approvalItems.slice(0, 5).map((item) => ({
+          title: item.vendor_name || item.vendor || 'Unknown',
+          body: `${item.currency || ''} ${Number(item.amount || 0).toLocaleString()}`,
+          shortDetailText: item.invoice_number || '',
+          isRead: false,
+          routeID: 'clearledgr/invoices',
+        })),
+      });
+    }
+
+    // Due This Week section
+    const now = new Date();
+    const fiveDays = new Date(now.getTime() + 5 * 86400000);
+    const dueItems = items.filter((i) => {
+      if (!i.due_date) return false;
+      const state = String(i.state || '').toLowerCase();
+      if (['closed', 'rejected'].includes(state)) return false;
+      try {
+        const due = new Date(i.due_date);
+        return due <= fiveDays;
+      } catch { return false; }
+    });
+    if (dueItems.length > 0) {
+      listRouteView.addSection({
+        title: `Due This Week (${dueItems.length})`,
+        subtitle: 'Invoices due within 5 days',
+        tableRows: dueItems.slice(0, 5).map((item) => ({
+          title: item.vendor_name || item.vendor || 'Unknown',
+          body: `${item.currency || ''} ${Number(item.amount || 0).toLocaleString()} — due ${item.due_date?.slice(0, 10) || ''}`,
+          shortDetailText: item.invoice_number || '',
+          isRead: true,
+          routeID: 'clearledgr/invoices',
+        })),
+      });
+    }
+  });
 }
 
 // ==================== GMAIL-NATIVE ROUTES (Streak pattern) ====================

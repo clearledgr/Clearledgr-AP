@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:1b191e369a5d4339f6544b2351e8be153eb66231a7a2bd60ddb8415a18824e1f */
+/* clearledgr-source-fingerprint:c957c513f6642969d2f14c1fb8406843f40f3e0f81fdd34591b32a44ef060b97 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -75401,7 +75401,77 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     registerKeyboardShortcuts();
     registerSearchSuggestions();
     watchForSettingsPage(queueManager);
+    registerInboxSavedViewSections();
     registerAppMenuAndRoutes();
+  }
+  function registerInboxSavedViewSections() {
+    if (!sdk?.Router || typeof sdk.Router.handleListRoute !== "function")
+      return;
+    sdk.Router.handleListRoute(sdk.Router.NativeRouteIDs.INBOX, (listRouteView) => {
+      const items = store_default.queue || [];
+      const exceptionItems = items.filter((i3) => {
+        const state = String(i3.state || "").toLowerCase();
+        return ["needs_info", "failed_post", "reversed"].includes(state);
+      });
+      if (exceptionItems.length > 0) {
+        listRouteView.addSection({
+          title: `Exceptions (${exceptionItems.length})`,
+          subtitle: "Invoices requiring human resolution",
+          tableRows: exceptionItems.slice(0, 5).map((item) => ({
+            title: item.vendor_name || item.vendor || "Unknown",
+            body: `${item.currency || ""} ${Number(item.amount || 0).toLocaleString()} — ${(item.exception_reason || item.exception_code || item.state || "").replace(/_/g, " ")}`,
+            shortDetailText: item.invoice_number || "",
+            isRead: false,
+            routeID: "clearledgr/invoices"
+          }))
+        });
+      }
+      const approvalItems = items.filter((i3) => {
+        const state = String(i3.state || "").toLowerCase();
+        return ["needs_approval", "pending_approval"].includes(state);
+      });
+      if (approvalItems.length > 0) {
+        listRouteView.addSection({
+          title: `Awaiting Approval (${approvalItems.length})`,
+          subtitle: "Invoices routed for human approval",
+          tableRows: approvalItems.slice(0, 5).map((item) => ({
+            title: item.vendor_name || item.vendor || "Unknown",
+            body: `${item.currency || ""} ${Number(item.amount || 0).toLocaleString()}`,
+            shortDetailText: item.invoice_number || "",
+            isRead: false,
+            routeID: "clearledgr/invoices"
+          }))
+        });
+      }
+      const now = new Date;
+      const fiveDays = new Date(now.getTime() + 5 * 86400000);
+      const dueItems = items.filter((i3) => {
+        if (!i3.due_date)
+          return false;
+        const state = String(i3.state || "").toLowerCase();
+        if (["closed", "rejected"].includes(state))
+          return false;
+        try {
+          const due = new Date(i3.due_date);
+          return due <= fiveDays;
+        } catch {
+          return false;
+        }
+      });
+      if (dueItems.length > 0) {
+        listRouteView.addSection({
+          title: `Due This Week (${dueItems.length})`,
+          subtitle: "Invoices due within 5 days",
+          tableRows: dueItems.slice(0, 5).map((item) => ({
+            title: item.vendor_name || item.vendor || "Unknown",
+            body: `${item.currency || ""} ${Number(item.amount || 0).toLocaleString()} — due ${item.due_date?.slice(0, 10) || ""}`,
+            shortDetailText: item.invoice_number || "",
+            isRead: true,
+            routeID: "clearledgr/invoices"
+          }))
+        });
+      }
+    });
   }
   function registerAppMenuAndRoutes() {
     const PAGE_MAP = {
