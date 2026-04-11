@@ -26,8 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-import httpx
-
+from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
 from clearledgr.core.utils import safe_float_or_none
 
 from clearledgr.core.prompt_guard import (
@@ -39,9 +38,6 @@ from clearledgr.core.prompt_guard import (
 logger = logging.getLogger(__name__)
 
 _MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
-_API_URL = "https://api.anthropic.com/v1/messages"
-_ANTHROPIC_VERSION = "2023-06-01"
-_TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 
 _VALID_RECOMMENDATIONS = {"approve", "needs_info", "escalate", "reject"}
 
@@ -641,11 +637,13 @@ class APDecisionService:
     """LLM-based AP invoice routing using Claude with full vendor context."""
 
     def __init__(self, api_key: Optional[str] = None) -> None:
-        self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        # api_key param kept for backward compatibility but is no longer used;
+        # all API calls go through the LLM Gateway which manages its own key.
+        self._gateway = get_llm_gateway()
 
     @property
     def is_available(self) -> bool:
-        return bool(self._api_key)
+        return bool(self._gateway._api_key)
 
     async def decide(
         self,
@@ -689,7 +687,7 @@ class APDecisionService:
             "vendor_risk_level": (vendor_risk_score or {}).get("level", "unknown"),
         }
 
-        if not self._api_key:
+        if not self.is_available:
             logger.info("[APDecision] No API key — using rule-based fallback")
             decision = self._fallback_decision(
                 invoice,
@@ -771,7 +769,7 @@ class APDecisionService:
     async def _call_claude(
         self, prompt: str, tool_schema: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """POST to the Anthropic messages API, forcing a ``record_ap_decision`` tool call.
+        """Call Claude via the LLM Gateway, forcing a ``record_ap_decision`` tool call.
 
         When ``tool_schema`` is supplied (the production path), Claude is
         given exactly one tool and ``tool_choice`` is set to force that
@@ -779,27 +777,25 @@ class APDecisionService:
         ``recommendation`` enum is the Layer 1 constraint that structurally
         excludes ``approve`` when the deterministic gate has failed.
         """
-        headers = {
-            "x-api-key": self._api_key,
-            "anthropic-version": _ANTHROPIC_VERSION,
-            "content-type": "application/json",
-        }
-        payload: Dict[str, Any] = {
-            "model": _MODEL,
-            "max_tokens": 512,
-            "temperature": 0.1,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        if tool_schema is not None:
-            payload["tools"] = [tool_schema]
-            payload["tool_choice"] = {
+        messages = [{"role": "user", "content": prompt}]
+        tools = [tool_schema] if tool_schema is not None else None
+        tool_choice = (
+            {
                 "type": "tool",
                 "name": tool_schema.get("name", _DECISION_TOOL_NAME),
             }
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(_API_URL, headers=headers, json=payload)
-        resp.raise_for_status()
-        return resp.json()
+            if tool_schema is not None
+            else None
+        )
+        org_id = getattr(self, "organization_id", "default")
+        llm_resp = await self._gateway.call(
+            LLMAction.AP_DECISION,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            organization_id=org_id,
+        )
+        return llm_resp.raw_response
 
     def _parse_response(
         self, data: Dict[str, Any], vendor_context_used: Dict[str, Any]

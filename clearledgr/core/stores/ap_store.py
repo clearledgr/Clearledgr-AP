@@ -72,6 +72,10 @@ class APStore:
         "grn_reference",
         "match_status",
         "exception_reason",
+        # §6 Agent Design Spec: Box state fields for plan persistence and waiting
+        "pending_plan",
+        "waiting_condition",
+        "fraud_flags",
     })
 
     # ------------------------------------------------------------------
@@ -223,14 +227,14 @@ class APStore:
         against the canonical AP state machine (PLAN.md 2.1) and an
         audit event is written atomically within the same transaction.
 
+        §11.2.5 Optimistic locking: pass ``_expected_updated_at`` to enable
+        concurrent-write detection. If the row's ``updated_at`` has changed
+        since the caller last read it, the update returns False (0 rows
+        affected) and the caller must re-read and re-evaluate.
+
         Transaction semantics: the row UPDATE and the audit-event INSERT
         share a single ``conn.commit()`` call, so they are atomic in both
         SQLite and Postgres.  If either statement fails, neither is committed.
-        The ``get_ap_item()`` read for state-machine validation happens
-        *before* the write transaction opens, so it is not held inside the
-        transaction (acceptable because state transitions are idempotent
-        and the write will fail on constraint violation if a concurrent
-        update races).
 
         Callers may pass ``_actor_type`` and ``_actor_id`` as kwargs to
         record who triggered the transition.  These keys are consumed
@@ -248,6 +252,8 @@ class APStore:
         workflow_id = kwargs.pop("_workflow_id", None)
         run_id = kwargs.pop("_run_id", None)
         decision_reason = kwargs.pop("_decision_reason", None)
+        # §11.2.5: Optimistic locking — if provided, WHERE includes updated_at check
+        expected_updated_at = kwargs.pop("_expected_updated_at", None)
 
         # Validate column names against whitelist
         invalid_cols = set(kwargs.keys()) - self._AP_ITEM_ALLOWED_COLUMNS
@@ -256,10 +262,10 @@ class APStore:
 
         now = datetime.now(timezone.utc).isoformat()
         kwargs["updated_at"] = now
-        if "metadata" in kwargs and isinstance(kwargs["metadata"], dict):
-            kwargs["metadata"] = json.dumps(kwargs["metadata"])  # type: ignore
-        if "field_confidences" in kwargs and isinstance(kwargs["field_confidences"], dict):
-            kwargs["field_confidences"] = json.dumps(kwargs["field_confidences"])  # type: ignore
+        # JSON-serialize dict/list values for TEXT columns
+        for json_col in ("metadata", "field_confidences", "pending_plan", "waiting_condition", "fraud_flags"):
+            if json_col in kwargs and isinstance(kwargs[json_col], (dict, list)):
+                kwargs[json_col] = json.dumps(kwargs[json_col])  # type: ignore
 
         # --- State machine enforcement ---
         prev_state: Optional[str] = None
@@ -301,10 +307,16 @@ class APStore:
             kwargs["state"] = normalize_state(new_state)
 
         set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
-        sql = self._prepare_sql(f"UPDATE ap_items SET {set_clause} WHERE id = ?")
+        if expected_updated_at:
+            # §11.2.5: Optimistic locking — only update if updated_at hasn't changed
+            sql = self._prepare_sql(f"UPDATE ap_items SET {set_clause} WHERE id = ? AND updated_at = ?")
+            params = (*kwargs.values(), ap_item_id, expected_updated_at)
+        else:
+            sql = self._prepare_sql(f"UPDATE ap_items SET {set_clause} WHERE id = ?")
+            params = (*kwargs.values(), ap_item_id)
         with self.connect() as conn:
             cur = conn.cursor()
-            cur.execute(sql, (*kwargs.values(), ap_item_id))
+            cur.execute(sql, params)
 
             # --- Atomic audit write on state transitions ---
             if prev_state is not None and new_state is not None:

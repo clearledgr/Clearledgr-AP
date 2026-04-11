@@ -1,0 +1,57 @@
+"""Celery Application — Agent Design Specification §11.2.1.
+
+Celery worker fleet configuration. Workers are stateless Python processes
+that pull events from Redis and process them through the planning engine.
+
+Start a worker:
+    celery -A clearledgr.services.celery_app worker -l info -c 4
+
+Start the scheduler (Celery Beat):
+    celery -A clearledgr.services.celery_app beat -l info
+"""
+from __future__ import annotations
+
+import os
+
+from celery import Celery
+
+# Redis URL from environment (same Redis used for rate limiting and event streams)
+_REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+
+app = Celery("clearledgr")
+
+app.config_from_object(
+    {
+        "broker_url": _REDIS_URL,
+        "result_backend": _REDIS_URL,
+        "task_serializer": "json",
+        "result_serializer": "json",
+        "accept_content": ["json"],
+        # §12: late ack ensures task survives worker crash
+        "task_acks_late": True,
+        # §11.2.1: one event at a time per worker process
+        "worker_prefetch_multiplier": 1,
+        # Don't store results by default (we write to DB directly)
+        "task_ignore_result": True,
+        # Visibility timeout: 5 minutes (reclaim if worker dies)
+        "broker_transport_options": {
+            "visibility_timeout": 300,
+        },
+        # Celery Beat schedule for timer-based events
+        "beat_schedule": {
+            # §4.3: GRN checks, approval timeouts, vendor chases
+            "fire-pending-timers": {
+                "task": "clearledgr.services.celery_tasks.fire_pending_timers",
+                "schedule": 60.0,  # Every 60 seconds (vs old 15-min polling)
+            },
+            # §12.1: Reclaim stale events from dead workers
+            "reclaim-stale-events": {
+                "task": "clearledgr.services.celery_tasks.reclaim_stale_events",
+                "schedule": 30.0,  # Every 30 seconds
+            },
+        },
+    }
+)
+
+# Auto-discover tasks
+app.autodiscover_tasks(["clearledgr.services"])

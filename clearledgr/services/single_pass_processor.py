@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +44,8 @@ async def process_invoice_single_pass(
 
     Returns a comprehensive result dict with classification, extraction,
     GL coding, duplicate analysis, risk assessment, and routing decision.
-    Returns None if the API key is missing or the call fails.
+    Returns None if the call fails.
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        return None
-
     prompt = _build_single_pass_prompt(
         subject=subject,
         sender=sender,
@@ -62,14 +59,12 @@ async def process_invoice_single_pass(
     )
 
     try:
-        import httpx
-
         if has_visual_attachments and visual_attachments:
             result = await _call_claude_vision_single_pass(
-                prompt, api_key, visual_attachments,
+                prompt, visual_attachments,
             )
         else:
-            result = await _call_claude_text_single_pass(prompt, api_key)
+            result = await _call_claude_text_single_pass(prompt)
 
         if not result:
             return None
@@ -185,28 +180,25 @@ If document is subscription/receipt/noise, still fill extraction fields but set 
 Return ONLY valid JSON. No prose, no markdown."""
 
 
-async def _call_claude_text_single_pass(prompt: str, api_key: str) -> Optional[str]:
-    """Call Claude Haiku for text-only single-pass processing."""
-    import httpx
-
+async def _call_claude_text_single_pass(prompt: str) -> Optional[str]:
+    """Call Claude for text-only single-pass processing via LLM Gateway."""
     try:
-        response = await _async_post(
-            api_key=api_key,
-            model="claude-3-5-haiku-20241022",
-            prompt=prompt,
-            max_tokens=1500,
+        gateway = get_llm_gateway()
+        llm_resp = await gateway.call(
+            LLMAction.SINGLE_PASS_EXTRACT,
+            messages=[{"role": "user", "content": prompt}],
         )
-        return response
+        return llm_resp.content
     except Exception as exc:
         logger.warning("[SinglePass] Claude text call failed: %s", exc)
         return None
 
 
 async def _call_claude_vision_single_pass(
-    prompt: str, api_key: str, visual_attachments: List[Dict[str, Any]],
+    prompt: str, visual_attachments: List[Dict[str, Any]],
 ) -> Optional[str]:
-    """Call Claude Sonnet for vision-based single-pass processing."""
-    import httpx, base64
+    """Call Claude for vision-based single-pass processing via LLM Gateway."""
+    import base64
 
     content: List[Dict[str, Any]] = []
     for att in visual_attachments[:3]:  # Max 3 attachments
@@ -222,32 +214,25 @@ async def _call_claude_vision_single_pass(
     content.append({"type": "text", "text": prompt})
 
     try:
-        import httpx as _httpx
-        async with _httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-sonnet-4-20250514",
-                    "max_tokens": 2000,
-                    "messages": [{"role": "user", "content": content}],
-                },
-                timeout=30,
-            )
-        if response.status_code != 200:
-            return None
-        return response.json().get("content", [{}])[0].get("text", "")
+        gateway = get_llm_gateway()
+        llm_resp = await gateway.call(
+            LLMAction.SINGLE_PASS_EXTRACT,
+            messages=[{"role": "user", "content": content}],
+        )
+        return llm_resp.content
     except Exception as exc:
         logger.warning("[SinglePass] Claude vision call failed: %s", exc)
         return None
 
 
 async def _async_post(*, api_key: str, model: str, prompt: str, max_tokens: int) -> Optional[str]:
-    """Make an async Claude API call."""
+    """Make an async Claude API call.
+
+    .. deprecated::
+        No longer called internally. All callers now use the LLM Gateway
+        (``get_llm_gateway().call()``). Retained for backward compatibility
+        but should not be used for new code.
+    """
     import httpx as _httpx
 
     async with _httpx.AsyncClient() as client:

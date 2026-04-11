@@ -49,8 +49,11 @@ python-multipart>=0.0.6
 # Utilities
 # NOTE: python-dateutil, pytz, pyyaml, tenacity removed — not imported anywhere.
 
-# Caching / Rate Limiting
+# Caching / Rate Limiting / Event Queue
 redis>=5.0.0
+
+# Task Queue (Agent Design Specification §11.2)
+celery>=5.4.0
 
 # Monitoring
 # NOTE: prometheus-client removed — not imported anywhere.

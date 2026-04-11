@@ -76,25 +76,13 @@ Return JSON array with one object per match:
 
 Return ONLY valid JSON."""
 
-        response = httpx.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-3-5-haiku-20241022",
-                "max_tokens": 500,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=15,
+        from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
+        gateway = get_llm_gateway()
+        llm_response = gateway.call_sync(
+            LLMAction.DUPLICATE_EVALUATION,
+            messages=[{"role": "user", "content": prompt}],
         )
-
-        if response.status_code != 200:
-            return flagged
-
-        text = response.json().get("content", [{}])[0].get("text", "")
+        text = llm_response.content if isinstance(llm_response.content, str) else ""
         verdicts = json.loads(text)
 
         # Enrich flagged duplicates with AI verdicts

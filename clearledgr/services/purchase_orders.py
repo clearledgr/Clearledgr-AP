@@ -706,24 +706,13 @@ Which PO line (if any) matches this invoice line? Consider that descriptions may
 Return JSON: {{"match_index": <0-based index or null if no match>, "confidence": 0.0-1.0, "reasoning": "one sentence"}}
 Return ONLY valid JSON."""
 
-            response = httpx.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-3-5-haiku-20241022",
-                    "max_tokens": 100,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=10,
+            from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
+            gateway = get_llm_gateway()
+            llm_resp = gateway.call_sync(
+                LLMAction.PO_LINE_MATCH,
+                messages=[{"role": "user", "content": prompt}],
             )
-            if response.status_code != 200:
-                return None
-
-            text = response.json().get("content", [{}])[0].get("text", "")
+            text = str(llm_resp.content) if llm_resp.content else ""
             result = json.loads(text)
             idx = result.get("match_index")
             conf = result.get("confidence", 0)

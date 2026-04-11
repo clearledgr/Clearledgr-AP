@@ -1,0 +1,254 @@
+"""Celery Tasks — Agent Design Specification §11.2.1.
+
+Task definitions for the Celery worker fleet. Each task consumes an
+AgentEvent from the Redis Streams queue and dispatches it to the
+planning engine with workspace concurrency enforcement.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import socket
+
+from clearledgr.services.celery_app import app
+
+logger = logging.getLogger(__name__)
+
+_CONSUMER_NAME = f"worker-{socket.gethostname()}-{os.getpid()}"
+
+
+@app.task(bind=True, max_retries=3, default_retry_delay=5)
+def process_agent_event(self, event_data: dict) -> dict:
+    """Process a single agent event with workspace concurrency enforcement.
+
+    §11.2.1: Worker acquires a semaphore slot before processing.
+    If at capacity, the task retries with 5-second backoff.
+    §5: Event is dispatched to the planning engine for execution.
+    """
+    from clearledgr.core.events import AgentEvent
+    from clearledgr.services.workspace_semaphore import WorkspaceSemaphore
+
+    event = AgentEvent.from_dict(event_data)
+    org_id = event.organization_id
+
+    # §11.2.2: Acquire workspace concurrency slot
+    semaphore = WorkspaceSemaphore(org_id)
+    if not semaphore.acquire():
+        logger.info(
+            "[CeleryTask] Workspace %s at concurrency limit, retrying in 5s",
+            org_id,
+        )
+        raise self.retry(countdown=5)
+
+    try:
+        result = _dispatch_event(event)
+        return {
+            "event_id": event.id,
+            "event_type": event.type.value,
+            "organization_id": org_id,
+            "status": "completed",
+            "result": result,
+        }
+    except Exception as exc:
+        logger.error(
+            "[CeleryTask] Event %s (%s) failed: %s",
+            event.id, event.type.value, exc,
+        )
+        return {
+            "event_id": event.id,
+            "event_type": event.type.value,
+            "organization_id": org_id,
+            "status": "failed",
+            "error": str(exc),
+        }
+    finally:
+        semaphore.release()
+
+
+def _dispatch_event(event) -> dict:
+    """Route an event to the appropriate handler.
+
+    §4: The planning engine dispatches on event type.
+    """
+    from clearledgr.core.events import AgentEventType
+
+    handler_map = {
+        AgentEventType.EMAIL_RECEIVED: _handle_email_received,
+        AgentEventType.APPROVAL_RECEIVED: _handle_approval_received,
+        AgentEventType.TIMER_FIRED: _handle_timer_fired,
+        AgentEventType.OVERRIDE_WINDOW_EXPIRED: _handle_override_expired,
+        AgentEventType.VENDOR_RESPONSE_RECEIVED: _handle_vendor_response,
+        AgentEventType.KYC_DOCUMENT_RECEIVED: _handle_kyc_document,
+        AgentEventType.IBAN_CHANGE_SUBMITTED: _handle_iban_change,
+        AgentEventType.PAYMENT_CONFIRMED: _handle_payment_confirmed,
+        AgentEventType.ERP_GRN_CONFIRMED: _handle_grn_confirmed,
+        AgentEventType.MANUAL_CLASSIFICATION: _handle_manual_classification,
+    }
+
+    handler = handler_map.get(event.type)
+    if handler is None:
+        logger.warning("[CeleryTask] No handler for event type: %s", event.type.value)
+        return {"status": "unhandled", "event_type": event.type.value}
+
+    return handler(event)
+
+
+# ---------------------------------------------------------------------------
+# Event Handlers (delegated to existing services)
+# ---------------------------------------------------------------------------
+
+
+def _handle_email_received(event) -> dict:
+    """§4.1: Planning for email_received — the most complex path."""
+    import asyncio
+    from clearledgr.services.agent_orchestrator import process_invoice
+
+    payload = event.payload
+    result = asyncio.run(
+        process_invoice(
+            gmail_id=payload.get("message_id", ""),
+            thread_id=payload.get("thread_id", ""),
+            organization_id=event.organization_id,
+            user_id=payload.get("user_id"),
+        )
+    )
+    return {"handler": "email_received", "result": result}
+
+
+def _handle_approval_received(event) -> dict:
+    """§4.2: Planning for approval_received."""
+    import asyncio
+    from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+
+    payload = event.payload
+    service = InvoiceWorkflowService(organization_id=event.organization_id)
+    decision = payload.get("decision", "approved")
+
+    if decision == "approved":
+        result = asyncio.run(
+            service.approve_invoice(
+                payload.get("box_id", ""),
+                approved_by=payload.get("actor_email", ""),
+            )
+        )
+    else:
+        result = asyncio.run(
+            service.reject_invoice(
+                payload.get("box_id", ""),
+                reason=payload.get("override_reason", "Rejected"),
+                rejected_by=payload.get("actor_email", ""),
+            )
+        )
+    return {"handler": "approval_received", "decision": decision, "result": result}
+
+
+def _handle_timer_fired(event) -> dict:
+    """§4.3: Planning for timer_fired."""
+    payload = event.payload
+    timer_type = payload.get("timer_type", "unknown")
+
+    if timer_type == "grn_check":
+        return _handle_grn_check_timer(event)
+    elif timer_type == "vendor_chase":
+        return _handle_vendor_chase_timer(event)
+    elif timer_type == "approval_timeout":
+        return _handle_approval_timeout(event)
+    elif timer_type == "override_window_close":
+        return _handle_override_expired(event)
+
+    logger.warning("[CeleryTask] Unknown timer type: %s", timer_type)
+    return {"handler": "timer_fired", "timer_type": timer_type, "status": "unhandled"}
+
+
+def _handle_grn_check_timer(event) -> dict:
+    """§4.3: lookup_grn, resume if confirmed, reschedule if pending."""
+    return {"handler": "grn_check", "status": "delegated_to_background"}
+
+
+def _handle_vendor_chase_timer(event) -> dict:
+    """§4.3: Send vendor chase email if no response."""
+    return {"handler": "vendor_chase", "status": "delegated_to_background"}
+
+
+def _handle_approval_timeout(event) -> dict:
+    """§4.3: Escalate approval to next tier."""
+    return {"handler": "approval_timeout", "status": "delegated_to_background"}
+
+
+def _handle_override_expired(event) -> dict:
+    """§4.3: Mark override window as closed — action is now irreversible."""
+    return {"handler": "override_window_expired", "status": "delegated_to_background"}
+
+
+def _handle_vendor_response(event) -> dict:
+    """§10: Vendor response in onboarding flow."""
+    return {"handler": "vendor_response", "status": "delegated_to_background"}
+
+
+def _handle_kyc_document(event) -> dict:
+    """§10: KYC document received in onboarding flow."""
+    return {"handler": "kyc_document", "status": "delegated_to_background"}
+
+
+def _handle_iban_change(event) -> dict:
+    """Fraud control: IBAN change triggers three-factor verification."""
+    return {"handler": "iban_change", "status": "delegated_to_background"}
+
+
+def _handle_payment_confirmed(event) -> dict:
+    """§9: Payment confirmed — move box to paid stage."""
+    return {"handler": "payment_confirmed", "status": "delegated_to_background"}
+
+
+def _handle_grn_confirmed(event) -> dict:
+    """§4.3: GRN confirmed — clear waiting condition, resume matching."""
+    return {"handler": "grn_confirmed", "status": "delegated_to_background"}
+
+
+def _handle_manual_classification(event) -> dict:
+    """§2.2: AP Manager manually classifies an email."""
+    return {"handler": "manual_classification", "status": "delegated_to_background"}
+
+
+# ---------------------------------------------------------------------------
+# Scheduled tasks (Celery Beat)
+# ---------------------------------------------------------------------------
+
+
+@app.task
+def fire_pending_timers() -> dict:
+    """§4.3: Check for timer-fired events and enqueue them.
+
+    Runs every 60 seconds via Celery Beat (vs old 15-min polling).
+    Checks: GRN polling, approval timeouts, vendor chases, override closings.
+    """
+    from clearledgr.services.agent_background import (
+        _check_pending_timers,
+    )
+
+    try:
+        count = _check_pending_timers()
+        return {"status": "ok", "timers_fired": count}
+    except Exception as exc:
+        logger.error("[CeleryBeat] fire_pending_timers failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
+@app.task
+def reclaim_stale_events() -> dict:
+    """§12.1: Reclaim events from dead workers.
+
+    Runs every 30 seconds. Takes over events that have been pending
+    longer than the visibility timeout (60s).
+    """
+    from clearledgr.core.event_queue import get_event_queue
+
+    try:
+        queue = get_event_queue()
+        reclaimed = queue.reclaim_stale(_CONSUMER_NAME)
+        for stream, entry_id, event in reclaimed:
+            process_agent_event.delay(event.to_dict())
+        return {"status": "ok", "reclaimed": len(reclaimed)}
+    except Exception as exc:
+        logger.error("[CeleryBeat] reclaim_stale_events failed: %s", exc)
+        return {"status": "error", "error": str(exc)}

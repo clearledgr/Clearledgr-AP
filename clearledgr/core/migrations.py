@@ -1013,6 +1013,47 @@ def _v27_seat_type(cur, db):
             pass
 
 
+@migration(28, "LLM Gateway call log (AGENT_DESIGN_SPECIFICATION.md §7)")
+def _v28_llm_call_log(cur, db):
+    """§7: Centralized LLM Gateway tracks every Claude call with cost and latency."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS llm_call_log (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT,
+            action TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            latency_ms INTEGER,
+            cost_estimate_usd REAL,
+            truncated INTEGER DEFAULT 0,
+            error TEXT,
+            created_at TEXT
+        )
+    """)
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_llm_call_log_org_action "
+            "ON llm_call_log(organization_id, action)"
+        )
+    except Exception:
+        pass
+
+
+@migration(29, "Box state fields (AGENT_DESIGN_SPECIFICATION.md §6)")
+def _v29_box_state_fields(cur, db):
+    """§6: pending_plan, waiting_condition, fraud_flags on ap_items for agent state management."""
+    for col, col_type in [
+        ("pending_plan", "TEXT"),        # JSON: remaining plan actions
+        ("waiting_condition", "TEXT"),    # JSON: {type, expected_by, context}
+        ("fraud_flags", "TEXT"),          # JSON: [{flag_type, detected_at, ...}]
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE ap_items ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass
+
+
 @migration(24, "Migration from Existing Tools (DESIGN_THESIS.md §3)")
 def _v24_migration_state(cur, db):
     """§3 Migration: parallel running mode + cutover decision tracking."""

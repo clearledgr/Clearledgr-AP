@@ -135,22 +135,14 @@ What should the AP team do? Consider:
 
 Respond in 2-3 sentences: the likely root cause, what to do, and who should handle it."""
 
-            response = httpx.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-3-5-haiku-20241022",
-                    "max_tokens": 200,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=10,
+            from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
+            gateway = get_llm_gateway()
+            llm_resp = gateway.call_sync(
+                LLMAction.GENERATE_EXCEPTION,
+                messages=[{"role": "user", "content": prompt}],
             )
-            if response.status_code == 200:
-                return response.json().get("content", [{}])[0].get("text", "").strip()
+            if llm_resp.content:
+                return str(llm_resp.content).strip()
         except Exception as exc:
             logger.debug("AI exception reasoning failed: %s", exc)
         return ""
@@ -325,22 +317,14 @@ What is the most likely reason for this variance? Consider:
 
 Respond in ONE sentence with the most likely explanation and whether this needs human review or can be auto-approved."""
 
-            response = httpx.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-3-5-haiku-20241022",
-                    "max_tokens": 150,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=10,
+            from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
+            gateway = get_llm_gateway()
+            llm_resp = gateway.call_sync(
+                LLMAction.GENERATE_EXCEPTION,
+                messages=[{"role": "user", "content": prompt}],
             )
-            if response.status_code == 200:
-                return response.json().get("content", [{}])[0].get("text", "").strip()
+            if llm_resp.content:
+                return str(llm_resp.content).strip()
         except Exception as exc:
             logger.debug("AI amount variance reasoning failed: %s", exc)
         return ""

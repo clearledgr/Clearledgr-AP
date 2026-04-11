@@ -60,7 +60,7 @@ services:
 
   worker:
     build: .
-    command: ["sh", "scripts/start-worker.sh"]
+    command: ["celery", "-A", "clearledgr.services.celery_app", "worker", "-l", "info", "-c", "4"]
     environment:
       - CLEARLEDGR_PROCESS_ROLE=worker
       - DATABASE_URL=postgresql://clearledgr:clearledgr@db:5432/clearledgr
@@ -96,6 +96,19 @@ services:
       - redis
     volumes:
       - ./data:/app/data
+    restart: unless-stopped
+
+  # Celery Beat scheduler (§11.2.1: timer_fired events)
+  beat:
+    build: .
+    command: ["celery", "-A", "clearledgr.services.celery_app", "beat", "-l", "info"]
+    environment:
+      - DATABASE_URL=postgresql://clearledgr:clearledgr@db:5432/clearledgr
+      - REDIS_URL=redis://redis:6379/0
+      - CLEARLEDGR_SECRET_KEY=${CLEARLEDGR_SECRET_KEY:-change-this-in-production}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    depends_on:
+      - redis
     restart: unless-stopped
 
   # PostgreSQL database

@@ -19,8 +19,6 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-import requests
-
 from clearledgr.core.prompt_guard import (
     clip_untrusted,
     MAX_ATTACHMENT_LENGTH,
@@ -364,33 +362,22 @@ Confidence rules:
 Return ONLY valid JSON."""
 
 
-def _call_claude_text(prompt: str, api_key: str) -> Dict[str, Any]:
-    """Call Claude Haiku for text-only extraction."""
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": _ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": _HAIKU_MODEL,
-        "max_tokens": 1024,
-        "temperature": 0.1,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    resp = requests.post(_API_URL, headers=headers, json=payload, timeout=_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+def _call_claude_text(prompt: str) -> str:
+    """Call Claude via LLM Gateway for text-only extraction."""
+    from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
+
+    gateway = get_llm_gateway()
+    messages = [{"role": "user", "content": prompt}]
+    llm_resp = gateway.call_sync(LLMAction.EXTRACT_INVOICE_FIELDS, messages=messages)
+    return llm_resp.content
 
 
 def _call_claude_vision(
-    prompt: str, api_key: str, attachments: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """Call Claude Sonnet with PDF/image attachments."""
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": _ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
+    prompt: str, attachments: List[Dict[str, Any]]
+) -> str:
+    """Call Claude via LLM Gateway with PDF/image attachments."""
+    from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
+
     content_blocks: List[Dict[str, Any]] = []
     for att in attachments:
         b64 = att.get("content_base64")
@@ -409,15 +396,10 @@ def _call_claude_vision(
             })
     content_blocks.append({"type": "text", "text": prompt})
 
-    payload = {
-        "model": _SONNET_MODEL,
-        "max_tokens": 1024,
-        "temperature": 0.1,
-        "messages": [{"role": "user", "content": content_blocks}],
-    }
-    resp = requests.post(_API_URL, headers=headers, json=payload, timeout=_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+    gateway = get_llm_gateway()
+    messages = [{"role": "user", "content": content_blocks}]
+    llm_resp = gateway.call_sync(LLMAction.EXTRACT_INVOICE_FIELDS, messages=messages)
+    return llm_resp.content
 
 
 def _extract_text_from_response(data: Dict[str, Any]) -> str:
@@ -1118,14 +1100,12 @@ class LLMEmailParser:
 
         if visual_atts:
             logger.info("[LLMEmailParser] Calling Claude Sonnet (vision) for %d attachment(s)", len(visual_atts))
-            raw = _call_claude_vision(prompt, self._api_key, visual_atts)
+            text = _call_claude_vision(prompt, visual_atts)
             model = _SONNET_MODEL
         else:
             logger.info("[LLMEmailParser] Calling Claude Haiku (text) for subject=%r", subject[:60])
-            raw = _call_claude_text(prompt, self._api_key)
+            text = _call_claude_text(prompt)
             model = _HAIKU_MODEL
-
-        text = _extract_text_from_response(raw)
         llm_json = _parse_json_response(text)
 
         result = _llm_result_to_parse_email_dict(

@@ -2298,6 +2298,13 @@ class InvoiceValidationMixin:
                             ],
                         },
                     )
+                    # §6: Record fraud flag on the Box
+                    try:
+                        _ap_id = getattr(self, "_current_ap_item_id", None) or (invoice.gmail_id if hasattr(invoice, "gmail_id") else None)
+                        if _ap_id and hasattr(self, "add_fraud_flag"):
+                            self.add_fraud_flag(_ap_id, f"vendor_high_risk:{risk_result.score}")
+                    except Exception:
+                        pass
             except Exception as risk_exc:
                 logger.warning(
                     "[Gate] Vendor risk evaluation raised: %s", risk_exc

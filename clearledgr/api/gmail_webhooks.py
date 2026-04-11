@@ -854,19 +854,62 @@ async def process_gmail_notification(email_address: str, history_id: str):
             return
         
         logger.info(f"Processing {len(message_ids)} new messages for {email_address}")
-        
-        # Process each message
+
+        # §2: Enqueue events to durable queue instead of inline processing
+        from clearledgr.core.events import AgentEvent, AgentEventType
+        from clearledgr.core.event_queue import get_event_queue
+
+        queue = get_event_queue()
+        enqueued = 0
         for message_id in message_ids:
             try:
-                await process_single_email(
-                    client=client,
-                    message_id=message_id,
-                    user_id=token.user_id,
+                event = AgentEvent(
+                    type=AgentEventType.EMAIL_RECEIVED,
+                    source="gmail_pubsub",
+                    payload={
+                        "message_id": message_id,
+                        "thread_id": "",  # Resolved by worker
+                        "mailbox": email_address,
+                        "user_id": token.user_id,
+                    },
                     organization_id=organization_id,
+                    idempotency_key=message_id,
                 )
+                result = queue.enqueue(event)
+                if result != "duplicate":
+                    enqueued += 1
             except Exception as e:
-                logger.error(f"Error processing message {message_id}: {e}")
-                continue
+                # Fallback: process inline if queue unavailable
+                logger.warning("Event queue unavailable, processing inline: %s", e)
+                try:
+                    await process_single_email(
+                        client=client,
+                        message_id=message_id,
+                        user_id=token.user_id,
+                        organization_id=organization_id,
+                    )
+                except Exception as inner_e:
+                    logger.error(f"Error processing message {message_id}: {inner_e}")
+
+        # Dispatch enqueued events to Celery workers
+        if enqueued > 0:
+            try:
+                from clearledgr.services.celery_tasks import process_agent_event
+                # Re-read events we just enqueued and dispatch to Celery
+                for message_id in message_ids:
+                    event = AgentEvent(
+                        type=AgentEventType.EMAIL_RECEIVED,
+                        source="gmail_pubsub",
+                        payload={
+                            "message_id": message_id,
+                            "mailbox": email_address,
+                            "user_id": token.user_id,
+                        },
+                        organization_id=organization_id,
+                    )
+                    process_agent_event.delay(event.to_dict())
+            except Exception as celery_exc:
+                logger.warning("Celery dispatch failed, events remain in Redis Stream: %s", celery_exc)
         
         logger.info(f"Finished processing emails for {email_address}")
     

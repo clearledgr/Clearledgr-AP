@@ -310,27 +310,19 @@ Return ONLY valid JSON."""
 
     def _call_anthropic_vision(self, prompt: str, attachments: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Call Claude with vision capability for PDFs and images."""
-        if not self.anthropic_key:
-            raise RuntimeError("Anthropic key not configured")
-
-        url = "https://api.anthropic.com/v1/messages"
-        headers = {
-            "x-api-key": self.anthropic_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
+        from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
 
         # Build content blocks with text prompt first
         content_blocks: List[Dict[str, Any]] = []
-        
+
         # Add visual attachments
         for attachment in attachments:
             base64_content = attachment.get("content_base64")
             if not base64_content:
                 continue
-                
+
             content_type = attachment.get("content_type") or "application/octet-stream"
-            
+
             # Claude supports both images and PDFs directly
             if "pdf" in content_type.lower():
                 content_blocks.append({
@@ -350,23 +342,19 @@ Return ONLY valid JSON."""
                         "data": base64_content,
                     },
                 })
-        
+
         # Add text prompt after images
         content_blocks.append({"type": "text", "text": prompt})
 
-        payload = {
-            "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
-            "max_tokens": 2000,  # More tokens for detailed extraction
-            "temperature": 0.1,  # Lower temp for accuracy
-            "messages": [{"role": "user", "content": content_blocks}],
-        }
+        messages = [{"role": "user", "content": content_blocks}]
 
         logger.info(f"Calling Claude Vision with {len(attachments)} attachments")
-        response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
-        response.raise_for_status()
-        data = response.json()
-        text = _extract_message_text(data)
-        result = _parse_llm_json(text)
+        gateway = get_llm_gateway()
+        llm_resp = gateway.call_sync(
+            LLMAction.EXTRACT_INVOICE_FIELDS,
+            messages=messages,
+        )
+        result = _parse_llm_json(llm_resp.content)
         result["provider"] = "anthropic"
         result["method"] = "vision"
         logger.info(f"Claude Vision extraction complete: vendor={result.get('vendor')}, amount={result.get('total_amount')}")
@@ -374,28 +362,16 @@ Return ONLY valid JSON."""
     
     def _call_anthropic_text(self, prompt: str) -> Dict[str, Any]:
         """Call Claude for text-only prompts."""
-        if not self.anthropic_key:
-            raise RuntimeError("Anthropic key not configured")
+        from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
 
-        url = "https://api.anthropic.com/v1/messages"
-        headers = {
-            "x-api-key": self.anthropic_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
+        messages = [{"role": "user", "content": prompt}]
 
-        payload = {
-            "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
-            "max_tokens": 1500,
-            "temperature": 0.2,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-
-        response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
-        response.raise_for_status()
-        data = response.json()
-        text = _extract_message_text(data)
-        result = _parse_llm_json(text)
+        gateway = get_llm_gateway()
+        llm_resp = gateway.call_sync(
+            LLMAction.EXTRACT_INVOICE_FIELDS,
+            messages=messages,
+        )
+        result = _parse_llm_json(llm_resp.content)
         result["provider"] = "anthropic"
         result["method"] = "text"
         return result

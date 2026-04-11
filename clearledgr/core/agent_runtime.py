@@ -342,6 +342,32 @@ class AgentPlanningEngine:
                 logger.warning("[AgentRuntime] Tool %s returned non-dict input: %s", tool_name, type(input_args).__name__)
                 input_args = {}
 
+            # §5.1 Rule 1: Pre-execution timeline write — record the action
+            # BEFORE it executes. If we crash between here and execution,
+            # the timeline shows "executing" which is enough to reconstruct.
+            _pre_exec_timeline_id = None
+            try:
+                _ap_item_id = (
+                    input_args.get("ap_item_id")
+                    or input_args.get("box_id")
+                    or task.metadata.get("ap_item_id")
+                    if hasattr(task, "metadata") and isinstance(task.metadata, dict)
+                    else None
+                )
+                if _ap_item_id and hasattr(db, "append_ap_item_timeline_entry"):
+                    import uuid as _uuid
+                    _pre_exec_timeline_id = f"TL-{_uuid.uuid4().hex[:12]}"
+                    db.append_ap_item_timeline_entry(_ap_item_id, {
+                        "id": _pre_exec_timeline_id,
+                        "type": "agent_action",
+                        "action": tool_name,
+                        "parameters": {k: str(v)[:100] for k, v in (input_args or {}).items()},
+                        "status": "executing",
+                        "step": step,
+                    })
+            except Exception:
+                pass  # Non-fatal — don't block execution on timeline failure
+
             # Checkpoint BEFORE executing — if we crash here, we retry this step on resume
             try:
                 db.update_task_run_step(
@@ -374,6 +400,22 @@ class AgentPlanningEngine:
 
             is_hitl = bool(output.get("is_awaiting_human"))
             next_status = "awaiting_human" if is_hitl else "running"
+
+            # §5.1 Rule 1: Update pre-execution timeline entry with result
+            try:
+                if _pre_exec_timeline_id and _ap_item_id and hasattr(db, "append_ap_item_timeline_entry"):
+                    _result_status = "completed" if output.get("ok", True) else "failed"
+                    _result_summary = str(output.get("error", ""))[:200] if not output.get("ok", True) else "ok"
+                    db.append_ap_item_timeline_entry(_ap_item_id, {
+                        "id": f"{_pre_exec_timeline_id}-result",
+                        "type": "agent_action",
+                        "action": tool_name,
+                        "status": _result_status,
+                        "result_summary": _result_summary,
+                        "step": step,
+                    })
+            except Exception:
+                pass  # Non-fatal
 
             # Checkpoint result
             try:
@@ -439,12 +481,8 @@ class AgentPlanningEngine:
         )
 
     # ------------------------------------------------------------------
-    # Claude API (raw httpx — consistent with ap_decision.py)
+    # Claude API (via LLM Gateway)
     # ------------------------------------------------------------------
-
-    _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503})
-    _MAX_RETRIES = 3
-    _BASE_DELAY = 1.0  # seconds
 
     async def _call_claude_with_tools(
         self,
@@ -452,63 +490,22 @@ class AgentPlanningEngine:
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """POST to Anthropic messages API with tool_use enabled.
+        """Call Claude via the LLM Gateway with tool_use enabled.
 
-        Retries up to ``_MAX_RETRIES`` times with exponential backoff for
-        transient failures (429, 500, 502, 503).  Returns the raw response
-        dict.  Raises RuntimeError when the API key is missing.
+        The gateway handles retries, cost tracking, and logging.
+        Returns the raw response dict (same shape as the Anthropic API).
         """
-        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError("anthropic_api_key_missing")
+        from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
 
-        import httpx
-        payload = {
-            "model": CLAUDE_MODEL,
-            "max_tokens": 4096,
-            "system": system,
-            "tools": tools,
-            "messages": messages,
-        }
-        headers = {
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
-
-        last_exc: Optional[Exception] = None
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            for attempt in range(self._MAX_RETRIES + 1):
-                try:
-                    resp = await client.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers=headers,
-                        json=payload,
-                    )
-                    if resp.status_code in self._RETRYABLE_STATUS_CODES and attempt < self._MAX_RETRIES:
-                        delay = self._BASE_DELAY * (2 ** attempt)
-                        logger.warning(
-                            "[AgentRuntime] Claude API returned %s, retrying in %.1fs (attempt %d/%d)",
-                            resp.status_code, delay, attempt + 1, self._MAX_RETRIES,
-                        )
-                        await asyncio.sleep(delay)
-                        continue
-                    resp.raise_for_status()
-                    return resp.json()
-                except httpx.HTTPStatusError:
-                    raise  # non-retryable status or exhausted retries
-                except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
-                    last_exc = exc
-                    if attempt < self._MAX_RETRIES:
-                        delay = self._BASE_DELAY * (2 ** attempt)
-                        logger.warning(
-                            "[AgentRuntime] Claude API network error (%s), retrying in %.1fs (attempt %d/%d)",
-                            type(exc).__name__, delay, attempt + 1, self._MAX_RETRIES,
-                        )
-                        await asyncio.sleep(delay)
-                        continue
-                    raise RuntimeError(f"Claude API failed after {self._MAX_RETRIES} retries: {last_exc}") from last_exc
-        raise RuntimeError(f"Claude API failed after {self._MAX_RETRIES} retries: {last_exc}")
+        gateway = get_llm_gateway()
+        llm_resp = await gateway.call(
+            LLMAction.AGENT_PLANNING,
+            messages=messages,
+            system_prompt=system,
+            tools=tools,
+            model_override=CLAUDE_MODEL,
+        )
+        return llm_resp.raw_response
 
     # ------------------------------------------------------------------
     # Checkpoint resume

@@ -477,21 +477,49 @@ def test_max_steps_exceeded(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 8: planner requires Anthropic API key (no fake completion fallback)
+# Test 8: _call_claude_with_tools delegates to LLM Gateway
 # ---------------------------------------------------------------------------
 
-def test_call_claude_requires_api_key(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+def test_call_claude_delegates_to_gateway(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "test.db"))
+    db_module._DB_INSTANCE = None
+
+    from clearledgr.core.llm_gateway import LLMResponse, LLMAction
+
+    fake_raw = {
+        "content": [{"type": "text", "text": "hello"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+    }
+    fake_resp = LLMResponse(
+        content="hello",
+        raw_response=fake_raw,
+        stop_reason="end_turn",
+        input_tokens=10,
+        output_tokens=5,
+    )
+
+    mock_gateway = AsyncMock()
+    mock_gateway.call.return_value = fake_resp
+
     runtime = AgentPlanningEngine()
 
-    with pytest.raises(RuntimeError, match="anthropic_api_key_missing"):
-        asyncio.run(
+    with patch("clearledgr.core.llm_gateway.get_llm_gateway", return_value=mock_gateway):
+        result = asyncio.run(
             runtime._call_claude_with_tools(
-                system="test",
-                messages=[],
-                tools=[],
+                system="test system",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[{"name": "t", "description": "d", "input_schema": {}}],
             )
         )
+
+    assert result == fake_raw
+    mock_gateway.call.assert_called_once()
+    call_kwargs = mock_gateway.call.call_args
+    assert call_kwargs[0][0] == LLMAction.AGENT_PLANNING
+    assert call_kwargs[1]["system_prompt"] == "test system"
+    assert call_kwargs[1]["messages"] == [{"role": "user", "content": "hi"}]
+    assert call_kwargs[1]["tools"] == [{"name": "t", "description": "d", "input_schema": {}}]
 
 
 # ---------------------------------------------------------------------------

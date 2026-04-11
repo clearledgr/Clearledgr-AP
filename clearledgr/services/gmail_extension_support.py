@@ -334,7 +334,6 @@ def render_ap_item_explanation(
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if api_key:
         return _explain_with_claude(
-            api_key=api_key,
             vendor=vendor,
             amount=amount,
             state=state,
@@ -361,7 +360,6 @@ def render_ap_item_explanation(
 
 def _explain_with_claude(
     *,
-    api_key: str,
     vendor: str,
     amount: Any,
     state: str,
@@ -378,7 +376,7 @@ def _explain_with_claude(
     import json as _json
     import re as _re
 
-    import requests as _requests
+    from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
 
     vendor_lines = [f"Vendor: {vendor}"]
     vendor_context = {"vendor": vendor}
@@ -456,25 +454,12 @@ Return ONLY valid JSON:
 {{"text": "...", "suggested_action": "..or null if no action needed"}}"""
 
     try:
-        response = _requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
-                "max_tokens": 512,
-                "temperature": 0.2,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=30,
+        gateway = get_llm_gateway()
+        llm_resp = gateway.call_sync(
+            LLMAction.EXPLAIN_STATE,
+            messages=[{"role": "user", "content": prompt}],
         )
-        response.raise_for_status()
-        raw = response.json()
-        content = raw.get("content", [])
-        text = "\n".join(chunk.get("text", "") for chunk in content if isinstance(chunk, dict)).strip()
+        text = str(llm_resp.content) if llm_resp.content else ""
         fenced = _re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
         if fenced:
             text = fenced.group(1)

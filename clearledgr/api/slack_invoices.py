@@ -792,6 +792,28 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
         correlation_id=normalized.correlation_id,
     )
 
+    # §2: Enqueue approval event to durable queue
+    try:
+        from clearledgr.core.events import AgentEvent, AgentEventType
+        from clearledgr.core.event_queue import get_event_queue
+        approval_event = AgentEvent(
+            type=AgentEventType.APPROVAL_RECEIVED,
+            source="slack_callback",
+            payload={
+                "box_id": normalized.ap_item_id or "",
+                "decision": normalized.action_type or "approved",
+                "actor_email": normalized.actor_email or "",
+                "actor_id": normalized.actor_id or "",
+                "override_reason": normalized.override_reason if hasattr(normalized, "override_reason") else "",
+                "gmail_id": normalized.gmail_id or "",
+            },
+            organization_id=normalized.organization_id or "default",
+            idempotency_key=normalized.idempotency_key,
+        )
+        get_event_queue().enqueue(approval_event)
+    except Exception as eq_exc:
+        logger.debug("[Slack] Event queue enqueue failed (non-fatal): %s", eq_exc)
+
     response_url = str(payload.get("response_url") or "").strip()
     if response_url:
         background_tasks.add_task(
@@ -1141,42 +1163,42 @@ async def _answer_query_with_context(
     full_context = context + onboarding_context + audit_context
 
     try:
-        import anthropic
+        from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
 
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model=os.environ.get("AGENT_RUNTIME_MODEL", "claude-sonnet-4-6"),
-            max_tokens=600,
-            system=(
-                "You are Clearledgr's AP agent answering finance questions from the AP team in Slack.\n\n"
-                "DATA FORMAT:\n"
-                "AP ITEMS: vendor | invoice_ref | state | currency amount | due:date | match:status | exception:reason | erp:ref\n"
-                "ONBOARDING: vendor | state | invited:date | chases:count\n"
-                "AGENT ACTIONS: timestamp | event_type | actor | vendor | summary\n\n"
-                "STATES: received, validated, needs_approval, approved, ready_to_post, posted_to_erp, "
-                "closed, needs_info, failed_post, rejected, snoozed, reversed\n\n"
-                "RESPONSE FORMAT — match these exact examples:\n"
-                "- Outstanding query: 'AWS EMEA has 2 open invoices this month: INV-2840 (£8,922 — exception, awaiting your review) "
-                "and INV-2843 (£4,200 — matched, due 18 April). Total outstanding: £13,122.'\n"
-                "- Due query: '3 invoices due Friday 11 April: Deel HR BV £31,200 (approved, SEPA scheduled), "
-                "Notion Labs £1,450 (pending your approval), Linear App £890 (matched, ready to approve).'\n"
-                "- Onboarding query: 'Brex Inc. is at KYC stage — their certificate of incorporation has not been received. "
-                "The agent chased them yesterday at 09:12. No response yet. Want me to escalate to their finance director?'\n"
-                "- Timeline query: 'A condensed timeline of all autonomous actions in that window. "
-                "Each line: timestamp, action, invoice or vendor, outcome.'\n\n"
-                "RULES:\n"
-                "- List EACH invoice individually with ref, amount, state description, and due date\n"
-                "- Include currency symbols (£, $, €) from the data\n"
-                "- Sum totals for outstanding/open queries\n"
-                "- For onboarding: include stage, what's missing, last agent action, and offer to help\n"
-                "- For timeline: list each action on its own line with timestamp\n"
-                "- Be specific. Never say 'some invoices' — name them"
-            ),
-            messages=[
-                {"role": "user", "content": f"AP data ({len(summary_lines)} items):\n{full_context}\n\nQuestion: {query}"},
-            ],
+        system_prompt = (
+            "You are Clearledgr's AP agent answering finance questions from the AP team in Slack.\n\n"
+            "DATA FORMAT:\n"
+            "AP ITEMS: vendor | invoice_ref | state | currency amount | due:date | match:status | exception:reason | erp:ref\n"
+            "ONBOARDING: vendor | state | invited:date | chases:count\n"
+            "AGENT ACTIONS: timestamp | event_type | actor | vendor | summary\n\n"
+            "STATES: received, validated, needs_approval, approved, ready_to_post, posted_to_erp, "
+            "closed, needs_info, failed_post, rejected, snoozed, reversed\n\n"
+            "RESPONSE FORMAT — match these exact examples:\n"
+            "- Outstanding query: 'AWS EMEA has 2 open invoices this month: INV-2840 (£8,922 — exception, awaiting your review) "
+            "and INV-2843 (£4,200 — matched, due 18 April). Total outstanding: £13,122.'\n"
+            "- Due query: '3 invoices due Friday 11 April: Deel HR BV £31,200 (approved, SEPA scheduled), "
+            "Notion Labs £1,450 (pending your approval), Linear App £890 (matched, ready to approve).'\n"
+            "- Onboarding query: 'Brex Inc. is at KYC stage — their certificate of incorporation has not been received. "
+            "The agent chased them yesterday at 09:12. No response yet. Want me to escalate to their finance director?'\n"
+            "- Timeline query: 'A condensed timeline of all autonomous actions in that window. "
+            "Each line: timestamp, action, invoice or vendor, outcome.'\n\n"
+            "RULES:\n"
+            "- List EACH invoice individually with ref, amount, state description, and due date\n"
+            "- Include currency symbols (£, $, €) from the data\n"
+            "- Sum totals for outstanding/open queries\n"
+            "- For onboarding: include stage, what's missing, last agent action, and offer to help\n"
+            "- For timeline: list each action on its own line with timestamp\n"
+            "- Be specific. Never say 'some invoices' — name them"
         )
-        return response.content[0].text
+        user_message = f"AP data ({len(summary_lines)} items):\n{full_context}\n\nQuestion: {query}"
+
+        gateway = get_llm_gateway()
+        llm_resp = await gateway.call(
+            LLMAction.SLACK_QUERY,
+            messages=[{"role": "user", "content": user_message}],
+            system_prompt=system_prompt,
+        )
+        return str(llm_resp.content) if llm_resp.content else ""
     except Exception as exc:
         logger.warning("[conversational] Claude call failed: %s", exc)
         return _answer_query_rule_based(query, items)

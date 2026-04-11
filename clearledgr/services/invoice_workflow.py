@@ -127,7 +127,61 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             self._settings = {}
         
         self._settings_loaded = True
-    
+
+    # ------------------------------------------------------------------
+    # §6 Box State Management (Agent Design Specification)
+    # ------------------------------------------------------------------
+
+    def set_waiting_condition(
+        self, ap_item_id: str, condition_type: str,
+        expected_by: Optional[str] = None, context: Optional[Dict] = None,
+    ) -> None:
+        """Record that the agent is waiting for a condition before proceeding."""
+        condition = {
+            "type": condition_type,
+            "expected_by": expected_by,
+            "context": context or {},
+            "set_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.db.update_ap_item(ap_item_id, waiting_condition=condition)
+
+    def clear_waiting_condition(self, ap_item_id: str) -> None:
+        """Clear the waiting condition when the condition is met."""
+        self.db.update_ap_item(ap_item_id, waiting_condition=None)
+
+    def set_pending_plan(self, ap_item_id: str, plan: List[Dict]) -> None:
+        """Persist the current plan for resumption after interruption."""
+        self.db.update_ap_item(ap_item_id, pending_plan=plan)
+
+    def clear_pending_plan(self, ap_item_id: str) -> None:
+        """Clear the pending plan when execution completes."""
+        self.db.update_ap_item(ap_item_id, pending_plan=None)
+
+    def add_fraud_flag(self, ap_item_id: str, flag_type: str) -> None:
+        """Add a fraud flag to the Box."""
+        item = self.db.get_ap_item(ap_item_id)
+        flags = (item or {}).get("fraud_flags") or []
+        if isinstance(flags, str):
+            flags = json.loads(flags) if flags else []
+        flags.append({
+            "flag_type": flag_type,
+            "detected_at": datetime.now(timezone.utc).isoformat(),
+        })
+        self.db.update_ap_item(ap_item_id, fraud_flags=flags)
+
+    def resolve_fraud_flag(self, ap_item_id: str, flag_type: str, resolved_by: str) -> None:
+        """Mark a fraud flag as resolved."""
+        item = self.db.get_ap_item(ap_item_id)
+        flags = (item or {}).get("fraud_flags") or []
+        if isinstance(flags, str):
+            flags = json.loads(flags) if flags else []
+        for flag in flags:
+            if flag.get("flag_type") == flag_type and not flag.get("resolved_at"):
+                flag["resolved_at"] = datetime.now(timezone.utc).isoformat()
+                flag["resolved_by"] = resolved_by
+                break
+        self.db.update_ap_item(ap_item_id, fraud_flags=flags)
+
     @property
     def slack_channel(self) -> str:
         """Get Slack channel, using settings if available."""
@@ -1528,6 +1582,14 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     "approval_next_action": "wait_for_approval",
                 },
             )
+            # §6: Set waiting condition — agent is paused until approval_received
+            if ap_item_id:
+                self.set_waiting_condition(
+                    ap_item_id, "approval_response",
+                    expected_by=(datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+                    context={"channel": existing_thread.get("channel_id"), "approvers": approval_labels},
+                )
+
             return {
                 "status": "pending_approval",
                 "invoice_id": invoice.gmail_id,
@@ -1733,6 +1795,14 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     )
                 except Exception:
                     pass  # Non-fatal
+
+            # §6: Set waiting condition — agent is paused until approval_received
+            if ap_item_id:
+                self.set_waiting_condition(
+                    ap_item_id, "approval_response",
+                    expected_by=(datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+                    context={"channel": message.channel, "message_ts": message.ts, "approvers": approval_labels},
+                )
 
             return {
                 "status": "pending_approval",
