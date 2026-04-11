@@ -556,6 +556,106 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         if not str(invoice.sender or "").strip():
             return {"status": "error", "reason": "missing_sender"}
 
+        # §6.4 Classification #2: Unknown vendor gate.
+        # "Sender not in vendor master. No Box created until vendor activated."
+        # Gate only runs when vendor_master_gate is enabled in org settings.
+        vendor_profile = None
+        _vendor_gate_enabled = False
+        try:
+            org = self.db.get_organization(self.organization_id)
+            org_settings = org.get("settings_json") if org else None
+            if isinstance(org_settings, str):
+                import json as _json
+                org_settings = _json.loads(org_settings)
+            _vendor_gate_enabled = bool((org_settings or {}).get("vendor_master_gate", False))
+        except Exception:
+            pass
+
+        if _vendor_gate_enabled and hasattr(self.db, "get_vendor_profile"):
+            vendor_profile = self.db.get_vendor_profile(
+                invoice.vendor_name, self.organization_id
+            )
+        else:
+            vendor_profile = True  # Skip gate when not enabled
+        # Vendor is "known" if they have a profile at all (even with zero invoices).
+        vendor_is_active = bool(vendor_profile)
+        # Also check if vendor has an active onboarding session
+        vendor_onboarding_active = False
+        if not vendor_is_active and hasattr(self.db, "get_active_onboarding_session"):
+            try:
+                session = self.db.get_active_onboarding_session(
+                    self.organization_id, invoice.vendor_name
+                )
+                if session and session.get("state") in ("active", "bank_verified", "ready_for_erp"):
+                    vendor_is_active = True
+                elif session:
+                    vendor_onboarding_active = True
+            except Exception:
+                pass
+
+        if not vendor_is_active and vendor_onboarding_active:
+            # Vendor is in onboarding — create the Box but note it
+            logger.info(
+                "[InvoiceWorkflow] Vendor '%s' is in active onboarding — "
+                "Box created but flagged for onboarding context.",
+                invoice.vendor_name,
+            )
+            # Apply onboarding label
+            try:
+                from clearledgr.services.gmail_labels import apply_label
+                from clearledgr.services.gmail_api import GmailAPIClient
+                client = GmailAPIClient(organization_id=self.organization_id)
+                await apply_label(client, invoice.gmail_id, "vendor_onboarding")
+            except Exception:
+                pass
+
+        if not vendor_is_active and not vendor_onboarding_active:
+            # Unknown vendor — do NOT create a Box. Apply Review Required
+            # label and notify AP Manager per thesis §6.4.
+            logger.info(
+                "[InvoiceWorkflow] Unknown vendor '%s' — no Box created. "
+                "Applying Review Required label.",
+                invoice.vendor_name,
+            )
+            try:
+                from clearledgr.services.gmail_labels import apply_label
+                from clearledgr.services.gmail_api import GmailAPIClient
+                client = GmailAPIClient(organization_id=self.organization_id)
+                await apply_label(client, invoice.gmail_id, "review_required")
+            except Exception:
+                pass
+
+            # Notify AP Manager via Slack
+            try:
+                from clearledgr.services.slack_notifications import _post_slack_blocks
+                await _post_slack_blocks(
+                    blocks=[{
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": (
+                                f"*Invoice from unknown vendor*\n"
+                                f"Sender: {invoice.sender}\n"
+                                f"Vendor: {invoice.vendor_name} — not in vendor master.\n"
+                                f"Amount: {invoice.currency} {invoice.amount:,.2f}\n"
+                                f"_Initiate onboarding or reject. No Box created until vendor is activated._"
+                            ),
+                        },
+                    }],
+                    text=f"Invoice from unknown vendor: {invoice.vendor_name}",
+                    organization_id=self.organization_id,
+                )
+            except Exception:
+                pass
+
+            return {
+                "status": "unknown_vendor",
+                "reason": "vendor_not_in_master",
+                "vendor_name": invoice.vendor_name,
+                "sender": invoice.sender,
+                "message": "No Box created. Initiate vendor onboarding or reject.",
+            }
+
         existing = self.db.get_invoice_status(invoice.gmail_id)
         if existing:
             if existing.get("status") == "posted":
