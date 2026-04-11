@@ -730,7 +730,7 @@ class TeamsTestRequest(BaseModel):
 
 class OnboardingStepRequest(BaseModel):
     organization_id: Optional[str] = None
-    step: int = Field(..., ge=1, le=5)
+    step: int = Field(..., ge=1, le=4)  # §15: exactly 4 onboarding steps
 
 
 class APPolicyRequest(BaseModel):
@@ -835,15 +835,35 @@ async def get_admin_bootstrap(
         _erp_status_for_org(org_id),
     ]
 
+    # §15: The Four Onboarding Steps — thesis-defined order
     onboarding = {
         "completed": bool(subscription.get("onboarding_completed")),
         "step": int(subscription.get("onboarding_step") or 0),
         "steps": [
-            {"id": 1, "name": "Connect Gmail"},
-            {"id": 2, "name": "Connect Slack and Teams"},
-            {"id": 3, "name": "Connect ERP"},
-            {"id": 4, "name": "Set approval channel"},
-            {"id": 5, "name": "Review AP policy defaults"},
+            {
+                "id": 1,
+                "name": "Install Chrome Extension",
+                "description": "InboxSDK initialises. Clearledgr section appears in Gmail's left nav.",
+                "time_estimate": "2 minutes",
+            },
+            {
+                "id": 2,
+                "name": "Connect ERP",
+                "description": "OAuth connection to NetSuite, SAP, Xero, or QuickBooks. Read access to PO, GRN, and vendor master.",
+                "time_estimate": "5 minutes",
+            },
+            {
+                "id": 3,
+                "name": "Set AP Policy",
+                "description": "Auto-approve threshold, match tolerance, and approval routing — built to your actual finance rules.",
+                "time_estimate": "10 minutes",
+            },
+            {
+                "id": 4,
+                "name": "Connect Slack or Teams",
+                "description": "Choose your approval surface. Agent begins processing immediately after this step.",
+                "time_estimate": "5 minutes",
+            },
         ],
     }
     current_role = current_user.get("role") or user.role
