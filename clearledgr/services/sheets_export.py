@@ -17,6 +17,10 @@ REPORT_TAB_NAMES = {
     "ap_aging": "AP Aging",
     "vendor_spend": "Vendor Spend",
     "posting_status": "Posting Status",
+    "invoice_volume": "Invoice Volume",
+    "agent_action_log": "Agent Action Log",
+    "match_accuracy": "Match Accuracy",
+    "onboarding_duration": "Onboarding Duration",
 }
 
 

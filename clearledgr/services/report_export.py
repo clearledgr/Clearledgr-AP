@@ -45,6 +45,14 @@ def generate_report(
             return _generate_posting_status(
                 organization_id, start_date=start_date, end_date=end_date, vendor=vendor,
             )
+        elif report_type == "invoice_volume":
+            return _generate_invoice_volume(organization_id, period_days)
+        elif report_type == "agent_action_log":
+            return _generate_agent_action_log(organization_id, period_days)
+        elif report_type == "match_accuracy":
+            return _generate_match_accuracy(organization_id, period_days)
+        elif report_type == "onboarding_duration":
+            return _generate_onboarding_duration(organization_id)
         else:
             logger.warning("[ReportExport] Unknown report type: %s", report_type)
             return [], []
@@ -228,3 +236,128 @@ def _generate_posting_status(
         })
 
     return rows, _POSTING_STATUS_COLUMNS
+
+
+# ── §6.8 Google Sheets Export: thesis-required report types ──
+
+_INVOICE_VOLUME_COLUMNS = ["period", "total_invoices", "auto_processed", "manual_reviewed", "exceptions", "touchless_rate_pct"]
+
+def _generate_invoice_volume(organization_id: str, period_days: int = 30) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Invoice volume report — count and breakdown by processing path."""
+    db = get_db()
+    items = db.list_ap_items(organization_id=organization_id, limit=5000)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=period_days)
+
+    recent = [i for i in items if _parse_date(i.get("created_at")) and _parse_date(i.get("created_at")) >= cutoff]
+    auto = [i for i in recent if i.get("state") in ("posted_to_erp", "closed", "approved") and not i.get("approved_by")]
+    manual = [i for i in recent if i.get("approved_by")]
+    exceptions = [i for i in recent if i.get("state") in ("needs_info", "failed_post")]
+    touchless = (len(auto) / len(recent) * 100) if recent else 0
+
+    rows = [{
+        "period": f"Last {period_days} days",
+        "total_invoices": len(recent),
+        "auto_processed": len(auto),
+        "manual_reviewed": len(manual),
+        "exceptions": len(exceptions),
+        "touchless_rate_pct": f"{touchless:.1f}",
+    }]
+    return rows, _INVOICE_VOLUME_COLUMNS
+
+
+_ACTION_LOG_COLUMNS = ["timestamp", "event_type", "actor", "vendor", "invoice", "summary"]
+
+def _generate_agent_action_log(organization_id: str, period_days: int = 30) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Agent action log — every autonomous action with timestamp."""
+    db = get_db()
+    events = []
+    try:
+        if hasattr(db, "list_recent_audit_events"):
+            events = db.list_recent_audit_events(organization_id, limit=500)
+        elif hasattr(db, "list_ap_audit_events"):
+            events = db.list_ap_audit_events(organization_id, limit=500)
+    except Exception:
+        pass
+
+    rows = []
+    for e in events:
+        rows.append({
+            "timestamp": (e.get("ts") or e.get("timestamp") or e.get("created_at") or "")[:19],
+            "event_type": e.get("event_type") or "",
+            "actor": e.get("actor_id") or e.get("actor") or "",
+            "vendor": e.get("vendor_name") or "",
+            "invoice": e.get("ap_item_id") or "",
+            "summary": (e.get("summary") or e.get("reason") or "")[:200],
+        })
+    return rows, _ACTION_LOG_COLUMNS
+
+
+_MATCH_ACCURACY_COLUMNS = ["period", "total_matched", "auto_correct", "overridden", "accuracy_pct", "override_rate_pct"]
+
+def _generate_match_accuracy(organization_id: str, period_days: int = 30) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Match accuracy report — how often the agent's match was correct."""
+    db = get_db()
+    items = db.list_ap_items(organization_id=organization_id, limit=5000)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=period_days)
+
+    recent = [i for i in items if _parse_date(i.get("created_at")) and _parse_date(i.get("created_at")) >= cutoff]
+    matched = [i for i in recent if i.get("match_status")]
+    overridden = [i for i in matched if i.get("approved_by") and i.get("match_status") != "passed"]
+    auto_correct = len(matched) - len(overridden)
+    accuracy = (auto_correct / len(matched) * 100) if matched else 100
+    override_rate = (len(overridden) / len(matched) * 100) if matched else 0
+
+    rows = [{
+        "period": f"Last {period_days} days",
+        "total_matched": len(matched),
+        "auto_correct": auto_correct,
+        "overridden": len(overridden),
+        "accuracy_pct": f"{accuracy:.1f}",
+        "override_rate_pct": f"{override_rate:.1f}",
+    }]
+    return rows, _MATCH_ACCURACY_COLUMNS
+
+
+_ONBOARDING_DURATION_COLUMNS = ["vendor", "state", "invited_at", "days_elapsed", "chase_count", "stage"]
+
+def _generate_onboarding_duration(organization_id: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Vendor onboarding duration — how long each vendor takes to onboard."""
+    db = get_db()
+    sessions = []
+    try:
+        if hasattr(db, "list_pending_onboarding_sessions"):
+            sessions = db.list_pending_onboarding_sessions(organization_id)
+    except Exception:
+        pass
+
+    now = datetime.now(timezone.utc)
+    rows = []
+    for s in sessions:
+        invited = s.get("invited_at") or ""
+        days = 0
+        if invited:
+            try:
+                dt = datetime.fromisoformat(invited.replace("Z", "+00:00"))
+                days = (now - dt).days
+            except (ValueError, TypeError):
+                pass
+        rows.append({
+            "vendor": s.get("vendor_name") or "",
+            "state": s.get("state") or "",
+            "invited_at": invited[:10] if invited else "",
+            "days_elapsed": days,
+            "chase_count": s.get("chase_count") or 0,
+            "stage": s.get("state", "").replace("_", " "),
+        })
+    return rows, _ONBOARDING_DURATION_COLUMNS
+
+
+def _parse_date(value) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
