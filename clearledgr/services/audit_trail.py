@@ -26,6 +26,19 @@ from clearledgr.core.database import get_db
 logger = logging.getLogger(__name__)
 
 
+# §7.3 Tone and Language — shared preamble for all agent prompts.
+# Import and prepend to any Claude system prompt.
+AGENT_TONE_PREAMBLE = (
+    "TONE RULES (DESIGN_THESIS.md §7.3 — enforced, not optional):\n"
+    "- Specific, never vague. 'Invoice €8,922 vs GRN receipt €8,500 — delta €422 exceeds "
+    "2% tolerance' not 'amount mismatch detected.'\n"
+    "- Finance language. '3-way match' not 'document verification'. 'GRN' not 'receipt "
+    "confirmation'. 'Net 30' not 'payment timeline'. 'IBAN' not 'bank account number'.\n"
+    "- Three sentences max. One for the action. One for the reason. One for what is next.\n"
+    "- No filler. Do not say 'Hi there' or 'Great news'. Start with the fact.\n"
+)
+
+
 def format_agent_message(did: str, why: str, next_step: str) -> str:
     """DESIGN_THESIS.md §7.1 — DID-WHY-NEXT three-sentence format.
 
