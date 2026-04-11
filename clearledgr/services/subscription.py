@@ -262,14 +262,24 @@ AI_CREDIT_ADDON_PRICING: Dict[int, int] = {
 # ---------------------------------------------------------------------------
 @dataclass
 class UsageStats:
-    """Current usage statistics for an organization."""
+    """Current usage statistics for an organization.
+
+    §13 Pricing Structure: metered billing with per-seat, volume bands,
+    and pooled agent credits.
+    """
     invoices_this_month: int = 0
     vendors_count: int = 0
     users_count: int = 1
+    read_only_users_count: int = 0  # §13: Read Only seats at reduced rate
     api_calls_today: int = 0
     storage_used_gb: float = 0.0
     ai_credits_this_month: int = 0
+    ai_credits_remaining: int = 0  # §13: pooled credits, purchased in advance
     last_reset: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    # §13 Invoice volume banding
+    invoice_volume_band: str = "included"  # included | band_1 | band_2 | overage
+    invoice_overage_count: int = 0  # invoices above the included band
 
     @classmethod
     def from_dict(cls, payload: Optional[Dict[str, Any]]) -> "UsageStats":
@@ -687,6 +697,132 @@ class SubscriptionService:
 
 
 # Singleton instance
+    # ------------------------------------------------------------------
+    # §13 Metered Billing — thesis pricing structure
+    # ------------------------------------------------------------------
+
+    # Invoice volume bands (thesis: "charged per invoice, in bands")
+    _VOLUME_BANDS = {
+        PlanTier.STARTER: [
+            {"up_to": 500, "per_invoice": 0.0, "label": "included"},     # First 500 included in seat charge
+            {"up_to": 1000, "per_invoice": 0.15, "label": "band_1"},     # 501-1000
+            {"up_to": float("inf"), "per_invoice": 0.25, "label": "overage"},  # 1001+
+        ],
+        PlanTier.PROFESSIONAL: [
+            {"up_to": 2000, "per_invoice": 0.0, "label": "included"},
+            {"up_to": 5000, "per_invoice": 0.10, "label": "band_1"},
+            {"up_to": float("inf"), "per_invoice": 0.20, "label": "overage"},
+        ],
+        PlanTier.ENTERPRISE: [
+            {"up_to": float("inf"), "per_invoice": 0.0, "label": "included"},  # Unlimited
+        ],
+    }
+
+    # Read Only seat pricing (thesis: "reduced rate")
+    _READ_ONLY_SEAT_RATE = 0.5  # 50% of full seat price
+
+    def record_invoice_processed(self, organization_id: str) -> Dict[str, Any]:
+        """§13: Record an invoice processed, update volume band and overage.
+
+        Called after every invoice is processed. Unused volume does not roll over.
+        """
+        sub = self.get_subscription(organization_id)
+        usage = sub.usage or UsageStats()
+        usage.invoices_this_month += 1
+
+        # Determine current band
+        tier = PlanTier(sub.plan) if sub.plan in [t.value for t in PlanTier] else PlanTier.STARTER
+        bands = self._VOLUME_BANDS.get(tier, self._VOLUME_BANDS[PlanTier.STARTER])
+        current_count = usage.invoices_this_month
+        band_label = "included"
+        for band in bands:
+            if current_count <= band["up_to"]:
+                band_label = band["label"]
+                break
+
+        usage.invoice_volume_band = band_label
+        if band_label != "included":
+            # Count invoices above the included band
+            included_limit = bands[0]["up_to"] if bands else 0
+            usage.invoice_overage_count = max(0, current_count - int(included_limit))
+
+        self._persist_usage(organization_id, usage)
+        return {"invoices_this_month": usage.invoices_this_month, "band": band_label, "overage": usage.invoice_overage_count}
+
+    def consume_agent_credit(self, organization_id: str, action_type: str = "extraction", cost: int = 1) -> Dict[str, Any]:
+        """§13: Consume agent action credits from the pooled pool.
+
+        "Credits are pooled across the team, purchased in advance, and
+        consumed per action. Failed actions do not consume credits."
+        """
+        sub = self.get_subscription(organization_id)
+        usage = sub.usage or UsageStats()
+        limits = sub.limits or PlanLimits.for_tier(PlanTier(sub.plan) if sub.plan in [t.value for t in PlanTier] else PlanTier.STARTER)
+
+        if limits.ai_credits_per_month != -1:  # -1 = unlimited
+            remaining = limits.ai_credits_per_month - usage.ai_credits_this_month
+            if remaining < cost:
+                return {"consumed": False, "reason": "credits_exhausted", "remaining": max(0, remaining)}
+
+            # §13: "A confirmation prompt appears before any action that
+            # would consume a significant number of credits."
+            if cost >= 10 and remaining - cost < 20:
+                return {"consumed": False, "reason": "confirmation_required", "remaining": remaining, "cost": cost}
+
+        usage.ai_credits_this_month += cost
+        usage.ai_credits_remaining = max(0, (limits.ai_credits_per_month if limits.ai_credits_per_month != -1 else 999999) - usage.ai_credits_this_month)
+        self._persist_usage(organization_id, usage)
+        return {"consumed": True, "credits_used": cost, "remaining": usage.ai_credits_remaining}
+
+    def get_billing_summary(self, organization_id: str) -> Dict[str, Any]:
+        """§13: Full billing summary for the Settings > Billing section."""
+        sub = self.get_subscription(organization_id)
+        usage = sub.usage or UsageStats()
+        tier = PlanTier(sub.plan) if sub.plan in [t.value for t in PlanTier] else PlanTier.STARTER
+        limits = sub.limits or PlanLimits.for_tier(tier)
+        prices = _PLAN_PRICES.get(tier, _PLAN_PRICES[PlanTier.STARTER])
+
+        seat_price = prices.get(sub.billing_cycle, prices["monthly"])
+        active_seats = usage.users_count
+        read_only_seats = usage.read_only_users_count
+        read_only_cost = seat_price * self._READ_ONLY_SEAT_RATE * read_only_seats
+
+        bands = self._VOLUME_BANDS.get(tier, [])
+        volume_cost = 0.0
+        if usage.invoice_overage_count > 0 and len(bands) > 1:
+            volume_cost = usage.invoice_overage_count * bands[1].get("per_invoice", 0.15)
+
+        return {
+            "plan": sub.plan,
+            "billing_cycle": sub.billing_cycle,
+            "seat_price": seat_price,
+            "active_seats": active_seats,
+            "read_only_seats": read_only_seats,
+            "read_only_cost": round(read_only_cost, 2),
+            "seat_total": round(seat_price * active_seats + read_only_cost, 2),
+            "invoices_this_month": usage.invoices_this_month,
+            "invoice_volume_band": usage.invoice_volume_band,
+            "invoice_overage_count": usage.invoice_overage_count,
+            "volume_cost": round(volume_cost, 2),
+            "ai_credits_used": usage.ai_credits_this_month,
+            "ai_credits_remaining": usage.ai_credits_remaining,
+            "estimated_total": round(seat_price * active_seats + read_only_cost + volume_cost, 2),
+            "annual_savings_pct": 20 if sub.billing_cycle == "yearly" else 0,
+        }
+
+    def _persist_usage(self, organization_id: str, usage: UsageStats) -> None:
+        """Write usage stats back to the subscription record."""
+        try:
+            import json
+            db = self._get_db()
+            sql = db._prepare_sql("UPDATE subscriptions SET usage_json = ? WHERE organization_id = ?")
+            with db.connect() as conn:
+                conn.execute(sql, (json.dumps(usage.to_dict()), organization_id))
+                conn.commit()
+        except Exception as exc:
+            logger.warning("[Subscription] persist usage failed: %s", exc)
+
+
 _subscription_service: Optional[SubscriptionService] = None
 
 

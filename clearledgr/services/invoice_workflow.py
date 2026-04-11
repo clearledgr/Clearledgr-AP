@@ -725,7 +725,14 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             user_id=invoice.user_id,
             bank_details=getattr(invoice, "bank_details", None),
         )
-        
+
+        # §13: Record invoice processed for metered billing (volume bands)
+        try:
+            from clearledgr.services.subscription import get_subscription_service
+            get_subscription_service().record_invoice_processed(self.organization_id)
+        except Exception:
+            pass
+
         logger.info(f"New invoice detected: {invoice.vendor_name} ${invoice.amount} (confidence: {invoice.confidence})")
 
         # §5.1 Box linking: auto-link invoice Box ↔ vendor onboarding Box
