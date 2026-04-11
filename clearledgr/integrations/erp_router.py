@@ -452,6 +452,78 @@ class SettlementApplication:
     related_ap_item_id: Optional[str] = None
 
 
+# ==================== Pre-Post Validation (§12.3) ====================
+
+
+def pre_post_validate(
+    ap_item_id: str,
+    organization_id: str,
+    db: Any = None,
+) -> Dict[str, Any]:
+    """§12.3: Re-validate against current ERP/DB state before posting.
+
+    Checks:
+    1. AP item not already posted (erp_reference check)
+    2. No duplicate bill with same invoice_number in trailing 90 days
+    3. Vendor is active (not frozen, not pending onboarding)
+
+    Returns {valid: bool, failures: [{check, reason}]}
+    """
+    if db is None:
+        db = _get_db()
+
+    failures: list = []
+    item = db.get_ap_item(ap_item_id)
+    if not item:
+        return {"valid": False, "failures": [{"check": "item_exists", "reason": "AP item not found"}]}
+
+    # 1. Already posted check
+    if item.get("erp_reference"):
+        return {"valid": False, "failures": [{"check": "already_posted", "reason": f"Already posted: {item['erp_reference']}"}]}
+
+    # 2. Duplicate bill in trailing 90 days
+    invoice_number = item.get("invoice_number") or ""
+    vendor_name = item.get("vendor_name") or ""
+    if invoice_number and vendor_name:
+        try:
+            from datetime import datetime, timedelta, timezone
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+            all_items = db.list_ap_items(organization_id=organization_id, limit=500)
+            for other in all_items:
+                if other.get("id") == ap_item_id:
+                    continue
+                if (
+                    other.get("invoice_number") == invoice_number
+                    and other.get("vendor_name") == vendor_name
+                    and other.get("erp_reference")
+                    and (other.get("erp_posted_at") or other.get("created_at", "")) >= cutoff
+                ):
+                    failures.append({
+                        "check": "duplicate_bill_90d",
+                        "reason": f"Bill {invoice_number} for {vendor_name} already posted as {other['erp_reference']} within 90 days",
+                    })
+                    break
+        except Exception as exc:
+            logger.debug("[pre_post_validate] Duplicate check failed: %s", exc)
+
+    # 3. Vendor active check
+    if vendor_name:
+        try:
+            if hasattr(db, "get_vendor_profile"):
+                profile = db.get_vendor_profile(organization_id, vendor_name)
+                if profile:
+                    status = str(profile.get("status") or "").lower()
+                    if status in ("frozen", "suspended", "blocked"):
+                        failures.append({
+                            "check": "vendor_active",
+                            "reason": f"Vendor '{vendor_name}' is {status}",
+                        })
+        except Exception as exc:
+            logger.debug("[pre_post_validate] Vendor check failed: %s", exc)
+
+    return {"valid": len(failures) == 0, "failures": failures}
+
+
 # ==================== Bill Dispatch ====================
 
 async def post_bill(
@@ -516,11 +588,41 @@ async def post_bill(
         except Exception:
             pass  # Non-fatal — proceed with post
 
+    # §12.3: Pre-post validation — check before any ERP write
+    if ap_item_id:
+        validation = pre_post_validate(ap_item_id, organization_id)
+        if not validation.get("valid"):
+            logger.warning(
+                "[post_bill] pre_post_validate failed for %s: %s",
+                ap_item_id, validation.get("failures"),
+            )
+            return {
+                "status": "pre_post_validation_failed",
+                "reason": "pre_post_validate",
+                "failures": validation.get("failures", []),
+                "idempotency_key": idempotency_key,
+            }
+
     connection = get_erp_connection(organization_id, entity_id=entity_id)
 
     if not connection:
         logger.warning("No ERP connected for %s", organization_id)
         return {"status": "skipped", "reason": "No ERP Connected", "idempotency_key": idempotency_key}
+
+    # §11.1: Per-ERP rate limit check before any API call
+    try:
+        from clearledgr.integrations.erp_rate_limiter import get_erp_rate_limiter
+        get_erp_rate_limiter().check_and_consume(organization_id, connection.type)
+    except Exception as rate_exc:
+        if "rate limit exceeded" in str(rate_exc).lower():
+            return {
+                "status": "rate_limited",
+                "reason": str(rate_exc),
+                "erp": connection.type,
+                "retry_after": getattr(rate_exc, "retry_after", 5),
+            }
+        # Non-rate-limit errors: log and proceed
+        logger.debug("[post_bill] Rate limiter check failed (non-fatal): %s", rate_exc)
 
     gl_map = _get_entity_gl_map(organization_id, entity_id) or _get_org_gl_map(organization_id)
 

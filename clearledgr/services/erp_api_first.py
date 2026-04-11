@@ -349,6 +349,37 @@ async def post_bill_api_first(
     }
     attempt_key = f"erp_api_attempt:{_stable_hash(attempt_key_seed)}"
 
+    # §12.3: Pre-post validation before any ERP write
+    if resolved_ap_item_id:
+        try:
+            from clearledgr.integrations.erp_router import pre_post_validate
+            ppv = pre_post_validate(resolved_ap_item_id, organization_id, db=resolved_db)
+            if not ppv.get("valid"):
+                return {
+                    "status": "pre_post_validation_failed",
+                    "reason": "pre_post_validate",
+                    "failures": ppv.get("failures", []),
+                    "execution_mode": "api_failed",
+                    "ap_item_id": resolved_ap_item_id,
+                }
+        except Exception as ppv_exc:
+            logger.debug("[erp_api_first] pre_post_validate failed (non-fatal): %s", ppv_exc)
+
+    # §11.1: Per-ERP rate limit check
+    if connection_present:
+        try:
+            from clearledgr.integrations.erp_rate_limiter import get_erp_rate_limiter
+            get_erp_rate_limiter().check_and_consume(organization_id, detected_erp_type)
+        except Exception as rate_exc:
+            if "rate limit exceeded" in str(rate_exc).lower():
+                return {
+                    "status": "rate_limited",
+                    "reason": str(rate_exc),
+                    "erp": detected_erp_type,
+                    "execution_mode": "api_failed",
+                    "retry_after": getattr(rate_exc, "retry_after", 5),
+                }
+
     rollout_block_reason = get_erp_posting_block_reason(
         organization_id,
         erp_type=detected_erp_type,
