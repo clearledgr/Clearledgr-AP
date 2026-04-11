@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:3a141331eff6fb78ac6a14436781e7e37a06950f5d7db3ceee3b33475f10b8ee */
+/* clearledgr-source-fingerprint:8ae3277c8f3c5dfb900b63d4280290440b15a52d6efbebddd600df19a3a16a3b */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -68898,6 +68898,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       onRefresh?.();
     });
     const [approvalRules, setApprovalRules] = d2([]);
+    const [billingSummary, setBillingSummary] = d2(null);
+    y2(() => {
+      if (!orgId)
+        return;
+      api(`/api/workspace/subscription/billing-summary?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).then((data) => setBillingSummary(data)).catch(() => {});
+    }, [orgId]);
     const [showAddRule, setShowAddRule] = d2(false);
     y2(() => {
       if (!orgId)
@@ -69144,17 +69150,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <div>
             <div class="settings-summary-grid">
               <div class="settings-summary-card">
+                <strong>Seats</strong>
+                <span>${billingSummary ? `${billingSummary.active_seats} active + ${billingSummary.read_only_seats} read-only` : `${Number(usage.users_count || 0)} users`}</span>
+              </div>
+              <div class="settings-summary-card">
                 <strong>Invoices</strong>
-                <span>${Number(usage.invoices_this_month || 0).toLocaleString()} this month</span>
+                <span>${billingSummary ? `${billingSummary.invoices_this_month} (${billingSummary.invoice_volume_band})` : `${Number(usage.invoices_this_month || 0).toLocaleString()} this month`}${billingSummary?.invoice_overage_count > 0 ? ` · ${billingSummary.invoice_overage_count} overage` : ""}</span>
               </div>
               <div class="settings-summary-card">
-                <strong>Users</strong>
-                <span>${Number(usage.users_count || 0).toLocaleString()} of ${sub.limits?.users === -1 ? "∞" : sub.limits?.users || "—"}</span>
+                <strong>Agent credits</strong>
+                <span>${billingSummary ? `${billingSummary.ai_credits_used} used · ${billingSummary.ai_credits_remaining} remaining` : `${Number(usage.ai_credits_this_month || 0).toLocaleString()} this month`}</span>
               </div>
-              <div class="settings-summary-card">
-                <strong>AI credits</strong>
-                <span>${Number(usage.ai_credits_this_month || 0).toLocaleString()} this month</span>
-              </div>
+              ${billingSummary ? html10`
+                <div class="settings-summary-card">
+                  <strong>Estimated total</strong>
+                  <span style="font:600 14px/1 'Geist Mono',monospace;">$${billingSummary.estimated_total?.toLocaleString()}/mo</span>
+                </div>
+              ` : ""}
             </div>
           </div>
         </div>

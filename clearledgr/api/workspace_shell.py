@@ -2650,6 +2650,16 @@ def get_admin_subscription(
     return {"organization_id": org_id, "subscription": _get_subscription_service().get_subscription(org_id).to_dict()}
 
 
+@router.get("/subscription/billing-summary")
+def get_billing_summary(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """§13: Metered billing summary — seats, volume bands, credits, estimated total."""
+    org_id = _resolve_org_id(user, organization_id)
+    return _get_subscription_service().get_billing_summary(org_id)
+
+
 @router.patch("/subscription/plan")
 def patch_subscription_plan(
     request: SubscriptionPlanPatchRequest,
@@ -2670,6 +2680,13 @@ def patch_subscription_plan(
     elif plan == PlanTier.PROFESSIONAL.value:
         sub = service.upgrade_plan(org_id, PlanTier.PROFESSIONAL)
     elif plan == PlanTier.ENTERPRISE.value:
+        # §13: Enterprise contracts are annual only
+        current_sub = service.get_subscription(org_id)
+        if current_sub.billing_cycle != "yearly":
+            raise HTTPException(
+                status_code=400,
+                detail="Enterprise plan requires annual billing. Switch to annual billing first.",
+            )
         sub = service.upgrade_plan(org_id, PlanTier.ENTERPRISE)
     else:
         raise HTTPException(status_code=400, detail="invalid_plan")

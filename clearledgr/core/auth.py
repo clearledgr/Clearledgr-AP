@@ -707,6 +707,17 @@ def _row_to_user(row: Dict[str, Any]) -> User:
         if created_raw
         else datetime.now(timezone.utc)
     )
+    # §13: Read Only seats expire after configurable period
+    seat_type = str(row.get("seat_type") or "full").lower()
+    seat_expires = row.get("seat_expires_at")
+    if seat_type == "read_only" and seat_expires:
+        try:
+            expires_dt = datetime.fromisoformat(str(seat_expires).replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) > expires_dt:
+                return None  # Expired Read Only seat — block access
+        except (ValueError, TypeError):
+            pass
+
     return User(
         id=str(row.get("id")),
         email=str(row.get("email")),

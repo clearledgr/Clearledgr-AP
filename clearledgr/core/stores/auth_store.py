@@ -552,6 +552,8 @@ class AuthStore:
         "updated_at", "last_seen_at", "slack_user_id",
         # §5.4 Archived Users
         "archived_at", "archived_by",
+        # §13 Subscription: seat type + expiry for Read Only auditors
+        "seat_type", "seat_expires_at",
     })
 
     def update_user(self, user_id: str, **kwargs) -> bool:
@@ -702,7 +704,11 @@ class AuthStore:
         return result
 
     def _adjust_subscription_seat_count(self, organization_id: str) -> None:
-        """§5.4: Adjust subscription seat count after user archival."""
+        """§5.4 + §13: Adjust subscription seat count after user archival.
+
+        Counts full seats and Read Only seats separately per §13
+        pricing structure (Read Only at reduced rate).
+        """
         try:
             sql = self._prepare_sql(
                 "SELECT COUNT(*) as cnt FROM users WHERE organization_id = ? AND is_active = 1"
@@ -712,6 +718,20 @@ class AuthStore:
                 cur.execute(sql, (organization_id,))
                 row = cur.fetchone()
             active_count = dict(row).get("cnt", 0) if row else 0
+
+            # Count Read Only seats separately
+            ro_sql = self._prepare_sql(
+                "SELECT COUNT(*) as cnt FROM users WHERE organization_id = ? AND is_active = 1 AND seat_type = 'read_only'"
+            )
+            ro_count = 0
+            try:
+                with self.connect() as conn2:
+                    cur2 = conn2.cursor()
+                    cur2.execute(ro_sql, (organization_id,))
+                    ro_row = cur2.fetchone()
+                ro_count = dict(ro_row).get("cnt", 0) if ro_row else 0
+            except Exception:
+                pass  # seat_type column may not exist yet
 
             # Update usage in subscription
             sub_sql = self._prepare_sql(
@@ -725,7 +745,8 @@ class AuthStore:
                 import json
                 sub = dict(sub_row)
                 usage = json.loads(sub.get("usage_json") or "{}")
-                usage["users_count"] = active_count
+                usage["users_count"] = active_count - ro_count  # Full seats only
+                usage["read_only_users_count"] = ro_count
                 update_sql = self._prepare_sql(
                     "UPDATE subscriptions SET usage_json = ? WHERE id = ?"
                 )

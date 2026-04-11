@@ -106,6 +106,15 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
 
   // --- Approval Rules state ---
   const [approvalRules, setApprovalRules] = useState([]);
+  const [billingSummary, setBillingSummary] = useState(null);
+
+  // §13: Fetch metered billing summary
+  useEffect(() => {
+    if (!orgId) return;
+    api(`/api/workspace/subscription/billing-summary?organization_id=${encodeURIComponent(orgId)}`, { silent: true })
+      .then((data) => setBillingSummary(data))
+      .catch(() => {});
+  }, [orgId]);
   const [showAddRule, setShowAddRule] = useState(false);
 
   useEffect(() => {
@@ -359,17 +368,23 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
           <div>
             <div class="settings-summary-grid">
               <div class="settings-summary-card">
+                <strong>Seats</strong>
+                <span>${billingSummary ? `${billingSummary.active_seats} active + ${billingSummary.read_only_seats} read-only` : `${Number(usage.users_count || 0)} users`}</span>
+              </div>
+              <div class="settings-summary-card">
                 <strong>Invoices</strong>
-                <span>${Number(usage.invoices_this_month || 0).toLocaleString()} this month</span>
+                <span>${billingSummary ? `${billingSummary.invoices_this_month} (${billingSummary.invoice_volume_band})` : `${Number(usage.invoices_this_month || 0).toLocaleString()} this month`}${billingSummary?.invoice_overage_count > 0 ? ` · ${billingSummary.invoice_overage_count} overage` : ''}</span>
               </div>
               <div class="settings-summary-card">
-                <strong>Users</strong>
-                <span>${Number(usage.users_count || 0).toLocaleString()} of ${sub.limits?.users === -1 ? '∞' : (sub.limits?.users || '—')}</span>
+                <strong>Agent credits</strong>
+                <span>${billingSummary ? `${billingSummary.ai_credits_used} used · ${billingSummary.ai_credits_remaining} remaining` : `${Number(usage.ai_credits_this_month || 0).toLocaleString()} this month`}</span>
               </div>
-              <div class="settings-summary-card">
-                <strong>AI credits</strong>
-                <span>${Number(usage.ai_credits_this_month || 0).toLocaleString()} this month</span>
-              </div>
+              ${billingSummary ? html`
+                <div class="settings-summary-card">
+                  <strong>Estimated total</strong>
+                  <span style="font:600 14px/1 'Geist Mono',monospace;">$${billingSummary.estimated_total?.toLocaleString()}/mo</span>
+                </div>
+              ` : ''}
             </div>
           </div>
         </div>

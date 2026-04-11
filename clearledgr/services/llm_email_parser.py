@@ -966,6 +966,21 @@ class LLMEmailParser:
                     extraction_method="attachment_authoritative",
                 )
 
+        # §13: Consume agent credit before Claude extraction call
+        try:
+            from clearledgr.services.subscription import get_subscription_service
+            credit_result = get_subscription_service().consume_agent_credit(
+                organization_id, action_type="extraction", cost=1,
+            )
+            if not credit_result.get("consumed") and credit_result.get("reason") == "credits_exhausted":
+                logger.warning("[LLMEmailParser] Agent credits exhausted for org=%s — falling back to regex", organization_id)
+                result = self._regex_fallback(subject, body, sender, attachments, local_result=local_result)
+                result["extraction_degraded"] = True
+                result["extraction_degraded_reason"] = "agent_credits_exhausted"
+                return result
+        except Exception:
+            pass  # Credit tracking failure is non-blocking
+
         if not self._api_key:
             logger.warning("[LLMEmailParser] No ANTHROPIC_API_KEY — extraction will be degraded (regex only)")
             result = self._regex_fallback(subject, body, sender, attachments, local_result=local_result)

@@ -726,6 +726,25 @@ class APDecisionService:
             gate_passed = bool(validation_gate.get("passed", True))
             gate_reason_codes = list(validation_gate.get("reason_codes") or [])
             tool_schema = _build_decision_tool_schema(gate_passed, gate_reason_codes)
+
+            # §13: Consume agent credit for reasoning call
+            try:
+                from clearledgr.services.subscription import get_subscription_service
+                credit = get_subscription_service().consume_agent_credit(
+                    self.organization_id, action_type="reasoning", cost=1,
+                )
+                if not credit.get("consumed") and credit.get("reason") == "credits_exhausted":
+                    logger.warning("[APDecision] credits exhausted — falling back to rule-based")
+                    decision = self._fallback_decision(
+                        invoice=invoice, validation_gate=validation_gate,
+                        vendor_profile=vendor_profile,
+                        cross_invoice_analysis=cross_invoice_analysis,
+                        org_config=org_config,
+                    )
+                    return enforce_gate_constraint(decision, validation_gate)
+            except Exception:
+                pass
+
             raw = await self._call_claude(prompt, tool_schema)
             decision = self._parse_response(raw, vendor_context_used)
             # Layer 2 (primary enforcement point): bind the LLM recommendation

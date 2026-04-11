@@ -1000,6 +1000,19 @@ def _v26_agent_columns(cur, db):
         pass
 
 
+@migration(27, "Read Only seat type + expiry (DESIGN_THESIS.md §13)")
+def _v27_seat_type(cur, db):
+    """§13: Read Only seats at reduced rate, expire after configurable period."""
+    for col, col_type in [
+        ("seat_type", "TEXT DEFAULT 'full'"),       # 'full' | 'read_only'
+        ("seat_expires_at", "TEXT"),                  # ISO timestamp for Read Only expiry
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass
+
+
 @migration(24, "Migration from Existing Tools (DESIGN_THESIS.md §3)")
 def _v24_migration_state(cur, db):
     """§3 Migration: parallel running mode + cutover decision tracking."""
