@@ -1044,6 +1044,136 @@ async def send_task_comment_notification(*args, **kwargs):
     pass
 
 
+async def send_invoice_exception_notification(
+    invoice_id: str,
+    gmail_thread_id: str,
+    vendor: str,
+    amount: float,
+    exception_statement: str,
+    due_date: Optional[str] = None,
+    user_email: Optional[str] = None,
+    organization_id: Optional[str] = None,
+    reasoning: Optional[str] = None,
+    match_detail: Optional[str] = None,
+    currency: Optional[str] = None,
+) -> bool:
+    """§6.8 Exception Messages — Designed for Resolution.
+
+    "Exception notifications are not alerts. They are decision packages."
+    Different from approval messages: specific exception statement,
+    resolution-oriented buttons, context thread, timer.
+    """
+    currency_str = currency or "USD"
+    gmail_link = f"https://mail.google.com/mail/u/0/#inbox/{gmail_thread_id}"
+
+    # TIMER: if due within 48 hours, show countdown
+    timer_text = ""
+    if due_date:
+        try:
+            from datetime import datetime, timezone
+            due = datetime.fromisoformat(str(due_date).replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            hours_remaining = (due - now).total_seconds() / 3600
+            if 0 < hours_remaining <= 48:
+                timer_text = f"\n⏱ Payment due in {int(hours_remaining)} hours. Override required before {due.strftime('%H:%M')} today to avoid late payment."
+        except Exception:
+            pass
+
+    blocks = [
+        # EXCEPTION STATEMENT: specific and immediate
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{exception_statement}*{timer_text}",
+            },
+        },
+        {"type": "divider"},
+        # RESOLUTION OPTIONS: three buttons for the three thesis-defined actions
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Override and approve"},
+                    "style": "primary",
+                    "action_id": f"override_approve_{invoice_id}",
+                    "value": invoice_id,
+                    "confirm": {
+                        "title": {"type": "plain_text", "text": "Override exception"},
+                        "text": {"type": "mrkdwn", "text": "You are overriding a match exception. Please provide a reason."},
+                        "confirm": {"type": "plain_text", "text": "Override"},
+                        "deny": {"type": "plain_text", "text": "Cancel"},
+                    },
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Request credit note"},
+                    "action_id": f"request_credit_{invoice_id}",
+                    "value": invoice_id,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Reject invoice"},
+                    "style": "danger",
+                    "action_id": f"reject_invoice_{invoice_id}",
+                    "value": invoice_id,
+                },
+            ],
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"{vendor} | {currency_str} {amount:,.2f} | <{gmail_link}|Open in Gmail →>"
+                },
+            ],
+        },
+    ]
+
+    # Send main card — use _post_slack_blocks directly to get message_ts for context thread
+    route = _resolve_intelligent_route(
+        message_type="personal_approval" if user_email else "channel",
+        approver_email=user_email,
+        organization_id=organization_id,
+    )
+
+    preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
+    send_result = await _post_slack_blocks(
+        blocks=blocks,
+        text=f"Exception: {exception_statement}",
+        preferred_channel=preferred_channel,
+        organization_id=organization_id,
+    )
+    sent = bool(send_result)
+
+    if sent:
+        # CONTEXT THREAD: full match detail as threaded reply
+        parent_ts = (send_result or {}).get("ts")
+        parent_channel = (send_result or {}).get("channel")
+        context_text = match_detail or reasoning or ""
+        if parent_ts and parent_channel and context_text:
+            try:
+                runtime = resolve_slack_runtime(organization_id or "default")
+                if runtime and runtime.get("token"):
+                    headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        await client.post(
+                            "https://slack.com/api/chat.postMessage",
+                            json={
+                                "channel": parent_channel,
+                                "thread_ts": parent_ts,
+                                "text": f"*Full match detail*\n{context_text}",
+                            },
+                            headers=headers,
+                        )
+            except Exception:
+                pass
+
+    return sent
+
+
 async def send_overdue_summary(
     overdue_items: List[Dict[str, Any]],
     stale_items: List[Dict[str, Any]],

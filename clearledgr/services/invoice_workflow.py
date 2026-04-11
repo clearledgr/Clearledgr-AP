@@ -942,6 +942,38 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 invoice.gmail_id,
                 ", ".join(validation_gate.get("reason_codes") or []),
             )
+            # §6.8 Exception Messages: send thesis-structured exception card
+            # with specific statement, resolution options, context thread, and timer
+            try:
+                from clearledgr.services.slack_notifications import send_invoice_exception_notification
+
+                reasons = validation_gate.get("reasons") or []
+                first_reason = reasons[0] if reasons else {}
+                exception_stmt = (
+                    first_reason.get("message")
+                    if isinstance(first_reason, dict)
+                    else str(first_reason)
+                ) if first_reason else f"Match exception on {invoice.vendor_name} — {invoice.currency} {invoice.amount:,.2f}"
+
+                match_detail = ap_decision.reasoning or ""
+                if validation_gate.get("reason_codes"):
+                    match_detail += f"\nReason codes: {', '.join(validation_gate['reason_codes'])}"
+
+                await send_invoice_exception_notification(
+                    invoice_id=invoice_id or invoice.gmail_id,
+                    gmail_thread_id=invoice.gmail_id,
+                    vendor=invoice.vendor_name,
+                    amount=invoice.amount,
+                    exception_statement=exception_stmt,
+                    due_date=invoice.due_date,
+                    organization_id=self.organization_id,
+                    reasoning=ap_decision.reasoning,
+                    match_detail=match_detail,
+                    currency=invoice.currency,
+                )
+            except Exception as exc:
+                logger.debug("[InvoiceWorkflow] exception notification failed: %s", exc)
+
             result = await self._send_for_approval(
                 invoice,
                 extra_context={
