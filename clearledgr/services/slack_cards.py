@@ -96,25 +96,20 @@ def build_undo_post_card(
         },
         {
             "type": "section",
-            "fields": [
-                {"type": "mrkdwn", "text": f"*Vendor*\n{vendor_name}"},
-                {"type": "mrkdwn", "text": f"*Amount*\n{amount_text}"},
-                {"type": "mrkdwn", "text": f"*Invoice #*\n{invoice_number}"},
-                {"type": "mrkdwn", "text": f"*ERP reference*\n`{erp_reference}`"},
-            ],
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"✓ Posted {invoice_number} to {erp_display}. "
+                    f"Payment of {amount_text} to {vendor_name}"
+                    + (f" scheduled {ap_item.get('due_date', '')[:10]}." if ap_item.get("due_date") else ".")
+                    + f" {expires_text}: *[Undo]*"
+                ),
+            },
         },
         {
             "type": "context",
             "elements": [
-                {"type": "mrkdwn", "text": f":hourglass_flowing_sand: {expires_text}"},
-                {
-                    "type": "mrkdwn",
-                    "text": (
-                        "If this post was a mistake, click *Undo post* below — "
-                        "the bill will be reversed at the ERP level. "
-                        "DESIGN_THESIS.md §8."
-                    ),
-                },
+                {"type": "mrkdwn", "text": f"ERP ref: `{erp_reference}`"},
             ],
         },
         {
