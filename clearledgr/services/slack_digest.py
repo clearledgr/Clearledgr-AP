@@ -114,13 +114,33 @@ async def build_digest(
         and _hours_since(s.get("invited_at")) >= 48
     ]
 
-    # Section 5: Agent confidence (check if accuracy below baseline)
+    # Section 5: Agent confidence (check if accuracy below customer's baseline)
+    # Thesis: "If the agent's match accuracy for the previous week is below
+    # the customer's established baseline, it flags this."
     confidence_note = None
     try:
         kpis = db.get_org_kpis(org_id) if hasattr(db, "get_org_kpis") else {}
         accuracy = kpis.get("match_accuracy_pct") or kpis.get("touchless_rate_pct")
-        if accuracy is not None and float(accuracy) < 95.0:
-            confidence_note = f"Match accuracy {float(accuracy):.1f}% this week vs 97.3% baseline."
+        # Customer baseline from trust arc state or org settings
+        customer_baseline = 97.3  # Default industry baseline
+        try:
+            org_data = db.get_organization(org_id)
+            org_s = (org_data or {}).get("settings_json")
+            if isinstance(org_s, str):
+                import json as _j2
+                org_s = _j2.loads(org_s)
+            trust_arc = (org_s or {}).get("trust_arc") or {}
+            if trust_arc.get("established_baseline"):
+                customer_baseline = float(trust_arc["established_baseline"])
+        except Exception:
+            pass
+        if accuracy is not None and float(accuracy) < customer_baseline:
+            cases_reviewed = kpis.get("overrides_this_week") or kpis.get("corrections_this_week") or 0
+            confidence_note = (
+                f"Match accuracy {float(accuracy):.1f}% this week vs "
+                f"{customer_baseline:.1f}% baseline."
+                + (f" {cases_reviewed} cases reviewed." if cases_reviewed else "")
+            )
     except Exception:
         pass
 
@@ -246,13 +266,22 @@ def _build_digest_blocks(
         {"type": "header", "text": {"type": "plain_text", "text": "Clearledgr Daily Digest"}},
     ]
 
-    # Section 1: What the agent handled
-    if agent_handled_count > 0:
+    # Section 1: What the agent handled — thesis: adapts if zero or exceptions
+    if agent_handled_count > 0 and total_needs_action == 0:
         blocks.append({
             "type": "section",
             "text": {
                 "type": "mrkdwn",
                 "text": f"*What the agent handled*\n{agent_handled_count} invoices processed automatically — {currency} {agent_handled_total:,.0f} total. No exceptions.",
+            },
+        })
+    elif agent_handled_count > 0:
+        # Agent handled some but there were also exceptions
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*What the agent handled*\n{agent_handled_count} invoices processed — {currency} {agent_handled_total:,.0f} total. {total_needs_action} exception(s) need attention below.",
             },
         })
     else:
@@ -271,9 +300,17 @@ def _build_digest_blocks(
             amount = float(item.get("amount") or 0)
             state = (item.get("state") or "").replace("_", " ")
             lines.append(f"• {vendor} — {currency} {amount:,.0f} — {state}")
-        if total_needs_action > 5:
-            lines.append(f"_See all {total_needs_action} →_")
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}})
+        if total_needs_action > 5:
+            blocks.append({
+                "type": "actions",
+                "elements": [{
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": f"See all {total_needs_action}"},
+                    "action_id": "digest_open_exceptions",
+                    "url": "https://mail.google.com/mail/u/0/#clearledgr/invoices",
+                }],
+            })
         blocks.append({"type": "divider"})
 
     # Section 3: Due for payment this week
