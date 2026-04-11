@@ -610,6 +610,29 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         except Exception:
             pass  # Non-fatal — linking is informational
 
+        # §5.2 Shared Inbox: if email arrived in an individual inbox
+        # (not the shared ap@), notify the team that it's been added
+        try:
+            from clearledgr.services.email_sharing import (
+                share_individual_inbox_email,
+                get_shared_inbox_email,
+            )
+            shared_inbox = get_shared_inbox_email(self.organization_id, db=self.db)
+            await share_individual_inbox_email(
+                ap_item_id=invoice_id,
+                gmail_id=invoice.gmail_id,
+                sender=invoice.sender,
+                vendor_name=invoice.vendor_name,
+                amount=invoice.amount,
+                currency=invoice.currency,
+                recipient_email=invoice.user_id or invoice.sender,
+                shared_inbox_email=shared_inbox,
+                organization_id=self.organization_id,
+                db=self.db,
+            )
+        except Exception:
+            pass  # Non-fatal
+
         correlation_id = self._ensure_ap_item_correlation_id(
             ap_item_id=invoice_id,
             gmail_id=invoice.gmail_id,
