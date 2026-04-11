@@ -366,6 +366,36 @@ def _handle_manual_classification(event) -> dict:
 
 
 @app.task
+def drain_event_stream() -> dict:
+    """§2: Consume events from Redis Streams and dispatch to workers.
+
+    Runs every 2 seconds via Celery Beat. Claims up to 10 events per
+    tick and dispatches each to a process_agent_event Celery task.
+    This is the ONLY consumer — Gmail webhooks and Slack callbacks
+    enqueue to the stream, this task drains it.
+    """
+    from clearledgr.core.event_queue import get_event_queue
+
+    try:
+        queue = get_event_queue()
+        dispatched = 0
+        for _ in range(10):  # Max 10 events per tick
+            claimed = queue.claim_next(_CONSUMER_NAME, block_ms=0)
+            if not claimed:
+                break
+            stream, entry_id, event = claimed
+            # Dispatch to Celery worker for processing
+            process_agent_event.delay(event.to_dict())
+            # Ack the stream entry — worker handles retries via Celery
+            queue.ack(stream, entry_id)
+            dispatched += 1
+        return {"status": "ok", "dispatched": dispatched}
+    except Exception as exc:
+        logger.debug("[CeleryBeat] drain_event_stream: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
+@app.task
 def fire_pending_timers() -> dict:
     """§4.3: Check for timer-fired events and enqueue them.
 

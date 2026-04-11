@@ -565,9 +565,35 @@ async def process_email(
     payload = request.model_dump()
     payload["organization_id"] = _resolve_org_id_for_user(user, request.organization_id)
     
+    # §2: Enqueue to durable event queue (canonical path)
+    try:
+        from clearledgr.core.events import AgentEvent, AgentEventType
+        from clearledgr.core.event_queue import get_event_queue
+        queue = get_event_queue()
+        event = AgentEvent(
+            type=AgentEventType.EMAIL_RECEIVED,
+            source="extension_process",
+            payload={
+                "message_id": request.email_id,
+                "user_id": getattr(user, "user_id", ""),
+                **{k: v for k, v in payload.items() if k in ("subject", "sender", "body", "snippet")},
+            },
+            organization_id=payload.get("organization_id", "default"),
+            idempotency_key=request.email_id,
+        )
+        result = queue.enqueue(event)
+        if result != "duplicate":
+            return {
+                "status": "processing",
+                "event_id": event.id,
+                "email_id": request.email_id,
+            }
+        return {"status": "duplicate", "email_id": request.email_id}
+    except Exception as eq_exc:
+        logger.debug("[Extension] Event queue unavailable, falling back to inline: %s", eq_exc)
+
     if _temporal_enabled():
         runtime = _temporal_runtime()
-        # Don't wait - this can take longer
         result = await runtime.start_workflow(
             "EmailProcessingWorkflow",
             payload,
@@ -579,8 +605,8 @@ async def process_email(
             "workflow_id": result.get("workflow_id"),
             "email_id": request.email_id,
         }
-    
-    # Inline execution - simplified
+
+    # Inline fallback
     triage_result = await triage_email(
         EmailTriageRequest(**{k: v for k, v in payload.items() if k in EmailTriageRequest.model_fields}),
         user=user,

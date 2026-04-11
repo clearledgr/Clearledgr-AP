@@ -68,6 +68,7 @@ class ExecutionEngine:
         self.organization_id = organization_id
         self._handlers: Dict[str, Callable] = {}
         self._workflow = None
+        self._ctx: Dict[str, Any] = {}  # Per-instance, NOT class-level
         self._register_handlers()
 
     def _get_workflow(self):
@@ -326,26 +327,43 @@ class ExecutionEngine:
     # Action Handlers — each wraps an actual service method
     # ------------------------------------------------------------------
 
-    # Shared mutable context across steps (accumulated during plan execution)
-    _ctx: Dict[str, Any] = {}
-
     def _ensure_ctx(self, plan: Plan) -> Dict[str, Any]:
-        """Get or initialize the shared execution context for this plan."""
-        if not hasattr(self, "_ctx") or self._ctx is None:
-            self._ctx = {}
+        """Get the per-instance execution context for this plan run."""
         return self._ctx
 
     async def _handle_read_email(self, action: Action, plan: Plan) -> dict:
-        """Fetch full email content from Gmail API."""
+        """§3: Fetch full email content from Gmail API."""
         ctx = self._ensure_ctx(plan)
         message_id = action.params.get("message_id", "")
         user_id = action.params.get("user_id", "")
         if not message_id:
-            return {"ok": True}  # Content may be pre-loaded by caller
-        # Store email metadata in context for downstream actions
+            return {"ok": True}
+
         ctx["message_id"] = message_id
         ctx["user_id"] = user_id
-        return {"ok": True, "message_id": message_id}
+
+        # Fetch actual email content from Gmail
+        try:
+            from clearledgr.services.gmail_autopilot import GmailAPIClient
+            client = GmailAPIClient(user_id)
+            if not await client.ensure_authenticated():
+                return {"_abort": True, "error": f"Gmail auth failed for user {user_id}"}
+
+            message = await client.get_message(message_id)
+            if message:
+                ctx["subject"] = getattr(message, "subject", "") or (message.get("subject", "") if isinstance(message, dict) else "")
+                ctx["sender"] = getattr(message, "sender", "") or (message.get("sender", "") if isinstance(message, dict) else "")
+                ctx["body"] = getattr(message, "body_text", "") or getattr(message, "body", "") or (message.get("body", "") if isinstance(message, dict) else "")
+                ctx["snippet"] = getattr(message, "snippet", "") or (message.get("snippet", "") if isinstance(message, dict) else "")
+                ctx["thread_id"] = getattr(message, "thread_id", "") or (message.get("thread_id", "") if isinstance(message, dict) else "")
+                ctx["attachments"] = getattr(message, "attachments", []) or (message.get("attachments", []) if isinstance(message, dict) else [])
+                logger.info("[ExecutionEngine] read_email: fetched %s (subject=%s)", message_id, ctx["subject"][:50])
+                return {"ok": True, "message_id": message_id, "has_content": True}
+            else:
+                return {"_abort": True, "error": f"Message {message_id} not found in Gmail"}
+        except Exception as exc:
+            logger.error("[ExecutionEngine] read_email failed: %s", exc)
+            return {"_abort": True, "error": f"Gmail fetch failed: {exc}"}
 
     async def _handle_classify_email(self, action: Action, plan: Plan) -> dict:
         """§3: Call Claude to classify the email."""
@@ -884,8 +902,8 @@ class ExecutionEngine:
         try:
             from clearledgr.services.agent_background import reap_expired_override_windows
             await reap_expired_override_windows()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[ExecutionEngine] close_override failed: %s", exc)
         return {"ok": True}
 
     async def _handle_escalate(self, action: Action, plan: Plan) -> dict:
@@ -1142,8 +1160,8 @@ class ExecutionEngine:
         try:
             from clearledgr.services.agent_background import _reap_expired_snoozes
             await _reap_expired_snoozes([self.organization_id])
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[ExecutionEngine] unsnooze failed: %s", exc)
         return {"ok": True}
 
 

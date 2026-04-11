@@ -39,6 +39,11 @@ app.config_from_object(
         },
         # Celery Beat schedule for timer-based events
         "beat_schedule": {
+            # §2: Consume events from Redis Streams
+            "drain-event-stream": {
+                "task": "clearledgr.services.celery_tasks.drain_event_stream",
+                "schedule": 2.0,  # Every 2 seconds — near-real-time consumption
+            },
             # §4.3: GRN checks, approval timeouts, vendor chases
             "fire-pending-timers": {
                 "task": "clearledgr.services.celery_tasks.fire_pending_timers",
