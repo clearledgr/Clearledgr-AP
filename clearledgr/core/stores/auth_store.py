@@ -550,6 +550,8 @@ class AuthStore:
         "name", "email", "password_hash", "role", "is_active",
         "organization_id", "google_id", "preferences_json", "preferences",
         "updated_at", "last_seen_at", "slack_user_id",
+        # §5.4 Archived Users
+        "archived_at", "archived_by",
     })
 
     def update_user(self, user_id: str, **kwargs) -> bool:
@@ -670,8 +672,68 @@ class AuthStore:
             conn.commit()
         return row_id
 
-    def delete_user(self, user_id: str) -> bool:
-        return self.update_user(user_id, is_active=False)
+    def delete_user(self, user_id: str, archived_by: Optional[str] = None) -> bool:
+        """§5.4 Archived Users: soft-delete + record archival metadata.
+
+        The person is gone from the product. Their record remains.
+        All timeline contributions, approvals, overrides, and exception
+        resolutions are permanently preserved in the audit trail.
+        """
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat()
+        result = self.update_user(
+            user_id,
+            is_active=False,
+            archived_at=now,
+            archived_by=archived_by or "system",
+        )
+
+        # Update subscription seat count
+        if result:
+            try:
+                user = self.get_user(user_id)
+                org_id = (user or {}).get("organization_id")
+                if org_id:
+                    self._adjust_subscription_seat_count(org_id)
+            except Exception:
+                pass  # Non-fatal — billing adjustment is best-effort
+
+        return result
+
+    def _adjust_subscription_seat_count(self, organization_id: str) -> None:
+        """§5.4: Adjust subscription seat count after user archival."""
+        try:
+            sql = self._prepare_sql(
+                "SELECT COUNT(*) as cnt FROM users WHERE organization_id = ? AND is_active = 1"
+            )
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id,))
+                row = cur.fetchone()
+            active_count = dict(row).get("cnt", 0) if row else 0
+
+            # Update usage in subscription
+            sub_sql = self._prepare_sql(
+                "SELECT id, usage_json FROM subscriptions WHERE organization_id = ?"
+            )
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sub_sql, (organization_id,))
+                sub_row = cur.fetchone()
+            if sub_row:
+                import json
+                sub = dict(sub_row)
+                usage = json.loads(sub.get("usage_json") or "{}")
+                usage["users_count"] = active_count
+                update_sql = self._prepare_sql(
+                    "UPDATE subscriptions SET usage_json = ? WHERE id = ?"
+                )
+                with self.connect() as conn:
+                    conn.execute(update_sql, (json.dumps(usage), sub["id"]))
+                    conn.commit()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Team invites

@@ -582,10 +582,28 @@ async def delete_user(
     if not user_data or user_data["organization_id"] != requesting_user.organization_id:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Soft delete
-    db.delete_user(user_id)
-    
-    return {"message": "User deleted", "user_id": user_id}
+    # §5.4 Archived Users: soft delete with attribution
+    actor_email = getattr(current_user, "email", None) or current_user.user_id
+    db.delete_user(user_id, archived_by=actor_email)
+
+    # Audit event
+    try:
+        db.append_ap_audit_event({
+            "event_type": "user_archived",
+            "actor_type": "user",
+            "actor_id": actor_email,
+            "organization_id": requesting_user.organization_id,
+            "source": "auth_api",
+            "payload_json": {
+                "archived_user_id": user_id,
+                "archived_user_email": user_data.get("email"),
+                "archived_by": actor_email,
+            },
+        })
+    except Exception:
+        pass
+
+    return {"message": "User archived", "user_id": user_id}
 
 
 @router.post("/users/{user_id}/role", response_model=User)
