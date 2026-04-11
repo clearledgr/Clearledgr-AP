@@ -1310,6 +1310,82 @@ class InvoiceValidationMixin:
                     details={"field": field_name, "value": field_val},
                 )
 
+        # 0b) §7.6 Extraction Guardrail: Amount cross-validation.
+        # "The extracted amount is compared against any amount visible in the
+        # email subject, body, and attachment. If they disagree, the agent
+        # raises a low-confidence flag and does not proceed."
+        if invoice.amount and invoice.subject:
+            import re
+            # Only match amounts that look like currency values:
+            # Must have currency symbol OR decimal with 2 digits OR comma-separated thousands
+            subject_amounts = re.findall(
+                r'[\$\£\€]\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)'  # With currency symbol
+                r'|(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)'              # With comma thousands
+                r'|(\d+\.\d{2})\b',                                # With exactly 2 decimal places
+                invoice.subject,
+            )
+            for match_groups in subject_amounts:
+                sa = next((g for g in match_groups if g), None)
+                if not sa:
+                    continue
+                try:
+                    subject_val = float(sa.replace(",", ""))
+                    if subject_val >= 10 and abs(subject_val - invoice.amount) > 0.01:
+                        # Subject mentions a different amount than extracted (ignore tiny numbers)
+                        delta = abs(invoice.amount - subject_val)
+                        if delta / max(invoice.amount, subject_val) > 0.02:
+                            add_reason(
+                                "amount_cross_validation_conflict",
+                                (
+                                    f"Extracted amount {invoice.currency} {invoice.amount:,.2f} "
+                                    f"differs from amount in subject ({subject_val:,.2f}). "
+                                    f"Delta: {delta:,.2f}. Requires human review."
+                                ),
+                                severity="warning",
+                                details={
+                                    "extracted_amount": invoice.amount,
+                                    "subject_amount": subject_val,
+                                    "delta": delta,
+                                },
+                            )
+                            break
+                except (ValueError, TypeError):
+                    pass
+
+        # 0c) §7.6 Extraction Guardrail: Currency consistency.
+        # "The extracted currency is validated against the vendor's configured
+        # currency in the ERP. A EUR invoice from a GBP vendor is flagged."
+        if invoice.currency and invoice.vendor_name:
+            try:
+                vendor_profile = (
+                    self.db.get_vendor_profile(invoice.vendor_name, self.organization_id)
+                    if hasattr(self.db, "get_vendor_profile") else None
+                )
+                if vendor_profile:
+                    vendor_currency = (
+                        vendor_profile.get("default_currency")
+                        or vendor_profile.get("currency")
+                        or ""
+                    ).upper().strip()
+                    invoice_currency = invoice.currency.upper().strip()
+                    if vendor_currency and invoice_currency and vendor_currency != invoice_currency:
+                        add_reason(
+                            "currency_mismatch",
+                            (
+                                f"Invoice currency {invoice_currency} does not match "
+                                f"vendor's configured currency {vendor_currency}. "
+                                f"The agent does not convert or assume."
+                            ),
+                            severity="warning",
+                            details={
+                                "invoice_currency": invoice_currency,
+                                "vendor_currency": vendor_currency,
+                                "vendor_name": invoice.vendor_name,
+                            },
+                        )
+            except Exception:
+                pass
+
         # 1) Policy checks (PO-required and any explicit blocking actions).
         policy_result = invoice.policy_compliance
         if not isinstance(policy_result, dict):
@@ -2195,10 +2271,11 @@ class InvoiceValidationMixin:
             try:
                 from clearledgr.services.vendor_risk import VendorRiskScoreService
 
-                risk_service = VendorRiskScoreService(db=db)
+                risk_service = VendorRiskScoreService(
+                    organization_id=self.organization_id, db=self.db,
+                )
                 risk_result = risk_service.compute(
                     vendor_name=invoice.vendor_name or "",
-                    organization_id=self.organization_id,
                 )
                 if risk_result and risk_result.score >= 70:
                     add_reason(
