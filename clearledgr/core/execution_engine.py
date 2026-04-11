@@ -525,7 +525,7 @@ class ExecutionEngine:
         try:
             from clearledgr.services.cross_invoice_analysis import get_cross_invoice_analyzer
             analyzer = get_cross_invoice_analyzer(
-                organization_id=self.organization_id, db=self.db,
+                organization_id=self.organization_id,
             )
             result = analyzer.analyze(
                 vendor=vendor,
@@ -890,10 +890,14 @@ class ExecutionEngine:
             return {"ok": True}
         try:
             from clearledgr.services.override_window import get_override_window_service
-            service = get_override_window_service(db=self.db)
+            service = get_override_window_service(self.organization_id, db=self.db)
+            item = self.db.get_ap_item(plan.box_id) if plan.box_id else None
+            erp_ref = (item or {}).get("erp_reference", "")
+            if not erp_ref:
+                return {"ok": True}  # No ERP reference yet — nothing to override
             window = service.open_window(
                 ap_item_id=plan.box_id,
-                organization_id=self.organization_id,
+                erp_reference=erp_ref,
             )
             return {"ok": True, "window_id": window.get("id") if isinstance(window, dict) else None}
         except Exception as exc:
@@ -925,7 +929,7 @@ class ExecutionEngine:
             return {"ok": True}
         try:
             from clearledgr.services.vendor_onboarding_lifecycle import chase_stale_sessions
-            await chase_stale_sessions(self.organization_id, db=self.db)
+            await chase_stale_sessions(db=self.db)
             return {"ok": True, "template": template, "vendor": vendor_name}
         except Exception as exc:
             logger.debug("[ExecutionEngine] send_vendor_email non-fatal: %s", exc)
