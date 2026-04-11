@@ -374,6 +374,14 @@ async def _run_loop():
                 except Exception as arc_exc:
                     logger.warning("[background] trust arc tick failed: %s", arc_exc)
 
+            # Every tick (~15 min): send pending vendor chases that weren't held (§6.8)
+            try:
+                pending_chases_sent = await _send_pending_chases(org_ids)
+                if pending_chases_sent:
+                    logger.info("[background] sent %d pending vendor chases", pending_chases_sent)
+            except Exception as chase_exc:
+                logger.warning("[background] pending chase reaper failed: %s", chase_exc)
+
             # Every tick (~15 min): reap expired snoozes (§3 Gmail Power Features)
             try:
                 unsnoozed = await _reap_expired_snoozes(org_ids)
@@ -507,6 +515,52 @@ async def _check_overdue_tasks():
             )
     except Exception as e:
         logger.error("Overdue task check failed: %s", e)
+
+
+async def _send_pending_chases(org_ids) -> int:
+    """§6.8: Send vendor chases that were previewed 30+ minutes ago and not held."""
+    from clearledgr.core.database import get_db
+
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    sent_count = 0
+
+    for org_id in (org_ids if isinstance(org_ids, (list, tuple)) else [org_ids]):
+        try:
+            if not hasattr(db, "list_pending_onboarding_sessions"):
+                continue
+            sessions = db.list_pending_onboarding_sessions(org_id)
+        except Exception:
+            sessions = []
+        for session in sessions:
+            meta = dict(session.get("metadata") or {})
+            send_at_str = meta.get("pending_chase_send_at")
+            if not send_at_str or meta.get("chase_held"):
+                continue
+            try:
+                send_at = datetime.fromisoformat(send_at_str.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            if now < send_at:
+                continue
+
+            # 30 minutes elapsed, not held — send the chase
+            chase_type = meta.pop("pending_chase_type", "chase_24h")
+            meta.pop("pending_chase_send_at", None)
+            try:
+                db.update_onboarding_session_metadata(session["id"], meta)
+            except Exception:
+                pass
+
+            try:
+                from clearledgr.services.vendor_onboarding_lifecycle import _dispatch_chase_email
+                hours = float(meta.get("hours_since_invite") or 24)
+                await _dispatch_chase_email(db, session, chase_type, hours)
+                sent_count += 1
+            except Exception as exc:
+                logger.warning("[background] pending chase send failed for %s: %s", session.get("id"), exc)
+
+    return sent_count
 
 
 async def _reap_expired_snoozes(org_ids) -> int:

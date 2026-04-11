@@ -182,7 +182,107 @@ async def _send_chase(
     chase_type: str,
     hours_since_invite: float,
 ) -> None:
-    """Dispatch a chase email for a session."""
+    """§6.8 Vendor Onboarding Chase Notices.
+
+    "Before the agent sends a chase email to a vendor who has not responded
+    to an onboarding step, it posts a preview to the AP channel. Two buttons:
+    [Hold chase] and [Send now]. If no response within 30 minutes, agent
+    sends automatically. If held, it asks for a reason and logs it."
+    """
+    meta = session.get("metadata") or {}
+    contact_email = meta.get("invite_email_to") or ""
+    vendor_name = session.get("vendor_name") or ""
+    org_id = session.get("organization_id") or ""
+    session_id = session.get("id") or ""
+    days = int(hours_since_invite / 24)
+
+    if not contact_email:
+        logger.info("[onboarding_lifecycle] skipping chase for session %s — no contact email", session_id)
+        return
+
+    # Determine what document is missing based on chase type
+    missing_doc = {
+        "chase_24h": "onboarding form completion",
+        "chase_48h": "onboarding form completion",
+        "escalation_72h": "onboarding (escalated after 72h)",
+    }.get(chase_type, "onboarding response")
+
+    # Post Slack preview with Hold/Send buttons
+    try:
+        from clearledgr.services.slack_notifications import _post_slack_blocks
+        import os
+
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*About to chase {vendor_name}* ({contact_email}) for their {missing_doc} "
+                        f"— {days * 24}h since first request. Sending in 30 minutes unless you hold it."
+                    ),
+                },
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Hold chase"},
+                        "action_id": f"hold_chase_{session_id}",
+                        "value": session_id,
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Send now"},
+                        "style": "primary",
+                        "action_id": f"send_chase_now_{session_id}",
+                        "value": session_id,
+                    },
+                ],
+            },
+        ]
+
+        preview_result = await _post_slack_blocks(
+            blocks=blocks,
+            text=f"About to chase {vendor_name} for {missing_doc}",
+            organization_id=org_id,
+        )
+
+        if preview_result:
+            # Store pending chase in session metadata for the background reaper
+            # to send after 30 minutes if not held
+            from datetime import datetime, timezone, timedelta
+            send_at = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+            pending = {
+                "pending_chase_type": chase_type,
+                "pending_chase_send_at": send_at,
+                "pending_chase_slack_ts": (preview_result or {}).get("ts"),
+                "pending_chase_slack_channel": (preview_result or {}).get("channel"),
+            }
+            try:
+                existing_meta = dict(db.get_onboarding_session_by_id(session_id).get("metadata") or {})
+                existing_meta.update(pending)
+                db.update_onboarding_session_metadata(session_id, existing_meta)
+            except Exception:
+                # If we can't store pending state, send immediately as fallback
+                await _dispatch_chase_email(db, session, chase_type, hours_since_invite)
+            return
+
+    except Exception as exc:
+        logger.debug("[onboarding_lifecycle] chase preview failed, sending directly: %s", exc)
+
+    # Fallback: send directly if Slack preview fails
+    await _dispatch_chase_email(db, session, chase_type, hours_since_invite)
+
+
+async def _dispatch_chase_email(
+    db: Any,
+    session: Dict[str, Any],
+    chase_type: str,
+    hours_since_invite: float,
+) -> None:
+    """Actually send the chase email to the vendor."""
     from clearledgr.services.vendor_onboarding_email import dispatch_onboarding_chase
 
     meta = session.get("metadata") or {}
@@ -192,24 +292,12 @@ async def _send_chase(
     thread_id = meta.get("invite_thread_id")
     in_reply_to = meta.get("invite_message_id")
 
-    # Rebuild the magic link from the live token (if any).
     tokens = db.list_session_tokens(session["id"], include_revoked=False)
     magic_link = ""
     if tokens:
-        # We can't reconstruct the raw token from the hash. If we have
-        # an active token, we know the vendor has the link — the chase
-        # email just reminds them. Include a generic "use your original
-        # link" instruction rather than re-generating a new token.
         import os
         base = os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "http://localhost:8000").rstrip("/")
         magic_link = f"{base}/portal/onboard/<your-original-link>"
-
-    if not contact_email:
-        logger.info(
-            "[onboarding_lifecycle] skipping chase for session %s — no contact email",
-            session.get("id"),
-        )
-        return
 
     await dispatch_onboarding_chase(
         organization_id=session.get("organization_id") or "",

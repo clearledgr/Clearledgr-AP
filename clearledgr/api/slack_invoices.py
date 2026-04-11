@@ -617,6 +617,17 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
         )
         raise HTTPException(status_code=400, detail="invalid_payload")
     raw_action = (payload.get("actions") or [{}])[0] if isinstance((payload.get("actions") or [{}])[0], dict) else {}
+
+    # §6.8 Vendor Chase: Handle Hold/Send actions before AP item resolution
+    _chase_action_id = str(raw_action.get("action_id") or "")
+    _chase_session_id = str(raw_action.get("value") or "")
+    if _chase_action_id.startswith("hold_chase_") and _chase_session_id:
+        background_tasks.add_task(_handle_hold_chase, db, _chase_session_id, payload)
+        return {"response_type": "ephemeral", "text": "Chase held. The vendor will not be contacted."}
+    if _chase_action_id.startswith("send_chase_now_") and _chase_session_id:
+        background_tasks.add_task(_handle_send_chase_now, db, _chase_session_id, payload)
+        return {"response_type": "ephemeral", "text": "Chase sent immediately."}
+
     gmail_candidate = ""
     value = str(raw_action.get("value") or "")
     if value.startswith("{"):
@@ -865,6 +876,44 @@ async def handle_slack_events(request: Request, background_tasks: BackgroundTask
     )
 
     return {"ok": True}
+
+
+async def _handle_hold_chase(db, session_id: str, payload: dict):
+    """§6.8: AP Manager clicked 'Hold chase'. Cancel the pending chase."""
+    try:
+        session = db.get_onboarding_session_by_id(session_id) if hasattr(db, "get_onboarding_session_by_id") else None
+        if not session:
+            return
+        meta = dict(session.get("metadata") or {})
+        meta.pop("pending_chase_type", None)
+        meta.pop("pending_chase_send_at", None)
+        meta["chase_held"] = True
+        meta["chase_held_by"] = str((payload.get("user") or {}).get("id") or "unknown")
+        if hasattr(db, "update_onboarding_session_metadata"):
+            db.update_onboarding_session_metadata(session_id, meta)
+        logger.info("[chase] held for session %s", session_id)
+    except Exception as exc:
+        logger.warning("[chase] hold failed: %s", exc)
+
+
+async def _handle_send_chase_now(db, session_id: str, payload: dict):
+    """§6.8: AP Manager clicked 'Send now'. Dispatch the chase immediately."""
+    try:
+        session = db.get_onboarding_session_by_id(session_id) if hasattr(db, "get_onboarding_session_by_id") else None
+        if not session:
+            return
+        meta = dict(session.get("metadata") or {})
+        chase_type = meta.pop("pending_chase_type", "chase_24h")
+        meta.pop("pending_chase_send_at", None)
+        if hasattr(db, "update_onboarding_session_metadata"):
+            db.update_onboarding_session_metadata(session_id, meta)
+
+        from clearledgr.services.vendor_onboarding_lifecycle import _dispatch_chase_email
+        hours = float(meta.get("hours_since_invite") or 24)
+        await _dispatch_chase_email(db, session, chase_type, hours)
+        logger.info("[chase] sent immediately for session %s", session_id)
+    except Exception as exc:
+        logger.warning("[chase] send now failed: %s", exc)
 
 
 async def _handle_mention_reply_sync(
