@@ -824,6 +824,164 @@ def _v23_approval_chain_entity(cur, db):
         pass
 
 
+@migration(25, "Object Model — Box/Pipeline/Stage/Column/SavedView (DESIGN_THESIS.md §5.1)")
+def _v25_object_model(cur, db):
+    """§5.1: First-class Pipeline, Stage, Column, SavedView, BoxLink objects."""
+    import json as _json
+    import uuid as _uuid
+    from datetime import datetime as _dt, timezone as _tz
+
+    now = _dt.now(_tz.utc).isoformat()
+
+    # --- Tables ---
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pipelines (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            box_type TEXT NOT NULL,
+            source_table TEXT NOT NULL,
+            is_active INTEGER DEFAULT 1,
+            created_at TEXT,
+            UNIQUE(organization_id, slug)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pipeline_stages (
+            id TEXT PRIMARY KEY,
+            pipeline_id TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            label TEXT NOT NULL,
+            color TEXT,
+            source_states TEXT NOT NULL DEFAULT '[]',
+            stage_order INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(pipeline_id, slug)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pipeline_columns (
+            id TEXT PRIMARY KEY,
+            pipeline_id TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            label TEXT NOT NULL,
+            source_field TEXT,
+            computed_fn TEXT,
+            display_order INTEGER NOT NULL DEFAULT 0,
+            visible_default INTEGER DEFAULT 1,
+            UNIQUE(pipeline_id, slug)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS saved_views (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            pipeline_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            filter_json TEXT NOT NULL DEFAULT '{}',
+            sort_json TEXT DEFAULT '{}',
+            show_in_inbox INTEGER DEFAULT 0,
+            created_by TEXT,
+            is_default INTEGER DEFAULT 0,
+            created_at TEXT,
+            UNIQUE(organization_id, pipeline_id, name)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS box_links (
+            id TEXT PRIMARY KEY,
+            source_box_id TEXT NOT NULL,
+            source_box_type TEXT NOT NULL,
+            target_box_id TEXT NOT NULL,
+            target_box_type TEXT NOT NULL,
+            link_type TEXT NOT NULL DEFAULT 'related',
+            created_at TEXT
+        )
+    """)
+    for idx_sql in [
+        "CREATE INDEX IF NOT EXISTS idx_pipeline_stages_pipeline ON pipeline_stages(pipeline_id)",
+        "CREATE INDEX IF NOT EXISTS idx_pipeline_columns_pipeline ON pipeline_columns(pipeline_id)",
+        "CREATE INDEX IF NOT EXISTS idx_saved_views_org ON saved_views(organization_id, pipeline_id)",
+        "CREATE INDEX IF NOT EXISTS idx_box_links_source ON box_links(source_box_id, source_box_type)",
+        "CREATE INDEX IF NOT EXISTS idx_box_links_target ON box_links(target_box_id, target_box_type)",
+    ]:
+        try:
+            cur.execute(idx_sql)
+        except Exception:
+            pass
+
+    # --- Seed: AP Invoices pipeline (thesis §6.7) ---
+    ap_pipeline_id = f"PL-{_uuid.uuid4().hex[:12]}"
+    cur.execute(
+        "INSERT OR IGNORE INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
+        "VALUES (?, '__default__', 'AP Invoices', 'ap-invoices', 'invoice', 'ap_items', ?)",
+        (ap_pipeline_id, now),
+    )
+
+    ap_stages = [
+        ("received", "Received", "#94A3B8", ["received"], 0),
+        ("matching", "Matching", "#CA8A04", ["validated", "needs_approval", "pending_approval"], 1),
+        ("exception", "Exception", "#DC2626", ["needs_info", "failed_post", "reversed", "snoozed"], 2),
+        ("approved", "Approved", "#2563EB", ["approved", "ready_to_post"], 3),
+        ("paid", "Paid", "#16A34A", ["posted_to_erp", "closed"], 4),
+    ]
+    for slug, label, color, states, order in ap_stages:
+        cur.execute(
+            "INSERT OR IGNORE INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (f"STG-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, slug, label, color, _json.dumps(states), order),
+        )
+
+    ap_columns = [
+        ("invoice_amount", "Invoice Amount", "amount", None, 0),
+        ("po_reference", "PO Reference", "po_number", None, 1),
+        ("match_status", "Match Status", None, "match_status", 2),
+        ("exception_reason", "Exception Reason", "exception_code", None, 3),
+        ("days_to_due", "Days to Due Date", None, "days_to_due", 4),
+        ("iban_verified", "IBAN Verified", None, "iban_verified", 5),
+        ("erp_posted", "ERP Posted", "erp_posted_at", None, 6),
+    ]
+    for slug, label, source_field, computed_fn, order in ap_columns:
+        cur.execute(
+            "INSERT OR IGNORE INTO pipeline_columns (id, pipeline_id, slug, label, source_field, computed_fn, display_order) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (f"COL-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, slug, label, source_field, computed_fn, order),
+        )
+
+    # --- Seed: Vendor Onboarding pipeline (thesis §9) ---
+    vo_pipeline_id = f"PL-{_uuid.uuid4().hex[:12]}"
+    cur.execute(
+        "INSERT OR IGNORE INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
+        "VALUES (?, '__default__', 'Vendor Onboarding', 'vendor-onboarding', 'vendor_onboarding', 'vendor_onboarding_sessions', ?)",
+        (vo_pipeline_id, now),
+    )
+
+    vo_stages = [
+        ("invited", "Invited", "#94A3B8", ["invited"], 0),
+        ("kyc", "KYC", "#CA8A04", ["awaiting_kyc"], 1),
+        ("bank_verify", "Bank Verify", "#2563EB", ["awaiting_bank", "microdeposit_pending"], 2),
+        ("active", "Active", "#16A34A", ["bank_verified", "ready_for_erp", "active"], 3),
+    ]
+    for slug, label, color, states, order in vo_stages:
+        cur.execute(
+            "INSERT OR IGNORE INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (f"STG-{_uuid.uuid4().hex[:12]}", vo_pipeline_id, slug, label, color, _json.dumps(states), order),
+        )
+
+    # --- Seed: 3 thesis saved views (thesis §6.2) ---
+    for name, filter_json, is_default in [
+        ("Exceptions", _json.dumps({"stage": "exception"}), 1),
+        ("Awaiting Approval", _json.dumps({"source_states": ["needs_approval", "pending_approval"]}), 1),
+        ("Due This Week", _json.dumps({"days_to_due_lte": 5}), 1),
+    ]:
+        cur.execute(
+            "INSERT OR IGNORE INTO saved_views (id, organization_id, pipeline_id, name, filter_json, is_default, show_in_inbox, created_at) "
+            "VALUES (?, '__default__', ?, ?, ?, ?, 1, ?)",
+            (f"SV-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, name, filter_json, is_default, now),
+        )
+
+
 @migration(24, "Migration from Existing Tools (DESIGN_THESIS.md §3)")
 def _v24_migration_state(cur, db):
     """§3 Migration: parallel running mode + cutover decision tracking."""

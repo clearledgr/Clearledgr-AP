@@ -312,7 +312,19 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
   }));
   const [navState, setNavState] = useState(() => readPipelineNavigation(pipelineScope));
   const [savedViewName, setSavedViewName] = useState('');
+  const [pipelineStages, setPipelineStages] = useState([]);
   const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
+
+  // §5.1: Fetch pipeline stage config from the object model API
+  useEffect(() => {
+    api(`/api/pipelines/ap-invoices?organization_id=${encodeURIComponent(orgId)}`, { silent: true })
+      .then((data) => {
+        if (Array.isArray(data?.stages) && data.stages.length > 0) {
+          setPipelineStages(data.stages);
+        }
+      })
+      .catch(() => {});
+  }, [api, orgId]);
   const syncReadyRef = useRef(false);
   const syncTimerRef = useRef(null);
   const lastSyncedPrefsRef = useRef('');
@@ -928,21 +940,24 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
       <!-- §6.7 Kanban board — stage columns with cards -->
       <div class="pipeline-kanban" style="display:flex;gap:12px;overflow-x:auto;padding:0 0 16px;min-height:400px">
         ${(() => {
-          // Thesis §6.7 AP Invoice stages: Received, Matching, Exception, Approved, Paid
-          const KANBAN_STAGES = [
-            { key: 'received',     label: 'Received',  states: ['received', 'validated'] },
-            { key: 'matching',     label: 'Matching',   states: ['needs_approval', 'pending_approval'] },
-            { key: 'exception',    label: 'Exception',  states: ['needs_info', 'failed_post', 'reversed'] },
-            { key: 'approved',     label: 'Approved',   states: ['approved', 'ready_to_post'] },
-            { key: 'paid',         label: 'Paid',       states: ['posted_to_erp', 'closed'] },
+          // §5.1: Kanban stages come from the Pipeline object model API.
+          // pipelineStages is fetched on mount from /api/pipelines/ap-invoices.
+          // Fallback to hardcoded thesis stages if API not available yet.
+          const FALLBACK_STAGES = [
+            { slug: 'received',  label: 'Received',  source_states: ['received', 'validated'], color: '#94A3B8' },
+            { slug: 'matching',  label: 'Matching',   source_states: ['needs_approval', 'pending_approval'], color: '#CA8A04' },
+            { slug: 'exception', label: 'Exception',  source_states: ['needs_info', 'failed_post', 'reversed'], color: '#DC2626' },
+            { slug: 'approved',  label: 'Approved',   source_states: ['approved', 'ready_to_post'], color: '#2563EB' },
+            { slug: 'paid',      label: 'Paid',       source_states: ['posted_to_erp', 'closed'], color: '#16A34A' },
           ];
-          const stageColors = {
-            received:  '#94A3B8',
-            matching:  '#CA8A04',
-            exception: '#DC2626',
-            approved:  '#2563EB',
-            paid:      '#10B981',
-          };
+          const KANBAN_STAGES = (pipelineStages && pipelineStages.length > 0)
+            ? pipelineStages.map((s) => ({
+                key: s.slug,
+                label: s.label,
+                states: Array.isArray(s.source_states) ? s.source_states : [],
+                color: s.color || '#94A3B8',
+              }))
+            : FALLBACK_STAGES.map((s) => ({ key: s.slug, label: s.label, states: s.source_states, color: s.color }));
           return KANBAN_STAGES.map((stage) => {
             const stageItems = displayed.filter((item) =>
               stage.states.includes(String(item.state || '').toLowerCase())
@@ -954,13 +969,13 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                 display:flex;flex-direction:column;
               ">
                 <div style="
-                  padding:10px 14px;border-bottom:2px solid ${stageColors[stage.key] || '#E2E8F0'};
+                  padding:10px 14px;border-bottom:2px solid ${stage.color || '#E2E8F0'};
                   display:flex;align-items:center;justify-content:space-between;
                 ">
                   <strong style="font-size:13px;color:#0A1628">${stage.label}</strong>
                   <span style="
                     font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;
-                    background:${stageColors[stage.key]}20;color:${stageColors[stage.key]};
+                    background:${stage.color || '#94A3B8'}20;color:${stage.color || '#94A3B8'};
                   ">${stageItems.length}</span>
                 </div>
                 <div style="padding:8px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px">

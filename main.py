@@ -947,6 +947,12 @@ except ImportError:
 try:
     from clearledgr.api.gmail_schedule import router as gmail_schedule_router
     app.include_router(gmail_schedule_router)
+
+    # §5.1 Object Model — Pipeline/SavedView/BoxLink endpoints
+    from clearledgr.api.pipelines import router as pipelines_router, saved_views_router, box_links_router
+    app.include_router(pipelines_router)
+    app.include_router(saved_views_router)
+    app.include_router(box_links_router)
 except ImportError:
     pass
 

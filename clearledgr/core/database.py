@@ -64,6 +64,7 @@ def _load_store_symbols() -> None:
     global DisputeStore
     global OverrideWindowStore
     global OnboardingTokenStore
+    global PipelineStore
 
     if "APStore" in globals():
         return
@@ -91,6 +92,7 @@ def _load_store_symbols() -> None:
     from clearledgr.core.stores.onboarding_token_store import (
         OnboardingTokenStore as _OnboardingTokenStore,
     )
+    from clearledgr.core.stores.pipeline_store import PipelineStore as _PipelineStore
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -109,6 +111,7 @@ def _load_store_symbols() -> None:
     DisputeStore = _DisputeStore
     OverrideWindowStore = _OverrideWindowStore
     OnboardingTokenStore = _OnboardingTokenStore
+    PipelineStore = _PipelineStore
 
 
 class _ClearledgrDBBase:
@@ -1354,6 +1357,7 @@ def _get_db_impl_class():
             WebhookStore,
             DisputeStore,
             OverrideWindowStore,
+            PipelineStore,
             _ClearledgrDBBase,
         ):
             pass

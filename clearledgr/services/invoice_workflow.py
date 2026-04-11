@@ -594,6 +594,22 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         )
         
         logger.info(f"New invoice detected: {invoice.vendor_name} ${invoice.amount} (confidence: {invoice.confidence})")
+
+        # §5.1 Box linking: auto-link invoice Box ↔ vendor onboarding Box
+        try:
+            if hasattr(self.db, "get_active_onboarding_session") and hasattr(self.db, "link_boxes"):
+                onboarding = self.db.get_active_onboarding_session(self.organization_id, invoice.vendor_name)
+                if onboarding and onboarding.get("id"):
+                    self.db.link_boxes(
+                        source_box_id=invoice_id,
+                        source_box_type="invoice",
+                        target_box_id=onboarding["id"],
+                        target_box_type="vendor_onboarding",
+                        link_type="vendor",
+                    )
+        except Exception:
+            pass  # Non-fatal — linking is informational
+
         correlation_id = self._ensure_ap_item_correlation_id(
             ap_item_id=invoice_id,
             gmail_id=invoice.gmail_id,

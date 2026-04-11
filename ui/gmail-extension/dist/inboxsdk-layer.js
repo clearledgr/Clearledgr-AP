@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:aa369c1f5ac8a81346526415b5a73d7fcde594b4fa7bb37ab93ba1a27148bc43 */
+/* clearledgr-source-fingerprint:dd77c45ec3576b6c791f5999b9803780a1de80ddd8f84401e0cea8dc521bd443 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -69938,7 +69938,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }));
     const [navState, setNavState] = d2(() => readPipelineNavigation(pipelineScope));
     const [savedViewName, setSavedViewName] = d2("");
+    const [pipelineStages, setPipelineStages] = d2([]);
     const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
+    y2(() => {
+      api(`/api/pipelines/ap-invoices?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).then((data) => {
+        if (Array.isArray(data?.stages) && data.stages.length > 0) {
+          setPipelineStages(data.stages);
+        }
+      }).catch(() => {});
+    }, [api, orgId]);
     const syncReadyRef = A2(false);
     const syncTimerRef = A2(null);
     const lastSyncedPrefsRef = A2("");
@@ -70489,20 +70497,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <!-- §6.7 Kanban board — stage columns with cards -->
       <div class="pipeline-kanban" style="display:flex;gap:12px;overflow-x:auto;padding:0 0 16px;min-height:400px">
         ${(() => {
-      const KANBAN_STAGES = [
-        { key: "received", label: "Received", states: ["received", "validated"] },
-        { key: "matching", label: "Matching", states: ["needs_approval", "pending_approval"] },
-        { key: "exception", label: "Exception", states: ["needs_info", "failed_post", "reversed"] },
-        { key: "approved", label: "Approved", states: ["approved", "ready_to_post"] },
-        { key: "paid", label: "Paid", states: ["posted_to_erp", "closed"] }
+      const FALLBACK_STAGES = [
+        { slug: "received", label: "Received", source_states: ["received", "validated"], color: "#94A3B8" },
+        { slug: "matching", label: "Matching", source_states: ["needs_approval", "pending_approval"], color: "#CA8A04" },
+        { slug: "exception", label: "Exception", source_states: ["needs_info", "failed_post", "reversed"], color: "#DC2626" },
+        { slug: "approved", label: "Approved", source_states: ["approved", "ready_to_post"], color: "#2563EB" },
+        { slug: "paid", label: "Paid", source_states: ["posted_to_erp", "closed"], color: "#16A34A" }
       ];
-      const stageColors = {
-        received: "#94A3B8",
-        matching: "#CA8A04",
-        exception: "#DC2626",
-        approved: "#2563EB",
-        paid: "#10B981"
-      };
+      const KANBAN_STAGES = pipelineStages && pipelineStages.length > 0 ? pipelineStages.map((s3) => ({
+        key: s3.slug,
+        label: s3.label,
+        states: Array.isArray(s3.source_states) ? s3.source_states : [],
+        color: s3.color || "#94A3B8"
+      })) : FALLBACK_STAGES.map((s3) => ({ key: s3.slug, label: s3.label, states: s3.source_states, color: s3.color }));
       return KANBAN_STAGES.map((stage) => {
         const stageItems = displayed.filter((item) => stage.states.includes(String(item.state || "").toLowerCase()));
         return html14`
@@ -70512,13 +70519,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 display:flex;flex-direction:column;
               ">
                 <div style="
-                  padding:10px 14px;border-bottom:2px solid ${stageColors[stage.key] || "#E2E8F0"};
+                  padding:10px 14px;border-bottom:2px solid ${stage.color || "#E2E8F0"};
                   display:flex;align-items:center;justify-content:space-between;
                 ">
                   <strong style="font-size:13px;color:#0A1628">${stage.label}</strong>
                   <span style="
                     font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;
-                    background:${stageColors[stage.key]}20;color:${stageColors[stage.key]};
+                    background:${stage.color || "#94A3B8"}20;color:${stage.color || "#94A3B8"};
                   ">${stageItems.length}</span>
                 </div>
                 <div style="padding:8px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px">
