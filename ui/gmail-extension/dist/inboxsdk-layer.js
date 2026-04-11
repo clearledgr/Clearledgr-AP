@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:c957c513f6642969d2f14c1fb8406843f40f3e0f81fdd34591b32a44ef060b97 */
+/* clearledgr-source-fingerprint:233239ffd4e89e235d6e03b2623a1bc67f5af0294de3cbd95be36122db83a6ff */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -58587,17 +58587,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     failed_post: "Failed post"
   };
   var STATE_COLORS = {
-    received: "#2563eb",
-    validated: "#0f766e",
-    needs_info: "#b45309",
-    needs_approval: "#c2410c",
-    pending_approval: "#c2410c",
-    approved: "#15803d",
-    ready_to_post: "#0f766e",
-    posted_to_erp: "#7c3aed",
-    closed: "#0f766e",
-    rejected: "#b91c1c",
-    failed_post: "#b91c1c"
+    received: "#94A3B8",
+    validated: "#2563EB",
+    needs_info: "#CA8A04",
+    needs_approval: "#CA8A04",
+    pending_approval: "#CA8A04",
+    approved: "#16A34A",
+    ready_to_post: "#2563EB",
+    posted_to_erp: "#16A34A",
+    closed: "#16A34A",
+    rejected: "#DC2626",
+    failed_post: "#DC2626",
+    reversed: "#DC2626",
+    snoozed: "#94A3B8"
   };
   function getStateLabel(state) {
     return STATE_LABELS[state] || "Received";

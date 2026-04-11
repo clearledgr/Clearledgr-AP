@@ -6,10 +6,26 @@ export const STATE_LABELS = {
   posted_to_erp: 'Posted to ERP', closed: 'Closed', rejected: 'Rejected', failed_post: 'Failed post',
 };
 
+// §6.3 Inbox Stage Labels — thesis color semantics:
+// Green (#16A34A) = passed, active, approved
+// Amber (#CA8A04) = exception, pending human action
+// Red (#DC2626) = failed, blocked
+// Blue (#2563EB) = approved and in progress
+// Grey (#94A3B8) = neutral, not yet processed
 export const STATE_COLORS = {
-  received: '#2563eb', validated: '#0f766e', needs_info: '#b45309',
-  needs_approval: '#c2410c', pending_approval: '#c2410c', approved: '#15803d', ready_to_post: '#0f766e',
-  posted_to_erp: '#7c3aed', closed: '#0f766e', rejected: '#b91c1c', failed_post: '#b91c1c',
+  received: '#94A3B8',          // grey — not yet processed
+  validated: '#2563EB',         // blue — in progress
+  needs_info: '#CA8A04',        // amber — pending human action
+  needs_approval: '#CA8A04',    // amber — pending human action
+  pending_approval: '#CA8A04',  // amber — pending human action
+  approved: '#16A34A',          // green — approved
+  ready_to_post: '#2563EB',     // blue — in progress
+  posted_to_erp: '#16A34A',     // green — active/passed
+  closed: '#16A34A',            // green — passed
+  rejected: '#DC2626',          // red — blocked
+  failed_post: '#DC2626',       // red — failed
+  reversed: '#DC2626',          // red — blocked
+  snoozed: '#94A3B8',           // grey — neutral
 };
 
 export function getStateLabel(state) { return STATE_LABELS[state] || 'Received'; }
