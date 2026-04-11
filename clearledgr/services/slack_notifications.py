@@ -104,37 +104,119 @@ def _resolve_intelligent_route(
     message_type: str = "channel",
     approver_email: Optional[str] = None,
     organization_id: Optional[str] = None,
+    amount: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """§6.8 Intelligent Routing — determine where to send based on message type.
+    """§6.8 Intelligent Routing — five thesis-defined routing rules.
 
-    Returns {"target": "channel"|"dm", "channel": "...", "user_email": "..."}.
-
-    Routing rules (thesis §6.8):
-    - Personal approval → Slack DM to the specific approver
-    - CFO escalation → DM to CFO with 4-hour timer
-    - No-PO exception → procurement contact from Settings
-    - Everything else → org's configured approval channel
+    Returns {"target": "channel"|"dm"|"dm_and_channel", "user_email": ...,
+             "escalation_hours": ..., "backup_email": ...}.
     """
-    result = {"target": "channel", "channel": None, "user_email": None}
+    result = {
+        "target": "channel",
+        "channel": None,
+        "user_email": None,
+        "also_channel": False,
+        "escalation_hours": None,
+        "backup_email": None,
+        "routing_rule": "default",
+    }
 
-    if message_type in ("personal_approval", "cfo_escalation") and approver_email:
+    # Load org settings for thresholds and contacts
+    org_settings = {}
+    try:
+        from clearledgr.core.database import get_db
+        db = get_db()
+        org = db.get_organization(organization_id) if organization_id else None
+        raw = (org or {}).get("settings_json") or {}
+        if isinstance(raw, str):
+            import json as _j
+            raw = _j.loads(raw)
+        org_settings = raw or {}
+    except Exception:
+        pass
+
+    controller_threshold = float(org_settings.get("controller_approval_threshold") or 50000)
+    cfo_threshold = float(org_settings.get("cfo_approval_threshold") or 100000)
+    procurement_email = org_settings.get("procurement_contact_email")
+
+    # Rule 5: OOO routing — check if approver is unavailable, route to backup
+    if approver_email:
+        backup = _check_ooo_and_get_backup(approver_email, org_settings)
+        if backup:
+            result["backup_email"] = approver_email  # Original approver (OOO)
+            approver_email = backup  # Route to backup instead
+            result["routing_rule"] = "ooo_backup"
+
+    # Rule 1: Standard approval → AP Manager DM
+    if message_type == "personal_approval" and approver_email:
         result["target"] = "dm"
         result["user_email"] = approver_email
-    elif message_type == "no_po_exception":
-        # Route to procurement contact if configured
-        try:
-            from clearledgr.core.database import get_db
-            db = get_db()
-            org = db.get_organization(organization_id) if organization_id else None
-            settings = (org.get("settings_json") if org else None) or {}
-            procurement_contact = settings.get("procurement_contact_email")
-            if procurement_contact:
-                result["target"] = "dm"
-                result["user_email"] = procurement_contact
-        except Exception:
-            pass
+        result["routing_rule"] = result.get("routing_rule") if result["routing_rule"] != "default" else "standard_approval"
+
+    # Rule 2: Above AP Manager threshold → Controller DM + channel copy
+    elif message_type in ("personal_approval", "cfo_escalation") and amount and amount > controller_threshold:
+        controller_email = org_settings.get("financial_controller_email")
+        if controller_email:
+            result["target"] = "dm"
+            result["user_email"] = controller_email
+            result["also_channel"] = True  # Copy to channel for visibility
+            result["routing_rule"] = "above_threshold_controller"
+        elif approver_email:
+            result["target"] = "dm"
+            result["user_email"] = approver_email
+            result["routing_rule"] = "standard_approval"
+
+    # Rule 3: CFO-level sign-off → CFO DM + 4-hour response window
+    elif message_type == "cfo_escalation" and approver_email:
+        result["target"] = "dm"
+        result["user_email"] = approver_email
+        result["escalation_hours"] = 4  # 4-hour response window
+        result["routing_rule"] = "cfo_sign_off"
+
+    # Rule 4: Exception requiring procurement → procurement contact DM
+    elif message_type == "no_po_exception" and procurement_email:
+        result["target"] = "dm"
+        result["user_email"] = procurement_email
+        result["routing_rule"] = "procurement_exception"
 
     return result
+
+
+def _check_ooo_and_get_backup(
+    approver_email: str,
+    org_settings: Dict[str, Any],
+) -> Optional[str]:
+    """§6.8 OOO Routing: Check if approver is unavailable, return backup.
+
+    "If the assigned approver's Google Calendar shows OOO, the agent
+    routes to their backup. Backup is configured per role in Settings."
+
+    Checks org settings for OOO overrides first (manual), then could
+    check Google Calendar API (future). Returns backup email or None.
+    """
+    # Check manual OOO overrides in settings
+    ooo_overrides = org_settings.get("ooo_overrides") or {}
+    if isinstance(ooo_overrides, dict) and approver_email in ooo_overrides:
+        backup = ooo_overrides[approver_email]
+        if isinstance(backup, str) and backup.strip():
+            return backup.strip()
+
+    # Check approval delegation rules
+    try:
+        from clearledgr.core.database import get_db
+        db = get_db()
+        if hasattr(db, "get_active_delegation"):
+            delegation = db.get_active_delegation(approver_email)
+            if delegation and delegation.get("delegate_email"):
+                return delegation["delegate_email"]
+    except Exception:
+        pass
+
+    # Future: Google Calendar API check
+    # calendar_ooo = await _check_google_calendar_ooo(approver_email)
+    # if calendar_ooo: return org_settings.get(f"backup_for_{role}")
+
+    return None
 
 
 async def _post_slack_dm(
@@ -931,11 +1013,12 @@ async def send_invoice_approval_notification(
         }
     ]
     
-    # §6.8 Intelligent Routing — personal approvals go as DMs, not channel
+    # §6.8 Intelligent Routing — five thesis-defined routing rules
     route = _resolve_intelligent_route(
         message_type="personal_approval" if user_email else "channel",
         approver_email=user_email,
         organization_id=organization_id,
+        amount=amount,
     )
 
     if route["target"] == "dm" and route["user_email"]:
@@ -946,7 +1029,21 @@ async def send_invoice_approval_notification(
             organization_id=organization_id,
         )
         if sent:
-            logger.info("[intelligent_routing] DM approval to %s for %s", route["user_email"], invoice_id)
+            logger.info(
+                "[intelligent_routing] DM approval to %s for %s (rule=%s)",
+                route["user_email"], invoice_id, route.get("routing_rule"),
+            )
+            # Rule 2: above-threshold → also post to channel for visibility
+            if route.get("also_channel"):
+                try:
+                    await _post_slack_blocks(
+                        blocks=blocks,
+                        text=f"Invoice {invoice_id} routed to {route['user_email']} for approval (above threshold)",
+                        preferred_channel=preferred_channel,
+                        organization_id=organization_id,
+                    )
+                except Exception:
+                    pass
             return True
         # Fall through to channel if DM fails
         logger.info("[intelligent_routing] DM failed, falling back to channel for %s", invoice_id)
