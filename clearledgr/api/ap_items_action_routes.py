@@ -1923,3 +1923,70 @@ async def unsnooze_ap_item(
     })
 
     return {"status": "unsnoozed", "restored_state": restore_state}
+
+
+# ---------------------------------------------------------------------------
+# §2.2: Manual Classification
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{ap_item_id}/classify")
+async def classify_ap_item(
+    ap_item_id: str,
+    classification: str = Query(..., description="Classification: invoice, credit_note, payment_query, vendor_statement, irrelevant"),
+    organization_id: Optional[str] = Query(default=None),
+    user: Any = Depends(require_ops_user),
+):
+    """§2.2: AP Manager manually classifies a Review Required email.
+
+    Enqueues a MANUAL_CLASSIFICATION event so the planning engine
+    produces the appropriate plan for the new classification.
+    """
+    from clearledgr.api.deps import verify_org_access
+    org_id = verify_org_access(user, organization_id)
+    db = get_db()
+
+    item = db.get_ap_item(ap_item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+
+    # Update the document_type on the item
+    db.update_ap_item(
+        ap_item_id,
+        document_type=classification,
+        _actor_type="user",
+        _actor_id=getattr(user, "email", None) or getattr(user, "user_id", "system"),
+    )
+
+    # Enqueue MANUAL_CLASSIFICATION event
+    try:
+        from clearledgr.core.events import AgentEvent, AgentEventType
+        from clearledgr.core.event_queue import get_event_queue
+        get_event_queue().enqueue(AgentEvent(
+            type=AgentEventType.MANUAL_CLASSIFICATION,
+            source="ap_manager",
+            payload={
+                "message_id": item.get("message_id") or item.get("thread_id", ""),
+                "classification": classification,
+                "classified_by": getattr(user, "email", None) or getattr(user, "user_id", "system"),
+                "ap_item_id": ap_item_id,
+            },
+            organization_id=org_id,
+        ))
+    except Exception as exc:
+        logger.debug("[classify] Event enqueue failed (non-fatal): %s", exc)
+
+    # Record in timeline
+    if hasattr(db, "append_ap_item_timeline_entry"):
+        db.append_ap_item_timeline_entry(ap_item_id, {
+            "type": "human_action",
+            "summary": f"Manually classified as {classification}",
+            "actor": getattr(user, "email", "system"),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+
+    return {
+        "status": "classified",
+        "ap_item_id": ap_item_id,
+        "classification": classification,
+    }

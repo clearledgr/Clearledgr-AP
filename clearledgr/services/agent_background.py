@@ -473,7 +473,30 @@ async def _run_loop():
                     await _run_erp_reconciliation(org_id)
                 # Poll ERP for payment status changes every ~1 hour
                 for org_id in org_ids:
-                    await _poll_payment_statuses(org_id)
+                    result = await _poll_payment_statuses(org_id)
+                    # §2.2: Enqueue PAYMENT_CONFIRMED for settled payments
+                    if isinstance(result, dict) and result.get("updated", 0) > 0:
+                        try:
+                            from clearledgr.core.events import AgentEvent, AgentEventType
+                            from clearledgr.core.event_queue import get_event_queue
+                            queue = get_event_queue()
+                            for payment_ref in (result.get("settled_refs") or []):
+                                queue.enqueue(AgentEvent(
+                                    type=AgentEventType.PAYMENT_CONFIRMED,
+                                    source="payment_poll",
+                                    payload={
+                                        "payment_reference": payment_ref,
+                                        "box_id": result.get("ap_item_ids", {}).get(payment_ref, ""),
+                                    },
+                                    organization_id=org_id,
+                                ))
+                        except Exception:
+                            pass
+
+                # §2.2: Poll for GRN confirmations on waiting invoices
+                for org_id in org_ids:
+                    await _poll_grn_confirmations(org_id)
+
                 # Run monitoring health checks every ~1 hour
                 for org_id in org_ids:
                     await _run_monitoring_checks(org_id)
@@ -1847,3 +1870,85 @@ async def _run_monitoring_checks(org_id: str):
             )
     except Exception as e:
         logger.error("Monitoring checks failed for org=%s: %s", org_id, e)
+
+
+async def _poll_grn_confirmations(org_id: str) -> None:
+    """§2.2 + §4.3: Poll for GRN confirmations on invoices waiting for GRN.
+
+    Checks AP items with waiting_condition.type = 'grn_confirmation',
+    queries ERP for GRN status, and enqueues ERP_GRN_CONFIRMED or
+    TIMER_FIRED events.
+    """
+    try:
+        from clearledgr.core.database import get_db
+        import json as _json
+
+        db = get_db()
+        # Find items waiting for GRN confirmation
+        items = db.list_ap_items(organization_id=org_id, limit=200)
+        grn_waiting = []
+        for item in (items or []):
+            wc = item.get("waiting_condition")
+            if isinstance(wc, str):
+                try:
+                    wc = _json.loads(wc)
+                except Exception:
+                    wc = None
+            if isinstance(wc, dict) and wc.get("type") == "grn_confirmation":
+                grn_waiting.append(item)
+
+        if not grn_waiting:
+            return
+
+        from clearledgr.core.events import AgentEvent, AgentEventType
+        from clearledgr.core.event_queue import get_event_queue
+        queue = get_event_queue()
+
+        for item in grn_waiting:
+            ap_item_id = item.get("id", "")
+            po_number = item.get("po_number", "")
+
+            # Check if GRN exists in ERP
+            grn_found = False
+            try:
+                from clearledgr.services.purchase_orders import get_purchase_order_service
+                po_service = get_purchase_order_service()
+                if po_number:
+                    po = po_service.get_po_by_number(po_number)
+                    if po:
+                        po_id = po.po_id if hasattr(po, "po_id") else (po.get("po_id") if isinstance(po, dict) else "")
+                        if po_id:
+                            grns = po_service.get_goods_receipts_for_po(po_id)
+                            grn_found = bool(grns)
+            except Exception as exc:
+                logger.debug("[GRN poll] ERP lookup failed for %s: %s", ap_item_id, exc)
+
+            if grn_found:
+                # GRN confirmed — enqueue ERP_GRN_CONFIRMED
+                queue.enqueue(AgentEvent(
+                    type=AgentEventType.ERP_GRN_CONFIRMED,
+                    source="grn_poll",
+                    payload={
+                        "box_id": ap_item_id,
+                        "grn_reference": po_number,
+                    },
+                    organization_id=org_id,
+                    idempotency_key=f"grn_confirmed:{ap_item_id}",
+                ))
+                logger.info("[GRN poll] GRN confirmed for %s (PO %s)", ap_item_id, po_number)
+            else:
+                # GRN not yet confirmed — enqueue TIMER_FIRED for recheck
+                queue.enqueue(AgentEvent(
+                    type=AgentEventType.TIMER_FIRED,
+                    source="grn_poll",
+                    payload={
+                        "box_id": ap_item_id,
+                        "timer_type": "grn_check",
+                        "po_number": po_number,
+                    },
+                    organization_id=org_id,
+                    idempotency_key=f"grn_recheck:{ap_item_id}:{int(datetime.now(timezone.utc).timestamp()) // 3600}",
+                ))
+
+    except Exception as exc:
+        logger.debug("[GRN poll] Failed for org=%s: %s", org_id, exc)

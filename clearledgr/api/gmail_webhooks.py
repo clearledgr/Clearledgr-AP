@@ -861,16 +861,34 @@ async def process_gmail_notification(email_address: str, history_id: str):
 
         queue = get_event_queue()
         enqueued = 0
+        db = get_db()
         for message_id in message_ids:
             try:
+                # §2.2: Detect if this is a reply on a watched thread (vendor response)
+                # vs a new email. Check if thread belongs to existing Box.
+                event_type = AgentEventType.EMAIL_RECEIVED
+                thread_id_for_event = ""
+                try:
+                    # Fetch thread_id from the message
+                    msg_meta = await client.get_message(message_id, format="metadata")
+                    thread_id_for_event = getattr(msg_meta, "thread_id", "") or ""
+                    if thread_id_for_event:
+                        existing_item = db.get_ap_item_by_thread(organization_id, thread_id_for_event)
+                        if existing_item:
+                            # This is a reply on a watched thread — vendor response
+                            event_type = AgentEventType.VENDOR_RESPONSE_RECEIVED
+                except Exception:
+                    pass  # Fall back to EMAIL_RECEIVED
+
                 event = AgentEvent(
-                    type=AgentEventType.EMAIL_RECEIVED,
+                    type=event_type,
                     source="gmail_pubsub",
                     payload={
                         "message_id": message_id,
-                        "thread_id": "",  # Resolved by worker
+                        "thread_id": thread_id_for_event,
                         "mailbox": email_address,
                         "user_id": token.user_id,
+                        "vendor_id": (existing_item.get("vendor_name", "") if event_type == AgentEventType.VENDOR_RESPONSE_RECEIVED else ""),
                     },
                     organization_id=organization_id,
                     idempotency_key=message_id,
