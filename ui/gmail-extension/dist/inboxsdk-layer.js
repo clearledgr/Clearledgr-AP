@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:cd1fd3369a84b343ccb3681d706199630d2d925b07c4f9016f20ddbde8207750 */
+/* clearledgr-source-fingerprint:12d44b8cd9ed8f824594f08e41e7333a24663be3e80a82521ad99a5917b4a0cd */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -69046,7 +69046,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <strong style="font-size:14px">${invite.email}</strong>
         <span class="status-badge ${invite.status === "pending" ? "" : "connected"}">${invite.status || "pending"}</span>
       </div>
-      <div class="muted" style="font-size:12px">Role: ${(invite.role || "member") === "member" ? "Operator" : invite.role === "viewer" ? "Read-only" : "Admin"}</div>
+      <div class="muted" style="font-size:12px">Role: ${{ ap_clerk: "AP Clerk", ap_manager: "AP Manager", financial_controller: "Financial Controller", cfo: "CFO", read_only: "Read Only", member: "AP Clerk", admin: "Financial Controller", viewer: "Read Only", operator: "AP Manager" }[invite.role] || invite.role || "AP Clerk"}</div>
     </div>
     ${invite.status === "pending" ? html11`<button class="btn-danger btn-sm" onClick=${() => onRevoke(invite.id)} disabled=${!canManage}>Revoke</button>` : null}
   </div>`;
@@ -69434,9 +69434,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <div class="secondary-form-grid">
               <input id="cl-invite-email" placeholder="teammate@company.com" disabled=${!canManageTeam} />
               <select id="cl-invite-role" disabled=${!canManageTeam}>
-                <option value="member">Operator</option>
-                <option value="admin">Admin</option>
-                <option value="viewer">Read-only</option>
+                <option value="ap_clerk">AP Clerk</option>
+                <option value="ap_manager">AP Manager</option>
+                <option value="financial_controller">Financial Controller</option>
+                <option value="cfo">CFO</option>
+                <option value="read_only">Read Only</option>
               </select>
             </div>
             <div class="row-actions" style="justify-content:flex-start;margin-top:14px">
@@ -69446,7 +69448,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
           </div>
           <div class="secondary-note">
-            Operators review invoices and move work forward. Admins manage setup, rules, and workspace details. Read-only teammates can follow activity without changing records.
+            AP Clerks process invoices within auto-approve threshold. AP Managers approve and manage vendor onboarding. Financial Controllers modify AP policy. CFOs connect/disconnect ERP and set autonomy tiers. Read Only is for external auditors.
           </div>
         </div>
         <div style="margin-top:18px">

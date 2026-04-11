@@ -19,7 +19,9 @@ function InviteRow({ invite, onRevoke, canManage }) {
         <strong style="font-size:14px">${invite.email}</strong>
         <span class="status-badge ${invite.status === 'pending' ? '' : 'connected'}">${invite.status || 'pending'}</span>
       </div>
-      <div class="muted" style="font-size:12px">Role: ${(invite.role || 'member') === 'member' ? 'Operator' : invite.role === 'viewer' ? 'Read-only' : 'Admin'}</div>
+      <div class="muted" style="font-size:12px">Role: ${
+        { ap_clerk: 'AP Clerk', ap_manager: 'AP Manager', financial_controller: 'Financial Controller', cfo: 'CFO', read_only: 'Read Only', member: 'AP Clerk', admin: 'Financial Controller', viewer: 'Read Only', operator: 'AP Manager' }[invite.role] || invite.role || 'AP Clerk'
+      }</div>
     </div>
     ${invite.status === 'pending'
       ? html`<button class="btn-danger btn-sm" onClick=${() => onRevoke(invite.id)} disabled=${!canManage}>Revoke</button>`
@@ -425,9 +427,11 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
             <div class="secondary-form-grid">
               <input id="cl-invite-email" placeholder="teammate@company.com" disabled=${!canManageTeam} />
               <select id="cl-invite-role" disabled=${!canManageTeam}>
-                <option value="member">Operator</option>
-                <option value="admin">Admin</option>
-                <option value="viewer">Read-only</option>
+                <option value="ap_clerk">AP Clerk</option>
+                <option value="ap_manager">AP Manager</option>
+                <option value="financial_controller">Financial Controller</option>
+                <option value="cfo">CFO</option>
+                <option value="read_only">Read Only</option>
               </select>
             </div>
             <div class="row-actions" style="justify-content:flex-start;margin-top:14px">
@@ -437,7 +441,7 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
             </div>
           </div>
           <div class="secondary-note">
-            Operators review invoices and move work forward. Admins manage setup, rules, and workspace details. Read-only teammates can follow activity without changing records.
+            AP Clerks process invoices within auto-approve threshold. AP Managers approve and manage vendor onboarding. Financial Controllers modify AP policy. CFOs connect/disconnect ERP and set autonomy tiers. Read Only is for external auditors.
           </div>
         </div>
         <div style="margin-top:18px">
