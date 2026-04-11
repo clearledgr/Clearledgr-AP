@@ -264,8 +264,21 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
               </div>
             </div>
           </div>
-          <div class="secondary-note">
-            ERP credentials are encrypted at rest. OAuth tokens refresh automatically. If a connection drops, the agent pauses posting and notifies the AP Manager.
+          <div style="margin-top:12px;">
+            <div class="settings-summary-grid">
+              <div class="settings-summary-card">
+                <strong>Data scope</strong>
+                <span>PO lines, GRN records, vendor master, chart of accounts</span>
+              </div>
+              <div class="settings-summary-card">
+                <strong>Write permissions</strong>
+                <span>${erp.connected ? 'Auto-post enabled' : 'Not configured'}</span>
+              </div>
+              <div class="settings-summary-card">
+                <strong>Last sync</strong>
+                <span>${erp.last_sync_at ? new Date(erp.last_sync_at).toLocaleString() : 'Never'}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -275,11 +288,50 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         <div class="panel-head compact">
           <div>
             <h3 style="margin-top:0">AP Policy</h3>
-            <p class="muted" style="margin:0">Auto-approve threshold, duplicate detection window, PO requirement, and payment ceiling.</p>
+            <p class="muted" style="margin:0">These controls reflect your documented finance policy, not generic defaults.</p>
           </div>
         </div>
-        <div class="secondary-note">
-          AP policy controls are configured via the API. A full settings UI for these controls is coming in the next release.
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 0 8px;">
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Auto-approve threshold</label>
+            <input
+              type="number" step="100" min="0" placeholder="500"
+              value=${bootstrap?.organization?.settings?.auto_approve_amount_threshold || ''}
+              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
+              onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ auto_approve_amount_threshold: parseFloat(e.target.value) || 0 }) }).then(() => toast('Threshold saved', 'success')).catch(() => toast('Save failed', 'error'))}
+            />
+            <div class="muted" style="font-size:11px;margin-top:4px;">Invoices below this amount with passed 3-way match auto-approve. Default: £0 (all require approval).</div>
+          </div>
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Match tolerance</label>
+            <input
+              type="number" step="0.5" min="0" max="10" placeholder="2"
+              value=${bootstrap?.organization?.settings?.match_tolerance_pct || ''}
+              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
+              onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ match_tolerance_pct: parseFloat(e.target.value) || 2 }) }).then(() => toast('Tolerance saved', 'success')).catch(() => toast('Save failed', 'error'))}
+            />
+            <div class="muted" style="font-size:11px;margin-top:4px;">% delta between invoice and GRN before exception is raised. Default: 2%.</div>
+          </div>
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Duplicate detection window</label>
+            <input
+              type="number" step="10" min="30" max="365" placeholder="90"
+              value=${bootstrap?.organization?.settings?.duplicate_window_days || ''}
+              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
+              onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ duplicate_window_days: parseInt(e.target.value) || 90 }) }).then(() => toast('Window saved', 'success')).catch(() => toast('Save failed', 'error'))}
+            />
+            <div class="muted" style="font-size:11px;margin-top:4px;">Days to look back for vendor+amount+reference duplicate matches. Default: 90.</div>
+          </div>
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Payment ceiling</label>
+            <input
+              type="number" step="1000" min="0" placeholder="10000"
+              value=${bootstrap?.organization?.settings?.payment_ceiling || ''}
+              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
+              onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ payment_ceiling: parseFloat(e.target.value) || 10000 }) }).then(() => toast('Ceiling saved', 'success')).catch(() => toast('Save failed', 'error'))}
+            />
+            <div class="muted" style="font-size:11px;margin-top:4px;">No autonomous payment above this amount without CFO approval. Default: £10,000.</div>
+          </div>
         </div>
       </div>
 
@@ -288,11 +340,30 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         <div class="panel-head compact">
           <div>
             <h3 style="margin-top:0">Vendor Onboarding Policy</h3>
-            <p class="muted" style="margin:0">Auto-chase timing, micro-deposit verification, and escalation windows.</p>
+            <p class="muted" style="margin:0">Control how the agent chases and verifies new vendors.</p>
           </div>
         </div>
-        <div class="secondary-note">
-          Vendor onboarding policy is configured via the API. Chase emails send at 24h and 48h, escalation at 72h, abandonment at 30 days.
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 0 8px;">
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">First chase delay</label>
+            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">24 hours</div>
+            <div class="muted" style="font-size:11px;">Agent chases unresponsive vendors after 24h. Preview shown in Slack before sending.</div>
+          </div>
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Escalation window</label>
+            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">72 hours</div>
+            <div class="muted" style="font-size:11px;">Escalates to AP Manager after 72h with no vendor response.</div>
+          </div>
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Bank verification</label>
+            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">Micro-deposit</div>
+            <div class="muted" style="font-size:11px;">Two small deposits verified by the vendor via the onboarding portal.</div>
+          </div>
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Abandonment</label>
+            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">30 days</div>
+            <div class="muted" style="font-size:11px;">Sessions with no activity for 30 days are automatically abandoned.</div>
+          </div>
         </div>
       </div>
 
@@ -301,11 +372,44 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         <div class="panel-head compact">
           <div>
             <h3 style="margin-top:0">Autonomy Configuration</h3>
-            <p class="muted" style="margin:0">Processing tier, transparency mode, and override window duration.</p>
+            <p class="muted" style="margin:0">Controls how much the agent does on its own.</p>
           </div>
         </div>
-        <div class="secondary-note">
-          Autonomy tiers progress through the trust-building arc. The agent starts in observation mode and expands autonomy as accuracy is demonstrated.
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 0 8px;">
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Processing tier</label>
+            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">
+              ${bootstrap?.trust_arc?.phase === 'week1_observation' ? 'Supervised (Week 1)' : bootstrap?.trust_arc?.phase === 'ongoing_weekly_signal' ? 'Autonomous' : 'Supervised'}
+            </div>
+            <div class="muted" style="font-size:11px;">Progresses through the trust-building arc. Day 30 tier expansion recommendation.</div>
+          </div>
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Override window</label>
+            <input
+              type="number" step="5" min="5" max="60" placeholder="15"
+              value=${bootstrap?.organization?.settings?.workflow_controls?.override_window_minutes?.default || ''}
+              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
+              onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ workflow_controls: { override_window_minutes: { default: parseInt(e.target.value) || 15 } } }) }).then(() => toast('Window saved', 'success')).catch(() => toast('Save failed', 'error'))}
+            />
+            <div class="muted" style="font-size:11px;margin-top:4px;">Minutes to undo an autonomous ERP post. Default: 15.</div>
+          </div>
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Confidence threshold</label>
+            <input
+              type="number" step="1" min="50" max="100" placeholder="95"
+              value=${Math.round((bootstrap?.organization?.settings?.auto_approve_confidence_threshold || 0.95) * 100)}
+              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
+              onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ auto_approve_confidence_threshold: (parseInt(e.target.value) || 95) / 100 }) }).then(() => toast('Threshold saved', 'success')).catch(() => toast('Save failed', 'error'))}
+            />
+            <div class="muted" style="font-size:11px;margin-top:4px;">% extraction confidence required for autonomous action. Default: 95%.</div>
+          </div>
+          <div>
+            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Migration status</label>
+            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">
+              ${bootstrap?.organization?.settings?.migration_status || 'Live'}
+            </div>
+            <div class="muted" style="font-size:11px;">Parallel mode suppresses autonomous actions for comparison with existing AP system.</div>
+          </div>
         </div>
       </div>
 
