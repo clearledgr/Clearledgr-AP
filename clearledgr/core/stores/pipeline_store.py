@@ -133,6 +133,12 @@ class PipelineStore:
             return []
         source_table = dict(pl_row).get("source_table", "ap_items")
 
+        # Whitelist source_table to prevent SQL injection via crafted pipeline config
+        _ALLOWED_SOURCE_TABLES = {"ap_items", "vendor_onboarding_sessions"}
+        if source_table not in _ALLOWED_SOURCE_TABLES:
+            logger.warning("[PipelineStore] Rejected source_table %r — not in whitelist", source_table)
+            return []
+
         stage_sql = self._prepare_sql(
             "SELECT source_states FROM pipeline_stages WHERE pipeline_id = ? AND slug = ?"
         )

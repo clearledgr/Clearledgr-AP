@@ -559,15 +559,32 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         # §6.4 Classification #2: Unknown vendor gate.
         # "Sender not in vendor master. No Box created until vendor activated."
         # Gate only runs when vendor_master_gate is enabled in org settings.
+        # Org settings cached on the instance to avoid DB hit per invoice.
         vendor_profile = None
+        if not hasattr(self, "_cached_org_settings"):
+            self._cached_org_settings = None
+            self._cached_org_settings_at = None
+
         _vendor_gate_enabled = False
+        _parallel_mode_from_cache = None
         try:
-            org = self.db.get_organization(self.organization_id)
-            org_settings = org.get("settings_json") if org else None
-            if isinstance(org_settings, str):
-                import json as _json
-                org_settings = _json.loads(org_settings)
-            _vendor_gate_enabled = bool((org_settings or {}).get("vendor_master_gate", False))
+            now_ts = datetime.now(timezone.utc)
+            cache_stale = (
+                self._cached_org_settings is None
+                or self._cached_org_settings_at is None
+                or (now_ts - self._cached_org_settings_at).total_seconds() > 300
+            )
+            if cache_stale:
+                org = self.db.get_organization(self.organization_id)
+                org_settings = org.get("settings_json") if org else None
+                if isinstance(org_settings, str):
+                    import json as _json
+                    org_settings = _json.loads(org_settings)
+                self._cached_org_settings = org_settings or {}
+                self._cached_org_settings_at = now_ts
+                self._cached_migration_status = (org or {}).get("migration_status")
+            _vendor_gate_enabled = bool(self._cached_org_settings.get("vendor_master_gate", False))
+            _parallel_mode_from_cache = self._cached_migration_status
         except Exception:
             pass
 
@@ -810,22 +827,14 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         )
 
         # --- §3 Migration: parallel mode gate ---
-        # When the org is in parallel running mode, all invoices are routed
-        # to human review regardless of confidence or agent decision.
-        # The agent still processes and extracts — results are visible for
-        # comparison — but no autonomous posting or approval happens.
-        _parallel_mode = False
-        try:
-            org = self.db.get_organization(self.organization_id)
-            if org and org.get("migration_status") == "parallel":
-                _parallel_mode = True
-                logger.info(
-                    "[InvoiceWorkflow] Parallel mode active for org=%s — "
-                    "autonomous actions suppressed, routing to human review",
-                    self.organization_id,
-                )
-        except Exception:
-            pass
+        # Uses cached org settings from the vendor gate above (5-min TTL).
+        _parallel_mode = _parallel_mode_from_cache == "parallel"
+        if _parallel_mode:
+            logger.info(
+                "[InvoiceWorkflow] Parallel mode active for org=%s — "
+                "autonomous actions suppressed, routing to human review",
+                self.organization_id,
+            )
 
         # --- AP reasoning layer: Claude decides with vendor context ---
         # If a pre-computed decision was provided (e.g. from the agent planning loop),

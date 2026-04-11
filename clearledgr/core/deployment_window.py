@@ -15,9 +15,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, Any
 
-import pytz
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # Python <3.9
 
-_UK_TZ = pytz.timezone("Europe/London")
+_UK_TZ = ZoneInfo("Europe/London")
 
 # Deployment allowed: Tuesday (1) through Thursday (3), 10:00-14:00 UK time.
 _ALLOWED_WEEKDAYS = {1, 2, 3}  # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4

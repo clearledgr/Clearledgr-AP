@@ -1034,12 +1034,23 @@ async def _answer_query_with_context(query: str, items: list, org_id: str) -> st
             model=os.environ.get("AGENT_RUNTIME_MODEL", "claude-sonnet-4-6"),
             max_tokens=500,
             system=(
-                "You are Clearledgr's AP agent. Answer finance questions using the AP data provided. "
-                "Be specific — use vendor names, amounts, dates. Follow DID-WHY-NEXT: state the fact, "
-                "explain the context, suggest what to do next. Keep responses under 3 sentences when possible."
+                "You are Clearledgr's AP agent answering finance questions from the AP team in Slack.\n\n"
+                "DATA FORMAT: Each line is: vendor | invoice_ref | state | amount | due_date\n"
+                "STATES: received, validated, needs_approval, approved, ready_to_post, posted_to_erp, "
+                "closed, needs_info, failed_post, rejected, snoozed, reversed\n"
+                "STATE MEANINGS: needs_approval = waiting for human sign-off. needs_info = blocked, "
+                "vendor follow-up required. failed_post = ERP posting failed. posted_to_erp = paid/completed.\n\n"
+                "RESPONSE RULES:\n"
+                "- Be specific: use vendor names, exact amounts, exact dates\n"
+                "- Follow DID-WHY-NEXT: state the fact, explain context, suggest what to do next\n"
+                "- Keep responses under 3 sentences\n"
+                "- For 'outstanding' queries: sum amounts where state NOT IN (closed, rejected, posted_to_erp)\n"
+                "- For 'due' queries: filter by due_date, show each item\n"
+                "- For vendor queries: filter by vendor name, show all their items\n"
+                "- If unsure, say what data you have and suggest checking the pipeline view"
             ),
             messages=[
-                {"role": "user", "content": f"AP data:\n{context}\n\nQuestion: {query}"},
+                {"role": "user", "content": f"AP data ({len(summary_lines)} items):\n{context}\n\nQuestion: {query}"},
             ],
         )
         return response.content[0].text

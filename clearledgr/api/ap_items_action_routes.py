@@ -1857,7 +1857,8 @@ async def snooze_ap_item(
     transition_or_raise(current_state, "snoozed", ap_item_id)
 
     now = datetime.now(timezone.utc)
-    snoozed_until = now + __import__("datetime").timedelta(minutes=request.duration_minutes)
+    from datetime import timedelta
+    snoozed_until = now + timedelta(minutes=request.duration_minutes)
 
     # Store pre-snooze state so the reaper can restore it
     metadata = dict(item.get("metadata") or {})

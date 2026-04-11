@@ -40,7 +40,25 @@ async def build_digest(
         from clearledgr.core.database import get_db
         db = get_db()
 
-    now = datetime.now(timezone.utc)
+    # Resolve org timezone — thesis says digest should respect local working days
+    org_tz = timezone.utc
+    try:
+        org_data = db.get_organization(org_id)
+        tz_name = ((org_data or {}).get("settings_json") or {})
+        if isinstance(tz_name, str):
+            import json as _json
+            tz_name = _json.loads(tz_name)
+        tz_str = (tz_name or {}).get("timezone", "")
+        if tz_str:
+            try:
+                from zoneinfo import ZoneInfo
+            except ImportError:
+                from backports.zoneinfo import ZoneInfo
+            org_tz = ZoneInfo(tz_str)
+    except Exception:
+        pass
+
+    now = datetime.now(org_tz)
     if not _is_working_day(now):
         return None
 
