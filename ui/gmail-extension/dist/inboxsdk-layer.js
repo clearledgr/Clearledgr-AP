@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:5f27ae0d1d003f81dde5dde2967f81c31a684380315db9187fbe846b9cea01b5 */
+/* clearledgr-source-fingerprint:b6c4f9b90b8bb5b1155d6ae52df9f047ff3e85f6920b72dd43f6e8eaac8e6646 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -53453,13 +53453,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this.autopilotStatus = null;
       this.auditCache = new Map;
       this.auditRequests = new Map;
-      this.agentSessionsByItem = new Map;
-      this.agentCommandInFlight = new Set;
-      this.agentSyncInFlight = false;
-      this.browserTabContext = [];
-      this.agentInsightsByItem = new Map;
-      this.agentCommandRetryCount = new Map;
-      this.agentReadPageRecovery = new Set;
       this.sourcesByItem = new Map;
       this.contextByItem = new Map;
       this.sourceRequests = new Map;
@@ -53498,7 +53491,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     emitQueueUpdated() {
       this.listeners.forEach((callback) => {
         try {
-          callback(this.queue, this.scanStatus, this.agentSessionsByItem, this.browserTabContext, this.agentInsightsByItem, this.sourcesByItem, this.contextByItem, this.tasksByItem, this.notesByItem, this.commentsByItem, this.filesByItem, this.kpiSnapshot);
+          callback(this.queue, this.scanStatus, new Map, [], new Map, this.sourcesByItem, this.contextByItem, this.tasksByItem, this.notesByItem, this.commentsByItem, this.filesByItem, this.kpiSnapshot);
         } catch (_2) {}
       });
     }
@@ -53521,19 +53514,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ap_item_id: apItemId || undefined,
         email_id: emailId || undefined
       };
-    }
-    getAgentSessionForItem(itemId) {
-      if (!itemId)
-        return null;
-      return this.agentSessionsByItem.get(itemId) || null;
-    }
-    getBrowserTabContext() {
-      return Array.isArray(this.browserTabContext) ? [...this.browserTabContext] : [];
-    }
-    getAgentInsightsForItem(itemId) {
-      if (!itemId)
-        return null;
-      return this.agentInsightsByItem.get(itemId) || null;
     }
     getSourcesForItem(itemId) {
       if (!itemId)
@@ -53619,215 +53599,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       return {};
     }
-    buildAgentScope(item, fallback = {}) {
-      const metadata = this.parseMetadata(item?.metadata);
-      const sessionMeta = this.parseMetadata(fallback?.session?.metadata);
-      const actorRole = String(fallback?.actorRole || metadata.actor_role || metadata.agent_actor_role || item?.actor_role || item?.assignee_role || sessionMeta.actor_role || "").trim();
-      const workflowId = String(fallback?.workflowId || item?.workflow_id || metadata.workflow_id || sessionMeta.workflow_id || "").trim();
-      return {
-        actorRole: actorRole || null,
-        workflowId: workflowId || null
-      };
-    }
-    extractHostname(url) {
-      try {
-        const parsed = new URL(String(url || ""));
-        return String(parsed.hostname || "").toLowerCase();
-      } catch (_2) {
-        return "";
-      }
-    }
-    extractSenderDomain(sender) {
-      const value = String(sender || "").trim().toLowerCase();
-      if (!value)
-        return "";
-      const match = value.match(/@([a-z0-9.-]+\.[a-z]{2,})/);
-      return match ? match[1] : "";
-    }
-    tokenizeSearchText(value) {
-      const text = String(value || "").toLowerCase();
-      if (!text)
-        return [];
-      const tokens = text.split(/[^a-z0-9.-]+/).map((token) => token.trim()).filter((token) => token.length >= 3);
-      return Array.from(new Set(tokens)).slice(0, 25);
-    }
-    buildTabSearchTokens(item) {
-      const tokens = new Set;
-      this.tokenizeSearchText(item?.vendor_name || item?.vendor).forEach((token) => tokens.add(token));
-      this.tokenizeSearchText(item?.subject).forEach((token) => tokens.add(token));
-      this.tokenizeSearchText(item?.invoice_number).forEach((token) => tokens.add(token));
-      const senderDomain = this.extractSenderDomain(item?.sender);
-      if (senderDomain) {
-        tokens.add(senderDomain);
-        senderDomain.split(".").forEach((part) => {
-          if (part.length >= 3)
-            tokens.add(part);
-        });
-      }
-      return Array.from(tokens).slice(0, 30);
-    }
-    buildCrossTabInsights(item) {
-      const tabs = Array.isArray(this.browserTabContext) ? this.browserTabContext : [];
-      if (!item) {
-        return {
-          totalTabs: tabs.length,
-          relatedCount: 0,
-          relatedTabs: [],
-          senderDomain: ""
-        };
-      }
-      const senderDomain = this.extractSenderDomain(item.sender);
-      const tokens = this.buildTabSearchTokens(item);
-      const scoredTabs = tabs.map((tab) => {
-        const host = this.extractHostname(tab.url);
-        const haystack = `${String(tab.title || "").toLowerCase()} ${String(tab.url || "").toLowerCase()}`;
-        let score = 0;
-        for (const token of tokens) {
-          if (token && haystack.includes(token))
-            score += 1;
-        }
-        if (senderDomain && host) {
-          if (host === senderDomain || host.endsWith(`.${senderDomain}`) || senderDomain.endsWith(`.${host}`)) {
-            score += 2;
-          }
-        }
-        if (String(tab.url || "").toLowerCase().includes("mail.google.com"))
-          score += 1;
-        if (tab.active)
-          score += 1;
-        return {
-          ...tab,
-          host,
-          score
-        };
-      }).filter((tab) => tab.score > 0).sort((a2, b) => b.score - a2.score || Number(b.active) - Number(a2.active));
-      return {
-        totalTabs: tabs.length,
-        relatedCount: scoredTabs.length,
-        relatedTabs: scoredTabs.slice(0, 5),
-        senderDomain
-      };
-    }
-    extractKeyFacts(text) {
-      const normalized = String(text || "").replace(/\s+/g, " ");
-      if (!normalized)
-        return [];
-      const facts = new Set;
-      const invoiceMatch = normalized.match(/\b(?:invoice|inv)[\s#:.-]*([a-z0-9-]{4,})\b/i);
-      if (invoiceMatch?.[1])
-        facts.add(`Invoice ${invoiceMatch[1]}`);
-      const amountMatches = normalized.match(/\b(?:USD|EUR|GBP|SEK|NOK|DKK|CAD|AUD)\s?\d[\d,]*(?:\.\d{2})?\b/g) || [];
-      amountMatches.slice(0, 2).forEach((match) => facts.add(match));
-      return Array.from(facts).slice(0, 3);
-    }
-    summarizeReadPageResult(result) {
-      if (!result || result.ok !== true) {
-        return {
-          ok: false,
-          error: result?.error || "read_page_failed"
-        };
-      }
-      const headings = Array.isArray(result.headings) ? result.headings.map((heading) => String(heading || "").trim()).filter(Boolean).slice(0, 3) : [];
-      const body = String(result.body_text || "").replace(/\s+/g, " ").trim();
-      let snippet = body.slice(0, 280);
-      if (snippet.length === 280) {
-        const sentenceIx = snippet.lastIndexOf(". ");
-        if (sentenceIx > 120)
-          snippet = snippet.slice(0, sentenceIx + 1);
-      }
-      return {
-        ok: true,
-        title: String(result.title || "").trim(),
-        url: String(result.url || "").trim(),
-        headings,
-        snippet,
-        facts: this.extractKeyFacts(body)
-      };
-    }
-    async summarizeCurrentPage() {
-      const response = await this.safeSendMessage({
-        action: "executeBrowserToolCommand",
-        command: {
-          tool_name: "read_page",
-          params: { include_headings: true }
-        }
-      });
-      if (!response?.success) {
-        return { ok: false, error: response?.error || "runtime_unavailable" };
-      }
-      return this.summarizeReadPageResult(response.result || {});
-    }
-    async summarizeRelatedTabs(item, maxTabs = 3) {
-      const insights = this.buildCrossTabInsights(item);
-      const tabs = (insights.relatedTabs || []).slice(0, Math.max(1, Math.min(5, Number(maxTabs) || 3)));
-      const summaries = [];
-      for (const tab of tabs) {
-        const response = await this.safeSendMessage({
-          action: "executeBrowserToolCommand",
-          command: {
-            tool_name: "read_page",
-            target: { tab_id: tab.tabId },
-            params: { include_headings: true }
-          }
-        });
-        if (!response?.success)
-          continue;
-        const summary = this.summarizeReadPageResult(response.result || {});
-        if (!summary.ok)
-          continue;
-        summaries.push({
-          tabId: tab.tabId,
-          host: tab.host || this.extractHostname(tab.url),
-          title: tab.title || summary.title,
-          summary
-        });
-      }
-      return {
-        ok: true,
-        totalRelated: insights.relatedCount || 0,
-        analyzedCount: summaries.length,
-        summaries
-      };
-    }
-    isTransientAgentError(errorCode) {
-      const code = String(errorCode || "").toLowerCase();
-      if (!code)
-        return true;
-      return code === "execution_failed" || code === "execution_exception" || code.includes("runtime_message_failed") || code.includes("runtime_message_timeout") || code.includes("runtime_unavailable") || code.includes("receiving end does not exist") || code.includes("target_tab_not_found") || code.includes("no_result") || code.includes("disconnected");
-    }
-    getAgentEventTimestamp(event) {
-      const raw = event?.updated_at || event?.updatedAt || event?.created_at || event?.createdAt || null;
-      const parsed = raw ? Date.parse(raw) : NaN;
-      return Number.isFinite(parsed) ? parsed : 0;
-    }
-    getLatestAgentCommandStatuses(events) {
-      const latest = new Map;
-      const rows = Array.isArray(events) ? events : [];
-      for (const event of rows) {
-        const commandId = String(event?.command_id || "");
-        if (!commandId)
-          continue;
-        const ts = this.getAgentEventTimestamp(event);
-        const prev = latest.get(commandId);
-        if (!prev || ts >= prev.ts) {
-          latest.set(commandId, { status: String(event?.status || ""), ts });
-        }
-      }
-      return latest;
-    }
-    getCommandDependencies(commandPayload) {
-      if (!commandPayload)
-        return [];
-      const raw = commandPayload.depends_on ?? commandPayload.dependsOn ?? [];
-      if (Array.isArray(raw)) {
-        return raw.map((value) => String(value || "").trim()).filter(Boolean);
-      }
-      if (typeof raw === "string") {
-        const value = raw.trim();
-        return value ? [value] : [];
-      }
-      return [];
-    }
     async init() {
       await this.loadProcessedIds();
       this.runtimeConfig = await this.getSyncConfig();
@@ -53847,7 +53618,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (this.scanStatus.state === "auth_required") {
         this.ensureBackendAuthIfNeeded();
       }
-      await this.syncAgentSessions();
       this.startBackendSync();
       this.startPeriodicScan();
       if (this.debugManualScan) {
@@ -54107,7 +53877,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this.backendSyncTimer = setInterval(async () => {
         const synced = await this.syncQueueWithBackend({ updateStatus: false });
         this.applyRuntimeStatus({ synced, extra: { lastScanAt: Date.now() } });
-        await this.syncAgentSessions();
       }, 30000);
     }
     async scanNow(source = "auto") {
@@ -54125,7 +53894,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             lastScanAt: Date.now()
           }
         });
-        await this.syncAgentSessions();
       } finally {
         this.scanInFlight = false;
       }
@@ -54460,7 +54228,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         synced,
         extra: { lastScanAt: Date.now() }
       });
-      await this.syncAgentSessions();
     }
     invalidateItemCaches(apItemId) {
       if (!apItemId)
@@ -54828,354 +54595,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this.invalidateItemCaches(item.id);
       await this.refreshQueue();
       return result;
-    }
-    async ensureAgentSession(item) {
-      if (!item?.id || !this.runtimeConfig?.backendUrl)
-        return null;
-      const existing = this.agentSessionsByItem.get(item.id);
-      if (existing?.session?.id)
-        return existing.session.id;
-      const metadata = this.parseMetadata(item.metadata);
-      const contextSnapshot = {
-        invoice_number: item.invoice_number || metadata.invoice_number || null,
-        vendor_name: item.vendor_name || metadata.vendor_name || null,
-        amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : null,
-        currency: item.currency || metadata.currency || null,
-        source_count: Number.isFinite(Number(item.source_count)) ? Number(item.source_count) : 0,
-        budget_status: item.budget_status || metadata.budget_status || null,
-        has_context_conflict: Boolean(item.has_context_conflict || metadata.has_context_conflict)
-      };
-      if (metadata?.agent_session_id)
-        return metadata.agent_session_id;
-      const scope = this.buildAgentScope(item);
-      try {
-        const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            org_id: this.runtimeConfig.organizationId || "default",
-            ap_item_id: item.id,
-            actor_id: "gmail_extension",
-            metadata: {
-              source: "gmail_sidebar",
-              actor_role: scope.actorRole,
-              workflow_id: scope.workflowId,
-              context_snapshot: contextSnapshot
-            }
-          })
-        });
-        if (!response.ok)
-          return null;
-        const payload = await response.json();
-        return payload?.session?.id || null;
-      } catch (_2) {
-        return null;
-      }
-    }
-    async fetchAgentSession(sessionId) {
-      if (!sessionId || !this.runtimeConfig?.backendUrl)
-        return null;
-      try {
-        const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}`, {
-          method: "GET"
-        });
-        if (!response.ok)
-          return null;
-        return await response.json();
-      } catch (_2) {
-        return null;
-      }
-    }
-    async submitAgentResult(sessionId, commandId, status, resultPayload) {
-      if (!sessionId || !commandId || !this.runtimeConfig?.backendUrl)
-        return null;
-      try {
-        const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/results`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            actor_id: "gmail_extension",
-            command_id: commandId,
-            status,
-            result_payload: resultPayload || {}
-          })
-        });
-        if (!response.ok)
-          return null;
-        return await response.json();
-      } catch (_2) {
-        return null;
-      }
-    }
-    async confirmAgentCommand(sessionId, command, actorId = "gmail_user", scopeContext = {}) {
-      if (!sessionId || !command || !this.runtimeConfig?.backendUrl)
-        return null;
-      const payload = command.request_payload || {};
-      const scope = this.buildAgentScope(null, {
-        actorRole: payload.actor_role || scopeContext.actorRole,
-        workflowId: payload.workflow_id || scopeContext.workflowId
-      });
-      try {
-        const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/commands`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            actor_id: actorId,
-            actor_role: scope.actorRole,
-            workflow_id: scope.workflowId,
-            tool_name: payload.tool_name || command.tool_name,
-            command_id: command.command_id,
-            correlation_id: payload.correlation_id,
-            target: payload.target || {},
-            params: payload.params || {},
-            idempotency_key: payload.idempotency_key,
-            confirm: true,
-            confirmed_by: actorId
-          })
-        });
-        if (!response.ok)
-          return null;
-        return await response.json();
-      } catch (_2) {
-        return null;
-      }
-    }
-    async enqueueAgentCommand(sessionId, command, actorId = "gmail_extension", scopeContext = {}) {
-      if (!sessionId || !command || !this.runtimeConfig?.backendUrl)
-        return null;
-      const scope = this.buildAgentScope(null, {
-        actorRole: command.actor_role || scopeContext.actorRole,
-        workflowId: command.workflow_id || scopeContext.workflowId
-      });
-      try {
-        const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/commands`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            actor_id: actorId,
-            actor_role: scope.actorRole,
-            workflow_id: scope.workflowId,
-            tool_name: command.tool_name,
-            command_id: command.command_id,
-            correlation_id: command.correlation_id,
-            target: command.target || {},
-            params: command.params || {},
-            idempotency_key: command.idempotency_key
-          })
-        });
-        if (!response.ok)
-          return null;
-        return await response.json();
-      } catch (_2) {
-        return null;
-      }
-    }
-    async previewAgentCommand(sessionId, command, actorId = "gmail_user", scopeContext = {}) {
-      if (!sessionId || !command || !this.runtimeConfig?.backendUrl)
-        return null;
-      const payload = command.request_payload || command;
-      const scope = this.buildAgentScope(null, {
-        actorRole: payload.actor_role || scopeContext.actorRole,
-        workflowId: payload.workflow_id || scopeContext.workflowId
-      });
-      try {
-        const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/commands/preview`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            actor_id: actorId,
-            actor_role: scope.actorRole,
-            workflow_id: scope.workflowId,
-            tool_name: payload.tool_name,
-            command_id: payload.command_id || command.command_id,
-            correlation_id: payload.correlation_id,
-            target: payload.target || {},
-            params: payload.params || {}
-          })
-        });
-        if (!response.ok)
-          return null;
-        const body = await response.json();
-        return body?.preview || null;
-      } catch (_2) {
-        return null;
-      }
-    }
-    async dispatchAgentMacro(sessionId, macroName, {
-      actorId = "gmail_user",
-      actorRole = null,
-      workflowId = null,
-      params = {},
-      dryRun = false
-    } = {}) {
-      if (!sessionId || !macroName || !this.runtimeConfig?.backendUrl)
-        return null;
-      const scope = this.buildAgentScope(null, {
-        actorRole,
-        workflowId
-      });
-      try {
-        const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/macros/${encodeURIComponent(macroName)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            actor_id: actorId,
-            actor_role: scope.actorRole,
-            workflow_id: scope.workflowId,
-            params: params || {},
-            dry_run: Boolean(dryRun)
-          })
-        });
-        if (!response.ok)
-          return null;
-        return await response.json();
-      } catch (_2) {
-        return null;
-      }
-    }
-    async recoverFailedReadPage(sessionPayload) {
-      const session = sessionPayload?.session;
-      const sessionId = session?.id;
-      if (!sessionId || this.agentReadPageRecovery.has(sessionId))
-        return;
-      const queued = Array.isArray(sessionPayload?.queued_commands) ? sessionPayload.queued_commands : [];
-      if (queued.length > 0)
-        return;
-      const events = Array.isArray(sessionPayload?.events) ? sessionPayload.events : [];
-      const hasCompletedRead = events.some((event) => event.tool_name === "read_page" && event.status === "completed");
-      if (hasCompletedRead)
-        return;
-      const latestReadFailure = [...events].reverse().find((event) => event.tool_name === "read_page" && event.status === "failed");
-      if (!latestReadFailure)
-        return;
-      const failureError = latestReadFailure?.result_payload?.error || latestReadFailure?.resultPayload?.error || "execution_failed";
-      if (!this.isTransientAgentError(failureError))
-        return;
-      const priorRequest = latestReadFailure.request_payload || latestReadFailure.requestPayload || {};
-      const retryCommand = {
-        tool_name: "read_page",
-        command_id: `read_invoice_page_retry_${Date.now()}`,
-        correlation_id: priorRequest.correlation_id,
-        target: priorRequest.target || { url: "https://mail.google.com/" },
-        params: priorRequest.params || { include_tables: true }
-      };
-      const enqueued = await this.enqueueAgentCommand(sessionId, retryCommand, "gmail_extension_recovery", {
-        actorRole: priorRequest.actor_role || this.parseMetadata(session?.metadata).actor_role || null,
-        workflowId: priorRequest.workflow_id || this.parseMetadata(session?.metadata).workflow_id || null
-      });
-      if (enqueued?.event?.command_id) {
-        this.agentReadPageRecovery.add(sessionId);
-      }
-    }
-    async processPendingAgentCommands(sessionPayload) {
-      if (!sessionPayload?.session?.id)
-        return;
-      const sessionId = sessionPayload.session.id;
-      const allEvents = Array.isArray(sessionPayload.events) ? sessionPayload.events : [];
-      const latestStatuses = this.getLatestAgentCommandStatuses(allEvents);
-      const queuedCommands = Array.isArray(sessionPayload.queued_commands) ? sessionPayload.queued_commands : [];
-      for (const command of queuedCommands.slice(0, 5)) {
-        const commandId = command.command_id;
-        if (!commandId)
-          continue;
-        const commandPayload = command.request_payload || {};
-        const dependencies = this.getCommandDependencies(commandPayload);
-        if (dependencies.length > 0) {
-          const failedDependency = dependencies.find((depId) => {
-            const depStatus = latestStatuses.get(depId)?.status || "";
-            return depStatus === "failed" || depStatus === "denied_policy";
-          });
-          if (failedDependency) {
-            await this.submitAgentResult(sessionId, commandId, "failed", {
-              error: "dependency_failed",
-              dependency: failedDependency
-            });
-            latestStatuses.set(commandId, { status: "failed", ts: Date.now() });
-            continue;
-          }
-          const pendingDependency = dependencies.find((depId) => {
-            const depStatus = latestStatuses.get(depId)?.status || "";
-            return depStatus !== "completed";
-          });
-          if (pendingDependency) {
-            continue;
-          }
-        }
-        const inFlightKey = `${sessionId}:${commandId}`;
-        if (this.agentCommandInFlight.has(inFlightKey))
-          continue;
-        this.agentCommandInFlight.add(inFlightKey);
-        try {
-          const response = await this.safeSendMessage({
-            action: "executeBrowserToolCommand",
-            command: {
-              tool_name: command.tool_name || commandPayload.tool_name,
-              target: commandPayload.target || {},
-              params: commandPayload.params || {},
-              url: commandPayload.url
-            }
-          });
-          const transientTransportError = !response || response?.success === false && this.isTransientAgentError(response?.error);
-          if (transientTransportError) {
-            const nextAttempts = (this.agentCommandRetryCount.get(inFlightKey) || 0) + 1;
-            this.agentCommandRetryCount.set(inFlightKey, nextAttempts);
-            if (nextAttempts < 3) {
-              continue;
-            }
-          }
-          let status = "failed";
-          let resultPayload = { error: response?.error || "execution_failed" };
-          if (response?.success && response?.result?.ok) {
-            status = "completed";
-            resultPayload = response.result;
-          } else if (response?.success) {
-            status = "failed";
-            resultPayload = response.result || resultPayload;
-          }
-          await this.submitAgentResult(sessionId, commandId, status, resultPayload);
-          latestStatuses.set(commandId, { status, ts: Date.now() });
-          this.agentCommandRetryCount.delete(inFlightKey);
-        } catch (_2) {
-          await this.submitAgentResult(sessionId, commandId, "failed", { error: "execution_exception" });
-          latestStatuses.set(commandId, { status: "failed", ts: Date.now() });
-          this.agentCommandRetryCount.delete(inFlightKey);
-        } finally {
-          this.agentCommandInFlight.delete(inFlightKey);
-        }
-      }
-    }
-    async syncAgentSessions() {
-      if (this.agentSyncInFlight || !this.runtimeConfig?.backendUrl)
-        return;
-      this.agentSyncInFlight = true;
-      try {
-        const tabsResp = await this.safeSendMessage({ action: "listBrowserTabs" });
-        if (tabsResp?.success && Array.isArray(tabsResp.tabs)) {
-          this.browserTabContext = tabsResp.tabs;
-        }
-        const map = new Map;
-        const insightsMap = new Map;
-        const items = (Array.isArray(this.queue) ? this.queue : []).slice(0, 30);
-        for (const item of items) {
-          if (!item?.id)
-            continue;
-          insightsMap.set(item.id, this.buildCrossTabInsights(item));
-          const sessionId = await this.ensureAgentSession(item);
-          if (!sessionId)
-            continue;
-          const payload = await this.fetchAgentSession(sessionId);
-          if (!payload)
-            continue;
-          await this.recoverFailedReadPage(payload);
-          map.set(item.id, payload);
-          await this.processPendingAgentCommands(payload);
-        }
-        this.agentSessionsByItem = map;
-        this.agentInsightsByItem = insightsMap;
-        this.emitQueueUpdated();
-      } finally {
-        this.agentSyncInFlight = false;
-      }
     }
     async verifyConfidence(item) {
       if (!item || !this.runtimeConfig?.backendUrl)
