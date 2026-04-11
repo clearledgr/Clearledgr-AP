@@ -490,17 +490,40 @@ async def post_bill_api_first(
         )
 
     # API failed — no browser fallback, return failure directly
+    # §18: Format thesis-quality error message
+    _erp_error_type = "erp_unreachable"
+    _raw_reason = str(api_result.get("reason") or "api_failed")
+    if "permission" in _raw_reason.lower() or "forbidden" in _raw_reason.lower():
+        _erp_error_type = "erp_insufficient_permissions"
+    elif "timeout" in _raw_reason.lower() or "unreachable" in _raw_reason.lower():
+        _erp_error_type = "erp_unreachable"
+
+    try:
+        from clearledgr.services.error_messages import format_error_for_timeline
+        _error_entry = format_error_for_timeline(
+            _erp_error_type,
+            vendor_name=vendor_name or "",
+            invoice_number=invoice_number or "",
+            erp_type=detected_erp_type,
+            detail=_raw_reason,
+        )
+        if resolved_ap_item_id and hasattr(resolved_db, "append_ap_item_timeline_entry"):
+            resolved_db.append_ap_item_timeline_entry(resolved_ap_item_id, _error_entry)
+    except Exception:
+        pass
+
     _audit(
         resolved_db,
         ap_item_id=resolved_ap_item_id,
         organization_id=organization_id,
         event_type="erp_api_failed",
         actor_id=actor_id,
-        reason=str(api_result.get("reason") or "api_failed"),
+        reason=_raw_reason,
         payload={
             "api_status": api_status,
             "api_reason": api_result.get("reason"),
             "route_plan": route_plan,
+            "error_type": _erp_error_type,
         },
         idempotency_key=f"erp_api_failed:{_stable_hash(attempt_key_seed)}",
         correlation_id=correlation_id,
