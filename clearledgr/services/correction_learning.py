@@ -26,13 +26,22 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 from enum import Enum
 
 from clearledgr.core.database import get_db
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_ts(value) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
 
 _correction_learning_services: Dict[str, "CorrectionLearningService"] = {}
 
@@ -1615,17 +1624,70 @@ class CorrectionLearningService:
         
         return " ".join(messages) if messages else "Correction recorded."
     
+    # §7.9: 50-signal minimum per category before a pattern is actionable
+    MIN_SIGNALS_FOR_SYSTEMIC_PATTERN = 50
+
     def get_learning_stats(self) -> Dict[str, Any]:
         """Get statistics about what the agent has learned."""
+        corrections_by_category = self._count_corrections_by_category()
+        actionable_categories = {
+            cat: count for cat, count in corrections_by_category.items()
+            if count >= self.MIN_SIGNALS_FOR_SYSTEMIC_PATTERN
+        }
         return {
             "total_corrections": len(self._corrections),
             "learned_rules": len(self._learned_rules),
             "vendor_preferences": len(self._vendor_preferences),
             "rules_by_type": self._count_rules_by_type(),
+            "corrections_by_category": corrections_by_category,
+            "actionable_categories": actionable_categories,
+            "min_signals_for_pattern": self.MIN_SIGNALS_FOR_SYSTEMIC_PATTERN,
             "recent_corrections": len([
                 c for c in self._corrections
                 if (datetime.now() - datetime.fromisoformat(c.timestamp)).days <= 7
             ]),
+        }
+
+    def _count_corrections_by_category(self) -> Dict[str, int]:
+        """§7.9: Count corrections by category (field + document type)."""
+        counts: Dict[str, int] = defaultdict(int)
+        for c in self._corrections:
+            category = f"{c.field_name}:{c.document_type or 'unknown'}"
+            counts[category] += 1
+        return dict(counts)
+
+    def get_closed_loop_validation(self, improvement_date: str, window_days: int = 28) -> Dict[str, Any]:
+        """§7.9 Closed-loop validation: track override rate change post-improvement.
+
+        "After each model improvement, the Backoffice tracks whether the
+        override rate for the targeted category decreases in the four weeks
+        following deployment."
+        """
+        try:
+            improvement_dt = datetime.fromisoformat(improvement_date.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return {"error": "invalid_improvement_date"}
+
+        pre_window = [
+            c for c in self._corrections
+            if _parse_ts(c.timestamp) and improvement_dt - timedelta(days=window_days) <= _parse_ts(c.timestamp) < improvement_dt
+        ]
+        post_window = [
+            c for c in self._corrections
+            if _parse_ts(c.timestamp) and improvement_dt <= _parse_ts(c.timestamp) <= improvement_dt + timedelta(days=window_days)
+        ]
+
+        pre_count = len(pre_window)
+        post_count = len(post_window)
+        improvement_pct = ((pre_count - post_count) / pre_count * 100) if pre_count > 0 else 0.0
+
+        return {
+            "improvement_date": improvement_date,
+            "window_days": window_days,
+            "pre_improvement_corrections": pre_count,
+            "post_improvement_corrections": post_count,
+            "improvement_pct": round(improvement_pct, 1),
+            "improved": post_count < pre_count,
         }
     
     def _count_rules_by_type(self) -> Dict[str, int]:
