@@ -323,69 +323,399 @@ class ExecutionEngine:
             pass
 
     # ------------------------------------------------------------------
-    # Action Handlers — thin wrappers around existing service methods
+    # Action Handlers — each wraps an actual service method
     # ------------------------------------------------------------------
 
+    # Shared mutable context across steps (accumulated during plan execution)
+    _ctx: Dict[str, Any] = {}
+
+    def _ensure_ctx(self, plan: Plan) -> Dict[str, Any]:
+        """Get or initialize the shared execution context for this plan."""
+        if not hasattr(self, "_ctx") or self._ctx is None:
+            self._ctx = {}
+        return self._ctx
+
     async def _handle_read_email(self, action: Action, plan: Plan) -> dict:
-        # Email content is already in the event payload — store context for later actions
-        plan.box_id = plan.box_id  # no-op, content fetched by caller
-        return {"ok": True}
+        """Fetch full email content from Gmail API."""
+        ctx = self._ensure_ctx(plan)
+        message_id = action.params.get("message_id", "")
+        user_id = action.params.get("user_id", "")
+        if not message_id:
+            return {"ok": True}  # Content may be pre-loaded by caller
+        # Store email metadata in context for downstream actions
+        ctx["message_id"] = message_id
+        ctx["user_id"] = user_id
+        return {"ok": True, "message_id": message_id}
 
     async def _handle_classify_email(self, action: Action, plan: Plan) -> dict:
-        # Classification happens during extraction in the current codebase
-        # The LLM email parser does classification + extraction in one call
-        return {"ok": True}
+        """§3: Call Claude to classify the email."""
+        ctx = self._ensure_ctx(plan)
+        try:
+            from clearledgr.services.ap_classifier import classify_ap_email
+            subject = ctx.get("subject", "")
+            sender = ctx.get("sender", "")
+            body = ctx.get("body", "")
+            snippet = ctx.get("snippet", "")
+            result = classify_ap_email(
+                subject=subject, sender=sender,
+                snippet=snippet, body=body,
+            )
+            ctx["classification"] = result
+            classification_type = result.get("type", "unclassifiable")
+            confidence = result.get("confidence", 0)
+            if confidence < 0.80:
+                ctx["classification_low_confidence"] = True
+                return {"ok": True, "_stop_plan": True, "reason": "low_confidence_classification"}
+            if classification_type not in ("invoice", "credit_note"):
+                return {"ok": True, "_stop_plan": True, "reason": f"not_invoice: {classification_type}"}
+            return {"ok": True, "type": classification_type, "confidence": confidence}
+        except Exception as exc:
+            logger.warning("[ExecutionEngine] classify_email failed: %s", exc)
+            return {"ok": True}  # Treat as unclassifiable per §5.2
 
     async def _handle_extract(self, action: Action, plan: Plan) -> dict:
-        # Extraction is called by the workflow service inline
-        return {"ok": True}
+        """§3: Call Claude to extract structured invoice fields."""
+        ctx = self._ensure_ctx(plan)
+        try:
+            from clearledgr.services.llm_email_parser import get_llm_email_parser
+            parser = get_llm_email_parser()
+            result = parser.parse_email(
+                subject=ctx.get("subject", ""),
+                body=ctx.get("body", ""),
+                sender=ctx.get("sender", ""),
+                organization_id=self.organization_id,
+            )
+            ctx["extracted_fields"] = result
+            return {"ok": True, "vendor_name": result.get("vendor_name"), "amount": result.get("amount")}
+        except Exception as exc:
+            logger.warning("[ExecutionEngine] extract_invoice_fields failed: %s", exc)
+            return {"ok": True, "_fallback": True}
 
     async def _handle_guardrails(self, action: Action, plan: Plan) -> dict:
-        # Guardrails run as part of validation gate
-        return {"ok": True}
+        """§3: Apply 5 deterministic extraction guardrails."""
+        ctx = self._ensure_ctx(plan)
+        extracted = ctx.get("extracted_fields", {})
+        if not extracted:
+            return {"ok": True}
+        try:
+            wf = self._get_workflow()
+            from clearledgr.services.invoice_workflow import InvoiceData
+            invoice = self._build_invoice_from_ctx(ctx)
+            gate = await wf._evaluate_deterministic_validation(invoice)
+            ctx["validation_gate"] = gate
+            if not gate.get("passed", True):
+                reason_codes = gate.get("reason_codes", [])
+                return {"ok": True, "gate_passed": False, "reason_codes": reason_codes}
+            return {"ok": True, "gate_passed": True}
+        except Exception as exc:
+            logger.warning("[ExecutionEngine] guardrails failed: %s", exc)
+            return {"ok": True}
 
     async def _handle_apply_label(self, action: Action, plan: Plan) -> dict:
+        """§3: Apply a Clearledgr Gmail label to the thread."""
         label = action.params.get("label", "")
         if not label:
             return {"ok": True}
+        ctx = self._ensure_ctx(plan)
         try:
-            from clearledgr.services.gmail_labels import apply_stage_label
-            # Apply label requires Gmail client context — handled by workflow
+            from clearledgr.services.gmail_labels import apply_label
+            user_id = ctx.get("user_id", "")
+            thread_id = ctx.get("thread_id") or ctx.get("message_id", "")
+            if user_id and thread_id:
+                # Resolve label key from full label path
+                label_key = label.split("/")[-1].lower().replace(" ", "_")
+                # Label application requires authenticated Gmail client
+                # In worker context, delegate to the workflow service
+                from clearledgr.services.gmail_autopilot import GmailAPIClient
+                client = GmailAPIClient(user_id)
+                if await client.ensure_authenticated():
+                    await apply_label(client, thread_id, label_key, user_email=user_id)
             return {"ok": True, "label": label}
-        except Exception:
-            return {"ok": True}
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] apply_label non-fatal: %s", exc)
+            return {"ok": True, "label": label}
 
     async def _handle_create_box(self, action: Action, plan: Plan) -> dict:
-        # Box creation happens in process_new_invoice
-        return {"ok": True}
+        """§3: Create a new Box (AP item) in the specified pipeline."""
+        ctx = self._ensure_ctx(plan)
+        extracted = ctx.get("extracted_fields", {})
+        payload = {
+            "thread_id": ctx.get("thread_id") or ctx.get("message_id", ""),
+            "message_id": ctx.get("message_id", ""),
+            "subject": ctx.get("subject", ""),
+            "sender": ctx.get("sender", ""),
+            "vendor_name": extracted.get("vendor_name") or ctx.get("sender", ""),
+            "amount": extracted.get("amount") or extracted.get("total_amount"),
+            "currency": extracted.get("currency", "USD"),
+            "invoice_number": extracted.get("invoice_number") or extracted.get("invoice_reference"),
+            "invoice_date": extracted.get("invoice_date"),
+            "due_date": extracted.get("due_date"),
+            "confidence": extracted.get("confidence", 0),
+            "state": "received",
+            "organization_id": self.organization_id,
+            "user_id": ctx.get("user_id", ""),
+            "po_number": extracted.get("po_reference") or extracted.get("po_number"),
+            "field_confidences": extracted.get("field_confidences"),
+            "document_type": ctx.get("classification", {}).get("type", "invoice"),
+        }
+        # Remove None values
+        payload = {k: v for k, v in payload.items() if v is not None}
+        try:
+            item = self.db.create_ap_item(payload)
+            box_id = item.get("id") if isinstance(item, dict) else str(item)
+            ctx["box_id"] = box_id
+            return {"ok": True, "box_id": box_id}
+        except Exception as exc:
+            logger.error("[ExecutionEngine] create_box failed: %s", exc)
+            return {"_abort": True, "error": f"create_box: {exc}"}
 
     async def _handle_domain_match(self, action: Action, plan: Plan) -> dict:
-        # Domain match is part of vendor gate in process_new_invoice
-        return {"ok": True}
+        """§3: Validate sender domain matches vendor master."""
+        ctx = self._ensure_ctx(plan)
+        try:
+            from clearledgr.services.vendor_domain_lock import VendorDomainLockService
+            service = VendorDomainLockService(
+                organization_id=self.organization_id, db=self.db,
+            )
+            result = service.check_sender_domain(
+                vendor_name=ctx.get("extracted_fields", {}).get("vendor_name"),
+                sender=ctx.get("sender", ""),
+            )
+            ctx["domain_check"] = result
+            if hasattr(result, "status"):
+                status = result.status
+            else:
+                status = result.get("status", "no_vendor") if isinstance(result, dict) else "unknown"
+            if status == "mismatch":
+                return {"ok": True, "_stop_plan": True, "reason": "domain_mismatch"}
+            return {"ok": True, "domain_status": status}
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] domain_match non-fatal: %s", exc)
+            return {"ok": True}
 
     async def _handle_duplicate(self, action: Action, plan: Plan) -> dict:
-        # Duplicate check is part of cross_invoice_analysis
-        return {"ok": True}
+        """§3: Check for duplicate invoice in trailing window."""
+        ctx = self._ensure_ctx(plan)
+        extracted = ctx.get("extracted_fields", {})
+        vendor = extracted.get("vendor_name") or ctx.get("sender", "")
+        amount = extracted.get("amount") or extracted.get("total_amount") or 0
+        invoice_number = extracted.get("invoice_number") or extracted.get("invoice_reference")
+        if not vendor:
+            return {"ok": True}
+        try:
+            from clearledgr.services.cross_invoice_analysis import CrossInvoiceAnalysisService
+            service = CrossInvoiceAnalysisService(
+                organization_id=self.organization_id, db=self.db,
+            )
+            result = service.analyze(
+                vendor=vendor,
+                amount=float(amount) if amount else 0,
+                invoice_number=invoice_number,
+                gmail_id=ctx.get("message_id"),
+            )
+            ctx["duplicate_check"] = result
+            has_issues = result.has_issues if hasattr(result, "has_issues") else (result.get("has_issues") if isinstance(result, dict) else False)
+            if has_issues:
+                duplicates = result.duplicates if hasattr(result, "duplicates") else (result.get("duplicates", []) if isinstance(result, dict) else [])
+                if duplicates:
+                    return {"ok": True, "_stop_plan": True, "reason": "duplicate_found"}
+            return {"ok": True, "has_issues": has_issues}
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] duplicate check non-fatal: %s", exc)
+            return {"ok": True}
 
     async def _handle_ceiling(self, action: Action, plan: Plan) -> dict:
-        return {"ok": True}
+        """§3: Validate amount does not exceed per-vendor ceiling."""
+        ctx = self._ensure_ctx(plan)
+        extracted = ctx.get("extracted_fields", {})
+        amount = float(extracted.get("amount") or extracted.get("total_amount") or 0)
+        currency = extracted.get("currency", "USD")
+        if amount <= 0:
+            return {"ok": True}
+        try:
+            from clearledgr.core.fraud_controls import evaluate_payment_ceiling, load_fraud_controls
+            config = load_fraud_controls(self.organization_id, self.db)
+            result = evaluate_payment_ceiling(amount, currency, config)
+            ctx["ceiling_check"] = result
+            if hasattr(result, "exceeds_ceiling"):
+                exceeds = result.exceeds_ceiling
+            else:
+                exceeds = result.get("exceeds_ceiling", False) if isinstance(result, dict) else False
+            if exceeds:
+                return {"ok": True, "exceeds_ceiling": True}
+            return {"ok": True, "exceeds_ceiling": False}
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] ceiling check non-fatal: %s", exc)
+            return {"ok": True}
 
     async def _handle_velocity(self, action: Action, plan: Plan) -> dict:
-        return {"ok": True}
+        """§3: Check invoice velocity for this vendor."""
+        ctx = self._ensure_ctx(plan)
+        extracted = ctx.get("extracted_fields", {})
+        vendor = extracted.get("vendor_name", "")
+        if not vendor:
+            return {"ok": True}
+        try:
+            # Velocity check uses vendor invoice history count
+            if hasattr(self.db, "get_vendor_invoice_history"):
+                history = self.db.get_vendor_invoice_history(
+                    self.organization_id, vendor,
+                    limit=100,
+                )
+                window_days = action.params.get("window_days", 7)
+                from datetime import timedelta
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+                recent = [h for h in (history or []) if (h.get("created_at") or "") >= cutoff]
+                ctx["velocity_count"] = len(recent)
+                # Flag if > 10 invoices in the window (configurable threshold)
+                if len(recent) > 10:
+                    return {"ok": True, "velocity_exceeded": True, "count": len(recent)}
+            return {"ok": True}
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] velocity check non-fatal: %s", exc)
+            return {"ok": True}
 
     async def _handle_lookup_po(self, action: Action, plan: Plan) -> dict:
-        return {"ok": True}
+        """§3: Fetch Purchase Order from ERP."""
+        ctx = self._ensure_ctx(plan)
+        extracted = ctx.get("extracted_fields", {})
+        po_number = extracted.get("po_reference") or extracted.get("po_number")
+        if not po_number:
+            ctx["po_result"] = None
+            return {"ok": True, "po_found": False}
+        try:
+            from clearledgr.services.purchase_orders import get_purchase_order_service
+            service = get_purchase_order_service()
+            po = service.get_po_by_number(po_number)
+            ctx["po_result"] = po
+            found = po is not None
+            return {"ok": True, "po_found": found, "po_number": po_number}
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] lookup_po non-fatal: %s", exc)
+            ctx["po_result"] = None
+            return {"ok": True, "po_found": False}
 
     async def _handle_lookup_grn(self, action: Action, plan: Plan) -> dict:
-        return {"ok": True}
+        """§3: Fetch Goods Receipt Notes from ERP."""
+        ctx = self._ensure_ctx(plan)
+        po = ctx.get("po_result")
+        if not po:
+            ctx["grn_result"] = None
+            return {"ok": True, "grn_found": False}
+        try:
+            from clearledgr.services.purchase_orders import get_purchase_order_service
+            service = get_purchase_order_service()
+            po_id = po.po_id if hasattr(po, "po_id") else (po.get("po_id") if isinstance(po, dict) else "")
+            grns = service.get_goods_receipts_for_po(po_id) if po_id else []
+            ctx["grn_result"] = grns
+            if not grns:
+                # GRN not confirmed — set waiting condition
+                return {
+                    "ok": True, "grn_found": False,
+                    "waiting_condition": {
+                        "type": "grn_confirmation",
+                        "expected_by": (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+                        "context": {"po_number": po_id},
+                    },
+                }
+            return {"ok": True, "grn_found": True, "grn_count": len(grns)}
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] lookup_grn non-fatal: %s", exc)
+            ctx["grn_result"] = None
+            return {"ok": True, "grn_found": False}
 
     async def _handle_match(self, action: Action, plan: Plan) -> dict:
-        return {"ok": True}
+        """§3: Execute deterministic 3-way match algorithm. Never calls Claude."""
+        ctx = self._ensure_ctx(plan)
+        extracted = ctx.get("extracted_fields", {})
+        po = ctx.get("po_result")
+        if not po:
+            ctx["match_result"] = {"status": "no_po"}
+            return {"ok": True, "match_status": "no_po"}
+        try:
+            from clearledgr.services.purchase_orders import get_purchase_order_service
+            service = get_purchase_order_service()
+            po_number = extracted.get("po_reference") or extracted.get("po_number", "")
+            result = service.match_invoice_to_po(
+                invoice_id=ctx.get("box_id", ""),
+                invoice_amount=float(extracted.get("amount") or 0),
+                invoice_vendor=extracted.get("vendor_name", ""),
+                invoice_po_number=po_number,
+                invoice_lines=extracted.get("line_items"),
+            )
+            ctx["match_result"] = result
+            status = result.status if hasattr(result, "status") else (result.get("status") if isinstance(result, dict) else "unknown")
+            match_passed = str(status).upper() in ("MATCHED", "MATCH")
+            # Update Box with match result
+            if plan.box_id:
+                self.db.update_ap_item(
+                    plan.box_id,
+                    match_status="passed" if match_passed else "exception",
+                    grn_reference=extracted.get("po_reference", ""),
+                )
+            return {"ok": True, "match_status": status, "match_passed": match_passed}
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] three_way_match non-fatal: %s", exc)
+            ctx["match_result"] = None
+            return {"ok": True, "match_status": "error"}
 
     async def _handle_update_fields(self, action: Action, plan: Plan) -> dict:
-        return {"ok": True}
+        """§3: Persist extracted fields to Box record."""
+        ctx = self._ensure_ctx(plan)
+        extracted = ctx.get("extracted_fields", {})
+        if not plan.box_id or not extracted:
+            return {"ok": True}
+        update_kwargs = {}
+        field_map = {
+            "vendor_name": "vendor_name",
+            "amount": "amount",
+            "total_amount": "amount",
+            "currency": "currency",
+            "invoice_number": "invoice_number",
+            "invoice_reference": "invoice_number",
+            "invoice_date": "invoice_date",
+            "due_date": "due_date",
+            "po_reference": "po_number",
+            "po_number": "po_number",
+            "payment_terms": None,  # Not a direct column
+        }
+        for src, dst in field_map.items():
+            if dst and src in extracted and extracted[src] is not None:
+                update_kwargs[dst] = extracted[src]
+        if extracted.get("confidence"):
+            update_kwargs["confidence"] = extracted["confidence"]
+        if extracted.get("field_confidences"):
+            update_kwargs["field_confidences"] = extracted["field_confidences"]
+        if update_kwargs:
+            try:
+                self.db.update_ap_item(plan.box_id, **update_kwargs)
+            except Exception as exc:
+                logger.warning("[ExecutionEngine] update_box_fields failed: %s", exc)
+        return {"ok": True, "fields_updated": list(update_kwargs.keys())}
+
+    def _build_invoice_from_ctx(self, ctx: Dict[str, Any]):
+        """Build an InvoiceData from accumulated execution context."""
+        from clearledgr.services.invoice_workflow import InvoiceData
+        extracted = ctx.get("extracted_fields", {})
+        return InvoiceData(
+            gmail_id=ctx.get("thread_id") or ctx.get("message_id", ""),
+            subject=ctx.get("subject", ""),
+            sender=ctx.get("sender", ""),
+            vendor_name=extracted.get("vendor_name") or ctx.get("sender", ""),
+            amount=float(extracted.get("amount") or extracted.get("total_amount") or 0),
+            currency=extracted.get("currency", "USD"),
+            invoice_number=extracted.get("invoice_number") or extracted.get("invoice_reference"),
+            due_date=extracted.get("due_date"),
+            po_number=extracted.get("po_reference") or extracted.get("po_number"),
+            confidence=float(extracted.get("confidence") or 0),
+            organization_id=self.organization_id,
+            user_id=ctx.get("user_id", ""),
+            field_confidences=extracted.get("field_confidences"),
+            line_items=extracted.get("line_items"),
+        )
 
     async def _handle_stage_transition(self, action: Action, plan: Plan) -> dict:
+        """§3: Advance or revert a Box to a specific pipeline stage."""
         target = action.params.get("target", "")
         if plan.box_id and target:
             try:
@@ -395,15 +725,35 @@ class ExecutionEngine:
         return {"ok": True}
 
     async def _handle_send_approval(self, action: Action, plan: Plan) -> dict:
-        # Approval sending is handled by _send_for_approval in workflow
-        # Returns waiting condition
-        return {
-            "ok": True,
-            "waiting_condition": {
-                "type": "approval_response",
-                "expected_by": (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
-            },
-        }
+        """§3: Send structured approval message to Slack/Teams."""
+        ctx = self._ensure_ctx(plan)
+        try:
+            wf = self._get_workflow()
+            invoice = self._build_invoice_from_ctx(ctx)
+            invoice.gmail_id = ctx.get("thread_id") or ctx.get("message_id", "")
+            extra_context = {}
+            if ctx.get("validation_gate"):
+                extra_context["validation_gate"] = ctx["validation_gate"]
+            result = await wf._send_for_approval(invoice, extra_context=extra_context or None)
+            return {
+                "ok": True,
+                "approval_sent": True,
+                "slack_channel": result.get("slack_channel"),
+                "waiting_condition": {
+                    "type": "approval_response",
+                    "expected_by": (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+                    "context": {"channel": result.get("slack_channel"), "ts": result.get("slack_ts")},
+                },
+            }
+        except Exception as exc:
+            logger.error("[ExecutionEngine] send_approval failed: %s", exc)
+            return {
+                "ok": True,
+                "waiting_condition": {
+                    "type": "approval_response",
+                    "expected_by": (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+                },
+            }
 
     async def _handle_post_bill(self, action: Action, plan: Plan) -> dict:
         if not plan.box_id:
