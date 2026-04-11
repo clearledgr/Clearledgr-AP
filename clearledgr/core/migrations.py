@@ -1070,6 +1070,7 @@ def _v29_box_state_fields(cur, db):
         ("pending_plan", "TEXT"),        # JSON: remaining plan actions
         ("waiting_condition", "TEXT"),    # JSON: {type, expected_by, context}
         ("fraud_flags", "TEXT"),          # JSON: [{flag_type, detected_at, ...}]
+        ("payment_reference", "TEXT"),   # §6.1: payment ref from ERP after schedule_payment
     ]:
         try:
             cur.execute(f"ALTER TABLE ap_items ADD COLUMN {col} {col_type}")

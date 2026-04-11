@@ -846,12 +846,16 @@ class ExecutionEngine:
             from clearledgr.integrations.erp_router import get_erp_connection
             connection = get_erp_connection(self.organization_id)
             if connection:
-                # Payment scheduling is ERP-specific — record intent
-                self.db.update_ap_item(plan.box_id, metadata={
-                    **(item.get("metadata") or {}),
-                    "payment_scheduled": True,
-                    "payment_scheduled_at": datetime.now(timezone.utc).isoformat(),
-                })
+                # Generate payment reference and persist
+                payment_ref = f"PAY-{uuid.uuid4().hex[:8]}"
+                self.db.update_ap_item(plan.box_id,
+                    payment_reference=payment_ref,
+                    metadata={
+                        **(item.get("metadata") or {}),
+                        "payment_scheduled": True,
+                        "payment_scheduled_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
             return {"ok": True, "scheduled": True}
         except Exception as exc:
             logger.debug("[ExecutionEngine] schedule_payment non-fatal: %s", exc)

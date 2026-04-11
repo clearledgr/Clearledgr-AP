@@ -76,6 +76,7 @@ class APStore:
         "pending_plan",
         "waiting_condition",
         "fraud_flags",
+        "payment_reference",
     })
 
     # ------------------------------------------------------------------
