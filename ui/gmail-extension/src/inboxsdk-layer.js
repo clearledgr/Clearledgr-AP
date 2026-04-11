@@ -17,6 +17,7 @@ import htm from 'htm';
 import { ClearledgrQueueManager } from '../queue-manager.js';
 import store from './utils/store.js';
 import SidebarApp, { showToast } from './components/SidebarApp.js';
+import OnboardingFlow from './components/OnboardingFlow.js';
 import { STATE_LABELS, STATE_COLORS, getStateLabel, readLocalStorage, writeLocalStorage, getAssetUrl, formatAmount } from './utils/formatters.js';
 import { resolveRecordRouteId } from './utils/record-route.js';
 import { resolveVendorRouteName } from './utils/vendor-route.js';
@@ -1468,6 +1469,44 @@ async function bootstrap() {
   registerAppMenuAndRoutes();
 }
 
+// ==================== §15 STREAK-STYLE ONBOARDING ====================
+
+function _showOnboardingFlow() {
+  // Mount the onboarding modal as a Preact component into a container on the page
+  const existing = document.getElementById('cl-onboarding-root');
+  if (existing) return; // Already showing
+
+  const container = document.createElement('div');
+  container.id = 'cl-onboarding-root';
+  document.body.appendChild(container);
+
+  const api = async (path, options = {}) => {
+    const fullUrl = `${queueManager?.runtimeConfig?.backendUrl || 'http://127.0.0.1:8010'}${path}`;
+    const result = await queueManager.backendFetch(fullUrl, {
+      method: options.method || 'GET',
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      body: options.body || undefined,
+    });
+    if (!result || !result.ok) throw new Error(`HTTP ${result?.status || 'unknown'}`);
+    if (result.status === 204) return {};
+    return result.json();
+  };
+
+  const onComplete = () => {
+    // Remove the onboarding overlay
+    container.remove();
+    // Navigate to Home
+    try { sdk.Router.goto('clearledgr/home'); } catch (_) {}
+    // Refresh bootstrap
+    try { queueManager.refreshQueue(); } catch (_) {}
+  };
+
+  render(
+    html`<${OnboardingFlow} api=${api} onComplete=${onComplete} />`,
+    container,
+  );
+}
+
 // ==================== §6.2 INBOX SAVED VIEW SECTIONS ====================
 
 function registerInboxSavedViewSections() {
@@ -2255,15 +2294,9 @@ function registerAppMenuAndRoutes() {
         currentRouteAccess = nextRouteAccess;
         rebuildMenuNavigation();
       }
-      // §15: First install — auto-navigate to Home if onboarding not complete
+      // §15: First install — show Streak-style onboarding modal
       if (data?.onboarding && !data.onboarding.completed) {
-        const currentHash = (window.location.hash || '').toLowerCase();
-        if (!currentHash.includes('clearledgr/')) {
-          // User hasn't navigated to any Clearledgr page yet — take them to Home
-          try {
-            sdk.Router.goto('clearledgr/home');
-          } catch (_) { /* best effort */ }
-        }
+        _showOnboardingFlow(data);
       }
 
       bootstrapPromise = null;

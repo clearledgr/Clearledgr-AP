@@ -1,12 +1,13 @@
 {
-  "generated_at": "2026-04-11T13:28:48.968Z",
-  "fingerprint": "6ee98e9b8d142aed2074fdd5e1ebaa843bc7f54d24b31865f2b1d2a167ed5e0b",
+  "generated_at": "2026-04-11T13:51:43.382Z",
+  "fingerprint": "e4f35e36d33ae289e4101635285be0cf136e29779be68f0f405eda1463c6cc61",
   "inputs": [
     "background.js",
     "manifest.json",
     "package.json",
     "queue-manager.js",
     "src/components/ActionDialog.js",
+    "src/components/OnboardingFlow.js",
     "src/components/SidebarApp.js",
     "src/components/ThreadSidebar.js",
     "src/inboxsdk-layer.js",
