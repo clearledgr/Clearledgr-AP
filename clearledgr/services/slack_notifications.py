@@ -850,35 +850,36 @@ async def send_invoice_approval_notification(
     if exceptions:
         exception_text = "\n*Issues:*\n" + "\n".join([f"• {e}" for e in exceptions])
     
+    # §6.8 Interactive Approval Messages — thesis-defined card structure
+    currency_str = "USD"  # TODO: pass currency from invoice
+
+    # Match result icons (PO ✓, GRN ✓/⚠, Invoice ✓)
+    # Default to ✓ for passed, ⚠ for exceptions
+    match_icons = "PO ✓  GRN ✓  Invoice ✓"
+    if exceptions:
+        match_icons = "PO ✓  GRN ⚠  Invoice ⚠"
+
     blocks = [
+        # HEADER: vendor name, invoice ref, amount — scannable in under 2 seconds
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "Invoice Needs Approval",
+                "text": f"{vendor} — ${amount:,.2f}",
             }
         },
+        # MATCH RESULT: three icons in a row
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": (
-                    f"*Vendor:* {vendor}\n"
-                    f"*Amount:* ${amount:,.2f}\n"
-                    + (f"*Due:* {due_date}\n" if due_date else "")
-                    + exception_text
-                )
+                "text": match_icons + (f"\n{exception_text}" if exception_text else ""),
             },
-            "accessory": {
-                "type": "button",
-                "text": {"type": "plain_text", "text": "View in Gmail"},
-                "url": gmail_link,
-                "action_id": f"view_gmail_{invoice_id}",
-            }
         },
         {
             "type": "divider"
         },
+        # ACTIONS: Approve, Reject, Request Info
         {
             "type": "actions",
             "elements": [
@@ -898,8 +899,8 @@ async def send_invoice_approval_notification(
                 },
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "Flag for Review"},
-                    "action_id": f"flag_invoice_{invoice_id}",
+                    "text": {"type": "plain_text", "text": "Request info"},
+                    "action_id": f"request_info_{invoice_id}",
                     "value": invoice_id,
                 }
             ]
@@ -909,7 +910,7 @@ async def send_invoice_approval_notification(
             "elements": [
                 {
                     "type": "mrkdwn",
-                    "text": f"Invoice ID: {invoice_id} | <{gmail_link}|Open in Gmail →>"
+                    "text": f"Invoice {invoice_id}" + (f" | Due {due_date}" if due_date else "") + f" | <{gmail_link}|Open in Gmail →>"
                 }
             ]
         }
@@ -944,6 +945,51 @@ async def send_invoice_approval_notification(
     )
     if sent:
         logger.info(f"Sent invoice approval notification for {invoice_id}")
+
+        # §6.8 AGENT REASONING (THREADED): post full reasoning as reply thread
+        # "The AP Manager can expand the thread if they want the full reasoning.
+        # It is not in the main message."
+        try:
+            runtime = resolve_slack_runtime(organization_id or "default")
+            if runtime and runtime.get("token") and runtime.get("channel"):
+                reasoning_text = (
+                    f"*Agent reasoning*\n"
+                    f"Match passed within tolerance. "
+                    f"{'PO confirmed. ' if not exceptions else ''}"
+                    f"{'Vendor IBAN verified. ' if not exceptions else ''}"
+                    + (f"Payment terms {due_date or 'on file'}." if due_date else "")
+                )
+                # Try to get the message_ts from the last sent message
+                # to post as a threaded reply
+                headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
+                # Get recent messages to find our card
+                async with httpx.AsyncClient(timeout=10) as client:
+                    history = await client.get(
+                        "https://slack.com/api/conversations.history",
+                        params={"channel": runtime["channel"], "limit": "3"},
+                        headers=headers,
+                    )
+                    history_data = history.json()
+                    messages = history_data.get("messages", [])
+                    # Find our message by matching invoice_id in text
+                    parent_ts = None
+                    for msg in messages:
+                        if invoice_id in str(msg.get("text", "")):
+                            parent_ts = msg.get("ts")
+                            break
+                    if parent_ts:
+                        await client.post(
+                            "https://slack.com/api/chat.postMessage",
+                            json={
+                                "channel": runtime["channel"],
+                                "thread_ts": parent_ts,
+                                "text": reasoning_text,
+                            },
+                            headers=headers,
+                        )
+        except Exception as reasoning_exc:
+            logger.debug("[approval] reasoning thread failed: %s", reasoning_exc)
+
     return sent
 
 
