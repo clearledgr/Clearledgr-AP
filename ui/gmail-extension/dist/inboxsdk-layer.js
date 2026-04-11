@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:5e6664ef1433fc7646b7e59bc0d5a851c4d0b01fd9cdec966fc79f70cbdd4624 */
+/* clearledgr-source-fingerprint:aaf651b3e52391229d4b75c8a9be26063c074c3aad6ddc92f56a2972cf736d32 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59847,15 +59847,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const events = (auditEvents || []).slice(0, 10);
     return m3`
     <div class="cl-ts-section">
-      <div class="cl-ts-section-title">Agent Actions</div>
+      <div class="cl-ts-section-title"><img src="${typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.getURL("icons/icon16.png") : ""}" alt="" style="width:12px;height:12px;vertical-align:-1px;margin-right:4px;opacity:0.7;" />Agent Actions</div>
       ${events.length > 0 ? m3`
           <ul class="cl-ts-timeline">
             ${events.map((e3) => {
       const what = e3.summary || e3.decision_reason || e3.event_type?.replace(/_/g, " ") || "Action";
       const why = e3.reasoning_summary || e3.reasoning || e3.reason || "";
       const next = e3.next_action || e3.next_step || "";
+      const isAgent = (e3.actor || e3.actor_type || "") !== "user";
       return m3`
                 <li key=${e3.id || e3.ts}>
+                  ${isAgent ? m3`<img src="${typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.getURL("icons/icon16.png") : ""}" alt="agent" style="width:10px;height:10px;vertical-align:-1px;margin-right:3px;opacity:0.6;" />` : ""}
                   <strong>${what}</strong>
                   ${why ? m3`<span class="cl-ts-timeline-why"> — ${why}</span>` : ""}
                   ${next ? m3`<span class="cl-ts-timeline-next">Next: ${next}</span>` : ""}

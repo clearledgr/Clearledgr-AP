@@ -303,17 +303,20 @@ function AgentActionsSection({ item, auditEvents }) {
   const events = (auditEvents || []).slice(0, 10);
   return html`
     <div class="cl-ts-section">
-      <div class="cl-ts-section-title">Agent Actions</div>
+      <div class="cl-ts-section-title"><img src="${typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getURL('icons/icon16.png') : ''}" alt="" style="width:12px;height:12px;vertical-align:-1px;margin-right:4px;opacity:0.7;" />Agent Actions</div>
       ${events.length > 0
         ? html`
           <ul class="cl-ts-timeline">
             ${events.map(e => {
               // Thesis §6.6: "what the agent did, why it did it, and what happens next"
+              // §10: Clearledgr icon marks agent-initiated actions (not human)
               const what = e.summary || e.decision_reason || e.event_type?.replace(/_/g, ' ') || 'Action';
               const why = e.reasoning_summary || e.reasoning || e.reason || '';
               const next = e.next_action || e.next_step || '';
+              const isAgent = (e.actor || e.actor_type || '') !== 'user';
               return html`
                 <li key=${e.id || e.ts}>
+                  ${isAgent ? html`<img src="${typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getURL('icons/icon16.png') : ''}" alt="agent" style="width:10px;height:10px;vertical-align:-1px;margin-right:3px;opacity:0.6;" />` : ''}
                   <strong>${what}</strong>
                   ${why ? html`<span class="cl-ts-timeline-why"> — ${why}</span>` : ''}
                   ${next ? html`<span class="cl-ts-timeline-next">Next: ${next}</span>` : ''}

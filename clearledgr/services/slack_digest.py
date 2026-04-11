@@ -339,7 +339,7 @@ def _build_digest_blocks(
     if confidence_note:
         blocks.append({
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": f"⚡ {confidence_note}"}],
+            "elements": [{"type": "mrkdwn", "text": f":clearledgr: {confidence_note}"}],
         })
 
     return blocks
