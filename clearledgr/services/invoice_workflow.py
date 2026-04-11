@@ -1121,11 +1121,10 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             except Exception:
                 pass
 
-            # Notify in Slack (informational, not approval)
-            try:
-                await self._send_posted_notification(invoice, result, reason)
-            except Exception as e:
-                logger.warning(f"Failed to send Slack notification: {e}")
+            # §4 Principle 04: "Exceptions are the only interruptions."
+            # A successful ERP post generates NO Slack notification.
+            # The override window observer handles the undo card separately
+            # (that's a time-limited safety mechanism, not a notification).
 
             # M1: Transition posted_to_erp → closed (terminal state).
             # All post-processing (learning, vendor profile, notifications) is

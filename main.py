@@ -1021,14 +1021,10 @@ except ImportError:
 # Workspace shell support APIs (single contract for Gmail-routed support surfaces)
 try:
     from clearledgr.api.workspace_shell import router as workspace_shell_router
-    workspace_shell_enabled = str(os.getenv("WORKSPACE_SHELL_ENABLED", "true")).strip().lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }
-    if workspace_shell_enabled:
-        app.include_router(workspace_shell_router)
+    # Workspace shell APIs are always mounted — they serve the Gmail extension's
+    # bootstrap, integrations, team management, etc. The standalone HTML page
+    # at /workspace is gated separately (§4 Principle 01).
+    app.include_router(workspace_shell_router)
 except ImportError:
     pass
 
@@ -1039,8 +1035,17 @@ if os.path.exists(static_dir):
 
 @app.get("/workspace", tags=["Workspace"], include_in_schema=False)
 async def workspace_page():
-    """Standalone workspace shell UI."""
-    enabled = str(os.getenv("WORKSPACE_SHELL_ENABLED", "true")).strip().lower() not in {"0", "false", "no", "off"}
+    """Standalone workspace shell UI — Clearledgr internal ops only.
+
+    DESIGN_THESIS.md §4 Principle 01: "There is no separate web application
+    in V1. There is no new tab. There is no dashboard the AP team checks."
+
+    The workspace shell is disabled by default. It is available only when
+    explicitly enabled via WORKSPACE_SHELL_ENABLED=true for Clearledgr
+    internal operations (§14 Backoffice). Customer-facing AP work happens
+    entirely inside Gmail via the extension.
+    """
+    enabled = str(os.getenv("WORKSPACE_SHELL_ENABLED", "false")).strip().lower() in {"1", "true", "yes", "on"}
     if not enabled:
         raise HTTPException(status_code=404, detail="Workspace shell disabled")
     workspace_file = os.path.join(os.path.dirname(__file__), "static", "workspace", "index.html")

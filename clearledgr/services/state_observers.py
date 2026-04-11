@@ -97,9 +97,26 @@ class AuditTrailObserver(StateObserver):
     def __init__(self, db: Any) -> None:
         self._db = db
 
+    # §4 Principle 03: DID-WHY-NEXT for every state transition
+    _NEXT_ACTION_MAP = {
+        "received": "Extraction and validation in progress.",
+        "validated": "Routing to approval or auto-posting based on confidence.",
+        "needs_approval": "Waiting for human approval via Slack or Gmail.",
+        "needs_info": "Vendor follow-up required before processing can continue.",
+        "approved": "Queued for ERP posting.",
+        "ready_to_post": "Posting to ERP.",
+        "posted_to_erp": "Override window open. Payment scheduled per terms.",
+        "failed_post": "Retry scheduled or manual resolution required.",
+        "reversed": "ERP post reversed. Item will be closed.",
+        "snoozed": "Snoozed. Will return to queue when timer expires.",
+        "rejected": "No further action.",
+        "closed": "Lifecycle complete.",
+    }
+
     async def on_transition(self, event: StateTransitionEvent) -> None:
         if not hasattr(self._db, "append_ap_audit_event"):
             return
+        next_action = self._NEXT_ACTION_MAP.get(event.new_state, "")
         self._db.append_ap_audit_event({
             "ap_item_id": event.ap_item_id,
             "organization_id": event.organization_id,
@@ -107,9 +124,11 @@ class AuditTrailObserver(StateObserver):
             "source": event.source,
             "actor": event.actor_id or "system",
             "correlation_id": event.correlation_id,
+            "next_action": next_action,
             "details": {
                 "old_state": event.old_state,
                 "new_state": event.new_state,
+                "next_action": next_action,
                 **(event.metadata or {}),
             },
         })
