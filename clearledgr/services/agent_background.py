@@ -212,6 +212,19 @@ async def reap_expired_override_windows() -> int:
             continue
         reaped += 1
 
+        # §2.2: Enqueue OVERRIDE_WINDOW_EXPIRED event
+        try:
+            from clearledgr.core.events import AgentEvent, AgentEventType
+            from clearledgr.core.event_queue import get_event_queue
+            get_event_queue().enqueue(AgentEvent(
+                type=AgentEventType.OVERRIDE_WINDOW_EXPIRED,
+                source="override_window_reaper",
+                payload={"box_id": window.get("ap_item_id", ""), "window_id": window_id},
+                organization_id=organization_id,
+            ))
+        except Exception:
+            pass  # Non-fatal — window already expired in DB
+
         # Best-effort Slack card update — if this fails the window is
         # still marked expired in the DB, the user just sees a stale card.
         try:
@@ -379,6 +392,20 @@ async def _run_loop():
                 pending_chases_sent = await _send_pending_chases(org_ids)
                 if pending_chases_sent:
                     logger.info("[background] sent %d pending vendor chases", pending_chases_sent)
+                    # §2.2: Enqueue TIMER_FIRED events for chases
+                    try:
+                        from clearledgr.core.events import AgentEvent, AgentEventType
+                        from clearledgr.core.event_queue import get_event_queue
+                        queue = get_event_queue()
+                        for oid in org_ids:
+                            queue.enqueue(AgentEvent(
+                                type=AgentEventType.TIMER_FIRED,
+                                source="background_loop",
+                                payload={"timer_type": "vendor_chase", "organization_id": oid},
+                                organization_id=oid,
+                            ))
+                    except Exception:
+                        pass
             except Exception as chase_exc:
                 logger.warning("[background] pending chase reaper failed: %s", chase_exc)
 
@@ -387,6 +414,20 @@ async def _run_loop():
                 unsnoozed = await _reap_expired_snoozes(org_ids)
                 if unsnoozed:
                     logger.info("[background] unsnoozed %d expired AP items", unsnoozed)
+                    # §2.2: Enqueue TIMER_FIRED events for snooze expiry
+                    try:
+                        from clearledgr.core.events import AgentEvent, AgentEventType
+                        from clearledgr.core.event_queue import get_event_queue
+                        queue = get_event_queue()
+                        for oid in org_ids:
+                            queue.enqueue(AgentEvent(
+                                type=AgentEventType.TIMER_FIRED,
+                                source="background_loop",
+                                payload={"timer_type": "snooze_expired", "organization_id": oid},
+                                organization_id=oid,
+                            ))
+                    except Exception:
+                        pass
             except Exception as snooze_exc:
                 logger.warning("[background] snooze reaper failed: %s", snooze_exc)
 

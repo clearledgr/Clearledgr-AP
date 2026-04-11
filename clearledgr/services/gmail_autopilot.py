@@ -181,11 +181,23 @@ class GmailAutopilot:
             logger.info("Gmail watch refreshed for %s", token.email)
         except Exception as exc:
             logger.warning("Gmail watch refresh failed for %s: %s", token.email, exc)
+            # §2.1.2: Mark mailbox as degraded on renewal failure
             self._db.save_gmail_autopilot_state(
                 user_id=token.user_id,
                 email=token.email,
                 last_error=f"watch_failed: {exc}",
+                watch_status="degraded",
             )
+            # §2.1.2: Alert CS team via monitoring
+            try:
+                from clearledgr.services.monitoring import alert_cs_team
+                alert_cs_team(
+                    severity="warning",
+                    title=f"Gmail watch renewal failed for {token.email}",
+                    detail=str(exc)[:200],
+                )
+            except Exception:
+                pass  # Monitoring may not be configured
 
     async def _poll_messages(self, token, client: GmailAPIClient) -> None:
         now = datetime.now(timezone.utc)

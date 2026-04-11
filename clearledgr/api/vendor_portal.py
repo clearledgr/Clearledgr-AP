@@ -264,6 +264,23 @@ def submit_kyc(
             actor_id=f"vendor_portal:{portal.token_id}",
         )
 
+        # §2.2: Enqueue KYC_DOCUMENT_RECEIVED event
+        try:
+            from clearledgr.core.events import AgentEvent, AgentEventType
+            from clearledgr.core.event_queue import get_event_queue
+            get_event_queue().enqueue(AgentEvent(
+                type=AgentEventType.KYC_DOCUMENT_RECEIVED,
+                source="vendor_portal",
+                payload={
+                    "vendor_id": portal.vendor_name,
+                    "document_type": "kyc_submission",
+                    "session_id": portal.session_id,
+                },
+                organization_id=portal.organization_id,
+            ))
+        except Exception:
+            pass  # Non-fatal
+
         # Best-effort vendor enrichment from Companies House / HMRC VAT
         # (DESIGN_THESIS §3). Runs in a background task so the vendor
         # redirect is not delayed by external API calls.
@@ -358,6 +375,22 @@ def submit_bank_details(
             VendorOnboardingState.MICRODEPOSIT_PENDING,
             actor_id=f"vendor_portal:{portal.token_id}",
         )
+
+    # §2.2: Enqueue IBAN_CHANGE_SUBMITTED event (triggers three-factor verification)
+    try:
+        from clearledgr.core.events import AgentEvent, AgentEventType
+        from clearledgr.core.event_queue import get_event_queue
+        get_event_queue().enqueue(AgentEvent(
+            type=AgentEventType.IBAN_CHANGE_SUBMITTED,
+            source="vendor_portal",
+            payload={
+                "vendor_id": portal.vendor_name,
+                "session_id": portal.session_id,
+            },
+            organization_id=portal.organization_id,
+        ))
+    except Exception:
+        pass  # Non-fatal
 
     return _redirect_with_flash(
         token,
