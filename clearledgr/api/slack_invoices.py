@@ -839,6 +839,21 @@ async def handle_slack_events(request: Request, background_tasks: BackgroundTask
     if not text or not channel:
         return {"ok": True}
 
+    # §5.3: Check if this is a reply to an @mention DM — sync back to Box timeline
+    message_metadata = event.get("metadata") or {}
+    if (
+        message_metadata.get("event_type") == "clearledgr_mention"
+        or event.get("thread_ts")  # Reply in a thread
+    ):
+        background_tasks.add_task(
+            _handle_mention_reply_sync,
+            text=text,
+            channel=channel,
+            thread_ts=thread_ts,
+            user_id=user_id,
+            team_id=body.get("team_id", ""),
+        )
+
     # Process the query in the background to respond within 3s
     background_tasks.add_task(
         _handle_conversational_query,
@@ -850,6 +865,90 @@ async def handle_slack_events(request: Request, background_tasks: BackgroundTask
     )
 
     return {"ok": True}
+
+
+async def _handle_mention_reply_sync(
+    *,
+    text: str,
+    channel: str,
+    thread_ts: str,
+    user_id: str,
+    team_id: str,
+):
+    """§5.3: Sync Slack DM replies back to the Box timeline.
+
+    "Their reply from Slack posts back to the Box timeline. Gmail and Slack
+    stay in sync without requiring the user to check both platforms."
+    """
+    try:
+        from clearledgr.services.slack_api import resolve_slack_runtime
+
+        # Find the parent message to get the ap_item_id from metadata
+        runtime = None
+        db = get_db()
+        orgs = db.list_organizations() if hasattr(db, "list_organizations") else []
+        org_id = "default"
+        for org in orgs:
+            rt = resolve_slack_runtime(org.get("id", "default"))
+            if rt and rt.get("team_id") == team_id:
+                runtime = rt
+                org_id = org.get("id", "default")
+                break
+        if not runtime:
+            runtime = resolve_slack_runtime("default")
+
+        if not runtime or not runtime.get("token"):
+            return
+
+        # Fetch the parent message to find the ap_item_id
+        headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=10) as client:
+            # Get conversation history for the thread parent
+            resp = await client.get(
+                "https://slack.com/api/conversations.history",
+                params={"channel": channel, "latest": thread_ts, "inclusive": "true", "limit": "1"},
+                headers=headers,
+            )
+            data = resp.json()
+            messages = data.get("messages", [])
+            if not messages:
+                return
+
+            parent = messages[0]
+            metadata = parent.get("metadata") or {}
+            event_payload = metadata.get("event_payload") or {}
+            ap_item_id = event_payload.get("ap_item_id")
+
+            if not ap_item_id:
+                return
+
+        # Look up user email for attribution
+        user_email = user_id
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                user_resp = await client.get(
+                    "https://slack.com/api/users.info",
+                    params={"user": user_id},
+                    headers=headers,
+                )
+                user_data = user_resp.json()
+                if user_data.get("ok"):
+                    user_email = user_data["user"].get("profile", {}).get("email") or user_id
+        except Exception:
+            pass
+
+        # Post the reply to the Box timeline
+        from datetime import datetime, timezone
+        db.append_ap_item_timeline_entry(ap_item_id, {
+            "event_type": "slack_mention_reply",
+            "summary": f"{user_email} replied via Slack: {text[:500]}",
+            "actor": user_email,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        logger.info("[mention_reply] synced reply from %s to ap_item %s", user_email, ap_item_id)
+
+    except Exception as exc:
+        logger.debug("[mention_reply] sync failed: %s", exc)
 
 
 async def _handle_conversational_query(

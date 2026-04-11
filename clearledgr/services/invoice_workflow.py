@@ -1331,6 +1331,35 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             correlation_id=correlation_id,
         )
 
+        # §5.3 @Mentions: agent posts timeline entry with @approver so
+        # the mention system sends them a Slack DM with the exception detail
+        if approval_mentions and ap_item_id:
+            mention_text = ", ".join(f"@{m}" for m in approval_mentions[:3])
+            exception_reason = (context_payload.get("ap_reasoning") or "Requires human review.")[:200]
+            mention_body = (
+                f"{mention_text} — {invoice.vendor_name} {invoice.currency} {invoice.amount:,.2f} "
+                f"(INV {invoice.invoice_number or 'N/A'}). {exception_reason} "
+                f"Match detail in sidebar. One click to override or reject."
+            )
+            try:
+                self.db.append_ap_item_timeline_entry(ap_item_id, {
+                    "event_type": "agent_mention",
+                    "summary": mention_body,
+                    "actor": "agent",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+                # Dispatch DM notifications for the mentioned users
+                item = self.db.get_ap_item(ap_item_id) or {}
+                from clearledgr.api.ap_items_action_routes import _dispatch_mention_notifications
+                _dispatch_mention_notifications(
+                    body=mention_body,
+                    ap_item_id=ap_item_id,
+                    item=item,
+                    actor_id="agent",
+                )
+            except Exception:
+                pass  # Non-fatal
+
         # Create approval chain record for audit and multi-step tracking
         chain_id = None
         try:

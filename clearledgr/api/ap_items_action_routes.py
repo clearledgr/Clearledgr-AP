@@ -103,14 +103,26 @@ def _dispatch_mention_notifications(
                 continue
             slack_user_id = lookup_data["user"]["id"]
 
-            # Send DM
+            # Send DM with ap_item_id in metadata for reply sync (§5.3)
             dm_text = (
                 f"*{actor_id}* mentioned you on {vendor} (invoice {item.get('invoice_number', 'N/A')}):\n"
-                f">{body[:500]}"
+                f">{body[:500]}\n"
+                f"_Reply here — your response will be added to the invoice timeline._"
             )
+            dm_payload = {
+                "channel": slack_user_id,
+                "text": dm_text,
+                "metadata": {
+                    "event_type": "clearledgr_mention",
+                    "event_payload": {
+                        "ap_item_id": ap_item_id,
+                        "organization_id": org_id,
+                    },
+                },
+            }
             httpx.post(
                 "https://slack.com/api/chat.postMessage",
-                json={"channel": slack_user_id, "text": dm_text},
+                json=dm_payload,
                 headers=headers,
                 timeout=10,
             )
@@ -1130,6 +1142,15 @@ def add_ap_item_comment(
             },
         }
     )
+
+    # §5.3 @Mentions — parse @email in comment body, dispatch notifications
+    _dispatch_mention_notifications(
+        body=comment["body"],
+        ap_item_id=ap_item_id,
+        item=item,
+        actor_id=actor_id,
+    )
+
     return {"status": "created", "comment": comment}
 
 
