@@ -1040,6 +1040,29 @@ def _v28_llm_call_log(cur, db):
         pass
 
 
+@migration(30, "SLA metrics table (AGENT_DESIGN_SPECIFICATION.md §11)")
+def _v30_sla_metrics(cur, db):
+    """§11: Per-step latency tracking for SLA compliance monitoring."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ap_sla_metrics (
+            id TEXT PRIMARY KEY,
+            ap_item_id TEXT,
+            organization_id TEXT NOT NULL,
+            step_name TEXT NOT NULL,
+            latency_ms INTEGER NOT NULL,
+            breached INTEGER DEFAULT 0,
+            created_at TEXT
+        )
+    """)
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sla_metrics_org_step "
+            "ON ap_sla_metrics(organization_id, step_name, created_at)"
+        )
+    except Exception:
+        pass
+
+
 @migration(29, "Box state fields (AGENT_DESIGN_SPECIFICATION.md §6)")
 def _v29_box_state_fields(cur, db):
     """§6: pending_plan, waiting_condition, fraud_flags on ap_items for agent state management."""

@@ -802,6 +802,9 @@ class SubscriptionService:
         if usage.invoice_overage_count > 0 and len(bands) > 1:
             volume_cost = usage.invoice_overage_count * bands[1].get("per_invoice", 0.15)
 
+        # §8.2: Aggregate LLM costs from llm_call_log
+        llm_cost = self._get_llm_cost_this_month(organization_id)
+
         return {
             "plan": sub.plan,
             "billing_cycle": sub.billing_cycle,
@@ -816,9 +819,41 @@ class SubscriptionService:
             "volume_cost": round(volume_cost, 2),
             "ai_credits_used": usage.ai_credits_this_month,
             "ai_credits_remaining": usage.ai_credits_remaining,
+            "llm_cost_usd": round(llm_cost.get("total_cost_usd", 0), 4),
+            "llm_calls_count": llm_cost.get("call_count", 0),
             "estimated_total": round(seat_price * active_seats + read_only_cost + volume_cost, 2),
             "annual_savings_pct": 20 if sub.billing_cycle == "yearly" else 0,
         }
+
+    def _get_llm_cost_this_month(self, organization_id: str) -> Dict[str, Any]:
+        """§8.2: Aggregate LLM API costs from llm_call_log for current month."""
+        try:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+            sql = self.db._prepare_sql(
+                "SELECT COUNT(*) as call_count, "
+                "COALESCE(SUM(cost_estimate_usd), 0) as total_cost_usd, "
+                "COALESCE(SUM(input_tokens), 0) as total_input_tokens, "
+                "COALESCE(SUM(output_tokens), 0) as total_output_tokens "
+                "FROM llm_call_log "
+                "WHERE organization_id = ? AND created_at >= ?"
+            )
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, month_start))
+                row = cur.fetchone()
+                if row:
+                    r = dict(row)
+                    return {
+                        "call_count": r.get("call_count", 0),
+                        "total_cost_usd": r.get("total_cost_usd", 0),
+                        "total_input_tokens": r.get("total_input_tokens", 0),
+                        "total_output_tokens": r.get("total_output_tokens", 0),
+                    }
+        except Exception as exc:
+            logger.debug("[Subscription] LLM cost aggregation failed: %s", exc)
+        return {"call_count": 0, "total_cost_usd": 0}
 
     def _persist_usage(self, organization_id: str, usage: UsageStats) -> None:
         """Write usage stats back to the subscription record."""

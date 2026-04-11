@@ -658,6 +658,7 @@ class APDecisionService:
         cross_invoice_analysis: Optional[Dict[str, Any]] = None,
         anomaly_signals: Optional[Dict[str, Any]] = None,
         vendor_risk_score: Optional[Dict[str, Any]] = None,
+        box_summary: Optional[str] = None,
     ) -> APDecision:
         """Call Claude with vendor context to decide how to route this invoice.
 
@@ -717,6 +718,9 @@ class APDecisionService:
                 anomaly_signals=anomaly_signals,
                 vendor_risk_score=vendor_risk_score,
             )
+            # §8.1: Append Box Summary for compact context
+            if box_summary:
+                prompt += f"\n\nBOX SUMMARY:\n{box_summary}"
             # Layer 1 of §7.6 enforcement: narrow the tool's recommendation
             # enum based on the gate outcome. Claude is then FORCED to call
             # this tool via tool_choice — it cannot return plain text, and

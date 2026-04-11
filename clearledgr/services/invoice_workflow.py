@@ -556,6 +556,21 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 existing_risks = getattr(invoice, "reasoning_risks", None) or []
                 invoice.reasoning_risks = existing_risks + vendor_risk["flags"]
 
+            # §8.1: Build Box Summary for compact Claude context
+            _box_summary_text = ""
+            try:
+                _ap_id = self._lookup_ap_item_id(
+                    gmail_id=invoice.gmail_id,
+                    vendor_name=invoice.vendor_name,
+                    invoice_number=invoice.invoice_number,
+                )
+                if _ap_id:
+                    from clearledgr.core.box_summary import build_box_summary
+                    _box_summary = build_box_summary(_ap_id, db=self.db)
+                    _box_summary_text = _box_summary.to_prompt_text()
+            except Exception:
+                pass
+
             decision_svc = APDecisionService()
             decision = await decision_svc.decide(
                 invoice,
@@ -568,6 +583,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 cross_invoice_analysis=cross_analysis_dict,
                 anomaly_signals=anomaly_signals,
                 vendor_risk_score=vendor_risk,
+                box_summary=_box_summary_text,
             )
             logger.info(
                 "[APDecision] %s → %s (confidence=%.2f fallback=%s risk=%s): %s",
@@ -598,6 +614,10 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         Returns:
             Dict with status, invoice_id, and action taken
         """
+        # §11: Track total processing time for SLA compliance
+        import time as _time
+        _total_start = _time.monotonic()
+
         # §7.8 Circuit breaker: if the override rate is elevated, hold processing
         try:
             from clearledgr.services.circuit_breaker import is_circuit_breaker_tripped
@@ -835,7 +855,17 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         invoice.correlation_id = correlation_id
 
         # Deterministic controls always run before confidence-based routing.
+        # §11: Track validation latency
+        _val_start = _time.monotonic()
         validation_gate = await self._evaluate_deterministic_validation(invoice)
+        try:
+            from clearledgr.core.sla_tracker import get_sla_tracker
+            get_sla_tracker().record(
+                "guardrails", int((_time.monotonic() - _val_start) * 1000),
+                ap_item_id=invoice_id, organization_id=self.organization_id,
+            )
+        except Exception:
+            pass
         confidence_gate = validation_gate.get("confidence_gate") if isinstance(validation_gate, dict) else None
         _line_items_meta = {}
         if isinstance(invoice.line_items, list) and invoice.line_items:
@@ -917,7 +947,17 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         # If a pre-computed decision was provided (e.g. from the agent planning loop),
         # skip the internal Claude call to avoid a double Sonnet invocation.
         if ap_decision is None:
+            _decision_start = _time.monotonic()
             ap_decision = await self._get_ap_decision(invoice, validation_gate)
+            # §11: Track classification/decision latency
+            try:
+                from clearledgr.core.sla_tracker import get_sla_tracker
+                get_sla_tracker().record(
+                    "classification", int((_time.monotonic() - _decision_start) * 1000),
+                    ap_item_id=invoice_id, organization_id=self.organization_id,
+                )
+            except Exception:
+                pass
 
         # §7.7 Shadow mode: run candidate model alongside production (non-blocking)
         try:
