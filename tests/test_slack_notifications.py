@@ -45,7 +45,7 @@ class TestPostSlackBlocks:
                 MockClient.return_value = instance
 
                 result = _run(_post_slack_blocks([{"type": "section"}], "test"))
-                assert result is True
+                assert result
 
     def test_no_delivery_method_returns_false(self, monkeypatch, mock_runtime):
         monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
@@ -80,7 +80,7 @@ class TestPostSlackBlocks:
                     )
                 )
 
-        assert result is True
+        assert result
         assert instance.post.await_count == 2
         first_payload = instance.post.await_args_list[0].kwargs["json"]
         second_payload = instance.post.await_args_list[1].kwargs["json"]
@@ -131,7 +131,7 @@ class TestRetrySlackResponseUrl:
                 "response_url": "https://hooks.slack.com/response/123",
                 "body": {"text": "updated"},
             }))
-            assert result is True
+            assert result
 
     def test_missing_response_url(self):
         result = _run(_retry_slack_response_url({"body": {}}))
@@ -187,7 +187,7 @@ class TestSendApprovalReminder:
                     )
                 )
 
-        assert result is True
+        assert result
         post_blocks.assert_awaited_once()
         instance.send_dm.assert_not_awaited()
         posted_blocks = post_blocks.await_args.kwargs["blocks"]
@@ -225,7 +225,7 @@ class TestSendApprovalReminder:
                 )
             )
 
-        assert result is True
+        assert result
         instance.send_dm.assert_awaited_once()
         dm_blocks = instance.send_dm.await_args.kwargs["blocks"]
         actions_block = next(block for block in dm_blocks if block.get("type") == "actions")
@@ -271,7 +271,7 @@ class TestSendApprovalReminder:
                     )
                 )
 
-        assert result is True
+        assert result
         instance.send_dm.assert_awaited_once()
         dm_args = instance.send_dm.await_args
         assert dm_args.args[0] == "U123"

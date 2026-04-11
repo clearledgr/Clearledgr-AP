@@ -187,7 +187,7 @@ async def _post_slack_blocks(
     text: str,
     preferred_channel: Optional[str] = None,
     organization_id: Optional[str] = None,
-) -> bool:
+) -> Optional[Dict[str, Any]]:
     """
     Send Slack blocks using webhook first, then bot token fallback.
 
@@ -226,7 +226,7 @@ async def _post_slack_blocks(
                     timeout=15,
                 )
                 response.raise_for_status()
-            return True
+            return {"ok": True, "via": "webhook"}
         except Exception as e:
             logger.warning(f"Slack webhook send failed, trying bot token fallback: {e}")
 
@@ -255,7 +255,7 @@ async def _post_slack_blocks(
                 response = await _send_to(channel)
                 payload = response.json() if response.content else {}
                 if response.status_code < 400 and payload.get("ok", False):
-                    return True
+                    return {"ok": True, "ts": payload.get("ts"), "channel": payload.get("channel"), "via": "bot"}
 
                 if payload.get("error") == "channel_not_found":
                     for retry_channel in _retry_candidates(channel):
@@ -267,16 +267,16 @@ async def _post_slack_blocks(
                                 channel,
                                 retry_channel,
                             )
-                            return True
+                            return {"ok": True, "ts": retry_payload.get("ts"), "channel": retry_payload.get("channel"), "via": "bot_fallback"}
 
                 logger.error(f"Slack bot send failed: status={response.status_code} payload={payload}")
-                return False
+                return None
         except Exception as e:
             logger.error(f"Slack bot token send failed: {e}")
-            return False
+            return None
 
     logger.warning(
-        "No Slack delivery method configured (set Slack install or SLACK_BOT_TOKEN). org=%s mode=%s",
+        "No Slack delivery method configured (set Slack install or SLACK_BOT_TOKEN, or connect via onboarding). org=%s mode=%s",
         organization_id or "default",
         runtime.get("mode"),
     )
@@ -292,11 +292,11 @@ async def send_with_retry(
 ) -> bool:
     """Send Slack blocks, enqueueing for retry on failure."""
     try:
-        ok = await _post_slack_blocks(blocks, text, preferred_channel, organization_id)
+        result = await _post_slack_blocks(blocks, text, preferred_channel, organization_id)
     except Exception as post_exc:
         logger.error("Slack _post_slack_blocks raised for ap_item=%s: %s", ap_item_id, post_exc)
-        ok = False
-    if ok:
+        result = None
+    if result:
         return True
     # Enqueue for retry
     try:
@@ -804,6 +804,11 @@ async def send_invoice_approval_notification(
     user_email: Optional[str] = None,
     exceptions: Optional[List[str]] = None,
     organization_id: Optional[str] = None,
+    reasoning: Optional[str] = None,
+    match_status: Optional[str] = None,
+    po_status: Optional[str] = None,
+    grn_status: Optional[str] = None,
+    currency: Optional[str] = None,
 ) -> bool:
     """
     Send Slack notification for invoice requiring approval.
@@ -851,13 +856,23 @@ async def send_invoice_approval_notification(
         exception_text = "\n*Issues:*\n" + "\n".join([f"• {e}" for e in exceptions])
     
     # §6.8 Interactive Approval Messages — thesis-defined card structure
-    currency_str = "USD"  # TODO: pass currency from invoice
+    currency_str = currency or "USD"
 
-    # Match result icons (PO ✓, GRN ✓/⚠, Invoice ✓)
-    # Default to ✓ for passed, ⚠ for exceptions
-    match_icons = "PO ✓  GRN ✓  Invoice ✓"
-    if exceptions:
-        match_icons = "PO ✓  GRN ⚠  Invoice ⚠"
+    # Match result icons from actual AP item match data
+    def _icon(status):
+        s = str(status or "").lower()
+        if s in ("matched", "passed", "confirmed", "verified"):
+            return "✓"
+        elif s in ("exception", "warning", "mismatch", "partial"):
+            return "⚠"
+        elif s in ("failed", "missing", "na"):
+            return "✗"
+        return "—"
+
+    po_icon = _icon(po_status or ("matched" if not exceptions else "warning"))
+    grn_icon = _icon(grn_status or ("matched" if not exceptions else "warning"))
+    inv_icon = _icon(match_status or ("passed" if not exceptions else "exception"))
+    match_icons = f"PO {po_icon}  GRN {grn_icon}  Invoice {inv_icon}"
 
     blocks = [
         # HEADER: vendor name, invoice ref, amount — scannable in under 2 seconds
@@ -936,59 +951,38 @@ async def send_invoice_approval_notification(
         # Fall through to channel if DM fails
         logger.info("[intelligent_routing] DM failed, falling back to channel for %s", invoice_id)
 
-    sent = await send_with_retry(
+    # Send via _post_slack_blocks directly to get message_ts for threaded reasoning
+    send_result = await _post_slack_blocks(
         blocks=blocks,
         text=f"Invoice {invoice_id} needs approval",
-        ap_item_id=invoice_id,
         preferred_channel=preferred_channel,
         organization_id=organization_id,
     )
+    sent = bool(send_result)
     if sent:
         logger.info(f"Sent invoice approval notification for {invoice_id}")
 
-        # §6.8 AGENT REASONING (THREADED): post full reasoning as reply thread
-        # "The AP Manager can expand the thread if they want the full reasoning.
-        # It is not in the main message."
-        try:
-            runtime = resolve_slack_runtime(organization_id or "default")
-            if runtime and runtime.get("token") and runtime.get("channel"):
-                reasoning_text = (
-                    f"*Agent reasoning*\n"
-                    f"Match passed within tolerance. "
-                    f"{'PO confirmed. ' if not exceptions else ''}"
-                    f"{'Vendor IBAN verified. ' if not exceptions else ''}"
-                    + (f"Payment terms {due_date or 'on file'}." if due_date else "")
-                )
-                # Try to get the message_ts from the last sent message
-                # to post as a threaded reply
-                headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
-                # Get recent messages to find our card
-                async with httpx.AsyncClient(timeout=10) as client:
-                    history = await client.get(
-                        "https://slack.com/api/conversations.history",
-                        params={"channel": runtime["channel"], "limit": "3"},
-                        headers=headers,
-                    )
-                    history_data = history.json()
-                    messages = history_data.get("messages", [])
-                    # Find our message by matching invoice_id in text
-                    parent_ts = None
-                    for msg in messages:
-                        if invoice_id in str(msg.get("text", "")):
-                            parent_ts = msg.get("ts")
-                            break
-                    if parent_ts:
+        # §6.8 AGENT REASONING (THREADED): post actual AP decision reasoning
+        # as a reply thread. Uses message_ts from _post_slack_blocks response.
+        parent_ts = (send_result or {}).get("ts")
+        parent_channel = (send_result or {}).get("channel")
+        if parent_ts and parent_channel and reasoning:
+            try:
+                runtime = resolve_slack_runtime(organization_id or "default")
+                if runtime and runtime.get("token"):
+                    headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
+                    async with httpx.AsyncClient(timeout=10) as client:
                         await client.post(
                             "https://slack.com/api/chat.postMessage",
                             json={
-                                "channel": runtime["channel"],
+                                "channel": parent_channel,
                                 "thread_ts": parent_ts,
-                                "text": reasoning_text,
+                                "text": f"*Agent reasoning*\n{reasoning}",
                             },
                             headers=headers,
                         )
-        except Exception as reasoning_exc:
-            logger.debug("[approval] reasoning thread failed: %s", reasoning_exc)
+            except Exception as reasoning_exc:
+                logger.debug("[approval] reasoning thread failed: %s", reasoning_exc)
 
     return sent
 
