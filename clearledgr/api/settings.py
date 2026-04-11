@@ -22,6 +22,28 @@ from clearledgr.core.auth import get_current_user, TokenData
 
 logger = logging.getLogger(__name__)
 
+
+def _enforce_deployment_window():
+    """§7.7: Block policy/model changes outside deployment window (Tue-Thu 10am-2pm UK).
+
+    This is a soft guard — returns a warning if outside the window.
+    Callers can choose to enforce or log.
+    """
+    try:
+        from clearledgr.core.deployment_window import is_deployment_allowed
+        result = is_deployment_allowed()
+        if not result.get("allowed"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "deployment_window_closed",
+                    "reason": result.get("reason"),
+                    "uk_time": result.get("uk_time"),
+                },
+            )
+    except ImportError:
+        pass  # deployment_window module not available
+
 router = APIRouter(
     prefix="/settings",
     tags=["settings"],
@@ -215,7 +237,10 @@ async def get_settings(organization_id: str):
 async def update_settings(organization_id: str, request: UpdateSettingsRequest):
     """
     Update organization settings.
+
+    §7.7: Blocked outside deployment window (Tue-Thu 10am-2pm UK).
     """
+    _enforce_deployment_window()
     db = get_db()
     org = db.get_organization(organization_id) or db.ensure_organization(
         organization_id,
