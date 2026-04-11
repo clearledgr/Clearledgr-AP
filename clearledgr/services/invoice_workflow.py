@@ -642,11 +642,37 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             workflow_id="invoice_entry",
         )
 
+        # --- §3 Migration: parallel mode gate ---
+        # When the org is in parallel running mode, all invoices are routed
+        # to human review regardless of confidence or agent decision.
+        # The agent still processes and extracts — results are visible for
+        # comparison — but no autonomous posting or approval happens.
+        _parallel_mode = False
+        try:
+            org = self.db.get_organization(self.organization_id)
+            if org and org.get("migration_status") == "parallel":
+                _parallel_mode = True
+                logger.info(
+                    "[InvoiceWorkflow] Parallel mode active for org=%s — "
+                    "autonomous actions suppressed, routing to human review",
+                    self.organization_id,
+                )
+        except Exception:
+            pass
+
         # --- AP reasoning layer: Claude decides with vendor context ---
         # If a pre-computed decision was provided (e.g. from the agent planning loop),
         # skip the internal Claude call to avoid a double Sonnet invocation.
         if ap_decision is None:
             ap_decision = await self._get_ap_decision(invoice, validation_gate)
+
+        # In parallel mode, override any autonomous decision to force human review
+        if _parallel_mode and ap_decision and ap_decision.recommendation == "approve":
+            ap_decision.recommendation = "escalate"
+            ap_decision.reasoning = (
+                (ap_decision.reasoning or "") +
+                " [Parallel mode: autonomous approval suppressed — routed to human review for comparison with existing AP system.]"
+            )
 
         # DESIGN_THESIS.md §7.6 — defense-in-depth enforcement point.
         # Whether the decision came from Path A (_get_ap_decision, already enforced)

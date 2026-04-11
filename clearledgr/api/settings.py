@@ -534,3 +534,132 @@ def get_gl_account_for_vendor(organization_id: str, vendor: str, category: str =
     
     # Return default
     return settings.get("default_expense_account")
+
+
+# ==================== MIGRATION FROM EXISTING TOOLS (§3) ====================
+
+
+@router.post("/{organization_id}/migration/start-parallel")
+async def start_parallel_mode(
+    organization_id: str,
+    user: TokenData = Depends(get_current_user),
+):
+    """§3 Migration: Start parallel running mode.
+
+    Clearledgr runs alongside the existing AP system. Autonomous actions
+    are suppressed — the agent provides suggestions only. The AP Manager
+    compares results for a minimum of 2 weeks before deciding to go live.
+    """
+    from clearledgr.core.auth import has_financial_controller
+    if not has_financial_controller(user):
+        raise HTTPException(status_code=403, detail="financial_controller_required")
+
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "system")
+
+    org = db.get_organization(organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="organization_not_found")
+
+    db.update_organization(organization_id, migration_status="parallel", parallel_start_date=now)
+
+    db.append_ap_audit_event({
+        "event_type": "migration_parallel_started",
+        "actor_type": "user",
+        "actor_id": actor_id,
+        "organization_id": organization_id,
+        "source": "settings_api",
+        "payload_json": {"parallel_start_date": now},
+    })
+
+    return {
+        "status": "parallel",
+        "parallel_start_date": now,
+        "message": "Parallel mode active. Autonomous actions suppressed. Compare results with your existing system.",
+    }
+
+
+@router.post("/{organization_id}/migration/cutover")
+async def migration_cutover(
+    organization_id: str,
+    user: TokenData = Depends(get_current_user),
+):
+    """§3 Migration: Go live — Clearledgr becomes the primary AP workflow.
+
+    "The cutover decision is logged in Settings. It is timestamped,
+    attributed to the AP Manager who made it, and recorded in the audit trail."
+    """
+    from clearledgr.core.auth import has_financial_controller
+    if not has_financial_controller(user):
+        raise HTTPException(status_code=403, detail="financial_controller_required")
+
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "system")
+
+    org = db.get_organization(organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="organization_not_found")
+
+    db.update_organization(
+        organization_id,
+        migration_status="live",
+        cutover_decision_at=now,
+        cutover_decision_by=actor_id,
+    )
+
+    db.append_ap_audit_event({
+        "event_type": "migration_cutover_decision",
+        "actor_type": "user",
+        "actor_id": actor_id,
+        "organization_id": organization_id,
+        "source": "settings_api",
+        "payload_json": {
+            "cutover_decision_at": now,
+            "cutover_decision_by": actor_id,
+            "previous_status": org.get("migration_status", "parallel"),
+        },
+    })
+
+    return {
+        "status": "live",
+        "cutover_decision_at": now,
+        "cutover_decision_by": actor_id,
+        "message": "Clearledgr is now the primary AP workflow. Autonomous actions enabled.",
+    }
+
+
+@router.get("/{organization_id}/migration/status")
+async def get_migration_status(
+    organization_id: str,
+    user: TokenData = Depends(get_current_user),
+):
+    """Get current migration status for an organization."""
+    db = get_db()
+    org = db.get_organization(organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="organization_not_found")
+
+    status = org.get("migration_status", "live")
+    parallel_start = org.get("parallel_start_date")
+    cutover_at = org.get("cutover_decision_at")
+    cutover_by = org.get("cutover_decision_by")
+
+    days_in_parallel = 0
+    if status == "parallel" and parallel_start:
+        try:
+            start = datetime.fromisoformat(parallel_start.replace("Z", "+00:00"))
+            days_in_parallel = (datetime.now(timezone.utc) - start).days
+        except (ValueError, TypeError):
+            pass
+
+    return {
+        "migration_status": status,
+        "parallel_start_date": parallel_start,
+        "days_in_parallel": days_in_parallel,
+        "cutover_decision_at": cutover_at,
+        "cutover_decision_by": cutover_by,
+        "minimum_parallel_days": 14,
+        "can_cutover": status == "parallel" and days_in_parallel >= 14,
+    }

@@ -468,18 +468,38 @@ async def import_vendors_csv(
             skipped.append({"row": row, "reason": "missing vendor_name"})
             continue
 
-        # Check if vendor already exists
+        # Check if vendor already exists with active onboarding
         existing = db.get_vendor_profile(vendor_name, organization_id) if hasattr(db, "get_vendor_profile") else None
         if existing:
             skipped.append({"row": row, "reason": "vendor_already_exists"})
             continue
 
-        # Create vendor profile
+        # §3 Migration: imported vendors enter the standard onboarding flow
+        # at 'invited' state. They must complete KYC and bank verification
+        # (micro-deposit) before invoices can be processed. No direct import
+        # to onboarded status.
         try:
+            # Create vendor profile with CSV data (KYC fields pre-populated)
             if hasattr(db, "upsert_vendor_profile"):
                 db.upsert_vendor_profile(vendor_name, organization_id, **{
                     k: v for k, v in mapped.items() if k != "vendor_name"
                 })
+
+            # Create onboarding session so vendor goes through verification
+            if hasattr(db, "create_vendor_onboarding_session"):
+                contact_email = mapped.get("primary_contact_email", "")
+                db.create_vendor_onboarding_session(
+                    organization_id=organization_id,
+                    vendor_name=vendor_name,
+                    initial_state="invited",
+                    metadata={
+                        "source": "csv_import",
+                        "imported_by": actor_id,
+                        "invite_email_to": contact_email,
+                        "pre_populated_fields": [k for k in mapped if k != "vendor_name"],
+                    },
+                )
+
             created.append(vendor_name)
         except Exception as exc:
             skipped.append({"row": row, "reason": str(exc)})

@@ -822,3 +822,18 @@ def _v23_approval_chain_entity(cur, db):
         cur.execute("ALTER TABLE approval_chains ADD COLUMN entity_id TEXT")
     except Exception:
         pass
+
+
+@migration(24, "Migration from Existing Tools (DESIGN_THESIS.md §3)")
+def _v24_migration_state(cur, db):
+    """§3 Migration: parallel running mode + cutover decision tracking."""
+    for col, col_type in [
+        ("migration_status", "TEXT DEFAULT 'live'"),
+        ("parallel_start_date", "TEXT"),
+        ("cutover_decision_at", "TEXT"),
+        ("cutover_decision_by", "TEXT"),
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE organizations ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass
