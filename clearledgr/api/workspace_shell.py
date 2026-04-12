@@ -843,7 +843,7 @@ async def get_admin_bootstrap(
             {
                 "id": 1,
                 "name": "Install Chrome Extension",
-                "description": "InboxSDK initialises. Clearledgr section appears in Gmail's left nav.",
+                "description": "Clearledgr section appears in Gmail's left nav. Extension ready to use.",
                 "time_estimate": "2 minutes",
             },
             {

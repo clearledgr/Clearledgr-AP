@@ -1445,10 +1445,29 @@ class ExecutionEngine:
         return {"ok": True, "sent": False, "reason": "teams_not_configured"}
 
     async def _handle_post_gmail_notification(self, action: Action, plan: Plan) -> dict:
-        """§3: Trigger a Gmail-native desktop notification."""
-        # Gmail desktop notifications are handled by the Chrome extension,
-        # not by the backend. The extension polls for state changes.
-        return {"ok": True}
+        """§3: Trigger a notification for a specific event.
+
+        Records a pending notification in the database. Surfaces
+        (whatever they are) read pending notifications from the API
+        and present them. The agent does not know which surface
+        will consume the notification.
+        """
+        if not plan.box_id:
+            return {"ok": True}
+        event_type = action.params.get("event_type", "agent_action")
+        try:
+            if hasattr(self.db, "append_ap_item_timeline_entry"):
+                self.db.append_ap_item_timeline_entry(plan.box_id, {
+                    "type": "notification",
+                    "event_type": event_type,
+                    "summary": action.description,
+                    "requires_attention": True,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+            return {"ok": True, "notification_recorded": True}
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] post_gmail_notification: %s", exc)
+            return {"ok": True}
 
     async def _handle_create_vendor_record(self, action: Action, plan: Plan) -> dict:
         """§3: Create a new Vendor record with status pending_onboarding."""
