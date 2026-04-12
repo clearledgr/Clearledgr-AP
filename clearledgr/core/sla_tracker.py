@@ -37,14 +37,16 @@ logger = logging.getLogger(__name__)
 
 # §11: SLA targets in milliseconds
 SLA_TARGETS_MS = {
-    "classification":    {"starter": 5000,   "enterprise": 3000},
-    "extraction":        {"starter": 10000,  "enterprise": 6000},
-    "guardrails":        {"starter": 500,    "enterprise": 500},
-    "erp_lookup":        {"starter": 3000,   "enterprise": 2000},
-    "three_way_match":   {"starter": 100,    "enterprise": 100},
-    "erp_post":          {"starter": 5000,   "enterprise": 5000},
-    "slack_delivery":    {"starter": 3000,   "enterprise": 3000},
-    "total_to_approval": {"starter": 300000, "enterprise": 120000},
+    "email_receipt_to_queue":  {"starter": 30000,  "enterprise": 30000},
+    "queue_to_planning":       {"starter": 60000,  "enterprise": 15000},
+    "classification":          {"starter": 5000,   "enterprise": 3000},
+    "extraction":              {"starter": 10000,  "enterprise": 6000},
+    "guardrails":              {"starter": 500,    "enterprise": 500},
+    "erp_lookup":              {"starter": 3000,   "enterprise": 2000},
+    "three_way_match":         {"starter": 100,    "enterprise": 100},
+    "erp_post":                {"starter": 5000,   "enterprise": 5000},
+    "slack_delivery":          {"starter": 3000,   "enterprise": 3000},
+    "total_to_approval":       {"starter": 300000, "enterprise": 120000},
 }
 
 

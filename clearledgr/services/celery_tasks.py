@@ -31,6 +31,21 @@ def process_agent_event(self, event_data: dict) -> dict:
     event = AgentEvent.from_dict(event_data)
     org_id = event.organization_id
 
+    # §11: Record queue_to_planning SLA latency
+    try:
+        from datetime import datetime, timezone as _tz
+        from clearledgr.core.sla_tracker import get_sla_tracker
+        if event.created_at:
+            created = datetime.fromisoformat(event.created_at.replace("Z", "+00:00"))
+            queue_latency_ms = int((datetime.now(_tz.utc) - created).total_seconds() * 1000)
+            get_sla_tracker().record(
+                "queue_to_planning", queue_latency_ms,
+                ap_item_id=event.payload.get("message_id") or event.payload.get("box_id"),
+                organization_id=org_id,
+            )
+    except Exception:
+        pass
+
     # §11.2.2: Acquire workspace concurrency slot
     semaphore = WorkspaceSemaphore(org_id)
     if not semaphore.acquire():

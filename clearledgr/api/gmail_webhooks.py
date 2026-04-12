@@ -781,6 +781,8 @@ async def gmail_push_notification(
     This endpoint is called by Google whenever a new email arrives in a watched inbox.
     Processing happens in the background to respond quickly to Google.
     """
+    import time as _time
+    _push_receipt_ts = _time.monotonic()
     body = await request.json()
     _enforce_push_verifier(request)
     payload = _validate_push_payload(body)
@@ -792,11 +794,12 @@ async def gmail_push_notification(
         process_gmail_notification,
         email_address,
         history_id,
+        _push_receipt_ts,
     )
     return {"status": "ok"}
 
 
-async def process_gmail_notification(email_address: str, history_id: str):
+async def process_gmail_notification(email_address: str, history_id: str, push_receipt_ts: float = None):
     """
     Process a Gmail notification in the background.
     
@@ -896,6 +899,19 @@ async def process_gmail_notification(email_address: str, history_id: str):
                 result = queue.enqueue(event)
                 if result != "duplicate":
                     enqueued += 1
+                    # §11: Record email_receipt_to_queue SLA latency
+                    if push_receipt_ts is not None:
+                        try:
+                            import time as _t
+                            from clearledgr.core.sla_tracker import get_sla_tracker
+                            latency_ms = int((_t.monotonic() - push_receipt_ts) * 1000)
+                            get_sla_tracker().record(
+                                "email_receipt_to_queue", latency_ms,
+                                ap_item_id=message_id,
+                                organization_id=organization_id,
+                            )
+                        except Exception:
+                            pass
             except Exception as e:
                 # Fallback: process inline if queue unavailable
                 logger.warning("Event queue unavailable, processing inline: %s", e)

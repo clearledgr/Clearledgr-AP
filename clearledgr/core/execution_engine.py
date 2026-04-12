@@ -35,6 +35,23 @@ logger = logging.getLogger(__name__)
 _RETRY_DELAYS = [5, 30, 120]  # seconds
 _MAX_RETRIES = 3
 
+# §11: Action → SLA step mapping for latency tracking
+_ACTION_TO_SLA_STEP = {
+    "classify_email":             "classification",
+    "extract_invoice_fields":     "extraction",
+    "run_extraction_guardrails":  "guardrails",
+    "lookup_po":                  "erp_lookup",
+    "lookup_grn":                 "erp_lookup",
+    "lookup_vendor_master":       "erp_lookup",
+    "run_three_way_match":        "three_way_match",
+    "post_bill":                  "erp_post",
+    "send_slack_approval":        "slack_delivery",
+    "send_slack_exception":       "slack_delivery",
+    "send_slack_override_window": "slack_delivery",
+    "send_slack_digest":          "slack_delivery",
+}
+
+
 # §5.1: Per-action-type timeouts
 _ACTION_TIMEOUTS = {
     "classify_email": 30,
@@ -182,6 +199,11 @@ class ExecutionEngine:
         box_id = plan.box_id
         steps_completed = 0
 
+        # §11: Track total_to_approval latency for email_received plans
+        import time as _time
+        _plan_start = _time.monotonic()
+        _is_invoice_plan = plan.event_type == "email_received"
+
         for step, action in enumerate(plan.actions):
             # --- Step 3: Pre-execution timeline write (Rule 1) ---
             timeline_id = self._pre_write(box_id, action, step)
@@ -227,6 +249,18 @@ class ExecutionEngine:
                         expected_by=result["waiting_condition"].get("expected_by"),
                         context=result["waiting_condition"].get("context"),
                     )
+                # §11: Record total_to_approval SLA when hitting approval wait
+                if _is_invoice_plan and result["waiting_condition"].get("type") == "approval_response":
+                    try:
+                        from clearledgr.core.sla_tracker import get_sla_tracker
+                        total_ms = int((_time.monotonic() - _plan_start) * 1000)
+                        get_sla_tracker().record(
+                            "total_to_approval", total_ms,
+                            ap_item_id=box_id,
+                            organization_id=self.organization_id,
+                        )
+                    except Exception:
+                        pass
                 return ExecutionResult(
                     status="waiting", steps_completed=steps_completed,
                     steps_total=plan.step_count, box_id=box_id,
@@ -294,6 +328,7 @@ class ExecutionEngine:
 
     async def _execute_with_retry(self, action: Action, plan: Plan, step: int) -> Dict[str, Any]:
         """Execute action with transient failure retry."""
+        import time as _time
         handler = self._handlers.get(action.name)
         if not handler:
             logger.warning("[ExecutionEngine] No handler for action: %s", action.name)
@@ -301,12 +336,28 @@ class ExecutionEngine:
 
         timeout = _ACTION_TIMEOUTS.get(action.name, _DEFAULT_TIMEOUT)
 
+        # §11: Map action name to SLA step name for timing
+        sla_step = _ACTION_TO_SLA_STEP.get(action.name)
+        _action_start = _time.monotonic()
+
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 result = await asyncio.wait_for(
                     handler(action, plan),
                     timeout=timeout,
                 )
+                # §11: Record SLA latency for this action
+                if sla_step:
+                    latency_ms = int((_time.monotonic() - _action_start) * 1000)
+                    try:
+                        from clearledgr.core.sla_tracker import get_sla_tracker
+                        get_sla_tracker().record(
+                            sla_step, latency_ms,
+                            ap_item_id=plan.box_id,
+                            organization_id=self.organization_id,
+                        )
+                    except Exception:
+                        pass
                 return result if isinstance(result, dict) else {"ok": True}
 
             except asyncio.TimeoutError:
