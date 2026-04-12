@@ -10,6 +10,8 @@ Implementation baseline (completed and archived):
 
 Latest validation baseline:
 - AP v1 regression slice + durable retry tests: `114 passed` (recorded in remaining-gaps tracker archive)
+- Full backend test suite (2026-04-12 post-Phase-3.5 commits `50a8851`, `cd40c7b`, `38da54a`): **2066 passed** (3 pre-existing test-ordering flakes that pass in isolation)
+- Frontend component contract tests (2026-04-12): 23/23 passing (ThreadSidebar 10 + BatchOps 10 + ActionDialog 3)
 
 ## Implementation Snapshot
 

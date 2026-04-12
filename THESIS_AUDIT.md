@@ -1,6 +1,6 @@
 # Design Thesis Audit — Codebase vs. DESIGN_THESIS.md
 
-**Date:** 2026-04-09 (initial) · **Phase 1 update:** 2026-04-09 · **Phase 2 update:** 2026-04-09 · **Phase 3 update:** 2026-04-10
+**Date:** 2026-04-09 (initial) · **Phase 1 update:** 2026-04-09 · **Phase 2 update:** 2026-04-09 · **Phase 3 update:** 2026-04-10 · **Phase 3 surface polish + Agent-Spec §1-§13 audit:** 2026-04-12
 **Method:** Four parallel structured audits across extension/surfaces, agent architecture, object model/security, and fraud/onboarding/commercial. Each audit produced a gap matrix with file:line citations.
 **Status legend:** ✅ Aligned · ⚠️ Partial · ❌ Missing · 🚫 Conflicts
 
@@ -482,12 +482,32 @@ Suggested execution sequence. P0 items should block any enterprise go-live.
 
    *Phase 2 net: 234 new tests, 1581 → 1815 passing, zero new regressions, all P0 ship-blocker items closed, vendor-identity cluster fully resolved.*
 
-**Phase 3 — Core missing features (8–10 weeks) ← NEXT**
-10. Micro-deposit bank verification workflow (#9)
-11. Vendor onboarding portal + auto-chase + ERP activation (#10)
-12. Trust-building arc scheduled messaging — Week 1 / Day 14 / Day 30 / weekly (#4)
-13. Thread toolbar buttons + sidebar restructure to four sections (#13, #14)
-14. Conditional digest + intelligent routing + conversational queries (#12, #16, #17)
+**Phase 3 — Core missing features ✅ SHIPPED 2026-04-10/11**
+10. ✅ Micro-deposit bank verification workflow (#9)
+11. ✅ Vendor onboarding portal + auto-chase + ERP activation (#10)
+12. ✅ Trust-building arc scheduled messaging — Week 1 / Day 14 / Day 30 / weekly (#4)
+13. ✅ Thread toolbar buttons + sidebar restructure to four sections (#13, #14)
+14. ✅ Conditional digest + intelligent routing + conversational queries (#12, #16, #17)
+
+**Phase 3.5 — Agent-spec §1-§13 audit + surface polish ✅ SHIPPED 2026-04-12**
+
+All 13 sections of `AGENT_DESIGN_SPECIFICATION.md` verified end-to-end; gaps closed in this cluster of commits:
+
+- ✅ `8030196` — Rule 1 audit status fix (§5.1). Dependency-failure waits now record `agent_action:<name>:paused` with the error as summary. Previously the timeline wrongly showed `completed` for failed actions that had been converted to waiting_conditions.
+- ✅ `aaf8ab2` — `list_ap_audit_events(limit, order)` params added so `box_summary.build_box_summary()` takes its fast path (was silently falling through to raw SQL). Migration v31 hardened: backfills empty-string `thread_id` → NULL before creating the UNIQUE partial index; surfaces real duplicates loudly instead of swallowing the error.
+- ✅ `50a8851` — ThreadSidebar 7-gap fill against thesis §6.6 / spec §6 / §8.1 / §9.1 / §12.2:
+  (1) waiting-condition banner with humanized type + since/next-check timing,
+  (2) override-window banner with live 1-second countdown + Undo wired to `/api/ap/items/{id}/reverse`,
+  (3) fraud-flags banner that self-hides when every flag is resolved,
+  (4) match-tolerance chip showing Δ% / tol% with pass/warn/fail tone (§8.1 "passed within 0.3%"),
+  (5) resubmission lineage banner (supersedes / superseded_by),
+  (6) CSP hardening — all inline `style=` attrs moved to CSS classes,
+  (7) LoadingSkeleton component.
+  Backend serializer (`build_worklist_item`) promotes `waiting_condition`, `fraud_flags`, `override_window`, and `po_match` numeric details to flat payload fields.
+- ✅ `cd40c7b` — BatchOps (§6.7 power-user workflow). Four new bulk endpoints (`/bulk-approve`, `/bulk-reject`, `/bulk-snooze`, `/bulk-retry-post`), each capped at 100 items and returning per-item results so a single ERP rejection never discards the batch. Every action runs through the normal runtime intent or state-machine store, so Rule 1 pre-write and audit stay intact. Shared `BatchOps.js` sticky toolbar wired into ReviewPage + PipelinePage, with reject-reason dialog + snooze duration picker + failed-IDs display.
+- ✅ `38da54a` — Phase 2 Gmail label sync (bidirectional). New `AgentEventType.LABEL_CHANGED` with `_plan_label_changed` handler. Only 4 action-verb labels trigger intents (Approved → approve, Exception/Review Required → needs_info, Not Finance → reject); status labels (Matched, Paid) explicitly excluded. Webhook's `_process_label_changes()` consumes `labelsAdded` history records with `label:{name}:{message_id}` idempotency. `get_history()` now subscribes to both `messageAdded` and `labelAdded`.
+
+*Phase 3.5 net: 27 new tests, 2039 → 2066 passing. 23/23 new frontend component tests (ThreadSidebar 10 + BatchOps 10 + ActionDialog 3). Bundle rebuilt + verified. Zero new regressions; 3 pre-existing test-ordering flakes unchanged (pass in isolation).*
 
 **Phase 4 — Scale readiness (6–8 weeks)**
 15. Google Workspace Add-on for mobile approvals (#11)
