@@ -341,6 +341,52 @@ class ExecutionEngine:
 
         return {"_abort": True, "error": "max retries exhausted"}
 
+    async def _run_exception_flow(self, plan: Plan, ctx: dict, match_result: Any) -> None:
+        """§9.3: Execute the exception flow when 3-way match fails.
+
+        Steps per spec:
+        1. generate_exception_reason(match_result, invoice, po, grn)
+        2. apply_label('Clearledgr/Invoice/Exception')
+        3. move_box_stage('exception')
+        4. send_slack_exception(box_id, ap_channel, {exception_summary})
+        """
+        box_id = plan.box_id
+        if not box_id:
+            return
+
+        # 1. Generate exception reason via Claude (LLM)
+        try:
+            await self._handle_generate_exception(
+                Action("generate_exception_reason", "LLM", {}, "Generate match exception reason"),
+                plan,
+            )
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] exception reason generation failed: %s", exc)
+
+        # 2. Apply Exception label
+        try:
+            await self._handle_apply_label(
+                Action("apply_label", "DET", {"label": "Clearledgr/Invoice/Exception"}, "Apply Exception label"),
+                plan,
+            )
+        except Exception:
+            pass
+
+        # 3. Move to exception stage
+        try:
+            self.db.update_ap_item(box_id, state="needs_info")
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] move to exception failed: %s", exc)
+
+        # 4. Send Slack exception notification
+        try:
+            await self._handle_send_slack_exception(
+                Action("send_slack_exception", "DET", {}, "Notify AP team of match exception"),
+                plan,
+            )
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] slack exception notification failed: %s", exc)
+
     def _move_to_exception(self, box_id: str, action_name: str, error: str) -> None:
         """Move Box to exception stage on persistent failure."""
         try:
@@ -698,7 +744,12 @@ class ExecutionEngine:
                     match_status="passed" if match_passed else "exception",
                     grn_reference=extracted.get("po_reference", ""),
                 )
-            return {"ok": True, "match_status": status, "match_passed": match_passed}
+            if not match_passed:
+                # §9.3: Match failed — run exception flow inline, then stop plan.
+                # Don't continue to apply_label(Matched) / send_approval.
+                await self._run_exception_flow(plan, ctx, result)
+                return {"ok": True, "match_status": status, "match_passed": False, "_stop_plan": True}
+            return {"ok": True, "match_status": status, "match_passed": True}
         except Exception as exc:
             logger.debug("[ExecutionEngine] three_way_match non-fatal: %s", exc)
             ctx["match_result"] = None
