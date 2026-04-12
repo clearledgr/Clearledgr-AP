@@ -148,39 +148,171 @@ class TestUnsignOAuthState:
 # _enforce_push_verifier
 # ---------------------------------------------------------------------------
 
+def _fake_request(headers=None):
+    """Build a FastAPI-Request-like object whose .headers.get returns strings."""
+    from unittest.mock import MagicMock
+    hdrs = {k: v for k, v in (headers or {}).items()}
+    req = MagicMock()
+    req.headers.get = lambda name, default="": hdrs.get(name, default)
+    return req
+
+
 class TestEnforcePushVerifier:
-    def test_no_secret_in_dev_passes(self, monkeypatch):
+    def test_no_secret_no_oidc_in_dev_passes(self, monkeypatch):
         monkeypatch.setenv("ENV", "dev")
         monkeypatch.delenv("GMAIL_PUSH_SHARED_SECRET", raising=False)
-        from unittest.mock import MagicMock
-        request = MagicMock()
-        _enforce_push_verifier(request)  # should not raise
+        monkeypatch.delenv("GMAIL_PUSH_AUDIENCE", raising=False)
+        monkeypatch.delenv("GMAIL_PUSH_INVOKER_SA", raising=False)
+        _enforce_push_verifier(_fake_request())  # should not raise
 
-    def test_no_secret_in_prod_raises_503(self, monkeypatch):
+    def test_no_secret_no_oidc_in_prod_raises_503(self, monkeypatch):
         monkeypatch.setenv("ENV", "production")
         monkeypatch.delenv("GMAIL_PUSH_SHARED_SECRET", raising=False)
+        monkeypatch.delenv("GMAIL_PUSH_AUDIENCE", raising=False)
+        monkeypatch.delenv("GMAIL_PUSH_INVOKER_SA", raising=False)
         monkeypatch.delenv("GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD", raising=False)
-        from unittest.mock import MagicMock
-        request = MagicMock()
         with pytest.raises(HTTPException) as exc_info:
-            _enforce_push_verifier(request)
+            _enforce_push_verifier(_fake_request())
         assert exc_info.value.status_code == 503
 
-    def test_correct_token_passes(self, monkeypatch):
+    def test_shared_secret_correct_token_passes(self, monkeypatch):
         monkeypatch.setenv("GMAIL_PUSH_SHARED_SECRET", "my-token")
-        from unittest.mock import MagicMock
-        request = MagicMock()
-        request.headers.get.side_effect = lambda h: "my-token" if h == "X-Gmail-Push-Token" else None
-        _enforce_push_verifier(request)  # should not raise
+        monkeypatch.delenv("GMAIL_PUSH_AUDIENCE", raising=False)
+        monkeypatch.delenv("GMAIL_PUSH_INVOKER_SA", raising=False)
+        _enforce_push_verifier(_fake_request({"X-Gmail-Push-Token": "my-token"}))
 
-    def test_wrong_token_raises_401(self, monkeypatch):
+    def test_shared_secret_wrong_token_raises_401(self, monkeypatch):
         monkeypatch.setenv("GMAIL_PUSH_SHARED_SECRET", "my-token")
-        from unittest.mock import MagicMock
-        request = MagicMock()
-        request.headers.get.return_value = "wrong-token"
+        monkeypatch.delenv("GMAIL_PUSH_AUDIENCE", raising=False)
+        monkeypatch.delenv("GMAIL_PUSH_INVOKER_SA", raising=False)
         with pytest.raises(HTTPException) as exc_info:
-            _enforce_push_verifier(request)
+            _enforce_push_verifier(_fake_request({"X-Gmail-Push-Token": "wrong"}))
         assert exc_info.value.status_code == 401
+
+
+class TestOIDCPushVerifier:
+    """OIDC path — Google Pub/Sub signs requests with a JWT bearer.
+
+    We patch google.oauth2.id_token.verify_oauth2_token to simulate signature
+    validation without actually fetching Google's public keys.
+    """
+
+    _EXPECTED_AUDIENCE = "https://api.clearledgr.com/gmail/push"
+    _EXPECTED_INVOKER = "pubsub-invoker@clearledgr.iam.gserviceaccount.com"
+
+    def _enable_oidc(self, monkeypatch):
+        monkeypatch.setenv("GMAIL_PUSH_AUDIENCE", self._EXPECTED_AUDIENCE)
+        monkeypatch.setenv("GMAIL_PUSH_INVOKER_SA", self._EXPECTED_INVOKER)
+        monkeypatch.delenv("GMAIL_PUSH_SHARED_SECRET", raising=False)
+
+    def _patch_verify(self, monkeypatch, claims=None, raises=None):
+        from unittest.mock import MagicMock
+        mock_verify = MagicMock()
+        if raises is not None:
+            mock_verify.side_effect = raises
+        else:
+            mock_verify.return_value = claims
+        monkeypatch.setattr(
+            "google.oauth2.id_token.verify_oauth2_token",
+            mock_verify,
+        )
+        return mock_verify
+
+    def test_valid_oidc_bearer_passes(self, monkeypatch):
+        self._enable_oidc(monkeypatch)
+        mock_verify = self._patch_verify(monkeypatch, claims={
+            "iss": "https://accounts.google.com",
+            "aud": self._EXPECTED_AUDIENCE,
+            "email": self._EXPECTED_INVOKER,
+            "email_verified": True,
+        })
+        req = _fake_request({"Authorization": "Bearer eyFAKE.TOKEN.HERE"})
+        _enforce_push_verifier(req)  # should not raise
+        # verify_oauth2_token was called with audience enforcement
+        assert mock_verify.called
+        args, kwargs = mock_verify.call_args
+        assert kwargs.get("audience") == self._EXPECTED_AUDIENCE
+
+    def test_oidc_wrong_email_raises_401(self, monkeypatch):
+        self._enable_oidc(monkeypatch)
+        self._patch_verify(monkeypatch, claims={
+            "iss": "https://accounts.google.com",
+            "aud": self._EXPECTED_AUDIENCE,
+            "email": "attacker@evil.com",
+            "email_verified": True,
+        })
+        with pytest.raises(HTTPException) as exc_info:
+            _enforce_push_verifier(_fake_request({"Authorization": "Bearer token"}))
+        assert exc_info.value.status_code == 401
+        assert "bad_principal" in str(exc_info.value.detail)
+
+    def test_oidc_email_unverified_raises_401(self, monkeypatch):
+        self._enable_oidc(monkeypatch)
+        self._patch_verify(monkeypatch, claims={
+            "iss": "https://accounts.google.com",
+            "aud": self._EXPECTED_AUDIENCE,
+            "email": self._EXPECTED_INVOKER,
+            "email_verified": False,
+        })
+        with pytest.raises(HTTPException) as exc_info:
+            _enforce_push_verifier(_fake_request({"Authorization": "Bearer token"}))
+        assert exc_info.value.status_code == 401
+
+    def test_oidc_wrong_issuer_raises_401(self, monkeypatch):
+        self._enable_oidc(monkeypatch)
+        self._patch_verify(monkeypatch, claims={
+            "iss": "https://evil.example/",
+            "aud": self._EXPECTED_AUDIENCE,
+            "email": self._EXPECTED_INVOKER,
+            "email_verified": True,
+        })
+        with pytest.raises(HTTPException) as exc_info:
+            _enforce_push_verifier(_fake_request({"Authorization": "Bearer token"}))
+        assert exc_info.value.status_code == 401
+        assert "bad_issuer" in str(exc_info.value.detail)
+
+    def test_oidc_invalid_signature_raises_401(self, monkeypatch):
+        self._enable_oidc(monkeypatch)
+        self._patch_verify(monkeypatch, raises=ValueError("Token expired"))
+        with pytest.raises(HTTPException) as exc_info:
+            _enforce_push_verifier(_fake_request({"Authorization": "Bearer expired"}))
+        assert exc_info.value.status_code == 401
+        assert "oidc_invalid" in str(exc_info.value.detail)
+
+    def test_missing_auth_header_falls_through_to_shared_secret(self, monkeypatch):
+        # Even with OIDC configured, a request with no Authorization header
+        # should fall through to the shared-secret path (useful for local
+        # testing or manual curl). If neither is set in prod, 503.
+        self._enable_oidc(monkeypatch)
+        monkeypatch.setenv("GMAIL_PUSH_SHARED_SECRET", "dev-token")
+        _enforce_push_verifier(_fake_request({"X-Gmail-Push-Token": "dev-token"}))
+
+    def test_oidc_not_configured_does_not_call_verify(self, monkeypatch):
+        # If GMAIL_PUSH_AUDIENCE or GMAIL_PUSH_INVOKER_SA is missing, OIDC
+        # path is skipped entirely — no signature validation attempted.
+        monkeypatch.delenv("GMAIL_PUSH_AUDIENCE", raising=False)
+        monkeypatch.delenv("GMAIL_PUSH_INVOKER_SA", raising=False)
+        monkeypatch.setenv("GMAIL_PUSH_SHARED_SECRET", "dev-token")
+        mock_verify = self._patch_verify(monkeypatch, claims={})
+        _enforce_push_verifier(_fake_request({
+            "Authorization": "Bearer anything",
+            "X-Gmail-Push-Token": "dev-token",
+        }))
+        # Shared secret accepted without consulting OIDC
+        assert not mock_verify.called
+
+    def test_empty_bearer_token_falls_through(self, monkeypatch):
+        self._enable_oidc(monkeypatch)
+        monkeypatch.setenv("GMAIL_PUSH_SHARED_SECRET", "dev")
+        mock_verify = self._patch_verify(monkeypatch, claims={})
+        # "Bearer " with no token → treated as absent, shared secret used
+        with pytest.raises(HTTPException) as exc_info:
+            _enforce_push_verifier(_fake_request({
+                "Authorization": "Bearer ",
+                "X-Gmail-Push-Token": "wrong",
+            }))
+        assert exc_info.value.status_code == 401
+        assert not mock_verify.called
 
 
 # ---------------------------------------------------------------------------

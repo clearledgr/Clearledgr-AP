@@ -709,27 +709,109 @@ def _validate_push_payload(body: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
+def _verify_pubsub_oidc_token(request: Request) -> bool:
+    """Validate Google Cloud Pub/Sub's OIDC bearer token.
+
+    When a push subscription is configured with `push-auth-service-account`,
+    Google signs each POST with an OIDC JWT in Authorization: Bearer <token>.
+    We verify:
+      - JWT signature via Google's public certs
+      - Issuer is https://accounts.google.com
+      - Audience matches GMAIL_PUSH_AUDIENCE (our webhook URL)
+      - `email` claim matches GMAIL_PUSH_INVOKER_SA (our dedicated SA)
+      - `email_verified` is true
+
+    Returns True on valid token. Raises HTTPException(401) on any failure.
+    Returns False (not raises) if Authorization header is absent — caller
+    then falls back to shared-secret verification (dev/local paths).
+    """
+    auth_header = request.headers.get("Authorization", "").strip()
+    if not auth_header.lower().startswith("bearer "):
+        return False
+
+    token = auth_header.split(None, 1)[1].strip()
+    if not token:
+        return False
+
+    expected_audience = str(os.getenv("GMAIL_PUSH_AUDIENCE", "")).strip()
+    expected_invoker = str(os.getenv("GMAIL_PUSH_INVOKER_SA", "")).strip()
+    if not expected_audience or not expected_invoker:
+        # If OIDC is not configured, fall through to shared-secret path
+        return False
+
+    try:
+        from google.oauth2 import id_token
+        from google.auth.transport import requests as google_requests
+    except ImportError as exc:
+        logger.error("[GmailPush] google-auth not available: %s", exc)
+        raise HTTPException(status_code=503, detail="gmail_push_verifier_unavailable") from exc
+
+    try:
+        claims = id_token.verify_oauth2_token(
+            token,
+            google_requests.Request(),
+            audience=expected_audience,
+        )
+    except ValueError as exc:
+        # verify_oauth2_token raises ValueError on signature/audience/expiry issues
+        logger.warning("[GmailPush] OIDC verification failed: %s", exc)
+        raise HTTPException(status_code=401, detail="gmail_push_oidc_invalid") from exc
+
+    # Issuer check (verify_oauth2_token already does this but belt-and-braces)
+    issuer = claims.get("iss", "")
+    if issuer not in ("https://accounts.google.com", "accounts.google.com"):
+        logger.warning("[GmailPush] unexpected issuer: %s", issuer)
+        raise HTTPException(status_code=401, detail="gmail_push_oidc_bad_issuer")
+
+    # Email must match our dedicated invoker SA
+    email = claims.get("email", "")
+    email_verified = claims.get("email_verified", False)
+    if email != expected_invoker or not email_verified:
+        logger.warning(
+            "[GmailPush] OIDC email mismatch: got %s verified=%s, expected %s",
+            email, email_verified, expected_invoker,
+        )
+        raise HTTPException(status_code=401, detail="gmail_push_oidc_bad_principal")
+
+    return True
+
+
 def _enforce_push_verifier(request: Request) -> None:
     """Verifier for public /gmail/push endpoint.
 
-    If GMAIL_PUSH_SHARED_SECRET is configured, callers must present it in
-    X-Gmail-Push-Token or X-Webhook-Token.
+    Preferred: Google Pub/Sub OIDC bearer token (production).
+    Fallback:  GMAIL_PUSH_SHARED_SECRET header (for dev/local testing).
+
+    Order matters: try OIDC first because Google always sends a bearer when
+    `push-auth-service-account` is configured on the subscription. If OIDC
+    succeeds, we accept. If OIDC is absent, we fall back to the shared-
+    secret check. If both are absent in a prod-like env, we refuse unless
+    GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD is explicitly enabled.
     """
-    secret = str(os.getenv("GMAIL_PUSH_SHARED_SECRET", "")).strip()
-    if not secret:
-        if _is_prod_like_env():
-            if not _allow_unverified_push_in_prod():
-                raise HTTPException(status_code=503, detail="gmail_push_verifier_not_configured")
-            logger.warning("GMAIL_PUSH_SHARED_SECRET is unset in prod-like env; unverified push explicitly allowed")
+    # Path 1: OIDC
+    if _verify_pubsub_oidc_token(request):
         return
 
-    provided = (
-        request.headers.get("X-Gmail-Push-Token")
-        or request.headers.get("X-Webhook-Token")
-        or ""
-    ).strip()
-    if provided != secret:
-        raise HTTPException(status_code=401, detail="gmail_push_verification_failed")
+    # Path 2: shared-secret header (dev/local)
+    secret = str(os.getenv("GMAIL_PUSH_SHARED_SECRET", "")).strip()
+    if secret:
+        provided = (
+            request.headers.get("X-Gmail-Push-Token")
+            or request.headers.get("X-Webhook-Token")
+            or ""
+        ).strip()
+        if provided != secret:
+            raise HTTPException(status_code=401, detail="gmail_push_verification_failed")
+        return
+
+    # Neither path configured
+    if _is_prod_like_env():
+        if not _allow_unverified_push_in_prod():
+            raise HTTPException(status_code=503, detail="gmail_push_verifier_not_configured")
+        logger.warning(
+            "[GmailPush] no verifier configured in prod; unverified push explicitly allowed "
+            "(set GMAIL_PUSH_AUDIENCE + GMAIL_PUSH_INVOKER_SA to enable OIDC verification)"
+        )
 
 
 def _should_setup_watch() -> bool:
