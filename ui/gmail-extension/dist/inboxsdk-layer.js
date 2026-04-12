@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:574db85b70a2686c9a27b01c05db1a3e5f8ae8e7148d27316280aec71fb90ed0 */
+/* clearledgr-source-fingerprint:3a4bfd009410c28a463d22b110e65ee0bbc1154488908ac22834c23b11172ee4 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -58986,7 +58986,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
   // src/components/ThreadSidebar.js
   var THREAD_SIDEBAR_CSS = `
-.cl-thread-sidebar { padding: 0; }
+.cl-thread-sidebar { padding: 0; max-width: 100%; overflow-x: hidden; }
+.cl-thread-sidebar, .cl-thread-sidebar * { word-break: break-word; overflow-wrap: anywhere; }
 .cl-ts-section { padding: 12px 16px; border-bottom: 1px solid #E2E8F0; }
 .cl-ts-section:last-child { border-bottom: none; }
 .cl-ts-section-title {
@@ -59228,6 +59229,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function agentIconUrl() {
     return typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.getURL("icons/icon16.png") : "";
+  }
+  function humanizeEventType(raw) {
+    if (!raw)
+      return "Action";
+    const s3 = String(raw).trim();
+    if (!s3)
+      return "Action";
+    const prefixMap = [
+      ["ap_invoice_processing_", "Invoice processing"],
+      ["vendor_onboarding_", "Vendor onboarding"],
+      ["agent_action:", ""]
+    ];
+    let label = s3;
+    for (const [prefix, replacement] of prefixMap) {
+      if (label.toLowerCase().startsWith(prefix)) {
+        label = replacement + (replacement ? " — " : "") + label.slice(prefix.length);
+        break;
+      }
+    }
+    label = label.replace(/[:_]/g, " ").replace(/\s+/g, " ").trim();
+    if (label.length > 0)
+      label = label[0].toUpperCase() + label.slice(1);
+    if (label.length > 80)
+      label = label.slice(0, 77) + "…";
+    return label;
   }
   function humanizeWaitingType(type) {
     if (!type)
@@ -59525,7 +59551,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       ${events.length > 0 ? m3`
           <ul class="cl-ts-timeline">
             ${events.map((e3) => {
-      const what = e3.summary || e3.decision_reason || e3.event_type?.replace(/_/g, " ") || "Action";
+      const what = e3.summary || e3.decision_reason || humanizeEventType(e3.event_type);
       const why = e3.reasoning_summary || e3.reasoning || e3.reason || "";
       const next = e3.next_action || e3.next_step || "";
       const isAgent = (e3.actor || e3.actor_type || "") !== "user";

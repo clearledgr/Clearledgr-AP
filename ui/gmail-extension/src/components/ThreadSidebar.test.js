@@ -99,6 +99,30 @@ describe('ThreadSidebar contract', () => {
     assert.match(source, /clearInterval\(handle\)/);
   });
 
+  it('humanizes long snake_case event_type strings before rendering', () => {
+    // Regression: raw event_type values like
+    // "ap_invoice_processing_field_review_required" forced horizontal
+    // scroll because the browser would not wrap them.
+    assert.match(source, /function humanizeEventType/);
+    const fnBody = source.match(/function humanizeEventType[^]*?\n\}/)[0];
+    const fn = new Function(`${fnBody}; return humanizeEventType;`)();
+    assert.equal(
+      fn('ap_invoice_processing_field_review_required'),
+      'Invoice processing — field review required',
+    );
+    assert.equal(fn('agent_action:apply_label'), 'Apply label');
+    assert.equal(fn(''), 'Action');
+    assert.equal(fn(null), 'Action');
+    // Long pathological string — capped at 80 chars
+    const huge = 'a'.repeat(200);
+    assert.ok(fn(huge).length <= 80);
+  });
+
+  it('prevents horizontal overflow — word-break CSS on every descendant', () => {
+    assert.match(source, /\.cl-thread-sidebar \{ [^}]*overflow-x: hidden/);
+    assert.match(source, /\.cl-thread-sidebar, \.cl-thread-sidebar \* \{[^}]*overflow-wrap: anywhere/);
+  });
+
   it('humanizes known waiting-condition types', () => {
     const mapIdx = source.indexOf('function humanizeWaitingType');
     assert.ok(mapIdx > 0, 'humanizeWaitingType function must exist');

@@ -30,7 +30,8 @@ import { useState, useEffect } from 'preact/hooks';
 // ---------------------------------------------------------------------------
 
 const THREAD_SIDEBAR_CSS = `
-.cl-thread-sidebar { padding: 0; }
+.cl-thread-sidebar { padding: 0; max-width: 100%; overflow-x: hidden; }
+.cl-thread-sidebar, .cl-thread-sidebar * { word-break: break-word; overflow-wrap: anywhere; }
 .cl-ts-section { padding: 12px 16px; border-bottom: 1px solid #E2E8F0; }
 .cl-ts-section:last-child { border-bottom: none; }
 .cl-ts-section-title {
@@ -260,6 +261,36 @@ function ibanPill(item) {
 
 function agentIconUrl() {
   return typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getURL('icons/icon16.png') : '';
+}
+
+// Event type strings from the audit trail (e.g.
+// "ap_invoice_processing_field_review_required") are raw snake_case
+// identifiers. Render them as human text and cap length so they never
+// break the sidebar layout.
+function humanizeEventType(raw) {
+  if (!raw) return 'Action';
+  const s = String(raw).trim();
+  if (!s) return 'Action';
+  // Common AP agent event prefix → shorter label
+  const prefixMap = [
+    ['ap_invoice_processing_', 'Invoice processing'],
+    ['vendor_onboarding_', 'Vendor onboarding'],
+    ['agent_action:', ''],
+  ];
+  let label = s;
+  for (const [prefix, replacement] of prefixMap) {
+    if (label.toLowerCase().startsWith(prefix)) {
+      label = replacement + (replacement ? ' — ' : '') + label.slice(prefix.length);
+      break;
+    }
+  }
+  // snake_case + colons → spaces, lowercase everything, capitalize first
+  label = label.replace(/[:_]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (label.length > 0) label = label[0].toUpperCase() + label.slice(1);
+  // Guard: truncate at 80 chars so even a pathological event name
+  // can't nuke the layout.
+  if (label.length > 80) label = label.slice(0, 77) + '…';
+  return label;
 }
 
 function humanizeWaitingType(type) {
@@ -562,7 +593,7 @@ function AgentActionsSection({ item, auditEvents }) {
           <ul class="cl-ts-timeline">
             ${events.map((e) => {
               // Thesis §6.6: "what the agent did, why it did it, and what happens next"
-              const what = e.summary || e.decision_reason || e.event_type?.replace(/_/g, ' ') || 'Action';
+              const what = e.summary || e.decision_reason || humanizeEventType(e.event_type);
               const why = e.reasoning_summary || e.reasoning || e.reason || '';
               const next = e.next_action || e.next_step || '';
               const isAgent = (e.actor || e.actor_type || '') !== 'user';
