@@ -1,0 +1,13 @@
+# Railway config for the Celery worker fleet.
+#
+# Workers have no HTTP surface so no healthcheck. Scale horizontally
+# via Railway's numReplicas (§11.2.1) — min 2, max 50.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "sh scripts/start-worker.sh"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
