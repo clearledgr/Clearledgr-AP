@@ -166,3 +166,42 @@ class SnoozeAPItemRequest(BaseModel):
     """DESIGN_THESIS.md §3 Gmail Power Features: snooze a thread."""
     duration_minutes: int = Field(..., gt=0, le=43200, description="Snooze duration in minutes (max 30 days)")
     note: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Bulk / BatchOps contracts
+#
+# AP teams receive dozens of invoices per morning. BatchOps is the sidebar
+# toolbar that lets them resolve many at once. Every bulk endpoint returns
+# per-item results (not all-or-nothing) so a single ERP rejection does not
+# discard the rest of a 50-item batch.
+# ---------------------------------------------------------------------------
+
+
+class BulkApproveRequest(BaseModel):
+    """Bulk approve N AP items. Each goes through the usual approve_invoice
+    intent (validation gate + ERP post) so Rule 1 pre-write and audit remain
+    intact. Per-item failures do not abort the batch."""
+    ap_item_ids: List[str] = Field(..., min_length=1, max_length=100)
+    override: bool = False
+    override_justification: Optional[str] = None
+    note: Optional[str] = None
+
+
+class BulkRejectRequest(BaseModel):
+    """Bulk reject N AP items with a shared reason."""
+    ap_item_ids: List[str] = Field(..., min_length=1, max_length=100)
+    reason: str = Field(..., min_length=1)
+    note: Optional[str] = None
+
+
+class BulkSnoozeRequest(BaseModel):
+    """Bulk snooze N AP items for the same duration."""
+    ap_item_ids: List[str] = Field(..., min_length=1, max_length=100)
+    duration_minutes: int = Field(..., gt=0, le=43200)
+    note: Optional[str] = None
+
+
+class BulkRetryPostRequest(BaseModel):
+    """Bulk retry ERP posting for items stuck in failed_post."""
+    ap_item_ids: List[str] = Field(..., min_length=1, max_length=100)

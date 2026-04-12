@@ -1,12 +1,13 @@
 {
-  "generated_at": "2026-04-11T17:45:57.453Z",
-  "fingerprint": "502b33d599ff23b8a3d7ac6e60bb58b24aa3c7a22d258227ca9bd82d66936a8d",
+  "generated_at": "2026-04-12T16:37:04.434Z",
+  "fingerprint": "574db85b70a2686c9a27b01c05db1a3e5f8ae8e7148d27316280aec71fb90ed0",
   "inputs": [
     "background.js",
     "manifest.json",
     "package.json",
     "queue-manager.js",
     "src/components/ActionDialog.js",
+    "src/components/BatchOps.js",
     "src/components/OnboardingFlow.js",
     "src/components/SidebarApp.js",
     "src/components/ThreadSidebar.js",

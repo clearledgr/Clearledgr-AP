@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:502b33d599ff23b8a3d7ac6e60bb58b24aa3c7a22d258227ca9bd82d66936a8d */
+/* clearledgr-source-fingerprint:574db85b70a2686c9a27b01c05db1a3e5f8ae8e7148d27316280aec71fb90ed0 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59005,6 +59005,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 .cl-ts-match-icon.na { color: #94A3B8; }
 .cl-ts-match-label { font-size: 12px; color: #0A1628; flex: 1; }
 .cl-ts-match-detail { font-size: 11px; color: #5C6B7A; }
+.cl-ts-match-tolerance {
+  font-size: 11px; color: #16A34A; background: #ECFDF5;
+  padding: 2px 8px; border-radius: 10px; margin-top: 6px; display: inline-block;
+}
+.cl-ts-match-tolerance.warn { color: #92400E; background: #FEFCE8; }
+.cl-ts-match-tolerance.fail { color: #991B1B; background: #FEF2F2; }
+.cl-ts-match-exception-box {
+  font-size: 12px; color: #92400E; margin-top: 4px;
+  padding: 6px 8px; background: #FEFCE8; border-radius: 6px;
+}
 .cl-ts-risk-badge {
   display: inline-block; padding: 2px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600;
@@ -59022,6 +59032,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   background: #00D67E; position: absolute; left: 0; top: 5px;
 }
 .cl-ts-timeline-time { font-size: 10px; color: #94A3B8; display: block; }
+.cl-ts-agent-icon { width: 10px; height: 10px; vertical-align: -1px; margin-right: 3px; opacity: 0.6; }
+.cl-ts-section-icon { width: 12px; height: 12px; vertical-align: -1px; margin-right: 4px; opacity: 0.7; }
 .cl-ts-iban-pill {
   display: inline-block; padding: 1px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600;
@@ -59059,12 +59071,68 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 }
 .cl-ts-approve-btn:hover { background: #00C271; }
 .cl-ts-approve-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cl-ts-snooze-btn {
+  padding: 6px 14px; border: 1px solid #CA8A04; border-radius: 6px;
+  background: #FEFCE8; color: #92400E;
+  font: 500 12px/1.2 'DM Sans', sans-serif; cursor: pointer;
+}
+.cl-ts-snoozed-notice {
+  font: 500 11px/1.3 'DM Sans', sans-serif; color: #CA8A04; padding: 4px 0;
+}
 .cl-ts-query-input {
   width: 100%; padding: 10px 12px; border: 1px solid #E2E8F0; border-radius: 8px;
   font-size: 13px; color: #0A1628; background: #FBFCFD; font-family: inherit;
 }
 .cl-ts-query-input:focus { outline: none; border-color: #00D67E; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15); }
 .cl-ts-query-input::placeholder { color: #94A3B8; }
+
+/* -- Banners (conditional, above the fixed sections) -- */
+.cl-ts-banner {
+  padding: 10px 16px; display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid #E2E8F0;
+}
+.cl-ts-banner-icon {
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+.cl-ts-banner-body { flex: 1; min-width: 0; }
+.cl-ts-banner-title { font-size: 12px; font-weight: 700; color: #0A1628; line-height: 1.2; }
+.cl-ts-banner-detail { font-size: 11px; color: #5C6B7A; margin-top: 2px; line-height: 1.3; }
+.cl-ts-banner.override { background: #ECFDF5; }
+.cl-ts-banner.override .cl-ts-banner-icon { background: #00D67E; color: #0A1628; }
+.cl-ts-banner.waiting { background: #FEFCE8; }
+.cl-ts-banner.waiting .cl-ts-banner-icon { background: #CA8A04; color: #FEFCE8; }
+.cl-ts-banner.fraud { background: #FEF2F2; }
+.cl-ts-banner.fraud .cl-ts-banner-icon { background: #DC2626; color: #FEF2F2; }
+.cl-ts-banner.resubmission { background: #EFF6FF; }
+.cl-ts-banner.resubmission .cl-ts-banner-icon { background: #1D4ED8; color: #EFF6FF; }
+.cl-ts-banner-action {
+  padding: 6px 12px; border: 1px solid #0A1628; border-radius: 6px;
+  background: #fff; color: #0A1628; font: 600 12px/1 'DM Sans', sans-serif;
+  cursor: pointer; flex-shrink: 0;
+}
+.cl-ts-banner-action:hover { background: #0A1628; color: #fff; }
+.cl-ts-banner-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.cl-ts-fraud-flag {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: #991B1B; margin-top: 4px; padding-left: 38px;
+}
+.cl-ts-fraud-flag::before {
+  content: '⚠'; color: #DC2626;
+}
+
+/* Loading skeleton */
+.cl-ts-skeleton {
+  padding: 12px 16px;
+  border-bottom: 1px solid #E2E8F0;
+}
+.cl-ts-skeleton-row {
+  height: 12px; background: linear-gradient(90deg, #F1F5F9 0%, #E2E8F0 50%, #F1F5F9 100%);
+  background-size: 200% 100%; animation: cl-ts-shimmer 1.4s infinite linear;
+  border-radius: 4px; margin-bottom: 8px;
+}
+@keyframes cl-ts-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 `;
   function formatAmount2(amount, currency) {
     if (amount == null || amount === "")
@@ -59106,6 +59174,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "";
     }
   }
+  function formatCountdown(targetIso, nowMs) {
+    if (!targetIso)
+      return "";
+    try {
+      const target = new Date(targetIso).getTime();
+      const diff = target - nowMs;
+      if (diff <= 0)
+        return "closed";
+      const totalSec = Math.floor(diff / 1000);
+      const h3 = Math.floor(totalSec / 3600);
+      const m4 = Math.floor(totalSec % 3600 / 60);
+      const s3 = totalSec % 60;
+      if (h3 > 0)
+        return `${h3}h ${m4}m`;
+      if (m4 > 0)
+        return `${m4}m ${s3}s`;
+      return `${s3}s`;
+    } catch {
+      return "";
+    }
+  }
   function matchIcon(status) {
     if (!status)
       return m3`<span class="cl-ts-match-icon na">—</span>`;
@@ -59136,6 +59225,136 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (item?.iban_verified)
       return m3`<span class="cl-ts-iban-pill cl-ts-iban-verified">Verified</span>`;
     return m3`<span class="cl-ts-iban-pill cl-ts-iban-unverified">Unverified</span>`;
+  }
+  function agentIconUrl() {
+    return typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.getURL("icons/icon16.png") : "";
+  }
+  function humanizeWaitingType(type) {
+    if (!type)
+      return "the next step";
+    const t5 = String(type).toLowerCase();
+    const map = {
+      grn_check: "GRN confirmation",
+      grn_confirmation: "GRN confirmation",
+      approval_response: "approval",
+      vendor_onboarding_completion: "vendor onboarding",
+      iban_verification: "IBAN verification",
+      external_dependency_unavailable: "ERP to come back online",
+      erp_unavailable: "ERP to come back online",
+      erp_recheck: "ERP reconnection",
+      payment_confirmation: "payment confirmation",
+      vendor_response: "vendor response"
+    };
+    return map[t5] || t5.replace(/_/g, " ");
+  }
+  function OverrideWindowBanner({ window_, onUndo, nowMs }) {
+    if (!window_ || !window_.expires_at)
+      return null;
+    const [undoing, setUndoing] = d2(false);
+    const remaining = formatCountdown(window_.expires_at, nowMs);
+    const isOpen = remaining && remaining !== "closed";
+    if (!isOpen)
+      return null;
+    const action = String(window_.action_type || "posted_to_erp").replace(/_/g, " ");
+    return m3`
+    <div class="cl-ts-banner override">
+      <div class="cl-ts-banner-icon">✓</div>
+      <div class="cl-ts-banner-body">
+        <div class="cl-ts-banner-title">Auto-${action} — ${remaining} to undo</div>
+        <div class="cl-ts-banner-detail">
+          ${window_.erp_reference ? `ERP ref ${window_.erp_reference} · ` : ""}
+          Closes ${formatTimeAgo(window_.expires_at).replace(/ ago/, "") || "shortly"}
+        </div>
+      </div>
+      ${onUndo ? m3`
+        <button class="cl-ts-banner-action" disabled=${undoing}
+          onClick=${async () => {
+      if (undoing)
+        return;
+      setUndoing(true);
+      try {
+        await onUndo(window_);
+      } finally {
+        setUndoing(false);
+      }
+    }}
+        >${undoing ? "Undoing…" : "Undo"}</button>
+      ` : ""}
+    </div>
+  `;
+  }
+  function WaitingBanner({ waiting }) {
+    if (!waiting || typeof waiting !== "object")
+      return null;
+    const type = waiting.type || waiting.condition;
+    if (!type)
+      return null;
+    const label = humanizeWaitingType(type);
+    const setAt = waiting.set_at || waiting.context?.set_at || waiting.created_at;
+    const expectedBy = waiting.expected_by || waiting.context?.expected_by;
+    const since = setAt ? formatTimeAgo(setAt) : "";
+    const nextCheck = expectedBy ? `Next check ${formatTimeAgo(expectedBy).replace(/ ago/, "") || "soon"}` : "";
+    return m3`
+    <div class="cl-ts-banner waiting">
+      <div class="cl-ts-banner-icon">⏳</div>
+      <div class="cl-ts-banner-body">
+        <div class="cl-ts-banner-title">Waiting for ${label}</div>
+        <div class="cl-ts-banner-detail">
+          ${since ? `Paused ${since}` : "Paused"}${nextCheck ? ` · ${nextCheck}` : ""}
+        </div>
+      </div>
+    </div>
+  `;
+  }
+  function FraudFlagsBanner({ flags }) {
+    if (!Array.isArray(flags) || flags.length === 0)
+      return null;
+    const active = flags.filter((f3) => f3 && typeof f3 === "object" && !f3.resolved_at);
+    if (active.length === 0)
+      return null;
+    const primary = active[0];
+    const type = (primary.flag_type || primary.type || "flag").replace(/_/g, " ");
+    return m3`
+    <div class="cl-ts-banner fraud">
+      <div class="cl-ts-banner-icon">!</div>
+      <div class="cl-ts-banner-body">
+        <div class="cl-ts-banner-title">${active.length} fraud ${active.length === 1 ? "flag" : "flags"} active</div>
+        <div class="cl-ts-banner-detail">Primary: ${type}</div>
+        ${active.slice(1).map((f3) => m3`
+          <div class="cl-ts-fraud-flag" key=${f3.detected_at || f3.flag_type}>
+            ${(f3.flag_type || f3.type || "flag").replace(/_/g, " ")}
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+  }
+  function ResubmissionBanner({ item }) {
+    if (!item?.is_resubmission && !item?.has_resubmission)
+      return null;
+    if (item.has_resubmission) {
+      return m3`
+      <div class="cl-ts-banner resubmission">
+        <div class="cl-ts-banner-icon">↻</div>
+        <div class="cl-ts-banner-body">
+          <div class="cl-ts-banner-title">Superseded by newer invoice</div>
+          <div class="cl-ts-banner-detail">ID ${item.superseded_by_ap_item_id}</div>
+        </div>
+      </div>
+    `;
+    }
+    return m3`
+    <div class="cl-ts-banner resubmission">
+      <div class="cl-ts-banner-icon">↻</div>
+      <div class="cl-ts-banner-body">
+        <div class="cl-ts-banner-title">Resubmission</div>
+        <div class="cl-ts-banner-detail">
+          ${item.resubmission_reason ? item.resubmission_reason : "Supersedes earlier invoice"}
+          ${item.supersedes_ap_item_id ? ` · replaces ${item.supersedes_ap_item_id}` : ""}
+        </div>
+      </div>
+    </div>
+  `;
   }
   function InvoiceSection({ item }) {
     return m3`
@@ -59194,6 +59413,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const poStatus = item.po_match_status || (item.po_number ? "matched" : "missing");
     const grnStatus = item.grn_match_status || "na";
     const invoiceStatus = matchStatus || "na";
+    const score = item.match_score;
+    const deltaPct = item.match_amount_delta_pct;
+    const tolPct = item.match_tolerance_pct;
+    let toleranceLabel = null;
+    let toleranceTone = "pass";
+    if (deltaPct != null && !isNaN(parseFloat(deltaPct))) {
+      const dp = Math.abs(parseFloat(deltaPct));
+      const tp = tolPct != null ? parseFloat(tolPct) : null;
+      toleranceLabel = `Δ ${dp.toFixed(2)}%${tp != null ? ` / ${tp.toFixed(2)}% tol.` : ""}`;
+      if (tp != null) {
+        if (dp <= tp)
+          toleranceTone = "pass";
+        else if (dp <= tp * 2)
+          toleranceTone = "warn";
+        else
+          toleranceTone = "fail";
+      }
+    } else if (score != null && !isNaN(parseFloat(score))) {
+      const s3 = parseFloat(score);
+      toleranceLabel = s3 <= 1 ? `Score ${(s3 * 100).toFixed(1)}%` : `Score ${s3.toFixed(2)}`;
+    }
     return m3`
     <div class="cl-ts-section">
       <div class="cl-ts-section-title">3-Way Match</div>
@@ -59212,8 +59452,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <span class="cl-ts-match-label">Invoice</span>
         <span class="cl-ts-match-detail">${String(matchStatus || "—").replace(/_/g, " ")}</span>
       </div>
+      ${toleranceLabel ? m3`
+        <span class="cl-ts-match-tolerance ${toleranceTone}">${toleranceLabel}</span>
+      ` : ""}
       ${item.match_exception_reason ? m3`
-        <div style="font-size: 12px; color: #92400E; margin-top: 4px; padding: 6px 8px; background: #FEFCE8; border-radius: 6px;">
+        <div class="cl-ts-match-exception-box">
           ${item.match_exception_reason}
         </div>
       ` : ""}
@@ -59269,12 +59512,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <span class="cl-ts-value">${riskBadge(item.risk_score)}</span>
         </div>
       ` : ""}
-      ${item.last_payment_date ? m3`
-        <div class="cl-ts-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E2E8F0;">
-          <span class="cl-ts-label">Last payment</span>
-          <span class="cl-ts-value">${formatDate(item.last_payment_date)}</span>
-        </div>
-      ` : ""}
     </div>
   `;
   }
@@ -59282,7 +59519,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const events = (auditEvents || []).slice(0, 10);
     return m3`
     <div class="cl-ts-section">
-      <div class="cl-ts-section-title"><img src="${typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.getURL("icons/icon16.png") : ""}" alt="" style="width:12px;height:12px;vertical-align:-1px;margin-right:4px;opacity:0.7;" />Agent Actions</div>
+      <div class="cl-ts-section-title">
+        <img src="${agentIconUrl()}" alt="" class="cl-ts-section-icon" />Agent Actions
+      </div>
       ${events.length > 0 ? m3`
           <ul class="cl-ts-timeline">
             ${events.map((e3) => {
@@ -59292,7 +59531,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const isAgent = (e3.actor || e3.actor_type || "") !== "user";
       return m3`
                 <li key=${e3.id || e3.ts}>
-                  ${isAgent ? m3`<img src="${typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.getURL("icons/icon16.png") : ""}" alt="agent" style="width:10px;height:10px;vertical-align:-1px;margin-right:3px;opacity:0.6;" />` : ""}
+                  ${isAgent ? m3`<img src="${agentIconUrl()}" alt="agent" class="cl-ts-agent-icon" />` : ""}
                   <strong>${what}</strong>
                   ${why ? m3`<span class="cl-ts-timeline-why"> — ${why}</span>` : ""}
                   ${next ? m3`<span class="cl-ts-timeline-next">Next: ${next}</span>` : ""}
@@ -59340,8 +59579,32 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
-  function ThreadSidebar({ item, auditEvents, onApprove, onSnooze, onQuery, fetchBoxLinks }) {
+  function LoadingSkeleton() {
+    return m3`
+    <div class="cl-thread-sidebar">
+      <style>${THREAD_SIDEBAR_CSS}</style>
+      ${[0, 1, 2, 3].map((i3) => m3`
+        <div class="cl-ts-skeleton" key=${i3}>
+          <div class="cl-ts-skeleton-row" style="width:40%"></div>
+          <div class="cl-ts-skeleton-row" style="width:80%"></div>
+          <div class="cl-ts-skeleton-row" style="width:60%"></div>
+        </div>
+      `)}
+    </div>
+  `;
+  }
+  function ThreadSidebar({
+    item,
+    auditEvents,
+    onApprove,
+    onSnooze,
+    onQuery,
+    onUndoOverride,
+    fetchBoxLinks,
+    loading
+  }) {
     const [boxLinks, setBoxLinks] = d2([]);
+    const [nowMs, setNowMs] = d2(Date.now());
     y2(() => {
       if (!item?.id || !fetchBoxLinks)
         return;
@@ -59357,22 +59620,36 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         cancelled = true;
       };
     }, [item?.id, fetchBoxLinks]);
+    y2(() => {
+      if (!item?.override_window?.expires_at)
+        return;
+      const handle = setInterval(() => setNowMs(Date.now()), 1000);
+      return () => clearInterval(handle);
+    }, [item?.override_window?.expires_at]);
+    if (loading)
+      return m3`<${LoadingSkeleton} />`;
     if (!item)
       return null;
     const state = String(item.state || "").toLowerCase();
     const matchPassed = state === "needs_approval" || state === "pending_approval";
     const canSnooze = ["needs_approval", "pending_approval", "needs_info", "validated", "failed_post"].includes(state);
     const isSnoozed = state === "snoozed";
+    const snoozedUntil = item.metadata?.snoozed_until || item.snoozed_until;
     return m3`
     <div class="cl-thread-sidebar">
       <style>${THREAD_SIDEBAR_CSS}</style>
+
+      <${ResubmissionBanner} item=${item} />
+      <${OverrideWindowBanner} window_=${item.override_window} onUndo=${onUndoOverride} nowMs=${nowMs} />
+      <${WaitingBanner} waiting=${item.waiting_condition} />
+      <${FraudFlagsBanner} flags=${item.fraud_flags} />
+
       <${InvoiceSection} item=${item} />
       <${MatchSection} item=${item} />
       <${VendorSection} item=${item} />
       <${LinkedBoxesSection} links=${boxLinks} />
       <${AgentActionsSection} item=${item} auditEvents=${auditEvents} />
 
-      <!-- §6.6: Below the four sections — approve button + snooze + query field -->
       <div class="cl-ts-actions-bar">
         ${matchPassed ? m3`
           <button
@@ -59383,13 +59660,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ${canSnooze && onSnooze ? m3`
           <button
             class="cl-ts-snooze-btn"
-            style="padding:6px 14px;border:1px solid #CA8A04;border-radius:6px;background:#FEFCE8;color:#92400E;font:500 12px/1.2 'DM Sans',sans-serif;cursor:pointer;"
             onClick=${() => onSnooze(item)}
           >Snooze</button>
         ` : ""}
         ${isSnoozed ? m3`
-          <div style="font:500 11px/1.3 'DM Sans',sans-serif;color:#CA8A04;padding:4px 0;">
-            Snoozed until ${item.metadata?.snoozed_until ? new Date(item.metadata.snoozed_until).toLocaleString() : "later"}
+          <div class="cl-ts-snoozed-notice">
+            Snoozed until ${snoozedUntil ? new Date(snoozedUntil).toLocaleString() : "later"}
           </div>
         ` : ""}
         <input
@@ -61338,6 +61614,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }}
                 onQuery=${async (query, queryItem) => {
       showToast("Query received — agent response coming soon", "info");
+    }}
+                onUndoOverride=${async (window_) => {
+      try {
+        const orgId = queueManager.runtimeConfig?.organizationId || "default";
+        const url = queueManager.runtimeConfig?.backendUrl + "/api/ap/items/" + encodeURIComponent(item.id) + "/reverse?organization_id=" + encodeURIComponent(orgId);
+        const result = await queueManager.backendFetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reason: "sidebar_undo",
+            actor_surface: "gmail_sidebar"
+          })
+        });
+        const ok = result && result.reversed !== false && !result.detail;
+        showToast(ok ? "Post reversed" : result?.detail || "Reverse failed", ok ? "success" : "error");
+        if (ok)
+          await queueManager.refreshQueue();
+      } catch (err) {
+        showToast("Reverse failed: " + (err.message || err), "error");
+      }
     }}
               />`}` : html2`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
       <//>
@@ -64781,6 +65077,259 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
 
+  // src/components/BatchOps.js
+  var BATCH_OPS_CSS = `
+.cl-batch-ops {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px;
+  background: #0A1628; color: #FFFFFF;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(10, 22, 40, 0.2);
+  margin-bottom: 12px;
+  font-family: 'DM Sans', sans-serif;
+}
+.cl-batch-count {
+  font-size: 13px; font-weight: 700;
+  padding: 4px 10px; background: #00D67E; color: #0A1628; border-radius: 6px;
+  flex-shrink: 0;
+}
+.cl-batch-hint {
+  font-size: 12px; color: #94A3B8; flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cl-batch-actions {
+  display: flex; gap: 6px; flex-shrink: 0;
+}
+.cl-batch-btn {
+  padding: 6px 14px; border: 1px solid #334155; border-radius: 6px;
+  background: #1F2937; color: #F1F5F9;
+  font: 600 12px/1 'DM Sans', sans-serif; cursor: pointer;
+}
+.cl-batch-btn:hover:not(:disabled) { background: #334155; }
+.cl-batch-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cl-batch-btn.primary { background: #00D67E; color: #0A1628; border-color: #00D67E; }
+.cl-batch-btn.primary:hover:not(:disabled) { background: #00C271; border-color: #00C271; }
+.cl-batch-btn.danger { border-color: #DC2626; color: #FCA5A5; }
+.cl-batch-btn.danger:hover:not(:disabled) { background: #DC2626; color: #FFFFFF; }
+.cl-batch-btn.ghost { border-color: transparent; background: transparent; color: #94A3B8; }
+.cl-batch-btn.ghost:hover:not(:disabled) { color: #FFFFFF; background: #1F2937; }
+
+/* Secondary row shown while an action is running — status for the failures */
+.cl-batch-failures {
+  padding: 8px 16px; background: #FEF2F2; color: #991B1B;
+  border-radius: 0 0 8px 8px; margin-top: -12px; margin-bottom: 12px;
+  font-size: 12px;
+}
+.cl-batch-failures strong { font-weight: 700; }
+.cl-batch-failures ul { margin: 4px 0 0; padding-left: 18px; }
+`;
+  function summarizeBulkResult(result, verb) {
+    if (!result || typeof result !== "object") {
+      return { tone: "error", message: `${verb} failed`, failedIds: [] };
+    }
+    const total = Number(result.total ?? 0);
+    const succeeded = Number(result.succeeded ?? 0);
+    const failed = Number(result.failed ?? 0);
+    const failedIds = Array.isArray(result.results) ? result.results.filter((r3) => r3 && r3.ok === false).map((r3) => r3.ap_item_id) : [];
+    if (failed === 0 && succeeded === total && total > 0) {
+      return { tone: "success", message: `${verb} ${total} ${total === 1 ? "item" : "items"}`, failedIds: [] };
+    }
+    if (succeeded === 0) {
+      return { tone: "error", message: `${verb} failed for all ${total} items`, failedIds };
+    }
+    return {
+      tone: "warning",
+      message: `${verb} ${succeeded} of ${total} — ${failed} failed`,
+      failedIds
+    };
+  }
+  function classifyCapabilities(selectedItems) {
+    const canApprove = selectedItems.filter((it) => {
+      const s3 = String(it?.state || "").toLowerCase();
+      return s3 === "needs_approval" || s3 === "pending_approval" || s3 === "validated";
+    });
+    const canReject = selectedItems.filter((it) => {
+      const s3 = String(it?.state || "").toLowerCase();
+      return s3 === "needs_approval" || s3 === "pending_approval" || s3 === "validated" || s3 === "needs_info";
+    });
+    const canSnooze = selectedItems.filter((it) => {
+      const s3 = String(it?.state || "").toLowerCase();
+      return ["needs_approval", "pending_approval", "needs_info", "validated", "failed_post"].includes(s3);
+    });
+    const canRetryPost = selectedItems.filter((it) => {
+      const s3 = String(it?.state || "").toLowerCase();
+      return s3 === "failed_post";
+    });
+    return { canApprove, canReject, canSnooze, canRetryPost };
+  }
+  function BatchOps({
+    selectedItems,
+    onClear,
+    onApprove,
+    onReject,
+    onSnooze,
+    onRetryPost,
+    toast,
+    openDialog
+  }) {
+    const [running, setRunning] = d2("");
+    const [lastFailures, setLastFailures] = d2([]);
+    const items = Array.isArray(selectedItems) ? selectedItems : [];
+    const caps = T2(() => classifyCapabilities(items), [items]);
+    const totalIds = T2(() => items.map((it) => it?.id).filter(Boolean), [items]);
+    if (items.length === 0)
+      return null;
+    async function run(verb, ids, callback) {
+      if (!ids || ids.length === 0)
+        return;
+      setRunning(verb);
+      setLastFailures([]);
+      try {
+        const result = await callback(ids);
+        const summary = summarizeBulkResult(result, verb);
+        toast?.(summary.message, summary.tone);
+        if (summary.failedIds.length > 0)
+          setLastFailures(summary.failedIds);
+      } catch (err) {
+        toast?.(`${verb} failed: ${err?.message || err}`, "error");
+      } finally {
+        setRunning("");
+      }
+    }
+    async function handleApprove() {
+      const ids = caps.canApprove.map((it) => it.id).filter(Boolean);
+      if (ids.length === 0) {
+        toast?.("No selected items can be approved", "warning");
+        return;
+      }
+      await run("Approved", ids, (xs) => onApprove?.(xs));
+    }
+    async function handleReject() {
+      const ids = caps.canReject.map((it) => it.id).filter(Boolean);
+      if (ids.length === 0) {
+        toast?.("No selected items can be rejected", "warning");
+        return;
+      }
+      if (!openDialog) {
+        toast?.("Reject dialog not available", "error");
+        return;
+      }
+      const reason = await openDialog({
+        actionType: "bulk_reject",
+        title: `Reject ${ids.length} ${ids.length === 1 ? "invoice" : "invoices"}?`,
+        label: "Reason",
+        message: "The reason is attached to every rejection.",
+        confirmLabel: "Reject all",
+        cancelLabel: "Cancel",
+        required: true,
+        chips: ["Duplicate", "Wrong vendor", "Amount dispute", "Not our invoice"]
+      });
+      if (reason == null)
+        return;
+      await run("Rejected", ids, (xs) => onReject?.(xs, reason));
+    }
+    async function handleSnooze() {
+      const ids = caps.canSnooze.map((it) => it.id).filter(Boolean);
+      if (ids.length === 0) {
+        toast?.("No selected items can be snoozed", "warning");
+        return;
+      }
+      let minutes = 240;
+      if (openDialog) {
+        const pick = await openDialog({
+          actionType: "bulk_snooze",
+          title: `Snooze ${ids.length} ${ids.length === 1 ? "item" : "items"}`,
+          label: "Snooze for",
+          message: "Items return to the queue when the snooze expires.",
+          confirmLabel: "Snooze",
+          cancelLabel: "Cancel",
+          required: false,
+          chips: ["1h", "4h", "Tomorrow", "Next Monday"]
+        });
+        if (pick == null)
+          return;
+        if (typeof pick === "string") {
+          if (pick === "1h")
+            minutes = 60;
+          else if (pick === "4h")
+            minutes = 240;
+          else if (pick === "Tomorrow")
+            minutes = 24 * 60;
+          else if (pick === "Next Monday")
+            minutes = 7 * 24 * 60;
+        }
+      }
+      await run("Snoozed", ids, (xs) => onSnooze?.(xs, minutes));
+    }
+    async function handleRetry() {
+      const ids = caps.canRetryPost.map((it) => it.id).filter(Boolean);
+      if (ids.length === 0) {
+        toast?.("No selected items are in failed_post", "warning");
+        return;
+      }
+      await run("Retried", ids, (xs) => onRetryPost?.(xs));
+    }
+    const isRunning = running !== "";
+    return m3`
+    <div>
+      <div class="cl-batch-ops" role="toolbar" aria-label="Bulk actions">
+        <span class="cl-batch-count">${items.length} selected</span>
+        <span class="cl-batch-hint">
+          ${isRunning ? `${running}…` : "Actions run per-item; failures stay selected."}
+        </span>
+        <div class="cl-batch-actions">
+          ${onApprove ? m3`
+            <button
+              class="cl-batch-btn primary"
+              disabled=${isRunning || caps.canApprove.length === 0}
+              onClick=${handleApprove}
+              aria-label="Approve selected"
+            >Approve${caps.canApprove.length !== items.length ? m3` (${caps.canApprove.length})` : ""}</button>
+          ` : ""}
+          ${onReject ? m3`
+            <button
+              class="cl-batch-btn danger"
+              disabled=${isRunning || caps.canReject.length === 0}
+              onClick=${handleReject}
+              aria-label="Reject selected"
+            >Reject${caps.canReject.length !== items.length ? m3` (${caps.canReject.length})` : ""}</button>
+          ` : ""}
+          ${onSnooze ? m3`
+            <button
+              class="cl-batch-btn"
+              disabled=${isRunning || caps.canSnooze.length === 0}
+              onClick=${handleSnooze}
+              aria-label="Snooze selected"
+            >Snooze${caps.canSnooze.length !== items.length ? m3` (${caps.canSnooze.length})` : ""}</button>
+          ` : ""}
+          ${onRetryPost ? m3`
+            <button
+              class="cl-batch-btn"
+              disabled=${isRunning || caps.canRetryPost.length === 0}
+              onClick=${handleRetry}
+              aria-label="Retry posting"
+            >Retry post${caps.canRetryPost.length > 0 ? m3` (${caps.canRetryPost.length})` : ""}</button>
+          ` : ""}
+          ${onClear ? m3`
+            <button class="cl-batch-btn ghost" disabled=${isRunning} onClick=${onClear}>
+              Clear
+            </button>
+          ` : ""}
+        </div>
+      </div>
+      ${lastFailures.length > 0 ? m3`
+        <div class="cl-batch-failures" role="status">
+          <strong>${lastFailures.length} ${lastFailures.length === 1 ? "item" : "items"} still selected after failure.</strong>
+          ${lastFailures.length <= 5 ? m3`
+            <ul>${lastFailures.map((id) => m3`<li key=${id}>${id}</li>`)}</ul>
+          ` : ""}
+        </div>
+      ` : ""}
+    </div>
+  `;
+  }
+
   // src/routes/review-preferences.js
   var STORAGE_PREFIX2 = "clearledgr_review_preferences_v1";
   function normalizeText2(value, fallback = "") {
@@ -65452,6 +66001,35 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       setSelectedIds(filtered.map((item) => String(item.id || "")));
     }, [filtered]);
     const clearSelection = q2(() => setSelectedIds([]), []);
+    const bulkOrgQuery = `organization_id=${encodeURIComponent(orgId)}`;
+    const batchApprove = q2(async (ids) => api(`/api/ap/items/bulk-approve?${bulkOrgQuery}`, {
+      method: "POST",
+      body: JSON.stringify({ ap_item_ids: ids })
+    }).then(async (result) => {
+      await loadItems({ silent: true });
+      return result;
+    }), [api, bulkOrgQuery, loadItems]);
+    const batchReject = q2(async (ids, reason) => api(`/api/ap/items/bulk-reject?${bulkOrgQuery}`, {
+      method: "POST",
+      body: JSON.stringify({ ap_item_ids: ids, reason })
+    }).then(async (result) => {
+      await loadItems({ silent: true });
+      return result;
+    }), [api, bulkOrgQuery, loadItems]);
+    const batchSnooze = q2(async (ids, minutes) => api(`/api/ap/items/bulk-snooze?${bulkOrgQuery}`, {
+      method: "POST",
+      body: JSON.stringify({ ap_item_ids: ids, duration_minutes: minutes })
+    }).then(async (result) => {
+      await loadItems({ silent: true });
+      return result;
+    }), [api, bulkOrgQuery, loadItems]);
+    const batchRetryPost = q2(async (ids) => api(`/api/ap/items/bulk-retry-post?${bulkOrgQuery}`, {
+      method: "POST",
+      body: JSON.stringify({ ap_item_ids: ids })
+    }).then(async (result) => {
+      await loadItems({ silent: true });
+      return result;
+    }), [api, bulkOrgQuery, loadItems]);
     const [resolveField, resolvingField] = useAction2(async (item, blocker, source) => {
       if (!item?.id || !blocker?.field)
         return;
@@ -65653,6 +66231,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         </div>
       </div>
+
+      <style>${BATCH_OPS_CSS}</style>
+      <${BatchOps}
+        selectedItems=${selectedItems}
+        onClear=${clearSelection}
+        onApprove=${batchApprove}
+        onReject=${batchReject}
+        onSnooze=${batchSnooze}
+        onRetryPost=${batchRetryPost}
+        toast=${toast}
+        openDialog=${openDialog}
+      />
 
       <div class="review-section-stack">
       ${Object.entries(SECTION_CONFIG).map(([sectionId, config]) => {
@@ -68848,6 +69438,40 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const clearSelection = () => {
       setSelectedIds([]);
     };
+    const [dialog, openDialog] = useActionDialog();
+    const _bulkOrgQuery = `organization_id=${encodeURIComponent(orgId)}`;
+    const batchApprove = async (ids) => {
+      const result = await api(`/api/ap/items/bulk-approve?${_bulkOrgQuery}`, {
+        method: "POST",
+        body: JSON.stringify({ ap_item_ids: ids })
+      });
+      await doRefresh();
+      return result;
+    };
+    const batchReject = async (ids, reason) => {
+      const result = await api(`/api/ap/items/bulk-reject?${_bulkOrgQuery}`, {
+        method: "POST",
+        body: JSON.stringify({ ap_item_ids: ids, reason })
+      });
+      await doRefresh();
+      return result;
+    };
+    const batchSnooze = async (ids, minutes) => {
+      const result = await api(`/api/ap/items/bulk-snooze?${_bulkOrgQuery}`, {
+        method: "POST",
+        body: JSON.stringify({ ap_item_ids: ids, duration_minutes: minutes })
+      });
+      await doRefresh();
+      return result;
+    };
+    const batchRetryPost = async (ids) => {
+      const result = await api(`/api/ap/items/bulk-retry-post?${_bulkOrgQuery}`, {
+        method: "POST",
+        body: JSON.stringify({ ap_item_ids: ids })
+      });
+      await doRefresh();
+      return result;
+    };
     const [routeSelected, routingSelected] = useAction2(async (explicitItems = null) => {
       const targetItems = Array.isArray(explicitItems) ? explicitItems : selectedItems.length ? selectedItems : activeItem ? [activeItem] : [];
       const routeableItems = targetItems.filter((item) => isRouteableInvoiceItem(item)).slice(0, 25);
@@ -69145,6 +69769,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         </div>
       </div>
+
+      <style>${BATCH_OPS_CSS}</style>
+      <${BatchOps}
+        selectedItems=${selectedItems}
+        onClear=${clearSelection}
+        onApprove=${batchApprove}
+        onReject=${batchReject}
+        onSnooze=${batchSnooze}
+        onRetryPost=${batchRetryPost}
+        toast=${toast}
+        openDialog=${openDialog}
+      />
+      <${ActionDialog} ...${dialog} />
 
       <!-- §6.7 Kanban board — stage columns with cards -->
       <div class="pipeline-kanban" style="display:flex;gap:12px;overflow-x:auto;padding:0 0 16px;min-height:400px">

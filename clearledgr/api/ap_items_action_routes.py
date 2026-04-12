@@ -17,7 +17,11 @@ from clearledgr.api.ap_item_contracts import (
     AddApItemNoteRequest,
     AddApItemTaskCommentRequest,
     AssignApItemTaskRequest,
+    BulkApproveRequest,
+    BulkRejectRequest,
     BulkResolveFieldReviewRequest,
+    BulkRetryPostRequest,
+    BulkSnoozeRequest,
     CreateComposeRecordRequest,
     CreateApItemTaskRequest,
     LinkSourceRequest,
@@ -1989,4 +1993,351 @@ async def classify_ap_item(
         "status": "classified",
         "ap_item_id": ap_item_id,
         "classification": classification,
+    }
+
+
+# ---------------------------------------------------------------------------
+# BatchOps — bulk endpoints (DESIGN_THESIS.md §6.7 power-user workflows)
+#
+# Every bulk endpoint:
+#   - runs the action per item through the normal runtime / store path,
+#     so every Rule 1 pre-write, audit event, and state transition still
+#     fires. There is no bulk-specific short-circuit.
+#   - captures a per-item result in the response, never aborts the
+#     batch on a single failure.
+#   - caps the batch at 100 items (pydantic max_length on the request).
+# ---------------------------------------------------------------------------
+
+
+def _bulk_resolve_item(db, ap_item_id: str, expected_org: str) -> Optional[Dict[str, Any]]:
+    """Return the item dict if it exists and belongs to the org, else None."""
+    item = db.get_ap_item(ap_item_id)
+    if not item:
+        return None
+    if str(item.get("organization_id") or "") != str(expected_org or ""):
+        return None
+    return item
+
+
+@router.post("/bulk-approve")
+async def bulk_approve_ap_items(
+    request: BulkApproveRequest,
+    organization_id: str = Query(default="default"),
+    user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    """Approve N items in one call. Each runs through approve_invoice
+    intent so the validation gate and ERP post still fire per item."""
+    verify_org_access(organization_id, user)
+    db = shared.get_db()
+
+    runtime_cls = shared._finance_agent_runtime_cls()
+    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "bulk_approve")
+    runtime = runtime_cls(
+        organization_id=organization_id,
+        actor_id=actor_id,
+        actor_email=getattr(user, "email", None),
+        db=db,
+    )
+
+    results: List[Dict[str, Any]] = []
+    succeeded = 0
+    for ap_item_id in request.ap_item_ids:
+        item = _bulk_resolve_item(db, ap_item_id, organization_id)
+        if not item:
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "error",
+                "reason": "ap_item_not_found_or_wrong_org",
+            })
+            continue
+
+        intent_payload = {
+            "ap_item_id": ap_item_id,
+            "email_id": str(item.get("thread_id") or ap_item_id),
+            "source_channel": "gmail_extension_bulk",
+            "source_channel_id": "gmail_extension_bulk",
+            "actor_id": actor_id,
+            "actor_display": actor_id,
+        }
+        if request.override:
+            intent_payload["approve_override"] = True
+            intent_payload["action_variant"] = "bulk_override"
+            if request.override_justification:
+                intent_payload["reason"] = request.override_justification
+                intent_payload["override_justification"] = request.override_justification
+        if request.note:
+            intent_payload.setdefault("reason", request.note)
+
+        try:
+            result = await runtime.execute_intent("approve_invoice", intent_payload)
+        except Exception as exc:
+            logger.exception("[BatchOps] bulk-approve failure for %s", ap_item_id)
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "error",
+                "reason": safe_error(exc, "bulk_approve"),
+            })
+            continue
+
+        status = str((result or {}).get("status") or "").strip().lower()
+        ok = status in {"approved", "posted", "posted_to_erp", "ready_to_post"}
+        if ok:
+            succeeded += 1
+        results.append({
+            "ap_item_id": ap_item_id,
+            "status": status or "unknown",
+            "ok": ok,
+            "reason": (result or {}).get("reason"),
+            "erp_reference": (result or {}).get("erp_reference"),
+        })
+
+    return {
+        "total": len(request.ap_item_ids),
+        "succeeded": succeeded,
+        "failed": len(request.ap_item_ids) - succeeded,
+        "results": results,
+    }
+
+
+@router.post("/bulk-reject")
+async def bulk_reject_ap_items(
+    request: BulkRejectRequest,
+    organization_id: str = Query(default="default"),
+    user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    """Reject N items with a shared reason."""
+    verify_org_access(organization_id, user)
+    db = shared.get_db()
+
+    runtime_cls = shared._finance_agent_runtime_cls()
+    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "bulk_reject")
+    runtime = runtime_cls(
+        organization_id=organization_id,
+        actor_id=actor_id,
+        actor_email=getattr(user, "email", None),
+        db=db,
+    )
+
+    results: List[Dict[str, Any]] = []
+    succeeded = 0
+    for ap_item_id in request.ap_item_ids:
+        item = _bulk_resolve_item(db, ap_item_id, organization_id)
+        if not item:
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "error",
+                "reason": "ap_item_not_found_or_wrong_org",
+            })
+            continue
+
+        try:
+            result = await runtime.execute_intent(
+                "reject_invoice",
+                {
+                    "ap_item_id": ap_item_id,
+                    "email_id": str(item.get("thread_id") or ap_item_id),
+                    "reason": request.reason,
+                    "source_channel": "gmail_extension_bulk",
+                    "source_channel_id": "gmail_extension_bulk",
+                    "source_message_ref": str(item.get("thread_id") or ap_item_id),
+                    "actor_id": actor_id,
+                    "actor_display": actor_id,
+                },
+            )
+        except Exception as exc:
+            logger.exception("[BatchOps] bulk-reject failure for %s", ap_item_id)
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "error",
+                "reason": safe_error(exc, "bulk_reject"),
+            })
+            continue
+
+        status = str((result or {}).get("status") or "").strip().lower()
+        ok = status == "rejected"
+        if ok:
+            succeeded += 1
+        results.append({
+            "ap_item_id": ap_item_id,
+            "status": status or "unknown",
+            "ok": ok,
+            "reason": (result or {}).get("reason"),
+        })
+
+    return {
+        "total": len(request.ap_item_ids),
+        "succeeded": succeeded,
+        "failed": len(request.ap_item_ids) - succeeded,
+        "results": results,
+    }
+
+
+@router.post("/bulk-snooze")
+async def bulk_snooze_ap_items(
+    request: BulkSnoozeRequest,
+    organization_id: str = Query(default="default"),
+    user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    """Snooze N items for the same duration. Uses the same state-machine
+    path as the single-item snooze endpoint, so the reaper restores them."""
+    from datetime import timedelta
+    from clearledgr.core.ap_states import transition_or_raise
+
+    verify_org_access(organization_id, user)
+    db = shared.get_db()
+
+    results: List[Dict[str, Any]] = []
+    succeeded = 0
+    now = datetime.now(timezone.utc)
+    snoozed_until = now + timedelta(minutes=request.duration_minutes)
+    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "bulk_snooze")
+
+    for ap_item_id in request.ap_item_ids:
+        item = _bulk_resolve_item(db, ap_item_id, organization_id)
+        if not item:
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "error",
+                "reason": "ap_item_not_found_or_wrong_org",
+            })
+            continue
+
+        current_state = str(item.get("state", "")).lower()
+        try:
+            transition_or_raise(current_state, "snoozed", ap_item_id)
+        except Exception as exc:
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "error",
+                "reason": f"invalid_state_transition:{current_state}",
+            })
+            continue
+
+        # metadata comes back as JSON text from SQLite, parsed dict from Postgres
+        raw_meta = item.get("metadata")
+        if isinstance(raw_meta, str) and raw_meta.strip():
+            import json as _json
+            try:
+                metadata = dict(_json.loads(raw_meta) or {})
+            except (ValueError, TypeError):
+                metadata = {}
+        elif isinstance(raw_meta, dict):
+            metadata = dict(raw_meta)
+        else:
+            metadata = {}
+        metadata["pre_snooze_state"] = current_state
+        metadata["snoozed_until"] = snoozed_until.isoformat()
+        if request.note:
+            metadata["snooze_note"] = request.note
+
+        try:
+            db.update_ap_item(ap_item_id, state="snoozed", metadata=metadata)
+            if hasattr(db, "append_ap_item_timeline_entry"):
+                db.append_ap_item_timeline_entry(ap_item_id, {
+                    "event_type": "snoozed",
+                    "summary": f"Bulk snooze for {request.duration_minutes} minutes.",
+                    "reason": request.note or "bulk_snooze",
+                    "next_action": f"Returns to queue at {snoozed_until.strftime('%Y-%m-%d %H:%M UTC')}.",
+                    "actor": actor_id,
+                    "timestamp": now.isoformat(),
+                })
+            succeeded += 1
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "snoozed",
+                "ok": True,
+                "snoozed_until": snoozed_until.isoformat(),
+            })
+        except Exception as exc:
+            logger.exception("[BatchOps] bulk-snooze failure for %s", ap_item_id)
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "error",
+                "reason": safe_error(exc, "bulk_snooze"),
+            })
+
+    return {
+        "total": len(request.ap_item_ids),
+        "succeeded": succeeded,
+        "failed": len(request.ap_item_ids) - succeeded,
+        "snoozed_until": snoozed_until.isoformat(),
+        "results": results,
+    }
+
+
+@router.post("/bulk-retry-post")
+async def bulk_retry_post_ap_items(
+    request: BulkRetryPostRequest,
+    organization_id: str = Query(default="default"),
+    user=Depends(require_ops_user),
+) -> Dict[str, Any]:
+    """Retry ERP posting for N items stuck in failed_post."""
+    verify_org_access(organization_id, user)
+    db = shared.get_db()
+
+    runtime_cls = shared._finance_agent_runtime_cls()
+    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "bulk_retry")
+    runtime = runtime_cls(
+        organization_id=organization_id,
+        actor_id=actor_id,
+        actor_email=getattr(user, "email", None),
+        db=db,
+    )
+
+    results: List[Dict[str, Any]] = []
+    succeeded = 0
+    for ap_item_id in request.ap_item_ids:
+        item = _bulk_resolve_item(db, ap_item_id, organization_id)
+        if not item:
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "error",
+                "reason": "ap_item_not_found_or_wrong_org",
+            })
+            continue
+
+        current_state = str(item.get("state") or item.get("status") or "").lower()
+        if current_state != APState.FAILED_POST:
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "error",
+                "reason": f"invalid_state:{current_state}_expected_failed_post",
+            })
+            continue
+
+        try:
+            retry_result = await runtime.execute_intent(
+                "retry_recoverable_failures",
+                {
+                    "ap_item_id": ap_item_id,
+                    "email_id": str(item.get("thread_id") or ap_item_id),
+                    "reason": "bulk_retry_post",
+                },
+            )
+        except Exception as exc:
+            logger.exception("[BatchOps] bulk-retry-post failure for %s", ap_item_id)
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "error",
+                "reason": safe_error(exc, "bulk_retry_post"),
+            })
+            continue
+
+        status = str((retry_result or {}).get("status") or "").strip().lower()
+        ok = status in {"posted", "posted_to_erp", "ready_to_post"}
+        if ok:
+            succeeded += 1
+        results.append({
+            "ap_item_id": ap_item_id,
+            "status": status or "unknown",
+            "ok": ok,
+            "reason": (retry_result or {}).get("reason"),
+            "erp_reference": (retry_result or {}).get("erp_reference"),
+        })
+
+    return {
+        "total": len(request.ap_item_ids),
+        "succeeded": succeeded,
+        "failed": len(request.ap_item_ids) - succeeded,
+        "results": results,
     }

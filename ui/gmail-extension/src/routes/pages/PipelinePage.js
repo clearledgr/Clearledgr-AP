@@ -6,6 +6,8 @@ import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDate, fmtDateTime, useAction } from '../route-helpers.js';
+import ActionDialog, { useActionDialog } from '../../components/ActionDialog.js';
+import { BatchOps, BATCH_OPS_CSS } from '../../components/BatchOps.js';
 import { formatAmount, openSourceEmail } from '../../utils/formatters.js';
 import { navigateToRecordDetail } from '../../utils/record-route.js';
 import {
@@ -618,6 +620,43 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
     setSelectedIds([]);
   };
 
+  const [dialog, openDialog] = useActionDialog();
+
+  // BatchOps handlers — each calls the matching bulk endpoint.
+  const _bulkOrgQuery = `organization_id=${encodeURIComponent(orgId)}`;
+  const batchApprove = async (ids) => {
+    const result = await api(`/api/ap/items/bulk-approve?${_bulkOrgQuery}`, {
+      method: 'POST',
+      body: JSON.stringify({ ap_item_ids: ids }),
+    });
+    await doRefresh();
+    return result;
+  };
+  const batchReject = async (ids, reason) => {
+    const result = await api(`/api/ap/items/bulk-reject?${_bulkOrgQuery}`, {
+      method: 'POST',
+      body: JSON.stringify({ ap_item_ids: ids, reason }),
+    });
+    await doRefresh();
+    return result;
+  };
+  const batchSnooze = async (ids, minutes) => {
+    const result = await api(`/api/ap/items/bulk-snooze?${_bulkOrgQuery}`, {
+      method: 'POST',
+      body: JSON.stringify({ ap_item_ids: ids, duration_minutes: minutes }),
+    });
+    await doRefresh();
+    return result;
+  };
+  const batchRetryPost = async (ids) => {
+    const result = await api(`/api/ap/items/bulk-retry-post?${_bulkOrgQuery}`, {
+      method: 'POST',
+      body: JSON.stringify({ ap_item_ids: ids }),
+    });
+    await doRefresh();
+    return result;
+  };
+
   const [routeSelected, routingSelected] = useAction(async (explicitItems = null) => {
     const targetItems = Array.isArray(explicitItems)
       ? explicitItems
@@ -936,6 +975,19 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
           </div>
         </div>
       </div>
+
+      <style>${BATCH_OPS_CSS}</style>
+      <${BatchOps}
+        selectedItems=${selectedItems}
+        onClear=${clearSelection}
+        onApprove=${batchApprove}
+        onReject=${batchReject}
+        onSnooze=${batchSnooze}
+        onRetryPost=${batchRetryPost}
+        toast=${toast}
+        openDialog=${openDialog}
+      />
+      <${ActionDialog} ...${dialog} />
 
       <!-- §6.7 Kanban board — stage columns with cards -->
       <div class="pipeline-kanban" style="display:flex;gap:12px;overflow-x:auto;padding:0 0 16px;min-height:400px">

@@ -6,6 +6,7 @@ import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import ActionDialog, { useActionDialog } from '../../components/ActionDialog.js';
+import { BatchOps, BATCH_OPS_CSS } from '../../components/BatchOps.js';
 import { navigateToRecordDetail } from '../../utils/record-route.js';
 import {
   formatAmount,
@@ -677,6 +678,37 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
 
   const clearSelection = useCallback(() => setSelectedIds([]), []);
 
+  // BatchOps handlers — each calls the matching bulk endpoint and
+  // returns the raw payload so BatchOps can summarize per-item results.
+  const bulkOrgQuery = `organization_id=${encodeURIComponent(orgId)}`;
+  const batchApprove = useCallback(async (ids) => (
+    api(`/api/ap/items/bulk-approve?${bulkOrgQuery}`, {
+      method: 'POST',
+      body: JSON.stringify({ ap_item_ids: ids }),
+    }).then(async (result) => { await loadItems({ silent: true }); return result; })
+  ), [api, bulkOrgQuery, loadItems]);
+
+  const batchReject = useCallback(async (ids, reason) => (
+    api(`/api/ap/items/bulk-reject?${bulkOrgQuery}`, {
+      method: 'POST',
+      body: JSON.stringify({ ap_item_ids: ids, reason }),
+    }).then(async (result) => { await loadItems({ silent: true }); return result; })
+  ), [api, bulkOrgQuery, loadItems]);
+
+  const batchSnooze = useCallback(async (ids, minutes) => (
+    api(`/api/ap/items/bulk-snooze?${bulkOrgQuery}`, {
+      method: 'POST',
+      body: JSON.stringify({ ap_item_ids: ids, duration_minutes: minutes }),
+    }).then(async (result) => { await loadItems({ silent: true }); return result; })
+  ), [api, bulkOrgQuery, loadItems]);
+
+  const batchRetryPost = useCallback(async (ids) => (
+    api(`/api/ap/items/bulk-retry-post?${bulkOrgQuery}`, {
+      method: 'POST',
+      body: JSON.stringify({ ap_item_ids: ids }),
+    }).then(async (result) => { await loadItems({ silent: true }); return result; })
+  ), [api, bulkOrgQuery, loadItems]);
+
   const [resolveField, resolvingField] = useAction(async (item, blocker, source) => {
     if (!item?.id || !blocker?.field) return;
 
@@ -911,6 +943,18 @@ export default function ReviewPage({ api, orgId, userEmail, navigate, toast }) {
           </div>
         </div>
       </div>
+
+      <style>${BATCH_OPS_CSS}</style>
+      <${BatchOps}
+        selectedItems=${selectedItems}
+        onClear=${clearSelection}
+        onApprove=${batchApprove}
+        onReject=${batchReject}
+        onSnooze=${batchSnooze}
+        onRetryPost=${batchRetryPost}
+        toast=${toast}
+        openDialog=${openDialog}
+      />
 
       <div class="review-section-stack">
       ${Object.entries(SECTION_CONFIG).map(([sectionId, config]) => {
