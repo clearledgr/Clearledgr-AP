@@ -100,9 +100,10 @@ describe('ThreadSidebar contract', () => {
   });
 
   it('humanizes long snake_case event_type strings before rendering', () => {
-    // Regression: raw event_type values like
+    // Regression: raw event_type / decision_reason values like
     // "ap_invoice_processing_field_review_required" forced horizontal
-    // scroll because the browser would not wrap them.
+    // scroll because the browser would not wrap them, and the humanizer
+    // was only called on event_type (not decision_reason which usually wins).
     assert.match(source, /function humanizeEventType/);
     const fnBody = source.match(/function humanizeEventType[^]*?\n\}/)[0];
     const fn = new Function(`${fnBody}; return humanizeEventType;`)();
@@ -111,11 +112,32 @@ describe('ThreadSidebar contract', () => {
       'Invoice processing — field review required',
     );
     assert.equal(fn('agent_action:apply_label'), 'Apply label');
-    assert.equal(fn(''), 'Action');
-    assert.equal(fn(null), 'Action');
+    // Empty input defaults to '' so optional fields don't render a placeholder
+    assert.equal(fn(''), '');
+    assert.equal(fn(null), '');
+    // With explicit fallback (used for the required "what" label)
+    assert.equal(fn('', { fallback: 'Action' }), 'Action');
+    assert.equal(fn(null, { fallback: 'Action' }), 'Action');
+    // Already-humanized strings (has a space, no underscores) pass through
+    assert.equal(fn('Approved by AP Manager'), 'Approved by AP Manager');
     // Long pathological string — capped at 80 chars
     const huge = 'a'.repeat(200);
     assert.ok(fn(huge).length <= 80);
+  });
+
+  it('humanizes decision_reason / reason when they win the fallback chain', () => {
+    // The sidebar call site must humanize whatever string wins, not only
+    // event_type. Backend's append_ap_audit_event stores the `reason` arg
+    // as `decision_reason`, which is often a raw snake_case token.
+    const callSite = source.match(/const what = humanizeEventType\([^)]*\)/s);
+    assert.ok(callSite, 'what must be computed via humanizeEventType');
+    assert.match(callSite[0], /e\.summary \|\| e\.decision_reason \|\| e\.event_type/);
+  });
+
+  it('skips the why line when it is identical to what', () => {
+    // When decision_reason == reason (backend sometimes duplicates), don't
+    // render "X — X" in the timeline.
+    assert.match(source, /humanizedWhy && humanizedWhy !== what/);
   });
 
   it('prevents horizontal overflow — word-break CSS on every descendant', () => {

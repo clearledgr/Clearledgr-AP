@@ -267,10 +267,17 @@ function agentIconUrl() {
 // "ap_invoice_processing_field_review_required") are raw snake_case
 // identifiers. Render them as human text and cap length so they never
 // break the sidebar layout.
-function humanizeEventType(raw) {
-  if (!raw) return 'Action';
+//
+// Returns '' on empty input so callers using humanizeEventType on
+// optional fields (reason, reasoning_summary) don't render a
+// placeholder for absent values.
+function humanizeEventType(raw, { fallback = '' } = {}) {
+  if (!raw) return fallback;
   const s = String(raw).trim();
-  if (!s) return 'Action';
+  if (!s) return fallback;
+  // If the string is already humanized (has a space and no snake_case),
+  // pass it through unchanged so human-written summaries aren't mangled.
+  if (s.includes(' ') && !s.includes('_')) return s.length > 120 ? s.slice(0, 117) + '…' : s;
   // Common AP agent event prefix → shorter label
   const prefixMap = [
     ['ap_invoice_processing_', 'Invoice processing'],
@@ -593,8 +600,17 @@ function AgentActionsSection({ item, auditEvents }) {
           <ul class="cl-ts-timeline">
             ${events.map((e) => {
               // Thesis §6.6: "what the agent did, why it did it, and what happens next"
-              const what = e.summary || e.decision_reason || humanizeEventType(e.event_type);
-              const why = e.reasoning_summary || e.reasoning || e.reason || '';
+              // Humanize whichever string wins — summary/decision_reason/event_type
+              // are all free-form and frequently raw snake_case from the audit pipeline.
+              const what = humanizeEventType(
+                e.summary || e.decision_reason || e.event_type,
+                { fallback: 'Action' },
+              );
+              // Skip "why" if it is identical to "what" (the backend sometimes
+              // fills reason with the same snake_case token as event_type).
+              const rawWhy = e.reasoning_summary || e.reasoning || e.reason || '';
+              const humanizedWhy = humanizeEventType(rawWhy);
+              const why = humanizedWhy && humanizedWhy !== what ? humanizedWhy : '';
               const next = e.next_action || e.next_step || '';
               const isAgent = (e.actor || e.actor_type || '') !== 'user';
               return html`

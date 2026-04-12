@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:3a4bfd009410c28a463d22b110e65ee0bbc1154488908ac22834c23b11172ee4 */
+/* clearledgr-source-fingerprint:fa80ee48a0600eb8cec41e5cd1337a19631320e6c52e03a43b4e588bc086a792 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59230,12 +59230,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function agentIconUrl() {
     return typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.getURL("icons/icon16.png") : "";
   }
-  function humanizeEventType(raw) {
+  function humanizeEventType(raw, { fallback = "" } = {}) {
     if (!raw)
-      return "Action";
+      return fallback;
     const s3 = String(raw).trim();
     if (!s3)
-      return "Action";
+      return fallback;
+    if (s3.includes(" ") && !s3.includes("_"))
+      return s3.length > 120 ? s3.slice(0, 117) + "…" : s3;
     const prefixMap = [
       ["ap_invoice_processing_", "Invoice processing"],
       ["vendor_onboarding_", "Vendor onboarding"],
@@ -59551,8 +59553,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       ${events.length > 0 ? m3`
           <ul class="cl-ts-timeline">
             ${events.map((e3) => {
-      const what = e3.summary || e3.decision_reason || humanizeEventType(e3.event_type);
-      const why = e3.reasoning_summary || e3.reasoning || e3.reason || "";
+      const what = humanizeEventType(e3.summary || e3.decision_reason || e3.event_type, { fallback: "Action" });
+      const rawWhy = e3.reasoning_summary || e3.reasoning || e3.reason || "";
+      const humanizedWhy = humanizeEventType(rawWhy);
+      const why = humanizedWhy && humanizedWhy !== what ? humanizedWhy : "";
       const next = e3.next_action || e3.next_step || "";
       const isAgent = (e3.actor || e3.actor_type || "") !== "user";
       return m3`
