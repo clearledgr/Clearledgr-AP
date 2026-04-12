@@ -1087,9 +1087,19 @@ def _v31_thread_unique_index(cur, db):
     Box. The second gets a UNIQUE violation and the handler routes
     to the existing Box.
 
-    Uses a partial index (WHERE thread_id IS NOT NULL) because thread_id
-    can be NULL for non-Gmail sources (manual creation, API imports).
+    Uses a partial index (WHERE thread_id IS NOT NULL AND thread_id != '')
+    because thread_id can be NULL or empty string for non-Gmail sources
+    (manual creation, API imports) — those rows must not collide.
+
+    Backfill first: normalize empty-string thread_ids to NULL so they
+    are excluded from the uniqueness check.
     """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    # Backfill: empty string → NULL so the partial index predicate excludes them
+    cur.execute("UPDATE ap_items SET thread_id = NULL WHERE thread_id = ''")
+
     try:
         cur.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS uniq_ap_items_org_thread "
@@ -1097,10 +1107,23 @@ def _v31_thread_unique_index(cur, db):
             "WHERE thread_id IS NOT NULL"
         )
     except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning(
-            "[Migration v31] Could not create unique index (may already have duplicates): %s", exc,
+        # Real duplicates in the data — surface loudly instead of silently continuing.
+        # Collect the offending (org, thread) pairs so operators can clean them up.
+        try:
+            cur.execute(
+                "SELECT organization_id, thread_id, COUNT(*) FROM ap_items "
+                "WHERE thread_id IS NOT NULL "
+                "GROUP BY organization_id, thread_id HAVING COUNT(*) > 1"
+            )
+            dupes = cur.fetchall()
+        except Exception:
+            dupes = []
+        _log.error(
+            "[Migration v31] UNIQUE index creation failed: %s. "
+            "Duplicate (org_id, thread_id) rows must be resolved manually: %s",
+            exc, [tuple(r) for r in dupes][:20],
         )
+        raise
 
 
 @migration(24, "Migration from Existing Tools (DESIGN_THESIS.md §3)")

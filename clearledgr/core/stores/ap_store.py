@@ -28,7 +28,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from clearledgr.core.utils import safe_float
 
@@ -1700,14 +1700,23 @@ class APStore:
             row = cur.fetchone()
         return self._deserialize_audit_event(dict(row)) if row else None
 
-    def list_ap_audit_events(self, ap_item_id: str) -> List[Dict[str, Any]]:
+    def list_ap_audit_events(
+        self,
+        ap_item_id: str,
+        limit: Optional[int] = None,
+        order: str = "asc",
+    ) -> List[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM audit_events WHERE ap_item_id = ? ORDER BY ts ASC"
-        )
+        direction = "DESC" if str(order).lower() == "desc" else "ASC"
+        sql = f"SELECT * FROM audit_events WHERE ap_item_id = ? ORDER BY ts {direction}"
+        params: Tuple[Any, ...] = (ap_item_id,)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (ap_item_id, int(limit))
+        sql = self._prepare_sql(sql)
         with self.connect() as conn:
             cur = conn.cursor()
-            cur.execute(sql, (ap_item_id,))
+            cur.execute(sql, params)
             rows = cur.fetchall()
         return [self._deserialize_audit_event(dict(row)) for row in rows]
 

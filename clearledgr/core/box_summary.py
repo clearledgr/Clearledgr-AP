@@ -124,20 +124,7 @@ def build_box_summary(
 
         # Last 3 actions from audit_events (the Box timeline)
         try:
-            if hasattr(db, "list_ap_audit_events"):
-                events = db.list_ap_audit_events(ap_item_id, limit=3, order="desc")
-            else:
-                # Fallback: direct SQL query
-                with db.connect() as conn:
-                    cur = conn.cursor()
-                    cur.execute(
-                        db._prepare_sql(
-                            "SELECT event_type, ts FROM audit_events "
-                            "WHERE ap_item_id = ? ORDER BY ts DESC LIMIT 3"
-                        ),
-                        (ap_item_id,),
-                    )
-                    events = [dict(zip(("event_type", "ts"), row)) for row in cur.fetchall()]
+            events = db.list_ap_audit_events(ap_item_id, limit=3, order="desc")
             for entry in (events or []):
                 action = entry.get("event_type") or "action"
                 ts = entry.get("ts") or ""
